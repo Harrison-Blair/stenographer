@@ -102,11 +102,13 @@ class Recorder:
 Called by `Capabilities.probe()` (see `10-packaging.md`):
 
 ```python
-sounddevice.query_devices(kind="input")
+result = sounddevice.query_devices(kind="input")
+# result is a single dict (the default input device) or an empty dict
+has_mic = bool(result)
 ```
 
-If this raises `sounddevice.PortAudioError`, or returns an empty
-device, `has_mic` is `False` and the daemon exits 78 with the message:
+If this raises `sounddevice.PortAudioError`, or `result` is empty,
+`has_mic` is `False` and the daemon exits 78 with the message:
 
 ```
 stenographer: no usable input device.

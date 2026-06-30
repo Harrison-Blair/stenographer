@@ -45,8 +45,16 @@ class Model:
         )
 
     def transcribe(self, samples: np.ndarray, language: str,
-                   beam_size: int) -> tuple[str, list[SegmentInfo]]:
-        """Run inference. Returns (text, segments). v1 ignores segments."""
+                   beam_size: int,
+                   on_segment: Callable[[SegmentInfo], None] | None = None,
+                   ) -> tuple[str, list[SegmentInfo]]:
+        """Run inference. Returns (text, segments).
+
+        If *on_segment* is not ``None`` it is called for each
+        ``SegmentInfo`` as the model produces it, enabling the
+        Session to stream partial transcripts before inference
+        completes.
+        """
         segments, info = self._impl.transcribe(
             samples,
             language=language,
@@ -74,8 +82,10 @@ crashing.
 - A single `threading.Thread` ("worker thread") runs an event loop
   driven by a `queue.Queue` of `Job` objects.
 - The Session submits a `Job(numpy.ndarray)` after the Recorder
-  stops. The Worker calls `Model.transcribe`, posts the result back
-  to a `queue.Queue` of `Result` objects, and loops.
+  stops. The Worker calls `Model.transcribe`, optionally pushing
+  partial `SegmentInfo` objects to a ``queue.Queue`` via the
+  ``on_segment`` callback, and posts the final result back via a
+  ``concurrent.futures.Future``.
 - A sentinel `None` job causes the worker to exit cleanly.
 - Only one inference runs at a time (the queue is unbounded, so
   bursty submissions are processed in order).
@@ -84,12 +94,14 @@ crashing.
 @dataclass
 class Job:
     samples: np.ndarray
-    future: "concurrent.futures.Future[Result]"
+    future: "concurrent.futures.Future[TranscriptionResult]"
+    on_segment: Callable[[SegmentInfo], None] | None = None
 
 @dataclass
-class Result:
+class TranscriptionResult:
     text: str
     duration_seconds: float
+    segments: list[SegmentInfo]
 ```
 
 Using `Future` instead of a `Result` queue is acceptable; the spec
@@ -111,6 +123,26 @@ requires only that the Session can `submit` from any thread and
   (`asr: no speech recognized for utterance`) and skips injection +
   clipboard. **No `error` cue is fired** — silence is not an error.
 
+### Streaming partial transcripts
+
+When the Session calls ``Worker.submit(samples, on_segment=callback)``,
+the Worker thread passes ``on_segment`` through to
+``Model.transcribe()``.  As faster-whisper yields each segment the
+callback fires on the Worker thread, which pushes the
+``SegmentInfo`` into a ``queue.Queue`` polled by the Session.  The
+Session calls ``Injector.type_text(seg.text, raw=True)`` for each
+non-empty segment so that text arrives at the focused window as soon
+as it is decoded, rather than waiting for the full utterance to
+finish transcribing.
+
+- Partial segments are injected *raw*: no strip, no truncation, no
+  trailing-space append — the model's output passes through unchanged.
+- When the final ``TranscriptionResult`` is ready, the Session
+  compares the concatenated partial text against ``result.text`` and
+  skips re-injection if they match (all partials already typed).
+- The clipboard is populated with the final text only — never with
+  intermediate partial text.
+
 ## Timing
 
 - The Worker MUST return control to the Session as soon as inference
@@ -127,17 +159,19 @@ requires only that the Session can `submit` from any thread and
 `Capabilities.probe()` (see `10-packaging.md`) checks:
 
 ```python
-from huggingface_hub import try_to_load_from_hf_hub
+from huggingface_hub import try_to_load_from_cache
 
-ok = try_to_load_from_hf_hub(
+result = try_to_load_from_cache(
     repo_id=cfg.asr.model,
     filename="config.json",  # every faster-whisper model has this
 )
+# result is a path string, a _CACHED_NO_EXIST sentinel, or None
+ok = isinstance(result, str) and bool(result)
 ```
 
 `has_asr_model` is `True` if and only if the model files are
-present. If `False`, the daemon prints the `stenographer model
-download` hint and exits 78.
+present in the local cache. If `False`, the daemon prints the
+`stenographer model download` hint and exits 78.
 
 ## `stenographer model download` subcommand
 
@@ -156,7 +190,6 @@ on startup (per `09-error-handling.md`).
 
 ## Out of scope (v1)
 
-- Streaming / partial transcripts.
 - Auto language detection.
 - Custom vocabulary / hotwords.
 - Multiple models loaded simultaneously (per-language routing).

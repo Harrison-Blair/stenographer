@@ -38,18 +38,19 @@ import shlex
 class Injector:
     def __init__(self, *, available: bool) -> None: ...
 
-    def type_text(self, text: str) -> bool:
+    def type_text(self, text: str, *, raw: bool = False) -> bool:
         """Type `text` at the focused window. Return True on success."""
 ```
 
 ### `type_text()`
 
 ```python
-def type_text(self, text: str) -> bool:
+def type_text(self, text: str, *, raw: bool = False) -> bool:
     if not self._available:
         log.warning("output.inject: wtype not available; skipping")
         return False
-    text = self._prepare(text)
+    if not raw:
+        text = self._prepare(text)
     if not text:
         return True  # nothing to type
     try:
@@ -144,6 +145,14 @@ silently swallowing the input.
 
 The "no injection AND no clipboard" case is the empty-transcript
 case (see `03-transcription.md`).
+
+### ``raw`` mode
+
+When ``raw=True``, ``_prepare()`` is bypassed entirely: the text is
+sent to ``wtype`` with no strip, no length truncation, and no
+trailing-space append.  This is used by the Session for streaming
+partial segments so that the model's intra-segment whitespace
+(including leading spaces that indicate continuation) is preserved.
 
 ## Edge cases
 

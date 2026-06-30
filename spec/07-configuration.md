@@ -44,9 +44,9 @@ hotkey.binding        = "KEY_RIGHTCTRL"   # default
 # at or above which it is treated as push-to-talk.
 hotkey.toggle_threshold_seconds = 0.5
 
-# Keyboard device path to grab. null => auto-detect the first keyboard
+# Keyboard device path to grab. "" => auto-detect the first keyboard
 # in /dev/input/event* owned by the user.
-hotkey.device         = null
+hotkey.device         = ""
 
 # === Audio capture ===
 # Sample rate fed into faster-whisper. faster-whisper resamples internally
@@ -56,8 +56,8 @@ audio.sample_rate     = 16000
 # Frame size passed to sounddevice.InputStream (frames per callback).
 audio.frames_per_buffer = 1024
 
-# Input device. null => sounddevice default input.
-audio.input_device    = null
+# Input device. "" => sounddevice default input.
+audio.input_device    = ""
 
 # === ASR ===
 # faster-whisper model identifier (HuggingFace repo id, or absolute local
@@ -72,7 +72,7 @@ asr.beam_size         = 5
 
 # Compute type for CTranslate2. One of: "int8", "int8_float16",
 # "float16", "float32", "default".
-asr.compute_type      = "int8_float16"
+asr.compute_type      = "int8"
 
 # === Audio feedback ===
 # Volume for cue playback, 0.0 .. 1.0. Mapped to pw-play/paplay --volume.
@@ -112,16 +112,16 @@ clipboard.enabled = true
 |----------------------------------------------|----------|--------------------------------------------|
 | `hotkey.binding`                             | string   | `"KEY_RIGHTCTRL"`                          |
 | `hotkey.toggle_threshold_seconds`            | number   | `0.5`                                      |
-| `hotkey.device`                              | string?  | `null`                                     |
+| `hotkey.device`                              | string   | `""` (empty string = auto-detect)          |
 | `audio.sample_rate`                          | int      | `16000`                                    |
 | `audio.frames_per_buffer`                    | int      | `1024`                                     |
-| `audio.input_device`                         | string?  | `null`                                     |
+| `audio.input_device`                         | string   | `""` (empty string = sounddevice default)  |
 | `asr.model`                                  | string   | `"Systran/faster-whisper-large-v3"`        |
 | `asr.language`                               | string   | `"en"`                                     |
 | `asr.beam_size`                              | int      | `5`                                        |
-| `asr.compute_type`                           | string   | `"int8_float16"`                           |
+| `asr.compute_type`                           | string   | `"int8"`                                   |
 | `feedback.volume`                            | number   | `0.6`                                      |
-| `feedback.cues.<name>`                       | string?  | `null` (per cue)                           |
+| `feedback.cues.<name>`                       | string   | `""` (per cue; empty = bundled default)    |
 | `feedback.mute`                              | bool     | `false`                                    |
 | `output.append_trailing_space`               | bool     | `true`                                     |
 | `output.max_chars`                           | int      | `4096`                                     |
@@ -138,8 +138,16 @@ clipboard.enabled = true
 - `asr.compute_type` must be one of the five allowed strings.
 - `feedback.volume` must satisfy `0.0 <= x <= 1.0`.
 - `output.max_chars` must satisfy `1 <= x <= 100000`.
-- Any `feedback.cues.<name>` value, if non-null, must point to a readable
-  file.
+- Any `feedback.cues.<name>` value, if non-empty, must point to a readable
+  file. Empty string means "use the bundled default".
+- The `hotkey.device` and `audio.input_device` values, if non-empty,
+  must point to an existing path / valid device index. Empty string means
+  "auto-detect" / "system default".
+
+**TOML `null` is not supported.** `tomllib` rejects `null` literals
+(TOML 1.0 has no null). Optional string fields use the empty string
+`""` as the "unset" sentinel. The loader treats `""` as `None`
+internally where appropriate.
 
 On validation failure the daemon logs a precise error (file path + key +
 expected type / range) and exits with code 78 (`EX_CONFIG`).

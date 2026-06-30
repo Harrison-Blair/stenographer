@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[Unit]
+Description=stenographer dictation daemon
+After=graphical-session.target pipewire.service pulseaudio.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/stenographer run
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

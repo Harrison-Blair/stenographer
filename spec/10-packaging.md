@@ -36,7 +36,7 @@ dependencies = [
     "sounddevice>=0.4.7",
     "numpy>=2.0",
     "faster-whisper>=1.0.0",
-    "python-evdev>=1.4",
+    "evdev>=1.4",
     # tomllib is in the stdlib on 3.11+; this project pins 3.14.
 ]
 
@@ -87,7 +87,7 @@ src/stenographer/
 ├── hotkey/
 │   ├── __init__.py
 │   ├── binding.py        # parse / validate hotkey.binding strings
-│   ├── listener.py       # python-evdev loop
+│   ├── listener.py       # evdev loop
 │   └── state_machine.py  # hybrid PTT / toggle FSM
 ├── audio/
 │   ├── __init__.py
@@ -136,7 +136,7 @@ packaging/
 | `sounddevice`   | `>=0.4.7`| `audio/capture.py`                     |
 | `numpy`         | `>=2.0`  | `audio/capture.py`, `asr/worker.py`    |
 | `faster-whisper`| `>=1.0.0`| `asr/model.py`, `asr/worker.py`        |
-| `python-evdev`  | `>=1.4`  | `hotkey/listener.py`                   |
+| `evdev`         | `>=1.4`  | `hotkey/listener.py`                   |
 | `tomllib`       | stdlib   | `config.py`                            |
 | `argparse`      | stdlib   | `cli.py`                               |
 | `logging`       | stdlib   | everywhere                             |
@@ -155,7 +155,7 @@ packaging/
 | `wl-paste`       | `wl-clipboard`                | `wl-clipboard`        | `output/clipboard.py`              |
 | `pw-play`        | `pipewire-utils`             | `pipewire-utils`     | `audio/feedback.py` (preferred)    |
 | `paplay`         | `pulseaudio-utils`            | `pulseaudio-utils`    | `audio/feedback.py` (fallback)     |
-| `python3-evdev`  | `python3-evdev`               | `python3-evdev`       | transitive, required by python-evdev |
+| (none)           | (none)                        | (none)                | `evdev` is a source build on Python 3.14; needs `libevdev-dev` headers at install time. |
 
 Additionally, the **user** must:
 - Be a member of the `input` group (or have a uaccess rule for the
@@ -262,6 +262,39 @@ activation, and the one-shot CLI does not communicate with the daemon.
 - A future distro package (`stenographer` on Debian / Fedora) is out of
   scope for this doc.
 
+## PyInstaller binary
+
+The canonical install for a single user who does not want a `pip
+install` of any kind is the PyInstaller `--onedir` binary at
+`dist/stenographer/stenographer`.
+
+- Build script: `scripts/build.sh` (wraps `pyinstaller --noconfirm
+  --clean packaging/stenographer.spec`).
+- Spec: `packaging/stenographer.spec`. The spec collects
+  `faster_whisper`, `tokenizers`, `ctranslate2`, `onnxruntime`, and
+  `evdev` (the latter has Cython-compiled data tables PyInstaller
+  cannot auto-detect). The sound cues under
+  `src/stenographer/assets/sounds/` are added as data files at
+  `stenographer/assets/sounds/` inside the bundle, so the runtime
+  resolves them as
+  `pathlib.Path(sys._MEIPASS) / "stenographer" / "assets" / "sounds"`
+  in the frozen binary and as
+  `pathlib.Path(__file__).parent / "assets" / "sounds"` in a wheel
+  / editable install. The entry script uses
+  `getattr(sys, "frozen", False)` to pick the right base.
+- Build dep: `pyinstaller>=6.10` (provided by the `[build]`
+  `optional-dependencies` group in `pyproject.toml`).
+- Output: `dist/stenographer/stenographer` launcher + `dist/stenographer/_internal/`
+  payload (~370 MB on Linux x86_64).
+- Required runtime system packages (NOT bundled, MUST be present):
+  `wtype`, `wl-clipboard`, `pipewire` (or `pulseaudio`), `libevdev1`,
+  `libportaudio2`, plus the user's `input` group membership.
+- `cli.main()` MUST call `multiprocessing.freeze_support()` as its
+  first line — see `spec/08-process-model.md` for the rationale.
+- The ASR model is **not** bundled. The user runs
+  `stenographer model download` once, which fetches into the
+  HuggingFace hub cache (`$XDG_CACHE_HOME/huggingface/hub/`).
+
 ## Out of scope (v1)
 
 - AUR / Homebrew / Nix package.
@@ -271,10 +304,11 @@ activation, and the one-shot CLI does not communicate with the daemon.
 
 ## Open questions
 
-- **Compute type default.** `int8_float16` requires a recent CPU. Should
-  the default be `"int8"` (CPU-only) and let users opt into
-  `int8_float16`? v1 ships `"int8_float16"`; revisit after first user
-  reports.
+- **Compute type default.** `int8_float16` requires a recent CPU with
+  float16 hardware support; some CPU + ctranslate2 combinations reject
+  it at load time. v1 ships `"int8"` as the default (CPU-friendly,
+  always works); users with appropriate hardware can opt into
+  `int8_float16` via config.
 - **Test sound assets.** Should the wheel include separate, shorter
   cue files for the test suite, or should tests mock `pw-play`? v1
   spec defers this to `04-audio-feedback.md`.

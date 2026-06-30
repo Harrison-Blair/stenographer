@@ -121,8 +121,10 @@ The following are probed; missing items downgrade the daemon gracefully
 - User in `input` group (or has uaccess on the keyboard device) -> enables
   hotkey capture. If not, daemon logs and exits with code 78
   (`EX_CONFIG`).
-- Default mic input device present (via `sounddevice.query_devices`) -> enables
-  recording. If not, daemon exits with code 78.
+- Default mic input device present (via `sounddevice.query_devices(kind="input")`
+  returning a truthy result; this returns a single dict for the default
+  input device, not a list) -> enables recording. If not, daemon exits
+  with code 78.
 - ASR model present at the resolved path (see `03-transcription.md`) ->
   enables dictation. If not, daemon logs the `stenographer model download`
   command and exits 78.

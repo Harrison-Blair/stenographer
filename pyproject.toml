@@ -12,7 +12,7 @@ dependencies = [
     "sounddevice>=0.4.7",
     "numpy>=2.0",
     "faster-whisper>=1.0.0",
-    "python-evdev>=1.4",
+    "evdev>=1.4",
     "soundfile>=0.12",
 ]
 
@@ -21,6 +21,9 @@ dev = [
     "ruff>=0.5",
     "pytest>=8",
     "pytest-asyncio>=0.23",
+]
+build = [
+    "pyinstaller>=6.10",
 ]
 
 [project.scripts]
@@ -50,3 +53,6 @@ select = ["E", "F", "I", "B", "UP", "N", "SIM", "RUF"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+markers = [
+    "integration: opt-in tests that touch the user's environment (clipboard, real audio). Set STENOGRAPHER_INTEGRATION=1 to run.",
+]

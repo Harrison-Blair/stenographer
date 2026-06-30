@@ -10,7 +10,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 - **Reads:** `07-configuration.md` (`hotkey.*` keys).
 - **Reads:** `09-error-handling.md` (capability matrix for `input`
   group, runtime error policy).
-- **Reads:** `10-packaging.md` (`python-evdev` dep, system deps for
+- **Reads:** `10-packaging.md` (`evdev` dep, system deps for
   `/dev/input/event*`).
 - **Calls into:** `04-audio-feedback.md` (fires `ptt_on`, `ptt_off`,
   `toggle_on`, `toggle_off` cues).
@@ -57,7 +57,7 @@ when **any** key is released.
 ### Valid key names
 
 The full set of evdev key names from
-`python_evdev.UINPUT_KEY_NAMES` is accepted. The parser MUST reject
+`evdev.UINPUT_KEY_NAMES` is accepted. The parser MUST reject
 unknown names at config load time (see `07-configuration.md`
 validation rules).
 
@@ -180,8 +180,12 @@ The recorder's `start()` / `stop()` calls and the cue plays are
 synchronous calls into the Session main thread; the state machine
 itself runs on the evdev read-loop thread, so all Session methods
 MUST be thread-safe. v1 implements this with a single
-`threading.Lock` held for the duration of each transition. (The
-critical sections are short — no audio I/O is held under the lock.)
+`threading.RLock` held for the duration of each transition. The lock
+is reentrant because the listener's dispatch path already holds the
+lock when it invokes session callbacks (e.g. `on_recording_start`),
+and the callbacks re-acquire the same lock to guard their own state.
+(The critical sections are short — no audio I/O is held under the
+lock.)
 
 ## Hotkey device disappearance
 

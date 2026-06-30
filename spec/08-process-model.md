@@ -251,6 +251,33 @@ logging.basicConfig(
 )
 ```
 
+## PyInstaller compatibility (binary build)
+
+When the project is packaged as a PyInstaller `--onedir` binary
+(`packaging/stenographer.spec`; see `spec/10-packaging.md` for the
+distribution layout), `cli.main()` MUST call
+`multiprocessing.freeze_support()` as its first line, before any
+other work:
+
+```python
+def main(argv: Sequence[str] | None = None) -> int:
+    import multiprocessing
+    multiprocessing.freeze_support()
+    _configure_logging()
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    ...
+```
+
+This is required because `faster-whisper` / CTranslate2 spawn
+multiprocessing resource-tracker children at inference time. Without
+`freeze_support()`, each child re-executes the entire `main()`
+function (passing the resource-tracker's command line through
+`argparse`), producing the error
+`argument subcommand: invalid choice: 'from multiprocessing.resource_tracker import main;main(<N>)'`.
+The same is true of any Python code that uses
+`multiprocessing.Process` from a frozen binary.
+
 ## Out of scope (v1)
 
 - D-Bus IPC (clients cannot query the daemon or trigger dictation

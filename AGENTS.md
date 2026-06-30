@@ -2,55 +2,138 @@
 
 ## Current state
 
-Tracked files:
-- `README.md` — 2-line glossary entry for "stenographer"; no project description.
-- `LICENSE` — GNU GPL v3.
-- `.gitignore` — Python-flavored defaults (`__pycache__/`, `.venv/`, `.pytest_cache/`, `.ruff_cache/`, etc.).
-- `.python-version` — pins Python 3.14 (consumable by `pyenv`/`uv`).
+The project is a Wayland push-to-talk / toggle dictation daemon
+(`spec/00-overview.md`). Source of truth for design is the
+`spec/` directory; the code under `src/`, the tests under `tests/`,
+the build assets under `packaging/` and `scripts/`, and `BUILD.md`
+all exist but are not yet committed.
+
+Tracked in git:
+
+- `README.md` — project readme (user description + auto-generated
+  install / run / configure sections).
+- `LICENSE` — GNU GPL v3-or-later.
+- `.gitignore` — Python defaults plus `build/`, `dist/`, `*.spec.bak`
+  for PyInstaller.
+- `.python-version` — pins Python 3.14 (consumable by `pyenv` / `uv`).
+- `pyproject.toml` — project metadata, runtime + dev + build
+  `optional-dependencies`, hatchling build, ruff config, pytest
+  config (with an `integration` marker, opt-in via
+  `STENOGRAPHER_INTEGRATION=1`).
 - `AGENTS.md` — this file.
+- `spec/00-overview.md` … `spec/10-packaging.md` — eleven spec docs
+  that fix the shape, behaviour, and build of the system. The
+  spec is canonical; the code must match it.
 
-Untracked infrastructure (gitignored):
-- `.venv/` — Python virtual environment at the repo root, created with `python3 -m venv .venv`. Currently contains `ruff` only; see **Tooling**.
+Present on disk but not yet committed (untracked):
 
-There is no source code, no `pyproject.toml`, no `requirements*.txt`, no `Makefile`, no CI, no test runner, and no `opencode.json`. No other `AGENTS.md`/`CLAUDE.md` files exist in subdirectories.
+- `BUILD.md` — standalone-binary build instructions.
+- `src/stenographer/` — the package (cli, config, session,
+  capabilities, errors, hotkey/, audio/, asr/, output/, assets/sounds/).
+- `tests/` — pytest suite mirroring `src/` plus `tests/fixtures/`.
+- `packaging/stenographer.service.in` — systemd user unit template.
+- `packaging/stenographer.spec` — PyInstaller spec.
+- `scripts/build.sh`, `scripts/download_model.py`, `scripts/gen_cues.py`.
+
+Also gitignored:
+
+- `.venv/` — Python virtual environment at the repo root, created
+  with `python3 -m venv .venv`. Contains `ruff` and the dev /
+  build extras; see **Tooling**.
+- `build/`, `dist/` — PyInstaller working / output directories.
+
+There is no CI configuration yet. The project will be published to
+PyPI but no release has been cut.
 
 ## Tooling
 
-The project venv is `.venv/` (gitignored) and the Python version pin is `.python-version` (3.14).
+The project venv is `.venv/` (gitignored) and the Python version pin
+is `.python-version` (3.14).
 
-- **Run Python via the venv.** Do not use the system `python`/`pip` for project work.
+- **Run Python via the venv.** Do not use the system `python` /
+  `pip` for project work.
   - Direct: `.venv/bin/python ...`
-  - Or activate first (`source .venv/bin/activate`), then use `python` / `pip` as usual.
-- **Lint and format with the venv's `ruff`.** Never rely on a system-installed `ruff`.
+  - Or activate first (`source .venv/bin/activate`), then use
+    `python` / `pip` as usual.
+- **Lint and format with the venv's `ruff`.** Never rely on a
+  system-installed `ruff`.
   - `.venv/bin/ruff check .`
   - `.venv/bin/ruff format .`
   - `.venv/bin/ruff check --fix .` for autofixes.
-- **Verification before committing changes to code.** Run both `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .` and resolve any reported issues.
-- **Recreating the venv.** If `.venv/` is missing or stale: `python3 -m venv .venv && .venv/bin/pip install ruff`.
+- **Test with the venv's `pytest`.** Two marker buckets:
+  - default (`-ra`) — fast, no environment dependencies.
+  - `integration` — touches the user's clipboard / audio / display.
+    Skipped unless `STENOGRAPHER_INTEGRATION=1` is set in the
+    environment.
+  - Run all: `.venv/bin/pytest`
+  - Run unit only: `.venv/bin/pytest -m "not integration"`
+- **Verification before committing changes to code.** Run both
+  `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .`
+  and resolve any reported issues. For code-touching changes, also
+  run `.venv/bin/pytest -m "not integration"` and confirm green.
+- **Recreating the venv.** If `.venv/` is missing or stale:
+  `python3 -m venv .venv && .venv/bin/pip install -e ".[dev,build]"`.
+  The `dev` extra pulls in `ruff` and `pytest`; the `build` extra
+  pulls in `pyinstaller` for the standalone binary.
+- **Building the standalone binary.** `scripts/build.sh` (wraps
+  `pyinstaller --noconfirm --clean packaging/stenographer.spec`).
+  Output: `dist/stenographer/stenographer`. Runtime system
+  requirements on the target machine: `wtype`, `wl-clipboard`,
+  `pipewire` (or `pulseaudio`), `libevdev1`, `libportaudio2`,
+  plus the user's `input` group membership. See `BUILD.md` and
+  `spec/10-packaging.md`.
 
-## Intended direction (aspirational — not yet enforced)
+## Established stack
 
-Treat as guidance for the first commits, not as established convention. Once a tool is actually configured, update the relevant line below to match.
+These decisions are baked into `pyproject.toml` and the spec, and
+are not open to renegotiation without a spec change.
 
-- **Stack:** Python CLI and/or library.
-- **Layout:** `src/<package>/` (src-layout) once the package name is chosen; `tests/` mirroring `src/`.
-- **Project metadata:** `pyproject.toml` as the single source of truth.
-- **Tests:** `pytest`.
-- **Types:** `mypy` or `pyright`.
-- **License:** GPL-3 — new source files should carry `SPDX-License-Identifier: GPL-3.0-or-later` at the top.
+- **Stack:** Python 3.14 CLI daemon.
+- **Layout:** `src/stenographer/` (src-layout); `tests/` mirrors
+  the package layout.
+- **Project metadata:** `pyproject.toml` is the single source of
+  truth. Built with `hatchling`.
+- **Tests:** `pytest`, with `pytest-asyncio` available and an
+  `integration` marker. Run via the venv.
+- **Types:** not yet enforced. `mypy` or `pyright` is a future
+  addition; the spec does not require it.
+- **License:** GPL-3.0-or-later — every new source file MUST carry
+  `SPDX-License-Identifier: GPL-3.0-or-later` at the top.
+- **Distribution:** `pip install` (or `pipx install`) via the wheel
+  built from `pyproject.toml`; **and** a PyInstaller `--onedir`
+  binary at `dist/stenographer/stenographer` for users who do not
+  want a `pip install` at all. The ASR model (~3 GB) is **not**
+  bundled; users fetch it once with `stenographer model download`.
 
-## Decide before writing the first code
+## Authoritative references
 
-The next agent should ask the user, not guess:
-- Package import name (repo is `stenographer`; confirm before creating `src/stenographer/`).
-- CLI command name and surface area.
-- Whether the project will be published to PyPI.
-- Minimum supported Python version.
+When in doubt, read these in order:
+
+1. `spec/00-overview.md` — shape, glossary, capability probe.
+2. The component spec for the area being changed
+   (`01-hotkey`, `02-audio-capture`, `03-transcription`,
+   `04-audio-feedback`, `05-text-output`, `06-clipboard`).
+3. `spec/07-configuration.md` — config schema.
+4. `spec/08-process-model.md` — CLI surface, lifecycle, signals.
+5. `spec/09-error-handling.md` — degradation policy and exit codes.
+6. `spec/10-packaging.md` — deps, asset layout, PyInstaller,
+   systemd.
+
+The code MUST match the spec; if it does not, the spec wins (open
+a question in the relevant spec doc and fix the code).
 
 ## When this file goes stale
 
-- If `.venv/` is recreated with different packages, or `.python-version` is bumped, keep the **Tooling** block in sync.
-- If `pyproject.toml` is added, update the "Intended direction" section to match what it actually configures.
-- If a different formatter, test runner, or type checker is chosen, update accordingly.
-- If CI is added, document required services, env vars, or test prerequisites here.
-- If a new top-level layout decision is made (e.g. flat module, monorepo), update "Layout".
+- If `.venv/` is recreated with different packages, or
+  `.python-version` is bumped, keep the **Tooling** block in sync.
+- If `pyproject.toml` changes (new optional-dependency, new
+  pytest marker, ruff rule change, hatch config), keep the
+  **Established stack** and **Tooling** blocks in sync.
+- If a new component is added to `src/`, mirror it under `tests/`
+  and reference its spec doc in **Authoritative references**.
+- If a spec doc is added, renumbered, or split, update both the
+  tracked-files list and **Authoritative references**.
+- If CI is added, document required services, env vars, and test
+  prerequisites here.
+- If a new top-level layout decision is made (e.g. monorepo,
+  separate `cli/` package), update **Established stack**.
