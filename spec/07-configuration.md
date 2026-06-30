@@ -1,0 +1,190 @@
+<!--
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
+# 07 — Configuration
+
+## Dependencies
+
+- **Reads:** `00-overview.md` (glossary, components).
+- **Blocks:** every component doc (`01`, `02`, `03`, `04`, `05`, `06`,
+  `08`). They all consume keys defined here.
+
+## Goal
+
+Define the user-editable `config.toml` schema, its location, its defaults,
+and the validation rules. Every other spec doc references keys from this
+document by dotted path (e.g. `hotkey.binding`).
+
+## File location and resolution order
+
+1. `$STENOGRAPHER_CONFIG` (env var, absolute path) if set and readable.
+2. `$XDG_CONFIG_HOME/stenographer/config.toml` (default
+   `~/.config/stenographer/config.toml`).
+3. If neither exists: write a default config to (2) on first daemon start,
+   then load it.
+
+The file is loaded once at startup. There is no `SIGHUP` reload in v1
+(see `00-overview.md`).
+
+## Schema (TOML)
+
+The top-level table is `stenographer`. Every key below lives under it.
+
+```toml
+[stenographer]
+
+# === Hotkey ===
+# The keyboard binding that arms stenographer.
+# Value: a string in evdev key-name syntax.
+# See 01-hotkey.md for the grammar and accepted values.
+hotkey.binding        = "KEY_RIGHTCTRL"   # default
+
+# Press duration (seconds) below which a press is treated as toggle,
+# at or above which it is treated as push-to-talk.
+hotkey.toggle_threshold_seconds = 0.5
+
+# Keyboard device path to grab. null => auto-detect the first keyboard
+# in /dev/input/event* owned by the user.
+hotkey.device         = null
+
+# === Audio capture ===
+# Sample rate fed into faster-whisper. faster-whisper resamples internally
+# to 16 kHz; this is the device sample rate we request.
+audio.sample_rate     = 16000
+
+# Frame size passed to sounddevice.InputStream (frames per callback).
+audio.frames_per_buffer = 1024
+
+# Input device. null => sounddevice default input.
+audio.input_device    = null
+
+# === ASR ===
+# faster-whisper model identifier (HuggingFace repo id, or absolute local
+# path). See 03-transcription.md.
+asr.model             = "Systran/faster-whisper-large-v3"
+
+# Language pinned for the model. The v1 spec mandates English.
+asr.language          = "en"
+
+# Beam size forwarded to faster_whisper.WhisperModel.transcribe.
+asr.beam_size         = 5
+
+# Compute type for CTranslate2. One of: "int8", "int8_float16",
+# "float16", "float32", "default".
+asr.compute_type      = "int8_float16"
+
+# === Audio feedback ===
+# Volume for cue playback, 0.0 .. 1.0. Mapped to pw-play/paplay --volume.
+feedback.volume       = 0.6
+
+# Per-cue override. Keys are cue names from 04-audio-feedback.md
+# (ptt_on, ptt_off, toggle_on, toggle_off, error, transcribe_done).
+# Values are absolute paths to a wav/ogg file. Missing key = use the
+# bundled default cue of that name.
+[stenographer.feedback.cues]
+ptt_on          = null
+ptt_off         = null
+toggle_on       = null
+toggle_off      = null
+error           = null
+transcribe_done = null
+
+# Disable all audio feedback (true => never invoke pw-play/paplay).
+feedback.mute = false
+
+# === Text output ===
+# Always append a single space to the typed transcript.
+output.append_trailing_space = true
+
+# Maximum number of characters to inject in a single wtype invocation.
+# faster-whisper outputs are normally short; this is a sanity ceiling.
+output.max_chars = 4096
+
+# === Clipboard ===
+# Copy the final transcript to the Wayland clipboard as well.
+clipboard.enabled = true
+```
+
+## Defaults (canonical list)
+
+| Key                                          | Type     | Default                                    |
+|----------------------------------------------|----------|--------------------------------------------|
+| `hotkey.binding`                             | string   | `"KEY_RIGHTCTRL"`                          |
+| `hotkey.toggle_threshold_seconds`            | number   | `0.5`                                      |
+| `hotkey.device`                              | string?  | `null`                                     |
+| `audio.sample_rate`                          | int      | `16000`                                    |
+| `audio.frames_per_buffer`                    | int      | `1024`                                     |
+| `audio.input_device`                         | string?  | `null`                                     |
+| `asr.model`                                  | string   | `"Systran/faster-whisper-large-v3"`        |
+| `asr.language`                               | string   | `"en"`                                     |
+| `asr.beam_size`                              | int      | `5`                                        |
+| `asr.compute_type`                           | string   | `"int8_float16"`                           |
+| `feedback.volume`                            | number   | `0.6`                                      |
+| `feedback.cues.<name>`                       | string?  | `null` (per cue)                           |
+| `feedback.mute`                              | bool     | `false`                                    |
+| `output.append_trailing_space`               | bool     | `true`                                     |
+| `output.max_chars`                           | int      | `4096`                                     |
+| `clipboard.enabled`                          | bool     | `true`                                     |
+
+## Validation rules
+
+- `hotkey.binding` must parse via the grammar in `01-hotkey.md`.
+- `hotkey.toggle_threshold_seconds` must satisfy `0 < x <= 5`.
+- `audio.sample_rate` must be one of `8000`, `16000`, `22050`, `44100`,
+  `48000`.
+- `audio.frames_per_buffer` must satisfy `64 <= x <= 8192`.
+- `asr.beam_size` must satisfy `1 <= x <= 10`.
+- `asr.compute_type` must be one of the five allowed strings.
+- `feedback.volume` must satisfy `0.0 <= x <= 1.0`.
+- `output.max_chars` must satisfy `1 <= x <= 100000`.
+- Any `feedback.cues.<name>` value, if non-null, must point to a readable
+  file.
+
+On validation failure the daemon logs a precise error (file path + key +
+expected type / range) and exits with code 78 (`EX_CONFIG`).
+
+## Loading API
+
+```python
+# stenographer.config
+
+@dataclass(frozen=True)
+class Config:
+    hotkey: HotkeyConfig
+    audio: AudioConfig
+    asr: AsrConfig
+    feedback: FeedbackConfig
+    output: OutputConfig
+    clipboard: ClipboardConfig
+
+    @classmethod
+    def load(cls, path: pathlib.Path) -> "Config": ...
+
+    @classmethod
+    def defaults(cls) -> "Config": ...
+
+    def write_default(cls, path: pathlib.Path) -> None: ...
+```
+
+The loader MUST:
+1. Read the file with `tomllib.load` (stdlib, Python 3.11+; this project
+   pins 3.14).
+2. Merge the loaded table on top of `defaults()` so that any missing key
+   takes the default.
+3. Validate every key against the rules above.
+4. Return a frozen `Config`. Components MUST treat `Config` as immutable.
+
+## Out of scope (v1)
+
+- Live reload (`SIGHUP`).
+- Profile switching (`[profiles.<name>]`).
+- Environment-variable interpolation beyond `STENOGRAPHER_CONFIG`.
+- Schema migration if the on-disk file is older than the running version.
+
+## Open questions
+
+- Should we accept `XKB key names` (e.g. `Right Ctrl`) in addition to
+  evdev names (`KEY_RIGHTCTRL`)? v1 spec restricts to evdev names to keep
+  the grammar small; the `01-hotkey.md` spec will define the exact
+  string format.
