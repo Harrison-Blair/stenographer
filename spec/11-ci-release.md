@@ -25,13 +25,13 @@ pull request.
 
 The workflow runs on:
 
-- `workflow_dispatch` (manual run from the Actions tab).
+- `workflow_dispatch` (manual run from the Actions tab). No inputs
+  are required — the version is always read from `pyproject.toml`.
 
 In v1 the workflow does **not** run on `push` to tags, on `push` to
-branches, or on `pull_request`. The operator wants to exercise the
-release end-to-end before turning on automatic triggers. The
-workflow file is structured so that adding the tag trigger later
-is a one-line change to the `on:` list:
+branches, or on `pull_request`. The workflow file is structured so
+that adding the tag trigger later is a one-line change to the `on:`
+list:
 
 ```yaml
 on:
@@ -68,51 +68,46 @@ marked failed. No artifacts are produced.
 
 ### 2. `build-release`
 
-Runs on every manual workflow dispatch. The job expects the operator
-to know the version they are about to release; the tag ↔ version
-validation step below uses `github.ref_name` only when triggered by
-a tag push (which is currently disabled).
+Runs on every manual workflow dispatch. The version is always read
+from `pyproject.toml` — there is no manual input. The job fails if a
+release for that version already exists.
 
 | Step | Command / value |
 |---|---|
 | Checkout | `actions/checkout@v4` with `fetch-depth: 0` (needed for `git log` in the release notes) |
 | Set up Python | `actions/setup-python@v5` with `python-version-file: .python-version` |
-| Install build extras | `.venv/bin/pip install -e ".[dev,build]"` |
 | Install system build deps | `sudo apt-get install -y wtype wl-clipboard pipewire-audio libevdev-dev libportaudio2` |
+| Install build extras | `.venv/bin/pip install -e ".[dev,build]"` |
+| Set VERSION | Reads `[project].version` from `pyproject.toml` via `tomllib` and exports `VERSION` to `$GITHUB_ENV` |
+| Guard: release exists? | `gh release view "v${VERSION}"` — fails with an error if the release already exists |
 | Build | `scripts/build.sh` |
 | Package | `tar -C dist -czf stenographer-$VERSION-linux-x86_64.tar.gz stenographer/` |
 | Hash | `sha256sum stenographer-$VERSION-linux-x86_64.tar.gz > stenographer-$VERSION-linux-x86_64.sha256` |
-| Create / update release | `softprops/action-gh-release@v2` |
+| Create draft release | `softprops/action-gh-release@v2` with `draft: true` |
 
 The job matrix is `[ubuntu-latest]` in v1. aarch64 and macOS / Windows
 builds are out of scope (see below).
 
-> **Tag ↔ version validation is currently disabled** because the
-> workflow only runs on `workflow_dispatch` (no tag is associated
-> with the run). When the tag trigger is added in a follow-up, the
-> validation step in the workflow file is re-enabled and the
-> contract below applies.
+### Pre-existing release guard
 
-### Tag ↔ version validation
+The `build-release` job reads `VERSION` from `pyproject.toml` early
+(in a "Set VERSION" step that runs before any heavy build work) and
+then checks whether a release with tag `v{VERSION}` already exists:
 
-The release job compares the pushed tag against the version in
-`pyproject.toml`. For a tag `vX.Y.Z[-suffix]`:
+```sh
+gh release view "v${VERSION}" &>/dev/null && {
+  echo "::error::Release v${VERSION} already exists. Bump the version in pyproject.toml."
+  exit 1
+}
+```
 
-1. Strip the leading `v`.
-2. Split on the first `-` to separate the numeric portion
-   `X.Y.Z` from the optional pre-release suffix.
-3. The numeric portion must match `pyproject.toml`'s
-   `[project].version` **exactly** (character-for-character). If it
-   does not, the job fails with a precise error message:
+If the tag already has a GitHub Release (in any state — draft or
+published), the job fails. The operator must bump the version in
+`pyproject.toml` and re-trigger. This prevents accidental double
+releases.
 
-   ```
-   tag v0.7.0 does not match pyproject.toml [project].version = 0.6.0.
-   Bump the version in pyproject.toml or push a different tag.
-   ```
-
-Pre-release tags like `v0.7.0-rc.1` are accepted; the numeric
-portion (`0.7.0`) is what must match. The pre-release suffix is
-free-form and is preserved as the GitHub Release tag verbatim.
+> The `gh` CLI is pre-installed on GitHub Actions runners. The job
+> already has `contents: write` permission, which includes read access.
 
 ### Release assets
 
@@ -142,18 +137,28 @@ stenographer/
 workflow computes the body as:
 
 ```sh
-git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --oneline
-```
-
-with a fallback for the first release:
-
-```sh
-git log --oneline
+if prev=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null); then
+  git log "${prev}..v${VERSION}" --oneline
+elif git describe --tags --abbrev=0 HEAD^ 2>/dev/null > prev_tag; then
+  git log "$(cat prev_tag)..HEAD" --oneline
+else
+  git log --oneline
+fi
 ```
 
 This produces a flat list of commit subjects since the previous
 tag. The project does not use Conventional Commits, so the spec does
 not attempt to parse the messages.
+
+### Draft releases
+
+The workflow creates releases in **draft** state (`draft: true`).
+A draft release is visible only to repo members with write access
+and does not trigger webhook events (release notifications,
+downstream workflows, watchers). The operator must review the
+release on the GitHub Releases page and click **Publish release**
+to make it public. This provides an additional human gate before
+end users see the release.
 
 ## Versioning contract
 
@@ -183,8 +188,9 @@ This means:
 - Editing `__version__` directly is no longer possible; the
   comment in `__init__.py` should call this out.
 
-The release job's tag-validation step enforces that the tag matches
-pyproject; mismatches fail the build.
+The release job's pre-existing-release guard prevents creating a
+release for a version that already exists; the operator must bump
+the version in `pyproject.toml` and re-trigger.
 
 ## System build dependencies (CI only)
 

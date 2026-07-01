@@ -3,13 +3,6 @@ name: release
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: >
-          Version to release (e.g. 0.7.0). Must match [project].version
-          in pyproject.toml. Leave blank to skip the validation step.
-        required: false
-        type: string
 
 jobs:
   lint-test:
@@ -51,55 +44,47 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install -e ".[dev,build]"
-      - name: Validate version matches pyproject
+      - name: Set VERSION from pyproject.toml
+        run: |
+          version=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+      - name: Check if release already exists
         env:
-          INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [ -z "$INPUT_VERSION" ]; then
-            echo "::notice::No version input supplied; skipping pyproject validation."
-            exit 0
-          fi
-          pyproject_version=$(.venv/bin/python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
-          if [ "$INPUT_VERSION" != "$pyproject_version" ]; then
-            echo "::error::input version $INPUT_VERSION does not match pyproject.toml [project].version = $pyproject_version."
-            echo "Bump the version in pyproject.toml or pass the correct version."
+          if gh release view "v${VERSION}" &>/dev/null; then
+            echo "::error::Release v${VERSION} already exists. Bump the version in pyproject.toml."
             exit 1
           fi
-          echo "input version $INPUT_VERSION matches pyproject version $pyproject_version"
+          echo "Release v${VERSION} does not exist. Proceeding."
       - name: Build with PyInstaller
         run: scripts/build.sh
       - name: Package tarball + sha256
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          set -euo pipefail
-          version="${INPUT_VERSION:-$(.venv/bin/python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")}"
-          echo "VERSION=${version}" >> "$GITHUB_ENV"
-          tar -C dist -czf "stenographer-${version}-linux-x86_64.tar.gz" stenographer/
-          sha256sum "stenographer-${version}-linux-x86_64.tar.gz" \
-            > "stenographer-${version}-linux-x86_64.sha256"
+          tar -C dist -czf "stenographer-${VERSION}-linux-x86_64.tar.gz" stenographer/
+          sha256sum "stenographer-${VERSION}-linux-x86_64.tar.gz" \
+            > "stenographer-${VERSION}-linux-x86_64.sha256"
       - name: Build release notes
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           {
             echo "## Changes"
             echo
-            if [ -n "$INPUT_VERSION" ] && prev=$(git describe --tags --abbrev=0 "v${INPUT_VERSION}^" 2>/dev/null); then
-              git log "${prev}..v${INPUT_VERSION}" --oneline
+            if prev=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null); then
+              git log "${prev}..v${VERSION}" --oneline
             elif git describe --tags --abbrev=0 HEAD^ 2>/dev/null > prev_tag; then
               git log "$(cat prev_tag)..HEAD" --oneline
             else
               git log --oneline
             fi
           } > release_notes.md
-      - name: Create / update GitHub Release
+      - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
           body_path: release_notes.md
+          draft: true
           files: |
             stenographer-${{ env.VERSION }}-linux-x86_64.tar.gz
             stenographer-${{ env.VERSION }}-linux-x86_64.sha256
