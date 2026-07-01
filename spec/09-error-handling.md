@@ -54,12 +54,19 @@ left to do.
 | `wl-copy` exits non-zero on write                       | Log `output.clipboard: wl-copy failed`. Skip. The transcript is still typed.                  |
 | `pw-play` / `paplay` exits non-zero on cue              | Log `audio.feedback: cue <name> failed`. Disable feedback for the rest of the session.         |
 | faster-whisper `transcribe()` raises                    | Log full traceback. Fire `error` cue. Do NOT inject. Do NOT write to clipboard.               |
-| faster-whisper returns empty `text`                     | Log at INFO level. Skip injection and clipboard. (User spoke but nothing was recognized.)      |
+| faster-whisper returns empty `text`                     | Log at INFO level. Fire `error` cue. Skip injection and clipboard.                              |
+| faster-whisper segments all have high `no_speech_prob` (silence/hallucination) | Log at INFO level. Fire `error` cue. Skip injection and clipboard.            |
 | `sounddevice.PortAudioError` mid-recording              | Log. Discard the in-flight utterance. Fire `error` cue. Return to IDLE.                        |
 | Hotkey device disappears mid-session (USB unplug)        | Log. Try to re-acquire every 2 s for 30 s, then exit 1.                                      |
 | `SIGINT` / `SIGTERM`                                    | Drain in-flight utterance (transcribe + inject + clipboard), then exit 0.                     |
 | `SIGPIPE`                                               | Suppress (stderr closed by a launcher).                                                       |
 | Uncaught exception in any component                     | Log full traceback. Fire `error` cue. Return to IDLE. Daemon keeps running.                   |
+| `update` cannot reach the GitHub API (network / 5xx)     | Log. `fatal("update: <reason>")`, exit 1. Old install untouched.                              |
+| `update` gets 404 on the configured `update.repo`        | Log. `fatal("update: repo not found, set update.repo")`, exit 1.                              |
+| `update` SHA-256 mismatch on the downloaded tarball      | Log the expected and actual hashes. `fatal("update: sha256 mismatch")`, exit 1. Old install untouched. |
+| `update` cannot `systemctl --user stop` (unit missing or no systemd) | Log a warning. Continue with the install.                                                |
+| `update` cannot `systemctl --user start` (unit missing)  | Log. New version is in place; print "check `journalctl --user -u stenographer`". Exit 1.       |
+| `update` staging-dir sanity check fails (launcher / `__init__.py` missing) | Log. Exit 1. Old install untouched.                                          |
 
 ## Logging policy
 
@@ -88,6 +95,7 @@ class ConfigError(StenographerError): ...     # -> exit 78
 class CapabilityError(StenographerError): ... # -> exit 78
 class AudioCaptureError(StenographerError): ...
 class TranscriptionError(StenographerError): ...
+class UpdateError(StenographerError): ...    # -> exit 1 (see spec/12-update.md)
 
 def notify_failure(reason: str) -> None:
     """Fire the error cue (if feedback is available) and log at ERROR."""

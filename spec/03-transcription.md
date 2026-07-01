@@ -118,10 +118,15 @@ requires only that the Session can `submit` from any thread and
 - The output `text` is the concatenation of all segment texts, with
   no additional processing. **No auto-punctuation injection, no
   capitalization fix, no profanity filter** in v1.
+- After inference completes, the Session checks each segment's
+  `no_speech_prob`. If **every** segment has
+  `no_speech_prob >= cfg.asr.silence_threshold` (default 0.6), the
+  audio is treated as silence (the model hallucinated text on quiet
+  audio). The Session logs at INFO, fires the `error` cue for user
+  feedback, and skips injection + clipboard.
 - If `text` is empty (faster-whisper returned no segments, or only
-  whitespace), the Session logs at INFO level
-  (`asr: no speech recognized for utterance`) and skips injection +
-  clipboard. **No `error` cue is fired** — silence is not an error.
+  whitespace), the Session logs at INFO, fires the `error` cue, and
+  skips injection + clipboard.
 
 ### Streaming partial transcripts
 

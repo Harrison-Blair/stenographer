@@ -46,6 +46,15 @@ class TranscriptionError(StenographerError):
     """Raised when the ASR worker fails to produce a transcript."""
 
 
+class UpdateError(StenographerError):
+    """Raised by ``stenographer update`` on any non-recoverable failure.
+
+    See ``spec/12-update.md`` for the full error policy. Callers
+    SHOULD map this to exit code 1 (network / sha256 / install
+    failure), not 78.
+    """
+
+
 def notify_failure(reason: str) -> None:
     """Log ``notify_failure: <reason>`` at ERROR level."""
     log.error("notify_failure: %s", reason)

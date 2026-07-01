@@ -15,6 +15,11 @@ from stenographer.asr.model import Model, SegmentInfo, TranscriptionResult
 log = logging.getLogger(__name__)
 
 
+class _CancelledError(Exception):
+    """Raised inside the worker thread when :meth:`Worker.cancel` is called
+    during an in-flight transcription."""
+
+
 @dataclass
 class Job:
     samples: np.ndarray
@@ -28,6 +33,7 @@ class Worker:
         self.timeout_seconds = timeout_seconds
         self._queue: queue.Queue[Job | None] = queue.Queue()
         self._thread: threading.Thread | None = None
+        self._cancel_event = threading.Event()
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -44,6 +50,14 @@ class Worker:
         future: concurrent.futures.Future[TranscriptionResult] = concurrent.futures.Future()
         self._queue.put(Job(samples=samples, future=future, on_segment=on_segment))
         return future
+
+    def cancel(self) -> None:
+        """Signal the in-flight transcription to abort at the next segment boundary.
+
+        Non-blocking.  Does not tear down the worker thread; use
+        :meth:`stop` for a full teardown.
+        """
+        self._cancel_event.set()
 
     def stop(self, timeout: float = 30.0) -> None:
         self._queue.put(None)
@@ -63,13 +77,28 @@ class Worker:
             if job is None:
                 log.debug("ASR worker thread exiting")
                 return
+
+            def on_segment(
+                seg: SegmentInfo,
+                *,
+                _user_cb: Callable[[SegmentInfo], None] | None = job.on_segment,
+            ) -> None:
+                if self._cancel_event.is_set():
+                    raise _CancelledError("transcription cancelled")
+                if _user_cb is not None:
+                    _user_cb(seg)
+
             try:
                 result = self._model.transcribe(
                     job.samples,
                     self._model.language,
                     self._model.beam_size,
-                    on_segment=job.on_segment,
+                    on_segment=on_segment,
                 )
+            except _CancelledError as exc:
+                log.debug("ASR worker: transcription cancelled")
+                job.future.set_exception(exc)
+                continue
             except Exception as exc:
                 log.exception("ASR worker inference failed")
                 job.future.set_exception(exc)

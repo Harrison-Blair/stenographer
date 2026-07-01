@@ -29,6 +29,7 @@ def model() -> Model:
             language="en",
             beam_size=1,
             compute_type="int8",
+            silence_threshold=0.6,
         )
     )
 

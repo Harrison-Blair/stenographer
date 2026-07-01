@@ -32,6 +32,10 @@ Subcommands:
   transcribe FILE           Transcribe a WAV/FLAC/MP3 file, print to stdout.
   dictate                   One-shot dictation: arm hotkey, capture, output, exit.
   model download            Download the configured ASR model and exit.
+  update [--check] [--yes] [--no-restart] [--prerelease] [--repo OWNER/NAME]
+                            Check GitHub Releases for a newer version, download
+                            and install it, and (re)start the daemon. See
+                            spec/12-update.md.
   doctor                    Print capability probe + resolved config; exit 0/78.
   --version                 Print version and exit.
   --help                    Print help and exit.
@@ -95,7 +99,9 @@ shutdown signal does not race.
       this blocks for 5-30 s on first run.
    4. Construct `Feedback`, `Injector`, `ClipboardManager`,
       `Worker` (with the model), `Recorder`, `HotkeyListener`.
-   5. `listener.start()`. Main thread blocks on `session.run()`.
+   5. Construct `Session` and call `session.start()` to launch the
+      processor thread.
+   6. `listener.start()`. Main thread blocks on `session.run()`.
 
 2. **Recording (PTT or toggle-on)**: `listener` calls
    `session.on_recording_start()`. The session:
@@ -107,14 +113,24 @@ shutdown signal does not race.
 3. **Recording stop (PTT keyup or toggle-off keydown)**: `listener`
    calls `session.on_recording_stop()`. The session:
    - Calls `recorder.stop()` to get the `numpy.ndarray`.
-   - Submits the buffer to `worker.submit(buffer)` and awaits
-     the `Future[Result]` with a 5-minute timeout (so a wedged
-     worker cannot block the daemon forever).
-   - On `Result`, calls `injector.type_text(result.text)` and
-     `clipboard.copy(result.text)` in any order.
-   - Fires the appropriate stop cue (already done by the listener
-     before calling `on_recording_stop`, see `01-hotkey.md`).
-   - Returns to `IDLE`.
+   - Enqueues the buffer into the utterance queue.
+   - Returns immediately (the listener thread can process new
+     hotkey events). The appropriate stop cue was already fired
+     by the listener before calling `on_recording_stop` (see
+     `01-hotkey.md`).
+
+   The **processor thread** (a dedicated daemon thread, created at
+   startup via `session.start()`) picks up the buffer, submits it
+   to `worker.submit(buffer)`, and awaits the `Future[Result]` with
+   a 5-minute timeout. On `Result`, it calls
+   `injector.type_text(result.text)` and
+   `clipboard.copy(result.text)`.
+
+   The session transitions to `IDLE` immediately after enqueuing.
+   Transcription and output run concurrently with the next
+   recording. If the user starts a new utterance while a previous
+   one is still transcribing, the new buffer is queued and
+   processed in order.
 
 4. **Signal handling**: SIGINT and SIGTERM set a `threading.Event`.
    The main thread, currently blocked in `session.run()`, wakes
@@ -128,21 +144,22 @@ shutdown signal does not race.
 
 ### Drain on shutdown
 
-When `SIGTERM` arrives during a recording:
+When `SIGTERM` arrives:
 
-1. The session completes the in-flight utterance: `recorder.stop()`
-   -> `worker.submit` -> inject + clipboard.
-2. The listener is stopped.
-3. The worker's sentinel `None` is enqueued; the worker thread
-   exits.
-4. The recorder is closed.
-5. The feedback player is closed.
-6. The session returns from `run()`; `cli.main` exits 0.
+1. The listener is stopped (no more hotkey events).
+2. If a recording was in progress, `recorder.stop()` is called and
+   the buffer is enqueued into the utterance queue.
+3. A sentinel `None` is placed on the utterance queue.
+4. The processor thread drains all remaining utterances
+   (transcribing + injecting each in order) then exits.
+5. The worker is stopped.
+6. The feedback player, injector, clipboard, and recorder are closed.
+7. The session returns from `run()`; `cli.main` exits 0.
 
-If the recording was the result of a toggle-mode press (i.e. the
-user has not yet said "toggle off"), the shutdown drains the
-transcript and exits cleanly. There is no "abandon the recording"
-code path in v1 — the transcript is always produced.
+If a toggle-mode recording was active (user hasn't pressed "toggle
+off" yet), the shutdown drains the transcript and exits cleanly.
+There is no "abandon the recording" code path in v1 — the transcript
+is always produced.
 
 ## One-shot: `transcribe FILE`
 
@@ -172,15 +189,17 @@ def cmd_transcribe(cfg: Config, path: pathlib.Path) -> int:
 
 ## One-shot: `dictate`
 
-Same daemon flow, but in a child process. The user runs
+Same daemon flow, but exits after the first utterance is fully
+processed (transcribed + injected + copied). The user runs
 `stenographer dictate`, presses the hotkey, dictates, presses it
-again. When the second press ends the recording, the transcript is
-injected and copied, then the process exits.
+again. The second press stops recording and the process waits for
+transcription to complete before exiting.
 
 The implementation is: `cmd_dictate(cfg)` constructs a `Session`
-with a `one_shot=True` flag, calls `session.run_until_toggle_off()`,
-and exits 0. The flag causes the session to exit after the first
-toggle-off rather than looping back to `IDLE`.
+with a `one_shot=True` flag, calls `session.run()` which blocks on
+`_stop_event`. When the processor thread finishes processing the
+first utterance, it sets `_stop_event`, unblocking `run()`. The
+`finally` block then calls `session.stop()` to drain and tear down.
 
 ## `doctor`
 
@@ -285,6 +304,29 @@ The same is true of any Python code that uses
 - A control socket (no `stenographerctl`).
 - A GUI notification on startup / shutdown.
 - Auto-update of the ASR model.
+
+## `update` subcommand (cross-reference)
+
+The `update` subcommand is **not** part of the daemon lifecycle. It
+is a one-shot command that:
+
+1. Stops the running daemon (if any) via the systemd user service
+   (`spec/10-packaging.md`).
+2. Replaces the onedir binary in place with the latest release
+   tarball from GitHub.
+3. Starts the daemon again (unless `--no-restart`).
+
+The daemon's single-instance lock (`$XDG_RUNTIME_DIR/stenographer.lock`)
+is **not** taken by `update`; the daemon is stopped via systemd
+instead, and the binary is replaced by `os.replace` on its install
+directory. See `spec/12-update.md` for the full flow, exit codes,
+and error policy.
+
+`update` does **not** stop one-shot commands (`transcribe`,
+`dictate`); they do not take the daemon lock and are not
+coordinated with the systemd unit. If a `dictate` is mid-recording
+when `update` runs, it completes normally and the process exits;
+the new binary takes effect on the next daemon start.
 
 ## Open questions
 

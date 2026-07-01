@@ -1,6 +1,6 @@
 [project]
 name = "stenographer"
-version = "0.1.0"
+version = "0.6.0"
 description = "Local, offline, Wayland push-to-talk / toggle dictation."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -14,6 +14,7 @@ dependencies = [
     "faster-whisper>=1.0.0",
     "evdev>=1.4",
     "soundfile>=0.12",
+    "packaging>=24.0",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +42,7 @@ packages = ["src/stenographer"]
 include = [
     "src/stenographer/assets/sounds/*.wav",
     "src/stenographer/assets/sounds/*.ogg",
+    "src/stenographer/assets/icons/*.png",
 ]
 
 [tool.ruff]

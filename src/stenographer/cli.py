@@ -10,6 +10,7 @@ import logging
 import os
 import pathlib
 import signal
+import subprocess
 import sys
 from collections.abc import Sequence
 
@@ -22,7 +23,7 @@ from stenographer.audio.capture import Recorder
 from stenographer.audio.feedback import CueName, Feedback
 from stenographer.capabilities import Capabilities
 from stenographer.config import Config
-from stenographer.errors import fatal
+from stenographer.errors import UpdateError, fatal
 from stenographer.hotkey.binding import HotkeyBinding
 from stenographer.hotkey.listener import HotkeyListener
 from stenographer.hotkey.state_machine import HotkeyStateMachine
@@ -30,6 +31,15 @@ from stenographer.notification import DesktopNotification
 from stenographer.output.clipboard import ClipboardManager
 from stenographer.output.inject import Injector
 from stenographer.session import Session
+from stenographer.update import (
+    apply_update,
+    check_for_update,
+    detect_install_root,
+    download_update,
+    extract_to_staging,
+    start_daemon,
+    stop_daemon,
+)
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +65,19 @@ def _resolve_asset_root() -> pathlib.Path:
 
 
 _ASSET_ROOT = _resolve_asset_root()
+
+
+def _resolve_icon_root() -> pathlib.Path:
+    """Return the directory holding the bundled icon.
+
+    Mirrors :func:`_resolve_asset_root` but for ``assets/icons``.
+    """
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        return pathlib.Path(sys._MEIPASS) / "stenographer" / "assets" / "icons"
+    return pathlib.Path(__file__).resolve().parent / "assets" / "icons"
+
+
+_ICON_ROOT = _resolve_icon_root()
 
 
 def _configure_logging() -> None:
@@ -148,7 +171,10 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         max_chars=cfg.output.max_chars,
     )
     clipboard = ClipboardManager(available=caps.has_wl_copy)
-    notification = DesktopNotification(available=caps.has_swaync)
+    notification = DesktopNotification(
+        available=caps.has_swaync,
+        icon_path=_ICON_ROOT / "stenographer.png",
+    )
     binding = HotkeyBinding.parse(cfg.hotkey.binding)
     sm = HotkeyStateMachine(threshold_seconds=cfg.hotkey.toggle_threshold_seconds)
     session = Session(
@@ -173,6 +199,7 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         feedback=feedback,
         lock=session._lock,
     )
+    session.start()
     session._listener = listener
     return session
 
@@ -202,6 +229,103 @@ def cmd_run(cfg: Config) -> int:
     finally:
         session.stop()
         _release_single_instance_lock()
+    return 0
+
+
+def cmd_run_stop() -> int:
+    """Stop any running daemon (systemd or direct). Best-effort."""
+    import shutil
+
+    # 1) Try systemd.
+    if shutil.which("systemctl") is not None:
+        try:
+            active = subprocess.run(
+                ["systemctl", "--user", "is-active", "--quiet", "stenographer.service"],
+                check=False,
+            )
+        except OSError:
+            pass
+        else:
+            if active.returncode == 0:
+                subprocess.run(
+                    ["systemctl", "--user", "stop", "stenographer.service"],
+                    check=False,
+                )
+                print("stenographer: stopped systemd unit.", file=sys.stderr)
+                return 0
+
+    # 2) Fall back to the lock-file PID.
+    if not _LOCK_PATH.exists():
+        print("stenographer: no running daemon found.", file=sys.stderr)
+        return 0
+
+    try:
+        pid_str = _LOCK_PATH.read_text().strip()
+    except OSError:
+        print("stenographer: cannot read lock file.", file=sys.stderr)
+        return 1
+
+    if not pid_str.isdigit():
+        print("stenographer: lock file does not contain a valid PID.", file=sys.stderr)
+        return 1
+
+    pid = int(pid_str)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        print(f"stenographer: PID {pid} is not running; lock file is stale.", file=sys.stderr)
+        _LOCK_PATH.unlink(missing_ok=True)
+        return 0
+    except PermissionError:
+        print(f"stenographer: cannot signal PID {pid} (permission denied).", file=sys.stderr)
+        return 1
+
+    print(f"stenographer: sent SIGTERM to PID {pid}.", file=sys.stderr)
+    return 0
+
+
+def cmd_run_disable() -> int:
+    """Disable (and stop) the systemd user unit. Warns if missing / already disabled."""
+    import shutil
+
+    unit_path = pathlib.Path.home() / ".config" / "systemd" / "user" / "stenographer.service"
+
+    if shutil.which("systemctl") is None:
+        print("stenographer: systemctl not available.", file=sys.stderr)
+        return 1
+
+    if not unit_path.is_file():
+        print(f"stenographer: warning: systemd unit not found at {unit_path}", file=sys.stderr)
+        return 0
+
+    try:
+        enabled = subprocess.run(
+            ["systemctl", "--user", "is-enabled", "stenographer.service"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        print("stenographer: cannot run systemctl.", file=sys.stderr)
+        return 1
+
+    if enabled.returncode != 0:
+        print("stenographer: already disabled.", file=sys.stderr)
+        return 0
+
+    subprocess.run(
+        ["systemctl", "--user", "stop", "stenographer.service"],
+        check=False,
+    )
+    subprocess.run(
+        ["systemctl", "--user", "disable", "stenographer.service"],
+        check=False,
+    )
+    subprocess.run(
+        ["systemctl", "--user", "daemon-reload"],
+        check=False,
+    )
+    print("stenographer: disabled systemd unit.", file=sys.stderr)
     return 0
 
 
@@ -267,6 +391,78 @@ def cmd_model_download(cfg: Config) -> int:
     return 0
 
 
+def cmd_update(
+    cfg: Config,
+    *,
+    check: bool,
+    yes: bool,
+    no_restart: bool,
+    prerelease: bool,
+    repo: str | None,
+) -> int:
+    """Self-update subcommand. See ``spec/12-update.md``."""
+    from dataclasses import replace
+
+    from stenographer.update import acquire_update_lock
+
+    lock_fd = acquire_update_lock()
+    if lock_fd is None:
+        print("stenographer: another update is in progress.", file=sys.stderr)
+        return 1
+    try:
+        update_cfg = cfg.update
+        if repo is not None:
+            update_cfg = replace(update_cfg, repo=repo)
+
+        try:
+            info = check_for_update(update_cfg, prerelease=prerelease)
+        except UpdateError as exc:
+            fatal(str(exc), code=1)
+
+        print(
+            f"update available: {info.current_version} -> {info.latest_version}",
+            file=sys.stderr,
+        )
+
+        if check:
+            return 0
+
+        if not yes:
+            print(f"Install v{info.latest_version}? [y/N] ", file=sys.stderr, end="")
+            try:
+                answer = input().strip().lower()
+            except EOFError:
+                answer = ""
+            if answer not in ("y", "yes"):
+                print("update: cancelled", file=sys.stderr)
+                return 0
+
+        was_running = stop_daemon() if not no_restart else False
+
+        try:
+            tarball = download_update(info, update_cfg)
+            install_root = detect_install_root()
+            bundle = extract_to_staging(tarball, install_root)
+            apply_update(bundle, install_root)
+        except UpdateError as exc:
+            fatal(str(exc), code=1)
+
+        if not no_restart and was_running:
+            started = start_daemon()
+            if not started:
+                print(
+                    "update: installed, but `systemctl --user start` did not run; "
+                    "start the daemon by hand.",
+                    file=sys.stderr,
+                )
+                return 1
+
+        print(f"Updated to v{info.latest_version}.", file=sys.stderr)
+        return 0
+    finally:
+        os.close(lock_fd)
+
+
 def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     caps = Capabilities.probe(cfg)
     print("stenographer doctor")
@@ -296,7 +492,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"stenographer {__version__}")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    sub.add_parser("run", help="Start the daemon (blocks).")
+    run_parser = sub.add_parser("run", help="Start/stop/disable the daemon.")
+    run_sub = run_parser.add_subparsers(dest="run_command", required=False)
+    run_sub.add_parser("stop", help="Stop any running daemon.")
+    run_sub.add_parser("disable", help="Disable the systemd user unit.")
 
     transcribe = sub.add_parser("transcribe", help="Transcribe an audio file and print to stdout.")
     transcribe.add_argument("file", type=pathlib.Path)
@@ -306,6 +505,19 @@ def _build_parser() -> argparse.ArgumentParser:
     model = sub.add_parser("model", help="Model management.")
     model_sub = model.add_subparsers(dest="model_command", required=True)
     model_sub.add_parser("download", help="Download the configured ASR model.")
+
+    update = sub.add_parser("update", help="Check for and install a newer release.")
+    update.add_argument(
+        "--check", action="store_true", help="Only check; do not download or restart."
+    )
+    update.add_argument("--yes", action="store_true", help="Skip the confirmation prompt.")
+    update.add_argument(
+        "--no-restart",
+        action="store_true",
+        help="Do not start the daemon after the install.",
+    )
+    update.add_argument("--prerelease", action="store_true", help="Include pre-release tags.")
+    update.add_argument("--repo", default=None, help="Override the configured GitHub OWNER/REPO.")
 
     sub.add_parser("doctor", help="Print capability probe and resolved config.")
 
@@ -321,6 +533,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.config is not None:
         os.environ["STENOGRAPHER_CONFIG"] = str(args.config)
+
+    # Subcommands that don't need config.
+    if args.subcommand == "run":
+        if args.run_command == "stop":
+            return cmd_run_stop()
+        if args.run_command == "disable":
+            return cmd_run_disable()
+
     from stenographer.config import load_or_default, resolve_config_path
 
     cfg = load_or_default()
@@ -333,6 +553,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_dictate(cfg)
     if args.subcommand == "model" and args.model_command == "download":
         return cmd_model_download(cfg)
+    if args.subcommand == "update":
+        return cmd_update(
+            cfg,
+            check=args.check,
+            yes=args.yes,
+            no_restart=args.no_restart,
+            prerelease=args.prerelease,
+            repo=args.repo,
+        )
     if args.subcommand == "doctor":
         return cmd_doctor(cfg, config_path)
     parser.error(f"unknown subcommand: {args.subcommand}")

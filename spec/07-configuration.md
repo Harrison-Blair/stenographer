@@ -74,6 +74,10 @@ asr.beam_size         = 5
 # "float16", "float32", "default".
 asr.compute_type      = "int8"
 
+# Silence detection threshold. If all segments have no_speech_prob
+# >= this value the utterance is treated as silence and skipped.
+asr.silence_threshold = 0.6
+
 # === Audio feedback ===
 # Volume for cue playback, 0.0 .. 1.0. Mapped to pw-play/paplay --volume.
 feedback.volume       = 0.6
@@ -104,6 +108,27 @@ output.max_chars = 4096
 # === Clipboard ===
 # Copy the final transcript to the Wayland clipboard as well.
 clipboard.enabled = true
+
+# === Update ===
+# GitHub OWNER/REPO queried by `stenographer update` for the latest
+# release. See spec/12-update.md.
+update.repo        = "Harrison-Blair/stenographer"
+
+# Update channel. "stable" skips pre-release tags; "latest" includes
+# them. The CLI flag --prerelease overrides this for one invocation.
+update.channel     = "stable"
+
+# Base URL for the GitHub-compatible API. Override for GitHub
+# Enterprise or a mirror. The release-list and asset-download
+# endpoints are derived from this base.
+update.base_url    = "https://api.github.com"
+
+# Asset filename pattern, with {version} substituted. The release
+# job in CI produces assets matching this template.
+update.asset_pattern = "stenographer-{version}-linux-x86_64.tar.gz"
+
+# HTTP timeout (seconds) for the API and the download.
+update.timeout_seconds = 60
 ```
 
 ## Defaults (canonical list)
@@ -120,12 +145,18 @@ clipboard.enabled = true
 | `asr.language`                               | string   | `"en"`                                     |
 | `asr.beam_size`                              | int      | `5`                                        |
 | `asr.compute_type`                           | string   | `"int8"`                                   |
+| `asr.silence_threshold`                      | number   | `0.6`                                      |
 | `feedback.volume`                            | number   | `0.6`                                      |
 | `feedback.cues.<name>`                       | string   | `""` (per cue; empty = bundled default)    |
 | `feedback.mute`                              | bool     | `false`                                    |
 | `output.append_trailing_space`               | bool     | `true`                                     |
-| `output.max_chars`                           | int      | `4096`                                     |
-| `clipboard.enabled`                          | bool     | `true`                                     |
+| `output.max_chars`                           | int      | `4096`                                    |
+| `clipboard.enabled`                          | bool     | `true`                                    |
+| `update.repo`                                | string   | `"Harrison-Blair/stenographer"`           |
+| `update.channel`                             | string   | `"stable"`                                |
+| `update.base_url`                            | string   | `"https://api.github.com"`                |
+| `update.asset_pattern`                       | string   | `"stenographer-{version}-linux-x86_64.tar.gz"` |
+| `update.timeout_seconds`                     | int      | `60`                                      |
 
 ## Validation rules
 
@@ -136,8 +167,12 @@ clipboard.enabled = true
 - `audio.frames_per_buffer` must satisfy `64 <= x <= 8192`.
 - `asr.beam_size` must satisfy `1 <= x <= 10`.
 - `asr.compute_type` must be one of the five allowed strings.
+- `asr.silence_threshold` must satisfy `0.0 <= x <= 1.0`.
 - `feedback.volume` must satisfy `0.0 <= x <= 1.0`.
 - `output.max_chars` must satisfy `1 <= x <= 100000`.
+- `update.channel` must be one of `"stable"`, `"latest"`.
+- `update.asset_pattern` must contain the literal `{version}`.
+- `update.timeout_seconds` must satisfy `1 <= x <= 600`.
 - Any `feedback.cues.<name>` value, if non-empty, must point to a readable
   file. Empty string means "use the bundled default".
 - The `hotkey.device` and `audio.input_device` values, if non-empty,

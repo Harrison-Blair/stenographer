@@ -73,6 +73,42 @@ class Injector:
             return False
         return True
 
+    def paste(self) -> bool:
+        """Simulate Ctrl+V via ``wtype``. Return ``True`` on success.
+
+        Used by paste-mode injection: the Session copies text to the
+        clipboard first, then calls this to paste it at the cursor.
+        """
+        if not self._available:
+            logger.warning("output.inject: wtype not available; cannot paste")
+            return False
+        try:
+            subprocess.run(
+                ["wtype", "-M", "ctrl", "v", "-m", "ctrl"],
+                check=True,
+                timeout=5.0,
+                capture_output=True,
+            )
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ) as exc:
+            rc = exc.returncode if isinstance(exc, subprocess.CalledProcessError) else -1
+            stderr = (
+                exc.stderr.decode("utf-8", "replace")
+                if isinstance(exc, subprocess.CalledProcessError) and exc.stderr
+                else ""
+            )
+            logger.error(
+                "output.inject: wtype paste failed (rc=%s, stderr=%s, exc=%s)",
+                rc,
+                stderr,
+                type(exc).__name__,
+            )
+            return False
+        return True
+
     def _prepare(self, text: str) -> str:
         text = text.strip()
         if not text:

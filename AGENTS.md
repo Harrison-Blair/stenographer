@@ -21,9 +21,11 @@ Tracked in git:
   config (with an `integration` marker, opt-in via
   `STENOGRAPHER_INTEGRATION=1`).
 - `AGENTS.md` — this file.
-- `spec/00-overview.md` … `spec/10-packaging.md` — eleven spec docs
-  that fix the shape, behaviour, and build of the system. The
-  spec is canonical; the code must match it.
+- `spec/00-overview.md` … `spec/12-update.md` — thirteen spec docs
+  that fix the shape, behaviour, build, and self-update of the
+  system. The spec is canonical; the code must match it.
+- `.github/workflows/release.yml` — release CI workflow (manual
+  trigger in v1; see `spec/11-ci-release.md`).
 
 Present on disk but not yet committed (untracked):
 
@@ -42,8 +44,10 @@ Also gitignored:
   build extras; see **Tooling**.
 - `build/`, `dist/` — PyInstaller working / output directories.
 
-There is no CI configuration yet. The project will be published to
-PyPI but no release has been cut.
+The release workflow lives at `.github/workflows/release.yml` and
+is currently triggered only by `workflow_dispatch` (manual). See
+`spec/11-ci-release.md`. The project will be published to PyPI but
+no release has been cut.
 
 ## Tooling
 
@@ -83,6 +87,26 @@ is `.python-version` (3.14).
   plus the user's `input` group membership. See `BUILD.md` and
   `spec/10-packaging.md`.
 
+## Post-change workflow
+
+After modifying any source file under `src/` or `tests/`, run through these
+steps in order:
+
+1. **Lint and format.**
+   ```
+   .venv/bin/ruff check . && .venv/bin/ruff format --check .
+   ```
+   Use `.venv/bin/ruff check --fix .` to auto-fix fixable issues.
+2. **Run unit tests.**
+   ```
+   .venv/bin/pytest -m "not integration"
+   ```
+3. **Build the standalone binary.**
+   ```
+   scripts/build.sh
+   ```
+   Output goes to `dist/stenographer/stenographer`.
+
 ## Established stack
 
 These decisions are baked into `pyproject.toml` and the spec, and
@@ -113,11 +137,19 @@ When in doubt, read these in order:
 2. The component spec for the area being changed
    (`01-hotkey`, `02-audio-capture`, `03-transcription`,
    `04-audio-feedback`, `05-text-output`, `06-clipboard`).
-3. `spec/07-configuration.md` — config schema.
-4. `spec/08-process-model.md` — CLI surface, lifecycle, signals.
-5. `spec/09-error-handling.md` — degradation policy and exit codes.
+3. `spec/07-configuration.md` — config schema (including
+   `[stenographer.update]`).
+4. `spec/08-process-model.md` — CLI surface, lifecycle, signals,
+   the `update` subcommand.
+5. `spec/09-error-handling.md` — degradation policy and exit codes
+   (including `UpdateError` and the network / sha256 / systemd
+   rows).
 6. `spec/10-packaging.md` — deps, asset layout, PyInstaller,
    systemd.
+7. `spec/11-ci-release.md` — the GitHub Actions release workflow
+   and the tag ↔ version contract.
+8. `spec/12-update.md` — the `update` subcommand: GitHub Releases
+   transport, onedir self-replace, daemon stop / start.
 
 The code MUST match the spec; if it does not, the spec wins (open
 a question in the relevant spec doc and fix the code).

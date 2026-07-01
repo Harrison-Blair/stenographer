@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >
+          Version to release (e.g. 0.7.0). Must match [project].version
+          in pyproject.toml. Leave blank to skip the validation step.
+        required: false
+        type: string
+
+jobs:
+  lint-test:
+    name: lint + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install dev extras
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e ".[dev]"
+      - name: ruff check
+        run: .venv/bin/ruff check .
+      - name: ruff format check
+        run: .venv/bin/ruff format --check .
+      - name: pytest (unit)
+        run: .venv/bin/pytest -m "not integration"
+
+  build-release:
+    name: build release binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install system build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wtype wl-clipboard pipewire-audio libevdev-dev libportaudio2
+      - name: Install build extras
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e ".[dev,build]"
+      - name: Validate version matches pyproject
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$INPUT_VERSION" ]; then
+            echo "::notice::No version input supplied; skipping pyproject validation."
+            exit 0
+          fi
+          pyproject_version=$(.venv/bin/python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          if [ "$INPUT_VERSION" != "$pyproject_version" ]; then
+            echo "::error::input version $INPUT_VERSION does not match pyproject.toml [project].version = $pyproject_version."
+            echo "Bump the version in pyproject.toml or pass the correct version."
+            exit 1
+          fi
+          echo "input version $INPUT_VERSION matches pyproject version $pyproject_version"
+      - name: Build with PyInstaller
+        run: scripts/build.sh
+      - name: Package tarball + sha256
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION:-$(.venv/bin/python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")}"
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          tar -C dist -czf "stenographer-${version}-linux-x86_64.tar.gz" stenographer/
+          sha256sum "stenographer-${version}-linux-x86_64.tar.gz" \
+            > "stenographer-${version}-linux-x86_64.sha256"
+      - name: Build release notes
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Changes"
+            echo
+            if [ -n "$INPUT_VERSION" ] && prev=$(git describe --tags --abbrev=0 "v${INPUT_VERSION}^" 2>/dev/null); then
+              git log "${prev}..v${INPUT_VERSION}" --oneline
+            elif git describe --tags --abbrev=0 HEAD^ 2>/dev/null > prev_tag; then
+              git log "$(cat prev_tag)..HEAD" --oneline
+            else
+              git log --oneline
+            fi
+          } > release_notes.md
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          body_path: release_notes.md
+          files: |
+            stenographer-${{ env.VERSION }}-linux-x86_64.tar.gz
+            stenographer-${{ env.VERSION }}-linux-x86_64.sha256
+          fail_on_unmatched_files: true

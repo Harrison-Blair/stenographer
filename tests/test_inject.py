@@ -175,6 +175,72 @@ def test_close_is_noop() -> None:
     assert inj.close() is None
 
 
+# --- paste() tests ---
+
+
+def test_paste_success_invokes_wtype_ctrl_v() -> None:
+    inj = Injector(available=True)
+    with patch("stenographer.output.inject.subprocess.run") as run:
+        run.return_value = _completed()
+        assert inj.paste() is True
+        run.assert_called_once()
+        call = run.call_args
+        assert call.args[0] == ["wtype", "-M", "ctrl", "v", "-m", "ctrl"]
+        assert call.kwargs["check"] is True
+        assert call.kwargs["timeout"] == 5.0
+        assert call.kwargs["capture_output"] is True
+
+
+def test_paste_unavailable_returns_false(caplog: pytest.LogCaptureFixture) -> None:
+    inj = Injector(available=False)
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("stenographer.output.inject.subprocess.run") as run,
+    ):
+        assert inj.paste() is False
+        run.assert_not_called()
+    assert any("cannot paste" in rec.message for rec in caplog.records)
+
+
+def test_paste_called_process_error_returns_false(caplog: pytest.LogCaptureFixture) -> None:
+    inj = Injector(available=True)
+    with (
+        caplog.at_level(logging.ERROR),
+        patch("stenographer.output.inject.subprocess.run") as run,
+    ):
+        run.side_effect = subprocess.CalledProcessError(returncode=1, cmd=["wtype"], stderr=b"oops")
+        assert inj.paste() is False
+    errs = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert errs
+    assert "wtype paste failed" in errs[-1].message
+
+
+def test_paste_timeout_returns_false(caplog: pytest.LogCaptureFixture) -> None:
+    inj = Injector(available=True)
+    with (
+        caplog.at_level(logging.ERROR),
+        patch("stenographer.output.inject.subprocess.run") as run,
+    ):
+        run.side_effect = subprocess.TimeoutExpired(cmd=["wtype"], timeout=5.0)
+        assert inj.paste() is False
+    errs = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert errs
+    assert "wtype paste failed" in errs[-1].message
+
+
+def test_paste_file_not_found_returns_false(caplog: pytest.LogCaptureFixture) -> None:
+    inj = Injector(available=True)
+    with (
+        caplog.at_level(logging.ERROR),
+        patch("stenographer.output.inject.subprocess.run") as run,
+    ):
+        run.side_effect = FileNotFoundError("wtype not on PATH")
+        assert inj.paste() is False
+    errs = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert errs
+    assert "wtype paste failed" in errs[-1].message
+
+
 # --- Integration test (live wtype against a real Wayland session) ---
 # OPT-IN ONLY: this test types into whichever window the user currently
 # has focused. It MUST be skipped unless the operator has explicitly

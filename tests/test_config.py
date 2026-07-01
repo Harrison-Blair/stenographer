@@ -16,6 +16,7 @@ from stenographer.config import (
     ConfigError,
     HotkeyConfig,
     OutputConfig,
+    UpdateConfig,
     load_or_default,
     resolve_config_path,
 )
@@ -45,6 +46,7 @@ def test_defaults_asr() -> None:
         language="en",
         beam_size=5,
         compute_type="int8",
+        silence_threshold=0.6,
     )
 
 
@@ -58,6 +60,7 @@ def test_defaults_feedback() -> None:
 
 def test_defaults_output() -> None:
     assert Config.defaults().output == OutputConfig(
+        injection_method="paste",
         append_trailing_space=True,
         max_chars=4096,
     )
@@ -65,6 +68,16 @@ def test_defaults_output() -> None:
 
 def test_defaults_clipboard() -> None:
     assert Config.defaults().clipboard == ClipboardConfig(enabled=True)
+
+
+def test_defaults_update() -> None:
+    assert Config.defaults().update == UpdateConfig(
+        repo="Harrison-Blair/stenographer",
+        channel="stable",
+        base_url="https://api.github.com",
+        asset_pattern="stenographer-{version}-linux-x86_64.tar.gz",
+        timeout_seconds=60,
+    )
 
 
 def test_defaults_is_frozen() -> None:
@@ -97,6 +110,7 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
             asr.compute_type = "int8"
             feedback.volume = 0.3
             feedback.mute = true
+            output.injection_method = "paste"
             output.append_trailing_space = false
             output.max_chars = 1000
             clipboard.enabled = false
@@ -112,6 +126,7 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
     assert cfg.asr.compute_type == "int8"
     assert cfg.feedback.volume == 0.3
     assert cfg.feedback.mute is True
+    assert cfg.output.injection_method == "paste"
     assert cfg.output.append_trailing_space is False
     assert cfg.output.max_chars == 1000
     assert cfg.clipboard.enabled is False
@@ -135,6 +150,7 @@ def test_load_partial_override_merges_over_defaults(tmp_path: pathlib.Path) -> N
     assert cfg.audio.input_device is None
     assert cfg.asr.beam_size == 5
     assert cfg.feedback.volume == 0.6
+    assert cfg.output.injection_method == "paste"
     assert cfg.output.max_chars == 4096
     assert cfg.clipboard.enabled is True
 
@@ -296,6 +312,75 @@ def test_validate_max_chars_too_high_rejected(tmp_path: pathlib.Path) -> None:
     p.write_text("[stenographer]\noutput.max_chars = 200000\n")
     with pytest.raises(ConfigError, match=r"output.max_chars"):
         Config.load(p)
+
+
+def test_validate_update_repo_missing_slash_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nupdate.repo = "no-slash"\n')
+    with pytest.raises(ConfigError, match=r"update.repo"):
+        Config.load(p)
+
+
+def test_validate_update_channel_invalid_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nupdate.channel = "daily"\n')
+    with pytest.raises(ConfigError, match=r"update.channel"):
+        Config.load(p)
+
+
+def test_validate_update_base_url_non_http_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nupdate.base_url = "ftp://example.com"\n')
+    with pytest.raises(ConfigError, match=r"update.base_url"):
+        Config.load(p)
+
+
+def test_validate_update_base_url_trailing_slash_stripped(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nupdate.base_url = "https://api.github.com/"\n')
+    assert Config.load(p).update.base_url == "https://api.github.com"
+
+
+def test_validate_update_asset_pattern_missing_placeholder_rejected(
+    tmp_path: pathlib.Path,
+) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nupdate.asset_pattern = "stenographer.tar.gz"\n')
+    with pytest.raises(ConfigError, match=r"update.asset_pattern"):
+        Config.load(p)
+
+
+def test_validate_update_timeout_too_low_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nupdate.timeout_seconds = 0\n")
+    with pytest.raises(ConfigError, match=r"update.timeout_seconds"):
+        Config.load(p)
+
+
+def test_validate_update_timeout_too_high_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nupdate.timeout_seconds = 1000\n")
+    with pytest.raises(ConfigError, match=r"update.timeout_seconds"):
+        Config.load(p)
+
+
+def test_validate_injection_method_invalid_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\noutput.injection_method = "bogus"\n')
+    with pytest.raises(ConfigError, match=r"output.injection_method"):
+        Config.load(p)
+
+
+def test_validate_injection_method_text_accepted(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\noutput.injection_method = "text"\n')
+    assert Config.load(p).output.injection_method == "text"
+
+
+def test_validate_injection_method_paste_accepted(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\noutput.injection_method = "paste"\n')
+    assert Config.load(p).output.injection_method == "paste"
 
 
 def test_validate_cue_unreadable_file_rejected(tmp_path: pathlib.Path) -> None:

@@ -17,6 +17,28 @@ scripts/build.sh
 ./dist/stenographer/stenographer doctor
 ```
 
+## Prebuilt binaries
+
+Prebuilt `dist/stenographer/` bundles (one per release) are attached
+to the GitHub Releases for this repository. The release workflow
+(`.github/workflows/release.yml`, see `spec/11-ci-release.md`) builds
+them on every `workflow_dispatch` and attaches the tarball + SHA-256.
+
+```sh
+VERSION=0.7.0
+curl -L -o /tmp/stenographer.tar.gz \
+  "https://github.com/Harrison-Blair/stenographer/releases/download/v${VERSION}/stenographer-${VERSION}-linux-x86_64.tar.gz"
+curl -L -o /tmp/stenographer.tar.gz.sha256 \
+  "https://github.com/Harrison-Blair/stenographer/releases/download/v${VERSION}/stenographer-${VERSION}-linux-x86_64.sha256"
+cd /tmp && sha256sum -c stenographer.tar.gz.sha256
+tar -xzf stenographer.tar.gz
+mv stenographer /opt/
+/opt/stenographer/stenographer --version
+```
+
+Or, if you have a previous build installed, just run
+`./dist/stenographer/stenographer update`.
+
 ## Output
 
 `dist/stenographer/stenographer` is a launcher script. The bundled payload

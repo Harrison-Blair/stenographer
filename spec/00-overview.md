@@ -92,22 +92,32 @@ specified in `01-hotkey.md` through `10-packaging.md`.
    the `Cue player` to fire the start cue.
 4. Audio frames accumulate in a per-utterance `numpy.ndarray` of shape
    `(n_samples, 1)` and dtype `float32`.
-5. On stop, `Session` hands the buffer to the `Worker`.
-6. `Worker` runs faster-whisper and returns a `Transcript` (a `str`).
-7. `Session` asks the `Injector` to type the transcript, and the
-   `Clipboard Mgr` to copy it.
-8. `Session` fires the stop cue and returns to idle.
+5. On stop, `Session` enqueues the buffer into the **utterance queue**
+   and returns to idle immediately. The listener thread is never
+   blocked waiting for transcription.
+6. The **processor thread** (a dedicated daemon thread created at
+   startup) dequeues the buffer, submits it to the `Worker`, and
+   awaits the transcript.
+7. The processor thread asks the `Injector` to type the transcript
+   and the `Clipboard Mgr` to copy it.
+8. The processor thread moves to the next queued utterance
+   (or blocks waiting for one).
 
 ## Lifecycle (daemon)
 
 ```
 boot -> capability probe -> config load -> hotkey device probe
-     -> register hotkey -> IDLE
+     -> register hotkey -> start processor thread -> IDLE
 IDLE -> (keydown) RECORDING
-RECORDING -> (stop) TRANSCRIBING
-TRANSCRIBING -> (output) IDLE
-(any) -> (SIGINT/SIGTERM) drain -> exit 0
+RECORDING -> (stop) IDLE                             # returns immediately
+(background) QUEUED -> TRANSCRIBING -> (output) -> done
+(any) -> (SIGINT/SIGTERM) drain utterance queue -> exit 0
 ```
+
+Transcription and output run concurrently on the processor thread.
+The daemon can accept a new recording while a previous utterance is
+still transcribing. Multiple utterances queued during a burst are
+processed in order.
 
 ## Capability probe (run once at startup)
 
@@ -159,7 +169,8 @@ blocks (cannot start before this one is done).
 - Streaming / partial transcripts (one final transcript per utterance).
 - Multiple simultaneous languages (English only; `language` is pinned).
 - Live reloading of the config (`SIGHUP` is not handled; restart required).
-- GUI / system-tray icon. The daemon is silent and headless.
+- System-tray icon. The daemon is silent and headless. (A notification
+  icon is included for the swaync notification shown during dictation.)
 - Push-to-talk and toggle as **separate** bindings (the hybrid logic
   arbitrates the single binding).
 

@@ -1,4 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""stenographer: local, offline, Wayland push-to-talk / toggle dictation."""
+"""stenographer: local, offline, Wayland push-to-talk / toggle dictation.
 
-__version__ = "0.1.0"
+The version is read from the installed package metadata (which is
+populated from ``pyproject.toml`` ``[project].version``). This keeps
+``pyproject.toml`` as the single source of truth; see
+``spec/11-ci-release.md``.
+"""
+
+from __future__ import annotations
+
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("stenographer")
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"

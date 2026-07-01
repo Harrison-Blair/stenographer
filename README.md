@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/stenographer/assets/icons/stenographer.png" width="128" alt="stenographer icon" />
+</p>
+
 # stenographer
 > 1. a writer of shorthand 2. a person employed chiefly to take and transcribe dictation [Webster](https://www.merriam-webster.com/dictionary/stenographer)
 
@@ -17,6 +21,9 @@ sudo usermod -aG input $USER   # log out / back in
 git clone … && cd stenographer
 python3 -m venv .venv && .venv/bin/pip install -e ".[build]"
 scripts/build.sh
+
+# one-command install: build + install + systemd (skip build step above)
+scripts/install.sh
 
 # download the ASR model
 ./dist/stenographer/stenographer model download
@@ -104,6 +111,7 @@ stenographer run                 # foreground daemon, Ctrl-C to stop
 stenographer dictate             # one-shot: arm, dictate, exit
 stenographer transcribe FILE     # batch: print transcript to stdout
 stenographer model download      # fetch the ASR model
+stenographer update [--check]    # self-update from GitHub Releases
 stenographer doctor              # print capabilities + resolved config
 stenographer --version
 ```
@@ -111,6 +119,28 @@ stenographer --version
 `stenographer run` holds a single-instance `fcntl.flock` on
 `$XDG_RUNTIME_DIR/stenographer.lock`; a second `run` exits 1 with
 `another instance is already running.`
+
+## Updating
+
+`stenographer update` checks GitHub Releases for a newer version of
+the onedir binary, downloads the matching tarball, verifies its
+SHA-256, and replaces the running install in place. If the daemon
+is running under systemd, it is stopped before the swap and started
+afterwards.
+
+```sh
+stenographer update              # check, prompt, install, restart
+stenographer update --check      # only print whether an update is available
+stenographer update --yes        # non-interactive
+stenographer update --prerelease # include pre-release tags (e.g. v0.7.0-rc.1)
+stenographer update --no-restart # leave the daemon stopped after the swap
+```
+
+`update` only self-updates the onedir binary built by `scripts/build.sh`.
+A `pipx` / `pip install --user` install is not replaced; run
+`pipx upgrade stenographer` or `pip install --upgrade stenographer`
+instead. Configure the target repo / channel in
+`~/.config/stenographer/config.toml` under `[stenographer.update]`.
 
 ## Configure
 
@@ -154,14 +184,24 @@ See `spec/07-configuration.md` for the full schema and validation rules.
 
 ## Run under systemd
 
-The unit template lives at `packaging/stenographer.service.in`. Copy it
-to `~/.config/systemd/user/stenographer.service` (substituting `%h`
-with your home directory), then:
+`scripts/install.sh` handles the full systemd setup by default: it
+builds the binary, installs it to `~/.local/share/stenographer/`,
+symlinks the launcher into `~/.local/bin/`, and installs + enables the
+systemd user unit. Run with `--no-enable` to skip the enable step, or
+`--no-start` to leave the daemon stopped.
 
 ```sh
-systemctl --user enable --now stenographer.service
+scripts/install.sh              # full install
+scripts/install.sh --no-start   # install unit but don't start
+stenographer run                # or start manually (if --no-start used)
 journalctl --user -u stenographer.service -f
 ```
+
+The raw unit template is at `packaging/stenographer.service.in`. To
+manually install it, copy it to
+`~/.config/systemd/user/stenographer.service` (substituting `%h` with
+your home directory), then `systemctl --user enable --now
+stenographer.service`.
 
 `Restart=on-failure`; binds to `graphical-session.target`. The daemon
 is foreground; systemd handles daemonization.

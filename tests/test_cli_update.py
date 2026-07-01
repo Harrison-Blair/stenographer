@@ -1,0 +1,156 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+from __future__ import annotations
+
+import pathlib
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+
+from stenographer.errors import UpdateError
+
+
+def _fake_check_for_update(info: Any) -> Any:
+    def _fn(cfg: Any, *, current_version: str | None = None, prerelease: bool = False) -> Any:
+        return info
+
+    return _fn
+
+
+def _info(version: str = "0.7.0") -> Any:
+    from stenographer.update import UpdateInfo
+
+    return UpdateInfo(
+        current_version="0.6.0",
+        latest_version=version,
+        tag_name=f"v{version}",
+        asset_url="https://example.invalid/tarball",
+        asset_size=1024,
+        sha256_url="https://example.invalid/sha",
+        release_notes="notes",
+        prerelease=False,
+    )
+
+
+def test_cli_update_check_exits_zero(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from stenographer.cli import main
+
+    monkeypatch.setattr("sys.argv", ["stenographer", "update", "--check"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+    monkeypatch.setattr("builtins.input", lambda *a, **kw: "y")
+    with patch("stenographer.cli.check_for_update", _fake_check_for_update(_info())):
+        rc = main()
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "update available" in captured.err
+
+
+def test_cli_update_check_up_to_date(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from stenographer.cli import main
+
+    def _raise(*a: Any, **kw: Any) -> Any:
+        raise UpdateError("update: no newer release available for the selected channel")
+
+    monkeypatch.setattr("sys.argv", ["stenographer", "update", "--check"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+    with patch("stenographer.cli.check_for_update", _raise), pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 1
+
+
+def test_cli_update_no_yes_decline_exits_zero(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from stenographer.cli import main
+
+    monkeypatch.setattr("sys.argv", ["stenographer", "update"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+    monkeypatch.setattr("builtins.input", lambda *a, **kw: "n")
+    with (
+        patch("stenographer.cli.check_for_update", _fake_check_for_update(_info())),
+        patch("stenographer.cli.download_update") as dl,
+        patch("stenographer.cli.extract_to_staging") as ex,
+        patch("stenographer.cli.apply_update") as ap,
+        patch("stenographer.cli.stop_daemon") as stop,
+        patch("stenographer.cli.start_daemon") as start,
+    ):
+        rc = main()
+    assert rc == 0
+    dl.assert_not_called()
+    ex.assert_not_called()
+    ap.assert_not_called()
+    stop.assert_not_called()
+    start.assert_not_called()
+    captured = capsys.readouterr()
+    assert "cancelled" in captured.err
+
+
+def test_cli_update_yes_skips_prompt(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from stenographer.cli import main
+
+    monkeypatch.setattr("sys.argv", ["stenographer", "update", "--yes", "--no-restart"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+
+    def _no_input(*a: Any, **kw: Any) -> Any:
+        raise AssertionError("input() should not be called with --yes")
+
+    monkeypatch.setattr("builtins.input", _no_input)
+
+    fake_tarball = tmp_path / "stenographer-0.7.0.tar.gz"
+    fake_tarball.write_bytes(b"fake")
+
+    fake_install_root = tmp_path / "opt" / "stenographer"
+    fake_install_root.mkdir(parents=True)
+    (fake_install_root / "_internal").mkdir()
+
+    fake_bundle = fake_install_root / "stenographer"
+    with (
+        patch("stenographer.cli.check_for_update", _fake_check_for_update(_info())),
+        patch("stenographer.cli.download_update", return_value=fake_tarball),
+        patch("stenographer.cli.detect_install_root", return_value=fake_install_root),
+        patch("stenographer.cli.extract_to_staging", return_value=fake_bundle),
+        patch("stenographer.cli.apply_update") as ap,
+        patch("stenographer.cli.stop_daemon") as stop,
+    ):
+        rc = main()
+    assert rc == 0
+    ap.assert_called_once()
+    stop.assert_not_called()
+    captured = capsys.readouterr()
+    assert "Updated to v0.7.0" in captured.err
+
+
+def test_cli_update_repo_override(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from stenographer.cli import main
+
+    monkeypatch.setattr("sys.argv", ["stenographer", "update", "--check", "--repo", "other/repo"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+
+    seen: dict[str, Any] = {}
+
+    def _capture(cfg: Any, *, current_version: str | None = None, prerelease: bool = False) -> Any:
+        seen["repo"] = cfg.repo
+        return _info()
+
+    with patch("stenographer.cli.check_for_update", _capture):
+        rc = main()
+    assert rc == 0
+    assert seen["repo"] == "other/repo"

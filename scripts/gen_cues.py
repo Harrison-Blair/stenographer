@@ -11,9 +11,11 @@ import soundfile as sf
 SAMPLE_RATE = 44100
 SUBTYPE = "PCM_16"
 DBFS_BEEP = -12.0
+DBFS_SEGMENT = -18.0
 DBFS_ERROR = -6.0
 ENVELOPE_S = 0.005
 GAP_S = 0.060
+SEGMENT_S = 0.050
 TRANSCRIBE_DONE_S = 0.010
 
 
@@ -69,6 +71,7 @@ def build_cues(sample_rate: int) -> dict[str, np.ndarray]:
             ]
         ),
         "error": tone(220.0, 0.250, DBFS_ERROR, sample_rate),
+        "segment": tone(660.0, SEGMENT_S, DBFS_SEGMENT, sample_rate),
         "transcribe_done": silence(TRANSCRIBE_DONE_S, sample_rate),
     }
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import pathlib
 import subprocess
 
 logger = logging.getLogger(__name__)
@@ -17,24 +18,27 @@ class DesktopNotification:
     it.  Degrades to a no-op when either tool is unavailable.
     """
 
-    def __init__(self, *, available: bool) -> None:
+    def __init__(self, *, available: bool, icon_path: pathlib.Path | None = None) -> None:
         self._available = available
+        self._icon_path = icon_path
 
     def show_listening(self) -> None:
         """Display 'Listening...' as a persistent notification."""
         if not self._available:
             return
         try:
+            cmd = [
+                "notify-send",
+                "-a",
+                "Stenographer",
+                "-t",
+                "0",
+            ]
+            if self._icon_path is not None:
+                cmd.extend(["-i", str(self._icon_path)])
+            cmd.extend(["Stenographer", "Listening\u2026"])
             subprocess.run(
-                [
-                    "notify-send",
-                    "-a",
-                    "Stenographer",
-                    "-t",
-                    "0",
-                    "Stenographer",
-                    "Listening…",
-                ],
+                cmd,
                 check=True,
                 timeout=5.0,
                 capture_output=True,

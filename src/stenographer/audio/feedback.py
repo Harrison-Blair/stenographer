@@ -15,7 +15,9 @@ from typing import Literal
 
 import soundfile
 
-CueName = Literal["ptt_on", "ptt_off", "toggle_on", "toggle_off", "error", "transcribe_done"]
+CueName = Literal[
+    "ptt_on", "ptt_off", "toggle_on", "toggle_off", "error", "segment", "transcribe_done"
+]
 
 logger = logging.getLogger(__name__)
 
