@@ -56,8 +56,8 @@ Runs on every manual workflow dispatch.
 
 | Step | Command |
 |---|---|
-| Checkout | `actions/checkout@v4` |
-| Set up Python | `actions/setup-python@v5` with `python-version-file: .python-version` |
+| Checkout | `actions/checkout@v7` |
+| Set up Python | `actions/setup-python@v6` with `python-version-file: .python-version` |
 | Install dev extras | `.venv/bin/pip install -e ".[dev]"` |
 | Lint | `.venv/bin/ruff check .` |
 | Format check | `.venv/bin/ruff format --check .` |
@@ -74,8 +74,8 @@ release for that version already exists.
 
 | Step | Command / value |
 |---|---|
-| Checkout | `actions/checkout@v4` with `fetch-depth: 0` (needed for `git log` in the release notes) |
-| Set up Python | `actions/setup-python@v5` with `python-version-file: .python-version` |
+| Checkout | `actions/checkout@v7` with `fetch-depth: 0` (needed for `git log` in the release notes) |
+| Set up Python | `actions/setup-python@v6` with `python-version-file: .python-version` |
 | Install system build deps | `sudo apt-get install -y wtype wl-clipboard pipewire-audio libevdev-dev libportaudio2` |
 | Install build extras | `.venv/bin/pip install -e ".[dev,build]"` |
 | Set VERSION | Reads `[project].version` from `pyproject.toml` via `tomllib` and exports `VERSION` to `$GITHUB_ENV` |
@@ -83,7 +83,7 @@ release for that version already exists.
 | Build | `scripts/build.sh` |
 | Package | `tar -C dist -czf stenographer-$VERSION-linux-x86_64.tar.gz stenographer/` |
 | Hash | `sha256sum stenographer-$VERSION-linux-x86_64.tar.gz > stenographer-$VERSION-linux-x86_64.sha256` |
-| Create draft release | `softprops/action-gh-release@v2` with `draft: true` |
+| Create draft release | `softprops/action-gh-release@v3` with `draft: true` |
 
 The job matrix is `[ubuntu-latest]` in v1. aarch64 and macOS / Windows
 builds are out of scope (see below).
@@ -133,7 +133,7 @@ stenographer/
 
 ### Release body
 
-`softprops/action-gh-release@v2` accepts a `body:` parameter. The
+`softprops/action-gh-release@v3` accepts a `body:` parameter. The
 workflow computes the body as:
 
 ```sh
