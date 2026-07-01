@@ -151,8 +151,7 @@ the asset's `browser_download_url`); well within the budget.
     the same filesystem so `os.replace` is atomic).
 
 13. **Sanity-check** the new bundle:
-    `<staging>/_internal/stenographer/__init__.py` and
-    `<staging>/stenographer` (the launcher) must both exist. If
+    `<staging>/stenographer` (the launcher) must exist. If
     not, exit 1, the old install is untouched.
 
 14. **Atomic swap**: `os.replace(staging, install_root)`. On

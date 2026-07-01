@@ -5,6 +5,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+.venv/bin/pip install -e ".[dev,build]"
+
 .venv/bin/pyinstaller --noconfirm --clean packaging/stenographer.spec
 
 echo

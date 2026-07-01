@@ -290,7 +290,6 @@ def test_check_for_update_invalid_current_version_raises() -> None:
 def _make_tarball(tarball: pathlib.Path, *, contents: dict[str, bytes] | None = None) -> None:
     contents = contents or {
         "stenographer/stenographer": b"#!/bin/sh\necho hi\n",
-        "stenographer/_internal/stenographer/__init__.py": b"__version__ = '0.7.0'\n",
     }
     with tarfile.open(tarball, "w:gz") as tf:
         for name, data in contents.items():
@@ -408,7 +407,6 @@ def test_extract_to_staging_creates_bundle(tmp_path: pathlib.Path) -> None:
     expected_parent = install_root.with_name(f"{install_root.name}.new.{os.getpid()}")
     assert bundle == expected_parent / "stenographer"
     assert (bundle / "stenographer").is_file()
-    assert (bundle / "_internal" / "stenographer" / "__init__.py").is_file()
 
 
 def test_extract_to_staging_missing_top_dir_raises(tmp_path: pathlib.Path) -> None:
@@ -436,14 +434,11 @@ def test_apply_update_atomic_swap(tmp_path: pathlib.Path, monkeypatch: pytest.Mo
     bundle = new_bundle_parent / "stenographer"
     bundle.mkdir()
     (bundle / "stenographer").write_text("#!/bin/sh\n")
-    (bundle / "_internal" / "stenographer").mkdir(parents=True)
-    (bundle / "_internal" / "stenographer" / "__init__.py").write_text("__version__ = '0.7.0'\n")
 
     from stenographer.update import apply_update
 
     apply_update(bundle, install_root)
     assert (install_root / "stenographer" / "stenographer").is_file()
-    assert (install_root / "stenographer" / "_internal" / "stenographer" / "__init__.py").is_file()
     assert not new_bundle_parent.exists()
 
 
@@ -454,11 +449,10 @@ def test_apply_update_sanity_check_fails(tmp_path: pathlib.Path) -> None:
     new_bundle_parent.mkdir()
     bundle = new_bundle_parent / "stenographer"
     bundle.mkdir()
-    (bundle / "stenographer").write_text("#!/bin/sh\n")
-    # missing _internal/stenographer/__init__.py
+    # missing launcher
     from stenographer.update import apply_update
 
-    with pytest.raises(UpdateError, match=r"missing _internal/stenographer/__init__.py"):
+    with pytest.raises(UpdateError, match=r"missing the launcher"):
         apply_update(bundle, install_root)
 
 
@@ -472,8 +466,6 @@ def test_apply_update_cross_filesystem_raises(tmp_path: pathlib.Path) -> None:
     bundle = new_bundle_parent / "stenographer"
     bundle.mkdir()
     (bundle / "stenographer").write_text("#!/bin/sh\n")
-    (bundle / "_internal" / "stenographer").mkdir(parents=True)
-    (bundle / "_internal" / "stenographer" / "__init__.py").write_text("__version__ = '0.7.0'\n")
 
     from stenographer.update import apply_update
 

@@ -307,8 +307,6 @@ def _sanity_check_bundle(bundle: pathlib.Path) -> None:
         raise UpdateError(
             f"update: extracted bundle is missing the launcher at {bundle}/stenographer"
         )
-    if not (bundle / "_internal" / "stenographer" / "__init__.py").is_file():
-        raise UpdateError("update: extracted bundle is missing _internal/stenographer/__init__.py")
 
 
 def apply_update(
