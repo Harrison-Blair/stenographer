@@ -37,6 +37,34 @@ _DEFAULT_REPO_PATH = "Harrison-Blair/stenographer"
 _DEFAULT_STAGING_PARENT = pathlib.Path("~/.local/share/stenographer/staging")
 _DEFAULT_UPDATE_LOCK = pathlib.Path("/dev/null")  # overridden at call time
 
+# Archive suffixes stripped when deriving the sibling .sha256 asset name
+# from the asset_pattern output. The CI workflow produces
+# "stenographer-<version>-linux-x86_64.sha256" (no .tar.gz in the middle);
+# see spec/12-update.md and spec/11-ci-release.md.
+_ARCHIVE_SUFFIXES: tuple[str, ...] = (
+    ".tar.gz",
+    ".tar.bz2",
+    ".tar.xz",
+    ".tgz",
+    ".tbz2",
+    ".txz",
+    ".zip",
+)
+
+
+def _strip_archive_suffix(name: str) -> str:
+    """Return ``name`` with a recognised archive extension removed.
+
+    Falls back to ``os.path.splitext`` (strips the last suffix) for
+    extensions not in :data:`_ARCHIVE_SUFFIXES`. Never returns an empty
+    string; if ``name`` has no stem, the original is returned verbatim.
+    """
+    for suffix in _ARCHIVE_SUFFIXES:
+        if name.endswith(suffix) and len(name) > len(suffix):
+            return name[: -len(suffix)]
+    stem, _, _ = name.rpartition(".")
+    return stem or name
+
 
 @dataclasses.dataclass(frozen=True)
 class UpdateInfo:
@@ -148,7 +176,7 @@ def check_for_update(
     tag = chosen.get("tag_name", "")
     raw_version = tag.lstrip("v")
     asset_name = cfg.asset_pattern.format(version=raw_version)
-    sha_name = f"{asset_name}.sha256"
+    sha_name = f"{_strip_archive_suffix(asset_name)}.sha256"
 
     asset = next((a for a in chosen.get("assets", []) if a.get("name") == asset_name), None)
     sha = next((a for a in chosen.get("assets", []) if a.get("name") == sha_name), None)

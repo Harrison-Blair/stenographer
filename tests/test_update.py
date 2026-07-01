@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import tarfile
 from typing import Any
 from unittest.mock import patch
@@ -17,6 +18,7 @@ from stenographer.update import (
     UpdateInfo,
     _parse_tag,
     _pick_release,
+    _strip_archive_suffix,
     check_for_update,
 )
 
@@ -36,7 +38,7 @@ def _release(
     if asset_name is None:
         asset_name = f"stenographer-{tag.lstrip('v')}-linux-x86_64.tar.gz"
     if sha_name is None:
-        sha_name = f"{asset_name}.sha256"
+        sha_name = f"{_strip_archive_suffix(asset_name)}.sha256"
     return {
         "tag_name": tag,
         "prerelease": prerelease,
@@ -189,7 +191,7 @@ def test_check_for_update_returns_info_when_newer() -> None:
     assert info.latest_version == "0.7.0"
     assert info.tag_name == "v0.7.0"
     assert info.asset_url.endswith("stenographer-0.7.0-linux-x86_64.tar.gz")
-    assert info.sha256_url.endswith("stenographer-0.7.0-linux-x86_64.tar.gz.sha256")
+    assert info.sha256_url.endswith("stenographer-0.7.0-linux-x86_64.sha256")
     assert info.prerelease is False
 
 
@@ -226,6 +228,42 @@ def test_check_for_update_missing_sha_raises() -> None:
         pytest.raises(UpdateError, match="missing the asset"),
     ):
         check_for_update(_DEFAULT_CFG, current_version="0.6.0")
+
+
+def test_check_for_update_accepts_spec_compliant_sha_name() -> None:
+    # Regression test: the CI workflow (and spec/12-update.md) produce
+    # the .sha256 sibling with the archive suffix stripped
+    # ("stenographer-0.7.0-linux-x86_64.sha256"), not
+    # "...tar.gz.sha256". The earlier code naively appended ".sha256"
+    # to the whole tarball name and could never find the asset.
+    releases = [_release("v0.7.0", sha_name="stenographer-0.7.0-linux-x86_64.sha256")]
+    with patch("stenographer.update._http_get_json", _fake_http_get_json(releases)):
+        info = check_for_update(_DEFAULT_CFG, current_version="0.6.0")
+    assert info.sha256_url.endswith("stenographer-0.7.0-linux-x86_64.sha256")
+
+
+def test_check_for_update_rejects_targz_sha_name() -> None:
+    # The old buggy expectation: *.tar.gz.sha256 is not what the spec or
+    # the CI workflow produce, so it must be rejected.
+    releases = [_release("v0.7.0", sha_name="stenographer-0.7.0-linux-x86_64.tar.gz.sha256")]
+    expected_msg = "missing the asset 'stenographer-0.7.0-linux-x86_64.sha256'"
+    with (
+        patch("stenographer.update._http_get_json", _fake_http_get_json(releases)),
+        pytest.raises(UpdateError, match=re.escape(expected_msg)),
+    ):
+        check_for_update(_DEFAULT_CFG, current_version="0.6.0")
+
+
+def test_strip_archive_suffix_handles_common_formats() -> None:
+    assert _strip_archive_suffix("a.tar.gz") == "a"
+    assert _strip_archive_suffix("a.tar.bz2") == "a"
+    assert _strip_archive_suffix("a.tar.xz") == "a"
+    assert _strip_archive_suffix("a.tgz") == "a"
+    assert _strip_archive_suffix("a.zip") == "a"
+    # Unknown multi-suffix falls back to the last suffix only.
+    assert _strip_archive_suffix("a.bz2") == "a"
+    # No suffix at all is a no-op.
+    assert _strip_archive_suffix("a") == "a"
 
 
 def test_check_for_update_network_error_wrapped() -> None:
