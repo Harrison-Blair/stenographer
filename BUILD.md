@@ -21,7 +21,7 @@ scripts/build.sh
 
 Prebuilt `dist/stenographer/` bundles (one per release) are attached
 to the GitHub Releases for this repository. The release workflow
-(`.github/workflows/release.yml`, see `spec/11-ci-release.md`) builds
+(`.github/workflows/build-release-draft.yml`, see `spec/11-ci-release.md`) builds
 them on every `workflow_dispatch` and attaches the tarball + SHA-256.
 
 ```sh

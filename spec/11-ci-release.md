@@ -48,7 +48,7 @@ on:
 ## Jobs
 
 The workflow file contains two jobs. Both are defined in
-`.github/workflows/release.yml`.
+`.github/workflows/build-release-draft.yml`.
 
 ### 1. `lint-test`
 
