@@ -78,6 +78,18 @@ asr.compute_type      = "int8"
 # >= this value the utterance is treated as silence and skipped.
 asr.silence_threshold = 0.6
 
+# Model initialization mode. "eager" loads the model on daemon
+# start (5-30 s boot). "lazy" loads on the first hotkey press
+# (<1 s boot); the first press plays the model_loading cue and
+# shows a loading notification, and transcription begins once the
+# model is ready. One-shot commands always use eager.
+asr.mode              = "lazy"
+
+# Seconds of inactivity before the lazy-loaded model is unloaded
+# from memory. Applies only when asr.mode = "lazy". Set to 0 to
+# disable unloading (the model stays resident once loaded).
+asr.idle_unload_seconds = 3600
+
 # === Audio feedback ===
 # Volume for cue playback, 0.0 .. 1.0. Mapped to pw-play/paplay --volume.
 feedback.volume       = 0.6
@@ -146,6 +158,8 @@ update.timeout_seconds = 60
 | `asr.beam_size`                              | int      | `5`                                        |
 | `asr.compute_type`                           | string   | `"int8"`                                   |
 | `asr.silence_threshold`                      | number   | `0.6`                                      |
+| `asr.mode`                                   | string   | `"lazy"`                                   |
+| `asr.idle_unload_seconds`                    | int      | `3600`                                     |
 | `feedback.volume`                            | number   | `0.6`                                      |
 | `feedback.cues.<name>`                       | string   | `""` (per cue; empty = bundled default)    |
 | `feedback.mute`                              | bool     | `false`                                    |
@@ -168,6 +182,8 @@ update.timeout_seconds = 60
 - `asr.beam_size` must satisfy `1 <= x <= 10`.
 - `asr.compute_type` must be one of the five allowed strings.
 - `asr.silence_threshold` must satisfy `0.0 <= x <= 1.0`.
+- `asr.mode` must be one of `"eager"`, `"lazy"`.
+- `asr.idle_unload_seconds` must satisfy `0 <= x <= 86400`.
 - `feedback.volume` must satisfy `0.0 <= x <= 1.0`.
 - `output.max_chars` must satisfy `1 <= x <= 100000`.
 - `update.channel` must be one of `"stable"`, `"latest"`.

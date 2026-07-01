@@ -30,6 +30,8 @@ def model() -> Model:
             beam_size=1,
             compute_type="int8",
             silence_threshold=0.6,
+            mode="eager",
+            idle_unload_seconds=0,
         )
     )
 

@@ -47,6 +47,8 @@ def test_defaults_asr() -> None:
         beam_size=5,
         compute_type="int8",
         silence_threshold=0.6,
+        mode="lazy",
+        idle_unload_seconds=3600,
     )
 
 
@@ -284,6 +286,59 @@ def test_validate_compute_type_invalid_rejected(tmp_path: pathlib.Path) -> None:
     p.write_text('[stenographer]\nasr.compute_type = "bogus"\n')
     with pytest.raises(ConfigError, match=r"asr.compute_type"):
         Config.load(p)
+
+
+def test_validate_asr_mode_eager_accepted(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nasr.mode = "eager"\n')
+    assert Config.load(p).asr.mode == "eager"
+
+
+def test_validate_asr_mode_lazy_accepted(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nasr.mode = "lazy"\n')
+    assert Config.load(p).asr.mode == "lazy"
+
+
+def test_validate_asr_mode_invalid_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nasr.mode = "fast"\n')
+    with pytest.raises(ConfigError, match=r"asr.mode"):
+        Config.load(p)
+
+
+def test_validate_idle_unload_seconds_negative_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nasr.idle_unload_seconds = -1\n")
+    with pytest.raises(ConfigError, match=r"asr.idle_unload_seconds"):
+        Config.load(p)
+
+
+def test_validate_idle_unload_seconds_too_high_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nasr.idle_unload_seconds = 100000\n")
+    with pytest.raises(ConfigError, match=r"asr.idle_unload_seconds"):
+        Config.load(p)
+
+
+def test_validate_idle_unload_seconds_zero_accepted(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nasr.idle_unload_seconds = 0\n")
+    assert Config.load(p).asr.idle_unload_seconds == 0
+
+
+def test_validate_idle_unload_seconds_upper_bound_accepted(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nasr.idle_unload_seconds = 86400\n")
+    assert Config.load(p).asr.idle_unload_seconds == 86400
+
+
+def test_write_default_includes_asr_mode(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    Config.write_default(p)
+    text = p.read_text(encoding="utf-8")
+    assert 'asr.mode = "lazy"' in text
+    assert "asr.idle_unload_seconds = 3600" in text
 
 
 def test_validate_volume_negative_rejected(tmp_path: pathlib.Path) -> None:

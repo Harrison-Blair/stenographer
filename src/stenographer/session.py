@@ -174,9 +174,16 @@ class Session:
                 return
             self._recording = True
             try:
+                is_lazy_first = self._cfg.asr.mode == "lazy" and not self._worker.is_model_loaded()
+                if is_lazy_first:
+                    self._worker.ensure_model_loaded(
+                        on_loaded=self._on_model_loaded,
+                        on_unloaded=self._on_model_unloaded,
+                    )
+                    self._on_model_loading()
                 self._recorder.start()
                 log.info("session: recording started")
-                if self._notification is not None:
+                if not is_lazy_first and self._notification is not None:
                     self._notification.show_listening()
             except Exception as exc:
                 self._recording = False
@@ -207,6 +214,41 @@ class Session:
 
     def on_toggle_off(self) -> None:
         self.on_recording_stop("toggle")
+
+    # -- lazy-mode model lifecycle callbacks (called from loader / timer threads) --
+
+    def _on_model_loading(self) -> None:
+        try:
+            self._feedback.play("model_loading")
+        except Exception as exc:
+            log.error("session: model_loading cue failed: %s", exc)
+        if self._notification is not None:
+            try:
+                self._notification.show_model_loading()
+            except Exception as exc:
+                log.error("session: show_model_loading failed: %s", exc)
+
+    def _on_model_loaded(self) -> None:
+        try:
+            self._feedback.play("model_ready")
+        except Exception as exc:
+            log.error("session: model_ready cue failed: %s", exc)
+        if self._notification is not None:
+            try:
+                self._notification.hide()
+            except Exception as exc:
+                log.error("session: notification.hide failed: %s", exc)
+            try:
+                self._notification.show_model_ready()
+            except Exception as exc:
+                log.error("session: show_model_ready failed: %s", exc)
+
+    def _on_model_unloaded(self) -> None:
+        if self._notification is not None:
+            try:
+                self._notification.show_model_unloaded()
+            except Exception as exc:
+                log.error("session: show_model_unloaded failed: %s", exc)
 
     def _process(self, samples: np.ndarray, mode: Literal["ptt", "toggle"]) -> None:
         log.info("session: processing %d samples (mode=%s)", samples.shape[0], mode)

@@ -18,7 +18,7 @@ from collections.abc import Sequence
 import soundfile
 
 from stenographer import __version__
-from stenographer.asr.model import Model
+from stenographer.asr.model import LazyModel, Model
 from stenographer.asr.worker import Worker
 from stenographer.audio.capture import Recorder
 from stenographer.audio.feedback import CueName, Feedback
@@ -158,8 +158,14 @@ def _release_single_instance_lock() -> None:
 
 
 def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
-    log.info("loading ASR model: %s", cfg.asr.model)
-    model = Model(cfg.asr)
+    if one_shot or cfg.asr.mode == "eager":
+        log.info("loading ASR model: %s", cfg.asr.model)
+        model: Model | LazyModel = Model(cfg.asr)
+    else:
+        model = LazyModel(
+            cfg.asr,
+            idle_unload_seconds=cfg.asr.idle_unload_seconds or None,
+        )
     worker = Worker(model, timeout_seconds=(cfg.asr.beam_size and 300.0) or 300.0)
     worker.start()
     feedback = _build_feedback(cfg, caps)
@@ -227,8 +233,8 @@ def cmd_run(cfg: Config) -> int:
     session._listener.start()
     _install_signal_handlers(session)
     log.info("session: daemon running (pid=%d)", os.getpid())
-    if session._notification is not None:
-        session._notification.show_startup(cfg.hotkey.binding)
+    if cfg.asr.mode == "eager" and session._notification is not None:
+        session._notification.show_model_ready()
     try:
         session.run()
     finally:
@@ -343,7 +349,7 @@ def cmd_dictate(cfg: Config) -> int:
     _install_signal_handlers(session)
     log.info("session: dictate mode armed; press the hotkey once")
     if session._notification is not None:
-        session._notification.show_startup(cfg.hotkey.binding)
+        session._notification.show_model_ready()
     try:
         session.run()
     finally:
@@ -511,6 +517,8 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     else:
         print("mic device:     NO  (recording disabled)")
     print(f"asr model:      {'yes' if caps.has_asr_model else 'NO  (transcription disabled)'}")
+    print(f"asr.mode:       {cfg.asr.mode}")
+    print(f"asr.idle_unload_seconds: {cfg.asr.idle_unload_seconds} (0 = disabled)")
     has_swaync = (
         shutil.which("swaync-client") is not None and shutil.which("notify-send") is not None
     )

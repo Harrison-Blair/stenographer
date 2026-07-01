@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from stenographer.asr.model import Model, SegmentInfo, TranscriptionResult
+from stenographer.asr.model import LazyModel, Model, SegmentInfo, TranscriptionResult
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class Job:
 
 
 class Worker:
-    def __init__(self, model: Model, timeout_seconds: float = 300.0) -> None:
+    def __init__(self, model: Model | LazyModel, timeout_seconds: float = 300.0) -> None:
         self._model = model
         self.timeout_seconds = timeout_seconds
         self._queue: queue.Queue[Job | None] = queue.Queue()
@@ -64,11 +64,25 @@ class Worker:
         thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout)
+        self._model.close()
 
     @property
     def is_running(self) -> bool:
         thread = self._thread
         return thread is not None and thread.is_alive()
+
+    def ensure_model_loaded(
+        self,
+        on_loaded: Callable[[], None] | None = None,
+        on_unloaded: Callable[[], None] | None = None,
+    ) -> None:
+        if isinstance(self._model, LazyModel):
+            self._model.ensure_loaded(on_loaded=on_loaded, on_unloaded=on_unloaded)
+
+    def is_model_loaded(self) -> bool:
+        if isinstance(self._model, LazyModel):
+            return self._model.is_loaded()
+        return True
 
     def _run(self) -> None:
         log.debug("ASR worker thread started")

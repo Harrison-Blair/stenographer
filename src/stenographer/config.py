@@ -16,11 +16,15 @@ CUE_NAMES: tuple[str, ...] = (
     "error",
     "segment",
     "transcribe_done",
+    "model_loading",
+    "model_ready",
 )
 
 ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
     {"int8", "int8_float16", "float16", "float32", "default"}
 )
+
+ALLOWED_ASR_MODES: frozenset[str] = frozenset({"eager", "lazy"})
 
 ALLOWED_SAMPLE_RATES: frozenset[int] = frozenset({8000, 16000, 22050, 44100, 48000})
 
@@ -56,6 +60,8 @@ class AsrConfig:
     beam_size: int
     compute_type: str
     silence_threshold: float
+    mode: str
+    idle_unload_seconds: int
 
 
 @dataclass(frozen=True)
@@ -118,6 +124,8 @@ class Config:
                 beam_size=5,
                 compute_type="int8",
                 silence_threshold=0.6,
+                mode="lazy",
+                idle_unload_seconds=3600,
             ),
             feedback=FeedbackConfig(
                 volume=0.6,
@@ -234,12 +242,20 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
     silence_threshold = _expect_number(table, "silence_threshold", "asr.silence_threshold", path)
     if not (0.0 <= silence_threshold <= 1.0):
         raise ConfigError(path, "asr.silence_threshold", "must satisfy 0.0 <= x <= 1.0")
+    mode = _expect_str(table, "mode", "asr.mode", path)
+    if mode not in ALLOWED_ASR_MODES:
+        raise ConfigError(path, "asr.mode", f"must be one of {sorted(ALLOWED_ASR_MODES)}")
+    idle_unload_seconds = _expect_int(table, "idle_unload_seconds", "asr.idle_unload_seconds", path)
+    if not (0 <= idle_unload_seconds <= 86400):
+        raise ConfigError(path, "asr.idle_unload_seconds", "must satisfy 0 <= x <= 86400")
     return AsrConfig(
         model=model,
         language=language,
         beam_size=beam_size,
         compute_type=compute_type,
         silence_threshold=silence_threshold,
+        mode=mode,
+        idle_unload_seconds=idle_unload_seconds,
     )
 
 
@@ -425,6 +441,8 @@ def _format_default_toml() -> str:
         f"asr.beam_size = {r.beam_size}",
         f"asr.compute_type = {_toml_str(r.compute_type)}",
         f"asr.silence_threshold = {r.silence_threshold}",
+        f"asr.mode = {_toml_str(r.mode)}",
+        f"asr.idle_unload_seconds = {r.idle_unload_seconds}",
         "",
         "# Audio feedback",
         f"feedback.volume = {f.volume}",

@@ -33,6 +33,24 @@ English-only, single utterance at a time.
 
 ## Model lifecycle
 
+Two modes, controlled by `cfg.asr.mode` (default `"lazy"`; see
+`07-configuration.md`):
+
+| Mode     | When `WhisperModel` is constructed                                        |
+|----------|---------------------------------------------------------------------------|
+| `eager`  | At daemon startup (once). Blocks `stenographer run` for 5-30 s.          |
+| `lazy`   | On the first hotkey press. The daemon boots in < 1 s; the first press     |
+|          | plays the `model_loading` cue, shows a loading notification, and starts   |
+|          | the recorder. The `WhisperModel` loads in a background thread (5-30 s),   |
+|          | and when it finishes the `model_ready` cue and notification fire.         |
+|          | Recording and transcription run in parallel with the load.                |
+
+`asr.mode` applies only to the daemon (`stenographer run`). One-shot
+commands (`transcribe FILE`, `dictate`) always construct the model
+eagerly.
+
+### `Model` (eager)
+
 ```python
 from faster_whisper import WhisperModel
 
@@ -47,8 +65,8 @@ class Model:
     def transcribe(self, samples: np.ndarray, language: str,
                    beam_size: int,
                    on_segment: Callable[[SegmentInfo], None] | None = None,
-                   ) -> tuple[str, list[SegmentInfo]]:
-        """Run inference. Returns (text, segments).
+                   ) -> TranscriptionResult:
+        """Run inference. Returns (text, duration, segments).
 
         If *on_segment* is not ``None`` it is called for each
         ``SegmentInfo`` as the model produces it, enabling the
@@ -63,12 +81,77 @@ class Model:
             condition_on_previous_text=False,
         )
         text = "".join(seg.text for seg in segments).strip()
-        return text, list(segments)
+        return TranscriptionResult(
+            text=text,
+            duration_seconds=info.duration,
+            segments=seg_infos,
+        )
 ```
 
-The `WhisperModel` is constructed **once** at daemon startup. Loading
-`large-v3` takes 5-30 s; this is acceptable for the daemon (one-time
-cost) but `transcribe FILE` must show a progress hint.
+### `LazyModel` (lazy)
+
+```python
+import gc
+import threading
+from collections.abc import Callable
+
+class LazyModel:
+    """Wraps :class:`Model`, deferring construction to the first hotkey press.
+
+    Used by the daemon when ``cfg.asr.mode == "lazy"``.  The session
+    calls :meth:`ensure_loaded` (non-blocking) on the first hotkey
+    press; the first :meth:`transcribe` call blocks until the inner
+    :class:`Model` is constructed.
+
+    Idle unload (``asr.idle_unload_seconds``)
+    ------------------------------------------
+
+    After ``asr.idle_unload_seconds`` (default 3600, i.e. 1 hour)
+    without a :meth:`transcribe` call, the inner :class:`Model` is
+    dropped and ``gc.collect()`` is called to reclaim GPU / CPU
+    memory.  A subsequent :meth:`transcribe` or
+    :meth:`ensure_loaded` triggers a fresh load with the full
+    loading-sequence (``model_loading`` cue, notification, etc.).
+
+    Set ``asr.idle_unload_seconds`` to 0 to disable unloading
+    (the model stays resident once loaded).
+    """
+
+    def __init__(
+        self,
+        cfg: AsrConfig,
+        idle_unload_seconds: float | None = None,
+    ) -> None: ...
+
+    def ensure_loaded(
+        self,
+        on_loaded: Callable[[], None] | None = None,
+    ) -> None:
+        """Start loading the inner Model on a background thread.
+
+        Idempotent: returns immediately if the model is already
+        loaded or currently loading.  The optional *on_loaded*
+        callback fires on the loader thread exactly once when the
+        model becomes available.
+        """
+
+    def is_loaded(self) -> bool: ...
+
+    def close(self) -> None:
+        """Cancel the idle-unload timer.  Does NOT unload the model."""
+
+    def transcribe(
+        self, samples, language, beam_size, on_segment=None,
+    ) -> TranscriptionResult:
+        """Wait until the model is loaded (blocking), then run inference.
+
+        Reschedules the idle-unload timer on every successful call.
+        """
+```
+
+On load failure the stored exception is re-raised from
+:meth:`transcribe` so the Worker thread can route it through the
+normal error path (``error`` cue, logged, resumable).
 
 `faster-whisper` automatically downloads the model to the HuggingFace
 Hub cache on first construction if it is not present. The startup

@@ -73,6 +73,22 @@ def build_cues(sample_rate: int) -> dict[str, np.ndarray]:
         "error": tone(220.0, 0.250, DBFS_ERROR, sample_rate),
         "segment": tone(660.0, SEGMENT_S, DBFS_SEGMENT, sample_rate),
         "transcribe_done": silence(TRANSCRIBE_DONE_S, sample_rate),
+        "model_loading": np.concatenate(
+            [
+                tone(440.0, 0.080, DBFS_BEEP, sample_rate),
+                silence(GAP_S, sample_rate),
+                tone(554.0, 0.080, DBFS_BEEP, sample_rate),
+                silence(GAP_S, sample_rate),
+                tone(660.0, 0.080, DBFS_BEEP, sample_rate),
+            ]
+        ),
+        "model_ready": np.concatenate(
+            [
+                tone(880.0, 0.060, -10.0, sample_rate),
+                silence(0.040, sample_rate),
+                tone(880.0, 0.060, -10.0, sample_rate),
+            ]
+        ),
     }
 
 

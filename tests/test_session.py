@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import threading
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -49,6 +49,7 @@ def _make_session(
         feedback=feedback,
         injector=injector,
         clipboard=clipboard,
+        notification=components.get("notification", None),
         one_shot=one_shot,
     )
     return session, components
@@ -441,3 +442,88 @@ def test_on_recording_stop_logs_queue_depth_when_backlog() -> None:
     # Queue should now have 2 items (the dummy + the new one)
     # The dummy is blocking the processor, so the new one is queued
     assert session._utterance_queue.qsize() >= 1  # dummy might have been picked up already
+
+
+# ---------------------------------------------------------------------------
+# Lazy-mode tests
+# ---------------------------------------------------------------------------
+
+
+def test_on_recording_start_lazy_mode_triggers_load_and_shows_loading() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.mode = "lazy"
+    c["worker"].is_model_loaded.return_value = False
+    session.on_recording_start()
+    c["worker"].ensure_model_loaded.assert_called_once()
+    assert c["feedback"].play.call_count >= 1
+    c["feedback"].play.assert_any_call("model_loading")
+    assert session._notification is None  # no notification in default _make_session
+
+
+def test_on_recording_start_lazy_first_press_shows_loading_notification() -> None:
+    from stenographer.notification import DesktopNotification
+
+    notif = DesktopNotification()
+    notif._available = True
+    session, _m = _make_session(notification=MagicMock(wraps=notif))
+    c = _components(session)
+    c["cfg"].asr.mode = "lazy"
+    c["worker"].is_model_loaded.return_value = False
+    c["worker"].ensure_model_loaded = MagicMock()
+    with patch("stenographer.notification.subprocess.run") as run:
+        session.on_recording_start()
+    assert run.call_count >= 1
+    cmd_lines = [run.call_args_list[i][0][0] for i in range(run.call_count)]
+    assert any("Loading speech model" in " ".join(str(a) for a in args) for args in cmd_lines)
+
+
+def test_on_recording_start_eager_mode_does_not_trigger_load() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    session.on_recording_start()
+    c["worker"].ensure_model_loaded.assert_not_called()
+
+
+def test_on_recording_start_lazy_second_press_skips_load() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.mode = "lazy"
+    c["worker"].is_model_loaded.return_value = True
+    session.on_recording_start()
+    c["worker"].ensure_model_loaded.assert_not_called()
+    c["feedback"].play.assert_not_called()
+
+
+def test_on_model_loaded_plays_ready_cue_and_notification() -> None:
+    from stenographer.notification import DesktopNotification
+
+    notif = DesktopNotification()
+    notif._available = True
+    session, _m = _make_session(notification=MagicMock(wraps=notif))
+    c = _components(session)
+    with patch("stenographer.notification.subprocess.run") as run:
+        session._on_model_loaded()
+    c["feedback"].play.assert_called_once_with("model_ready")
+    cmd_lines = [run.call_args_list[i][0][0] for i in range(run.call_count)]
+    assert any("Model ready" in " ".join(str(a) for a in args) for args in cmd_lines)
+
+
+def test_on_model_loading_plays_loading_cue() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    session._on_model_loading()
+    c["feedback"].play.assert_called_once_with("model_loading")
+
+
+def test_on_model_unloaded_shows_notification() -> None:
+    from stenographer.notification import DesktopNotification
+
+    notif = DesktopNotification()
+    notif._available = True
+    session, _m = _make_session(notification=MagicMock(wraps=notif))
+    with patch("stenographer.notification.subprocess.run") as run:
+        session._on_model_unloaded()
+    cmd_lines = [run.call_args_list[i][0][0] for i in range(run.call_count)]
+    assert any("Speech model unloaded" in " ".join(str(a) for a in args) for args in cmd_lines)

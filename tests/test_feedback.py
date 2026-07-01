@@ -192,3 +192,11 @@ def test_real_pw_play_invocation() -> None:
     )
     rc = proc.wait(timeout=5.0)
     assert rc == 0
+
+
+def test_bundled_model_loading_asset_exists() -> None:
+    assert (BUNDLED_ASSET_ROOT / "model_loading.wav").is_file()
+
+
+def test_bundled_model_ready_asset_exists() -> None:
+    assert (BUNDLED_ASSET_ROOT / "model_ready.wav").is_file()

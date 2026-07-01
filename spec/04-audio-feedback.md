@@ -23,9 +23,9 @@ they are loaded from, and how they are played. The component is
 
 ## Cue catalogue (v1)
 
-Six cues, named exactly as below. The hotkey state machine
-(`01-hotkey.md`) and the error helper (`09-error-handling.md`) refer
-to them by these names.
+Eight cues, named exactly as below. The hotkey state machine
+(`01-hotkey.md`), the error helper (`09-error-handling.md`), and the
+Session orchestrator (`08-process-model.md`) refer to them by these names.
 
 | Cue name          | Fired by                                  | Audio content (default)                          |
 |-------------------|-------------------------------------------|--------------------------------------------------|
@@ -35,10 +35,15 @@ to them by these names.
 | `toggle_off`      | Hotkey state machine, on toggle-off (keydown during rec) | 2 low beeps: 440 Hz, 80 ms, 60 ms gap, -12 dBFS |
 | `error`           | `errors.notify_failure`                   | 1 low buzz: 220 Hz, 250 ms, -6 dBFS              |
 | `transcribe_done` | Session, after successful injection       | (silent in v1)                                   |
+| `model_loading`   | Session, on first hotkey press in lazy mode | 3 ascending tones: 440, 554, 660 Hz, 80 ms each, 60 ms gap, -12 dBFS |
+| `model_ready`     | Session, when lazy-mode model load completes | 2 quick high beeps: 880 Hz, 60 ms, 40 ms gap, -10 dBFS |
 
 `transcribe_done` is a stub in v1 — the cue exists in the catalogue
 and the asset is bundled, but no code path fires it yet. The asset is
 a no-op (a 10 ms silent WAV) so the file resolves cleanly.
+
+`model_loading` and `model_ready` are used only when
+`cfg.asr.mode == "lazy"`; in eager mode they are never fired.
 
 `v1` ships **pre-rendered WAVs** at the parameters above. The
 implementation MAY also generate them on the fly (numpy -> WAV
@@ -93,7 +98,7 @@ import pathlib
 
 CueName = Literal[
     "ptt_on", "ptt_off", "toggle_on", "toggle_off",
-    "error", "transcribe_done",
+    "error", "transcribe_done", "model_loading", "model_ready",
 ]
 
 class Feedback:
@@ -165,6 +170,8 @@ unchanged.
 | Hotkey keydown while in toggle recording   | `toggle_off`     | `01-hotkey.md`       |
 | `errors.notify_failure`                    | `error`          | `09-error-handling.md` |
 | Successful transcript injected (v2)        | `transcribe_done` | `08-process-model.md` |
+| First hotkey press in lazy mode            | `model_loading`  | `08-process-model.md` |
+| Lazy-mode model load completes             | `model_ready`    | `08-process-model.md` |
 
 ## Out of scope (v1)
 

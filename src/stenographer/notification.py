@@ -119,3 +119,90 @@ class DesktopNotification:
             self._available = False
             self._last_failure = time.monotonic()
             logger.debug("notification: swaync-client failed: %s", exc)
+
+    def show_model_loading(self) -> None:
+        if not self._ensure_available():
+            return
+        try:
+            cmd = [
+                "notify-send",
+                "-a",
+                "Stenographer",
+                "-t",
+                "0",
+            ]
+            if self._icon_path is not None:
+                cmd.extend(["-i", str(self._icon_path)])
+            cmd.extend(["Stenographer", "Loading speech model\u2009\u2014\u2009listening\u2026"])
+            subprocess.run(
+                cmd,
+                check=True,
+                timeout=5.0,
+                capture_output=True,
+            )
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ) as exc:
+            self._available = False
+            self._last_failure = time.monotonic()
+            logger.debug("notification: model_loading failed: %s", exc)
+
+    def show_model_ready(self) -> None:
+        if not self._ensure_available():
+            return
+        try:
+            cmd = [
+                "notify-send",
+                "-a",
+                "Stenographer",
+                "-t",
+                "5000",
+            ]
+            if self._icon_path is not None:
+                cmd.extend(["-i", str(self._icon_path)])
+            cmd.extend(["Stenographer", "Model ready"])
+            subprocess.run(
+                cmd,
+                check=True,
+                timeout=5.0,
+                capture_output=True,
+            )
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ) as exc:
+            self._available = False
+            self._last_failure = time.monotonic()
+            logger.debug("notification: model_ready failed: %s", exc)
+
+    def show_model_unloaded(self) -> None:
+        if not self._ensure_available():
+            return
+        try:
+            cmd = [
+                "notify-send",
+                "-a",
+                "Stenographer",
+                "-t",
+                "5000",
+            ]
+            if self._icon_path is not None:
+                cmd.extend(["-i", str(self._icon_path)])
+            cmd.extend(["Stenographer", "Speech model unloaded (idle)"])
+            subprocess.run(
+                cmd,
+                check=True,
+                timeout=5.0,
+                capture_output=True,
+            )
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ) as exc:
+            self._available = False
+            self._last_failure = time.monotonic()
+            logger.debug("notification: model_unloaded failed: %s", exc)

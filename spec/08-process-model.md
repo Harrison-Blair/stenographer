@@ -95,8 +95,11 @@ shutdown signal does not race.
 1. **Boot** (daemon start):
    1. `Config.load`.
    2. `Capabilities.probe`.
-   3. Construct the model (`faster_whisper.WhisperModel(...)`) —
-      this blocks for 5-30 s on first run.
+   3. Construct the model. In `eager` mode: `Model(cfg.asr)` blocks
+      for 5-30 s, then fires a desktop notification (`show_model_ready`).
+      In `lazy` mode: `LazyModel(cfg.asr)` returns immediately; the
+      actual `WhisperModel` is constructed later on the first hotkey
+      press (see below).
    4. Construct `Feedback`, `Injector`, `ClipboardManager`,
       `Worker` (with the model), `Recorder`, `HotkeyListener`.
    5. Construct `Session` and call `session.start()` to launch the
@@ -105,32 +108,54 @@ shutdown signal does not race.
 
 2. **Recording (PTT or toggle-on)**: `listener` calls
    `session.on_recording_start()`. The session:
-   - Fires the appropriate start cue (via `Feedback.play`).
-   - Calls `recorder.start()`.
-   - Returns immediately (the listener thread continues to read
-     evdev events).
+   - If `cfg.asr.mode == "lazy"` and the model has not been loaded
+     yet: play the `model_loading` cue, show a persistent
+     "Loading speech model — listening…" notification, and call
+     `worker.ensure_model_loaded(on_loaded=…)`.  The `on_loaded`
+     callback plays the `model_ready` cue and shows a transient
+     "Model ready" notification when the load finishes.
+   - Start the recorder (even in lazy mode — recording and model
+     load run in parallel).
+   - If the model was already loaded (or in eager mode): show the
+     normal "Listening…" notification.
+   - Return immediately.
 
 3. **Recording stop (PTT keyup or toggle-off keydown)**: `listener`
    calls `session.on_recording_stop()`. The session:
    - Calls `recorder.stop()` to get the `numpy.ndarray`.
    - Enqueues the buffer into the utterance queue.
-   - Returns immediately (the listener thread can process new
-     hotkey events). The appropriate stop cue was already fired
+   - Returns immediately. The appropriate stop cue was already fired
      by the listener before calling `on_recording_stop` (see
      `01-hotkey.md`).
 
-   The **processor thread** (a dedicated daemon thread, created at
-   startup via `session.start()`) picks up the buffer, submits it
-   to `worker.submit(buffer)`, and awaits the `Future[Result]` with
-   a 5-minute timeout. On `Result`, it calls
-   `injector.type_text(result.text)` and
-   `clipboard.copy(result.text)`.
+   The **processor thread** picks up the buffer, submits it to
+   `worker.submit(buffer)`, and awaits the `Future[Result]`.  In
+   lazy mode, if the model is still loading, the Worker thread
+   blocks on `LazyModel.transcribe` until the load completes —
+   the first utterance is only transcribed once the model is
+   ready.  The load runs in a separate background thread, so it
+   does not block the processor thread's `Future` wait.
+
+   On `Result`, the processor calls `injector.type_text(result.text)`
+   and `clipboard.copy(result.text)`.
 
    The session transitions to `IDLE` immediately after enqueuing.
    Transcription and output run concurrently with the next
-   recording. If the user starts a new utterance while a previous
-   one is still transcribing, the new buffer is queued and
-   processed in order.
+   recording.
+
+### Idle unload (lazy mode only)
+
+When `cfg.asr.mode == "lazy"` and `cfg.asr.idle_unload_seconds > 0`,
+the LazyModel schedules a timer after every successful
+`transcribe()` call.  If the timer expires (no transcription for
+`asr.idle_unload_seconds` seconds), the inner `Model` is dropped,
+`gc.collect()` is called to reclaim GPU / CPU memory, and a
+"Speech model unloaded (idle)" desktop notification is shown.
+
+The next hotkey press triggers the same loading sequence as the
+first press (cues + loading notification + recording in parallel).
+This re-load → transcribe → idle-unload cycle repeats for the
+lifetime of the daemon.
 
 4. **Signal handling**: SIGINT and SIGTERM set a `threading.Event`.
    The main thread, currently blocked in `session.run()`, wakes
