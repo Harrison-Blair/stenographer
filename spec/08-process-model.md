@@ -215,7 +215,11 @@ def cmd_doctor(cfg: Config) -> int:
     print(f"wl-copy:       {'yes' if caps.has_wl_copy else 'NO  (clipboard disabled)'}")
     print(f"pw-play/paplay:{'yes' if (caps.has_pw_play or caps.has_paplay) else 'NO  (audio feedback disabled)'}")
     print(f"input group:   {'yes' if caps.has_input_group else 'NO  (hotkey disabled)'}")
-    print(f"mic device:    {'yes' if caps.has_mic else 'NO  (recording disabled)'}")
+    if caps.has_mic:
+        mic_name = cfg.audio.input_device or f"default: {Recorder.default_input_device_name()}"
+        print(f"mic device:    {mic_name}")
+    else:
+        print("mic device:    NO  (recording disabled)")
     print(f"asr model:     {'yes' if caps.has_asr_model else 'NO  (transcription disabled)'}")
     fatal_cap = not (caps.has_input_group and caps.has_mic and caps.has_asr_model)
     return 78 if fatal_cap else 0
@@ -302,7 +306,6 @@ The same is true of any Python code that uses
 - D-Bus IPC (clients cannot query the daemon or trigger dictation
   out of band).
 - A control socket (no `stenographerctl`).
-- A GUI notification on startup / shutdown.
 - Auto-update of the ASR model.
 
 ## `update` subcommand (cross-reference)

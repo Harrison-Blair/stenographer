@@ -24,7 +24,6 @@ class Capabilities:
     has_input_group: bool
     has_mic: bool
     has_asr_model: bool
-    has_swaync: bool
 
     @classmethod
     def probe(cls, cfg: Config) -> Capabilities:
@@ -58,10 +57,6 @@ class Capabilities:
         except Exception:
             has_asr_model = False
 
-        has_swaync = (
-            shutil.which("swaync-client") is not None and shutil.which("notify-send") is not None
-        )
-
         return cls(
             has_wtype=has_wtype,
             has_wl_copy=has_wl_copy,
@@ -70,5 +65,4 @@ class Capabilities:
             has_input_group=has_input_group,
             has_mic=has_mic,
             has_asr_model=has_asr_model,
-            has_swaync=has_swaync,
         )

@@ -9,6 +9,7 @@ import fcntl
 import logging
 import os
 import pathlib
+import shutil
 import signal
 import subprocess
 import sys
@@ -175,7 +176,6 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
     )
     clipboard = ClipboardManager(available=caps.has_wl_copy)
     notification = DesktopNotification(
-        available=caps.has_swaync,
         icon_path=_ICON_ROOT / "stenographer.png",
     )
     binding = HotkeyBinding.parse(cfg.hotkey.binding)
@@ -227,6 +227,8 @@ def cmd_run(cfg: Config) -> int:
     session._listener.start()
     _install_signal_handlers(session)
     log.info("session: daemon running (pid=%d)", os.getpid())
+    if session._notification is not None:
+        session._notification.show_startup(cfg.hotkey.binding)
     try:
         session.run()
     finally:
@@ -340,6 +342,8 @@ def cmd_dictate(cfg: Config) -> int:
     session._listener.start()
     _install_signal_handlers(session)
     log.info("session: dictate mode armed; press the hotkey once")
+    if session._notification is not None:
+        session._notification.show_startup(cfg.hotkey.binding)
     try:
         session.run()
     finally:
@@ -501,9 +505,16 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     audio_str = "yes" if has_audio else "NO  (audio feedback disabled)"
     print(f"pw-play/paplay: {audio_str}")
     print(f"input group:    {'yes' if caps.has_input_group else 'NO  (hotkey disabled)'}")
-    print(f"mic device:     {'yes' if caps.has_mic else 'NO  (recording disabled)'}")
+    if caps.has_mic:
+        mic_name = cfg.audio.input_device or f"default: {Recorder.default_input_device_name()}"
+        print(f"mic device:     {mic_name}")
+    else:
+        print("mic device:     NO  (recording disabled)")
     print(f"asr model:      {'yes' if caps.has_asr_model else 'NO  (transcription disabled)'}")
-    print(f"swaync:         {'yes' if caps.has_swaync else 'NO  (desktop notification)'}")
+    has_swaync = (
+        shutil.which("swaync-client") is not None and shutil.which("notify-send") is not None
+    )
+    print(f"swaync:         {'yes' if has_swaync else 'NO  (desktop notification)'}")
     fatal_cap = not (caps.has_input_group and caps.has_mic and caps.has_asr_model)
     return 78 if fatal_cap else 0
 
@@ -513,8 +524,8 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="stenographer",
         description="Local, offline, Wayland push-to-talk / toggle dictation.",
     )
-    parser.add_argument("--config", type=pathlib.Path, default=None)
-    parser.add_argument("--version", action="version", version=f"stenographer {__version__}")
+    parser.add_argument("-c", "--config", type=pathlib.Path, default=None)
+    parser.add_argument("-v", "--version", action="version", version=f"stenographer {__version__}")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
     run_parser = sub.add_parser("run", help="Start/stop/disable the daemon.")

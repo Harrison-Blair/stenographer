@@ -30,7 +30,7 @@ def test_start_opens_input_stream_with_expected_kwargs() -> None:
     assert patched.call_count == 1
     kwargs = patched.call_args.kwargs
     assert kwargs["samplerate"] == 16000
-    assert kwargs["channels"] == 1
+    assert kwargs["channels"] == 2
     assert kwargs["dtype"] == "float32"
     assert kwargs["blocksize"] == 1024
     assert kwargs["device"] is None
@@ -191,3 +191,129 @@ def test_real_audio_recording_returns_well_shaped_buffer() -> None:
     assert min_samples <= n <= max_samples, (
         f"expected between {min_samples} and {max_samples} samples at {rate} Hz; got {n}"
     )
+
+
+def test_start_falls_back_on_invalid_sample_rate() -> None:
+    fake_stream = MagicMock()
+    with patch(
+        "sounddevice.InputStream",
+        side_effect=[
+            sounddevice.PortAudioError("Invalid sample rate", -9997),
+            fake_stream,
+        ],
+    ) as patched:
+        r = Recorder(sample_rate=16000, frames_per_buffer=1024, device=None, on_error=_noop)
+        r.start()
+    assert patched.call_count == 2
+    assert patched.call_args_list[0].kwargs["samplerate"] == 16000
+    assert patched.call_args_list[1].kwargs["samplerate"] == 48000
+    assert r._sample_rate == 48000
+    assert r.is_active is True
+    r.stop()
+
+
+def test_start_does_not_fallback_on_non_rate_error() -> None:
+    with patch(
+        "sounddevice.InputStream",
+        side_effect=sounddevice.PortAudioError("Invalid device", -9996),
+    ):
+        r = Recorder(sample_rate=16000, frames_per_buffer=1024, device=None, on_error=_noop)
+        with pytest.raises(sounddevice.PortAudioError):
+            r.start()
+    assert r.is_active is False
+
+
+def test_start_raises_when_all_rates_rejected() -> None:
+    with patch(
+        "sounddevice.InputStream",
+        side_effect=sounddevice.PortAudioError("Invalid sample rate", -9997),
+    ):
+        r = Recorder(sample_rate=16000, frames_per_buffer=1024, device=None, on_error=_noop)
+        with pytest.raises(sounddevice.PortAudioError):
+            r.start()
+    assert r.is_active is False
+
+
+def test_start_uses_configured_rate_when_accepted() -> None:
+    errors: list[Exception] = []
+
+    def collect(exc: Exception) -> None:
+        errors.append(exc)
+
+    fake_stream = MagicMock()
+    with patch("sounddevice.InputStream", fake_stream) as patched:
+        r = Recorder(sample_rate=44100, frames_per_buffer=1024, device=None, on_error=collect)
+        r.start()
+    assert patched.call_count == 1
+    assert patched.call_args.kwargs["samplerate"] == 44100
+    assert r._sample_rate == 44100
+    assert errors == []
+    r.stop()
+
+
+def test_stop_resamples_fallback_buffer_to_configured_rate() -> None:
+    """If the device opens at a non-configured rate via the fallback loop,
+    stop() MUST return a buffer resampled to cfg.audio.sample_rate so the
+    ASR model gets samples at its expected 16 kHz."""
+    fake_stream = MagicMock()
+    with patch(
+        "sounddevice.InputStream",
+        side_effect=[
+            sounddevice.PortAudioError("Invalid sample rate", -9997),
+            fake_stream,
+        ],
+    ) as patched:
+        r = Recorder(sample_rate=16000, frames_per_buffer=1024, device=None, on_error=_noop)
+        r.start()
+    assert patched.call_args_list[1].kwargs["samplerate"] == 48000
+    assert r._sample_rate == 48000
+    # Feed ~1s of 48 kHz mono (sine) into the callback.
+    n_in = 48000
+    t = np.arange(n_in, dtype=np.float32) / 48000
+    block = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32).reshape(-1, 1)
+    r._on_audio(block, n_in, None, None)
+    out = r.stop()
+    assert out.dtype == np.float32
+    assert out.ndim == 2
+    assert out.shape[1] == 1
+    # ~1s at 16 kHz (filter tail adds a handful of samples; allow slack).
+    assert 15700 <= out.shape[0] <= 16500
+    # Energy should survive the anti-aliased downsample (no silent / aliased output).
+    assert float(np.sqrt(np.mean(out[:, 0] ** 2))) > 0.1
+
+
+def test_stop_no_resample_when_device_opened_at_configured_rate() -> None:
+    """Happy path (PipeWire default opens 16 kHz without fallback): stop()
+    MUST NOT resample — the buffer must pass through byte-identical in length."""
+    fake_stream = MagicMock()
+    with patch("sounddevice.InputStream", fake_stream):
+        r = Recorder(sample_rate=16000, frames_per_buffer=1024, device=None, on_error=_noop)
+        r.start()
+    assert r._sample_rate == 16000
+    frames = 1024
+    r._on_audio(np.ones((frames, 1), dtype=np.float32), frames, None, None)
+    out = r.stop()
+    assert out.shape == (frames, 1)
+    assert np.allclose(out[:, 0], 1.0)
+
+
+def test_resample_poly_identity_and_empty() -> None:
+    from stenographer.audio.capture import _resample_poly
+
+    x = np.linspace(-1, 1, 100, dtype=np.float32)
+    assert np.array_equal(_resample_poly(x, 16000, 16000), x)
+    assert _resample_poly(np.zeros(0, dtype=np.float32), 48000, 16000).shape == (0,)
+
+
+def test_resample_poly_downsamples_48k_to_16k_without_aliasing() -> None:
+    from stenographer.audio.capture import _resample_poly
+
+    sr_in, sr_out = 48000, 16000
+    t = np.arange(sr_in, dtype=np.float32) / sr_in
+    x = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    y = _resample_poly(x, sr_in, sr_out)
+    assert y.dtype == np.float32
+    # ~1s at the target rate.
+    assert 15700 <= y.size <= 16500
+    # Anti-aliased: RMS at the output must be close to the input RMS.
+    assert abs(float(np.sqrt(np.mean(x**2))) - float(np.sqrt(np.mean(y**2)))) < 0.02

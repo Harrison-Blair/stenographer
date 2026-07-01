@@ -33,9 +33,28 @@ session) and that survives mid-utterance device errors.
 | `latency`        | `"high"`                                                | spec (we don't need real-time)          |
 | `callback`       | `Recorder._on_audio`                                    | this doc                                |
 
-faster-whisper resamples from this rate to 16 kHz internally. 16 kHz is
-the default device rate to keep that no-op, but the spec allows
-`8000`, `22050`, `44100`, or `48000` (validated in `07-configuration.md`).
+### Sample-rate contract with the ASR model
+
+faster-whisper's `FeatureExtractor` is hard-coded to
+`sampling_rate=16000` / `hop_length=160`. **It does NOT resample
+ndarray input** — that path is only exercised by its PyAV-based file
+decoder (`faster_whisper.audio.decode_audio`). When the Recorder hands
+an `ndarray` to `Worker.submit`, those samples MUST already be at the
+model's expected rate (16 kHz mono) or the mel-spectrogram is computed
+at the wrong time scale and the transcription comes out as garbage.
+
+`cfg.audio.sample_rate` (default `16000`, see `07-configuration.md`)
+is therefore the rate the ASR model receives. The spec allows
+`8000`, `22050`, `44100`, or `48000` (validated in
+`07-configuration.md`) for the device-open attempt, but if the device
+opens at a different rate than the configured one — including through
+the fallback loop below — **the Recorder MUST resample the captured
+mono buffer to `cfg.audio.sample_rate` before returning it from
+`stop()`**, using a polyphase FIR with an anti-aliasing lowpass at
+`min(rate_in, rate_out) / 2`. Pushing the configured value to 16 kHz and
+letting PipeWire resample on the way in is the recommended happy path;
+the Recorder's own resampler is the safety net for devices (e.g. a raw
+ALSA/JACK node) that refuse 16 kHz.
 
 ## Buffer representation
 
