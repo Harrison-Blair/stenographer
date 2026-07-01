@@ -16,6 +16,7 @@
 # first run.
 
 # -*- mode: python ; coding: utf-8 -*-
+import certifi
 from pathlib import Path
 
 block_cipher = None
@@ -28,8 +29,8 @@ a = Analysis(
     [str(PROJECT_ROOT / "src" / "stenographer" / "cli.py")],
     pathex=[str(PROJECT_ROOT / "src")],
     binaries=[],
-    datas=[(str(ASSET_SRC), "stenographer/assets/sounds"), (str(ICON_SRC), "stenographer/assets/icons")],
-    hiddenimports=["sounddevice", "evdev", "evdev._ecodes"],
+    datas=[(str(ASSET_SRC), "stenographer/assets/sounds"), (str(ICON_SRC), "stenographer/assets/icons"), (certifi.where(), "certifi")],
+    hiddenimports=["sounddevice", "evdev", "evdev._ecodes", "certifi"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

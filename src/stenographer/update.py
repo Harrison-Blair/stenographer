@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -22,10 +23,13 @@ import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
 
+import certifi
 from packaging.version import InvalidVersion, Version
 
 from stenographer import __version__
 from stenographer.errors import UpdateError
+
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 if TYPE_CHECKING:
     from stenographer.config import UpdateConfig
@@ -96,7 +100,7 @@ def _runtime_dir() -> pathlib.Path:
 def _http_get(url: str, *, timeout: int) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT) as resp:
             return resp.read()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
@@ -201,7 +205,10 @@ def _download_to(url: str, dest: pathlib.Path, *, timeout: int) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp, dest.open("wb") as out:
+        with (
+            urllib.request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT) as resp,
+            dest.open("wb") as out,
+        ):
             while True:
                 chunk = resp.read(CHUNK_SIZE)
                 if not chunk:

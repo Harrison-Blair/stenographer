@@ -15,6 +15,7 @@ dependencies = [
     "evdev>=1.4",
     "soundfile>=0.12",
     "packaging>=24.0",
+    "certifi>=2024.0",
 ]
 
 [project.optional-dependencies]
