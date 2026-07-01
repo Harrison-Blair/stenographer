@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -11,9 +13,26 @@ import numpy as np
 from faster_whisper import WhisperModel
 
 if TYPE_CHECKING:
+    from stenographer.asr.worker import Worker
     from stenographer.config import AsrConfig
 
 log = logging.getLogger(__name__)
+
+
+def _read_rss_kb() -> int | None:
+    """Return current VmRSS in kB from ``/proc/self/status`` (Linux only).
+
+    Used only by the opt-in ``STENOGRAPHER_TRACE_UNLOAD`` tracing path.
+    Returns ``None`` if not available (non-Linux or unreadable).
+    """
+    try:
+        with open("/proc/self/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except OSError, ValueError, IndexError:
+        return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -120,6 +139,8 @@ class LazyModel:
         self._on_unloaded_cb: Callable[[], None] | None = None
         self._unload_timer: threading.Timer | None = None
         self._load_exception: BaseException | None = None
+        self._worker_ref: weakref.ref[Worker] | None = None
+        self._load_generation: int = 0
 
     @property
     def language(self) -> str:
@@ -128,6 +149,14 @@ class LazyModel:
     @property
     def beam_size(self) -> int:
         return self._cfg.beam_size
+
+    def attach_worker(self, worker: Worker) -> None:
+        """Stash a weakref to the owning Worker so the idle-unload timer
+        can route model disposal onto the worker thread (where the
+        CTranslate2 ReplicaPool binding lives).  Called once by the
+        CLI after both objects are constructed.
+        """
+        self._worker_ref = weakref.ref(worker)
 
     def ensure_loaded(
         self,
@@ -197,6 +226,7 @@ class LazyModel:
                 impl = self._impl
             assert impl is not None
             result = impl.transcribe(samples, language, beam_size, on_segment=on_segment)
+            self._load_generation += 1
             self._schedule_unload()
             return result
 
@@ -235,12 +265,47 @@ class LazyModel:
         with self._lock:
             if self._unload_timer is not None:
                 self._unload_timer.cancel()
-            self._unload_timer = threading.Timer(self._idle_unload_seconds, self._unload)
+            self._unload_timer = threading.Timer(
+                self._idle_unload_seconds, self._request_unload_via_worker
+            )
             self._unload_timer.daemon = True
             self._unload_timer.name = "asr-model-unload"
             self._unload_timer.start()
 
+    def _request_unload_via_worker(self) -> None:
+        """Fire on the timer thread. Hands the actual disposal off to
+        the Worker thread via a sentinel job; the Worker thread is
+        where CTranslate2's ReplicaPool bound the model, so dropping
+        it there is what lets the C++ destructor release the weights.
+        Falls back to in-timer-thread ``_unload`` only if the Worker
+        has gone away (defensive; should not happen in normal life).
+        """
+        gen = self._load_generation
+        worker_ref = self._worker_ref
+        worker = worker_ref() if worker_ref is not None else None
+        if worker is not None:
+            worker.request_unload(gen)
+        else:
+            self._unload()
+
+    def do_unload_on_worker(self, token: int) -> None:
+        """Run on the Worker thread. Drops the model iff *token* matches
+        the current ``_load_generation`` (a transcribe that happened
+        between the timer firing and the Worker dequeuing the request
+        would have bumped the generation, invalidating this token).
+        """
+        with self._lock:
+            if token != self._load_generation:
+                log.debug(
+                    "ASR model: unload request stale (token=%s gen=%s), skipping",
+                    token,
+                    self._load_generation,
+                )
+                return
+        self._unload()
+
     def _unload(self) -> None:
+        trace = __debug__ and os.environ.get("STENOGRAPHER_TRACE_UNLOAD") == "1"
         with self._lock:
             impl = self._impl
             self._impl = None
@@ -251,6 +316,22 @@ class LazyModel:
                 "ASR model: unloading after %s s idle",
                 self._idle_unload_seconds,
             )
+            if trace:
+                import gc as _gc
+
+                whisper = getattr(impl, "_impl", None)
+                referrers = (
+                    [type(r).__name__ for r in _gc.get_referrers(whisper)]
+                    if whisper is not None
+                    else ["<no _impl attr>"]
+                )
+                rss0 = _read_rss_kb()
+                log.info(
+                    "trace-unload: before close referrers=%s rss_kb=%s",
+                    referrers,
+                    rss0,
+                )
+                _gc.collect()
             try:
                 impl.close()
             except Exception as exc:

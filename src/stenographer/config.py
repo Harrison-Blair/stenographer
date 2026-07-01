@@ -125,7 +125,7 @@ class Config:
                 compute_type="int8",
                 silence_threshold=0.6,
                 mode="lazy",
-                idle_unload_seconds=3600,
+                idle_unload_seconds=300,
             ),
             feedback=FeedbackConfig(
                 volume=0.6,

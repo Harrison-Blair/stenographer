@@ -148,9 +148,21 @@ shutdown signal does not race.
 When `cfg.asr.mode == "lazy"` and `cfg.asr.idle_unload_seconds > 0`,
 the LazyModel schedules a timer after every successful
 `transcribe()` call.  If the timer expires (no transcription for
-`asr.idle_unload_seconds` seconds), the inner `Model` is dropped,
-`gc.collect()` is called to reclaim GPU / CPU memory, and a
-"Speech model unloaded (idle)" desktop notification is shown.
+`asr.idle_unload_seconds` seconds), the timer thread enqueues an
+unload request onto the Worker's job queue; the **Worker thread**
+then drops the inner `Model`, calls `gc.collect()`, and runs
+`malloc_trim(0)` to return the freed weights and inference scratch
+to the OS.  A "Speech model unloaded (idle)" desktop notification
+is shown.
+
+Disposal runs on the Worker thread (not the timer thread) because
+CTranslate2 binds the model to that thread via a `thread_local`
+replica slot; dropping the Python reference on a different thread
+defers the C++ destructor — and the `munmap` of the model weights —
+until the Worker thread next becomes active or exits.  A generation
+counter on LazyModel invalidates stale unload requests (a transcribe
+that happens between the timer firing and the Worker dequeuing bumps
+the generation, and the Worker drops the stale request).
 
 The next hotkey press triggers the same loading sequence as the
 first press (cues + loading notification + recording in parallel).

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import concurrent.futures
+import ctypes
 import logging
+import os
 import queue
 import threading
 from collections.abc import Callable
@@ -20,6 +22,11 @@ class _CancelledError(Exception):
     during an in-flight transcription."""
 
 
+_UNLOAD = object()
+"""Sentinel placed on the Worker queue by :meth:`Worker.request_unload` to
+signal that the lazy model should be disposed on the worker thread."""
+
+
 @dataclass
 class Job:
     samples: np.ndarray
@@ -31,7 +38,7 @@ class Worker:
     def __init__(self, model: Model | LazyModel, timeout_seconds: float = 300.0) -> None:
         self._model = model
         self.timeout_seconds = timeout_seconds
-        self._queue: queue.Queue[Job | None] = queue.Queue()
+        self._queue: queue.Queue[Job | object] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._cancel_event = threading.Event()
 
@@ -50,6 +57,16 @@ class Worker:
         future: concurrent.futures.Future[TranscriptionResult] = concurrent.futures.Future()
         self._queue.put(Job(samples=samples, future=future, on_segment=on_segment))
         return future
+
+    def request_unload(self, token: int) -> None:
+        """Enqueue an idle-unload of the lazy model onto the worker thread.
+
+        The actual disposal runs in :meth:`_run` (worker thread), where
+        CTranslate2's ReplicaPool bound the model, so the C++ destructor
+        can release the weights.  *token* is checked against the
+        LazyModel's ``_load_generation`` to drop stale requests.
+        """
+        self._queue.put((_UNLOAD, token))
 
     def cancel(self) -> None:
         """Signal the in-flight transcription to abort at the next segment boundary.
@@ -91,6 +108,19 @@ class Worker:
             if job is None:
                 log.debug("ASR worker thread exiting")
                 return
+            if isinstance(job, tuple) and len(job) == 2 and job[0] is _UNLOAD:
+                _sentinel, token = job
+                if isinstance(self._model, LazyModel):
+                    self._model.do_unload_on_worker(token)
+                _trim_arena()
+                if __debug__ and os.environ.get("STENOGRAPHER_TRACE_UNLOAD") == "1":
+                    from stenographer.asr.model import _read_rss_kb
+
+                    log.info(
+                        "trace-unload: after malloc_trim rss_kb=%s",
+                        _read_rss_kb(),
+                    )
+                continue
 
             def on_segment(
                 seg: SegmentInfo,
@@ -118,3 +148,21 @@ class Worker:
                 job.future.set_exception(exc)
                 continue
             job.future.set_result(result)
+
+
+def _trim_arena() -> None:
+    """``malloc_trim(0)`` on the worker thread so freed scratch returns
+    to the OS. Linux/glibc only; no-op elsewhere so the binary still
+    runs in CI / non-glibc containers.
+    """
+    try:
+        libc = ctypes.CDLL(None)
+    except OSError:
+        return
+    trim = getattr(libc, "malloc_trim", None)
+    if trim is None:
+        return
+    try:
+        trim(0)
+    except Exception as exc:
+        log.debug("malloc_trim on worker thread failed: %s", exc)

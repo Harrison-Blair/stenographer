@@ -48,7 +48,7 @@ def test_defaults_asr() -> None:
         compute_type="int8",
         silence_threshold=0.6,
         mode="lazy",
-        idle_unload_seconds=3600,
+        idle_unload_seconds=300,
     )
 
 
@@ -338,7 +338,7 @@ def test_write_default_includes_asr_mode(tmp_path: pathlib.Path) -> None:
     Config.write_default(p)
     text = p.read_text(encoding="utf-8")
     assert 'asr.mode = "lazy"' in text
-    assert "asr.idle_unload_seconds = 3600" in text
+    assert "asr.idle_unload_seconds = 300" in text
 
 
 def test_validate_volume_negative_rejected(tmp_path: pathlib.Path) -> None:

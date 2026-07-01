@@ -115,6 +115,27 @@ class LazyModel:
 
     Set ``asr.idle_unload_seconds`` to 0 to disable unloading
     (the model stays resident once loaded).
+
+    Threading of disposal
+    ~~~~~~~~~~~~~~~~~~~~~
+
+    The idle timer fires on its own thread but only enqueues an
+    unload request onto the :class:`Worker`'s queue.  The actual
+    disposal — ``del self._impl``, ``gc.collect()``, then
+    ``malloc_trim(0)`` — runs on the **Worker thread**.  This is
+    required because CTranslate2 binds the model to the worker
+    thread via a ``thread_local`` replica slot; dropping the Python
+    reference on a different thread frees the Python wrapper but
+    defers the C++ destructor (and the ``munmap`` of the model
+    weights) until the worker thread next becomes active or exits.
+    Destroying the model on the worker thread lets the destructor
+    run immediately, and ``malloc_trim(0)`` on the same thread
+    returns the freed inference scratch to the OS at once.
+
+    A *generation counter* guards against stale unload requests: a
+    :meth:`transcribe` call that happens between the timer firing
+    and the Worker dequeuing the request bumps the generation, and
+    the Worker drops the stale request.
     """
 
     def __init__(
@@ -122,6 +143,12 @@ class LazyModel:
         cfg: AsrConfig,
         idle_unload_seconds: float | None = None,
     ) -> None: ...
+
+    def attach_worker(self, worker: "Worker") -> None:
+        """Stash a weakref to the owning Worker so the idle-unload timer
+        can route disposal onto the Worker thread.  Called once by the
+        CLI after both objects are constructed.
+        """
 
     def ensure_loaded(
         self,
@@ -147,7 +174,18 @@ class LazyModel:
 
         Reschedules the idle-unload timer on every successful call.
         """
+
+    def do_unload_on_worker(self, token: int) -> None:
+        """Run on the Worker thread.  Drops the model iff *token* matches
+        the current generation; otherwise no-ops (a transcribe happened
+        since the request was enqueued).
+        """
 ```
+
+The :class:`Worker` gains a ``request_unload(token)`` method that
+enqueues a sentinel onto its job queue; the Worker's run loop handles
+it by calling ``model.do_unload_on_worker(token)`` and then
+``malloc_trim(0)`` (Linux/glibc; no-op elsewhere).
 
 On load failure the stored exception is re-raised from
 :meth:`transcribe` so the Worker thread can route it through the

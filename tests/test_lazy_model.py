@@ -22,7 +22,7 @@ def _cfg(**overrides: object) -> AsrConfig:
         "compute_type": "int8",
         "silence_threshold": 0.6,
         "mode": "lazy",
-        "idle_unload_seconds": 3600,
+        "idle_unload_seconds": 300,
     }
     defaults.update(overrides)
     return AsrConfig(**defaults)  # type: ignore[arg-type]
@@ -164,6 +164,93 @@ class TestIdleUnload:
         assert m._unload_timer is not None
         m.close()
         assert m._unload_timer is None
+
+
+class TestWorkerThreadUnload:
+    """The idle-unload timer routes disposal onto the Worker thread, where
+    CTranslate2 bound the model; a generation counter drops stale requests."""
+
+    def test_attach_worker_stores_weakref(self) -> None:
+        import gc as _gc
+
+        m = LazyModel(_cfg(), idle_unload_seconds=1)
+        worker = MagicMock(spec=["request_unload", "is_alive"])
+        m.attach_worker(worker)
+        assert m._worker_ref is not None
+        assert m._worker_ref() is worker
+        del worker
+        _gc.collect()
+        assert m._worker_ref() is None
+
+    def test_request_unload_via_worker_calls_worker_request_unload(self) -> None:
+        m = LazyModel(_cfg(), idle_unload_seconds=1)
+        worker = MagicMock(spec=["request_unload", "is_alive"])
+        m.attach_worker(worker)
+        m._loaded_event.set()
+        gen = m._load_generation
+        m._request_unload_via_worker()
+        worker.request_unload.assert_called_once_with(gen)
+
+    def test_request_unload_via_worker_falls_back_to_unload_without_worker(self) -> None:
+        m = LazyModel(_cfg(), idle_unload_seconds=1)
+        m._loaded_event.set()
+        m._impl = MagicMock()  # type: ignore[assignment]
+        # No attach_worker: should fall back to _unload (drops _impl).
+        m._request_unload_via_worker()
+        assert m._impl is None
+        assert not m._loaded_event.is_set()
+
+    def test_do_unload_on_worker_matching_token_drops_model(self) -> None:
+        m = LazyModel(_cfg(), idle_unload_seconds=1)
+        m._loaded_event.set()
+        m._impl = MagicMock()  # type: ignore[assignment]
+        m.do_unload_on_worker(m._load_generation)
+        assert m._impl is None
+        assert not m._loaded_event.is_set()
+
+    def test_do_unload_on_worker_stale_token_skips(self) -> None:
+        m = LazyModel(_cfg(), idle_unload_seconds=1)
+        m._loaded_event.set()
+        m._impl = MagicMock()  # type: ignore[assignment]
+        # A transcribe happened after the timer fired, bumping the generation.
+        m._load_generation += 1
+        m.do_unload_on_worker(token=0)
+        assert m._impl is not None
+        assert m._loaded_event.is_set()
+
+    def test_transcribe_bumps_load_generation(self) -> None:
+        m = LazyModel(_cfg(), idle_unload_seconds=3600)
+        fake_impl = MagicMock()
+        fake_impl.transcribe.return_value = TranscriptionResult(text="x", duration_seconds=0.0)
+        m._impl = fake_impl  # type: ignore[assignment]
+        m._loaded_event.set()
+        gen0 = m._load_generation
+        m.transcribe(np.zeros(100, dtype=np.float32), "en", 1)
+        assert m._load_generation == gen0 + 1
+        m._unload_timer.cancel()
+
+    def test_worker_run_handles_unload_sentinel(self) -> None:
+        """Worker._run dequeues the _UNLOAD sentinel and calls
+        do_unload_on_worker(token) on a LazyModel, then trims the arena."""
+        from stenographer.asr import worker as worker_mod
+        from stenographer.asr.worker import Worker
+
+        model = MagicMock(spec=LazyModel)
+        worker = Worker(model)
+        worker.start()
+        try:
+            with patch.object(worker_mod, "_trim_arena") as trim:
+                worker.request_unload(token=7)
+                # Wait for the worker to process the sentinel.
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    if model.do_unload_on_worker.called and trim.called:
+                        break
+                    time.sleep(0.02)
+                model.do_unload_on_worker.assert_called_once_with(7)
+                trim.assert_called_once()
+        finally:
+            worker.stop(timeout=2.0)
 
 
 class TestProperties:

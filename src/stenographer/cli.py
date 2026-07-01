@@ -168,6 +168,8 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         )
     worker = Worker(model, timeout_seconds=(cfg.asr.beam_size and 300.0) or 300.0)
     worker.start()
+    if isinstance(model, LazyModel):
+        model.attach_worker(worker)
     feedback = _build_feedback(cfg, caps)
     recorder = Recorder(
         sample_rate=cfg.audio.sample_rate,
