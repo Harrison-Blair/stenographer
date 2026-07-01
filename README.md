@@ -3,12 +3,15 @@
 </p>
 
 # stenographer
-> 1. a writer of shorthand 2. a person employed chiefly to take and transcribe dictation [Webster](https://www.merriam-webster.com/dictionary/stenographer)
+> *1. A writer of shorthand 2. A person employed chiefly to take and transcribe dictation [Merriam Webster](https://www.merriam-webster.com/dictionary/stenographer)*
 
 Local, offline, Wayland push-to-talk / toggle dictation daemon. Press a
 configurable hotkey, speak, get the text at your cursor and in your
 clipboard. See [BUILD.md](BUILD.md) for the standalone-binary build
 instructions.
+
+> [!NOTE]
+> This `README.md` was generated with AI, but reviewed for accuracy by a human
 
 ## Quick start
 
