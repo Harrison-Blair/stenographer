@@ -13,34 +13,7 @@ instructions.
 > [!NOTE]
 > This `README.md` was generated with AI, but reviewed for accuracy by a human
 
-## Quick start
-
-```sh
-# system deps (Debian/Ubuntu names; adjust for your distro)
-sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2
-sudo usermod -aG input $USER   # log out / back in
-
-# build
-git clone … && cd stenographer
-python3 -m venv .venv && .venv/bin/pip install -e ".[build]"
-scripts/build.sh
-
-# one-command install: build + install + systemd (skip build step above)
-scripts/install.sh
-
-# download the ASR model
-./dist/stenographer/stenographer model download
-
-# check everything is wired up
-./dist/stenographer/stenographer doctor
-
-# run
-./dist/stenographer/stenographer run
-```
-
-Default hotkey: right-Ctrl. Short press (<0.5s) toggles recording; long
-press (≥0.5s) is push-to-talk. See `spec/01-hotkey.md` for the full
-hybrid-trigger state machine.
+See [Install](#install) for the install steps and a [Quick start](#quick-start) for the post-install flow. Default hotkey: right-Ctrl (short press <0.5 s toggles recording; long press ≥0.5 s is push-to-talk — see `spec/01-hotkey.md`).
 
 
 <!--
@@ -51,6 +24,35 @@ verbatim by this project and by any automated tooling (including AI
 assistants). Everything below this comment is generated / maintained
 content. To change the project description, edit above this line.
 -->
+
+## Quick start
+
+```sh
+# system deps (Debian/Ubuntu names; adjust for your distro)
+sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2
+sudo usermod -aG input $USER   # log out / back in
+
+git clone … && cd stenographer
+
+# one-time build env (needed by scripts/install.sh's internal build step)
+python3 -m venv .venv && .venv/bin/pip install -e ".[build]"
+
+# build, install to ~/.local/share/stenographer/, symlink into
+# ~/.local/bin/stenographer, enable + start the systemd user unit
+scripts/install.sh
+
+# one-time: fetch the ASR model
+stenographer model download
+
+# verify everything is wired up
+stenographer doctor
+```
+
+The daemon is now running under systemd. To watch it:
+
+```sh
+journalctl --user -u stenographer.service -f
+```
 
 ## What it is
 
@@ -84,17 +86,39 @@ only, GPL-3.0-or-later.
 
 ## Install
 
-Three options, in order of preference:
+The canonical single-user install is the onedir binary installed by
+`scripts/install.sh` from a local source tree. It builds the binary,
+copies it to `~/.local/share/stenographer/`, symlinks the launcher
+into `~/.local/bin/stenographer`, and installs + enables the systemd
+user unit (see `spec/10-packaging.md`).
 
 ```sh
-pipx install stenographer        # recommended: isolated environment
-pip install --user stenographer  # alternative: in ~/.local
+# prereq: the system packages listed in Requirements above
+python3 -m venv .venv && .venv/bin/pip install -e ".[build]"
+scripts/install.sh             # full install + systemd enable+start
+scripts/install.sh --no-start  # install the unit but don't start it
 ```
 
-Or, if you do not want a `pip install` at all, use the standalone
-PyInstaller `--onedir` binary at `dist/stenographer/stenographer`
-(canonical single-user install per `spec/10-packaging.md`). See
-`BUILD.md` for the build / runtime-system-package requirements.
+`scripts/install.sh` warns if `~/.local/bin` is not on your `PATH` and
+prints the one-line `export PATH=…` for bash / zsh / fish. The systemd
+user unit starts the daemon automatically.
+
+### Alternatives
+
+```sh
+pipx install stenographer        # isolated env, no systemd integration
+pip install --user stenographer  # in ~/.local
+```
+
+These install from PyPI via the `[project.scripts]` entry point; they
+do not register a systemd unit. Run the daemon interactively with
+`stenographer run`, or wire it up manually (see
+[Run under systemd](#run-under-systemd)).
+
+If you don't want a `pip install` of any kind, download a prebuilt
+`stenographer-VERSION-linux-x86_64.tar.gz` from the GitHub Releases,
+verify its SHA-256, and unpack it under `/opt/` (or wherever). See
+`BUILD.md` for the full procedure.
 
 ## First-run setup
 
@@ -187,11 +211,16 @@ See `spec/07-configuration.md` for the full schema and validation rules.
 
 ## Run under systemd
 
-`scripts/install.sh` handles the full systemd setup by default: it
-builds the binary, installs it to `~/.local/share/stenographer/`,
-symlinks the launcher into `~/.local/bin/`, and installs + enables the
-systemd user unit. Run with `--no-enable` to skip the enable step, or
-`--no-start` to leave the daemon stopped.
+`scripts/install.sh` handles the full systemd setup by default (see
+[Install](#install)). This section is for users who want to install
+the unit manually — e.g. against a binary that was unpacked to a
+non-default location like `/opt/`, or who want to skip
+`scripts/install.sh` and wire up an existing onedir binary by hand.
+`scripts/install.sh` builds the binary, installs it to
+`~/.local/share/stenographer/`, symlinks the launcher into
+`~/.local/bin/`, and installs + enables the systemd user unit. Run
+with `--no-enable` to skip the enable step, or `--no-start` to leave
+the daemon stopped.
 
 ```sh
 scripts/install.sh              # full install
