@@ -90,15 +90,28 @@ the asset's `browser_download_url`); well within the budget.
    filtered set is empty, exit 1 with a precise error.
 
 5. **Compare** to `__version__`. If `latest <= current`, print
-   `up to date: <version>` and exit 0. If `--check`, do not
-   download and do not restart.
+   `up to date: <version>` and exit 0. Otherwise, print
+   `update available: <current> -> <latest>` to stderr and
+   continue. If `--check`, do not download and do not restart.
 
-6. **Prompt** for confirmation unless `--yes`. The prompt is
+6. **Display the change log.** Print the release's `body` to
+   stderr in a bordered box so the user can see what they are
+   about to install (or, for `--check`, what the new version
+   contains). The box has a `=` rule above and below, a header
+   of the form `Release notes for v<version>`, and the body
+   taken verbatim from the GitHub release. If `body` is empty
+   or missing, print `(no release notes provided)` in place of
+   the body. The change log is shown both for `--check` (as
+   the last output before exit 0) and for the interactive path
+   (immediately before the confirmation prompt in step 7). It
+   is **not** re-printed after the install.
+
+7. **Prompt** for confirmation unless `--yes`. The prompt is
    written to stderr; stdin is read for a single character. A
    `y` / `Y` response continues; anything else exits 0 without
    changes.
 
-7. **Detect the running daemon**:
+8. **Detect the running daemon**:
    `systemctl --user is-active --quiet stenographer.service`. If
    the service is `active`, the daemon is running. Run
    `systemctl --user stop stenographer.service` and wait for it
@@ -108,7 +121,7 @@ the asset's `browser_download_url`); well within the budget.
    `dictate`); they do not take the single-instance lock and are
    out of scope for this command.
 
-8. **Resolve the install location**:
+9. **Resolve the install location**:
    `install_root = pathlib.Path(sys.argv[0]).resolve().parent`.
    - If `<install_root>/_internal` exists → onedir PyInstaller
      bundle; the install root is `<install_root>` and the
@@ -121,38 +134,38 @@ the asset's `browser_download_url`); well within the budget.
      `pip install --upgrade` and exit 1 without writing
      anything. v1 only self-updates the onedir bundle.
 
-9. **Download** the tarball to
-   `$XDG_DATA_HOME/stenographer/staging/stenographer-<version>.tar.gz`
-   (default `~/.local/share/stenographer/staging/...`). Stream
-   the response; do not load the full file into memory. On
-   network error, exit 1 with a precise message; the old
-   install is untouched.
+10. **Download** the tarball to
+    `$XDG_DATA_HOME/stenographer/staging/stenographer-<version>.tar.gz`
+    (default `~/.local/share/stenographer/staging/...`). Stream
+    the response; do not load the full file into memory. On
+    network error, exit 1 with a precise message; the old
+    install is untouched.
 
-10. **Download and verify** the matching `.sha256` file. Compute
+11. **Download and verify** the matching `.sha256` file. Compute
     the SHA-256 of the downloaded tarball with
     `hashlib.sha256()` and compare byte-for-byte. Mismatch →
     exit 1, the old install is untouched.
 
-11. **Extract** the tarball to a staging directory at
+12. **Extract** the tarball to a staging directory at
     `<install_root>.new.<pid>` (sibling of the install root, on
     the same filesystem so `os.replace` is atomic).
 
-12. **Sanity-check** the new bundle:
+13. **Sanity-check** the new bundle:
     `<staging>/_internal/stenographer/__init__.py` and
     `<staging>/stenographer` (the launcher) must both exist. If
     not, exit 1, the old install is untouched.
 
-13. **Atomic swap**: `os.replace(staging, install_root)`. On
+14. **Atomic swap**: `os.replace(staging, install_root)`. On
     Linux, this is atomic on the same filesystem. If the swap
     fails (e.g. permissions), the staging dir is left in place
     and the user can investigate; the old install is untouched.
 
-14. **Restart** (unless `--no-restart`):
+15. **Restart** (unless `--no-restart`):
     `systemctl --user start stenographer.service`. If the unit
     is missing, print a hint and exit 0 anyway (the install
     succeeded; the user can start the daemon by hand).
 
-15. **Report**: print `Updated to v<version>.` and exit 0.
+16. **Report**: print `Updated to v<version>.` and exit 0.
 
 ## Exit codes
 

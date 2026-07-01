@@ -17,7 +17,11 @@ def _fake_check_for_update(info: Any) -> Any:
     return _fn
 
 
-def _info(version: str = "0.7.0") -> Any:
+def _info(
+    version: str = "0.7.0",
+    *,
+    release_notes: str = "notes",
+) -> Any:
     from stenographer.update import UpdateInfo
 
     return UpdateInfo(
@@ -27,7 +31,7 @@ def _info(version: str = "0.7.0") -> Any:
         asset_url="https://example.invalid/tarball",
         asset_size=1024,
         sha256_url="https://example.invalid/sha",
-        release_notes="notes",
+        release_notes=release_notes,
         prerelease=False,
     )
 
@@ -154,3 +158,138 @@ def test_cli_update_repo_override(
         rc = main()
     assert rc == 0
     assert seen["repo"] == "other/repo"
+
+
+# ---------------------------------------------------------------------------
+# Changelog display (spec/12-update.md step 6)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_update_check_prints_changelog_box(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from stenographer.cli import main
+
+    body = "abc1234 fix hotkey double-fire\ndef5678 bump faster-whisper to 1.0.0"
+    monkeypatch.setattr("sys.argv", ["stenographer", "update", "--check"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+    with patch(
+        "stenographer.cli.check_for_update",
+        _fake_check_for_update(_info(release_notes=body)),
+    ):
+        rc = main()
+    assert rc == 0
+    captured = capsys.readouterr()
+    err = captured.err
+    assert "update available" in err
+    assert "Release notes for v0.7.0" in err
+    assert "abc1234 fix hotkey double-fire" in err
+    assert "def5678 bump faster-whisper to 1.0.0" in err
+    assert "=" * 60 in err
+    # --check must not perform the install, so the post-install report
+    # is absent.
+    assert "Updated to v0.7.0" not in err
+
+
+def test_cli_update_interactive_prints_changelog_before_prompt(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from stenographer.cli import main
+
+    body = "fix: cap buffer at end of recording"
+    monkeypatch.setattr("sys.argv", ["stenographer", "update"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+    monkeypatch.setattr("builtins.input", lambda *a, **kw: "n")
+    with (
+        patch(
+            "stenographer.cli.check_for_update",
+            _fake_check_for_update(_info(release_notes=body)),
+        ),
+        patch("stenographer.cli.download_update") as dl,
+        patch("stenographer.cli.extract_to_staging") as ex,
+        patch("stenographer.cli.apply_update") as ap,
+        patch("stenographer.cli.stop_daemon") as stop,
+        patch("stenographer.cli.start_daemon") as start,
+    ):
+        rc = main()
+    assert rc == 0
+    dl.assert_not_called()
+    ex.assert_not_called()
+    ap.assert_not_called()
+    stop.assert_not_called()
+    start.assert_not_called()
+    err = capsys.readouterr().err
+    assert "Release notes for v0.7.0" in err
+    assert "fix: cap buffer at end of recording" in err
+    # Changelog must appear before the prompt and the cancellation line.
+    assert err.index("Release notes for v0.7.0") < err.index("[y/N]")
+    assert err.index("Release notes for v0.7.0") < err.index("cancelled")
+    # The changelog body must not be re-printed after a successful
+    # install (per the chosen design: before the prompt only).
+    assert err.count("fix: cap buffer at end of recording") == 1
+
+
+def test_cli_update_changelog_empty_shows_placeholder(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from stenographer.cli import main
+
+    monkeypatch.setattr("sys.argv", ["stenographer", "update", "--check"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+    with patch(
+        "stenographer.cli.check_for_update",
+        _fake_check_for_update(_info(release_notes="")),
+    ):
+        rc = main()
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Release notes for v0.7.0" in err
+    assert "(no release notes provided)" in err
+    assert "=" * 60 in err
+
+
+def test_cli_update_successful_install_does_not_reprint_changelog(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from stenographer.cli import main
+
+    body = "release note that should only appear once"
+    monkeypatch.setattr("sys.argv", ["stenographer", "update", "--yes", "--no-restart"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+    monkeypatch.setattr("builtins.input", lambda *a, **kw: (_ for _ in ()).throw(AssertionError))
+
+    fake_tarball = tmp_path / "stenographer-0.7.0.tar.gz"
+    fake_tarball.write_bytes(b"fake")
+    fake_install_root = tmp_path / "opt" / "stenographer"
+    fake_install_root.mkdir(parents=True)
+    (fake_install_root / "_internal").mkdir()
+    fake_bundle = fake_install_root / "stenographer"
+
+    with (
+        patch(
+            "stenographer.cli.check_for_update",
+            _fake_check_for_update(_info(release_notes=body)),
+        ),
+        patch("stenographer.cli.download_update", return_value=fake_tarball),
+        patch("stenographer.cli.detect_install_root", return_value=fake_install_root),
+        patch("stenographer.cli.extract_to_staging", return_value=fake_bundle),
+        patch("stenographer.cli.apply_update") as ap,
+    ):
+        rc = main()
+    assert rc == 0
+    ap.assert_called_once()
+    err = capsys.readouterr().err
+    # Header appears once.
+    assert err.count("Release notes for v0.7.0") == 1
+    # Body appears once.
+    assert err.count("release note that should only appear once") == 1
+    # Changelog sits before the post-install report.
+    assert err.index("Release notes for v0.7.0") < err.index("Updated to v0.7.0.")

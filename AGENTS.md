@@ -107,6 +107,32 @@ steps in order:
    ```
    Output goes to `dist/stenographer/stenographer`.
 
+## Spec-first workflow
+
+The `spec/` directory is the source of truth. Code is downstream of spec.
+
+**New feature or new component.** Before writing anything under
+`src/` or `tests/`, draft a new spec doc in `spec/`. Use the next
+free two-digit number prefix (currently `14-…`, after
+`13-asset-retention.md`). Match the existing template:
+`SPDX-License-Identifier: GPL-3.0-or-later` front matter, a
+`## Dependencies` section listing which other spec docs this doc
+consumes and which it blocks, and (for leaf components) a row in
+the "Build order" DAG in `spec/00-overview.md`. Then implement.
+
+**Requirement change that affects an existing spec doc.** Edit the
+relevant spec doc first. Update its `## Dependencies` and any DAG
+rows in `00-overview.md` that it touches. Then change the code. If
+the change crosses docs (e.g. config schema + process model), update
+all of them before writing code.
+
+**Pure bug fix that the spec already covers.** No spec edit needed;
+fix the code so it matches the spec.
+
+**Conflict.** Spec wins. If code disagrees with spec, fix the code;
+if you believe the spec is wrong, open an "Open questions" item in
+the relevant spec doc and ask before changing the spec.
+
 ## Established stack
 
 These decisions are baked into `pyproject.toml` and the spec, and

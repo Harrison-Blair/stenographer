@@ -32,6 +32,7 @@ from stenographer.output.clipboard import ClipboardManager
 from stenographer.output.inject import Injector
 from stenographer.session import Session
 from stenographer.update import (
+    UpdateInfo,
     apply_update,
     check_for_update,
     detect_install_root,
@@ -40,6 +41,8 @@ from stenographer.update import (
     start_daemon,
     stop_daemon,
 )
+
+_CHANGELOG_BOX_WIDTH = 60
 
 log = logging.getLogger(__name__)
 
@@ -391,6 +394,27 @@ def cmd_model_download(cfg: Config) -> int:
     return 0
 
 
+def _print_changelog(info: UpdateInfo) -> None:
+    """Print ``info.release_notes`` in a bordered box to stderr.
+
+    See ``spec/12-update.md`` "Display the change log" step. The body
+    is taken verbatim from the GitHub release; if empty, a
+    placeholder line is shown so the box is still framed.
+    """
+    rule = "=" * _CHANGELOG_BOX_WIDTH
+    print(rule, file=sys.stderr)
+    print(f"Release notes for v{info.latest_version}", file=sys.stderr)
+    print(rule, file=sys.stderr)
+    body = (info.release_notes or "").strip()
+    if body:
+        for line in body.splitlines():
+            print(line, file=sys.stderr)
+    else:
+        print("(no release notes provided)", file=sys.stderr)
+    print(rule, file=sys.stderr)
+    print("", file=sys.stderr)
+
+
 def cmd_update(
     cfg: Config,
     *,
@@ -423,6 +447,7 @@ def cmd_update(
             f"update available: {info.current_version} -> {info.latest_version}",
             file=sys.stderr,
         )
+        _print_changelog(info)
 
         if check:
             return 0
