@@ -240,9 +240,7 @@ def _build_audio(table: dict[str, Any], path: pathlib.Path) -> AudioConfig:
     )
     if not (0 <= max_recording_seconds <= 86400):
         raise ConfigError(path, "audio.max_recording_seconds", "must satisfy 0 <= x <= 86400")
-    silence_detection = _expect_bool(
-        table, "silence_detection", "audio.silence_detection", path
-    )
+    silence_detection = _expect_bool(table, "silence_detection", "audio.silence_detection", path)
     silence_rms_threshold = _expect_number(
         table, "silence_rms_threshold", "audio.silence_rms_threshold", path
     )

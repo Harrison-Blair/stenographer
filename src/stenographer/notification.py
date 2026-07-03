@@ -97,9 +97,7 @@ class DesktopNotification:
 
     def _ensure_worker(self) -> None:
         if self._worker is None or not self._worker.is_alive():
-            self._worker = threading.Thread(
-                target=self._drain, name="notification", daemon=True
-            )
+            self._worker = threading.Thread(target=self._drain, name="notification", daemon=True)
             self._worker.start()
 
     def _drain(self) -> None:

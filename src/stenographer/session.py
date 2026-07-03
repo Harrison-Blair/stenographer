@@ -387,9 +387,7 @@ class Session:
                 # Some segments were typed and some were not. Re-typing the
                 # full transcript would duplicate what is already at the
                 # cursor; the clipboard below holds the complete text.
-                log.warning(
-                    "session: partial injection incomplete; full transcript on clipboard"
-                )
+                log.warning("session: partial injection incomplete; full transcript on clipboard")
             if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
                 try:
                     self._clipboard.copy(text)

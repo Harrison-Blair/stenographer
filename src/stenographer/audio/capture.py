@@ -180,9 +180,7 @@ class Recorder:
                 # covers the first max_seconds only.
                 self._capped = True
                 self._on_error(
-                    AudioCaptureError(
-                        f"recording exceeded {self._max_seconds}s; capture truncated"
-                    )
+                    AudioCaptureError(f"recording exceeded {self._max_seconds}s; capture truncated")
                 )
             else:
                 if indata.shape[1] > 1:
