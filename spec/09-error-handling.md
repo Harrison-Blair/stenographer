@@ -34,6 +34,7 @@ The exact split is decided per capability below.
 | `wl-copy`          | Clipboard copy disabled. Cursor injection still works.                  |
 | `pw-play` + `paplay` | Audio feedback disabled; all cue calls become no-ops.                  |
 | `pw-play` only     | Fall back to `paplay`.                                                  |
+| `notify-send`      | Desktop notifications disabled; all `show_*`/`hide` calls become no-ops. Re-probed after a cooldown so it self-heals if installed later. |
 | `input` group / uaccess | **Fatal.** Daemon prints install hint, exits 78.                     |
 | Default mic device | **Fatal.** Daemon prints device list, exits 78.                         |
 | ASR model          | **Fatal at startup.** Daemon prints `stenographer model download`.     |
@@ -57,6 +58,7 @@ left to do.
 | faster-whisper returns empty `text`                     | Log at INFO level. Fire `error` cue. Skip injection and clipboard.                              |
 | faster-whisper segments all have high `no_speech_prob` (silence/hallucination) | Log at INFO level. Fire `error` cue. Skip injection and clipboard.            |
 | `sounddevice.PortAudioError` mid-recording              | Log. Discard the in-flight utterance. Fire `error` cue. Return to IDLE.                        |
+| Recording reaches `audio.max_recording_seconds`         | Log. Freeze the buffer at the cap (transcribe the first N seconds). Fire `error` cue once. Keep recording until the user stops it. |
 | Hotkey device disappears mid-session (USB unplug)        | Log. Try to re-acquire every 2 s for 30 s, then exit 1.                                      |
 | `SIGINT` / `SIGTERM`                                    | Drain in-flight utterance (transcribe + inject + clipboard), then exit 0.                     |
 | `SIGPIPE`                                               | Suppress (stderr closed by a launcher).                                                       |
@@ -126,4 +128,6 @@ def degrade_capability(name: str) -> None:
 ## Open questions
 
 - Should the daemon write a coredump on uncaught exceptions? v1: no.
-- Should the log file be rotated? v1: no (append; user can truncate).
+- Should the log file be rotated? Yes — a
+  `logging.handlers.RotatingFileHandler` caps it at 5 MB with 3
+  backups (see `08-process-model.md` Logging).

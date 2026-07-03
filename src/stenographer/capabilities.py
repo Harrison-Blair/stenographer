@@ -41,7 +41,12 @@ class Capabilities:
                 user = None
             if user is None:
                 user = pwd.getpwuid(os.getuid()).pw_name
-            has_input_group = grp.getgrnam("input").gr_gid in os.getgrouplist(user, os.getgid())
+            try:
+                input_gid = grp.getgrnam("input").gr_gid
+            except KeyError:
+                has_input_group = False
+            else:
+                has_input_group = input_gid in os.getgrouplist(user, os.getgid())
 
         try:
             has_mic = bool(sounddevice.query_devices(kind="input"))

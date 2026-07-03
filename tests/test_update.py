@@ -106,15 +106,14 @@ def test_pick_release_stable_skips_pre_releases() -> None:
     assert chosen["tag_name"] == "v0.6.0"
 
 
-def test_pick_release_stable_with_only_pre_releases_raises() -> None:
+def test_pick_release_stable_with_only_pre_releases_returns_none() -> None:
     from packaging.version import Version
 
     releases = [
         _release("v0.7.0-rc.1", prerelease=True),
         _release("v0.7.0-rc.2", prerelease=True),
     ]
-    with pytest.raises(UpdateError, match="no newer release"):
-        _pick_release(releases, channel="stable", current=Version("0.6.0"))
+    assert _pick_release(releases, channel="stable", current=Version("0.6.0")) is None
 
 
 def test_pick_release_latest_includes_pre_releases() -> None:
@@ -144,8 +143,7 @@ def test_pick_release_skips_current_and_older() -> None:
     from packaging.version import Version
 
     releases = [_release("v0.5.0"), _release("v0.6.0")]
-    with pytest.raises(UpdateError, match="no newer release"):
-        _pick_release(releases, channel="stable", current=Version("0.6.0"))
+    assert _pick_release(releases, channel="stable", current=Version("0.6.0")) is None
 
 
 def test_pick_release_skips_unparseable_tags() -> None:
@@ -195,13 +193,10 @@ def test_check_for_update_returns_info_when_newer() -> None:
     assert info.prerelease is False
 
 
-def test_check_for_update_up_to_date_raises() -> None:
+def test_check_for_update_up_to_date_returns_none() -> None:
     releases = [_release("v0.6.0")]
-    with (
-        patch("stenographer.update._http_get_json", _fake_http_get_json(releases)),
-        pytest.raises(UpdateError, match="no newer release"),
-    ):
-        check_for_update(_DEFAULT_CFG, current_version="0.6.0")
+    with patch("stenographer.update._http_get_json", _fake_http_get_json(releases)):
+        assert check_for_update(_DEFAULT_CFG, current_version="0.6.0") is None
 
 
 def test_check_for_update_prerelease_flag_widens() -> None:
@@ -438,7 +433,10 @@ def test_apply_update_atomic_swap(tmp_path: pathlib.Path, monkeypatch: pytest.Mo
     from stenographer.update import apply_update
 
     apply_update(bundle, install_root)
-    assert (install_root / "stenographer" / "stenographer").is_file()
+    # The bundle itself becomes the new install root: the launcher is a
+    # file at the same path the old one occupied.
+    assert (install_root / "stenographer").is_file()
+    assert not (install_root / "old").exists()
     assert not new_bundle_parent.exists()
 
 
@@ -493,7 +491,7 @@ def test_detect_install_root_finds_onedir(
     assert update_mod.detect_install_root() == bundle
 
 
-def test_detect_install_root_falls_back_to_parent_for_wheel(
+def test_detect_install_root_rejects_wheel_install(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import stenographer.update as update_mod
@@ -503,7 +501,8 @@ def test_detect_install_root_falls_back_to_parent_for_wheel(
     (site_packages / "stenographer").mkdir()
     fake_argv0 = str(site_packages / "stenographer" / "__main__.py")
     monkeypatch.setattr(update_mod.sys, "argv", [fake_argv0])
-    assert update_mod.detect_install_root() == site_packages / "stenographer"
+    with pytest.raises(UpdateError, match="onedir binary"):
+        update_mod.detect_install_root()
 
 
 # ---------------------------------------------------------------------------

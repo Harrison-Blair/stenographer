@@ -37,6 +37,10 @@ def test_defaults_audio() -> None:
         sample_rate=16000,
         frames_per_buffer=1024,
         input_device=None,
+        max_recording_seconds=600,
+        silence_detection=True,
+        silence_rms_threshold=0.01,
+        silence_duration_seconds=1.5,
     )
 
 
@@ -265,6 +269,48 @@ def test_validate_frames_per_buffer_too_high_rejected(tmp_path: pathlib.Path) ->
     p.write_text("[stenographer]\naudio.frames_per_buffer = 16384\n")
     with pytest.raises(ConfigError, match=r"audio.frames_per_buffer"):
         Config.load(p)
+
+
+def test_validate_silence_detection_non_bool_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\naudio.silence_detection = 1\n")
+    with pytest.raises(ConfigError, match=r"audio.silence_detection"):
+        Config.load(p)
+
+
+def test_validate_silence_rms_threshold_too_high_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\naudio.silence_rms_threshold = 1.5\n")
+    with pytest.raises(ConfigError, match=r"audio.silence_rms_threshold"):
+        Config.load(p)
+
+
+def test_validate_silence_duration_zero_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\naudio.silence_duration_seconds = 0\n")
+    with pytest.raises(ConfigError, match=r"audio.silence_duration_seconds"):
+        Config.load(p)
+
+
+def test_validate_silence_duration_too_high_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\naudio.silence_duration_seconds = 11\n")
+    with pytest.raises(ConfigError, match=r"audio.silence_duration_seconds"):
+        Config.load(p)
+
+
+def test_load_silence_override_round_trips(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[stenographer]\n"
+        "audio.silence_detection = false\n"
+        "audio.silence_rms_threshold = 0.05\n"
+        "audio.silence_duration_seconds = 2.5\n"
+    )
+    cfg = Config.load(p)
+    assert cfg.audio.silence_detection is False
+    assert cfg.audio.silence_rms_threshold == 0.05
+    assert cfg.audio.silence_duration_seconds == 2.5
 
 
 def test_validate_beam_size_too_low_rejected(tmp_path: pathlib.Path) -> None:

@@ -126,13 +126,10 @@ the asset's `browser_download_url`); well within the budget.
    - If `<install_root>/_internal` exists → onedir PyInstaller
      bundle; the install root is `<install_root>` and the
      launcher is `<install_root>/stenographer`.
-   - Otherwise → wheel / pipx install; the install root is
-     `<install_root>` and we replace the entire `stenographer`
-     Python package under `<install_root>/..` (typically
-     `site-packages/stenographer`).
-   - Wheel installs print a hint to use `pipx upgrade` /
-     `pip install --upgrade` and exit 1 without writing
-     anything. v1 only self-updates the onedir bundle.
+   - Otherwise → wheel / pipx install. `detect_install_root`
+     raises `UpdateError` (exit 1) with a hint to use
+     `pipx upgrade` / `pip install --upgrade`; nothing is
+     written. v1 only self-updates the onedir bundle.
 
 10. **Download** the tarball to
     `$XDG_DATA_HOME/stenographer/staging/stenographer-<version>.tar.gz`
@@ -148,16 +145,28 @@ the asset's `browser_download_url`); well within the budget.
 
 12. **Extract** the tarball to a staging directory at
     `<install_root>.new.<pid>` (sibling of the install root, on
-    the same filesystem so `os.replace` is atomic).
+    the same filesystem so the rename swap is atomic). The
+    tarball's single top-level entry is `stenographer/`, so the
+    extracted bundle (with its `_internal/` and launcher) lands at
+    `<staging>/stenographer` — call this `bundle`.
 
-13. **Sanity-check** the new bundle:
-    `<staging>/stenographer` (the launcher) must exist. If
-    not, exit 1, the old install is untouched.
+13. **Sanity-check** the new bundle: the launcher
+    `<bundle>/stenographer` (i.e. `<staging>/stenographer/stenographer`)
+    must be a file. If not, exit 1, the old install is untouched.
 
-14. **Atomic swap**: `os.replace(staging, install_root)`. On
-    Linux, this is atomic on the same filesystem. If the swap
-    fails (e.g. permissions), the staging dir is left in place
-    and the user can investigate; the old install is untouched.
+14. **Swap into place.** `os.replace` cannot overwrite a
+    non-empty directory, so the swap is a two-step rename on the
+    same filesystem:
+    1. `os.rename(install_root, <install_root>.old.<pid>)` — move
+       the current install aside as a backup.
+    2. `os.rename(bundle, install_root)` — move the new bundle in.
+       If this fails, the backup is renamed back and the error is
+       re-raised; the old install is untouched.
+    On success the backup and the emptied staging dir are removed
+    (`shutil.rmtree(..., ignore_errors=True)`). The system is
+    always in either the fully-old or fully-new state, never a
+    half-installed one (modulo a crash between the two renames, in
+    which case the `.old.<pid>` backup is recoverable by hand).
 
 15. **Restart** (unless `--no-restart`):
     `systemctl --user start stenographer.service`. If the unit

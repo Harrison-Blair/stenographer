@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import fcntl
 import logging
+import logging.handlers
 import os
 import pathlib
 import shutil
@@ -98,7 +99,9 @@ def _configure_logging() -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(log_file, mode="a"),
+            logging.handlers.RotatingFileHandler(
+                log_file, maxBytes=5 * 1024 * 1024, backupCount=3
+            ),
         ],
     )
 
@@ -166,16 +169,28 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
             cfg.asr,
             idle_unload_seconds=cfg.asr.idle_unload_seconds or None,
         )
-    worker = Worker(model, timeout_seconds=(cfg.asr.beam_size and 300.0) or 300.0)
+    worker = Worker(model)
     worker.start()
     if isinstance(model, LazyModel):
         model.attach_worker(worker)
     feedback = _build_feedback(cfg, caps)
+
+    def _on_recorder_error(exc: Exception) -> None:
+        log.error("recorder: %s", exc)
+        with contextlib.suppress(Exception):
+            feedback.play("error")
+
     recorder = Recorder(
         sample_rate=cfg.audio.sample_rate,
         frames_per_buffer=cfg.audio.frames_per_buffer,
         device=cfg.audio.input_device,
-        on_error=lambda exc: log.error("recorder: %s", exc),
+        on_error=_on_recorder_error,
+        max_seconds=cfg.audio.max_recording_seconds,
+        # Mid-recording silence flushing is a daemon (PTT/toggle) feature; the
+        # one-shot processor stops after the first item, so disable it there.
+        silence_detection=cfg.audio.silence_detection and not one_shot,
+        silence_rms_threshold=cfg.audio.silence_rms_threshold,
+        silence_duration_seconds=cfg.audio.silence_duration_seconds,
     )
     injector = Injector(
         available=caps.has_wtype,
@@ -208,10 +223,10 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         on_stop=session.on_recording_stop,
         on_toggle_off=session.on_toggle_off,
         feedback=feedback,
-        lock=session._lock,
+        lock=session.lock,
     )
     session.start()
-    session._listener = listener
+    session.attach_listener(listener)
     return session
 
 
@@ -232,11 +247,11 @@ def cmd_run(cfg: Config) -> int:
     if rc != 0:
         return rc
     session = _build_session(cfg, caps, one_shot=False)
-    session._listener.start()
+    session.start_listener()
     _install_signal_handlers(session)
     log.info("session: daemon running (pid=%d)", os.getpid())
-    if cfg.asr.mode == "eager" and session._notification is not None:
-        session._notification.show_model_ready()
+    if session.notification is not None:
+        session.notification.show_startup(cfg.hotkey.binding)
     try:
         session.run()
     finally:
@@ -247,25 +262,10 @@ def cmd_run(cfg: Config) -> int:
 
 def cmd_run_stop() -> int:
     """Stop any running daemon (systemd or direct). Best-effort."""
-    import shutil
-
     # 1) Try systemd.
-    if shutil.which("systemctl") is not None:
-        try:
-            active = subprocess.run(
-                ["systemctl", "--user", "is-active", "--quiet", "stenographer.service"],
-                check=False,
-            )
-        except OSError:
-            pass
-        else:
-            if active.returncode == 0:
-                subprocess.run(
-                    ["systemctl", "--user", "stop", "stenographer.service"],
-                    check=False,
-                )
-                print("stenographer: stopped systemd unit.", file=sys.stderr)
-                return 0
+    if stop_daemon():
+        print("stenographer: stopped systemd unit.", file=sys.stderr)
+        return 0
 
     # 2) Fall back to the lock-file PID.
     if not _LOCK_PATH.exists():
@@ -299,8 +299,6 @@ def cmd_run_stop() -> int:
 
 def cmd_run_disable() -> int:
     """Disable (and stop) the systemd user unit. Warns if missing / already disabled."""
-    import shutil
-
     unit_path = pathlib.Path.home() / ".config" / "systemd" / "user" / "stenographer.service"
 
     if shutil.which("systemctl") is None:
@@ -347,11 +345,11 @@ def cmd_dictate(cfg: Config) -> int:
     if not (caps.has_mic and caps.has_asr_model):
         fatal("missing required capabilities: mic and/or asr-model")
     session = _build_session(cfg, caps, one_shot=True)
-    session._listener.start()
+    session.start_listener()
     _install_signal_handlers(session)
     log.info("session: dictate mode armed; press the hotkey once")
-    if session._notification is not None:
-        session._notification.show_model_ready()
+    if session.notification is not None:
+        session.notification.show_startup(cfg.hotkey.binding)
     try:
         session.run()
     finally:
@@ -455,6 +453,10 @@ def cmd_update(
         except UpdateError as exc:
             fatal(str(exc), code=1)
 
+        if info is None:
+            print(f"stenographer is up to date (v{__version__}).", file=sys.stderr)
+            return 0
+
         print(
             f"update available: {info.current_version} -> {info.latest_version}",
             file=sys.stderr,
@@ -469,6 +471,10 @@ def cmd_update(
             try:
                 answer = input().strip().lower()
             except EOFError:
+                print(
+                    "\nupdate: no input available; pass --yes to install non-interactively.",
+                    file=sys.stderr,
+                )
                 answer = ""
             if answer not in ("y", "yes"):
                 print("update: cancelled", file=sys.stderr)
@@ -500,6 +506,32 @@ def cmd_update(
         os.close(lock_fd)
 
 
+def cmd_devices() -> int:
+    """List audio input devices for the ``audio.input_device`` config key."""
+    import sounddevice
+
+    try:
+        devices = sounddevice.query_devices()
+    except sounddevice.PortAudioError as exc:
+        print(f"stenographer: cannot query audio devices: {exc}", file=sys.stderr)
+        return 1
+    try:
+        default_index = sounddevice.default.device[0]
+    except (TypeError, IndexError):
+        default_index = -1
+    print("audio input devices (use the name or index as audio.input_device):")
+    found = False
+    for dev in devices:
+        if dev.get("max_input_channels", 0) <= 0:
+            continue
+        found = True
+        marker = "*" if dev.get("index") == default_index else " "
+        print(f"  {marker} [{dev.get('index')}] {dev.get('name')}")
+    if not found:
+        print("  (none found)")
+    return 0
+
+
 def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     caps = Capabilities.probe(cfg)
     print("stenographer doctor")
@@ -521,10 +553,8 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     print(f"asr model:      {'yes' if caps.has_asr_model else 'NO  (transcription disabled)'}")
     print(f"asr.mode:       {cfg.asr.mode}")
     print(f"asr.idle_unload_seconds: {cfg.asr.idle_unload_seconds} (0 = disabled)")
-    has_swaync = (
-        shutil.which("swaync-client") is not None and shutil.which("notify-send") is not None
-    )
-    print(f"swaync:         {'yes' if has_swaync else 'NO  (desktop notification)'}")
+    has_notify = DesktopNotification.probe()
+    print(f"notify-send:    {'yes' if has_notify else 'NO  (desktop notification disabled)'}")
     fatal_cap = not (caps.has_input_group and caps.has_mic and caps.has_asr_model)
     return 78 if fatal_cap else 0
 
@@ -567,6 +597,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="Print capability probe and resolved config.")
 
+    sub.add_parser("devices", help="List audio input devices.")
+
     return parser
 
 
@@ -586,6 +618,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_run_stop()
         if args.run_command == "disable":
             return cmd_run_disable()
+    if args.subcommand == "devices":
+        return cmd_devices()
 
     from stenographer.config import load_or_default, resolve_config_path
 

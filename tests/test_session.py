@@ -18,7 +18,7 @@ def _make_components() -> dict[str, MagicMock]:
         "cfg": MagicMock(),
         "caps": MagicMock(has_wtype=True, has_wl_copy=True),
         "listener": MagicMock(),
-        "recorder": MagicMock(),
+        "recorder": MagicMock(is_active=False),
         "worker": MagicMock(),
         "feedback": MagicMock(),
         "injector": MagicMock(),
@@ -53,6 +53,14 @@ def _make_session(
         one_shot=one_shot,
     )
     return session, components
+
+
+def _fake_future() -> MagicMock:
+    """A worker future whose add_done_callback fires immediately, so the
+    session's segment loop sees its completion sentinel."""
+    fut = MagicMock()
+    fut.add_done_callback.side_effect = lambda cb: cb(fut)
+    return fut
 
 
 def _components(session: Session) -> dict[str, MagicMock]:
@@ -110,7 +118,7 @@ def test_process_submits_to_worker_and_outputs() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].clipboard.enabled = True
-    future = MagicMock()
+    future = _fake_future()
     future.result.return_value = TranscriptionResult(
         text="hello world", duration_seconds=0.5, segments=[]
     )
@@ -127,7 +135,7 @@ def test_process_empty_transcript_skips_output() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].clipboard.enabled = True
-    future = MagicMock()
+    future = _fake_future()
     future.result.return_value = TranscriptionResult(text="   ", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
     session._process(np.zeros((1, 1), dtype=np.float32), "ptt")
@@ -141,7 +149,7 @@ def test_process_injector_skipped_when_wtype_unavailable() -> None:
     c = _components(session)
     c["caps"].has_wtype = False
     c["cfg"].clipboard.enabled = True
-    future = MagicMock()
+    future = _fake_future()
     future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
     session._process(np.zeros((1, 1), dtype=np.float32), "ptt")
@@ -153,7 +161,7 @@ def test_process_clipboard_skipped_when_disabled() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].clipboard.enabled = False
-    future = MagicMock()
+    future = _fake_future()
     future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
     session._process(np.zeros((1, 1), dtype=np.float32), "ptt")
@@ -166,7 +174,7 @@ def test_process_streaming_injects_partial_segments_and_skips_duplicate_final() 
     c["cfg"].clipboard.enabled = True
 
     result = TranscriptionResult(text="hello world", duration_seconds=1.0, segments=[])
-    future = MagicMock()
+    future = _fake_future()
     future.done.return_value = True
     future.result.return_value = result
 
@@ -192,7 +200,7 @@ def test_process_paste_mode_skips_streaming_and_pastes_at_end() -> None:
     c["cfg"].output.injection_method = "paste"
 
     result = TranscriptionResult(text="hello world", duration_seconds=1.0, segments=[])
-    future = MagicMock()
+    future = _fake_future()
     future.done.return_value = True
     future.result.return_value = result
 
@@ -207,7 +215,8 @@ def test_process_paste_mode_skips_streaming_and_pastes_at_end() -> None:
 
     c["injector"].type_text.assert_not_called()
     c["feedback"].play.assert_any_call("segment")
-    assert c["feedback"].play.call_count == 2
+    c["feedback"].play.assert_any_call("transcribe_done")
+    assert c["feedback"].play.call_count == 3  # 2 segments + transcribe_done
     c["clipboard"].copy.assert_called_once_with("hello world")
     c["injector"].paste.assert_called_once()
 
@@ -217,7 +226,7 @@ def test_process_paste_mode_empty_transcript_skips_output() -> None:
     c = _components(session)
     c["cfg"].output.injection_method = "paste"
 
-    future = MagicMock()
+    future = _fake_future()
     future.done.return_value = True
     future.result.return_value = TranscriptionResult(text="   ", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
@@ -235,7 +244,7 @@ def test_process_paste_mode_clipboard_disabled_still_pastes() -> None:
     c["cfg"].clipboard.enabled = False
     c["cfg"].output.injection_method = "paste"
 
-    future = MagicMock()
+    future = _fake_future()
     future.done.return_value = True
     future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
@@ -250,7 +259,7 @@ def test_process_silence_no_speech_prob_skips_output() -> None:
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
     c["cfg"].clipboard.enabled = True
-    future = MagicMock()
+    future = _fake_future()
     future.result.return_value = TranscriptionResult(
         text="Thank you",
         duration_seconds=1.0,
@@ -271,7 +280,7 @@ def test_process_silence_no_speech_prob_below_threshold_outputs() -> None:
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
     c["cfg"].clipboard.enabled = True
-    future = MagicMock()
+    future = _fake_future()
     future.result.return_value = TranscriptionResult(
         text="hello",
         duration_seconds=0.5,
@@ -288,7 +297,7 @@ def test_process_silence_no_speech_prob_below_threshold_outputs() -> None:
 def test_process_transcription_failure_plays_error_cue() -> None:
     session, _m = _make_session()
     c = _components(session)
-    future = MagicMock()
+    future = _fake_future()
     future.result.side_effect = RuntimeError("inference crashed")
     c["worker"].submit.return_value = future
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
@@ -302,7 +311,7 @@ def test_process_silence_some_segments_below_threshold_outputs() -> None:
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
     c["cfg"].clipboard.enabled = True
-    future = MagicMock()
+    future = _fake_future()
     future.result.return_value = TranscriptionResult(
         text="hello world",
         duration_seconds=1.0,
@@ -340,13 +349,134 @@ def test_on_recording_stop_enqueues_and_recorder_stops() -> None:
     c["worker"].submit.assert_called_once()
 
 
+def test_silence_detection_disabled_when_one_shot() -> None:
+    cfg = MagicMock()
+    cfg.audio.silence_detection = True
+    session, _m = _make_session(one_shot=True, cfg=cfg)
+    assert session._silence_detection is False
+
+
+def test_silence_detection_enabled_for_daemon() -> None:
+    cfg = MagicMock()
+    cfg.audio.silence_detection = True
+    session, _m = _make_session(one_shot=False, cfg=cfg)
+    assert session._silence_detection is True
+
+
+def test_recording_start_wires_flush_callback_when_enabled() -> None:
+    cfg = MagicMock()
+    cfg.audio.silence_detection = True
+    cfg.asr.mode = "eager"  # avoid the lazy-load branch
+    session, _m = _make_session(cfg=cfg)
+    c = _components(session)
+    session.on_recording_start()
+    assert c["recorder"].start.call_args.kwargs["on_segment"] == session._enqueue_flush_segment
+
+
+def test_recording_start_no_flush_callback_when_disabled() -> None:
+    cfg = MagicMock()
+    cfg.audio.silence_detection = False
+    cfg.asr.mode = "eager"
+    session, _m = _make_session(cfg=cfg)
+    c = _components(session)
+    session.on_recording_start()
+    assert c["recorder"].start.call_args.kwargs["on_segment"] is None
+
+
+def test_enqueue_flush_segment_tags_ptt_and_processes() -> None:
+    session, _m = _make_session()
+    arr = np.ones((10, 1), dtype=np.float32)
+    session._enqueue_flush_segment(arr)
+    samples, mode = session._utterance_queue.get_nowait()
+    assert mode == "ptt"
+    assert np.array_equal(samples, arr)
+
+
+def test_on_recording_stop_skips_empty_tail_when_silence_detection() -> None:
+    cfg = MagicMock()
+    cfg.audio.silence_detection = True
+    cfg.asr.mode = "eager"
+    session, _m = _make_session(cfg=cfg)
+    c = _components(session)
+    c["recorder"].stop.return_value = np.empty((0, 1), dtype=np.float32)
+
+    session.on_recording_start()
+    session.on_recording_stop("ptt")
+
+    # Chunks were already flushed mid-recording; the empty tail is not queued.
+    assert session._utterance_queue.qsize() == 0
+
+
+def test_on_recording_stop_enqueues_empty_tail_when_disabled() -> None:
+    cfg = MagicMock()
+    cfg.audio.silence_detection = False
+    cfg.asr.mode = "eager"
+    session, _m = _make_session(cfg=cfg)
+    c = _components(session)
+    c["recorder"].stop.return_value = np.empty((0, 1), dtype=np.float32)
+
+    session.on_recording_start()
+    session.on_recording_stop("ptt")
+
+    # Legacy behavior preserved: the empty recording is still enqueued.
+    assert session._utterance_queue.qsize() == 1
+
+
+def test_on_recording_stop_shows_transcribing_notification() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
+
+    session.on_recording_start()
+    session.on_recording_stop("ptt")
+
+    notif.show_transcribing.assert_called_once()
+    notif.hide.assert_not_called()
+
+
+def test_on_recording_stop_hides_notification_when_nothing_queued() -> None:
+    cfg = MagicMock()
+    cfg.audio.silence_detection = True
+    cfg.asr.mode = "eager"
+    notif = MagicMock()
+    session, _m = _make_session(cfg=cfg, notification=notif)
+    c = _components(session)
+    c["recorder"].stop.return_value = np.empty((0, 1), dtype=np.float32)
+
+    session.on_recording_start()
+    session.on_recording_stop("ptt")
+
+    notif.hide.assert_called_once()
+    notif.show_transcribing.assert_not_called()
+
+
+def test_processor_hides_notification_when_queue_drained() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
+    fut = _fake_future()
+    fut.result.return_value = TranscriptionResult(text="", duration_seconds=0.0, segments=[])
+    c["worker"].submit.return_value = fut
+    session.start()
+
+    session.on_recording_start()
+    session.on_recording_stop("ptt")
+    time.sleep(0.1)
+
+    notif.hide.assert_called_once()
+
+
 def test_one_shot_sets_stop_event_after_processor_finishes() -> None:
     """In one_shot mode the processor thread sets _stop_event after processing."""
     session, _m = _make_session(one_shot=True)
     c = _components(session)
     session.start()
 
-    future = MagicMock()
+    future = _fake_future()
     future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.1, segments=[])
     c["worker"].submit.return_value = future
     c["recorder"].stop.return_value = np.zeros((1, 1), dtype=np.float32)
@@ -367,7 +497,7 @@ def test_stop_drains_queued_utterances_before_worker_shutdown() -> None:
     c = _components(session)
     session.start()
 
-    future = MagicMock()
+    future = _fake_future()
     future.result.return_value = TranscriptionResult(
         text="drained", duration_seconds=0.0, segments=[]
     )
@@ -400,7 +530,7 @@ def test_multiple_utterances_processed_in_order() -> None:
     submit_count = [0]
 
     def submit_side_effect(samples, *, on_segment=None):
-        fut = MagicMock()
+        fut = _fake_future()
         fut.result.return_value = results[submit_count[0]]
         submit_count[0] += 1
         return fut
@@ -473,6 +603,7 @@ def test_on_recording_start_lazy_first_press_shows_loading_notification() -> Non
     c["worker"].ensure_model_loaded = MagicMock()
     with patch("stenographer.notification.subprocess.run") as run:
         session.on_recording_start()
+        notif.flush()
     assert run.call_count >= 1
     cmd_lines = [run.call_args_list[i][0][0] for i in range(run.call_count)]
     assert any("Loading speech model" in " ".join(str(a) for a in args) for args in cmd_lines)
@@ -496,18 +627,24 @@ def test_on_recording_start_lazy_second_press_skips_load() -> None:
     c["feedback"].play.assert_not_called()
 
 
-def test_on_model_loaded_plays_ready_cue_and_notification() -> None:
-    from stenographer.notification import DesktopNotification
-
-    notif = DesktopNotification()
-    notif._available = True
-    session, _m = _make_session(notification=MagicMock(wraps=notif))
+def test_on_model_loaded_plays_ready_cue_and_shows_listening_while_recording() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
     c = _components(session)
-    with patch("stenographer.notification.subprocess.run") as run:
-        session._on_model_loaded()
+    session._recording = True
+    session._on_model_loaded()
     c["feedback"].play.assert_called_once_with("model_ready")
-    cmd_lines = [run.call_args_list[i][0][0] for i in range(run.call_count)]
-    assert any("Model ready" in " ".join(str(a) for a in args) for args in cmd_lines)
+    notif.show_listening.assert_called_once()
+
+
+def test_on_model_loaded_leaves_notification_alone_when_not_recording() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    session._on_model_loaded()
+    c["feedback"].play.assert_called_once_with("model_ready")
+    notif.show_listening.assert_not_called()
+    notif.hide.assert_not_called()
 
 
 def test_on_model_loading_plays_loading_cue() -> None:
@@ -525,5 +662,6 @@ def test_on_model_unloaded_shows_notification() -> None:
     session, _m = _make_session(notification=MagicMock(wraps=notif))
     with patch("stenographer.notification.subprocess.run") as run:
         session._on_model_unloaded()
+        notif.flush()
     cmd_lines = [run.call_args_list[i][0][0] for i in range(run.call_count)]
     assert any("Speech model unloaded" in " ".join(str(a) for a in args) for args in cmd_lines)

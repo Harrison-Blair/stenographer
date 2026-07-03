@@ -23,7 +23,7 @@ they are loaded from, and how they are played. The component is
 
 ## Cue catalogue (v1)
 
-Eight cues, named exactly as below. The hotkey state machine
+Nine cues, named exactly as below. The hotkey state machine
 (`01-hotkey.md`), the error helper (`09-error-handling.md`), and the
 Session orchestrator (`08-process-model.md`) refer to them by these names.
 
@@ -34,13 +34,16 @@ Session orchestrator (`08-process-model.md`) refer to them by these names.
 | `toggle_on`       | Hotkey state machine, on toggle-on (keyup)| 1 low beep: 440 Hz, 80 ms, -12 dBFS              |
 | `toggle_off`      | Hotkey state machine, on toggle-off (keydown during rec) | 2 low beeps: 440 Hz, 80 ms, 60 ms gap, -12 dBFS |
 | `error`           | `errors.notify_failure`                   | 1 low buzz: 220 Hz, 250 ms, -6 dBFS              |
-| `transcribe_done` | Session, after successful injection       | (silent in v1)                                   |
+| `segment`         | Session, per decoded segment in paste mode | 1 short soft tick                               |
+| `transcribe_done` | Session, after successful output          | 1 soft confirmation tone                         |
 | `model_loading`   | Session, on first hotkey press in lazy mode | 3 ascending tones: 440, 554, 660 Hz, 80 ms each, 60 ms gap, -12 dBFS |
 | `model_ready`     | Session, when lazy-mode model load completes | 2 quick high beeps: 880 Hz, 60 ms, 40 ms gap, -10 dBFS |
 
-`transcribe_done` is a stub in v1 — the cue exists in the catalogue
-and the asset is bundled, but no code path fires it yet. The asset is
-a no-op (a 10 ms silent WAV) so the file resolves cleanly.
+`transcribe_done` fires after an utterance is successfully output
+(typed or pasted). `segment` fires once per decoded segment while
+`output.injection_method = "paste"` streams the transcript (see
+`05-text-output.md`); it is the paste-mode analogue of watching text
+stream in under text mode.
 
 `model_loading` and `model_ready` are used only when
 `cfg.asr.mode == "lazy"`; in eager mode they are never fired.
@@ -98,7 +101,7 @@ import pathlib
 
 CueName = Literal[
     "ptt_on", "ptt_off", "toggle_on", "toggle_off",
-    "error", "transcribe_done", "model_loading", "model_ready",
+    "error", "segment", "transcribe_done", "model_loading", "model_ready",
 ]
 
 class Feedback:
@@ -136,21 +139,15 @@ sequencing.)
 ### Subprocess invocation
 
 ```
-pw-play --volume=<vol> <path>
-paplay  <path>     # paplay does not take --volume; volume is applied
-                   # by remixing the WAV on disk in a pre-step
+pw-play --volume=<vol>            <path>   # vol is 0.0 .. 1.0 (linear)
+paplay  --volume=<int(vol*65536)> <path>   # paplay volume is 0 .. 65536
 ```
 
-For `paplay`, because the binary ignores `--volume`, the
-implementation applies volume by reading the WAV with
-`soundfile.read`, scaling the samples, and writing to a temp file in
-`$XDG_RUNTIME_DIR/stenographer-cues/` (default
-`/run/user/<uid>/stenographer-cues/`) before invoking `paplay`. The
-temp file is unlinked after `paplay` exits (poll with a 100 ms
-timeout, max 5 s, then unlink unconditionally).
-
-For `pw-play`, `--volume` is passed directly. The WAV is played
-unchanged.
+Both players take a volume flag and play the bundled WAV directly;
+neither writes a temp file. `pw-play` uses the linear `0.0 .. 1.0`
+multiplier as-is; `paplay` uses PulseAudio's integer scale where
+`65536` is unity gain, so `cfg.feedback.volume` is mapped as
+`int(volume * 65536)`.
 
 ### Volume and mute
 
@@ -169,7 +166,8 @@ unchanged.
 | Hotkey keyup after short press, was IDLE   | `toggle_on`      | `01-hotkey.md`       |
 | Hotkey keydown while in toggle recording   | `toggle_off`     | `01-hotkey.md`       |
 | `errors.notify_failure`                    | `error`          | `09-error-handling.md` |
-| Successful transcript injected (v2)        | `transcribe_done` | `08-process-model.md` |
+| Each decoded segment in paste mode         | `segment`        | `05-text-output.md`  |
+| Utterance successfully output (typed/pasted) | `transcribe_done` | `08-process-model.md` |
 | First hotkey press in lazy mode            | `model_loading`  | `08-process-model.md` |
 | Lazy-mode model load completes             | `model_ready`    | `08-process-model.md` |
 
@@ -186,5 +184,6 @@ unchanged.
   `gen_assets.py` script) or committed as binary files? v1: committed
   as binary, the script is optional and lives in
   `scripts/gen_cues.py` if anyone wants to regenerate.
-- Should `transcribe_done` fire on every successful injection in v1
-  to give the user closure? v1: no (silent in v1 by design).
+- Should `transcribe_done` fire on every successful injection to give
+  the user closure? Yes — it fires after each successfully output
+  utterance (typed or pasted).

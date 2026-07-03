@@ -129,12 +129,12 @@ def _pick_release(
     *,
     channel: str,
     current: Version,
-) -> dict:
+) -> dict | None:
     """Return the highest-version release matching ``channel``.
 
     ``channel`` is ``"stable"`` (drop ``prerelease``) or ``"latest"``
-    (keep all). Returns the raw release dict; raises
-    :class:`UpdateError` if no candidates remain.
+    (keep all). Returns the raw release dict, or ``None`` if no
+    release is newer than ``current`` (i.e. already up to date).
     """
     candidates: list[tuple[Version, dict]] = []
     for rel in releases:
@@ -148,7 +148,7 @@ def _pick_release(
             continue
         candidates.append((v, rel))
     if not candidates:
-        raise UpdateError("update: no newer release available for the selected channel")
+        return None
     candidates.sort(key=lambda pair: pair[0])
     return candidates[-1][1]
 
@@ -158,12 +158,13 @@ def check_for_update(
     *,
     current_version: str | None = None,
     prerelease: bool = False,
-) -> UpdateInfo:
+) -> UpdateInfo | None:
     """Return the highest-version release newer than the running binary.
 
-    ``current_version`` defaults to the package's ``__version__`` and is
-    overridable for testing. ``prerelease`` widens the channel to
-    ``"latest"`` for this invocation.
+    Returns ``None`` when already up to date. ``current_version``
+    defaults to the package's ``__version__`` and is overridable for
+    testing. ``prerelease`` widens the channel to ``"latest"`` for
+    this invocation.
     """
     current_str = current_version if current_version is not None else __version__
     try:
@@ -177,6 +178,8 @@ def check_for_update(
     if not isinstance(raw, list):
         raise UpdateError(f"update: unexpected response shape from {url}: expected a list")
     chosen = _pick_release(raw, channel=channel, current=current)
+    if chosen is None:
+        return None
     tag = chosen.get("tag_name", "")
     raw_version = tag.lstrip("v")
     asset_name = cfg.asset_pattern.format(version=raw_version)
@@ -273,19 +276,22 @@ def download_update(
 
 
 def detect_install_root() -> pathlib.Path:
-    """Return the directory containing the running binary.
+    """Return the onedir bundle directory containing the running binary.
 
     Detects a PyInstaller ``--onedir`` bundle by the presence of a
-    sibling ``_internal/`` directory. If absent, the running
-    interpreter is a wheel / pipx install and this returns the
-    directory containing the launcher.
+    sibling ``_internal/`` directory. Raises :class:`UpdateError` for
+    a wheel / pipx install: swapping out the directory containing the
+    console script would clobber unrelated files (e.g. ``~/.local/bin``).
     """
     argv0 = pathlib.Path(sys.argv[0])
     argv0 = (pathlib.Path.cwd() / argv0).resolve() if not argv0.is_absolute() else argv0.resolve()
     parent = argv0.parent
     if (parent / "_internal").is_dir():
         return parent
-    return parent
+    raise UpdateError(
+        "update: self-update is only supported for the onedir binary install; "
+        "use pip/pipx to upgrade this installation"
+    )
 
 
 def extract_to_staging(tarball: pathlib.Path, install_root: pathlib.Path) -> pathlib.Path:
@@ -339,18 +345,19 @@ def apply_update(
             f"update: staging dir {bundle.parent} is not a sibling of {install_root}; "
             "cross-filesystem rename is not supported"
         )
-    backup = parent.with_name(f"{install_root.name}.old.{os.getpid()}")
+    backup = install_root.with_name(f"{install_root.name}.old.{os.getpid()}")
     if backup.exists():
         shutil.rmtree(backup)
     os.rename(install_root, backup)
     try:
-        os.rename(bundle.parent, install_root)
+        os.rename(bundle, install_root)
     except OSError:
         if backup.exists():
             os.rename(backup, install_root)
         raise
     else:
         shutil.rmtree(backup, ignore_errors=True)
+        shutil.rmtree(bundle.parent, ignore_errors=True)
 
 
 def stop_daemon() -> bool:

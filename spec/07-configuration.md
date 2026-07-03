@@ -57,7 +57,29 @@ audio.sample_rate     = 16000
 audio.frames_per_buffer = 1024
 
 # Input device. "" => sounddevice default input.
+# Run `stenographer devices` to list valid names / indices.
 audio.input_device    = ""
+
+# Hard cap on a single recording. When a capture reaches this many
+# seconds the buffer is truncated (recording keeps running, but only
+# the first max_recording_seconds are transcribed) and the error cue /
+# notification fire. Guards against a forgotten toggle-on growing the
+# buffer without bound. Set to 0 to disable the cap.
+audio.max_recording_seconds = 600
+
+# Mid-recording silence flush. While holding push-to-talk or with the
+# toggle on, a pause of audio.silence_duration_seconds after real speech
+# flushes the audio so far to transcription and keeps recording, so results
+# appear sooner. false restores one-utterance-per-press behavior. Ignored by
+# one-shot `dictate`.
+audio.silence_detection = true
+
+# RMS energy (0.0 .. 1.0 on float32 [-1, 1] audio) at or above which a block
+# counts as speech; below it counts as silence.
+audio.silence_rms_threshold = 0.01
+
+# Seconds of continuous silence after speech before a flush fires.
+audio.silence_duration_seconds = 1.5
 
 # === ASR ===
 # faster-whisper model identifier (HuggingFace repo id, or absolute local
@@ -88,29 +110,40 @@ asr.mode              = "lazy"
 # Seconds of inactivity before the lazy-loaded model is unloaded
 # from memory. Applies only when asr.mode = "lazy". Set to 0 to
 # disable unloading (the model stays resident once loaded).
-asr.idle_unload_seconds = 3600
+asr.idle_unload_seconds = 300
 
 # === Audio feedback ===
 # Volume for cue playback, 0.0 .. 1.0. Mapped to pw-play/paplay --volume.
 feedback.volume       = 0.6
 
 # Per-cue override. Keys are cue names from 04-audio-feedback.md
-# (ptt_on, ptt_off, toggle_on, toggle_off, error, transcribe_done).
-# Values are absolute paths to a wav/ogg file. Missing key = use the
-# bundled default cue of that name.
+# (ptt_on, ptt_off, toggle_on, toggle_off, error, segment,
+# transcribe_done, model_loading, model_ready). An unknown cue name
+# is a config error. Values are absolute paths to a wav/ogg file.
+# Missing key = use the bundled default cue of that name.
 [stenographer.feedback.cues]
 ptt_on          = null
 ptt_off         = null
 toggle_on       = null
 toggle_off      = null
 error           = null
+segment         = null
 transcribe_done = null
+model_loading   = null
+model_ready     = null
 
 # Disable all audio feedback (true => never invoke pw-play/paplay).
 feedback.mute = false
 
 # === Text output ===
-# Always append a single space to the typed transcript.
+# How the transcript reaches the focused window. "paste" copies the
+# text to the clipboard and simulates Ctrl+V (fast, robust for long
+# text and non-Latin scripts, needs clipboard.enabled). "text" types
+# the transcript with wtype, streaming each segment as it is decoded.
+# See 05-text-output.md.
+output.injection_method = "paste"
+
+# Append a single space to the typed transcript (text mode only).
 output.append_trailing_space = true
 
 # Maximum number of characters to inject in a single wtype invocation.
@@ -153,16 +186,21 @@ update.timeout_seconds = 60
 | `audio.sample_rate`                          | int      | `16000`                                    |
 | `audio.frames_per_buffer`                    | int      | `1024`                                     |
 | `audio.input_device`                         | string   | `""` (empty string = sounddevice default)  |
+| `audio.max_recording_seconds`                | int      | `600` (`0` = uncapped)                      |
+| `audio.silence_detection`                    | bool     | `true`                                     |
+| `audio.silence_rms_threshold`                | number   | `0.01`                                     |
+| `audio.silence_duration_seconds`             | number   | `1.5`                                      |
 | `asr.model`                                  | string   | `"Systran/faster-whisper-large-v3"`        |
 | `asr.language`                               | string   | `"en"`                                     |
 | `asr.beam_size`                              | int      | `5`                                        |
 | `asr.compute_type`                           | string   | `"int8"`                                   |
 | `asr.silence_threshold`                      | number   | `0.6`                                      |
 | `asr.mode`                                   | string   | `"lazy"`                                   |
-| `asr.idle_unload_seconds`                    | int      | `3600`                                     |
+| `asr.idle_unload_seconds`                    | int      | `300`                                      |
 | `feedback.volume`                            | number   | `0.6`                                      |
 | `feedback.cues.<name>`                       | string   | `""` (per cue; empty = bundled default)    |
 | `feedback.mute`                              | bool     | `false`                                    |
+| `output.injection_method`                    | string   | `"paste"`                                  |
 | `output.append_trailing_space`               | bool     | `true`                                     |
 | `output.max_chars`                           | int      | `4096`                                    |
 | `clipboard.enabled`                          | bool     | `true`                                    |
@@ -179,12 +217,18 @@ update.timeout_seconds = 60
 - `audio.sample_rate` must be one of `8000`, `16000`, `22050`, `44100`,
   `48000`.
 - `audio.frames_per_buffer` must satisfy `64 <= x <= 8192`.
+- `audio.max_recording_seconds` must satisfy `0 <= x <= 86400` (`0` = uncapped).
+- `audio.silence_rms_threshold` must satisfy `0.0 <= x <= 1.0`.
+- `audio.silence_duration_seconds` must satisfy `0 < x <= 10`.
 - `asr.beam_size` must satisfy `1 <= x <= 10`.
 - `asr.compute_type` must be one of the five allowed strings.
 - `asr.silence_threshold` must satisfy `0.0 <= x <= 1.0`.
 - `asr.mode` must be one of `"eager"`, `"lazy"`.
 - `asr.idle_unload_seconds` must satisfy `0 <= x <= 86400`.
 - `feedback.volume` must satisfy `0.0 <= x <= 1.0`.
+- Every key under `feedback.cues` must be a known cue name (one of the
+  nine in `04-audio-feedback.md`); an unknown name is a config error.
+- `output.injection_method` must be one of `"paste"`, `"text"`.
 - `output.max_chars` must satisfy `1 <= x <= 100000`.
 - `update.channel` must be one of `"stable"`, `"latest"`.
 - `update.asset_pattern` must contain the literal `{version}`.
@@ -216,6 +260,7 @@ class Config:
     feedback: FeedbackConfig
     output: OutputConfig
     clipboard: ClipboardConfig
+    update: UpdateConfig
 
     @classmethod
     def load(cls, path: pathlib.Path) -> "Config": ...

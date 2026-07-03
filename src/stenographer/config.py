@@ -8,6 +8,8 @@ import tomllib
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from stenographer.errors import ConfigError as _BaseConfigError
+
 CUE_NAMES: tuple[str, ...] = (
     "ptt_on",
     "ptt_off",
@@ -31,7 +33,13 @@ ALLOWED_SAMPLE_RATES: frozenset[int] = frozenset({8000, 16000, 22050, 44100, 480
 ALLOWED_UPDATE_CHANNELS: frozenset[str] = frozenset({"stable", "latest"})
 
 
-class ConfigError(ValueError):
+class ConfigError(_BaseConfigError):
+    """A validation error tied to a specific config file key.
+
+    Subclasses :class:`stenographer.errors.ConfigError` so handlers
+    catching the base class (exit code 78 policy) see both.
+    """
+
     def __init__(self, path: pathlib.Path, key: str, reason: str) -> None:
         self.path = path
         self.key = key
@@ -51,6 +59,10 @@ class AudioConfig:
     sample_rate: int
     frames_per_buffer: int
     input_device: str | None
+    max_recording_seconds: int
+    silence_detection: bool
+    silence_rms_threshold: float
+    silence_duration_seconds: float
 
 
 @dataclass(frozen=True)
@@ -117,6 +129,10 @@ class Config:
                 sample_rate=16000,
                 frames_per_buffer=1024,
                 input_device=None,
+                max_recording_seconds=600,
+                silence_detection=True,
+                silence_rms_threshold=0.01,
+                silence_duration_seconds=1.5,
             ),
             asr=AsrConfig(
                 model="Systran/faster-whisper-large-v3",
@@ -219,10 +235,32 @@ def _build_audio(table: dict[str, Any], path: pathlib.Path) -> AudioConfig:
     if not (64 <= frames_per_buffer <= 8192):
         raise ConfigError(path, "audio.frames_per_buffer", "must satisfy 64 <= x <= 8192")
     input_device = _expect_optional_str(table, "input_device", "audio.input_device", path)
+    max_recording_seconds = _expect_int(
+        table, "max_recording_seconds", "audio.max_recording_seconds", path
+    )
+    if not (0 <= max_recording_seconds <= 86400):
+        raise ConfigError(path, "audio.max_recording_seconds", "must satisfy 0 <= x <= 86400")
+    silence_detection = _expect_bool(
+        table, "silence_detection", "audio.silence_detection", path
+    )
+    silence_rms_threshold = _expect_number(
+        table, "silence_rms_threshold", "audio.silence_rms_threshold", path
+    )
+    if not (0.0 <= silence_rms_threshold <= 1.0):
+        raise ConfigError(path, "audio.silence_rms_threshold", "must satisfy 0.0 <= x <= 1.0")
+    silence_duration_seconds = _expect_number(
+        table, "silence_duration_seconds", "audio.silence_duration_seconds", path
+    )
+    if not (0 < silence_duration_seconds <= 10):
+        raise ConfigError(path, "audio.silence_duration_seconds", "must satisfy 0 < x <= 10")
     return AudioConfig(
         sample_rate=sample_rate,
         frames_per_buffer=frames_per_buffer,
         input_device=input_device,
+        max_recording_seconds=max_recording_seconds,
+        silence_detection=silence_detection,
+        silence_rms_threshold=silence_rms_threshold,
+        silence_duration_seconds=silence_duration_seconds,
     )
 
 
@@ -273,6 +311,12 @@ def _build_cues(raw: Any, path: pathlib.Path) -> dict[str, str | None]:
         raise ConfigError(path, "feedback.cues", f"must be a table, got {type(raw).__name__}")
     cues: dict[str, str | None] = {}
     for name, value in raw.items():
+        if name not in CUE_NAMES:
+            raise ConfigError(
+                path,
+                f"feedback.cues.{name}",
+                f"unknown cue name; must be one of {', '.join(CUE_NAMES)}",
+            )
         if value is None or value == "":
             cues[name] = None
         elif isinstance(value, str):
@@ -434,6 +478,10 @@ def _format_default_toml() -> str:
         f"audio.sample_rate = {a.sample_rate}",
         f"audio.frames_per_buffer = {a.frames_per_buffer}",
         f"audio.input_device = {_toml_optional(a.input_device)}",
+        f"audio.max_recording_seconds = {a.max_recording_seconds}",
+        f"audio.silence_detection = {_toml_bool(a.silence_detection)}",
+        f"audio.silence_rms_threshold = {a.silence_rms_threshold}",
+        f"audio.silence_duration_seconds = {a.silence_duration_seconds}",
         "",
         "# ASR",
         f"asr.model = {_toml_str(r.model)}",

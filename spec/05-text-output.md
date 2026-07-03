@@ -18,10 +18,30 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 ## Goal
 
-Specify the `Injector` component: how the final transcript is
-typed at the cursor via `wtype`, what the auto-spacing and length
-rules are, and the documented fallback to the clipboard when
+Specify the `Injector` component: how the final transcript reaches
+the focused window — either typed at the cursor via `wtype` or pasted
+from the clipboard with a simulated Ctrl+V — what the auto-spacing and
+length rules are, and the documented fallback to the clipboard when
 `wtype` is missing or fails.
+
+## Injection method
+
+`cfg.output.injection_method` (default `"paste"`; see
+`07-configuration.md`) selects how the transcript is delivered:
+
+| Method   | Behaviour                                                                 |
+|----------|---------------------------------------------------------------------------|
+| `"text"` | Type the transcript at the cursor with `wtype`. Segments stream as they are decoded (`type_text(seg.text, raw=True)` per segment; see `03-transcription.md`). |
+| `"paste"`| Do not type mid-stream. Play the `segment` cue per decoded segment, then at the end copy the full text to the clipboard (`06-clipboard.md`) and simulate Ctrl+V via `Injector.paste()`. |
+
+`"paste"` is the default because it is near-instant for long
+transcripts and avoids per-keystroke timing issues in some apps;
+`"text"` gives live streaming feedback but is slower and depends on the
+target app honouring synthetic key events.
+
+Both methods require `wtype`. When `wtype` is unavailable, paste mode
+degrades to "clipboard populated, no Ctrl+V" — the transcript is on the
+clipboard and the user pastes it manually.
 
 ## Injection mechanism
 
@@ -40,6 +60,11 @@ class Injector:
 
     def type_text(self, text: str, *, raw: bool = False) -> bool:
         """Type `text` at the focused window. Return True on success."""
+
+    def paste(self) -> bool:
+        """Simulate Ctrl+V (`wtype -M ctrl v -m ctrl`). Return True on
+        success. Used by paste mode after the transcript is on the
+        clipboard."""
 ```
 
 ### `type_text()`

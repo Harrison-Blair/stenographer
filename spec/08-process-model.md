@@ -29,6 +29,8 @@ stenographer [--config PATH] <subcommand> [args]
 
 Subcommands:
   run                       Start the daemon. Blocks until SIGINT/SIGTERM.
+  run stop                  Stop a running daemon (via systemd user unit).
+  run disable               Disable the systemd user unit.
   transcribe FILE           Transcribe a WAV/FLAC/MP3 file, print to stdout.
   dictate                   One-shot dictation: arm hotkey, capture, output, exit.
   model download            Download the configured ASR model and exit.
@@ -36,6 +38,8 @@ Subcommands:
                             Check GitHub Releases for a newer version, download
                             and install it, and (re)start the daemon. See
                             spec/12-update.md.
+  devices                   List audio input devices (name + index; marks the
+                            default with `*`) for the audio.input_device key.
   doctor                    Print capability probe + resolved config; exit 0/78.
   --version                 Print version and exit.
   --help                    Print help and exit.
@@ -136,8 +140,13 @@ shutdown signal does not race.
    ready.  The load runs in a separate background thread, so it
    does not block the processor thread's `Future` wait.
 
-   On `Result`, the processor calls `injector.type_text(result.text)`
-   and `clipboard.copy(result.text)`.
+   On `Result`, the processor outputs the transcript per
+   `cfg.output.injection_method` (see `05-text-output.md`): `"text"`
+   types it with `injector.type_text` (streaming each segment as it is
+   decoded), `"paste"` copies to the clipboard and simulates Ctrl+V.
+   The clipboard is populated with the final text when
+   `clipboard.enabled`. After a successful output the `transcribe_done`
+   cue fires.
 
    The session transitions to `IDLE` immediately after enqueuing.
    Transcription and output run concurrently with the next
@@ -251,6 +260,7 @@ def cmd_doctor(cfg: Config) -> int:
     print(f"wtype:         {'yes' if caps.has_wtype else 'NO  (cursor injection disabled)'}")
     print(f"wl-copy:       {'yes' if caps.has_wl_copy else 'NO  (clipboard disabled)'}")
     print(f"pw-play/paplay:{'yes' if (caps.has_pw_play or caps.has_paplay) else 'NO  (audio feedback disabled)'}")
+    print(f"notify-send:   {'yes' if DesktopNotification.probe() else 'NO  (desktop notification disabled)'}")
     print(f"input group:   {'yes' if caps.has_input_group else 'NO  (hotkey disabled)'}")
     if caps.has_mic:
         mic_name = cfg.audio.input_device or f"default: {Recorder.default_input_device_name()}"
@@ -295,7 +305,7 @@ concurrently with the daemon.
 Configured in `capabilities.py.__init__`:
 
 ```python
-import logging, os, pathlib
+import logging, logging.handlers, os, pathlib
 state_dir = pathlib.Path(os.environ.get("XDG_STATE_HOME",
     pathlib.Path.home() / ".local/state")) / "stenographer"
 state_dir.mkdir(parents=True, exist_ok=True)
@@ -306,10 +316,16 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(),                  # stderr
-        logging.FileHandler(log_file, mode="a"),  # append
+        logging.handlers.RotatingFileHandler(     # 5 MB x 3 backups
+            log_file, maxBytes=5 * 1024 * 1024, backupCount=3
+        ),
     ],
 )
 ```
+
+The file handler rotates so a long-lived daemon does not grow the log
+without bound. Full transcripts are logged to the file only at `DEBUG`;
+at `INFO` the session logs the transcript **length** only (privacy).
 
 ## PyInstaller compatibility (binary build)
 

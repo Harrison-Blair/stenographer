@@ -29,7 +29,7 @@ English-only, single utterance at a time.
 - Language: `cfg.asr.language` (default `"en"`). v1 pins this; the
   spec does not support auto-detect.
 - Beam size: `cfg.asr.beam_size` (default `5`).
-- Compute type: `cfg.asr.compute_type` (default `"int8_float16"`).
+- Compute type: `cfg.asr.compute_type` (default `"int8"`).
 
 ## Model lifecycle
 
@@ -106,7 +106,7 @@ class LazyModel:
     Idle unload (``asr.idle_unload_seconds``)
     ------------------------------------------
 
-    After ``asr.idle_unload_seconds`` (default 3600, i.e. 1 hour)
+    After ``asr.idle_unload_seconds`` (default 300, i.e. 5 minutes)
     without a :meth:`transcribe` call, the inner :class:`Model` is
     dropped and ``gc.collect()`` is called to reclaim GPU / CPU
     memory.  A subsequent :meth:`transcribe` or
@@ -255,19 +255,25 @@ When the Session calls ``Worker.submit(samples, on_segment=callback)``,
 the Worker thread passes ``on_segment`` through to
 ``Model.transcribe()``.  As faster-whisper yields each segment the
 callback fires on the Worker thread, which pushes the
-``SegmentInfo`` into a ``queue.Queue`` polled by the Session.  The
-Session calls ``Injector.type_text(seg.text, raw=True)`` for each
-non-empty segment so that text arrives at the focused window as soon
-as it is decoded, rather than waiting for the full utterance to
-finish transcribing.
+``SegmentInfo`` into a ``queue.Queue`` polled by the Session.  How the
+Session consumes each segment depends on ``cfg.output.injection_method``
+(see ``05-text-output.md``):
 
-- Partial segments are injected *raw*: no strip, no truncation, no
-  trailing-space append — the model's output passes through unchanged.
-- When the final ``TranscriptionResult`` is ready, the Session
-  compares the concatenated partial text against ``result.text`` and
-  skips re-injection if they match (all partials already typed).
-- The clipboard is populated with the final text only — never with
-  intermediate partial text.
+- ``"text"`` — the Session calls ``Injector.type_text(seg.text,
+  raw=True)`` for each non-empty segment so that text arrives at the
+  focused window as soon as it is decoded, rather than waiting for the
+  full utterance to finish. Partial segments are typed *raw*: no strip,
+  no truncation, no trailing-space append.
+- ``"paste"`` — segments are **not** injected mid-stream; the Session
+  accumulates them (and plays the ``segment`` cue per segment). When
+  the final result is ready it copies the full text to the clipboard
+  and simulates Ctrl+V once.
+
+In text mode, when the final ``TranscriptionResult`` is ready the
+Session compares the concatenated partial text against ``result.text``
+and skips re-injection if they match (all partials already typed). The
+clipboard is populated with the final text only — never with
+intermediate partial text.
 
 ## Timing
 

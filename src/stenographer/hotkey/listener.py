@@ -288,35 +288,37 @@ class HotkeyListener:
                     evdev.ecodes.KEY.get(code, code),
                     value,
                 )
-                if value == 1:
-                    with self._held_lock:
-                        self._held.add(code)
-                elif value == 0:
-                    with self._held_lock:
-                        self._held.discard(code)
-                else:
-                    continue
                 with self._held_lock:
-                    was_active = self._sm.is_chord_active
-                    is_active = chord_codes.issubset(self._held) and chord_codes
-                if is_active and not was_active:
-                    self._emit_keydown(event.timestamp(), device.path)
-                elif was_active and not is_active:
-                    self._emit_keyup(event.timestamp(), device.path)
+                    if value == 1:
+                        self._held.add(code)
+                    elif value == 0:
+                        self._held.discard(code)
+                    else:
+                        continue
+                    is_active = bool(chord_codes) and chord_codes.issubset(self._held)
+                self._update_chord(is_active, event.timestamp(), device.path)
         except (OSError, PermissionError) as exc:
             logger.warning("hotkey: device %s lost: %s", device.path, exc)
 
-    def _emit_keydown(self, timestamp: float, source: str) -> None:
-        def _action() -> Transition:
-            self._sm.mark_chord_active(True)
-            return self._sm.on_keydown(timestamp)
+    def _update_chord(self, is_active: bool, timestamp: float, source: str) -> None:
+        """Emit a keydown/keyup transition if the chord state changed.
 
-        self._dispatch(_action, source)
+        The was-active read and the state-machine update happen inside
+        the same dispatch lock, so two readers observing the same chord
+        press cannot both emit a keydown.
+        """
+        if is_active == self._sm.is_chord_active:
+            return  # racy fast path; re-checked under the dispatch lock
 
-    def _emit_keyup(self, timestamp: float, source: str) -> None:
         def _action() -> Transition:
-            self._sm.mark_chord_active(False)
-            return self._sm.on_keyup(timestamp)
+            was_active = self._sm.is_chord_active
+            if is_active and not was_active:
+                self._sm.mark_chord_active(True)
+                return self._sm.on_keydown(timestamp)
+            if was_active and not is_active:
+                self._sm.mark_chord_active(False)
+                return self._sm.on_keyup(timestamp)
+            return Transition("noop", None)
 
         self._dispatch(_action, source)
 

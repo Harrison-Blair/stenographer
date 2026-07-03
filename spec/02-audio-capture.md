@@ -97,10 +97,21 @@ class Recorder:
         frames_per_buffer: int,
         device: Optional[str | int],
         on_error: Callable[[Exception], None],
+        max_seconds: int = 0,                      # 0 = uncapped
+        silence_detection: bool = False,
+        silence_rms_threshold: float = 0.01,
+        silence_duration_seconds: float = 1.5,
     ) -> None: ...
 
-    def start(self) -> None:
-        """Open the InputStream and begin accumulating samples."""
+    def start(
+        self, *, on_segment: Optional[Callable[[np.ndarray], None]] = None
+    ) -> None:
+        """Open the InputStream and begin accumulating samples.
+
+        When ``silence_detection`` is on and ``on_segment`` is given, a
+        trailing-silence gap flushes the audio so far and calls
+        ``on_segment`` with it (see "Silence-based mid-recording flush").
+        """
 
     def stop(self) -> np.ndarray:
         """Close the stream, return the accumulated mono float32 buffer."""
@@ -149,6 +160,23 @@ If the PortAudio callback reports an error (the callback receives a
 - The Recorder MUST be reusable: the next `start()` MUST open a fresh
   stream.
 
+## Max recording duration cap
+
+`audio.max_recording_seconds` (default `600`, `0` = uncapped) bounds a
+single capture. When the buffer reaches `max_seconds * sample_rate`
+mono float32 samples, the Recorder:
+
+- Stops appending new audio (the buffer is frozen at the cap; the first
+  `max_seconds` are what gets transcribed).
+- Calls `on_error(AudioCaptureError("recording exceeded <N>s; capture
+  truncated"))` **exactly once**, which routes through
+  `errors.notify_failure` for the `error` cue / notification.
+- Keeps the stream open — recording is not force-stopped; the user's
+  next PTT-release or toggle-off ends it normally.
+
+This guards against a forgotten toggle-on growing the buffer (and the
+downstream resample + transcription job) without bound.
+
 ## Concurrent feedback playback
 
 `audio/feedback.py` plays cues via `pw-play` or `paplay` (see
@@ -168,11 +196,23 @@ exact same `Recorder` class:
 - `dictate`: uses the Recorder exactly as the daemon does (start, wait
   for toggle-off, stop, hand off to Worker).
 
+## Silence-based mid-recording flush
+
+While the user holds push-to-talk or has the toggle on, the Recorder
+watches per-block RMS energy. After `audio.silence_duration_seconds` of
+continuous silence following real speech, it finalizes the audio captured
+so far into its own utterance, hands it to the `on_segment` callback, and
+keeps recording — so transcription of each spoken chunk appears without
+waiting for the user to release/toggle-off. Detection runs entirely inside
+the PortAudio callback; a flush only fires on trailing silence, so it never
+drops speech. Controlled by `audio.silence_detection` (default on),
+`audio.silence_rms_threshold`, and `audio.silence_duration_seconds`. Disabled
+in one-shot (`dictate`) mode and when `audio.silence_detection = false`, in
+which case the Recorder returns the whole recording on `stop()` as before.
+
 ## Out of scope (v1)
 
 - Multi-channel / stereo input.
-- Per-utterance silence detection / VAD (faster-whisper handles
-  silence natively).
 - Microphone gain / AGC controls.
 - Hot-pluggable input device switching mid-session.
 

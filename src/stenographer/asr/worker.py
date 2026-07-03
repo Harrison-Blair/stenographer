@@ -35,9 +35,8 @@ class Job:
 
 
 class Worker:
-    def __init__(self, model: Model | LazyModel, timeout_seconds: float = 300.0) -> None:
+    def __init__(self, model: Model | LazyModel) -> None:
         self._model = model
-        self.timeout_seconds = timeout_seconds
         self._queue: queue.Queue[Job | object] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._cancel_event = threading.Event()

@@ -37,6 +37,10 @@ dependencies = [
     "numpy>=2.0",
     "faster-whisper>=1.0.0",
     "evdev>=1.4",
+    "soundfile>=0.12",       # transcribe FILE / cue asset reads
+    "packaging>=24.0",       # update: Version ordering
+    "certifi>=2024.0",       # update: TLS CA bundle
+    "huggingface_hub>=0.23", # model cache probe / download (direct import)
     # tomllib is in the stdlib on 3.11+; this project pins 3.14.
 ]
 
@@ -46,12 +50,15 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
 ]
+build = [
+    "pyinstaller>=6.10",
+]
 
 [project.scripts]
 stenographer = "stenographer.cli:main"
 
 [project.urls]
-Homepage = "https://example.invalid/stenographer"
+Homepage = "https://github.com/Harrison-Blair/stenographer"
 
 [build-system]
 requires = ["hatchling"]
@@ -62,6 +69,7 @@ packages = ["src/stenographer"]
 include = [
     "src/stenographer/assets/sounds/*.wav",
     "src/stenographer/assets/sounds/*.ogg",
+    "src/stenographer/assets/icons/*.png",
 ]
 
 [tool.ruff]
@@ -104,13 +112,18 @@ src/stenographer/
 ├── session.py            # per-utterance orchestrator
 ├── capabilities.py       # startup probe (wtype, wl-copy, pw-play, ...)
 └── assets/
-    └── sounds/
-        ├── ptt_on.wav
-        ├── ptt_off.wav
-        ├── toggle_on.wav
-        ├── toggle_off.wav
-        ├── error.wav
-        └── transcribe_done.wav
+    ├── sounds/
+    │   ├── ptt_on.wav
+    │   ├── ptt_off.wav
+    │   ├── toggle_on.wav
+    │   ├── toggle_off.wav
+    │   ├── error.wav
+    │   ├── segment.wav
+    │   ├── transcribe_done.wav
+    │   ├── model_loading.wav
+    │   └── model_ready.wav
+    └── icons/
+        └── stenographer.png   # notification icon
 
 tests/
 ├── conftest.py
@@ -137,6 +150,10 @@ packaging/
 | `numpy`         | `>=2.0`  | `audio/capture.py`, `asr/worker.py`    |
 | `faster-whisper`| `>=1.0.0`| `asr/model.py`, `asr/worker.py`        |
 | `evdev`         | `>=1.4`  | `hotkey/listener.py`                   |
+| `soundfile`     | `>=0.12` | `audio/capture.py` (file reads), cue assets |
+| `packaging`     | `>=24.0` | `update.py` (version ordering)         |
+| `certifi`       | `>=2024.0`| `update.py` (TLS CA bundle)           |
+| `huggingface_hub`| `>=0.23`| `capabilities.py`, `cli.py` (model cache probe / download) |
 | `tomllib`       | stdlib   | `config.py`                            |
 | `argparse`      | stdlib   | `cli.py`                               |
 | `logging`       | stdlib   | everywhere                             |
@@ -202,7 +219,9 @@ The on-disk layout of installed cues (after `pip install`) is:
 
 ```
 <site-packages>/stenographer/assets/sounds/{ptt_on,ptt_off,toggle_on,
-    toggle_off,error,transcribe_done}.wav
+    toggle_off,error,segment,transcribe_done,model_loading,
+    model_ready}.wav
+<site-packages>/stenographer/assets/icons/stenographer.png
 ```
 
 The `04-audio-feedback.md` spec also defines the resolution order for

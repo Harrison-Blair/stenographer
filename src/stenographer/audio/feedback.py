@@ -3,17 +3,10 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import os
 import pathlib
 import subprocess
-import threading
-import time
-import uuid
 from typing import Literal
-
-import soundfile
 
 CueName = Literal[
     "ptt_on",
@@ -64,47 +57,16 @@ class Feedback:
             logger.warning("cue %r: no asset found; skipping", name)
             return
         if self._player == "pw-play":
-            subprocess.Popen(
-                ["pw-play", f"--volume={self._volume:.2f}", str(path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            cmd = ["pw-play", f"--volume={self._volume:.2f}", str(path)]
         else:
-            self._play_paplay(path)
-
-    def _play_paplay(self, path: pathlib.Path) -> None:
-        data, samplerate = soundfile.read(str(path), dtype="float32")
-        scaled = data * self._volume
-        xdg = os.environ.get("XDG_RUNTIME_DIR")
-        if xdg:
-            cue_dir = pathlib.Path(xdg) / "stenographer-cues"
-        else:
-            cue_dir = pathlib.Path("/tmp/stenographer-cues")
-        cue_dir.mkdir(parents=True, exist_ok=True)
-        tmp_path = cue_dir / f"{uuid.uuid4()}.wav"
-        soundfile.write(str(tmp_path), scaled, samplerate)
-        process = subprocess.Popen(
-            ["paplay", str(tmp_path)],
+            # paplay volume is linear 0..65536.
+            cmd = ["paplay", f"--volume={int(self._volume * 65536)}", str(path)]
+        subprocess.Popen(
+            cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        threading.Thread(
-            target=self._poll_and_unlink,
-            args=(process, tmp_path),
-            daemon=True,
-        ).start()
-
-    @staticmethod
-    def _poll_and_unlink(process: subprocess.Popen, path: pathlib.Path) -> None:
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            if process.poll() is not None:
-                break
-            time.sleep(0.1)
-        with contextlib.suppress(FileNotFoundError):
-            path.unlink()
 
     def close(self) -> None:
         return None

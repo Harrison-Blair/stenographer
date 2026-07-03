@@ -7,8 +7,6 @@ from unittest.mock import patch
 
 import pytest
 
-from stenographer.errors import UpdateError
-
 
 def _fake_check_for_update(info: Any) -> Any:
     def _fn(cfg: Any, *, current_version: str | None = None, prerelease: bool = False) -> Any:
@@ -60,14 +58,12 @@ def test_cli_update_check_up_to_date(
 ) -> None:
     from stenographer.cli import main
 
-    def _raise(*a: Any, **kw: Any) -> Any:
-        raise UpdateError("update: no newer release available for the selected channel")
-
     monkeypatch.setattr("sys.argv", ["stenographer", "update", "--check"])
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
-    with patch("stenographer.cli.check_for_update", _raise), pytest.raises(SystemExit) as exc:
-        main()
-    assert exc.value.code == 1
+    with patch("stenographer.cli.check_for_update", lambda *a, **kw: None):
+        rc = main()
+    assert rc == 0
+    assert "up to date" in capsys.readouterr().err
 
 
 def test_cli_update_no_yes_decline_exits_zero(

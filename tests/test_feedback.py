@@ -7,7 +7,6 @@ import logging
 import pathlib
 import shutil
 import subprocess
-import time
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -108,22 +107,17 @@ def test_play_with_pw_play_calls_popen_with_expected_args(
     assert call.kwargs["start_new_session"] is True
 
 
-def test_play_with_paplay_creates_temp_file_scales_volume_and_unlinks(
+def test_play_with_paplay_passes_volume_flag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
     sr = 44100
-    duration = 0.05
-    n = int(sr * duration)
-    original = np.full(n, 0.3, dtype=np.float32)
+    original = np.full(int(sr * 0.05), 0.3, dtype=np.float32)
     source_path = tmp_path / "ptt_on.wav"
     sf.write(str(source_path), original, sr)
     asset_root = tmp_path / "empty_assets"
     asset_root.mkdir()
     popen_mock = MagicMock()
-    process_mock = popen_mock.return_value
-    process_mock.poll.return_value = None
     monkeypatch.setattr("stenographer.audio.feedback.subprocess.Popen", popen_mock)
-    monkeypatch.setattr(time, "sleep", lambda s: None)
     feedback = Feedback(
         player="paplay",
         asset_root=asset_root,
@@ -131,28 +125,11 @@ def test_play_with_paplay_creates_temp_file_scales_volume_and_unlinks(
         volume=0.5,
         muted=False,
     )
-    tmp_file: pathlib.Path | None = None
-    try:
-        feedback.play("ptt_on")
-        popen_mock.assert_called_once()
-        cmd = popen_mock.call_args.args[0]
-        assert cmd[0] == "paplay"
-        tmp_file = pathlib.Path(cmd[1])
-        assert tmp_file.exists()
-        data, read_sr = sf.read(str(tmp_file))
-        assert read_sr == sr
-        assert abs(float(data[0]) - float(original[0]) * 0.5) < 1e-5
-        process_mock.poll.return_value = 0
-        deadline = time.monotonic() + 1.0
-        while tmp_file.exists() and time.monotonic() < deadline:
-            pass
-        assert not tmp_file.exists()
-    finally:
-        process_mock.poll.return_value = 0
-        if tmp_file is not None:
-            deadline = time.monotonic() + 1.0
-            while tmp_file.exists() and time.monotonic() < deadline:
-                pass
+    feedback.play("ptt_on")
+    popen_mock.assert_called_once()
+    cmd = popen_mock.call_args.args[0]
+    # paplay volume is linear 0..65536; the original file plays directly.
+    assert cmd == ["paplay", "--volume=32768", str(source_path)]
 
 
 def test_play_logs_warning_and_skips_popen_when_no_asset(
