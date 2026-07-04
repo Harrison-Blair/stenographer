@@ -3,12 +3,20 @@
 
 from __future__ import annotations
 
-import argparse
+# PYTHON_ARGCOMPLETE_OK
+import os
+
+if "_ARGCOMPLETE" in os.environ:  # completion hot path: skip the heavy imports below
+    import argcomplete
+
+    from stenographer._parser import build_parser
+
+    argcomplete.autocomplete(build_parser())  # writes completions and exits
+
 import contextlib
 import fcntl
 import logging
 import logging.handlers
-import os
 import pathlib
 import shutil
 import signal
@@ -19,6 +27,7 @@ from collections.abc import Sequence
 import soundfile
 
 from stenographer import __version__
+from stenographer._parser import build_parser
 from stenographer.asr.model import LazyModel, Model
 from stenographer.asr.worker import Worker
 from stenographer.audio.capture import Recorder
@@ -515,7 +524,7 @@ def cmd_devices() -> int:
         return 1
     try:
         default_index = sounddevice.default.device[0]
-    except TypeError, IndexError:
+    except (TypeError, IndexError):
         default_index = -1
     print("audio input devices (use the name or index as audio.input_device):")
     found = False
@@ -557,55 +566,15 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     return 78 if fatal_cap else 0
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="stenographer",
-        description="Local, offline, Wayland push-to-talk / toggle dictation.",
-    )
-    parser.add_argument("-c", "--config", type=pathlib.Path, default=None)
-    parser.add_argument("-v", "--version", action="version", version=f"stenographer {__version__}")
-    sub = parser.add_subparsers(dest="subcommand", required=True)
-
-    run_parser = sub.add_parser("run", help="Start/stop/disable the daemon.")
-    run_sub = run_parser.add_subparsers(dest="run_command", required=False)
-    run_sub.add_parser("stop", help="Stop any running daemon.")
-    run_sub.add_parser("disable", help="Disable the systemd user unit.")
-
-    transcribe = sub.add_parser("transcribe", help="Transcribe an audio file and print to stdout.")
-    transcribe.add_argument("file", type=pathlib.Path)
-
-    sub.add_parser("dictate", help="One-shot dictation.")
-
-    model = sub.add_parser("model", help="Model management.")
-    model_sub = model.add_subparsers(dest="model_command", required=True)
-    model_sub.add_parser("download", help="Download the configured ASR model.")
-
-    update = sub.add_parser("update", help="Check for and install a newer release.")
-    update.add_argument(
-        "--check", action="store_true", help="Only check; do not download or restart."
-    )
-    update.add_argument("--yes", action="store_true", help="Skip the confirmation prompt.")
-    update.add_argument(
-        "--no-restart",
-        action="store_true",
-        help="Do not start the daemon after the install.",
-    )
-    update.add_argument("--prerelease", action="store_true", help="Include pre-release tags.")
-    update.add_argument("--repo", default=None, help="Override the configured GitHub OWNER/REPO.")
-
-    sub.add_parser("doctor", help="Print capability probe and resolved config.")
-
-    sub.add_parser("devices", help="List audio input devices.")
-
-    return parser
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     import multiprocessing
 
+    import argcomplete
+
     multiprocessing.freeze_support()
     _configure_logging()
-    parser = _build_parser()
+    parser = build_parser()
+    argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
     if args.config is not None:
         os.environ["STENOGRAPHER_CONFIG"] = str(args.config)

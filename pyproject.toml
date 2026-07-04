@@ -1,6 +1,6 @@
 [project]
 name = "stenographer"
-version = "0.6.9"
+version = "0.6.10"
 description = "Local, offline, Wayland push-to-talk / toggle dictation."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -17,6 +17,7 @@ dependencies = [
     "packaging>=24.0",
     "certifi>=2024.0",
     "huggingface_hub>=0.23",
+    "argcomplete>=3.5",
 ]
 
 [project.optional-dependencies]

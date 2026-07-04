@@ -21,7 +21,8 @@ Install stenographer from the local build tree:
   1. Build the standalone binary (if not already built)
   2. Copy dist/stenographer/ to INSTALL_DIR (default ~/.local/share/stenographer/)
   3. Symlink the launcher into ~/.local/bin/stenographer
-  4. Install and (optionally) enable+start the systemd user unit
+  4. Install bash completion to ~/.local/share/bash-completion/completions/
+  5. Install and (optionally) enable+start the systemd user unit
 
 Options:
   --no-enable    Install unit but do not enable it
@@ -87,7 +88,16 @@ fi
 echo
 
 # ────────────────────────────────────────────────────────────────
-# Step 3 — Install systemd user unit
+# Step 3 — Install bash completion
+# ────────────────────────────────────────────────────────────────
+COMPLETION_DST="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/stenographer"
+echo "==> Installing bash completion to ${COMPLETION_DST} ..."
+mkdir -p "$(dirname "${COMPLETION_DST}")"
+cp packaging/stenographer-completion.bash "${COMPLETION_DST}"
+echo
+
+# ────────────────────────────────────────────────────────────────
+# Step 4 — Install systemd user unit
 # ────────────────────────────────────────────────────────────────
 echo "==> Installing systemd user unit to ${SERVICE_DST} ..."
 
@@ -134,14 +144,14 @@ fi
 echo
 
 # ────────────────────────────────────────────────────────────────
-# Step 4 — Reload systemd
+# Step 5 — Reload systemd
 # ────────────────────────────────────────────────────────────────
 echo "==> Reloading systemd user units ..."
 systemctl --user daemon-reload
 echo
 
 # ────────────────────────────────────────────────────────────────
-# Step 5 — Enable and start
+# Step 6 — Enable and start
 # ────────────────────────────────────────────────────────────────
 if [[ "${DO_ENABLE}" -eq 1 ]]; then
     echo "==> Enabling and starting stenographer.service ..."

@@ -120,6 +120,17 @@ If you don't want a `pip install` of any kind, download a prebuilt
 verify its SHA-256, and unpack it under `/opt/` (or wherever). See
 `BUILD.md` for the full procedure.
 
+### Shell completion (bash)
+
+`scripts/install.sh` installs bash tab-completion automatically (to
+`~/.local/share/bash-completion/completions/stenographer`, loaded
+lazily by the `bash-completion` package). For pip/pipx installs,
+add this to `~/.bashrc` instead:
+
+```sh
+eval "$(register-python-argcomplete stenographer)"
+```
+
 ## First-run setup
 
 ```sh
