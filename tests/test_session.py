@@ -171,6 +171,7 @@ def test_process_clipboard_skipped_when_disabled() -> None:
 def test_process_streaming_injects_partial_segments_and_skips_duplicate_final() -> None:
     session, _m = _make_session()
     c = _components(session)
+    c["cfg"].asr.silence_threshold = 0.6
     c["cfg"].clipboard.enabled = True
 
     result = TranscriptionResult(text="hello world", duration_seconds=1.0, segments=[])
@@ -196,6 +197,7 @@ def test_process_streaming_injects_partial_segments_and_skips_duplicate_final() 
 def test_process_paste_mode_skips_streaming_and_pastes_at_end() -> None:
     session, _m = _make_session()
     c = _components(session)
+    c["cfg"].asr.silence_threshold = 0.6
     c["cfg"].clipboard.enabled = True
     c["cfg"].output.injection_method = "paste"
 
@@ -292,6 +294,61 @@ def test_process_silence_no_speech_prob_below_threshold_outputs() -> None:
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
     c["injector"].type_text.assert_called_once_with("hello")
     c["clipboard"].copy.assert_called_once_with("hello")
+
+
+def test_process_streaming_silence_segments_never_reach_cursor() -> None:
+    """Hallucinated segments over silence must not be typed during streaming."""
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.silence_threshold = 0.6
+    c["cfg"].clipboard.enabled = True
+
+    segments = [
+        SegmentInfo(0.0, 0.5, " Thank", 0.95),
+        SegmentInfo(0.5, 1.0, " you.", 0.88),
+    ]
+    result = TranscriptionResult(text="Thank you.", duration_seconds=1.0, segments=segments)
+    future = _fake_future()
+    future.result.return_value = result
+
+    def submit_side_effect(samples, *, on_segment=None):
+        if on_segment is not None:
+            for seg in segments:
+                on_segment(seg)
+        return future
+
+    c["worker"].submit.side_effect = submit_side_effect
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+
+    c["injector"].type_text.assert_not_called()
+    c["clipboard"].copy.assert_not_called()
+    c["feedback"].play.assert_called_once_with("error")
+
+
+def test_process_streaming_types_speech_but_skips_silence_segments() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.silence_threshold = 0.6
+    c["cfg"].clipboard.enabled = True
+
+    segments = [
+        SegmentInfo(0.0, 0.5, " hello", 0.1),
+        SegmentInfo(0.5, 1.0, " Thank you.", 0.95),
+    ]
+    result = TranscriptionResult(text="hello Thank you.", duration_seconds=1.0, segments=segments)
+    future = _fake_future()
+    future.result.return_value = result
+
+    def submit_side_effect(samples, *, on_segment=None):
+        if on_segment is not None:
+            for seg in segments:
+                on_segment(seg)
+        return future
+
+    c["worker"].submit.side_effect = submit_side_effect
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+
+    c["injector"].type_text.assert_called_once_with(" hello", raw=True)
 
 
 def test_process_transcription_failure_plays_error_cue() -> None:

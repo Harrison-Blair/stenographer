@@ -321,6 +321,13 @@ class Session:
             seg = segment_queue.get()
             if seg is None:
                 break
+            if seg.no_speech_prob >= self._cfg.asr.silence_threshold:
+                # Likely a hallucination over silence (e.g. "Thank you.");
+                # never send it to the cursor. The post-transcription check
+                # below handles the all-silence case for clipboard/paste.
+                log.info("session: skipping probable-silence segment")
+                log.debug("session: silence segment %r", seg.text)
+                continue
             if seg.text.strip():
                 if paste_mode:
                     injected_text += seg.text
