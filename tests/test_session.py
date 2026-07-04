@@ -349,6 +349,30 @@ def test_process_streaming_types_speech_but_skips_silence_segments() -> None:
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
 
     c["injector"].type_text.assert_called_once_with(" hello", raw=True)
+    c["clipboard"].copy.assert_called_once_with("hello")
+
+
+def test_process_paste_mode_clipboard_excludes_silence_segments() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.silence_threshold = 0.6
+    c["cfg"].clipboard.enabled = True
+    c["cfg"].output.injection_method = "paste"
+
+    future = _fake_future()
+    future.result.return_value = TranscriptionResult(
+        text="hello Thank you.",
+        duration_seconds=1.0,
+        segments=[
+            SegmentInfo(0.0, 0.5, "hello", 0.1),
+            SegmentInfo(0.5, 1.0, " Thank you.", 0.95),
+        ],
+    )
+    c["worker"].submit.return_value = future
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+
+    c["clipboard"].copy.assert_called_once_with("hello")
+    c["injector"].paste.assert_called_once()
 
 
 def test_process_transcription_failure_plays_error_cue() -> None:
@@ -363,7 +387,7 @@ def test_process_transcription_failure_plays_error_cue() -> None:
     c["feedback"].play.assert_called_once_with("error")
 
 
-def test_process_silence_some_segments_below_threshold_outputs() -> None:
+def test_process_silence_some_segments_below_threshold_outputs_speech_only() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
@@ -379,8 +403,8 @@ def test_process_silence_some_segments_below_threshold_outputs() -> None:
     )
     c["worker"].submit.return_value = future
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
-    c["injector"].type_text.assert_called_once_with("hello world")
-    c["clipboard"].copy.assert_called_once_with("hello world")
+    c["injector"].type_text.assert_called_once_with("world")
+    c["clipboard"].copy.assert_called_once_with("world")
 
 
 # ---------------------------------------------------------------------------

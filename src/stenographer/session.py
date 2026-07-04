@@ -357,14 +357,26 @@ class Session:
         # Full transcripts go to the log file only at DEBUG (privacy).
         log.info("session: transcript received (%d chars)", len(text))
         log.debug("session: transcript %r", text)
-        if result.segments and all(
-            seg.no_speech_prob >= self._cfg.asr.silence_threshold for seg in result.segments
-        ):
-            log.info("session: silence detected, skipping output")
-            if not self._stop_event.is_set():
-                with contextlib.suppress(Exception):
-                    self._feedback.play("error")
-            return
+        if result.segments:
+            speech_segments = [
+                seg
+                for seg in result.segments
+                if seg.no_speech_prob < self._cfg.asr.silence_threshold
+            ]
+            if not speech_segments:
+                log.info("session: silence detected, skipping output")
+                if not self._stop_event.is_set():
+                    with contextlib.suppress(Exception):
+                        self._feedback.play("error")
+                return
+            if len(speech_segments) != len(result.segments):
+                # Drop probable-silence segments from the clipboard/paste text
+                # too, matching what the streaming loop sent to the cursor.
+                text = "".join(seg.text for seg in speech_segments).strip()
+                log.info(
+                    "session: dropped %d probable-silence segment(s) from output",
+                    len(result.segments) - len(speech_segments),
+                )
         if not text or not text.strip():
             log.info("session: empty transcript, skipping output")
             if not self._stop_event.is_set():
