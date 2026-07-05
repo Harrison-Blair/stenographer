@@ -23,7 +23,7 @@ they are loaded from, and how they are played. The component is
 
 ## Cue catalogue (v1)
 
-Nine cues, named exactly as below. The hotkey state machine
+Eleven cues, named exactly as below. The hotkey state machine
 (`01-hotkey.md`), the error helper (`09-error-handling.md`), and the
 Session orchestrator (`08-process-model.md`) refer to them by these names.
 
@@ -31,8 +31,10 @@ Session orchestrator (`08-process-model.md`) refer to them by these names.
 |-------------------|-------------------------------------------|--------------------------------------------------|
 | `ptt_on`          | Hotkey state machine, on PTT keydown      | 1 high beep: 880 Hz, 80 ms, -12 dBFS             |
 | `ptt_off`         | Hotkey state machine, on PTT keyup        | 2 high beeps: 880 Hz, 80 ms, 60 ms gap, -12 dBFS |
-| `toggle_on`       | Hotkey state machine, on toggle-on (keyup)| 1 low beep: 440 Hz, 80 ms, -12 dBFS              |
-| `toggle_off`      | Hotkey state machine, on toggle-off (keydown during rec) | 2 low beeps: 440 Hz, 80 ms, 60 ms gap, -12 dBFS |
+| `toggle_on`       | Hotkey state machine, on double-tap latch (keydown) | 1 low beep: 440 Hz, 80 ms, -12 dBFS     |
+| `toggle_off`      | Hotkey state machine, on toggle-off (keyup during rec) | 2 low beeps: 440 Hz, 80 ms, 60 ms gap, -12 dBFS |
+| `cancel`          | Hotkey state machine, on cancel chord     | descending 2-tone: 440 Hz 80 ms, 60 ms gap, 220 Hz 120 ms, -12 dBFS |
+| `discard`         | Hotkey state machine, on double-tap window expiry | 1 soft short tone: 330 Hz, 60 ms, -18 dBFS |
 | `error`           | `errors.notify_failure`                   | 1 low buzz: 220 Hz, 250 ms, -6 dBFS              |
 | `segment`         | Session, per decoded segment in paste mode | 1 short soft tick                               |
 | `transcribe_done` | Session, after successful output          | 1 soft confirmation tone                         |

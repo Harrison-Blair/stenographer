@@ -124,7 +124,7 @@ def test_process_submits_to_worker_and_outputs() -> None:
     )
     c["worker"].submit.return_value = future
     samples = np.zeros((16000, 1), dtype=np.float32)
-    session._process(samples, "ptt")
+    session._process(samples, "ptt", threading.Event())
     c["worker"].submit.assert_called_once()
     future.result.assert_called_once()
     c["injector"].type_text.assert_called_once_with("hello world")
@@ -138,7 +138,7 @@ def test_process_empty_transcript_skips_output() -> None:
     future = _fake_future()
     future.result.return_value = TranscriptionResult(text="   ", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
-    session._process(np.zeros((1, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_not_called()
     c["clipboard"].copy.assert_not_called()
     c["feedback"].play.assert_called_once_with("error")
@@ -152,7 +152,7 @@ def test_process_injector_skipped_when_wtype_unavailable() -> None:
     future = _fake_future()
     future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
-    session._process(np.zeros((1, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_not_called()
     c["clipboard"].copy.assert_called_once()
 
@@ -164,7 +164,7 @@ def test_process_clipboard_skipped_when_disabled() -> None:
     future = _fake_future()
     future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
-    session._process(np.zeros((1, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
     c["clipboard"].copy.assert_not_called()
 
 
@@ -179,14 +179,14 @@ def test_process_streaming_injects_partial_segments_and_skips_duplicate_final() 
     future.done.return_value = True
     future.result.return_value = result
 
-    def submit_side_effect(samples, *, on_segment=None):
+    def submit_side_effect(samples, *, on_segment=None, cancel_event=None):
         if on_segment is not None:
             on_segment(SegmentInfo(0.0, 0.5, " hello", 0.1))
             on_segment(SegmentInfo(0.5, 1.0, " world", 0.1))
         return future
 
     c["worker"].submit.side_effect = submit_side_effect
-    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["injector"].type_text.assert_any_call(" hello", raw=True)
     c["injector"].type_text.assert_any_call(" world", raw=True)
@@ -206,14 +206,14 @@ def test_process_paste_mode_skips_streaming_and_pastes_at_end() -> None:
     future.done.return_value = True
     future.result.return_value = result
 
-    def submit_side_effect(samples, *, on_segment=None):
+    def submit_side_effect(samples, *, on_segment=None, cancel_event=None):
         if on_segment is not None:
             on_segment(SegmentInfo(0.0, 0.5, " hello", 0.1))
             on_segment(SegmentInfo(0.5, 1.0, " world", 0.1))
         return future
 
     c["worker"].submit.side_effect = submit_side_effect
-    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["injector"].type_text.assert_not_called()
     c["feedback"].play.assert_any_call("segment")
@@ -232,7 +232,7 @@ def test_process_paste_mode_empty_transcript_skips_output() -> None:
     future.done.return_value = True
     future.result.return_value = TranscriptionResult(text="   ", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
-    session._process(np.zeros((1, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["injector"].type_text.assert_not_called()
     c["injector"].paste.assert_not_called()
@@ -250,7 +250,7 @@ def test_process_paste_mode_clipboard_disabled_still_pastes() -> None:
     future.done.return_value = True
     future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
     c["worker"].submit.return_value = future
-    session._process(np.zeros((1, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["clipboard"].copy.assert_not_called()
     c["injector"].paste.assert_called_once()
@@ -271,7 +271,7 @@ def test_process_silence_no_speech_prob_skips_output() -> None:
         ],
     )
     c["worker"].submit.return_value = future
-    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_not_called()
     c["clipboard"].copy.assert_not_called()
     c["feedback"].play.assert_called_once_with("error")
@@ -291,7 +291,7 @@ def test_process_silence_no_speech_prob_below_threshold_outputs() -> None:
         ],
     )
     c["worker"].submit.return_value = future
-    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_called_once_with("hello")
     c["clipboard"].copy.assert_called_once_with("hello")
 
@@ -311,14 +311,14 @@ def test_process_streaming_silence_segments_never_reach_cursor() -> None:
     future = _fake_future()
     future.result.return_value = result
 
-    def submit_side_effect(samples, *, on_segment=None):
+    def submit_side_effect(samples, *, on_segment=None, cancel_event=None):
         if on_segment is not None:
             for seg in segments:
                 on_segment(seg)
         return future
 
     c["worker"].submit.side_effect = submit_side_effect
-    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["injector"].type_text.assert_not_called()
     c["clipboard"].copy.assert_not_called()
@@ -339,14 +339,14 @@ def test_process_streaming_types_speech_but_skips_silence_segments() -> None:
     future = _fake_future()
     future.result.return_value = result
 
-    def submit_side_effect(samples, *, on_segment=None):
+    def submit_side_effect(samples, *, on_segment=None, cancel_event=None):
         if on_segment is not None:
             for seg in segments:
                 on_segment(seg)
         return future
 
     c["worker"].submit.side_effect = submit_side_effect
-    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["injector"].type_text.assert_called_once_with(" hello", raw=True)
     c["clipboard"].copy.assert_called_once_with("hello")
@@ -369,7 +369,7 @@ def test_process_paste_mode_clipboard_excludes_silence_segments() -> None:
         ],
     )
     c["worker"].submit.return_value = future
-    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["clipboard"].copy.assert_called_once_with("hello")
     c["injector"].paste.assert_called_once()
@@ -381,7 +381,7 @@ def test_process_transcription_failure_plays_error_cue() -> None:
     future = _fake_future()
     future.result.side_effect = RuntimeError("inference crashed")
     c["worker"].submit.return_value = future
-    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_not_called()
     c["clipboard"].copy.assert_not_called()
     c["feedback"].play.assert_called_once_with("error")
@@ -402,7 +402,7 @@ def test_process_silence_some_segments_below_threshold_outputs_speech_only() -> 
         ],
     )
     c["worker"].submit.return_value = future
-    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt")
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_called_once_with("world")
     c["clipboard"].copy.assert_called_once_with("world")
 
@@ -468,7 +468,7 @@ def test_enqueue_flush_segment_tags_ptt_and_processes() -> None:
     session, _m = _make_session()
     arr = np.ones((10, 1), dtype=np.float32)
     session._enqueue_flush_segment(arr)
-    samples, mode = session._utterance_queue.get_nowait()
+    samples, mode, _abort, _gen = session._utterance_queue.get_nowait()
     assert mode == "ptt"
     assert np.array_equal(samples, arr)
 
@@ -610,7 +610,7 @@ def test_multiple_utterances_processed_in_order() -> None:
     ]
     submit_count = [0]
 
-    def submit_side_effect(samples, *, on_segment=None):
+    def submit_side_effect(samples, *, on_segment=None, cancel_event=None):
         fut = _fake_future()
         fut.result.return_value = results[submit_count[0]]
         submit_count[0] += 1
@@ -641,7 +641,7 @@ def test_on_recording_stop_logs_queue_depth_when_backlog() -> None:
     session.start()
 
     # Simulate a blocked processor by putting a dummy entry on the queue
-    session._utterance_queue.put((np.zeros((1, 1), dtype=np.float32), "ptt"))
+    session._utterance_queue.put((np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event(), 0))
     assert session._utterance_queue.qsize() == 1
 
     c = _components(session)
@@ -746,3 +746,135 @@ def test_on_model_unloaded_shows_notification() -> None:
         notif.flush()
     cmd_lines = [run.call_args_list[i][0][0] for i in range(run.call_count)]
     assert any("Speech model unloaded" in " ".join(str(a) for a in args) for args in cmd_lines)
+
+
+# ---------------------------------------------------------------------------
+# discard_recording / cancel_all
+# ---------------------------------------------------------------------------
+
+
+def test_discard_recording_stops_recorder_without_enqueue() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
+    session.on_recording_start()
+    session.discard_recording()
+    c["recorder"].stop.assert_called_once()
+    assert session._utterance_queue.qsize() == 0
+    c["worker"].submit.assert_not_called()
+    assert not session._recording
+
+
+def test_discard_recording_without_active_recording_is_noop() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    session.discard_recording()
+    c["recorder"].stop.assert_not_called()
+
+
+def test_cancel_all_stops_recording_and_drains_queue() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
+    # Two queued utterances plus an active recording.
+    session._utterance_queue.put((np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event(), 0))
+    session._utterance_queue.put((np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event(), 0))
+    session.on_recording_start()
+    session.cancel_all()
+    assert session._utterance_queue.qsize() == 0
+    c["recorder"].stop.assert_called_once()
+    assert not session._recording
+
+
+def test_cancel_all_preserves_shutdown_sentinel() -> None:
+    session, _m = _make_session()
+    session._utterance_queue.put((np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event(), 0))
+    session._utterance_queue.put(None)
+    session.cancel_all()
+    assert session._utterance_queue.get_nowait() is None
+
+
+def test_cancel_all_aborts_in_flight_processing() -> None:
+    """cancel_all sets the abort event of the utterance being processed;
+    no further segments inject, no done cue, no error cue."""
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.silence_threshold = 0.6
+    c["cfg"].clipboard.enabled = True
+    c["cfg"].output.injection_method = "text"
+    session.start()
+
+    captured: dict[str, object] = {}
+    first_segment_delivered = threading.Event()
+    release_second_segment = threading.Event()
+
+    def submit_side_effect(samples, *, on_segment=None, cancel_event=None):
+        captured["cancel_event"] = cancel_event
+        # Defer the done-callback (the segment-loop sentinel) until all
+        # segments are delivered, unlike _fake_future which fires it eagerly.
+        fut = MagicMock()
+        done_callbacks: list = []
+        fut.add_done_callback.side_effect = done_callbacks.append
+
+        def deliver() -> None:
+            on_segment(SegmentInfo(0.0, 0.5, " hello", 0.1))
+            first_segment_delivered.set()
+            release_second_segment.wait(timeout=2.0)
+            on_segment(SegmentInfo(0.5, 1.0, " world", 0.1))
+            from stenographer.asr.worker import CancelledError
+
+            fut.result.side_effect = CancelledError("transcription cancelled")
+            for cb in done_callbacks:
+                cb(fut)
+
+        t = threading.Thread(target=deliver, daemon=True)
+        t.start()
+        return fut
+
+    c["worker"].submit.side_effect = submit_side_effect
+    c["injector"].type_text.return_value = True
+    c["recorder"].stop.return_value = np.zeros((16000, 1), dtype=np.float32)
+
+    session.on_recording_start()
+    session.on_recording_stop("ptt")
+    assert first_segment_delivered.wait(timeout=2.0)
+    # First segment was typed while processing was live.
+    _wait = time.monotonic() + 2.0
+    while c["injector"].type_text.call_count < 1 and time.monotonic() < _wait:
+        time.sleep(0.01)
+    c["injector"].type_text.assert_called_once_with(" hello", raw=True)
+
+    session.cancel_all()
+    assert captured["cancel_event"] is not None
+    assert captured["cancel_event"].is_set()
+    release_second_segment.set()
+
+    # Give the processor time to drain the segment queue and observe the cancel.
+    _wait = time.monotonic() + 2.0
+    while session._active_abort is not None and time.monotonic() < _wait:
+        time.sleep(0.01)
+    # The second segment must not have been typed, and no done/error cue played.
+    c["injector"].type_text.assert_called_once_with(" hello", raw=True)
+    played = [call.args[0] for call in c["feedback"].play.call_args_list]
+    assert "transcribe_done" not in played
+    assert "error" not in played
+    c["clipboard"].copy.assert_not_called()
+
+
+def test_cancel_all_drops_dequeued_but_unprocessed_item() -> None:
+    """An item stamped with a pre-cancel generation is dropped even if the
+    processor dequeues it after cancel_all ran."""
+    session, _m = _make_session()
+    c = _components(session)
+    session._utterance_queue.put(
+        (np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event(), session._cancel_generation)
+    )
+    # Cancel before the processor thread ever starts, then start it.
+    session.cancel_all()
+    session._utterance_queue.put((np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event(), -1))
+    session.start()
+    _wait = time.monotonic() + 2.0
+    while session._utterance_queue.qsize() > 0 and time.monotonic() < _wait:
+        time.sleep(0.01)
+    time.sleep(0.05)
+    c["worker"].submit.assert_not_called()

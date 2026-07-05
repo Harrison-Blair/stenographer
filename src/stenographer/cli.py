@@ -209,7 +209,13 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         icon_path=_ICON_ROOT / "stenographer.png",
     )
     binding = HotkeyBinding.parse(cfg.hotkey.binding)
-    sm = HotkeyStateMachine(threshold_seconds=cfg.hotkey.toggle_threshold_seconds)
+    cancel_binding = (
+        HotkeyBinding.parse(cfg.hotkey.cancel_binding) if cfg.hotkey.cancel_binding else None
+    )
+    sm = HotkeyStateMachine(
+        threshold_seconds=cfg.hotkey.toggle_threshold_seconds,
+        double_tap_window_seconds=cfg.hotkey.double_tap_window_seconds,
+    )
     session = Session(
         cfg=cfg,
         capabilities=caps,
@@ -231,6 +237,9 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         on_toggle_off=session.on_toggle_off,
         feedback=feedback,
         lock=session.lock,
+        cancel_binding=cancel_binding,
+        on_discard=session.discard_recording,
+        on_cancel=session.cancel_all,
     )
     session.start()
     session.attach_listener(listener)

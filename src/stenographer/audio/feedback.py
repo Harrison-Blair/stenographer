@@ -13,6 +13,8 @@ CueName = Literal[
     "ptt_off",
     "toggle_on",
     "toggle_off",
+    "cancel",
+    "discard",
     "error",
     "segment",
     "transcribe_done",

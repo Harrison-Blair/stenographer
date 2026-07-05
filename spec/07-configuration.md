@@ -40,9 +40,18 @@ The top-level table is `stenographer`. Every key below lives under it.
 # See 01-hotkey.md for the grammar and accepted values.
 hotkey.binding        = "KEY_RIGHTCTRL"   # default
 
-# Press duration (seconds) below which a press is treated as toggle,
+# Press duration (seconds) below which a press counts as a tap,
 # at or above which it is treated as push-to-talk.
 hotkey.toggle_threshold_seconds = 0.5
+
+# Window (seconds) after a short tap in which a second tap latches
+# toggle recording. A lone tap is discarded when the window expires.
+hotkey.double_tap_window_seconds = 0.35
+
+# Cancel key: while the main chord is held, pressing this key discards
+# the active recording, aborts in-flight transcription, and clears the
+# queue. "" disables the cancel chord.
+hotkey.cancel_binding = "KEY_ESC"
 
 # Keyboard device path to grab. "" => auto-detect the first keyboard
 # in /dev/input/event* owned by the user.
@@ -182,6 +191,8 @@ update.timeout_seconds = 60
 |----------------------------------------------|----------|--------------------------------------------|
 | `hotkey.binding`                             | string   | `"KEY_RIGHTCTRL"`                          |
 | `hotkey.toggle_threshold_seconds`            | number   | `0.5`                                      |
+| `hotkey.double_tap_window_seconds`           | number   | `0.35`                                     |
+| `hotkey.cancel_binding`                      | string   | `"KEY_ESC"` (empty string = disabled)      |
 | `hotkey.device`                              | string   | `""` (empty string = auto-detect)          |
 | `audio.sample_rate`                          | int      | `16000`                                    |
 | `audio.frames_per_buffer`                    | int      | `1024`                                     |
@@ -214,6 +225,10 @@ update.timeout_seconds = 60
 
 - `hotkey.binding` must parse via the grammar in `01-hotkey.md`.
 - `hotkey.toggle_threshold_seconds` must satisfy `0 < x <= 5`.
+- `hotkey.double_tap_window_seconds` must satisfy `0 < x <= 2`.
+- `hotkey.cancel_binding` must be empty (disabled) or parse via the
+  grammar in `01-hotkey.md`, and must not share any key with
+  `hotkey.binding`.
 - `audio.sample_rate` must be one of `8000`, `16000`, `22050`, `44100`,
   `48000`.
 - `audio.frames_per_buffer` must satisfy `64 <= x <= 8192`.

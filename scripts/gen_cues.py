@@ -70,6 +70,14 @@ def build_cues(sample_rate: int) -> dict[str, np.ndarray]:
                 tone(440.0, 0.080, DBFS_BEEP, sample_rate),
             ]
         ),
+        "cancel": np.concatenate(
+            [
+                tone(440.0, 0.080, DBFS_BEEP, sample_rate),
+                silence(GAP_S, sample_rate),
+                tone(220.0, 0.120, DBFS_BEEP, sample_rate),
+            ]
+        ),
+        "discard": tone(330.0, 0.060, DBFS_SEGMENT, sample_rate),
         "error": tone(220.0, 0.250, DBFS_ERROR, sample_rate),
         "segment": tone(660.0, SEGMENT_S, DBFS_SEGMENT, sample_rate),
         "transcribe_done": silence(TRANSCRIBE_DONE_S, sample_rate),

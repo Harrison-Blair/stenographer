@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
+import logging
 import os
 import pathlib
 import re
@@ -10,11 +11,15 @@ from typing import Any
 
 from stenographer.errors import ConfigError as _BaseConfigError
 
+logger = logging.getLogger(__name__)
+
 CUE_NAMES: tuple[str, ...] = (
     "ptt_on",
     "ptt_off",
     "toggle_on",
     "toggle_off",
+    "cancel",
+    "discard",
     "error",
     "segment",
     "transcribe_done",
@@ -51,6 +56,8 @@ class ConfigError(_BaseConfigError):
 class HotkeyConfig:
     binding: str
     toggle_threshold_seconds: float
+    double_tap_window_seconds: float
+    cancel_binding: str
     device: str | None
 
 
@@ -123,6 +130,8 @@ class Config:
             hotkey=HotkeyConfig(
                 binding="KEY_RIGHTCTRL",
                 toggle_threshold_seconds=0.5,
+                double_tap_window_seconds=0.35,
+                cancel_binding="KEY_ESC",
                 device=None,
             ),
             audio=AudioConfig(
@@ -187,17 +196,25 @@ class Config:
         if not isinstance(table, dict):
             raise ConfigError(path, "stenographer", f"must be a table, got {type(table).__name__}")
 
+        # Whether the user set hotkey.cancel_binding themselves. A cancel
+        # binding that came only from the defaults must not hard-fail on an
+        # overlap with an explicit hotkey.binding (see _build_hotkey).
+        user_hotkey = table.get("hotkey", {})
+        cancel_explicit = isinstance(user_hotkey, dict) and bool(user_hotkey.get("cancel_binding"))
+
         merged = _merge(asdict(cls.defaults()), table)
-        return cls._from_dict(merged, path)
+        return cls._from_dict(merged, path, cancel_explicit=cancel_explicit)
 
     @classmethod
     def write_default(cls, path: pathlib.Path) -> None:
         path.write_text(_format_default_toml(), encoding="utf-8")
 
     @classmethod
-    def _from_dict(cls, table: dict[str, Any], path: pathlib.Path) -> Config:
+    def _from_dict(
+        cls, table: dict[str, Any], path: pathlib.Path, *, cancel_explicit: bool = False
+    ) -> Config:
         return cls(
-            hotkey=_build_hotkey(table["hotkey"], path),
+            hotkey=_build_hotkey(table["hotkey"], path, cancel_explicit=cancel_explicit),
             audio=_build_audio(table["audio"], path),
             asr=_build_asr(table["asr"], path),
             feedback=_build_feedback(table["feedback"], path),
@@ -210,7 +227,9 @@ class Config:
 _NULL_VALUE_RE = re.compile(r'(?<=\s=\s)null(?=[^\w"]|\Z)', re.MULTILINE)
 
 
-def _build_hotkey(table: dict[str, Any], path: pathlib.Path) -> HotkeyConfig:
+def _build_hotkey(
+    table: dict[str, Any], path: pathlib.Path, *, cancel_explicit: bool = False
+) -> HotkeyConfig:
     binding = _expect_str(table, "binding", "hotkey.binding", path)
     if not binding:
         raise ConfigError(path, "hotkey.binding", "must be a non-empty string")
@@ -219,8 +238,52 @@ def _build_hotkey(table: dict[str, Any], path: pathlib.Path) -> HotkeyConfig:
     )
     if not (0 < threshold <= 5):
         raise ConfigError(path, "hotkey.toggle_threshold_seconds", "must satisfy 0 < x <= 5")
+    window = _expect_number(
+        table, "double_tap_window_seconds", "hotkey.double_tap_window_seconds", path
+    )
+    if not (0 < window <= 2):
+        raise ConfigError(path, "hotkey.double_tap_window_seconds", "must satisfy 0 < x <= 2")
+    cancel_binding = _expect_str(table, "cancel_binding", "hotkey.cancel_binding", path)
+    # Deferred import to avoid a hard evdev dependency at config-module
+    # import time (mirrors how the main binding is parsed in cli.py).
+    from stenographer.hotkey.binding import HotkeyBinding
+
+    try:
+        main = HotkeyBinding.parse(binding)
+    except _BaseConfigError as exc:
+        raise ConfigError(path, "hotkey.binding", str(exc)) from exc
+    if cancel_binding:
+        try:
+            cancel = HotkeyBinding.parse(cancel_binding)
+        except _BaseConfigError as exc:
+            raise ConfigError(path, "hotkey.cancel_binding", str(exc)) from exc
+        overlap = set(cancel.keys) & set(main.keys)
+        if overlap:
+            shared = ", ".join(sorted(overlap))
+            if cancel_explicit:
+                raise ConfigError(
+                    path,
+                    "hotkey.cancel_binding",
+                    f"must not share keys with hotkey.binding: {shared}",
+                )
+            # The cancel binding came only from the defaults and collides
+            # with the user's explicit hotkey.binding. Disable cancel rather
+            # than refuse to start.
+            logger.warning(
+                "hotkey.cancel_binding default %r shares keys with hotkey.binding (%s); "
+                "disabling cancel. Set hotkey.cancel_binding explicitly to re-enable.",
+                cancel_binding,
+                shared,
+            )
+            cancel_binding = ""
     device = _expect_optional_path(table, "device", "hotkey.device", path)
-    return HotkeyConfig(binding=binding, toggle_threshold_seconds=threshold, device=device)
+    return HotkeyConfig(
+        binding=binding,
+        toggle_threshold_seconds=threshold,
+        double_tap_window_seconds=window,
+        cancel_binding=cancel_binding,
+        device=device,
+    )
 
 
 def _build_audio(table: dict[str, Any], path: pathlib.Path) -> AudioConfig:
@@ -470,6 +533,8 @@ def _format_default_toml() -> str:
         "# Hotkey",
         f"hotkey.binding = {_toml_str(h.binding)}",
         f"hotkey.toggle_threshold_seconds = {h.toggle_threshold_seconds}",
+        f"hotkey.double_tap_window_seconds = {h.double_tap_window_seconds}",
+        f"hotkey.cancel_binding = {_toml_str(h.cancel_binding)}",
         f"hotkey.device = {_toml_optional(h.device)}",
         "",
         "# Audio capture",

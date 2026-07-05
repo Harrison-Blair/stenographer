@@ -17,9 +17,9 @@ from stenographer.asr.model import LazyModel, Model, SegmentInfo, TranscriptionR
 log = logging.getLogger(__name__)
 
 
-class _CancelledError(Exception):
-    """Raised inside the worker thread when :meth:`Worker.cancel` is called
-    during an in-flight transcription."""
+class CancelledError(Exception):
+    """Raised inside the worker thread when a job's ``cancel_event`` or
+    :meth:`Worker.cancel` fires during an in-flight transcription."""
 
 
 _UNLOAD = object()
@@ -32,6 +32,7 @@ class Job:
     samples: np.ndarray
     future: concurrent.futures.Future[TranscriptionResult]
     on_segment: Callable[[SegmentInfo], None] | None = None
+    cancel_event: threading.Event | None = None
 
 
 class Worker:
@@ -52,9 +53,12 @@ class Worker:
         samples: np.ndarray,
         *,
         on_segment: Callable[[SegmentInfo], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> concurrent.futures.Future[TranscriptionResult]:
         future: concurrent.futures.Future[TranscriptionResult] = concurrent.futures.Future()
-        self._queue.put(Job(samples=samples, future=future, on_segment=on_segment))
+        self._queue.put(
+            Job(samples=samples, future=future, on_segment=on_segment, cancel_event=cancel_event)
+        )
         return future
 
     def request_unload(self, token: int) -> None:
@@ -125,11 +129,21 @@ class Worker:
                 seg: SegmentInfo,
                 *,
                 _user_cb: Callable[[SegmentInfo], None] | None = job.on_segment,
+                _job_cancel: threading.Event | None = job.cancel_event,
             ) -> None:
                 if self._cancel_event.is_set():
-                    raise _CancelledError("transcription cancelled")
+                    raise CancelledError("transcription cancelled")
+                if _job_cancel is not None and _job_cancel.is_set():
+                    raise CancelledError("transcription cancelled")
                 if _user_cb is not None:
                     _user_cb(seg)
+
+            if self._cancel_event.is_set() or (
+                job.cancel_event is not None and job.cancel_event.is_set()
+            ):
+                log.debug("ASR worker: job cancelled before transcription")
+                job.future.set_exception(CancelledError("transcription cancelled"))
+                continue
 
             try:
                 result = self._model.transcribe(
@@ -138,7 +152,7 @@ class Worker:
                     self._model.beam_size,
                     on_segment=on_segment,
                 )
-            except _CancelledError as exc:
+            except CancelledError as exc:
                 log.debug("ASR worker: transcription cancelled")
                 job.future.set_exception(exc)
                 continue

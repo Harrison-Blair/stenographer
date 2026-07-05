@@ -119,15 +119,26 @@ class HotkeyListener:
         on_toggle_off: Callable[[], None],
         feedback: Any,
         lock: threading.RLock | None = None,
+        cancel_binding: HotkeyBinding | None = None,
+        on_discard: Callable[[], None] | None = None,
+        on_cancel: Callable[[], None] | None = None,
     ) -> None:
         self._binding = binding
+        self._cancel_binding = cancel_binding
         self._device_path = device_path
         self._sm = state_machine
         self._on_start = on_start
         self._on_stop = on_stop
         self._on_toggle_off = on_toggle_off
+        self._on_discard = on_discard
+        self._on_cancel = on_cancel
         self._feedback = feedback
         self._lock = lock
+        # Double-tap window timer; armed on the await_double_tap action.
+        # Correctness against a racing second keydown comes from the state
+        # machine's generation check under the dispatch lock, not from
+        # Timer.cancel() (which is only hygiene).
+        self._pending_timer: threading.Timer | None = None
         # Shared across all reader threads: the union of keys currently
         # held down across all listened HIDs. A QMK/VIA keyboard often
         # multiplexes the same physical key across multiple HIDs (e.g.
@@ -151,6 +162,7 @@ class HotkeyListener:
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop_event.set()
+        self._cancel_pending_timer()
         for device in self._devices:
             with contextlib.suppress(OSError):
                 device.close()
@@ -196,6 +208,11 @@ class HotkeyListener:
                     getattr(device, "name", "?"),
                 )
             deadline = None
+            self._cancel_pending_timer()
+            # A recording waiting on the double-tap window would be orphaned
+            # by the reset below (the generation bump makes its timer a
+            # noop), so discard it first.
+            self._dispatch(self._sm.force_discard, "device-reacquire")
             self._sm.reset()
             with self._held_lock:
                 self._held.clear()
@@ -274,6 +291,17 @@ class HotkeyListener:
         correctly clears the held set.
         """
         chord_codes = set(self._binding.to_evdev_codes())
+        cancel_codes: set[int] = set()
+        if self._cancel_binding is not None:
+            cancel_codes = set(self._cancel_binding.to_evdev_codes())
+        # Keys currently held on THIS device. The shared self._held is the
+        # union across all HIDs (a key pressed on one HID may be released on
+        # another), but a genuine missed release can only be detected against
+        # the single device that saw the un-released press: a second keydown
+        # for a code still in device_held means this HID dropped its release.
+        # A duplicate keydown mirrored from another HID is not in device_held
+        # and is treated as an idempotent no-op.
+        device_held: set[int] = set()
         try:
             for event in device.read_loop():
                 if self._stop_event.is_set():
@@ -288,14 +316,44 @@ class HotkeyListener:
                     evdev.ecodes.KEY.get(code, code),
                     value,
                 )
+                stuck = False
                 with self._held_lock:
                     if value == 1:
+                        if code in device_held:
+                            # This HID sent a second keydown without an
+                            # intervening release, so it dropped the release
+                            # and the chord may be wedged active. Synthesize
+                            # a release + press.
+                            stuck = True
+                            self._held.discard(code)
+                            active_after_release = bool(chord_codes) and chord_codes.issubset(
+                                self._held
+                            )
+                        device_held.add(code)
                         self._held.add(code)
                     elif value == 0:
+                        device_held.discard(code)
                         self._held.discard(code)
                     else:
                         continue
                     is_active = bool(chord_codes) and chord_codes.issubset(self._held)
+                    cancel_pressed = (
+                        value == 1
+                        and code in cancel_codes
+                        and cancel_codes.issubset(self._held)
+                        and bool(chord_codes)
+                        and chord_codes.issubset(self._held)
+                    )
+                if stuck:
+                    logger.debug(
+                        "hotkey: %s missed release for %s; synthesizing keyup+keydown",
+                        device.path,
+                        evdev.ecodes.KEY.get(code, code),
+                    )
+                    self._update_chord(active_after_release, event.timestamp(), device.path)
+                if cancel_pressed:
+                    self._dispatch(self._sm.on_cancel, device.path)
+                    continue
                 self._update_chord(is_active, event.timestamp(), device.path)
         except (OSError, PermissionError) as exc:
             logger.warning("hotkey: device %s lost: %s", device.path, exc)
@@ -348,3 +406,32 @@ class HotkeyListener:
             self._on_stop("ptt")
         elif transition.action == "stop_recording_toggle":
             self._on_toggle_off()
+        elif transition.action == "await_double_tap":
+            self._arm_pending_timer()
+        elif transition.action == "latch_toggle":
+            self._cancel_pending_timer()
+        elif transition.action == "discard_recording":
+            self._cancel_pending_timer()
+            if self._on_discard is not None:
+                self._on_discard()
+        elif transition.action == "cancel":
+            self._cancel_pending_timer()
+            if self._on_cancel is not None:
+                self._on_cancel()
+
+    def _arm_pending_timer(self) -> None:
+        self._cancel_pending_timer()
+        generation = self._sm.pending_generation
+        timer = threading.Timer(
+            self._sm.double_tap_window_seconds,
+            lambda: self._dispatch(lambda: self._sm.on_timeout(generation), "pending-timer"),
+        )
+        timer.daemon = True
+        timer.start()
+        self._pending_timer = timer
+
+    def _cancel_pending_timer(self) -> None:
+        timer = self._pending_timer
+        if timer is not None:
+            timer.cancel()
+            self._pending_timer = None

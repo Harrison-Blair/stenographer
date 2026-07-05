@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from stenographer.asr.worker import CancelledError
+
 if TYPE_CHECKING:
     from stenographer.asr.model import SegmentInfo
     from stenographer.asr.worker import Worker
@@ -67,8 +69,21 @@ class Session:
         self._stop_event = threading.Event()
         self._recording = False
         self._utterances_processed = 0
+        # Abort event for the recording currently in progress (fresh per
+        # recording; shared by that recording's flush segments and tail).
+        self._recording_abort = threading.Event()
+        # Abort event of the utterance the processor thread is running now,
+        # so cancel_all() can reach in-flight transcription.
+        self._active_abort: threading.Event | None = None
+        # Bumped by cancel_all(); queue items stamped with an older
+        # generation are dropped by the processor. This closes the race
+        # where an item is dequeued but not yet processing when a cancel
+        # drains the queue.
+        self._cancel_generation = 0
 
-        self._utterance_queue: queue.Queue[tuple[np.ndarray, Literal["ptt", "toggle"]] | None]
+        self._utterance_queue: queue.Queue[
+            tuple[np.ndarray, Literal["ptt", "toggle"], threading.Event, int] | None
+        ]
         self._utterance_queue = queue.Queue()
         self._processor: threading.Thread | None = None
         self._processing_times: collections.deque[float] = collections.deque(maxlen=10)
@@ -122,12 +137,19 @@ class Session:
             if item is None:
                 log.debug("session: processor thread exiting")
                 break
-            samples, mode = item
+            samples, mode, abort, generation = item
+            with self._lock:
+                if generation < self._cancel_generation:
+                    log.info("session: dropping cancelled utterance")
+                    continue
+                self._active_abort = abort
             remaining = self._utterance_queue.qsize()
             if remaining > 0:
                 log.info("session: processing utterance (%d queued)", remaining)
             t0 = time.monotonic()
-            self._process(samples, mode)
+            self._process(samples, mode, abort)
+            with self._lock:
+                self._active_abort = None
             elapsed = time.monotonic() - t0
             self._processing_times.append(elapsed)
             if self._one_shot:
@@ -206,6 +228,7 @@ class Session:
                 log.warning("session: on_recording_start while already recording")
                 return
             self._recording = True
+            self._recording_abort = threading.Event()
             try:
                 is_lazy_first = self._cfg.asr.mode == "lazy" and not self._worker.is_model_loaded()
                 if is_lazy_first:
@@ -242,13 +265,9 @@ class Session:
             # Nothing left after the final flush; the spoken chunks were already
             # enqueued mid-recording. Skip the empty tail to avoid a stray cue.
             log.info("session: no trailing audio after final flush, nothing to queue")
-            if self._notification is not None:
-                if self._utterance_queue.qsize() > 0:
-                    self._notification.show_transcribing()
-                else:
-                    self._notification.hide()
+            self._refresh_notification()
             return
-        self._utterance_queue.put((samples, mode))
+        self._utterance_queue.put((samples, mode, self._recording_abort, self._cancel_generation))
         if self._notification is not None:
             self._notification.show_transcribing()
         queue_depth = self._utterance_queue.qsize()
@@ -257,18 +276,80 @@ class Session:
         if self._one_shot:
             pass  # processor thread sets _stop_event after processing
 
+    def _refresh_notification(self) -> None:
+        """Show the transcribing indicator if work remains queued, else hide it."""
+        if self._notification is None:
+            return
+        if self._utterance_queue.qsize() > 0:
+            self._notification.show_transcribing()
+        else:
+            self._notification.hide()
+
     def _enqueue_flush_segment(self, samples: np.ndarray) -> None:
         """Enqueue a segment flushed mid-recording on a silence gap.
 
         Called from the recorder's PortAudio callback thread; it only touches
         the thread-safe utterance queue, so it takes no lock. ``mode`` is inert
         (logging only) and cannot be known before key release, so flushes are
-        tagged ``"ptt"``.
+        tagged ``"ptt"``. The abort event and generation are plain attribute
+        reads; a stale generation read around a concurrent cancel only makes
+        the flush item eligible for dropping, which is the desired outcome.
         """
-        self._utterance_queue.put((samples, "ptt"))
+        self._utterance_queue.put((samples, "ptt", self._recording_abort, self._cancel_generation))
 
     def on_toggle_off(self) -> None:
         self.on_recording_stop("toggle")
+
+    def discard_recording(self) -> None:
+        """Stop the active recording and drop its samples (no transcription).
+
+        Wired to the listener's double-tap-window expiry: a lone short tap
+        of the chord starts a recording that is thrown away here.
+        """
+        with self._lock:
+            if not self._recording:
+                log.warning("session: discard_recording with no active recording")
+                return
+            self._recording = False
+            self._recording_abort.set()
+            try:
+                self._recorder.stop()
+            except Exception as exc:
+                log.error("session: recorder.stop during discard failed: %s", exc)
+            log.info("session: recording discarded")
+            self._refresh_notification()
+
+    def cancel_all(self) -> None:
+        """Cancel everything: active recording, queued utterances, and the
+        in-flight transcription. Already-typed streamed text is not undone.
+
+        Wired to the cancel chord (main hotkey held + cancel key). Runs on
+        the listener dispatch thread, which already holds ``_lock`` (RLock).
+        """
+        with self._lock:
+            log.info("session: cancel requested")
+            self._cancel_generation += 1
+            if self._recording:
+                self._recording = False
+                self._recording_abort.set()
+                try:
+                    self._recorder.stop()
+                except Exception as exc:
+                    log.error("session: recorder.stop during cancel failed: %s", exc)
+            while True:
+                try:
+                    item = self._utterance_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    # Shutdown sentinel; keep it for the processor thread.
+                    self._utterance_queue.put(None)
+                    break
+            if self._active_abort is not None:
+                self._active_abort.set()
+            if self._notification is not None:
+                with contextlib.suppress(Exception):
+                    self._notification.hide()
 
     # -- lazy-mode model lifecycle callbacks (called from loader / timer threads) --
 
@@ -305,11 +386,16 @@ class Session:
             except Exception as exc:
                 log.error("session: show_model_unloaded failed: %s", exc)
 
-    def _process(self, samples: np.ndarray, mode: Literal["ptt", "toggle"]) -> None:
+    def _process(
+        self,
+        samples: np.ndarray,
+        mode: Literal["ptt", "toggle"],
+        abort: threading.Event,
+    ) -> None:
         log.info("session: processing %d samples (mode=%s)", samples.shape[0], mode)
 
         segment_queue: queue.Queue[SegmentInfo | None] = queue.Queue()
-        future = self._worker.submit(samples, on_segment=segment_queue.put)
+        future = self._worker.submit(samples, on_segment=segment_queue.put, cancel_event=abort)
         # The None sentinel unblocks the loop when transcription finishes
         # (all segments are emitted before the future resolves).
         future.add_done_callback(lambda _f: segment_queue.put(None))
@@ -321,6 +407,10 @@ class Session:
             seg = segment_queue.get()
             if seg is None:
                 break
+            if abort.is_set():
+                # Cancelled: keep draining until the sentinel, but stop
+                # injecting. Text already typed at the cursor stays.
+                continue
             if seg.no_speech_prob >= self._cfg.asr.silence_threshold:
                 # Likely a hallucination over silence (e.g. "Thank you.");
                 # never send it to the cursor. The post-transcription check
@@ -346,11 +436,18 @@ class Session:
 
         try:
             result = future.result(timeout=5.0)  # done already; timeout is defensive
+        except CancelledError:
+            log.info("session: transcription cancelled")
+            return
         except Exception as exc:
             log.error("session: transcription failed: %s", exc)
             if not self._stop_event.is_set():
                 with contextlib.suppress(Exception):
                     self._feedback.play("error")
+            return
+        if abort.is_set():
+            # Cancelled after transcription completed; drop the output.
+            log.info("session: transcription result discarded after cancel")
             return
         self._utterances_processed += 1
         text = result.text
@@ -418,4 +515,4 @@ class Session:
 
     def _drain(self, samples: np.ndarray) -> None:
         log.info("session: draining in-flight utterance on shutdown")
-        self._utterance_queue.put((samples, "ptt"))
+        self._utterance_queue.put((samples, "ptt", threading.Event(), self._cancel_generation))

@@ -19,16 +19,29 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 ## Goal
 
-Specify the `HotkeyListener` component and the hybrid PTT / toggle
-state machine that decides what a press means. A single keybinding is
-arbitrated by the press duration:
+Specify the `HotkeyListener` component and the hybrid PTT /
+double-tap-toggle state machine that decides what a press means. A
+single keybinding is arbitrated by press duration and tap count:
 
-- press duration **< 0.5 s** => **toggle mode** (one beep low on,
-  two beeps low off).
-- press duration **>= 0.5 s** => **push-to-talk mode** (one beep high
-  on keydown, two beeps high on keyup).
+- **hold >= 0.5 s** => **push-to-talk mode** (one beep high on
+  keydown, two beeps high on keyup; recording while held).
+- **double-tap** (two short presses within the double-tap window) =>
+  **toggle mode** (one beep low on latch, two beeps low off). The
+  recording latches on and ends on a later press-and-release of the
+  chord.
+- **single short tap** => the recording that tentatively started on
+  keydown is **discarded** when the double-tap window expires (soft
+  `discard` cue, nothing transcribed). This makes stray taps of the
+  hotkey harmless.
 
-The default threshold `0.5` is `cfg.hotkey.toggle_threshold_seconds`.
+A separate **cancel chord** — the main chord held plus
+`cfg.hotkey.cancel_binding` (default `KEY_ESC`) — discards the active
+recording, aborts in-flight transcription, and clears the utterance
+queue (see `05-text-output.md`; text already typed at the cursor is
+not undone).
+
+The default threshold `0.5` is `cfg.hotkey.toggle_threshold_seconds`;
+the double-tap window `0.35` is `cfg.hotkey.double_tap_window_seconds`.
 
 ## Hotkey binding grammar
 
@@ -106,25 +119,37 @@ Wayland.
 
 ## State machine
 
-States: `IDLE`, `RECORDING`.
+States: `IDLE`, `RECORDING_PTT`, `PENDING_TAP`, `TOGGLE_LATCHED`,
+`TOGGLE_STOPPING`.
 Variables:
 - `press_start: float | None` — wall-clock time of the current
   keydown, or `None` if not pressed.
 - `chord_active: bool` — whether all keys of the chord are currently
   held.
-- `recording_mode: Literal["ptt", "toggle"]` — only meaningful in
-  `RECORDING`.
+- `consumed: bool` — the current chord press was swallowed by a
+  cancel; its keyup must not stop/reclassify/start anything.
+- `pending_generation: int` — bumped whenever a pending-tap wait is
+  invalidated; stale timeout events are ignored.
 
 ### Transitions
 
-| Event              | From       | To          | Side effects                                                                                                                                        |
-|--------------------|------------|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `keydown` (chord starts) | `IDLE`     | `RECORDING` | `press_start = now`; `recording_mode = "ptt"` (tentative); `recorder.start()`; `feedback.play("ptt_on")`                                            |
-| `keyup` (chord ends) | `RECORDING` (ptt) | `IDLE`     | `duration = now - press_start`; if `duration >= threshold`: `recorder.stop()`; `feedback.play("ptt_off")`; `press_start = None`                   |
-| `keyup` (chord ends) | `RECORDING` (toggle) | `IDLE`     | `duration = now - press_start`; if `duration < threshold`: this is **toggle-on**; `recording_mode = "toggle"`; `feedback.play("toggle_on")`; do NOT stop recording |
-| `keydown` (chord starts) | `RECORDING` (any) | `IDLE`     | `recorder.stop()`; `feedback.play("toggle_off")`; `press_start = None`                                                                              |
-| Any `keydown` outside chord | any        | (unchanged) | ignored                                                                                                                                              |
-| Any `keyup` of a non-chord key | any        | (unchanged) | ignored (the chord is not complete yet; see below)                                                                                                    |
+| Event | From | To | Side effects |
+|---|---|---|---|
+| `keydown` (chord starts) | `IDLE` | `RECORDING_PTT` | `press_start = now`; `recorder.start()`; `feedback.play("ptt_on")` |
+| `keyup`, duration >= threshold | `RECORDING_PTT` | `IDLE` | `recorder.stop()` and transcribe; `feedback.play("ptt_off")` |
+| `keyup`, duration < threshold | `RECORDING_PTT` | `PENDING_TAP` | recording continues; listener arms the double-tap window timer (no cue) |
+| `keydown` (second tap) | `PENDING_TAP` | `TOGGLE_LATCHED` | generation bump (stale timer becomes a noop); `feedback.play("toggle_on")` |
+| window timeout (current generation) | `PENDING_TAP` | `IDLE` | `recorder.stop()`, samples discarded; `feedback.play("discard")` |
+| window timeout (stale generation) | any | (unchanged) | ignored |
+| `keyup` (release of the latching tap, any duration) | `TOGGLE_LATCHED` | `TOGGLE_LATCHED` | ignored — the latch committed on keydown |
+| `keydown` | `TOGGLE_LATCHED` | `TOGGLE_STOPPING` | no side effect; stop fires on the release so the cancel chord can intervene |
+| `keyup` | `TOGGLE_STOPPING` | `IDLE` | `recorder.stop()` and transcribe; `feedback.play("toggle_off")` |
+| cancel (chord held + cancel key) | `RECORDING_PTT` / `TOGGLE_LATCHED` / `TOGGLE_STOPPING` | `IDLE` | `consumed = true`; `session.cancel_all()`; `feedback.play("cancel")` |
+| cancel (chord held) | `IDLE` | `IDLE` | idempotent: `session.cancel_all()` again (covers cancel while only processing) |
+| cancel (chord not held) | any | (unchanged) | ignored (bare cancel-key presses pass through) |
+| `keyup` while `consumed` | any | (unchanged) | clears `consumed`; otherwise ignored |
+| Any `keydown` outside chord | any | (unchanged) | ignored |
+| Any `keyup` of a non-chord key | any | (unchanged) | ignored (the chord is not complete yet; see below) |
 
 **Chord bookkeeping.** A chord with N keys is considered "started"
 on the N-th keydown (the moment all N keys are down) and "ended" on
@@ -134,16 +159,32 @@ down and the `keydown` / `keyup` events for that key are debounced
 (ignored) until the chord truly ends. This is the same logic most
 DE shortcut handlers use.
 
-**Mode arbitration on keyup.** The threshold is evaluated at keyup
-of the chord. If `duration >= cfg.hotkey.toggle_threshold_seconds`,
-the press is PTT. Otherwise it is toggle.
+**Double-tap window timer.** The state machine stays pure: it never
+arms a timer. On the `await_double_tap` action the listener arms a
+`threading.Timer` for `double_tap_window_seconds`, capturing
+`pending_generation` at arming time, and delivers the expiry as
+`on_timeout(generation)` through the ordinary dispatch lock. A second
+keydown racing the expiry is safe: both serialize on the lock, and
+whichever loses sees either a stale generation or a non-pending state
+and no-ops. `Timer.cancel()` is only hygiene.
 
-- In PTT, the cue `ptt_on` was already played on the original
-  keydown; the cue `ptt_off` is played now.
-- In toggle, the press is the toggle-on event: the recording
-  continues, the mode is set to `"toggle"`, and `toggle_on` is
-  played. The recording ends on the next chord `keydown`
-  (which plays `toggle_off` and transitions to `IDLE`).
+**Cancel chord.** The cancel key (default `KEY_ESC`) fires only when
+every key of the main chord is physically held at the cancel keydown.
+Pressing it marks the current chord press consumed, so the eventual
+chord keyup does nothing. While a latched-toggle recording is
+running, the user holds the main chord (which enters
+`TOGGLE_STOPPING` without stopping anything) and presses the cancel
+key; releasing the chord without the cancel key stops and
+transcribes as usual. While the daemon is merely processing (not
+recording), pressing the chord starts a fresh recording and the
+cancel key then cancels both it and all queued/in-flight processing.
+
+**Stuck keys.** If a keydown (`value == 1`) arrives for a key already
+in the shared held set, its release was missed (multi-HID keyboards
+can route it to a node we lost). The listener synthesizes a release
+followed by a press — recomputing chord state after each — so a
+wedged `chord_active` clears and the chord can fire again. Logged at
+DEBUG.
 
 ### Anti-repeat
 
@@ -169,12 +210,14 @@ from a stuck key).
 
 ## Cue firing summary (cross-reference)
 
-| Transition                                 | Cue fired        | When           |
-|--------------------------------------------|------------------|----------------|
-| `IDLE -> RECORDING` (chord starts)         | `ptt_on`         | keydown        |
-| `RECORDING (ptt) -> IDLE` (chord ends, PTT)| `ptt_off`        | keyup          |
-| `RECORDING (ptt) -> RECORDING (toggle)`    | `toggle_on`      | keyup (short)  |
-| `RECORDING (any) -> IDLE` (chord restarts) | `toggle_off`     | keydown        |
+| Transition                                   | Cue fired    | When                |
+|----------------------------------------------|--------------|---------------------|
+| `IDLE -> RECORDING_PTT` (chord starts)       | `ptt_on`     | keydown             |
+| `RECORDING_PTT -> IDLE` (long release)       | `ptt_off`    | keyup               |
+| `PENDING_TAP -> TOGGLE_LATCHED` (second tap) | `toggle_on`  | keydown             |
+| `PENDING_TAP -> IDLE` (window expired)       | `discard`    | timer               |
+| `TOGGLE_STOPPING -> IDLE`                    | `toggle_off` | keyup               |
+| cancel chord fired                           | `cancel`     | cancel-key keydown  |
 
 The recorder's `start()` / `stop()` calls and the cue plays are
 synchronous calls into the Session main thread; the state machine
@@ -195,8 +238,9 @@ the listener:
 1. Logs `hotkey.listener: device <path> disappeared`.
 2. Calls `errors.notify_failure("hotkey device lost")`.
 3. Attempts to re-acquire a keyboard every 2 s for 30 s.
-4. If re-acquisition succeeds, the state machine resets to `IDLE`
-   and resumes.
+4. If re-acquisition succeeds, a `PENDING_TAP` recording is
+   discarded (its timer would be orphaned by the reset), then the
+   state machine resets to `IDLE` and resumes.
 5. If 30 s elapses without re-acquisition, the daemon exits 1
    (per `09-error-handling.md`).
 
@@ -226,12 +270,17 @@ class HotkeyListener:
 ```python
 # stenographer.hotkey.state_machine
 class HotkeyStateMachine:
-    def on_keydown(self) -> None: ...
-    def on_keyup(self) -> None: ...
+    def on_keydown(self, timestamp: float) -> Transition: ...
+    def on_keyup(self, timestamp: float) -> Transition: ...
+    def on_timeout(self, generation: int) -> Transition: ...
+    def on_cancel(self) -> Transition: ...
+    def force_discard(self) -> Transition: ...  # device loss during PENDING_TAP
     @property
-    def state(self) -> Literal["IDLE", "RECORDING"]: ...
+    def state(self) -> Literal[
+        "IDLE", "RECORDING_PTT", "PENDING_TAP", "TOGGLE_LATCHED", "TOGGLE_STOPPING"
+    ]: ...
     @property
-    def mode(self) -> Literal["ptt", "toggle"]: ...
+    def pending_generation(self) -> int: ...
     def reset(self) -> None: ...
 ```
 
@@ -251,13 +300,8 @@ device.
 
 ## Open questions
 
-- Should the threshold be evaluated live (keydown is followed by an
-  immediate 0.5 s timer; if the user keeps holding, we still treat
-  the press as PTT) or only at keyup (current spec)? v1: at keyup
-  only, since live evaluation would prematurely play `ptt_on` for
-  every short toggle press.
 - Should `ptt_on` be played on keydown even if the user immediately
-  releases before the threshold? Yes, the spec currently says so. If
-  the release happens within 1 ms, the user hears a single high
-  beep (ptt_on) followed by two high beeps (ptt_off) back to back.
-  This is rare in practice; the spec accepts it.
+  releases before the threshold? Yes: the recording must start
+  immediately for PTT responsiveness, and the cue confirms it. A lone
+  short tap is discarded when the double-tap window expires (soft
+  `discard` cue).

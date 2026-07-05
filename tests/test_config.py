@@ -28,6 +28,8 @@ def test_defaults_hotkey() -> None:
     assert Config.defaults().hotkey == HotkeyConfig(
         binding="KEY_RIGHTCTRL",
         toggle_threshold_seconds=0.5,
+        double_tap_window_seconds=0.35,
+        cancel_binding="KEY_ESC",
         device=None,
     )
 
@@ -234,6 +236,40 @@ def test_validate_hotkey_threshold_upper_bound_accepted(tmp_path: pathlib.Path) 
     p = tmp_path / "config.toml"
     p.write_text("[stenographer]\nhotkey.toggle_threshold_seconds = 5\n")
     assert Config.load(p).hotkey.toggle_threshold_seconds == 5.0
+
+
+def test_validate_double_tap_window_out_of_range_rejected(tmp_path: pathlib.Path) -> None:
+    for bad in ("0", "-0.1", "2.5"):
+        p = tmp_path / "config.toml"
+        p.write_text(f"[stenographer]\nhotkey.double_tap_window_seconds = {bad}\n")
+        with pytest.raises(ConfigError, match=r"hotkey.double_tap_window_seconds"):
+            Config.load(p)
+
+
+def test_validate_double_tap_window_accepted(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nhotkey.double_tap_window_seconds = 0.5\n")
+    assert Config.load(p).hotkey.double_tap_window_seconds == 0.5
+
+
+def test_validate_cancel_binding_unknown_key_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.cancel_binding = "NOT_A_KEY"\n')
+    with pytest.raises(ConfigError, match=r"hotkey.cancel_binding"):
+        Config.load(p)
+
+
+def test_validate_cancel_binding_overlap_with_main_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.cancel_binding = "KEY_RIGHTCTRL"\n')
+    with pytest.raises(ConfigError, match=r"hotkey.cancel_binding"):
+        Config.load(p)
+
+
+def test_validate_cancel_binding_empty_disables(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.cancel_binding = ""\n')
+    assert Config.load(p).hotkey.cancel_binding == ""
 
 
 def test_validate_hotkey_binding_empty_rejected(tmp_path: pathlib.Path) -> None:
