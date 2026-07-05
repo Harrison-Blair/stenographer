@@ -533,7 +533,7 @@ def cmd_devices() -> int:
         return 1
     try:
         default_index = sounddevice.default.device[0]
-    except (TypeError, IndexError):
+    except TypeError, IndexError:
         default_index = -1
     print("audio input devices (use the name or index as audio.input_device):")
     found = False
