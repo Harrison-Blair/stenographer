@@ -2,8 +2,16 @@
   <img src="src/stenographer/assets/icons/stenographer.png" width="128" alt="stenographer icon" />
 </p>
 
+
+
 # stenographer
-> *1. A writer of shorthand 2. A person employed chiefly to take and transcribe dictation [Merriam Webster](https://www.merriam-webster.com/dictionary/stenographer)*
+> 1. A writer of shorthand
+> 
+> 2. A person employed chiefly to take and transcribe dictation
+>
+>    *\- [Merriam Webster](https://www.merriam-webster.com/dictionary/stenographer)*
+
+[![release](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Harrison-Blair/stenographer/badges/release.json)](https://github.com/Harrison-Blair/stenographer/releases)
 
 Local, offline, Wayland push-to-talk / toggle dictation daemon. Press a
 configurable hotkey, speak, get the text at your cursor and in your
@@ -24,8 +32,6 @@ verbatim by this project and by any automated tooling (including AI
 assistants). Everything below this comment is generated / maintained
 content. To change the project description, edit above this line.
 -->
-
-[![release](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Harrison-Blair/stenographer/badges/release.json)](https://github.com/Harrison-Blair/stenographer/releases)
 
 ## Quick start
 
