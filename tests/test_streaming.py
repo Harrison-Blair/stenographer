@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for the streaming transcriber and bench WER (no real model)."""
+
 from __future__ import annotations
 
 import numpy as np

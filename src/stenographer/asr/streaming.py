@@ -117,9 +117,7 @@ class StreamingTranscriber:
         self._history.append(tokens)
 
         commit_n = (
-            longest_common_prefix(list(self._history))
-            if len(self._history) >= self._agree
-            else 0
+            longest_common_prefix(list(self._history)) if len(self._history) >= self._agree else 0
         )
 
         result = StepResult()
