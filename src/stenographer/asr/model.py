@@ -44,6 +44,14 @@ class SegmentInfo:
 
 
 @dataclass(frozen=True)
+class WordInfo:
+    start: float
+    end: float
+    word: str
+    probability: float
+
+
+@dataclass(frozen=True)
 class TranscriptionResult:
     text: str
     duration_seconds: float
@@ -105,6 +113,42 @@ class Model:
             duration_seconds=info.duration,
             segments=seg_infos,
         )
+
+    def transcribe_words(
+        self,
+        samples: np.ndarray,
+        *,
+        beam_size: int | None = None,
+        initial_prompt: str | None = None,
+    ) -> list[WordInfo]:
+        """Low-level word-timestamped transcription for the streaming path.
+
+        Unlike :meth:`transcribe` (the batch daemon path, left untouched),
+        this requests ``word_timestamps=True`` and accepts an
+        ``initial_prompt`` so a rolling window can be re-decoded with the
+        already-committed text as context.  Returns a flat, time-ordered
+        list of words.
+        """
+        if samples.size == 0:
+            return []
+        if samples.ndim == 2 and samples.shape[1] == 1:
+            samples = samples.squeeze(-1)
+        segments_iter, _info = self._impl.transcribe(
+            samples,
+            language=self._language,
+            beam_size=self._beam_size if beam_size is None else beam_size,
+            vad_filter=False,
+            condition_on_previous_text=False,
+            word_timestamps=True,
+            initial_prompt=initial_prompt,
+        )
+        words: list[WordInfo] = []
+        for seg in segments_iter:
+            for w in seg.words or ():
+                words.append(
+                    WordInfo(start=w.start, end=w.end, word=w.word, probability=w.probability)
+                )
+        return words
 
     def close(self) -> None:
         if hasattr(self, "_impl"):

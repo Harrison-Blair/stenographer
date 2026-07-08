@@ -25,6 +25,8 @@ assistants). Everything below this comment is generated / maintained
 content. To change the project description, edit above this line.
 -->
 
+[![release](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Harrison-Blair/stenographer/badges/release.json)](https://github.com/Harrison-Blair/stenographer/releases)
+
 ## Quick start
 
 ```sh

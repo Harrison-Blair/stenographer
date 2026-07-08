@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: release-badge
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-badge
+  cancel-in-progress: false
+
+jobs:
+  update-badge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute badge state
+        run: |
+          set -euo pipefail
+          tag=$(git tag --points-at HEAD --list 'v*' | sort -V | tail -n1)
+          if [ -n "$tag" ]; then
+            message="$tag"; color="brightgreen"
+          else
+            message="unreleased"; color="orange"
+          fi
+          printf '{"schemaVersion":1,"label":"release","message":"%s","color":"%s"}\n' \
+            "$message" "$color" > /tmp/release.json
+          echo "Badge: $message ($color)"
+
+      - name: Publish to badges branch
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin badges || true
+          if git show-ref --quiet refs/remotes/origin/badges; then
+            git checkout badges
+          else
+            git checkout --orphan badges
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+          cp /tmp/release.json release.json
+          git add release.json
+          git diff --cached --quiet && { echo "no change"; exit 0; }
+          git commit -m "chore: update release badge"
+          git push origin badges

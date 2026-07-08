@@ -402,6 +402,61 @@ def cmd_transcribe(cfg: Config, path: pathlib.Path) -> int:
     return 0
 
 
+_DEFAULT_BENCH_MODELS = (
+    "Systran/faster-whisper-large-v3",
+    "Systran/faster-distil-whisper-medium.en",
+    "Systran/faster-distil-whisper-small.en",
+)
+
+
+def cmd_bench(cfg: Config, args) -> int:
+    from stenographer import bench
+
+    if args.record is None and args.file is None:
+        print("stenographer: provide an audio FILE/dir or --record SECONDS", file=sys.stderr)
+        return 2
+
+    files: list[pathlib.Path] = []
+    if args.record is None:
+        path = args.file
+        if not path.exists():
+            print(f"stenographer: file not found: {path}", file=sys.stderr)
+            return 2
+        if path.is_dir():
+            files = sorted(
+                p for p in path.iterdir() if p.suffix.lower() in (".wav", ".flac", ".ogg")
+            )
+            if not files:
+                print(f"stenographer: no audio clips in {path}", file=sys.stderr)
+                return 2
+        else:
+            files = [path]
+
+    models = (
+        [m.strip() for m in args.models.split(",") if m.strip()]
+        if args.models
+        else list(_DEFAULT_BENCH_MODELS)
+    )
+    beams = [int(b) for b in args.beams.split(",") if b.strip()]
+    computes = [c.strip() for c in args.computes.split(",") if c.strip()]
+
+    return bench.run(
+        cfg,
+        files=files,
+        record_seconds=args.record,
+        save=args.save,
+        models=models,
+        beams=beams,
+        computes=computes,
+        streaming=not args.no_streaming,
+        chunk=args.chunk,
+        agree=args.agree,
+        context=not args.no_context,
+        show_text=args.show_text,
+        stream_model=args.stream_model,
+    )
+
+
 def cmd_model_download(cfg: Config) -> int:
     from huggingface_hub import snapshot_download
 
@@ -620,6 +675,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.subcommand == "doctor":
         return cmd_doctor(cfg, config_path)
+    if args.subcommand == "bench":
+        return cmd_bench(cfg, args)
     parser.error(f"unknown subcommand: {args.subcommand}")
     return 2  # unreachable
 
