@@ -24,8 +24,8 @@ Tracked in git:
 - `spec/00-overview.md` … `spec/12-update.md` — thirteen spec docs
   that fix the shape, behaviour, build, and self-update of the
   system. The spec is canonical; the code must match it.
-- `.github/workflows/build-release-draft.yml` — release CI workflow (manual
-  trigger in v1; see `spec/11-ci-release.md`).
+- `.github/workflows/release.yml` — release CI workflow (runs on merge to
+  `main`; see `spec/11-ci-release.md`).
 
 Present on disk but not yet committed (untracked):
 
@@ -44,10 +44,11 @@ Also gitignored:
   build extras; see **Tooling**.
 - `build/`, `dist/` — PyInstaller working / output directories.
 
-The release workflow lives at `.github/workflows/build-release-draft.yml` and
-is currently triggered only by `workflow_dispatch` (manual). See
-`spec/11-ci-release.md`. The project will be published to PyPI but
-no release has been cut.
+The release workflow lives at `.github/workflows/release.yml` and runs on
+every merge to `main` (plus `workflow_dispatch`): it lints, tests, builds the
+binary, and publishes a `v<version>` release. Features are developed on the
+`dev` branch and merged to `main` to release; each such merge must bump
+`[project].version` in `pyproject.toml`. See `spec/11-ci-release.md`.
 
 ## Tooling
 
