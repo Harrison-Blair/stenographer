@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: release-badge
 
+# Runs after the release workflow finishes so the just-published release is
+# visible to `gh release view`. A `release: published` trigger would not fire
+# here (events raised by the default GITHUB_TOKEN don't start new workflow runs),
+# and a `push: main` trigger would race ahead of the release being published.
 on:
-  push:
-    branches: [main]
-  release:
-    types: [published]
+  workflow_run:
+    workflows: [release]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -18,6 +21,9 @@ concurrency:
 jobs:
   update-badge:
     runs-on: ubuntu-latest
+    # On workflow_run, only proceed if the release actually succeeded.
+    # workflow_dispatch has no workflow_run context, so allow it through.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v7
         with:
