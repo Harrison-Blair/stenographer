@@ -21,8 +21,8 @@ scripts/build.sh
 
 Prebuilt `dist/stenographer/` bundles (one per release) are attached
 to the GitHub Releases for this repository. The release workflow
-(`.github/workflows/build-release-draft.yml`, see `spec/11-ci-release.md`) builds
-them on every `workflow_dispatch` and attaches the tarball + SHA-256.
+(`.github/workflows/release.yml`) builds them on every merge to `main` and
+attaches the tarball + SHA-256.
 
 ```sh
 VERSION=0.7.0
@@ -78,6 +78,24 @@ ExecStart=/opt/stenographer/stenographer run
 ```
 
 (or wherever the user copies `dist/stenographer/`).
+
+## Development workflow
+
+Develop features on the `dev` branch. Merging `dev` → `main` triggers
+`.github/workflows/release.yml`, which lints, tests, builds the binary, and
+**publishes** a `v<version>` GitHub release. Because the workflow refuses to
+reuse an existing release, **every merge to `main` must bump
+`[project].version` in `pyproject.toml`.**
+
+Set up the git hooks once after cloning:
+
+```sh
+./scripts/install-hooks.sh
+```
+
+This points `core.hooksPath` at `.githooks/`, whose `pre-commit` hook runs
+`ruff format` on staged Python files and re-stages them — so commits are always
+formatted and CI's `ruff format --check` never fails on your work.
 
 ## Rebuilding
 

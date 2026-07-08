@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Auto-format staged Python files with ruff before committing.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+ruff="ruff"
+[ -x .venv/bin/ruff ] && ruff=".venv/bin/ruff"
+
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+[ ${#files[@]} -eq 0 ] && exit 0
+
+"$ruff" format "${files[@]}"
+git add "${files[@]}"

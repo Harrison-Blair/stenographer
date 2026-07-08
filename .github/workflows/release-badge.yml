@@ -26,9 +26,11 @@ jobs:
           fetch-tags: true
 
       - name: Compute badge state
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag=$(git tag --points-at HEAD --list 'v*' | sort -V | tail -n1)
+          tag=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
           if [ -n "$tag" ]; then
             message="$tag"; color="brightgreen"
           else

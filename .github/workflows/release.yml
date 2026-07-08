@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-name: build-release-draft
+name: release
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+  workflow_dispatch:   # keep manual re-runs available
 
 jobs:
   lint-test:
@@ -84,12 +86,12 @@ jobs:
               git log --oneline
             fi
           } > release_notes.md
-      - name: Create draft release
+      - name: Create release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ env.VERSION }}
           body_path: release_notes.md
-          draft: true
+          draft: false
           files: |
             stenographer-${{ env.VERSION }}-linux-x86_64.tar.gz
             stenographer-${{ env.VERSION }}-linux-x86_64.sha256
