@@ -105,28 +105,29 @@ fi
 detect_deps() {  # sets PM_INSTALL and DEPS
     if command -v apt-get >/dev/null 2>&1; then
         PM_INSTALL="sudo apt-get update && sudo apt-get install -y"
-        DEPS="wtype wl-clipboard pipewire-audio libevdev1 libportaudio2"
+        DEPS="wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 libnotify-bin"
     elif command -v dnf >/dev/null 2>&1; then
         PM_INSTALL="sudo dnf install -y"
-        DEPS="wtype wl-clipboard pipewire-utils libevdev portaudio"
+        DEPS="wtype wl-clipboard pipewire-utils libevdev portaudio libnotify"
     elif command -v pacman >/dev/null 2>&1; then
         PM_INSTALL="sudo pacman -S --needed"
-        DEPS="wtype wl-clipboard pipewire libevdev portaudio"
+        DEPS="wtype wl-clipboard pipewire libevdev portaudio libnotify"
     else
         PM_INSTALL=""
-        DEPS="wtype wl-clipboard pipewire libevdev libportaudio"
+        DEPS="wtype wl-clipboard pipewire libevdev libportaudio libnotify"
     fi
 }
 
 install_deps() {
     detect_deps
     local missing=()
-    command -v wtype   >/dev/null 2>&1 || missing+=("wtype")
-    command -v wl-copy >/dev/null 2>&1 || missing+=("wl-copy")
-    command -v pw-play >/dev/null 2>&1 || command -v paplay >/dev/null 2>&1 || missing+=("pw-play/paplay")
+    command -v wtype       >/dev/null 2>&1 || missing+=("wtype")
+    command -v wl-copy     >/dev/null 2>&1 || missing+=("wl-copy")
+    command -v pw-play     >/dev/null 2>&1 || command -v paplay >/dev/null 2>&1 || missing+=("pw-play/paplay")
+    command -v notify-send >/dev/null 2>&1 || missing+=("notify-send")
 
     if [[ ${#missing[@]} -eq 0 ]]; then
-        ok "core CLIs present (wtype, wl-copy, pw-play/paplay)"
+        ok "core CLIs present (wtype, wl-copy, pw-play/paplay, notify-send)"
     else
         warn "missing: ${missing[*]}"
     fi
@@ -216,6 +217,54 @@ install_binary() {
     fi
 }
 
+# ── ASR model choices (mirrors `stenographer bench` defaults) ───────────
+# Each entry: "<hf repo id>|<approx download size>|<one-line description>".
+# The first entry is the recommended default.
+MODEL_CHOICES=(
+    "Systran/faster-distil-whisper-medium.en|~800 MB|English-only, recommended balance of speed and accuracy"
+    "Systran/faster-distil-whisper-small.en|~350 MB|English-only, smallest and fastest"
+    "Systran/faster-whisper-large-v3|~3 GB|multilingual, most accurate but slower"
+)
+
+# model_size REPO → echoes the size string for a known repo (empty if unknown)
+model_size() {
+    local repo size _rest
+    for entry in "${MODEL_CHOICES[@]}"; do
+        IFS='|' read -r repo size _rest <<< "$entry"
+        [[ "$repo" == "$1" ]] && { printf '%s' "$size"; return; }
+    done
+}
+
+# config_model → echoes asr.model from the config (falls back to the default)
+config_model() {
+    local m=""
+    [[ -f "$CONFIG_PATH" ]] && m=$(grep -m1 -E '^asr\.model = ' "$CONFIG_PATH" \
+        | sed -E 's/^asr\.model = "?([^"]*)"?.*/\1/')
+    printf '%s' "${m:-${MODEL_CHOICES[0]%%|*}}"
+}
+
+# pick_model → echoes the chosen repo id (default: first/recommended choice)
+pick_model() {
+    if [[ -z "$TTY" || -n "$ASSUME_YES" ]]; then
+        printf '%s' "${MODEL_CHOICES[0]%%|*}"; return
+    fi
+    info "Choose the ASR model to download:" >&2
+    local i=1 repo size desc
+    for entry in "${MODEL_CHOICES[@]}"; do
+        IFS='|' read -r repo size desc <<< "$entry"
+        printf '    %d) %-42s %-8s %s\n' "$i" "$repo" "$size" "$desc" >&2
+        i=$((i + 1))
+    done
+    local ans
+    read -r -p "Model [1-${#MODEL_CHOICES[@]}, default 1] " ans < "$TTY" || ans=""
+    ans="${ans:-1}"
+    if ! [[ "$ans" =~ ^[0-9]+$ ]] || (( ans < 1 || ans > ${#MODEL_CHOICES[@]} )); then
+        warn "invalid choice '${ans}'; using the recommended default"
+        ans=1
+    fi
+    printf '%s' "${MODEL_CHOICES[$((ans - 1))]%%|*}"
+}
+
 # ── step 4: interactive configuration ───────────────────────────────────
 CONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/stenographer/config.toml"
 configure() {
@@ -238,16 +287,28 @@ configure() {
     local mic
     mic=$(ask_default "Mic device (name or index; empty = system default)" "")
 
+    local model
+    model=$(pick_model)
+
     # These lines exist verbatim in the generated default config.
     sed -i -E "s|^hotkey\.binding = .*|hotkey.binding = \"${hotkey}\"|" "$CONFIG_PATH"
     sed -i -E "s|^audio\.input_device = .*|audio.input_device = \"${mic}\"|" "$CONFIG_PATH"
-    ok "wrote config: ${CONFIG_PATH} (hotkey=${hotkey}, mic=${mic:-default})"
+    sed -i -E "s|^asr\.model = .*|asr.model = \"${model}\"|" "$CONFIG_PATH"
+    ok "wrote config: ${CONFIG_PATH} (hotkey=${hotkey}, mic=${mic:-default}, model=${model})"
 }
 
 # ── step 5: ASR model ───────────────────────────────────────────────────
 MODEL_READY=0
 download_model() {
-    if ask_yn "Download the ASR model now (~3 GB, required to transcribe)?" "Y"; then
+    local model size prompt
+    model=$(config_model)
+    size=$(model_size "$model")
+    if [[ -n "$size" ]]; then
+        prompt="Download the ASR model ${model} now (${size}, required to transcribe)?"
+    else
+        prompt="Download the ASR model ${model} now (required to transcribe)?"
+    fi
+    if ask_yn "$prompt" "Y"; then
         if "$STENO" model download; then
             MODEL_READY=1
             ok "model downloaded"

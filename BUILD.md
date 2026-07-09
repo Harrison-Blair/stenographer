@@ -63,8 +63,8 @@ contributors are CTranslate2 (~60 MB) and ONNX Runtime (~55 MB).
 
 | Asset                                | How the user gets it                            |
 |--------------------------------------|-------------------------------------------------|
-| ASR model (`large-v3`, ~3 GB)        | `./dist/stenographer/stenographer model download` |
-| System CLIs (`wtype`, `wl-copy`, `pw-play`, `paplay`) | Distro packages — see `spec/10-packaging.md` |
+| ASR model (`distil-whisper-medium.en`, ~800 MB) | `./dist/stenographer/stenographer model download` |
+| System CLIs (`wtype`, `wl-copy`, `pw-play`, `paplay`, `notify-send`) | Distro packages — see `spec/10-packaging.md` |
 | System libraries (`libevdev`, `libportaudio`) | Distro packages                  |
 
 ## Runtime dependencies on the target machine
@@ -72,7 +72,7 @@ contributors are CTranslate2 (~60 MB) and ONNX Runtime (~55 MB).
 Install once on the target machine (Debian/Ubuntu names shown):
 
 ```sh
-sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2
+sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 libnotify-bin
 sudo usermod -aG input $USER   # log out / back in for this to take effect
 ```
 
