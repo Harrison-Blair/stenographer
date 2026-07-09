@@ -37,7 +37,7 @@ content. To change the project description, edit above this line.
 
 ```sh
 # system deps (Debian/Ubuntu names; adjust for your distro)
-sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2
+sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 libnotify-bin
 sudo usermod -aG input $USER   # log out / back in
 
 git clone … && cd stenographer
@@ -87,6 +87,7 @@ only, GPL-3.0-or-later.
   | `wtype`             | `wtype`             | `wtype`             |
   | `wl-copy`           | `wl-clipboard`      | `wl-clipboard`      |
   | `pw-play` (or `paplay`) | `pipewire-utils` / `pulseaudio-utils` | same |
+  | `notify-send`       | `libnotify-bin`     | `libnotify`         | (desktop notifications; degrades to a no-op if absent) |
   | `libevdev` runtime  | `libevdev1`         | `libevdev`          | (also `libevdev-dev` / `libevdev-devel` headers, required at install time to build the `evdev` wheel on Python 3.14) |
   | `libportaudio`      | `libportaudio2`     | `portaudio`         | (required by `sounddevice`; bundled in the `sounddevice` wheel on most distros, but a system dep for the PyInstaller binary) |
 
@@ -171,7 +172,7 @@ eval "$(register-python-argcomplete stenographer)"
 ## First-run setup
 
 ```sh
-stenographer model download      # one-time: fetch the ASR model (~3 GB)
+stenographer model download      # one-time: fetch the ASR model (~800 MB)
 stenographer doctor              # verify wtype / wl-copy / pw-play / input / mic / model
 ```
 
@@ -250,7 +251,7 @@ hotkey.device                        = ""      # "" => auto-detect first keyboar
 audio.input_device                   = ""      # "" => sounddevice default
 
 # ASR
-asr.model                            = "Systran/faster-whisper-large-v3"
+asr.model                            = "Systran/faster-distil-whisper-medium.en"
 asr.compute_type                     = "int8"             # opt into "int8_float16" on CPUs with float16 hardware
 
 # Audio feedback

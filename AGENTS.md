@@ -85,7 +85,8 @@ is `.python-version` (3.14).
   Output: `dist/stenographer/stenographer`. Runtime system
   requirements on the target machine: `wtype`, `wl-clipboard`,
   `pipewire` (or `pulseaudio`), `libevdev1`, `libportaudio2`,
-  plus the user's `input` group membership. See `BUILD.md` and
+  `libnotify` (`notify-send`), plus the user's `input` group
+  membership. See `BUILD.md` and
   `spec/10-packaging.md`.
 
 ## Post-change workflow
@@ -153,7 +154,7 @@ are not open to renegotiation without a spec change.
 - **Distribution:** `pip install` (or `pipx install`) via the wheel
   built from `pyproject.toml`; **and** a PyInstaller `--onedir`
   binary at `dist/stenographer/stenographer` for users who do not
-  want a `pip install` at all. The ASR model (~3 GB) is **not**
+  want a `pip install` at all. The ASR model (~800 MB) is **not**
   bundled; users fetch it once with `stenographer model download`.
 
 ## Authoritative references
