@@ -6,7 +6,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/stenographer run
+ExecStart=%h/.local/share/stenographer/stenographer run
 Restart=on-failure
 RestartSec=2
 

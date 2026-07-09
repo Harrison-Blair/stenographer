@@ -95,4 +95,5 @@ jobs:
           files: |
             stenographer-${{ env.VERSION }}-linux-x86_64.tar.gz
             stenographer-${{ env.VERSION }}-linux-x86_64.sha256
+            packaging/install.sh
           fail_on_unmatched_files: true

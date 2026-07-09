@@ -62,6 +62,8 @@ _LOCK_PATH = (
     / "stenographer.lock"
 )
 
+_UNIT_PATH = pathlib.Path.home() / ".config" / "systemd" / "user" / "stenographer.service"
+
 
 def _resolve_asset_root() -> pathlib.Path:
     """Return the directory holding the bundled sound cues.
@@ -276,7 +278,110 @@ def cmd_run(cfg: Config) -> int:
     return 0
 
 
-def cmd_run_stop() -> int:
+def _resolve_daemon_exec() -> str:
+    """Return the ``ExecStart`` command line for the systemd user unit.
+
+    Resolves the path to the launcher that should run the daemon. For
+    the PyInstaller onedir binary this is ``sys.executable`` (the
+    bundle launcher); for a pip/pipx console-script install it is the
+    ``stenographer`` entry point on ``PATH``. The path is resolved so a
+    symlinked launcher (e.g. ``~/.local/bin/stenographer``) expands to
+    its real target, matching what ``scripts/install.sh`` writes.
+    """
+    if getattr(sys, "frozen", False):
+        launcher = pathlib.Path(sys.executable).resolve()
+    else:
+        found = shutil.which("stenographer")
+        launcher = pathlib.Path(found or sys.argv[0]).resolve()
+    return f"{launcher} run"
+
+
+def _render_unit() -> str:
+    """Render the systemd user unit for the resolved launcher path."""
+    return (
+        "[Unit]\n"
+        "Description=stenographer dictation daemon\n"
+        "After=graphical-session.target pipewire.service pulseaudio.service\n"
+        "PartOf=graphical-session.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"ExecStart={_resolve_daemon_exec()}\n"
+        "Restart=on-failure\n"
+        "RestartSec=2\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=graphical-session.target\n"
+    )
+
+
+def cmd_enable(no_start: bool) -> int:
+    """Install + enable the systemd user unit (and start it unless --no-start).
+
+    Writes the unit to ``~/.config/systemd/user/stenographer.service``,
+    backing up any existing file to ``…stenographer.service.bak``, then
+    ``daemon-reload`` and ``enable``.
+    """
+    if shutil.which("systemctl") is None:
+        print("stenographer: systemctl not available.", file=sys.stderr)
+        return 1
+
+    unit_content = _render_unit()
+    _UNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    if _UNIT_PATH.is_file() and _UNIT_PATH.read_text() == unit_content:
+        print(f"stenographer: unit unchanged at {_UNIT_PATH}", file=sys.stderr)
+    else:
+        if _UNIT_PATH.is_file():
+            backup = _UNIT_PATH.with_name(_UNIT_PATH.name + ".bak")
+            _UNIT_PATH.replace(backup)
+            print(f"stenographer: backed up existing unit to {backup}", file=sys.stderr)
+        _UNIT_PATH.write_text(unit_content)
+        print(f"stenographer: wrote unit to {_UNIT_PATH}", file=sys.stderr)
+
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+
+    enable_cmd = ["systemctl", "--user", "enable", "stenographer.service"]
+    if not no_start:
+        enable_cmd.insert(3, "--now")
+    result = subprocess.run(enable_cmd, check=False)
+    if result.returncode != 0:
+        print("stenographer: systemctl enable failed.", file=sys.stderr)
+        return 1
+
+    if no_start:
+        print("stenographer: enabled systemd unit (not started).", file=sys.stderr)
+    else:
+        print("stenographer: enabled and started systemd unit.", file=sys.stderr)
+    return 0
+
+
+def cmd_start() -> int:
+    """Start an existing systemd user unit. Does not create the unit."""
+    if shutil.which("systemctl") is None:
+        print("stenographer: systemctl not available.", file=sys.stderr)
+        return 1
+
+    if not _UNIT_PATH.is_file():
+        print(
+            f"stenographer: no systemd unit at {_UNIT_PATH}; run `stenographer enable` first "
+            "(or `stenographer run` for a foreground daemon).",
+            file=sys.stderr,
+        )
+        return 1
+
+    result = subprocess.run(
+        ["systemctl", "--user", "start", "stenographer.service"],
+        check=False,
+    )
+    if result.returncode != 0:
+        print("stenographer: systemctl start failed.", file=sys.stderr)
+        return 1
+    print("stenographer: started systemd unit.", file=sys.stderr)
+    return 0
+
+
+def cmd_stop() -> int:
     """Stop any running daemon (systemd or direct). Best-effort."""
     # 1) Try systemd.
     if stop_daemon():
@@ -313,16 +418,14 @@ def cmd_run_stop() -> int:
     return 0
 
 
-def cmd_run_disable() -> int:
+def cmd_disable() -> int:
     """Disable (and stop) the systemd user unit. Warns if missing / already disabled."""
-    unit_path = pathlib.Path.home() / ".config" / "systemd" / "user" / "stenographer.service"
-
     if shutil.which("systemctl") is None:
         print("stenographer: systemctl not available.", file=sys.stderr)
         return 1
 
-    if not unit_path.is_file():
-        print(f"stenographer: warning: systemd unit not found at {unit_path}", file=sys.stderr)
+    if not _UNIT_PATH.is_file():
+        print(f"stenographer: warning: systemd unit not found at {_UNIT_PATH}", file=sys.stderr)
         return 0
 
     try:
@@ -644,11 +747,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         os.environ["STENOGRAPHER_CONFIG"] = str(args.config)
 
     # Subcommands that don't need config.
-    if args.subcommand == "run":
-        if args.run_command == "stop":
-            return cmd_run_stop()
-        if args.run_command == "disable":
-            return cmd_run_disable()
+    if args.subcommand == "enable":
+        return cmd_enable(no_start=args.no_start)
+    if args.subcommand == "disable":
+        return cmd_disable()
+    if args.subcommand == "start":
+        return cmd_start()
+    if args.subcommand == "stop":
+        return cmd_stop()
     if args.subcommand == "devices":
         return cmd_devices()
 

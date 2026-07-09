@@ -9,7 +9,19 @@ import pytest
 
 pytest.importorskip("argcomplete")
 
-SUBCOMMANDS = {"run", "transcribe", "dictate", "model", "update", "doctor", "devices"}
+SUBCOMMANDS = {
+    "run",
+    "enable",
+    "disable",
+    "start",
+    "stop",
+    "transcribe",
+    "dictate",
+    "model",
+    "update",
+    "doctor",
+    "devices",
+}
 
 
 def _complete(comp_line: str, tmp_path) -> list[str]:
