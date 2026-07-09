@@ -23,10 +23,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--version", action="version", version=f"stenographer {__version__}")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    run_parser = sub.add_parser("run", help="Start/stop/disable the daemon.")
-    run_sub = run_parser.add_subparsers(dest="run_command", required=False)
-    run_sub.add_parser("stop", help="Stop any running daemon.")
-    run_sub.add_parser("disable", help="Disable the systemd user unit.")
+    sub.add_parser("run", help="Start the daemon in the foreground.")
+
+    enable = sub.add_parser(
+        "enable", help="Install and enable the systemd user unit, then start it."
+    )
+    enable.add_argument(
+        "--no-start", action="store_true", help="Enable the unit but do not start it now."
+    )
+    sub.add_parser("disable", help="Disable (and stop) the systemd user unit.")
+    sub.add_parser("start", help="Start an existing systemd user unit.")
+    sub.add_parser("stop", help="Stop any running daemon (systemd or foreground).")
 
     transcribe = sub.add_parser("transcribe", help="Transcribe an audio file and print to stdout.")
     transcribe.add_argument("file", type=pathlib.Path)
