@@ -6,12 +6,6 @@ The project is a Wayland push-to-talk / toggle dictation daemon. The
 whole tree — `src/`, `tests/`, `packaging/`, `scripts/`, `BUILD.md` —
 is committed and released (current version in `pyproject.toml`).
 
-> **Note:** an earlier design lived in a `spec/` directory that was the
-> declared source of truth. **That directory has been removed** (commit
-> `d4c0192`, "remove outdated spec"). Several module docstrings still
-> reference `spec/…` paths — those files no longer exist. Treat the code
-> and tests as authoritative; there is no spec to consult or update.
-
 Key tracked paths:
 
 - `README.md` — project readme (user-owned description + auto-generated
@@ -103,7 +97,7 @@ steps in order:
 
 ## Development workflow
 
-There is no spec; the code and tests are the source of truth. `session.py`
+The code and tests are the source of truth. `session.py`
 is the orchestrator that wires the components together — start there when
 tracing behaviour.
 

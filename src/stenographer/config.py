@@ -179,9 +179,9 @@ class Config:
         except OSError as e:
             raise ConfigError(path, "<file>", f"cannot read: {e}") from e
 
-        # TOML 1.0 has no null; rewrite bare `null` values to "" so the
-        # spec's example syntax parses. Looks only at token boundaries so
-        # the word "null" inside a string is left alone.
+        # TOML 1.0 has no null; rewrite a bare `null` value to "" so users
+        # can blank an optional key with `null`. Looks only at token
+        # boundaries so the word "null" inside a string is left alone.
         content = _NULL_VALUE_RE.sub('""', content)
 
         try:
