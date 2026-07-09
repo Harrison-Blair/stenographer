@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Wayland text injection via ``wtype``.
 
-See ``spec/05-text-output.md`` for the full behaviour contract. The
-Injector degrades to a no-op when ``wtype`` is not on ``PATH``; on a
+The Injector degrades to a no-op when ``wtype`` is not on ``PATH``; on a
 runtime failure the session falls back to the clipboard, which is
 always populated independently.
 """

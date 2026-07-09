@@ -526,7 +526,6 @@ def _format_default_toml() -> str:
     u = cfg.update
     lines: list[str] = [
         "# stenographer configuration",
-        "# See spec/07-configuration.md for the full schema.",
         "",
         "[stenographer]",
         "",
@@ -567,7 +566,7 @@ def _format_default_toml() -> str:
         "# Clipboard",
         f"clipboard.enabled = {_toml_bool(c.enabled)}",
         "",
-        "# Update (see spec/12-update.md)",
+        "# Update",
         f"update.repo = {_toml_str(u.repo)}",
         f"update.channel = {_toml_str(u.channel)}",
         f"update.base_url = {_toml_str(u.base_url)}",

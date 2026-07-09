@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 class ClipboardManager:
     """Write the final transcript to the Wayland clipboard.
 
-    The manager degrades to a no-op when ``wl-copy`` is not on ``PATH``
-    (see ``spec/09-error-handling.md``).  Each call to :meth:`copy` is
+    The manager degrades to a no-op when ``wl-copy`` is not on ``PATH``.
+    Each call to :meth:`copy` is
     independent; the daemon never reads from the clipboard at runtime.
     """
 

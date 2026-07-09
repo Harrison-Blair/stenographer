@@ -138,8 +138,8 @@ def _build_feedback(cfg: Config, caps: Capabilities) -> Feedback:
 def _install_signal_handlers(session: Session) -> None:
     """Install SIGINT/SIGTERM handlers that drain and stop the session.
 
-    Per ``spec/08-process-model.md`` lifecycle: SIGINT and SIGTERM
-    trigger a clean drain (finish in-flight utterance, close
+    Lifecycle: SIGINT and SIGTERM trigger a clean drain
+    (finish in-flight utterance, close
     components, release the lock) and exit 0.
     """
 
@@ -581,8 +581,7 @@ def cmd_model_download(cfg: Config) -> int:
 def _print_changelog(info: UpdateInfo) -> None:
     """Print ``info.release_notes`` in a bordered box to stderr.
 
-    See ``spec/12-update.md`` "Display the change log" step. The body
-    is taken verbatim from the GitHub release; if empty, a
+    The body is taken verbatim from the GitHub release; if empty, a
     placeholder line is shown so the box is still framed.
     """
     rule = "=" * _CHANGELOG_BOX_WIDTH
@@ -608,7 +607,7 @@ def cmd_update(
     prerelease: bool,
     repo: str | None,
 ) -> int:
-    """Self-update subcommand. See ``spec/12-update.md``."""
+    """Self-update subcommand."""
     from dataclasses import replace
 
     from stenographer.update import acquire_update_lock

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Self-update subcommand (see ``spec/12-update.md``).
+"""Self-update subcommand.
 
 The :func:`check_for_update` and :func:`download_and_install`
 functions are pure-Python and unit-testable. The CLI subcommand
@@ -43,8 +43,7 @@ _DEFAULT_UPDATE_LOCK = pathlib.Path("/dev/null")  # overridden at call time
 
 # Archive suffixes stripped when deriving the sibling .sha256 asset name
 # from the asset_pattern output. The CI workflow produces
-# "stenographer-<version>-linux-x86_64.sha256" (no .tar.gz in the middle);
-# see spec/12-update.md and spec/11-ci-release.md.
+# "stenographer-<version>-linux-x86_64.sha256" (no .tar.gz in the middle).
 _ARCHIVE_SUFFIXES: tuple[str, ...] = (
     ".tar.gz",
     ".tar.bz2",

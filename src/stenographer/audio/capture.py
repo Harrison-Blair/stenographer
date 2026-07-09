@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Audio capture: the ``Recorder`` component (see ``spec/02-audio-capture.md``)."""
+"""Audio capture: the ``Recorder`` component."""
 
 from __future__ import annotations
 

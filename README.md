@@ -13,7 +13,7 @@ instructions.
 > [!NOTE]
 > This `README.md` was generated with AI, but reviewed for accuracy by a human
 
-See [Install](#install) for the install steps and a [Quick start](#quick-start) for the post-install flow. Default hotkey: right-Ctrl (short press <0.5 s toggles recording; long press ≥0.5 s is push-to-talk — see `spec/01-hotkey.md`).
+See [Install](#install) for the install steps and a [Quick start](#quick-start) for the post-install flow. Default hotkey: right-Ctrl (short press <0.5 s toggles recording; long press ≥0.5 s is push-to-talk).
 
 
 <!--
@@ -121,7 +121,7 @@ The canonical single-user source install is the onedir binary built and
 installed by `scripts/install.sh` from a local source tree. It builds the
 binary, copies it to `~/.local/share/stenographer/`, symlinks the launcher
 into `~/.local/bin/stenographer`, and installs + enables the systemd
-user unit (see `spec/10-packaging.md`).
+user unit.
 
 ```sh
 # prereq: the system packages listed in Requirements above
@@ -256,7 +256,7 @@ feedback.mute                        = false
 clipboard.enabled                    = true
 ```
 
-See `spec/07-configuration.md` for the full schema and validation rules.
+See `stenographer.config` for the full schema and validation rules.
 
 ## Run under systemd
 

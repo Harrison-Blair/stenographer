@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Cue player (see ``spec/04-audio-feedback.md``)."""
+"""Cue player."""
 
 from __future__ import annotations
 
