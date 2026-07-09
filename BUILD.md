@@ -22,7 +22,17 @@ scripts/build.sh
 Prebuilt `dist/stenographer/` bundles (one per release) are attached
 to the GitHub Releases for this repository. The release workflow
 (`.github/workflows/release.yml`) builds them on every merge to `main` and
-attaches the tarball + SHA-256.
+attaches the tarball + SHA-256, plus a self-bootstrapping `install.sh`.
+
+The easiest way to consume a release is the installer, which downloads
+the tarball, verifies its SHA-256, installs it, and sets up systemd +
+config for you:
+
+```sh
+curl -fsSL https://github.com/Harrison-Blair/stenographer/releases/latest/download/install.sh | bash
+```
+
+To do it by hand instead:
 
 ```sh
 VERSION=0.7.0

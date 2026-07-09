@@ -88,9 +88,37 @@ only, GPL-3.0-or-later.
 
 ## Install
 
-The canonical single-user install is the onedir binary installed by
-`scripts/install.sh` from a local source tree. It builds the binary,
-copies it to `~/.local/share/stenographer/`, symlinks the launcher
+### Quick install (prebuilt binary)
+
+The easiest path on any machine. The installer downloads the latest
+release, verifies its SHA-256, installs the binary to
+`~/.local/share/stenographer/`, symlinks the launcher into
+`~/.local/bin/`, offers to install the system dependencies, walks you
+through a minimal configuration (hotkey + mic), fetches the ASR model,
+and enables the systemd user unit.
+
+```sh
+curl -fsSL https://github.com/Harrison-Blair/stenographer/releases/latest/download/install.sh | bash
+```
+
+It is interactive (prompts read from your terminal even when piped to
+`bash`). Flags and overrides:
+
+```sh
+./install.sh --version 0.7.3   # install a specific release
+./install.sh --yes             # accept all prompts (non-interactive)
+./install.sh --no-deps         # skip the system-package step
+```
+
+Prefer to inspect before running? Download `install.sh` from the
+[Releases](https://github.com/Harrison-Blair/stenographer/releases) page,
+read it, then `bash install.sh`.
+
+### From source
+
+The canonical single-user source install is the onedir binary built and
+installed by `scripts/install.sh` from a local source tree. It builds the
+binary, copies it to `~/.local/share/stenographer/`, symlinks the launcher
 into `~/.local/bin/stenographer`, and installs + enables the systemd
 user unit (see `spec/10-packaging.md`).
 
@@ -126,8 +154,9 @@ verify its SHA-256, and unpack it under `/opt/` (or wherever). See
 
 `scripts/install.sh` installs bash tab-completion automatically (to
 `~/.local/share/bash-completion/completions/stenographer`, loaded
-lazily by the `bash-completion` package). For pip/pipx installs,
-add this to `~/.bashrc` instead:
+lazily by the `bash-completion` package). The quick installer
+(`install.sh`) and pip/pipx installs do **not** set up completion; add
+this to `~/.bashrc` instead:
 
 ```sh
 eval "$(register-python-argcomplete stenographer)"
@@ -154,6 +183,12 @@ stenographer model download      # fetch the ASR model
 stenographer update [--check]    # self-update from GitHub Releases
 stenographer doctor              # print capabilities + resolved config
 stenographer --version
+
+# systemd user unit management
+stenographer enable [--no-start] # install + enable the unit, then start it
+stenographer start               # start an already-installed unit
+stenographer stop                # stop the daemon (systemd or foreground)
+stenographer disable             # stop + disable the unit
 ```
 
 `stenographer run` holds a single-instance `fcntl.flock` on
@@ -224,29 +259,29 @@ See `spec/07-configuration.md` for the full schema and validation rules.
 
 ## Run under systemd
 
-`scripts/install.sh` handles the full systemd setup by default (see
-[Install](#install)). This section is for users who want to install
-the unit manually — e.g. against a binary that was unpacked to a
-non-default location like `/opt/`, or who want to skip
-`scripts/install.sh` and wire up an existing onedir binary by hand.
-`scripts/install.sh` builds the binary, installs it to
-`~/.local/share/stenographer/`, symlinks the launcher into
-`~/.local/bin/`, and installs + enables the systemd user unit. Run
-with `--no-enable` to skip the enable step, or `--no-start` to leave
-the daemon stopped.
+The quick installer and `scripts/install.sh` both set up the systemd
+user unit for you. To manage it yourself, the binary can install and
+control its own unit — no need to hand-edit unit files:
 
 ```sh
-scripts/install.sh              # full install
-scripts/install.sh --no-start   # install unit but don't start
-stenographer run                # or start manually (if --no-start used)
+stenographer enable             # write the unit, enable it, and start now
+stenographer enable --no-start  # write + enable, but don't start yet
+stenographer start              # start an already-installed unit
+stenographer stop               # stop the daemon
+stenographer disable            # stop + disable the unit
 journalctl --user -u stenographer.service -f
 ```
 
-The raw unit template is at `packaging/stenographer.service.in`. To
-manually install it, copy it to
+`enable` writes `~/.config/systemd/user/stenographer.service` with an
+`ExecStart` pointing at the running binary (backing up any existing unit
+to `…stenographer.service.bak`), runs `daemon-reload`, then enables it.
+
+If you'd rather wire it up by hand — e.g. against a binary unpacked to a
+non-default location like `/opt/` — the raw unit template is at
+`packaging/stenographer.service.in`. Copy it to
 `~/.config/systemd/user/stenographer.service` (substituting `%h` with
-your home directory), then `systemctl --user enable --now
-stenographer.service`.
+your home directory and adjusting `ExecStart` to your binary path), then
+`systemctl --user enable --now stenographer.service`.
 
 `Restart=on-failure`; binds to `graphical-session.target`. The daemon
 is foreground; systemd handles daemonization.
