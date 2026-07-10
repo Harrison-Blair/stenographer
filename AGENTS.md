@@ -145,7 +145,7 @@ When in doubt, read the code in this order:
    process lifecycle, signals, single-instance lock.
 3. The component module for the area being changed:
    `hotkey/` (binding, listener, state machine), `audio/` (capture,
-   feedback), `asr/` (model, worker, streaming), `output/` (inject,
+   feedback), `asr/` (model, worker), `output/` (inject,
    clipboard).
 4. `config.py` — config schema (including `[stenographer.update]`).
 5. `errors.py` — degradation policy and exit codes.

@@ -2,8 +2,7 @@
 """Offline benchmark harness for transcription latency/quality exploration.
 
 Compares batch ASR configs (model x beam x compute_type) for cold-load time,
-real-time factor, and word-error-rate against a gold reference, and simulates
-the streaming (LocalAgreement) path for intra-utterance latency. Invoked via
+real-time factor, and word-error-rate against a gold reference. Invoked via
 ``stenographer bench`` (see ``cli.cmd_bench``); heavy imports live here so the
 argument parser stays light.
 """
@@ -18,14 +17,13 @@ from dataclasses import dataclass
 import numpy as np
 
 from stenographer.asr.model import Model
-from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.config import Config
 
 _GOLD_MODEL = "Systran/faster-whisper-large-v3"
 _GOLD_BEAM = 5
 _GOLD_COMPUTE = "int8"
 
-# Punctuation stripped when tokenising for WER (matches streaming._norm intent).
+# Punctuation stripped when tokenising for WER.
 _PUNCT = ".,!?;:\"'“”‘’…-"  # noqa: RUF001
 
 _UNITS = {
@@ -185,18 +183,6 @@ class BatchRow:
     text: str
 
 
-@dataclass
-class StreamRow:
-    model: str
-    chunk: float
-    agree: int
-    context: bool
-    first_commit_s: float | None
-    avg_commit_lag_s: float | None
-    revisions: int
-    final_wer: float
-
-
 def _short_model(model: str) -> str:
     return model.rsplit("/", 1)[-1].replace("faster-", "").replace("whisper-", "")
 
@@ -327,57 +313,6 @@ def run_batch(
     return rows, gold_text
 
 
-# -- streaming simulation ---------------------------------------------------
-
-
-def run_streaming(
-    cfg: Config,
-    clips: list[Clip],
-    model_id: str,
-    chunk: float,
-    agree: int,
-    use_context: bool,
-    gold_text: str,
-) -> StreamRow:
-    """Feed clips through the streaming transcriber in chunk-sized steps."""
-    asr_cfg = dataclasses.replace(cfg.asr, model=model_id)
-    print(f"bench: streaming sim with {_short_model(model_id)} (chunk={chunk}s agree={agree})…")
-    model = Model(asr_cfg)
-    sr = cfg.audio.sample_rate
-    step = max(1, round(chunk * sr))
-    first_commit: float | None = None
-    lags: list[float] = []
-    revisions = 0
-    parts: list[str] = []
-    try:
-        for clip in clips:
-            st = StreamingTranscriber(model, sample_rate=sr, agree=agree, use_context=use_context)
-            mono = clip.samples[:, 0]
-            for start in range(0, mono.shape[0], step):
-                res = st.push(mono[start : start + step])
-                now = min((start + step) / sr, clip.duration)
-                if res.newly_committed and first_commit is None:
-                    first_commit = now
-                for end_t in res.committed_audio_ends:
-                    lags.append(max(0.0, now - end_t))
-                if res.revised and res.provisional:
-                    revisions += 1
-            parts.append(st.finish())
-    finally:
-        model.close()
-    final_text = " ".join(parts).strip()
-    return StreamRow(
-        model=model_id,
-        chunk=chunk,
-        agree=agree,
-        context=use_context,
-        first_commit_s=first_commit,
-        avg_commit_lag_s=(sum(lags) / len(lags)) if lags else None,
-        revisions=revisions,
-        final_wer=word_error_rate(gold_text, final_text),
-    )
-
-
 # -- reporting --------------------------------------------------------------
 
 
@@ -396,17 +331,6 @@ def print_batch(rows: list[BatchRow]) -> None:
         )
 
 
-def print_streaming(row: StreamRow) -> None:
-    print(
-        f"\nSTREAMING ({_short_model(row.model)}, chunk={row.chunk:g}s, "
-        f"agree={row.agree}, context={'on' if row.context else 'off'}):"
-    )
-    print(f" first-commit:   {_fmt(row.first_commit_s, '.2f')} s")
-    print(f" avg-commit-lag: {_fmt(row.avg_commit_lag_s, '.2f')} s")
-    print(f" revisions:      {row.revisions}")
-    print(f" final-WER-vs-batch-gold: {row.final_wer:.1%}")
-
-
 # -- entry point ------------------------------------------------------------
 
 
@@ -419,12 +343,7 @@ def run(
     models: list[str],
     beams: list[int],
     computes: list[str],
-    streaming: bool,
-    chunk: float,
-    agree: int,
-    context: bool,
     show_text: bool = False,
-    stream_model: str | None = None,
 ) -> int:
     if record_seconds is not None:
         clips = [record_clip(cfg, record_seconds, save)]
@@ -436,7 +355,7 @@ def run(
     total = sum(c.duration for c in clips)
     print(f"bench: {len(clips)} clip(s), {total:.1f}s total audio")
 
-    rows, gold_text = run_batch(cfg, clips, models, beams, computes)
+    rows, _gold_text = run_batch(cfg, clips, models, beams, computes)
     print_batch(rows)
 
     if show_text:
@@ -445,10 +364,4 @@ def run(
             tag = " (gold)" if r.is_gold else ""
             print(f"\n [{_short_model(r.model)} beam={r.beam} {r.compute}{tag}]")
             print(f"   {r.text or '<empty>'}")
-
-    if streaming:
-        row = run_streaming(
-            cfg, clips, stream_model or _GOLD_MODEL, chunk, agree, context, gold_text
-        )
-        print_streaming(row)
     return 0

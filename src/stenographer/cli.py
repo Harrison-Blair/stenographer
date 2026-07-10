@@ -178,7 +178,7 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
             cfg.asr,
             idle_unload_seconds=cfg.asr.idle_unload_seconds or None,
         )
-    worker = Worker(model)
+    worker = Worker(model, sample_rate=cfg.audio.sample_rate)
     worker.start()
     if isinstance(model, LazyModel):
         model.attach_worker(worker)
@@ -551,12 +551,7 @@ def cmd_bench(cfg: Config, args) -> int:
         models=models,
         beams=beams,
         computes=computes,
-        streaming=not args.no_streaming,
-        chunk=args.chunk,
-        agree=args.agree,
-        context=not args.no_context,
         show_text=args.show_text,
-        stream_model=args.stream_model,
     )
 
 

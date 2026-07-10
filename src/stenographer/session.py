@@ -321,7 +321,7 @@ class Session:
 
     def cancel_all(self) -> None:
         """Cancel everything: active recording, queued utterances, and the
-        in-flight transcription. Already-typed streamed text is not undone.
+        in-flight transcription. Already-typed text is not undone.
 
         Wired to the cancel chord (main hotkey held + cancel key). Runs on
         the listener dispatch thread, which already holds ``_lock`` (RLock).
@@ -468,7 +468,7 @@ class Session:
                 return
             if len(speech_segments) != len(result.segments):
                 # Drop probable-silence segments from the clipboard/paste text
-                # too, matching what the streaming loop sent to the cursor.
+                # too, matching what the segment loop sent to the cursor.
                 text = "".join(seg.text for seg in speech_segments).strip()
                 log.info(
                     "session: dropped %d probable-silence segment(s) from output",

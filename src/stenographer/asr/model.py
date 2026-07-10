@@ -44,14 +44,6 @@ class SegmentInfo:
 
 
 @dataclass(frozen=True)
-class WordInfo:
-    start: float
-    end: float
-    word: str
-    probability: float
-
-
-@dataclass(frozen=True)
 class TranscriptionResult:
     text: str
     duration_seconds: float
@@ -113,42 +105,6 @@ class Model:
             duration_seconds=info.duration,
             segments=seg_infos,
         )
-
-    def transcribe_words(
-        self,
-        samples: np.ndarray,
-        *,
-        beam_size: int | None = None,
-        initial_prompt: str | None = None,
-    ) -> list[WordInfo]:
-        """Low-level word-timestamped transcription for the streaming path.
-
-        Unlike :meth:`transcribe` (the batch daemon path, left untouched),
-        this requests ``word_timestamps=True`` and accepts an
-        ``initial_prompt`` so a rolling window can be re-decoded with the
-        already-committed text as context.  Returns a flat, time-ordered
-        list of words.
-        """
-        if samples.size == 0:
-            return []
-        if samples.ndim == 2 and samples.shape[1] == 1:
-            samples = samples.squeeze(-1)
-        segments_iter, _info = self._impl.transcribe(
-            samples,
-            language=self._language,
-            beam_size=self._beam_size if beam_size is None else beam_size,
-            vad_filter=False,
-            condition_on_previous_text=False,
-            word_timestamps=True,
-            initial_prompt=initial_prompt,
-        )
-        words: list[WordInfo] = []
-        for seg in segments_iter:
-            for w in seg.words or ():
-                words.append(
-                    WordInfo(start=w.start, end=w.end, word=w.word, probability=w.probability)
-                )
-        return words
 
     def close(self) -> None:
         if hasattr(self, "_impl"):
@@ -254,6 +210,20 @@ class LazyModel:
 
         Reschedules the idle-unload timer on every successful call.
         """
+        impl = self._await_impl()
+        result = impl.transcribe(samples, language, beam_size, on_segment=on_segment)
+        self._load_generation += 1
+        self._schedule_unload()
+        return result
+
+    # -- internal -------------------------------------------------------
+
+    def _await_impl(self) -> Model:
+        """Block until the inner Model is loaded and return it.
+
+        Re-raises a stored load exception (clearing state so a later
+        call retries the load).
+        """
         while True:
             if not self._loaded_event.is_set():
                 self.ensure_loaded()
@@ -269,12 +239,7 @@ class LazyModel:
                     raise exc
                 impl = self._impl
             assert impl is not None
-            result = impl.transcribe(samples, language, beam_size, on_segment=on_segment)
-            self._load_generation += 1
-            self._schedule_unload()
-            return result
-
-    # -- internal -------------------------------------------------------
+            return impl
 
     def _do_load(self) -> None:
         try:

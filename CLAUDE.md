@@ -72,9 +72,8 @@ The component modules it wires:
   cues in `assets/sounds/` via `pw-play`/`paplay`.
 - **`asr/`** — `model.py` wraps faster-whisper (`Model`, plus `LazyModel` which
   loads on first use and unloads after idle); `worker.py` runs transcription
-  off the main thread with cancellation support; `streaming.py` is a
-  **prototype** (LocalAgreement-N incremental decoding), not the daemon's
-  current path — the daemon transcribes each utterance in one batch pass.
+  off the main thread with cancellation support, one batch job per utterance
+  (`submit`).
 - **`output/`** — `inject.py` (`Injector`, types via `wtype`) and
   `clipboard.py` (`ClipboardManager`, via `wl-copy`). The clipboard is
   populated independently, so it's the fallback when injection fails.

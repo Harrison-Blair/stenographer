@@ -10,12 +10,17 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from stenographer.asr.model import SegmentInfo, TranscriptionResult
+from stenographer.asr.worker import CancelledError
 from stenographer.session import Session
+
+
+def _mock_cfg() -> MagicMock:
+    return MagicMock()
 
 
 def _make_components() -> dict[str, MagicMock]:
     return {
-        "cfg": MagicMock(),
+        "cfg": _mock_cfg(),
         "caps": MagicMock(has_wtype=True, has_wl_copy=True),
         "listener": MagicMock(),
         "recorder": MagicMock(is_active=False),
@@ -168,7 +173,7 @@ def test_process_clipboard_skipped_when_disabled() -> None:
     c["clipboard"].copy.assert_not_called()
 
 
-def test_process_streaming_injects_partial_segments_and_skips_duplicate_final() -> None:
+def test_process_injects_partial_segments_and_skips_duplicate_final() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
@@ -194,7 +199,7 @@ def test_process_streaming_injects_partial_segments_and_skips_duplicate_final() 
     c["clipboard"].copy.assert_called_once_with("hello world")
 
 
-def test_process_paste_mode_skips_streaming_and_pastes_at_end() -> None:
+def test_process_paste_mode_skips_partial_injection_and_pastes_at_end() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
@@ -296,8 +301,8 @@ def test_process_silence_no_speech_prob_below_threshold_outputs() -> None:
     c["clipboard"].copy.assert_called_once_with("hello")
 
 
-def test_process_streaming_silence_segments_never_reach_cursor() -> None:
-    """Hallucinated segments over silence must not be typed during streaming."""
+def test_process_silence_segments_never_reach_cursor() -> None:
+    """Hallucinated segments over silence must not be typed at the cursor."""
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
@@ -325,7 +330,7 @@ def test_process_streaming_silence_segments_never_reach_cursor() -> None:
     c["feedback"].play.assert_called_once_with("error")
 
 
-def test_process_streaming_types_speech_but_skips_silence_segments() -> None:
+def test_process_types_speech_but_skips_silence_segments() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
@@ -431,21 +436,21 @@ def test_on_recording_stop_enqueues_and_recorder_stops() -> None:
 
 
 def test_silence_detection_disabled_when_one_shot() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
     session, _m = _make_session(one_shot=True, cfg=cfg)
     assert session._silence_detection is False
 
 
 def test_silence_detection_enabled_for_daemon() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
     session, _m = _make_session(one_shot=False, cfg=cfg)
     assert session._silence_detection is True
 
 
 def test_recording_start_wires_flush_callback_when_enabled() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
     cfg.asr.mode = "eager"  # avoid the lazy-load branch
     session, _m = _make_session(cfg=cfg)
@@ -455,7 +460,7 @@ def test_recording_start_wires_flush_callback_when_enabled() -> None:
 
 
 def test_recording_start_no_flush_callback_when_disabled() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = False
     cfg.asr.mode = "eager"
     session, _m = _make_session(cfg=cfg)
@@ -474,7 +479,7 @@ def test_enqueue_flush_segment_tags_ptt_and_processes() -> None:
 
 
 def test_on_recording_stop_skips_empty_tail_when_silence_detection() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
     cfg.asr.mode = "eager"
     session, _m = _make_session(cfg=cfg)
@@ -489,7 +494,7 @@ def test_on_recording_stop_skips_empty_tail_when_silence_detection() -> None:
 
 
 def test_on_recording_stop_enqueues_empty_tail_when_disabled() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = False
     cfg.asr.mode = "eager"
     session, _m = _make_session(cfg=cfg)
@@ -518,7 +523,7 @@ def test_on_recording_stop_shows_transcribing_notification() -> None:
 
 
 def test_on_recording_stop_hides_notification_when_nothing_queued() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
     cfg.asr.mode = "eager"
     notif = MagicMock()
@@ -821,7 +826,6 @@ def test_cancel_all_aborts_in_flight_processing() -> None:
             first_segment_delivered.set()
             release_second_segment.wait(timeout=2.0)
             on_segment(SegmentInfo(0.5, 1.0, " world", 0.1))
-            from stenographer.asr.worker import CancelledError
 
             fut.result.side_effect = CancelledError("transcription cancelled")
             for cb in done_callbacks:
