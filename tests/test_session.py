@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
+import types
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -973,3 +975,174 @@ def test_processor_drops_cancelled_live_item() -> None:
     session._utterance_queue.put(None)
     session._process_utterance_queue()
     assert session._live_streamer is None  # dangling reference cleared
+
+
+# ---------------------------------------------------------------------------
+# Prompt-mode routing (source-tagged recordings, LLM rewrite)
+# ---------------------------------------------------------------------------
+#
+# FTHR-003 (stenographer.llm) is developed in parallel and may not be merged
+# yet, so these tests inject a stand-in module into sys.modules rather than
+# importing/patching the real thing.
+
+
+def _fake_llm_module(
+    *, rewritten: str | None = None, raise_error: bool = False
+) -> types.ModuleType:
+    mod = types.ModuleType("stenographer.llm")
+
+    class LlmError(Exception):
+        pass
+
+    mod.LlmError = LlmError  # type: ignore[attr-defined]
+
+    def rewrite_prompt(cfg: object, transcript: str) -> str:
+        if raise_error:
+            raise LlmError("llm call failed")
+        return rewritten if rewritten is not None else transcript
+
+    mod.rewrite_prompt = MagicMock(side_effect=rewrite_prompt)  # type: ignore[attr-defined]
+    return mod
+
+
+def _process_prompt(
+    session: Session,
+    c: dict[str, MagicMock],
+    *,
+    text: str = "hello world",
+    rewritten: str | None = None,
+    raise_error: bool = False,
+) -> types.ModuleType:
+    c["cfg"].clipboard.enabled = True
+    future = _fake_future()
+    future.result.return_value = TranscriptionResult(text=text, duration_seconds=0.5, segments=[])
+    c["worker"].submit.return_value = future
+    llm_mod = _fake_llm_module(rewritten=rewritten, raise_error=raise_error)
+    samples = np.zeros((16000, 1), dtype=np.float32)
+    with patch.dict(sys.modules, {"stenographer.llm": llm_mod}):
+        session._process(samples, "ptt", threading.Event(), source="prompt")
+    return llm_mod
+
+
+def test_prompt_mode_recording_calls_rewrite_prompt() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    llm_mod = _process_prompt(session, c, text="hello world")
+    llm_mod.rewrite_prompt.assert_called_once_with(c["cfg"].llm, "hello world")
+
+
+def test_prompt_mode_types_rewritten_text_not_raw_transcript() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    _process_prompt(session, c, text="hello world", rewritten="Hello, world!")
+    c["injector"].type_text.assert_called_once_with("Hello, world!")
+    c["clipboard"].copy.assert_called_once_with("Hello, world!")
+
+
+def test_prompt_mode_falls_back_to_raw_transcript_on_llm_error() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    _process_prompt(session, c, text="hello world", raise_error=True)
+    c["injector"].type_text.assert_called_once_with("hello world")
+    c["clipboard"].copy.assert_called_once_with("hello world")
+    c["feedback"].play.assert_any_call("error")
+
+
+def test_prompt_mode_paste_mode_uses_rewritten_text_not_reformatted() -> None:
+    """output.injection_method="paste" is the real default (config.py); the
+    LLM's rewritten text must survive it, not get overwritten by format_batch
+    reformatting the raw ASR segments."""
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.silence_threshold = 0.6
+    c["cfg"].clipboard.enabled = True
+    c["cfg"].output.injection_method = "paste"
+
+    segments = [
+        SegmentInfo(0.0, 0.5, "hello", 0.1),
+        SegmentInfo(0.5, 1.0, " world", 0.1),
+    ]
+    result = TranscriptionResult(text="hello world", duration_seconds=1.0, segments=segments)
+    future = _fake_future()
+    future.result.return_value = result
+    c["worker"].submit.return_value = future
+
+    llm_mod = _fake_llm_module(rewritten="Hello, world!")
+    samples = np.zeros((16000, 1), dtype=np.float32)
+    with (
+        patch.dict(sys.modules, {"stenographer.llm": llm_mod}),
+        patch.object(session._formatter, "format_batch") as format_batch,
+    ):
+        session._process(samples, "ptt", threading.Event(), source="prompt")
+
+    format_batch.assert_not_called()
+    c["clipboard"].copy.assert_called_once_with("Hello, world!")
+    c["injector"].paste.assert_called_once()
+
+
+def test_dictate_mode_unaffected_by_prompt_mode_addition() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].clipboard.enabled = True
+    future = _fake_future()
+    future.result.return_value = TranscriptionResult(
+        text="hello world", duration_seconds=0.5, segments=[]
+    )
+    c["worker"].submit.return_value = future
+    samples = np.zeros((16000, 1), dtype=np.float32)
+    session._process(samples, "ptt", threading.Event())  # source defaults to "dictate"
+    c["injector"].type_text.assert_called_once_with("hello world")
+    c["clipboard"].copy.assert_called_once_with("hello world")
+
+
+def test_prompt_mode_hotkey_independent_trigger_rules() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    prompt_listener = MagicMock()
+    session.attach_prompt_listener(prompt_listener)
+
+    session.start_listener()
+    c["listener"].start.assert_called_once()
+    prompt_listener.start.assert_called_once()
+
+    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
+
+    # Dictate hotkey (default source) is tagged "dictate".
+    session.on_recording_start()
+    session.on_recording_stop("ptt")
+    _samples, mode, _abort, _generation, *rest = session._utterance_queue.get_nowait()
+    assert (rest[0] if rest else "dictate") == "dictate"
+    assert mode == "ptt"
+
+    # Prompt hotkey is tagged "prompt" and its own PTT/toggle mechanics are
+    # unaffected by the dictate hotkey's prior use.
+    session.on_recording_start(source="prompt")
+    session.on_recording_stop("toggle", source="prompt")
+    _samples2, mode2, _abort2, _generation2, *rest2 = session._utterance_queue.get_nowait()
+    assert rest2[0] == "prompt"
+    assert mode2 == "toggle"
+
+    session.stop()
+    prompt_listener.stop.assert_called_once()
+
+
+def test_prompt_mode_never_streams() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    c = _components(session)
+    session.on_recording_start(source="prompt")
+    assert session._live_streamer is None
+    kwargs = c["recorder"].start.call_args.kwargs
+    assert "on_partial" not in kwargs
+    assert kwargs.get("on_segment") is None
+
+
+def test_prompt_mode_disables_silence_flush_segments() -> None:
+    cfg = _mock_cfg()
+    cfg.audio.silence_detection = True
+    cfg.asr.mode = "eager"
+    cfg.streaming.enabled = False
+    session, _m = _make_session(cfg=cfg)
+    c = _components(session)
+    session.on_recording_start(source="prompt")
+    assert c["recorder"].start.call_args.kwargs["on_segment"] is None
