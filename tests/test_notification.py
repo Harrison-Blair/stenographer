@@ -199,3 +199,76 @@ def test_hide_noop_when_nothing_shown() -> None:
         notif.hide()
         notif.flush()
         run.assert_not_called()
+
+
+def test_show_listening_prompt_enqueues_persistent_notification() -> None:
+    notif = DesktopNotification()
+    notif._available = True
+    with patch("stenographer.notification.subprocess.run", return_value=_completed()) as run:
+        notif.show_listening_prompt()
+        notif.flush()
+    called_args = run.call_args[0][0]
+    assert called_args[-1] == "Listening (prompt)…"
+    assert called_args[called_args.index("-t") + 1] == "0"
+
+
+def test_show_transcribing_prompt_enqueues_persistent_notification() -> None:
+    notif = DesktopNotification()
+    notif._available = True
+    with patch("stenographer.notification.subprocess.run", return_value=_completed()) as run:
+        notif.show_transcribing_prompt()
+        notif.flush()
+    called_args = run.call_args[0][0]
+    assert called_args[-1] == "Transcribing (prompt)…"
+    assert called_args[called_args.index("-t") + 1] == "0"
+
+
+def test_show_rewriting_enqueues_persistent_notification() -> None:
+    notif = DesktopNotification()
+    notif._available = True
+    with patch("stenographer.notification.subprocess.run", return_value=_completed()) as run:
+        notif.show_rewriting()
+        notif.flush()
+    called_args = run.call_args[0][0]
+    assert called_args[-1] == "Rewriting with local LLM…"
+    assert called_args[called_args.index("-t") + 1] == "0"
+
+
+def test_show_prompt_ready_enqueues_transient_notification() -> None:
+    notif = DesktopNotification()
+    notif._available = True
+    with patch("stenographer.notification.subprocess.run", return_value=_completed()) as run:
+        notif.show_prompt_ready()
+        notif.flush()
+    called_args = run.call_args[0][0]
+    assert called_args[-1] == "Prompt ready"
+    assert called_args[called_args.index("-t") + 1] == "3000"
+
+
+def test_show_prompt_failed_enqueues_transient_notification() -> None:
+    notif = DesktopNotification()
+    notif._available = True
+    with patch("stenographer.notification.subprocess.run", return_value=_completed()) as run:
+        notif.show_prompt_failed()
+        notif.flush()
+    called_args = run.call_args[0][0]
+    assert called_args[-1] == "Prompt-crafting failed — using raw transcript"
+    assert called_args[called_args.index("-t") + 1] == "5000"
+
+
+def test_prompt_stage_wording_distinct_from_dictate_stage_wording() -> None:
+    notif = DesktopNotification()
+    notif._available = True
+    with patch("stenographer.notification.subprocess.run", return_value=_completed()) as run:
+        notif.show_listening()
+        notif.show_transcribing()
+        notif.show_listening_prompt()
+        notif.show_transcribing_prompt()
+        notif.show_rewriting()
+        notif.show_prompt_ready()
+        notif.show_prompt_failed()
+        notif.flush()
+    bodies = [call[0][0][-1] for call in run.call_args_list]
+    dictate_bodies = set(bodies[:2])
+    prompt_bodies = bodies[2:]
+    assert dictate_bodies.isdisjoint(prompt_bodies)

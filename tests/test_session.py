@@ -1146,3 +1146,80 @@ def test_prompt_mode_disables_silence_flush_segments() -> None:
     c = _components(session)
     session.on_recording_start(source="prompt")
     assert c["recorder"].start.call_args.kwargs["on_segment"] is None
+
+
+# ---------------------------------------------------------------------------
+# Prompt-mode distinct per-stage notifications (FTHR-005)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_mode_recording_start_shows_prompt_listening_notification() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+
+    session.on_recording_start(source="prompt")
+
+    notif.show_listening_prompt.assert_called_once()
+    notif.show_listening.assert_not_called()
+
+
+def test_prompt_mode_recording_stop_shows_prompt_transcribing_notification() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
+
+    session.on_recording_start(source="prompt")
+    session.on_recording_stop("ptt", source="prompt")
+
+    notif.show_transcribing_prompt.assert_called_once()
+    notif.show_transcribing.assert_not_called()
+
+
+def test_prompt_mode_llm_call_shows_rewriting_notification() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    _process_prompt(session, c, text="hello world", rewritten="Hello, world!")
+    notif.show_rewriting.assert_called_once()
+
+
+def test_prompt_mode_success_shows_prompt_ready_notification() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    _process_prompt(session, c, text="hello world", rewritten="Hello, world!")
+    notif.show_prompt_ready.assert_called_once()
+    notif.show_prompt_failed.assert_not_called()
+
+
+def test_prompt_mode_llm_failure_shows_prompt_failed_notification() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    _process_prompt(session, c, text="hello world", raise_error=True)
+    notif.show_prompt_failed.assert_called_once()
+    notif.show_prompt_ready.assert_not_called()
+    c["feedback"].play.assert_any_call("error")
+
+
+def test_dictate_mode_notifications_unchanged() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
+
+    session.on_recording_start()
+    session.on_recording_stop("ptt")
+
+    notif.show_listening.assert_called_once()
+    notif.show_transcribing.assert_called_once()
+    notif.show_listening_prompt.assert_not_called()
+    notif.show_transcribing_prompt.assert_not_called()
+    notif.show_rewriting.assert_not_called()
+    notif.show_prompt_ready.assert_not_called()
+    notif.show_prompt_failed.assert_not_called()
