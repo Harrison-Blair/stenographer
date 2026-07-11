@@ -1,6 +1,6 @@
 # FTHR-002 Evidence: Config surface for prompt mode
 
-## AC-1: Tests observed failing before implementation, passing after
+## AC-1
 
 All new tests live in `tests/test_config.py`:
 
@@ -79,7 +79,7 @@ Full output captured by running `.venv/bin/pytest tests/test_config.py -v` after
 (see AC-4 section for the complete-suite run, which includes all 98 `test_config.py` tests
 passing).
 
-## AC-2: `Config.defaults()` exposes `hotkey.prompt_binding` and a fully-defaulted `llm` section
+## AC-2
 
 Implemented in `src/stenographer/config.py`:
 - `HotkeyConfig.prompt_binding: str`, defaulted in `Config.defaults()` to `"KEY_RIGHTSHIFT"`.
@@ -102,7 +102,7 @@ tests/test_config.py::test_defaults_include_llm_config PASSED
 ============================== 3 passed in 0.03s ==============================
 ```
 
-## AC-3: Invalid values for every new field rejected with `ConfigError`
+## AC-3
 
 - `prompt_binding` overlapping `binding`: `_build_hotkey` now parses `prompt_binding` via
   `HotkeyBinding.parse` and unconditionally raises `ConfigError` (no defaults-only leniency,
@@ -125,7 +125,7 @@ tests/test_config.py::test_llm_max_tokens_out_of_range_rejected PASSED
 ============================== 6 passed in 0.03s ==============================
 ```
 
-## AC-4: `.venv/bin/pytest -m "not integration"` passes with no regressions
+## AC-4
 
 ```
 $ .venv/bin/pytest -m "not integration"

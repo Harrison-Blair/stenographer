@@ -1,6 +1,6 @@
 # FTHR-003 Evidence: Local LLM HTTP client
 
-## AC-1: Tests observed failing before implementation and passing after
+## AC-1
 
 All new tests live in `tests/test_llm.py`:
 
@@ -74,7 +74,7 @@ tests/test_llm.py::test_rewrite_prompt_empty_content_raises_llm_error PASSED [10
 ============================== 8 passed in 0.02s ===============================
 ```
 
-## AC-2: Spec-conformant OpenAI-compatible chat-completions request
+## AC-2
 
 `rewrite_prompt()` (in `src/stenographer/llm.py`) POSTs to
 `f"{cfg.base_url}/v1/chat/completions"` via `urllib.request.Request`/`urlopen`
@@ -87,7 +87,7 @@ transcript; `test_rewrite_prompt_success_returns_content` asserts the
 extracted, stripped `choices[0].message.content` is returned. Both pass (see
 AC-1 post-implementation run above).
 
-## AC-3: Every failure mode raises `LlmError`
+## AC-3
 
 `rewrite_prompt()` catches `urllib.error.HTTPError` (non-2xx),
 `urllib.error.URLError` (unreachable/DNS), `TimeoutError` (covers
@@ -107,7 +107,7 @@ Covered by:
 
 All pass (see AC-1 post-implementation run above).
 
-## AC-4: Full suite passes, no real network access
+## AC-4
 
 ```
 $ .venv/bin/pytest -m "not integration"
