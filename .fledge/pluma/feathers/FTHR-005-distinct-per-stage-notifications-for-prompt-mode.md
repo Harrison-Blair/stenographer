@@ -56,8 +56,8 @@ Per `.fledge/nest/entry-points.md` (`DesktopNotification`'s existing `show_liste
 Implementation order: write all tests above, run against the unchanged code and confirm they fail for the expected reason (new methods don't exist yet; Session still calls the generic methods for prompt-mode recordings), then implement until all pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: Every stage of a prompt-mode recording (listening, transcribing, rewriting, success, failure) shows a notification worded distinctly from the equivalent dictate-mode notification (satisfies PLM-002 FC-5, AC-4).
-- [ ] AC-3: An LLM-call failure shows the "Prompt-crafting failed — using raw transcript" notification alongside the existing error cue from FTHR-004 (completes PLM-002 FC-4, AC-2).
-- [ ] AC-4: Dictate-mode notification behavior is unchanged (regression guard).
-- [ ] AC-5: `.venv/bin/pytest -m "not integration"` passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: Every stage of a prompt-mode recording (listening, transcribing, rewriting, success, failure) shows a notification worded distinctly from the equivalent dictate-mode notification (satisfies PLM-002 FC-5, AC-4).
+- [x] AC-3: An LLM-call failure shows the "Prompt-crafting failed — using raw transcript" notification alongside the existing error cue from FTHR-004 (completes PLM-002 FC-4, AC-2).
+- [x] AC-4: Dictate-mode notification behavior is unchanged (regression guard).
+- [x] AC-5: `.venv/bin/pytest -m "not integration"` passes with no regressions.

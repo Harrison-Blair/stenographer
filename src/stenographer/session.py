@@ -339,7 +339,10 @@ class Session:
                     )
                 log.info("session: recording started")
                 if not is_lazy_first and self._notification is not None:
-                    self._notification.show_listening()
+                    if source == "prompt":
+                        self._notification.show_listening_prompt()
+                    else:
+                        self._notification.show_listening()
             except Exception as exc:
                 self._recording = False
                 log.error("session: recorder.start failed: %s", exc)
@@ -378,7 +381,10 @@ class Session:
             (samples, mode, self._recording_abort, self._cancel_generation, source)
         )
         if self._notification is not None:
-            self._notification.show_transcribing()
+            if source == "prompt":
+                self._notification.show_transcribing_prompt()
+            else:
+                self._notification.show_transcribing()
         queue_depth = self._utterance_queue.qsize()
         if queue_depth > 1:
             log.info("session: %d utterance(s) queued for transcription", queue_depth)
@@ -632,10 +638,16 @@ class Session:
             # sys.modules["stenographer.llm"] to stub it out.
             llm_module = importlib.import_module("stenographer.llm")
 
+            if self._notification is not None:
+                self._notification.show_rewriting()
             try:
                 text = llm_module.rewrite_prompt(self._cfg.llm, text)
+                if self._notification is not None:
+                    self._notification.show_prompt_ready()
             except llm_module.LlmError as exc:
                 log.error("session: rewrite_prompt failed: %s", exc)
+                if self._notification is not None:
+                    self._notification.show_prompt_failed()
                 if not self._stop_event.is_set():
                     with contextlib.suppress(Exception):
                         self._feedback.play("error")
