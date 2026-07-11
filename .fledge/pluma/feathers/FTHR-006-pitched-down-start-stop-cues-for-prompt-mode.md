@@ -36,8 +36,8 @@ Per `.fledge/nest/modules.md` (`scripts/gen_cues.py` cue synthesis; `audio/feedb
 Implementation order: write all tests above, run against the unchanged code and confirm they fail for the expected reason (new cue keys/assets don't exist; no adapter exists yet), then implement `gen_cues.py`'s new entries (and regenerate the WAV assets), the `CueName` extension, and the adapter until all pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `ptt_on_prompt`/`toggle_on_prompt`/`ptt_off_prompt`/`toggle_off_prompt` WAV assets exist at exactly ÷4 the frequency of their base tones (satisfies PLM-002 FC-7).
-- [ ] AC-3: A prompt-mode recording start/stop plays the pitched-down cue variants; all other cues (cancel/discard/error/etc.) remain shared and unchanged for both modes (satisfies PLM-002 FC-7).
-- [ ] AC-4: The existing dictate-mode hotkey's cues are unaffected (regression guard).
-- [ ] AC-5: `.venv/bin/pytest -m "not integration"` passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `ptt_on_prompt`/`toggle_on_prompt`/`ptt_off_prompt`/`toggle_off_prompt` WAV assets exist at exactly ÷4 the frequency of their base tones (satisfies PLM-002 FC-7).
+- [x] AC-3: A prompt-mode recording start/stop plays the pitched-down cue variants; all other cues (cancel/discard/error/etc.) remain shared and unchanged for both modes (satisfies PLM-002 FC-7).
+- [x] AC-4: The existing dictate-mode hotkey's cues are unaffected (regression guard).
+- [x] AC-5: `.venv/bin/pytest -m "not integration"` passes with no regressions.
