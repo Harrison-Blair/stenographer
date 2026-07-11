@@ -42,7 +42,7 @@ All in `tests/test_config.py`, following the file's existing `_build_x`/defaults
 Implementation order: write all tests above, run against the unchanged code and confirm every one fails for the expected reason (missing fields/`AttributeError`, or validation not yet implemented), then implement `LlmConfig`/`prompt_binding` end to end until all pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `Config.defaults()` exposes `hotkey.prompt_binding` and a fully-defaulted `llm` section as specified (satisfies PLM-002 FC-3 for the config layer).
-- [ ] AC-3: Invalid values for every new field (`prompt_binding` overlap/unparseable, `llm.base_url`/`timeout_seconds`/`temperature`/`max_tokens` out of range) are rejected with `ConfigError`, matching this codebase's existing validation conventions.
-- [ ] AC-4: `.venv/bin/pytest -m "not integration"` passes with no regressions to existing config tests.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `Config.defaults()` exposes `hotkey.prompt_binding` and a fully-defaulted `llm` section as specified (satisfies PLM-002 FC-3 for the config layer).
+- [x] AC-3: Invalid values for every new field (`prompt_binding` overlap/unparseable, `llm.base_url`/`timeout_seconds`/`temperature`/`max_tokens` out of range) are rejected with `ConfigError`, matching this codebase's existing validation conventions.
+- [x] AC-4: `.venv/bin/pytest -m "not integration"` passes with no regressions to existing config tests.
