@@ -117,6 +117,30 @@ def _configure_logging() -> None:
     )
 
 
+_PROMPT_CUE_REMAP: dict[CueName, CueName] = {
+    "ptt_on": "ptt_on_prompt",
+    "toggle_on": "toggle_on_prompt",
+    "ptt_off": "ptt_off_prompt",
+    "toggle_off": "toggle_off_prompt",
+}
+
+
+class _PromptCueAdapter:
+    """Remaps start/stop cues to their pitched-down prompt-mode variants.
+
+    Passed as the ``feedback=`` argument to the prompt-mode
+    ``HotkeyListener`` only, so its recording-start/stop cues are
+    audibly distinct from the dictate-mode listener's. Every other
+    cue name is passed through to the underlying `Feedback` unchanged.
+    """
+
+    def __init__(self, feedback: Feedback) -> None:
+        self._feedback = feedback
+
+    def play(self, name: CueName) -> None:
+        self._feedback.play(_PROMPT_CUE_REMAP.get(name, name))
+
+
 def _build_feedback(cfg: Config, caps: Capabilities) -> Feedback:
     if caps.has_pw_play:
         player = "pw-play"
@@ -257,7 +281,7 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         on_start=functools.partial(session.on_recording_start, source="prompt"),
         on_stop=functools.partial(session.on_recording_stop, source="prompt"),
         on_toggle_off=functools.partial(session.on_toggle_off, source="prompt"),
-        feedback=feedback,
+        feedback=_PromptCueAdapter(feedback),
         lock=session.lock,
         cancel_binding=cancel_binding,
         on_discard=session.discard_recording,
