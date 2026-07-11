@@ -2,7 +2,7 @@
 id: FTHR-005
 title: Distinct per-stage notifications for prompt mode
 plumage: PLM-002
-status: hatching
+status: fledged
 priority: P2
 depends_on: [FTHR-004]
 authored: 2026-07-11T05:57:54Z
