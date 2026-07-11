@@ -2,7 +2,7 @@
 id: FTHR-007
 title: Bump version to 0.8.0
 plumage: PLM-002
-status: hatching
+status: fledged
 priority: P3
 depends_on: []
 authored: 2026-07-11T06:01:43Z
