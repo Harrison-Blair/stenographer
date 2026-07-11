@@ -1,17 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: ci
 
-# The main-branch protection rule requires the checks "lint + test" and
-# "build release binary", but release.yml only runs on push to main
+ # The main-branch protection rule requires the checks "lint + test" and
+ # "build release binary", but release.yml only runs on push to main
 # (post-merge). This workflow reports both checks on pull requests (and
 # dev pushes) so the required checks can actually pass before merging.
-# The build job mirrors release.yml's build without publishing anything.
+# (post-merge). This workflow reports both checks on pull requests
+# targeting main so the required checks can actually pass before merging.
+ # The build job mirrors release.yml's build without publishing anything.
+
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [dev]
-  workflow_dispatch:
+   pull_request:
+     branches: [main]
+   push:
+     branches: [dev]
+   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
