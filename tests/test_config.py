@@ -592,9 +592,12 @@ def test_streaming_defaults() -> None:
     assert cfg.streaming.agreement_n == 2
     assert cfg.streaming.beam_size is None
     assert cfg.streaming.max_buffer_seconds == 20.0
-    assert cfg.formatting.paragraph_pause_seconds == 2.0
     assert cfg.formatting.capitalize_sentences is True
     assert cfg.formatting.normalize_spacing is True
+
+
+def test_default_paragraph_pause_seconds_is_zero() -> None:
+    assert Config.defaults().formatting.paragraph_pause_seconds == 0.0
 
 
 def test_streaming_overrides_load(tmp_path: pathlib.Path) -> None:
