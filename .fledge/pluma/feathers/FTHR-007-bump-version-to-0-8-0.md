@@ -29,6 +29,6 @@ Single-line change: `version = "0.7.7"` → `version = "0.8.0"` in `pyproject.to
 Implementation order: write the test, run it against the unchanged file and confirm it fails (current value is `0.7.7`), then make the one-line change until it passes.
 
 ## Acceptance Criteria
-- [ ] AC-1: The test listed above was observed failing before implementation and passes after.
-- [ ] AC-2: `pyproject.toml`'s `[project].version` reads `0.8.0` (satisfies PLM-002 FC-8, AC-6).
-- [ ] AC-3: `.venv/bin/pytest -m "not integration"` passes with no regressions.
+- [x] AC-1: The test listed above was observed failing before implementation and passes after.
+- [x] AC-2: `pyproject.toml`'s `[project].version` reads `0.8.0` (satisfies PLM-002 FC-8, AC-6).
+- [x] AC-3: `.venv/bin/pytest -m "not integration"` passes with no regressions.
