@@ -1,7 +1,7 @@
 ---
 id: PLM-002
 title: Prompt-crafting dictation mode (Right Shift)
-status: hatched
+status: fledged
 priority: P1
 authored: 2026-07-11T05:44:03Z
 agent: fledge-orchestrate/planning
@@ -31,13 +31,13 @@ Stenographer's existing dictation mode types the user's speech verbatim at the c
 8. FC-8: The project version is bumped to 0.8.0 as part of shipping this plumage.
 
 ## Acceptance Criteria
-- [ ] AC-1: A test demonstrates that completing a recording on the new hotkey results in the (mocked) LLM's response being typed/copied, not the raw transcript.
-- [ ] AC-2: A test demonstrates that when the LLM call fails, the raw transcript is typed/copied instead and an error notification fires.
-- [ ] AC-3: A test demonstrates that the new hotkey's push-to-talk, toggle, and double-tap-discard behaviors match the existing hotkey's behavior (same trigger rules, independently triggerable).
-- [ ] AC-4: A test demonstrates that a distinct notification is shown at each pipeline stage for this mode, and that it is distinguishable from the existing mode's notifications.
-- [ ] AC-5: A test demonstrates that this mode's start/stop audio cues are the pitched-down (÷4 frequency) assets, while other cues remain the shared/unchanged ones.
-- [ ] AC-6: `pyproject.toml`'s `[project].version` reads `0.8.0`.
-- [ ] AC-7: The full unit test suite passes with no regressions to the existing dictation mode's behavior.
+- [x] AC-1: A test demonstrates that completing a recording on the new hotkey results in the (mocked) LLM's response being typed/copied, not the raw transcript.
+- [x] AC-2: A test demonstrates that when the LLM call fails, the raw transcript is typed/copied instead and an error notification fires.
+- [x] AC-3: A test demonstrates that the new hotkey's push-to-talk, toggle, and double-tap-discard behaviors match the existing hotkey's behavior (same trigger rules, independently triggerable).
+- [x] AC-4: A test demonstrates that a distinct notification is shown at each pipeline stage for this mode, and that it is distinguishable from the existing mode's notifications.
+- [x] AC-5: A test demonstrates that this mode's start/stop audio cues are the pitched-down (÷4 frequency) assets, while other cues remain the shared/unchanged ones.
+- [x] AC-6: `pyproject.toml`'s `[project].version` reads `0.8.0`.
+- [x] AC-7: The full unit test suite passes with no regressions to the existing dictation mode's behavior.
 
 ## Out of Scope
 - Any live/streaming typing feedback for this mode (explicitly excluded per the original request).
