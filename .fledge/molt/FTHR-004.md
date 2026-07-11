@@ -114,6 +114,25 @@ Implementation: `session.py:_process` calls `llm.rewrite_prompt(self._cfg.llm, t
 otherwise silently discard the LLM's rewritten text and reconstruct from raw ASR segments instead —
 this matters because `output.injection_method` defaults to `"paste"`).
 
+**Update (skua review round 1):** added `test_prompt_mode_paste_mode_uses_rewritten_text_not_reformatted`
+to pin the paste-mode guard specifically, since the original test set covered only `paste_mode=False`.
+Sets `cfg.output.injection_method = "paste"` with non-empty `result.segments`, mocks `rewrite_prompt` to
+return `"Hello, world!"`, and asserts `session._formatter.format_batch` is never called and
+`clipboard.copy`/`injector.paste` use the rewritten text. Verified test-first per the brooder protocol:
+temporarily reverted the `source != "prompt"` guard (`if result.segments:` instead of
+`if result.segments and source != "prompt":`) and confirmed the test FAILS —
+`AssertionError: Expected 'format_batch' to not have been called. Called 1 times.` — then restored the
+guard and confirmed it PASSES:
+
+```
+$ .venv/bin/pytest -m "not integration" tests/test_session.py::test_prompt_mode_paste_mode_uses_rewritten_text_not_reformatted -v
+tests/test_session.py::test_prompt_mode_paste_mode_uses_rewritten_text_not_reformatted PASSED [100%]
+============================== 1 passed in 0.16s ===============================
+```
+
+Full suite after this addition: **442 passed, 4 deselected**; `ruff check .` and
+`ruff format --check .` both clean.
+
 ## AC-3
 
 "On an LLM-call failure, the raw transcript is typed/copied instead and the existing error cue plays."

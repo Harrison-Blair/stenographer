@@ -1048,6 +1048,38 @@ def test_prompt_mode_falls_back_to_raw_transcript_on_llm_error() -> None:
     c["feedback"].play.assert_any_call("error")
 
 
+def test_prompt_mode_paste_mode_uses_rewritten_text_not_reformatted() -> None:
+    """output.injection_method="paste" is the real default (config.py); the
+    LLM's rewritten text must survive it, not get overwritten by format_batch
+    reformatting the raw ASR segments."""
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.silence_threshold = 0.6
+    c["cfg"].clipboard.enabled = True
+    c["cfg"].output.injection_method = "paste"
+
+    segments = [
+        SegmentInfo(0.0, 0.5, "hello", 0.1),
+        SegmentInfo(0.5, 1.0, " world", 0.1),
+    ]
+    result = TranscriptionResult(text="hello world", duration_seconds=1.0, segments=segments)
+    future = _fake_future()
+    future.result.return_value = result
+    c["worker"].submit.return_value = future
+
+    llm_mod = _fake_llm_module(rewritten="Hello, world!")
+    samples = np.zeros((16000, 1), dtype=np.float32)
+    with (
+        patch.dict(sys.modules, {"stenographer.llm": llm_mod}),
+        patch.object(session._formatter, "format_batch") as format_batch,
+    ):
+        session._process(samples, "ptt", threading.Event(), source="prompt")
+
+    format_batch.assert_not_called()
+    c["clipboard"].copy.assert_called_once_with("Hello, world!")
+    c["injector"].paste.assert_called_once()
+
+
 def test_dictate_mode_unaffected_by_prompt_mode_addition() -> None:
     session, _m = _make_session()
     c = _components(session)
