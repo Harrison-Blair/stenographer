@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: ci
+
+# The main-branch protection rule requires a check named "lint + test",
+# but release.yml only runs on push to main (post-merge). This workflow
+# reports that check on pull requests (and dev pushes) so the required
+# check can actually pass before merging.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: lint + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+      - name: Install system test deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libportaudio2
+      - name: Install dev extras
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e ".[dev]"
+      - name: ruff check
+        run: .venv/bin/ruff check .
+      - name: ruff format check
+        run: .venv/bin/ruff format --check .
+      - name: pytest (unit)
+        run: .venv/bin/pytest -m "not integration"
