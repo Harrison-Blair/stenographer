@@ -33,6 +33,13 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# A queued batch recording, optionally tagged with which hotkey triggered it
+# (added by FTHR-004; the untagged 4-tuple form defaults to "dictate").
+_BatchItem = tuple[np.ndarray, Literal["ptt", "toggle"], threading.Event, int]
+_TaggedBatchItem = tuple[
+    np.ndarray, Literal["ptt", "toggle"], threading.Event, int, Literal["dictate", "prompt"]
+]
+
 
 @dataclass
 class _LiveItem:
@@ -69,6 +76,7 @@ class Session:
         self._cfg = cfg
         self._caps = capabilities
         self._listener = listener
+        self._prompt_listener: HotkeyListener | None = None
         self._recorder = recorder
         self._worker = worker
         self._feedback = feedback
@@ -93,9 +101,7 @@ class Session:
         # drains the queue.
         self._cancel_generation = 0
 
-        self._utterance_queue: queue.Queue[
-            tuple[np.ndarray, Literal["ptt", "toggle"], threading.Event, int] | _LiveItem | None
-        ]
+        self._utterance_queue: queue.Queue[_BatchItem | _TaggedBatchItem | _LiveItem | None]
         self._utterance_queue = queue.Queue()
         self._processor: threading.Thread | None = None
         self._processing_times: collections.deque[float] = collections.deque(maxlen=10)
@@ -139,9 +145,20 @@ class Session:
         """
         self._listener = listener
 
+    def attach_prompt_listener(self, listener: HotkeyListener) -> None:
+        """Late-bind the second (prompt-mode) hotkey listener.
+
+        Shares the session's lock like the primary listener; its
+        callbacks are tagged ``source="prompt"`` by the caller (see
+        ``cli.py:_build_session``).
+        """
+        self._prompt_listener = listener
+
     def start_listener(self) -> None:
         if self._listener is not None:
             self._listener.start()
+        if self._prompt_listener is not None:
+            self._prompt_listener.start()
 
     def start(self) -> None:
         """Launch the processor thread that dequeues and processes utterances."""
@@ -162,7 +179,10 @@ class Session:
                 generation = item.generation
                 abort = item.streamer.abort
             else:
-                _samples, _mode, abort, generation = item
+                # Batch item: (samples, mode, abort, generation[, source]).
+                # The trailing source element is optional so directly-queued
+                # test items (and other legacy 4-tuples) keep working.
+                abort, generation = item[2], item[3]
             with self._lock:
                 if generation < self._cancel_generation:
                     log.info("session: dropping cancelled utterance")
@@ -177,8 +197,9 @@ class Session:
             if isinstance(item, _LiveItem):
                 self._run_live(item.streamer)
             else:
-                samples, mode, abort, generation = item
-                self._process(samples, mode, abort)
+                samples, mode, abort, generation, *rest = item
+                source = rest[0] if rest else "dictate"
+                self._process(samples, mode, abort, source)
             with self._lock:
                 self._active_abort = None
             elapsed = time.monotonic() - t0
@@ -230,6 +251,11 @@ class Session:
                 self._listener.stop(timeout=2.0)
         except Exception as exc:
             log.error("session: listener.stop failed: %s", exc)
+        try:
+            if self._prompt_listener is not None:
+                self._prompt_listener.stop(timeout=2.0)
+        except Exception as exc:
+            log.error("session: prompt_listener.stop failed: %s", exc)
         self._worker.cancel()
         self._utterance_queue.put(None)
         if self._processor is not None and self._processor.is_alive():
@@ -257,7 +283,7 @@ class Session:
         except Exception as exc:
             log.error("session: notification.hide failed: %s", exc)
 
-    def on_recording_start(self) -> None:
+    def on_recording_start(self, source: Literal["dictate", "prompt"] = "dictate") -> None:
         with self._lock:
             if self._stop_event.is_set():
                 return
@@ -274,7 +300,11 @@ class Session:
                         on_unloaded=self._on_model_unloaded,
                     )
                     self._on_model_loading()
-                if self._streaming:
+                # Prompt-mode recordings never stream and never flush
+                # mid-recording segments (FC-6): a prompt utterance must be
+                # transcribed as one contiguous batch, one LLM call per
+                # utterance.
+                if self._streaming and source != "prompt":
                     # Live streaming replaces the silence-flush path: the
                     # driver's tail-silence guard covers hallucination-over-
                     # silence, and words are typed as they stabilise.
@@ -302,7 +332,9 @@ class Session:
                     self._utterance_queue.put(_LiveItem(streamer, self._cancel_generation))
                 else:
                     self._recorder.start(
-                        on_segment=self._enqueue_flush_segment if self._silence_detection else None
+                        on_segment=self._enqueue_flush_segment
+                        if (self._silence_detection and source != "prompt")
+                        else None
                     )
                 log.info("session: recording started")
                 if not is_lazy_first and self._notification is not None:
@@ -311,7 +343,9 @@ class Session:
                 self._recording = False
                 log.error("session: recorder.start failed: %s", exc)
 
-    def on_recording_stop(self, mode: Literal["ptt", "toggle"]) -> None:
+    def on_recording_stop(
+        self, mode: Literal["ptt", "toggle"], source: Literal["dictate", "prompt"] = "dictate"
+    ) -> None:
         with self._lock:
             if not self._recording:
                 log.warning("session: on_recording_stop with no active recording")
@@ -339,7 +373,9 @@ class Session:
             log.info("session: no trailing audio after final flush, nothing to queue")
             self._refresh_notification()
             return
-        self._utterance_queue.put((samples, mode, self._recording_abort, self._cancel_generation))
+        self._utterance_queue.put(
+            (samples, mode, self._recording_abort, self._cancel_generation, source)
+        )
         if self._notification is not None:
             self._notification.show_transcribing()
         queue_depth = self._utterance_queue.qsize()
@@ -390,8 +426,8 @@ class Session:
         """
         self._utterance_queue.put((samples, "ptt", self._recording_abort, self._cancel_generation))
 
-    def on_toggle_off(self) -> None:
-        self.on_recording_stop("toggle")
+    def on_toggle_off(self, source: Literal["dictate", "prompt"] = "dictate") -> None:
+        self.on_recording_stop("toggle", source=source)
 
     def discard_recording(self) -> None:
         """Stop the active recording and drop its samples (no transcription).
@@ -488,8 +524,11 @@ class Session:
         samples: np.ndarray,
         mode: Literal["ptt", "toggle"],
         abort: threading.Event,
+        source: Literal["dictate", "prompt"] = "dictate",
     ) -> None:
-        log.info("session: processing %d samples (mode=%s)", samples.shape[0], mode)
+        log.info(
+            "session: processing %d samples (mode=%s, source=%s)", samples.shape[0], mode, source
+        )
 
         segment_queue: queue.Queue[SegmentInfo | None] = queue.Queue()
         future = self._worker.submit(samples, on_segment=segment_queue.put, cancel_event=abort)
@@ -507,6 +546,11 @@ class Session:
             if abort.is_set():
                 # Cancelled: keep draining until the sentinel, but stop
                 # injecting. Text already typed at the cursor stays.
+                continue
+            if source == "prompt":
+                # Prompt-mode recordings never do partial injection (FC-6):
+                # nothing is typed until the full, LLM-rewritten result is
+                # ready. Still drain the queue so the sentinel is observed.
                 continue
             if seg.no_speech_prob >= self._cfg.asr.silence_threshold:
                 # Likely a hallucination over silence (e.g. "Thank you.");
@@ -577,10 +621,24 @@ class Session:
                 with contextlib.suppress(Exception):
                     self._feedback.play("error")
             return
+        if source == "prompt":
+            # FTHR-003's contract; imported lazily so dictate-mode sessions
+            # never require stenographer.llm to be present.
+            from stenographer import llm as llm_module
+
+            try:
+                text = llm_module.rewrite_prompt(self._cfg.llm, text)
+            except llm_module.LlmError as exc:
+                log.error("session: rewrite_prompt failed: %s", exc)
+                if not self._stop_event.is_set():
+                    with contextlib.suppress(Exception):
+                        self._feedback.play("error")
         if paste_mode:
-            if result.segments:
+            if result.segments and source != "prompt":
                 # Paste output goes through the heuristic formatter (spacing,
                 # capitalisation, pause-based paragraphs at segment granularity).
+                # Prompt-mode text is already rewritten by the LLM, so it is
+                # used as-is rather than reformatted from raw ASR segments.
                 text = self._formatter.format_batch(speech_segments)
             # Copy to clipboard, then simulate Ctrl+V
             if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
