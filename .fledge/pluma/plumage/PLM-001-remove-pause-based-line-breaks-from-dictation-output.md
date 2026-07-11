@@ -1,7 +1,7 @@
 ---
 id: PLM-001
 title: Remove pause-based line breaks from dictation output
-status: hatched
+status: fledged
 priority: P0
 authored: 2026-07-11T05:33:12Z
 agent: fledge-orchestrate/planning
@@ -24,9 +24,9 @@ Stenographer currently inserts a paragraph break (blank line) into typed dictati
 4. FC-4: All other output formatting (spacing normalization, sentence capitalization) is unaffected.
 
 ## Acceptance Criteria
-- [ ] AC-1: A test demonstrates that, with default configuration, no paragraph break is inserted even when a long pause occurs between dictated tokens (test written first, observed failing against the unchanged default, then passing after the fix).
-- [ ] AC-2: A test demonstrates that explicitly configuring the old pause threshold still reproduces the previous paragraph-break behavior.
-- [ ] AC-3: The full unit test suite passes with no regressions to existing spacing/capitalization formatting tests.
+- [x] AC-1: A test demonstrates that, with default configuration, no paragraph break is inserted even when a long pause occurs between dictated tokens (test written first, observed failing against the unchanged default, then passing after the fix).
+- [x] AC-2: A test demonstrates that explicitly configuring the old pause threshold still reproduces the previous paragraph-break behavior.
+- [x] AC-3: The full unit test suite passes with no regressions to existing spacing/capitalization formatting tests.
 
 ## Out of Scope
 - Removing or redesigning the paragraph-break mechanism itself (spacing/capitalization normalization logic is untouched).
