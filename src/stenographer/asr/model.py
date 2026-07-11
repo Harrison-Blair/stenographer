@@ -44,6 +44,14 @@ class SegmentInfo:
 
 
 @dataclass(frozen=True)
+class WordInfo:
+    start: float
+    end: float
+    word: str
+    probability: float
+
+
+@dataclass(frozen=True)
 class TranscriptionResult:
     text: str
     duration_seconds: float
@@ -105,6 +113,43 @@ class Model:
             duration_seconds=info.duration,
             segments=seg_infos,
         )
+
+    def transcribe_words(
+        self,
+        samples: np.ndarray,
+        *,
+        beam_size: int | None = None,
+        check_cancel: Callable[[], None] | None = None,
+    ) -> list[WordInfo]:
+        """Low-level word-timestamped transcription for the live streaming path.
+
+        Unlike :meth:`transcribe` (the batch daemon path, left untouched),
+        this requests ``word_timestamps=True``.  *check_cancel* is invoked
+        once per decoded segment so an in-flight re-decode can be aborted
+        (it should raise to abort).  Returns a flat, time-ordered list of
+        words.
+        """
+        if samples.size == 0:
+            return []
+        if samples.ndim == 2 and samples.shape[1] == 1:
+            samples = samples.squeeze(-1)
+        segments_iter, _info = self._impl.transcribe(
+            samples,
+            language=self._language,
+            beam_size=self._beam_size if beam_size is None else beam_size,
+            vad_filter=False,
+            condition_on_previous_text=False,
+            word_timestamps=True,
+        )
+        words: list[WordInfo] = []
+        for seg in segments_iter:
+            if check_cancel is not None:
+                check_cancel()
+            for w in seg.words or ():
+                words.append(
+                    WordInfo(start=w.start, end=w.end, word=w.word, probability=w.probability)
+                )
+        return words
 
     def close(self) -> None:
         if hasattr(self, "_impl"):
@@ -212,6 +257,23 @@ class LazyModel:
         """
         impl = self._await_impl()
         result = impl.transcribe(samples, language, beam_size, on_segment=on_segment)
+        self._load_generation += 1
+        self._schedule_unload()
+        return result
+
+    def transcribe_words(
+        self,
+        samples: np.ndarray,
+        *,
+        beam_size: int | None = None,
+        check_cancel: Callable[[], None] | None = None,
+    ) -> list[WordInfo]:
+        """Wait until the model is loaded (blocking), then run a word decode.
+
+        Reschedules the idle-unload timer on every successful call.
+        """
+        impl = self._await_impl()
+        result = impl.transcribe_words(samples, beam_size=beam_size, check_cancel=check_cancel)
         self._load_generation += 1
         self._schedule_unload()
         return result

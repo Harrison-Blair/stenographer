@@ -363,6 +363,11 @@ def test_process_paste_mode_clipboard_excludes_silence_segments() -> None:
     c["cfg"].asr.silence_threshold = 0.6
     c["cfg"].clipboard.enabled = True
     c["cfg"].output.injection_method = "paste"
+    # The formatter holds cfg.formatting (captured at construction); pin its
+    # fields so the formatted paste output is deterministic.
+    c["cfg"].formatting.paragraph_pause_seconds = 2.0
+    c["cfg"].formatting.capitalize_sentences = True
+    c["cfg"].formatting.normalize_spacing = True
 
     future = _fake_future()
     future.result.return_value = TranscriptionResult(
@@ -376,7 +381,9 @@ def test_process_paste_mode_clipboard_excludes_silence_segments() -> None:
     c["worker"].submit.return_value = future
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
-    c["clipboard"].copy.assert_called_once_with("hello")
+    # The silence segment is excluded and the survivor is formatted
+    # (capitalised, trailing space per output.append_trailing_space).
+    c["clipboard"].copy.assert_called_once_with("Hello ")
     c["injector"].paste.assert_called_once()
 
 
@@ -882,3 +889,87 @@ def test_cancel_all_drops_dequeued_but_unprocessed_item() -> None:
         time.sleep(0.01)
     time.sleep(0.05)
     c["worker"].submit.assert_not_called()
+
+
+# --- live streaming wiring ---
+
+
+def _streaming_cfg() -> MagicMock:
+    cfg = _mock_cfg()
+    cfg.asr.mode = "eager"  # avoid the lazy-load branch
+    cfg.streaming.enabled = True
+    cfg.streaming.agreement_n = 2
+    cfg.streaming.min_chunk_seconds = 1.0
+    cfg.output.injection_method = "text"
+    return cfg
+
+
+def test_streaming_recording_start_wires_on_partial_and_enqueues_live_item() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    c = _components(session)
+    session.on_recording_start()
+    kwargs = c["recorder"].start.call_args.kwargs
+    assert "on_segment" not in kwargs  # silence-flush path disabled
+    assert callable(kwargs["on_partial"])
+    assert kwargs["min_partial_seconds"] == 1.0
+    item = session._utterance_queue.get_nowait()
+    from stenographer.session import _LiveItem
+
+    assert isinstance(item, _LiveItem)
+    assert item.streamer is session._live_streamer
+
+
+def test_streaming_recording_stop_signals_final_not_enqueue() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    c = _components(session)
+    tail = np.ones((16000, 1), dtype=np.float32)
+    c["recorder"].stop.return_value = tail
+
+    session.on_recording_start()
+    streamer = session._live_streamer
+    assert streamer is not None
+    session.on_recording_stop("ptt")
+
+    # Only the live item is queued; the tail went to the streamer as final.
+    assert session._utterance_queue.qsize() == 1
+    kind, samples = streamer._signals.get_nowait()
+    assert kind == "final"
+    assert np.array_equal(samples, tail)
+
+
+def test_streaming_not_active_in_paste_mode() -> None:
+    cfg = _streaming_cfg()
+    cfg.output.injection_method = "paste"
+    session, _m = _make_session(cfg=cfg)
+    assert session._streaming is False
+
+
+def test_cancel_all_signals_live_streamer_abort() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    session.on_recording_start()
+    streamer = session._live_streamer
+    assert streamer is not None
+    session.cancel_all()
+    assert streamer.abort.is_set()
+    kinds = []
+    while True:
+        try:
+            kinds.append(streamer._signals.get_nowait()[0])
+        except Exception:
+            break
+    assert "abort" in kinds
+
+
+def test_processor_drops_cancelled_live_item() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    session.on_recording_start()
+    streamer = session._live_streamer
+    session.cancel_all()  # drains the queue and bumps the generation
+    # Re-enqueue a stale-generation live item to exercise the processor drop.
+    from stenographer.session import _LiveItem
+
+    session._live_streamer = streamer
+    session._utterance_queue.put(_LiveItem(streamer, session._cancel_generation - 1))
+    session._utterance_queue.put(None)
+    session._process_utterance_queue()
+    assert session._live_streamer is None  # dangling reference cleared

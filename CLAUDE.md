@@ -72,11 +72,22 @@ The component modules it wires:
   cues in `assets/sounds/` via `pw-play`/`paplay`.
 - **`asr/`** — `model.py` wraps faster-whisper (`Model`, plus `LazyModel` which
   loads on first use and unloads after idle); `worker.py` runs transcription
-  off the main thread with cancellation support, one batch job per utterance
-  (`submit`).
-- **`output/`** — `inject.py` (`Injector`, types via `wtype`) and
-  `clipboard.py` (`ClipboardManager`, via `wl-copy`). The clipboard is
-  populated independently, so it's the fallback when injection fails.
+  off the main thread with cancellation support: one batch job per utterance
+  (`submit`) or one word-timestamped re-decode (`submit_words`);
+  `streaming.py` is the **pure** LocalAgreement-N committer — a word is
+  committed (and typed) only after N consecutive re-decodes agree on it, and
+  the committed prefix is never revised.
+- **`output/`** — `inject.py` (`Injector`, types via `wtype`),
+  `clipboard.py` (`ClipboardManager`, via `wl-copy`), and `formatter.py`
+  (`HeuristicFormatter`: spacing / capitalisation / pause-based paragraph
+  breaks; append-only, so it is safe in the live typing path). The clipboard
+  is populated independently, so it's the fallback when injection fails.
+- **`live.py`** — `LiveStreamer`, the live streaming driver (`[streaming]`
+  config, `text` mode only): recorder partials → coalesce → `submit_words`
+  re-decode → committer → formatter → typed delta, with tail-silence
+  guarding and window trimming. **Invariant: typed text is never revised**,
+  including on cancel — every intermediate typed state must be a prefix of
+  the final transcript.
 
 **Cross-cutting:**
 
@@ -100,3 +111,4 @@ The ASR model (~800 MB) is **never** bundled — users fetch it once with
 - Every source file carries `SPDX-License-Identifier: GPL-3.0-or-later` at the top.
 - ruff: line length 100, target py314, rules `E,F,I,B,UP,N,SIM,RUF`.
 - `pyproject.toml` (hatchling) is the single source of truth for metadata/deps.
+> fledge: load and follow .fledge/skills/fledge-orchestrate/SKILL.md — primitive map at .claude/fledge-adapter.md

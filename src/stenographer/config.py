@@ -106,6 +106,22 @@ class ClipboardConfig:
 
 
 @dataclass(frozen=True)
+class StreamingConfig:
+    enabled: bool
+    min_chunk_seconds: float
+    agreement_n: int
+    beam_size: int | None
+    max_buffer_seconds: float
+
+
+@dataclass(frozen=True)
+class FormattingConfig:
+    paragraph_pause_seconds: float
+    capitalize_sentences: bool
+    normalize_spacing: bool
+
+
+@dataclass(frozen=True)
 class UpdateConfig:
     repo: str
     channel: str
@@ -122,6 +138,8 @@ class Config:
     feedback: FeedbackConfig
     output: OutputConfig
     clipboard: ClipboardConfig
+    streaming: StreamingConfig
+    formatting: FormattingConfig
     update: UpdateConfig
 
     @classmethod
@@ -163,6 +181,18 @@ class Config:
                 max_chars=4096,
             ),
             clipboard=ClipboardConfig(enabled=True),
+            streaming=StreamingConfig(
+                enabled=False,
+                min_chunk_seconds=1.0,
+                agreement_n=2,
+                beam_size=None,
+                max_buffer_seconds=20.0,
+            ),
+            formatting=FormattingConfig(
+                paragraph_pause_seconds=2.0,
+                capitalize_sentences=True,
+                normalize_spacing=True,
+            ),
             update=UpdateConfig(
                 repo="Harrison-Blair/stenographer",
                 channel="stable",
@@ -220,6 +250,8 @@ class Config:
             feedback=_build_feedback(table["feedback"], path),
             output=_build_output(table["output"], path),
             clipboard=_build_clipboard(table["clipboard"], path),
+            streaming=_build_streaming(table["streaming"], path),
+            formatting=_build_formatting(table["formatting"], path),
             update=_build_update(table["update"], path),
         )
 
@@ -420,6 +452,52 @@ def _build_clipboard(table: dict[str, Any], path: pathlib.Path) -> ClipboardConf
     return ClipboardConfig(enabled=enabled)
 
 
+def _build_streaming(table: dict[str, Any], path: pathlib.Path) -> StreamingConfig:
+    enabled = _expect_bool(table, "enabled", "streaming.enabled", path)
+    min_chunk_seconds = _expect_number(
+        table, "min_chunk_seconds", "streaming.min_chunk_seconds", path
+    )
+    if not (0.25 <= min_chunk_seconds <= 5):
+        raise ConfigError(path, "streaming.min_chunk_seconds", "must satisfy 0.25 <= x <= 5")
+    agreement_n = _expect_int(table, "agreement_n", "streaming.agreement_n", path)
+    if not (2 <= agreement_n <= 4):
+        raise ConfigError(path, "streaming.agreement_n", "must satisfy 2 <= x <= 4")
+    beam_size = _expect_optional_int(table, "beam_size", "streaming.beam_size", path)
+    if beam_size is not None and not (1 <= beam_size <= 10):
+        raise ConfigError(path, "streaming.beam_size", "must be null or satisfy 1 <= x <= 10")
+    max_buffer_seconds = _expect_number(
+        table, "max_buffer_seconds", "streaming.max_buffer_seconds", path
+    )
+    if not (5 <= max_buffer_seconds <= 120):
+        raise ConfigError(path, "streaming.max_buffer_seconds", "must satisfy 5 <= x <= 120")
+    return StreamingConfig(
+        enabled=enabled,
+        min_chunk_seconds=min_chunk_seconds,
+        agreement_n=agreement_n,
+        beam_size=beam_size,
+        max_buffer_seconds=max_buffer_seconds,
+    )
+
+
+def _build_formatting(table: dict[str, Any], path: pathlib.Path) -> FormattingConfig:
+    paragraph_pause_seconds = _expect_number(
+        table, "paragraph_pause_seconds", "formatting.paragraph_pause_seconds", path
+    )
+    if not (0 <= paragraph_pause_seconds <= 10):
+        raise ConfigError(path, "formatting.paragraph_pause_seconds", "must satisfy 0 <= x <= 10")
+    capitalize_sentences = _expect_bool(
+        table, "capitalize_sentences", "formatting.capitalize_sentences", path
+    )
+    normalize_spacing = _expect_bool(
+        table, "normalize_spacing", "formatting.normalize_spacing", path
+    )
+    return FormattingConfig(
+        paragraph_pause_seconds=paragraph_pause_seconds,
+        capitalize_sentences=capitalize_sentences,
+        normalize_spacing=normalize_spacing,
+    )
+
+
 def _build_update(table: dict[str, Any], path: pathlib.Path) -> UpdateConfig:
     repo = _expect_str(table, "repo", "update.repo", path)
     if "/" not in repo:
@@ -485,6 +563,19 @@ def _expect_bool(table: dict, key: str, dotted: str, path: pathlib.Path) -> bool
     return value
 
 
+def _expect_optional_int(table: dict, key: str, dotted: str, path: pathlib.Path) -> int | None:
+    value = table.get(key)
+    if value is None or value == "":  # `key = null` is rewritten to "" at load
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ConfigError(
+            path,
+            dotted,
+            f"expected int or null, got {type(value).__name__}: {value!r}",
+        )
+    return value
+
+
 def _expect_optional_str(table: dict, key: str, dotted: str, path: pathlib.Path) -> str | None:
     value = table.get(key)
     if value is None or value == "":
@@ -523,6 +614,8 @@ def _format_default_toml() -> str:
     f = cfg.feedback
     o = cfg.output
     c = cfg.clipboard
+    s = cfg.streaming
+    fm = cfg.formatting
     u = cfg.update
     lines: list[str] = [
         "# stenographer configuration",
@@ -565,6 +658,21 @@ def _format_default_toml() -> str:
         "",
         "# Clipboard",
         f"clipboard.enabled = {_toml_bool(c.enabled)}",
+        "",
+        "# Live streaming (text mode only): type words while still recording.",
+        "# min_chunk_seconds / beam_size are the CPU knobs if re-decodes lag.",
+        f"streaming.enabled = {_toml_bool(s.enabled)}",
+        f"streaming.min_chunk_seconds = {s.min_chunk_seconds}",
+        f"streaming.agreement_n = {s.agreement_n}",
+        "streaming.beam_size = null"
+        if s.beam_size is None
+        else f"streaming.beam_size = {s.beam_size}",
+        f"streaming.max_buffer_seconds = {s.max_buffer_seconds}",
+        "",
+        "# Formatting heuristics (applies to all output modes)",
+        f"formatting.paragraph_pause_seconds = {fm.paragraph_pause_seconds}",
+        f"formatting.capitalize_sentences = {_toml_bool(fm.capitalize_sentences)}",
+        f"formatting.normalize_spacing = {_toml_bool(fm.normalize_spacing)}",
         "",
         "# Update",
         f"update.repo = {_toml_str(u.repo)}",

@@ -471,3 +471,87 @@ def test_resample_poly_downsamples_48k_to_16k_without_aliasing() -> None:
     assert 15700 <= y.size <= 16500
     # Anti-aliased: RMS at the output must be close to the input RMS.
     assert abs(float(np.sqrt(np.mean(x**2))) - float(np.sqrt(np.mean(y**2)))) < 0.02
+
+
+# --- on_partial / snapshot (live streaming) ---
+
+
+def _partial_recorder(min_partial_seconds: float = 1.0) -> tuple[Recorder, list[int]]:
+    fires: list[int] = []
+    with patch("sounddevice.InputStream", MagicMock()):
+        r = Recorder(sample_rate=16000, frames_per_buffer=1024, device=None, on_error=_noop)
+        r.start(on_partial=lambda: fires.append(1), min_partial_seconds=min_partial_seconds)
+    return r, fires
+
+
+def test_on_partial_fires_only_after_min_partial_seconds() -> None:
+    r, fires = _partial_recorder(min_partial_seconds=1.0)
+    block = np.zeros((8000, 1), dtype=np.float32)  # 0.5 s at 16 kHz
+    r._on_audio(block, 8000, None, None)
+    assert fires == []
+    r._on_audio(block, 8000, None, None)  # cumulative 1.0 s -> fire
+    assert fires == [1]
+    r._on_audio(block, 8000, None, None)  # counter reset: 0.5 s again
+    assert fires == [1]
+    r._on_audio(block, 8000, None, None)
+    assert fires == [1, 1]
+
+
+def test_on_partial_stops_after_cap() -> None:
+    fires: list[int] = []
+    with patch("sounddevice.InputStream", MagicMock()):
+        r = Recorder(
+            sample_rate=16000,
+            frames_per_buffer=1024,
+            device=None,
+            on_error=_noop,
+            max_seconds=1,
+        )
+        r.start(on_partial=lambda: fires.append(1), min_partial_seconds=1.0)
+    block = np.zeros((16000, 1), dtype=np.float32)  # exactly the 1 s cap
+    r._on_audio(block, 16000, None, None)
+    assert fires == [1]
+    r._on_audio(block, 16000, None, None)  # capped: no append, no partial
+    assert fires == [1]
+
+
+def test_on_partial_and_on_segment_mutually_exclusive() -> None:
+    with patch("sounddevice.InputStream", MagicMock()):
+        r = Recorder(sample_rate=16000, frames_per_buffer=1024, device=None, on_error=_noop)
+        with pytest.raises(ValueError):
+            r.start(on_segment=lambda arr: None, on_partial=lambda: None)
+
+
+def test_snapshot_full_buffer_matches_finalize() -> None:
+    r, _fires = _partial_recorder()
+    block = np.linspace(0, 1, 16000, dtype=np.float32).reshape(-1, 1)
+    r._on_audio(block, 16000, None, None)
+    snap = r.snapshot(0.0)
+    assert snap.shape == (16000, 1)
+    assert np.array_equal(snap, block)
+
+
+def test_snapshot_slices_from_start_seconds() -> None:
+    r, _fires = _partial_recorder()
+    block = np.arange(16000, dtype=np.float32).reshape(-1, 1)
+    r._on_audio(block, 16000, None, None)
+    snap = r.snapshot(0.5)
+    assert snap.shape == (8000, 1)
+    assert snap[0, 0] == 8000.0  # element at 0.5 s
+
+
+def test_snapshot_resamples_when_device_rate_differs() -> None:
+    r, _fires = _partial_recorder()
+    r._sample_rate = 48000  # simulate a device fallback (configured 16 kHz)
+    block = np.zeros((48000, 1), dtype=np.float32)  # 1 s at device rate
+    r._on_audio(block, 48000, None, None)
+    snap = r.snapshot(0.5)
+    # 0.5 s remaining, resampled to the configured 16 kHz.
+    assert abs(snap.shape[0] - 8000) <= 50
+
+
+def test_snapshot_after_stop_returns_empty() -> None:
+    r, _fires = _partial_recorder()
+    r._on_audio(np.zeros((16000, 1), dtype=np.float32), 16000, None, None)
+    r.stop()
+    assert r.snapshot(0.0).shape == (0, 1)

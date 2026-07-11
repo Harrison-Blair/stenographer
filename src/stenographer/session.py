@@ -9,11 +9,15 @@ import logging
 import queue
 import threading
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.asr.worker import CancelledError
+from stenographer.live import LiveStreamer
+from stenographer.output.formatter import HeuristicFormatter
 
 if TYPE_CHECKING:
     from stenographer.asr.model import SegmentInfo
@@ -28,6 +32,14 @@ if TYPE_CHECKING:
     from stenographer.output.inject import Injector
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class _LiveItem:
+    """Utterance-queue entry for a streamed recording (see LiveStreamer)."""
+
+    streamer: LiveStreamer
+    generation: int
 
 
 class Session:
@@ -82,16 +94,25 @@ class Session:
         self._cancel_generation = 0
 
         self._utterance_queue: queue.Queue[
-            tuple[np.ndarray, Literal["ptt", "toggle"], threading.Event, int] | None
+            tuple[np.ndarray, Literal["ptt", "toggle"], threading.Event, int] | _LiveItem | None
         ]
         self._utterance_queue = queue.Queue()
         self._processor: threading.Thread | None = None
         self._processing_times: collections.deque[float] = collections.deque(maxlen=10)
         self._sample_rate = cfg.audio.sample_rate
+        self._formatter = HeuristicFormatter(
+            cfg.formatting, append_trailing_space=cfg.output.append_trailing_space
+        )
         # Mid-recording silence flushing only applies to the PTT/toggle daemon.
         # In one-shot mode the processor tears the session down after the first
         # queued item, which would truncate dictation at the first pause.
         self._silence_detection = cfg.audio.silence_detection and not one_shot
+        # Live word-level streaming only applies to direct typing; paste mode
+        # assembles the utterance and pastes once.
+        self._streaming = bool(cfg.streaming.enabled and cfg.output.injection_method == "text")
+        # The streamer of the recording currently in progress (or whose final
+        # decode is still running); cancel paths use it to wake the driver.
+        self._live_streamer: LiveStreamer | None = None
 
     @property
     def stop_event(self) -> threading.Event:
@@ -137,17 +158,27 @@ class Session:
             if item is None:
                 log.debug("session: processor thread exiting")
                 break
-            samples, mode, abort, generation = item
+            if isinstance(item, _LiveItem):
+                generation = item.generation
+                abort = item.streamer.abort
+            else:
+                _samples, _mode, abort, generation = item
             with self._lock:
                 if generation < self._cancel_generation:
                     log.info("session: dropping cancelled utterance")
+                    if isinstance(item, _LiveItem) and self._live_streamer is item.streamer:
+                        self._live_streamer = None
                     continue
                 self._active_abort = abort
             remaining = self._utterance_queue.qsize()
             if remaining > 0:
                 log.info("session: processing utterance (%d queued)", remaining)
             t0 = time.monotonic()
-            self._process(samples, mode, abort)
+            if isinstance(item, _LiveItem):
+                self._run_live(item.streamer)
+            else:
+                samples, mode, abort, generation = item
+                self._process(samples, mode, abort)
             with self._lock:
                 self._active_abort = None
             elapsed = time.monotonic() - t0
@@ -187,7 +218,13 @@ class Session:
             except Exception as exc:
                 log.error("session: recorder.stop during shutdown failed: %s", exc)
             else:
-                self._drain(samples)
+                streamer = self._live_streamer
+                if streamer is not None:
+                    # Streamed recording: the queued live item finishes the
+                    # utterance once it sees the final signal.
+                    streamer.signal_final(samples)
+                else:
+                    self._drain(samples)
         try:
             if self._listener is not None:
                 self._listener.stop(timeout=2.0)
@@ -237,9 +274,36 @@ class Session:
                         on_unloaded=self._on_model_unloaded,
                     )
                     self._on_model_loading()
-                self._recorder.start(
-                    on_segment=self._enqueue_flush_segment if self._silence_detection else None
-                )
+                if self._streaming:
+                    # Live streaming replaces the silence-flush path: the
+                    # driver's tail-silence guard covers hallucination-over-
+                    # silence, and words are typed as they stabilise.
+                    streamer = LiveStreamer(
+                        cfg=self._cfg,
+                        recorder=self._recorder,
+                        worker=self._worker,
+                        injector=self._injector,
+                        transcriber=StreamingTranscriber(
+                            agreement_n=self._cfg.streaming.agreement_n
+                        ),
+                        formatter=HeuristicFormatter(
+                            self._cfg.formatting,
+                            append_trailing_space=self._cfg.output.append_trailing_space,
+                        ),
+                        clipboard=self._clipboard,
+                        caps=self._caps,
+                        abort=self._recording_abort,
+                    )
+                    self._recorder.start(
+                        on_partial=streamer.signal_partial,
+                        min_partial_seconds=self._cfg.streaming.min_chunk_seconds,
+                    )
+                    self._live_streamer = streamer
+                    self._utterance_queue.put(_LiveItem(streamer, self._cancel_generation))
+                else:
+                    self._recorder.start(
+                        on_segment=self._enqueue_flush_segment if self._silence_detection else None
+                    )
                 log.info("session: recording started")
                 if not is_lazy_first and self._notification is not None:
                     self._notification.show_listening()
@@ -261,6 +325,14 @@ class Session:
                     self._stop_event.set()
                 return
         log.info("session: recording stopped, %d samples captured", samples.shape[0])
+        streamer = self._live_streamer
+        if streamer is not None:
+            # Streamed recording: hand the finalized tail to the driver, which
+            # runs the final decode + flush. The live item is already queued.
+            streamer.signal_final(samples)
+            if self._notification is not None:
+                self._notification.show_transcribing()
+            return
         if self._silence_detection and samples.shape[0] == 0:
             # Nothing left after the final flush; the spoken chunks were already
             # enqueued mid-recording. Skip the empty tail to avoid a stray cue.
@@ -275,6 +347,27 @@ class Session:
             log.info("session: %d utterance(s) queued for transcription", queue_depth)
         if self._one_shot:
             pass  # processor thread sets _stop_event after processing
+
+    def _run_live(self, streamer: LiveStreamer) -> None:
+        """Drive one streamed utterance to completion on the processor thread."""
+        typed = ""
+        try:
+            typed = streamer.run()
+        except Exception as exc:
+            log.error("session: live streamer failed: %s", exc)
+            if not self._stop_event.is_set():
+                with contextlib.suppress(Exception):
+                    self._feedback.play("error")
+        finally:
+            with self._lock:
+                if self._live_streamer is streamer:
+                    self._live_streamer = None
+        if streamer.abort.is_set() or not typed:
+            return
+        self._utterances_processed += 1
+        if not self._stop_event.is_set():
+            with contextlib.suppress(Exception):
+                self._feedback.play("transcribe_done")
 
     def _refresh_notification(self) -> None:
         """Show the transcribing indicator if work remains queued, else hide it."""
@@ -312,6 +405,8 @@ class Session:
                 return
             self._recording = False
             self._recording_abort.set()
+            if self._live_streamer is not None:
+                self._live_streamer.signal_abort()
             try:
                 self._recorder.stop()
             except Exception as exc:
@@ -347,6 +442,8 @@ class Session:
                     break
             if self._active_abort is not None:
                 self._active_abort.set()
+            if self._live_streamer is not None:
+                self._live_streamer.signal_abort()
             if self._notification is not None:
                 with contextlib.suppress(Exception):
                     self._notification.hide()
@@ -481,6 +578,10 @@ class Session:
                     self._feedback.play("error")
             return
         if paste_mode:
+            if result.segments:
+                # Paste output goes through the heuristic formatter (spacing,
+                # capitalisation, pause-based paragraphs at segment granularity).
+                text = self._formatter.format_batch(speech_segments)
             # Copy to clipboard, then simulate Ctrl+V
             if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
                 try:

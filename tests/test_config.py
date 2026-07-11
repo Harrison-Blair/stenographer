@@ -582,6 +582,71 @@ def test_validate_bool_rejected_for_int_field(tmp_path: pathlib.Path) -> None:
         Config.load(p)
 
 
+# --- [streaming] / [formatting] ---
+
+
+def test_streaming_defaults() -> None:
+    cfg = Config.defaults()
+    assert cfg.streaming.enabled is False
+    assert cfg.streaming.min_chunk_seconds == 1.0
+    assert cfg.streaming.agreement_n == 2
+    assert cfg.streaming.beam_size is None
+    assert cfg.streaming.max_buffer_seconds == 20.0
+    assert cfg.formatting.paragraph_pause_seconds == 2.0
+    assert cfg.formatting.capitalize_sentences is True
+    assert cfg.formatting.normalize_spacing is True
+
+
+def test_streaming_overrides_load(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[stenographer]\n"
+        "streaming.enabled = true\n"
+        "streaming.min_chunk_seconds = 0.5\n"
+        "streaming.agreement_n = 3\n"
+        "streaming.beam_size = 2\n"
+        "streaming.max_buffer_seconds = 30\n"
+        "formatting.paragraph_pause_seconds = 3.5\n"
+        "formatting.capitalize_sentences = false\n"
+    )
+    cfg = Config.load(p)
+    assert cfg.streaming.enabled is True
+    assert cfg.streaming.min_chunk_seconds == 0.5
+    assert cfg.streaming.agreement_n == 3
+    assert cfg.streaming.beam_size == 2
+    assert cfg.streaming.max_buffer_seconds == 30.0
+    assert cfg.formatting.paragraph_pause_seconds == 3.5
+    assert cfg.formatting.capitalize_sentences is False
+
+
+def test_streaming_beam_size_null_means_asr_beam(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nstreaming.beam_size = null\n")
+    assert Config.load(p).streaming.beam_size is None
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("streaming.min_chunk_seconds", "0.1"),
+        ("streaming.min_chunk_seconds", "6"),
+        ("streaming.agreement_n", "1"),
+        ("streaming.agreement_n", "5"),
+        ("streaming.beam_size", "0"),
+        ("streaming.beam_size", "11"),
+        ("streaming.max_buffer_seconds", "4"),
+        ("streaming.max_buffer_seconds", "121"),
+        ("formatting.paragraph_pause_seconds", "-1"),
+        ("formatting.paragraph_pause_seconds", "11"),
+    ],
+)
+def test_streaming_out_of_range_rejected(tmp_path: pathlib.Path, key: str, value: str) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\n{key} = {value}\n")
+    with pytest.raises(ConfigError, match=key.replace(".", r"\.")):
+        Config.load(p)
+
+
 # --- write_default() round-trip ---
 
 

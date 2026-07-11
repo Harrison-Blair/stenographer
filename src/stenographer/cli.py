@@ -40,6 +40,7 @@ from stenographer.hotkey.listener import HotkeyListener
 from stenographer.hotkey.state_machine import HotkeyStateMachine
 from stenographer.notification import DesktopNotification
 from stenographer.output.clipboard import ClipboardManager
+from stenographer.output.formatter import HeuristicFormatter
 from stenographer.output.inject import Injector
 from stenographer.session import Session
 from stenographer.update import (
@@ -497,9 +498,10 @@ def cmd_transcribe(cfg: Config, path: pathlib.Path) -> int:
     log.info("transcribe: loading model %s", cfg.asr.model)
     model = Model(cfg.asr)
     result = model.transcribe(samples, cfg.asr.language, cfg.asr.beam_size)
-    text = result.text
-    if cfg.output.append_trailing_space:
-        text = text.rstrip() + " "
+    formatter = HeuristicFormatter(
+        cfg.formatting, append_trailing_space=cfg.output.append_trailing_space
+    )
+    text = formatter.format_batch(result.segments)
     sys.stdout.write(text)
     sys.stdout.write("\n")
     return 0

@@ -95,6 +95,21 @@ class TestTranscribe:
         assert result.text == "ok"
         fake_impl.transcribe.assert_called_once()
 
+    def test_transcribe_words_delegates_and_reschedules_unload(self) -> None:
+        m = LazyModel(_cfg(), idle_unload_seconds=300)
+        fake_impl = MagicMock()
+        fake_impl.transcribe_words.return_value = []
+        m._impl = fake_impl  # type: ignore[assignment]
+        m._loaded_event.set()
+        gen = m._load_generation
+        with patch.object(m, "_schedule_unload") as schedule:
+            words = m.transcribe_words(np.zeros(100, dtype=np.float32), beam_size=2)
+        assert words == []
+        fake_impl.transcribe_words.assert_called_once()
+        assert fake_impl.transcribe_words.call_args.kwargs["beam_size"] == 2
+        assert m._load_generation == gen + 1
+        schedule.assert_called_once()
+
     def test_transcribe_raises_stored_load_exception(self) -> None:
         m = LazyModel(_cfg(), idle_unload_seconds=0)
         m._load_exception = RuntimeError("load failed")
