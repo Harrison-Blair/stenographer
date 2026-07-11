@@ -45,9 +45,9 @@ All in `tests/test_session.py`, following the file's existing `_make_session()`/
 Implementation order: write all new tests above, run against the unchanged code and confirm they fail for the expected reason (no `source` parameter exists yet; no second listener; no `llm` import), then implement until they and the full existing `test_session.py` suite pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: A prompt-mode recording's typed/copied output is the (mocked, in this feather's tests) LLM's rewritten text, not the raw transcript (satisfies PLM-002 FC-2, AC-1).
-- [ ] AC-3: On an LLM-call failure, the raw transcript is typed/copied instead and the existing error cue plays (satisfies PLM-002 FC-4, AC-2 partially).
-- [ ] AC-4: The prompt-mode hotkey's PTT/toggle/double-tap-discard behavior matches the dictate hotkey's, and the two hotkeys operate independently (satisfies PLM-002 FC-1, AC-3).
-- [ ] AC-5: Prompt-mode recordings never use the live/streaming path and never emit mid-recording silence-flush segments, regardless of global streaming/silence-detection config (satisfies PLM-002 FC-6).
-- [ ] AC-6: `.venv/bin/pytest -m "not integration"` passes with no regressions to any existing `test_session.py`/`test_hotkey.py` behavior.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: A prompt-mode recording's typed/copied output is the (mocked, in this feather's tests) LLM's rewritten text, not the raw transcript (satisfies PLM-002 FC-2, AC-1).
+- [x] AC-3: On an LLM-call failure, the raw transcript is typed/copied instead and the existing error cue plays (satisfies PLM-002 FC-4, AC-2 partially).
+- [x] AC-4: The prompt-mode hotkey's PTT/toggle/double-tap-discard behavior matches the dictate hotkey's, and the two hotkeys operate independently (satisfies PLM-002 FC-1, AC-3).
+- [x] AC-5: Prompt-mode recordings never use the live/streaming path and never emit mid-recording silence-flush segments, regardless of global streaming/silence-detection config (satisfies PLM-002 FC-6).
+- [x] AC-6: `.venv/bin/pytest -m "not integration"` passes with no regressions to any existing `test_session.py`/`test_hotkey.py` behavior.
