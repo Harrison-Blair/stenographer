@@ -204,3 +204,54 @@ All checks passed!
 $ .venv/bin/ruff format --check .
 53 files already formatted
 ```
+
+## Post-merge fix: test-isolation bug (sys.modules patch bypassed)
+
+**Reported by the orchestrator:** this branch passed in isolation but the merge into `dev` went red,
+because `dev` now includes FTHR-003's real `src/stenographer/llm.py` and `tests/test_llm.py` (this
+worktree was branched before FTHR-003 merged, so it never had them). Rebased onto `dev` (`git rebase dev`,
+clean, no conflicts) to pull in the real module and reproduce.
+
+**Root cause:** `session.py`'s prompt-mode LLM call used `from stenographer import llm as llm_module`
+inside `_process`. That import-statement form does not always consult `sys.modules`: CPython's
+`from X import Y` compiles to an `IMPORT_NAME` (imports `X`) followed by an `IMPORT_FROM 'Y'`, and the
+fromlist-handling step (`_handle_fromlist`) skips re-importing `X.Y` if `X` already has a `Y` attribute
+— it just does `getattr(X, 'Y')`. Once `tests/test_llm.py` imports the real `stenographer.llm` anywhere
+in the same pytest session, Python sets `stenographer.llm` as an attribute of the `stenographer` package
+object as a side effect. From that point on, `from stenographer import llm` returns the REAL cached
+module via `getattr`, silently ignoring our tests' `patch.dict(sys.modules, {"stenographer.llm": fake})`
+— so `_process` called the real `rewrite_prompt`, which tried to `json.dumps` a `MagicMock` (`cfg.llm`)
+and blew up with `TypeError: Object of type MagicMock is not JSON serializable`.
+
+Reproduced verbatim before the fix:
+
+```
+$ .venv/bin/pytest tests/test_llm.py tests/test_session.py -q
+...
+E       TypeError: Object of type MagicMock is not JSON serializable
+=========================== short test summary info ============================
+FAILED tests/test_session.py::test_prompt_mode_recording_calls_rewrite_prompt
+FAILED tests/test_session.py::test_prompt_mode_types_rewritten_text_not_raw_transcript
+FAILED tests/test_session.py::test_prompt_mode_falls_back_to_raw_transcript_on_llm_error
+FAILED tests/test_session.py::test_prompt_mode_paste_mode_uses_rewritten_text_not_reformatted
+4 failed, 64 passed in 0.64s
+```
+
+**Fix:** replaced the import with `importlib.import_module("stenographer.llm")` (added `import importlib`
+at module top). `importlib.import_module` resolves through `sys.modules` unconditionally (checks
+`sys.modules.get(name)` before ever touching parent-package attributes), so it always honors the tests'
+`patch.dict(sys.modules, ...)` stub regardless of import order or whether the real module was already
+cached elsewhere. No test assertions were weakened — same mocked module, same `LlmError` fallback
+behavior, same call signature.
+
+Verified fixed:
+
+```
+$ .venv/bin/pytest tests/test_llm.py tests/test_session.py -q
+....................................................................     [100%]
+68 passed in 0.52s
+```
+
+Full suite after rebase + fix (`.venv/bin/pytest -m "not integration"`): **453 passed, 4 deselected**
+(435 pre-existing + 7 new FTHR-004 tests + 11 new FTHR-003 `test_llm.py` tests now included via the
+rebase). `ruff check .` / `ruff format --check .` both clean.

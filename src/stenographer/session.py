@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import importlib
 import logging
 import queue
 import threading
@@ -622,9 +623,14 @@ class Session:
                     self._feedback.play("error")
             return
         if source == "prompt":
-            # FTHR-003's contract; imported lazily so dictate-mode sessions
-            # never require stenographer.llm to be present.
-            from stenographer import llm as llm_module
+            # Deferred import: keeps the stenographer.llm dependency scoped
+            # to prompt-mode processing. Uses importlib.import_module
+            # (rather than "from stenographer import llm") because that
+            # statement form binds via the stenographer package's cached
+            # attribute once anything else has imported the real module,
+            # which would silently defeat tests that patch
+            # sys.modules["stenographer.llm"] to stub it out.
+            llm_module = importlib.import_module("stenographer.llm")
 
             try:
                 text = llm_module.rewrite_prompt(self._cfg.llm, text)
