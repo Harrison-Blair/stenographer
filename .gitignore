@@ -225,3 +225,6 @@ build/
 dist/
 *.spec.bak
 
+# fledge — per-run intermediates, regenerable
+.fledge/nest/raw/
+.fledge/broods/
