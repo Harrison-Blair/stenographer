@@ -2,7 +2,7 @@
 id: FTHR-006
 title: Pitched-down start/stop cues for prompt mode
 plumage: PLM-002
-status: egg
+status: hatching
 priority: P2
 depends_on: [FTHR-004]
 authored: 2026-07-11T06:00:05Z
