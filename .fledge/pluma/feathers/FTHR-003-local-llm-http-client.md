@@ -2,7 +2,7 @@
 id: FTHR-003
 title: Local LLM HTTP client
 plumage: PLM-002
-status: egg
+status: hatching
 priority: P1
 depends_on: [FTHR-002]
 authored: 2026-07-11T05:52:43Z

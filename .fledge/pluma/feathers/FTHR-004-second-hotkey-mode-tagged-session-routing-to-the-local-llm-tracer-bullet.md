@@ -2,7 +2,7 @@
 id: FTHR-004
 title: "Second hotkey + mode-tagged Session routing to the local LLM (tracer bullet)"
 plumage: PLM-002
-status: egg
+status: hatching
 priority: P1
 depends_on: [FTHR-002]
 authored: 2026-07-11T05:55:59Z
