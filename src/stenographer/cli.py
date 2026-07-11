@@ -15,6 +15,7 @@ if "_ARGCOMPLETE" in os.environ:  # completion hot path: skip the heavy imports 
 
 import contextlib
 import fcntl
+import functools
 import logging
 import logging.handlers
 import pathlib
@@ -244,8 +245,27 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         on_discard=session.discard_recording,
         on_cancel=session.cancel_all,
     )
+    prompt_binding = HotkeyBinding.parse(cfg.hotkey.prompt_binding)
+    prompt_sm = HotkeyStateMachine(
+        threshold_seconds=cfg.hotkey.toggle_threshold_seconds,
+        double_tap_window_seconds=cfg.hotkey.double_tap_window_seconds,
+    )
+    prompt_listener = HotkeyListener(
+        binding=prompt_binding,
+        device_path=cfg.hotkey.device or None,
+        state_machine=prompt_sm,
+        on_start=functools.partial(session.on_recording_start, source="prompt"),
+        on_stop=functools.partial(session.on_recording_stop, source="prompt"),
+        on_toggle_off=functools.partial(session.on_toggle_off, source="prompt"),
+        feedback=feedback,
+        lock=session.lock,
+        cancel_binding=cancel_binding,
+        on_discard=session.discard_recording,
+        on_cancel=session.cancel_all,
+    )
     session.start()
     session.attach_listener(listener)
+    session.attach_prompt_listener(prompt_listener)
     return session
 
 
