@@ -117,8 +117,15 @@ class Session:
         # Live word-level streaming only applies to direct typing; paste mode
         # assembles the utterance and pastes once.
         self._streaming = bool(cfg.streaming.enabled and cfg.output.injection_method == "text")
-        # The streamer of the recording currently in progress (or whose final
-        # decode is still running); cancel paths use it to wake the driver.
+        # The streamer of the recording currently capturing audio. Popped by
+        # the stop/discard path that ends that recording, so a following
+        # recording (e.g. a prompt-mode batch) can never be routed into a
+        # previous utterance's streamer that is still finishing its final
+        # decode.
+        self._recording_streamer: LiveStreamer | None = None
+        # The streamer that has not yet finished processing (its final decode
+        # may outlive the recording); cancel_all uses it to wake the driver.
+        # Cleared by _run_live when the drive completes.
         self._live_streamer: LiveStreamer | None = None
 
     @property
@@ -240,7 +247,8 @@ class Session:
             except Exception as exc:
                 log.error("session: recorder.stop during shutdown failed: %s", exc)
             else:
-                streamer = self._live_streamer
+                streamer = self._recording_streamer
+                self._recording_streamer = None
                 if streamer is not None:
                     # Streamed recording: the queued live item finishes the
                     # utterance once it sees the final signal.
@@ -329,6 +337,7 @@ class Session:
                         on_partial=streamer.signal_partial,
                         min_partial_seconds=self._cfg.streaming.min_chunk_seconds,
                     )
+                    self._recording_streamer = streamer
                     self._live_streamer = streamer
                     self._utterance_queue.put(_LiveItem(streamer, self._cancel_generation))
                 else:
@@ -355,6 +364,11 @@ class Session:
                 log.warning("session: on_recording_stop with no active recording")
                 return
             self._recording = False
+            # Pop under the lock: only the streamer created for *this*
+            # recording may receive its final signal. A previous utterance's
+            # streamer still running its final decode must not capture it.
+            streamer = self._recording_streamer
+            self._recording_streamer = None
             try:
                 samples = self._recorder.stop()
             except Exception as exc:
@@ -363,7 +377,6 @@ class Session:
                     self._stop_event.set()
                 return
         log.info("session: recording stopped, %d samples captured", samples.shape[0])
-        streamer = self._live_streamer
         if streamer is not None:
             # Streamed recording: hand the finalized tail to the driver, which
             # runs the final decode + flush. The live item is already queued.
@@ -448,8 +461,13 @@ class Session:
                 return
             self._recording = False
             self._recording_abort.set()
-            if self._live_streamer is not None:
-                self._live_streamer.signal_abort()
+            # Only the discarded recording's own streamer is aborted; a
+            # previous utterance's streamer still finishing its final decode
+            # must complete normally.
+            streamer = self._recording_streamer
+            self._recording_streamer = None
+            if streamer is not None:
+                streamer.signal_abort()
             try:
                 self._recorder.stop()
             except Exception as exc:
@@ -470,6 +488,10 @@ class Session:
             if self._recording:
                 self._recording = False
                 self._recording_abort.set()
+                # _live_streamer below wakes the driver; the recording
+                # reference just needs to be dropped so nothing routes a
+                # later stop/discard into this cancelled streamer.
+                self._recording_streamer = None
                 try:
                     self._recorder.stop()
                 except Exception as exc:

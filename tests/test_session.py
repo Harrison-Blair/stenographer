@@ -977,6 +977,84 @@ def test_processor_drops_cancelled_live_item() -> None:
     assert session._live_streamer is None  # dangling reference cleared
 
 
+def _drain_signals(streamer) -> list[tuple[str, object]]:
+    signals = []
+    while True:
+        try:
+            signals.append(streamer._signals.get_nowait())
+        except Exception:
+            break
+    return signals
+
+
+def test_prompt_stop_during_stale_final_decode_takes_batch_path() -> None:
+    """A prompt recording stopped while a previous streamed utterance's final
+    decode is still running must be enqueued as a tagged batch item (the LLM
+    path), not routed into the stale streamer as a second final signal."""
+    session, _m = _make_session(cfg=_streaming_cfg())
+    c = _components(session)
+    dictate_tail = np.ones((16000, 1), dtype=np.float32)
+    c["recorder"].stop.return_value = dictate_tail
+
+    session.on_recording_start()  # streamed dictation
+    stale = session._live_streamer
+    assert stale is not None
+    session.on_recording_stop("ptt")
+    # The driver has not consumed the final yet; the processing reference
+    # lingers exactly as it does while a real final decode is in flight.
+    assert session._live_streamer is stale
+
+    prompt_samples = np.full((8000, 1), 0.5, dtype=np.float32)
+    c["recorder"].stop.return_value = prompt_samples
+    session.on_recording_start(source="prompt")
+    session.on_recording_stop("ptt", source="prompt")
+
+    items = []
+    while session._utterance_queue.qsize() > 0:
+        items.append(session._utterance_queue.get_nowait())
+    batch_items = [item for item in items if isinstance(item, tuple)]
+    assert len(batch_items) == 1
+    samples, _mode, _abort, _gen, source = batch_items[0]
+    assert source == "prompt"
+    assert np.array_equal(samples, prompt_samples)
+
+    # The stale streamer saw exactly one final: the dictation tail.
+    finals = [s for s in _drain_signals(stale) if s[0] == "final"]
+    assert len(finals) == 1
+    assert np.array_equal(finals[0][1], dictate_tail)
+
+
+def test_discard_does_not_abort_stale_streamer_final_decode() -> None:
+    """Discarding a new recording must not signal abort into a previous
+    utterance's streamer that is still finishing its final decode."""
+    session, _m = _make_session(cfg=_streaming_cfg())
+    c = _components(session)
+    c["recorder"].stop.return_value = np.ones((16000, 1), dtype=np.float32)
+
+    session.on_recording_start()  # streamed dictation
+    stale = session._live_streamer
+    assert stale is not None
+    session.on_recording_stop("ptt")  # stale streamer now finishing
+
+    session.on_recording_start(source="prompt")
+    session.discard_recording()
+
+    assert not stale.abort.is_set()
+    kinds = [kind for kind, _ in _drain_signals(stale)]
+    assert "abort" not in kinds
+
+
+def test_discard_aborts_active_streamed_recording() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    session.on_recording_start()
+    streamer = session._live_streamer
+    assert streamer is not None
+    session.discard_recording()
+    assert streamer.abort.is_set()
+    kinds = [kind for kind, _ in _drain_signals(streamer)]
+    assert "abort" in kinds
+
+
 # ---------------------------------------------------------------------------
 # Prompt-mode routing (source-tagged recordings, LLM rewrite)
 # ---------------------------------------------------------------------------
