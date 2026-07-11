@@ -202,7 +202,7 @@ class Config:
                 max_buffer_seconds=20.0,
             ),
             formatting=FormattingConfig(
-                paragraph_pause_seconds=2.0,
+                paragraph_pause_seconds=0.0,
                 capitalize_sentences=True,
                 normalize_spacing=True,
             ),

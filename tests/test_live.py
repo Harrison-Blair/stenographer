@@ -358,6 +358,12 @@ def test_paragraph_pause_straddling_trim_emits_one_break() -> None:
     # gap is 2.5s (>= the 2.0s threshold), but read as window-local it would
     # be only 1.5s (< threshold). Exactly one break proves the formatter saw
     # the absolute timeline across the trim.
+    import dataclasses
+
+    cfg = _cfg()
+    cfg = dataclasses.replace(
+        cfg, formatting=dataclasses.replace(cfg.formatting, paragraph_pause_seconds=2.0)
+    )
     streamer, injector, _worker, _clip = _make_streamer(
         windows=[_speech(1.5), _speech(1.5), _speech(4.0)],
         hypotheses=[
@@ -366,6 +372,7 @@ def test_paragraph_pause_straddling_trim_emits_one_break() -> None:
             _words((" two", 2.5, 3.0)),  # window-local: absolute 3.5-4.0
             _words((" two", 2.5, 3.0)),
         ],
+        cfg=cfg,
     )
     for _ in range(4):
         assert streamer._step()
@@ -415,10 +422,17 @@ def test_prefix_invariant_deltas_reconstruct_final_transcript() -> None:
         # final decode:
         _words((" and", 4.0, 4.3), (" i", 4.3, 4.5), (" agree", 4.5, 5.0)),
     ]
+    import dataclasses
+
+    cfg = _cfg()
+    cfg = dataclasses.replace(
+        cfg, formatting=dataclasses.replace(cfg.formatting, paragraph_pause_seconds=2.0)
+    )
     n_steps = len(hypotheses) - 1
     streamer, injector, _worker, _clip = _make_streamer(
         windows=[_speech(1.5)] * 6 + [_speech(5.0)] * (n_steps - 6),
         hypotheses=hypotheses,
+        cfg=cfg,
     )
     for _ in range(n_steps):
         assert streamer._step()
@@ -433,7 +447,6 @@ def test_prefix_invariant_deltas_reconstruct_final_transcript() -> None:
 
     # (b) the deltas reconstruct exactly the batch-formatted transcript of
     # the committed words (same formatter rules, fresh state).
-    cfg = _cfg()
     fresh = HeuristicFormatter(
         cfg.formatting, append_trailing_space=cfg.output.append_trailing_space
     )

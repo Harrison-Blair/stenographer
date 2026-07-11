@@ -33,7 +33,7 @@ Single-line change: in `Config.defaults()`, change `paragraph_pause_seconds=2.0`
 Implementation order: write these three tests, run them against the unchanged code and confirm the first two FAIL for the expected reason (default is still 2.0; a 5s pause under the old default would insert a break), then change the one default value line until all three pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `Config.defaults().formatting.paragraph_pause_seconds == 0.0` (satisfies PLM-001 FC-1).
-- [ ] AC-3: Explicitly configuring `paragraph_pause_seconds` to a positive value still reproduces the old paragraph-break behavior (satisfies PLM-001 FC-2).
-- [ ] AC-4: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions (satisfies PLM-001 FC-4/AC-7 at the plumage level).
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `Config.defaults().formatting.paragraph_pause_seconds == 0.0` (satisfies PLM-001 FC-1).
+- [x] AC-3: Explicitly configuring `paragraph_pause_seconds` to a positive value still reproduces the old paragraph-break behavior (satisfies PLM-001 FC-2).
+- [x] AC-4: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions (satisfies PLM-001 FC-4/AC-7 at the plumage level).

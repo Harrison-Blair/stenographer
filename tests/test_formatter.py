@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from stenographer.asr.model import SegmentInfo, WordInfo
-from stenographer.config import FormattingConfig
+from stenographer.config import Config, FormattingConfig
 from stenographer.output.formatter import HeuristicFormatter
 
 
@@ -76,6 +76,18 @@ def test_paragraph_pause_zero_disables_breaks() -> None:
     f = _fmt(paragraph_pause_seconds=0)
     out = f.feed([_w(" one", 0.0, 0.5), _w(" two", 30.0, 30.5)])
     assert out == "One two"
+
+
+def test_no_paragraph_break_with_default_config() -> None:
+    f = HeuristicFormatter(Config.defaults().formatting, append_trailing_space=False)
+    out = f.feed([_w(" one", 0.0, 0.5), _w(" two", 5.0, 5.5)])
+    assert "\n\n" not in out
+
+
+def test_paragraph_break_still_available_via_explicit_config() -> None:
+    f = _fmt(paragraph_pause_seconds=2.0)
+    out = f.feed([_w(" one.", 0.0, 0.5), _w(" two", 3.0, 3.5)])
+    assert out == "One.\n\nTwo"
 
 
 def test_paragraph_break_capitalizes_next_word() -> None:
