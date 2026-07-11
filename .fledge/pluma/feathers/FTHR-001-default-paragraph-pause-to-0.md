@@ -2,7 +2,7 @@
 id: FTHR-001
 title: Default paragraph-pause to 0
 plumage: PLM-001
-status: pipping
+status: hatching
 priority: P0
 depends_on: []
 authored: 2026-07-11T05:49:15Z

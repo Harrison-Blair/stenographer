@@ -228,3 +228,4 @@ dist/
 # fledge — per-run intermediates, regenerable
 .fledge/nest/raw/
 .fledge/broods/
+.fledge/burrows/

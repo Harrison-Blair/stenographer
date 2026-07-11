@@ -2,7 +2,7 @@
 id: FTHR-002
 title: Config surface for prompt mode
 plumage: PLM-002
-status: pipping
+status: hatching
 priority: P1
 depends_on: []
 authored: 2026-07-11T05:51:00Z
