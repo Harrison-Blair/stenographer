@@ -89,6 +89,11 @@ class Session:
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._recording = False
+        # Which hotkey owns the active recording. The dictate and prompt
+        # listeners run independent state machines, so a stop/discard from
+        # one must never end a recording the other started (meaningful only
+        # while _recording is True).
+        self._recording_source: Literal["dictate", "prompt"] = "dictate"
         self._utterances_processed = 0
         # Abort event for the recording currently in progress (fresh per
         # recording; shared by that recording's flush segments and tail).
@@ -300,6 +305,7 @@ class Session:
                 log.warning("session: on_recording_start while already recording")
                 return
             self._recording = True
+            self._recording_source = source
             self._recording_abort = threading.Event()
             try:
                 is_lazy_first = self._cfg.asr.mode == "lazy" and not self._worker.is_model_loaded()
@@ -362,6 +368,17 @@ class Session:
         with self._lock:
             if not self._recording:
                 log.warning("session: on_recording_stop with no active recording")
+                return
+            if source != self._recording_source:
+                # The other hotkey's state machine went through a press/release
+                # cycle whose start was ignored (a recording was already
+                # active). Its stop must not end — or re-route — a recording
+                # it does not own.
+                log.warning(
+                    "session: ignoring %s-mode stop for a %s-mode recording",
+                    source,
+                    self._recording_source,
+                )
                 return
             self._recording = False
             # Pop under the lock: only the streamer created for *this*
@@ -449,15 +466,24 @@ class Session:
     def on_toggle_off(self, source: Literal["dictate", "prompt"] = "dictate") -> None:
         self.on_recording_stop("toggle", source=source)
 
-    def discard_recording(self) -> None:
+    def discard_recording(self, source: Literal["dictate", "prompt"] = "dictate") -> None:
         """Stop the active recording and drop its samples (no transcription).
 
         Wired to the listener's double-tap-window expiry: a lone short tap
-        of the chord starts a recording that is thrown away here.
+        of the chord starts a recording that is thrown away here. Only the
+        hotkey that owns the active recording may discard it — a stray tap
+        of the other hotkey mid-recording must not destroy the utterance.
         """
         with self._lock:
             if not self._recording:
                 log.warning("session: discard_recording with no active recording")
+                return
+            if source != self._recording_source:
+                log.warning(
+                    "session: ignoring %s-mode discard for a %s-mode recording",
+                    source,
+                    self._recording_source,
+                )
                 return
             self._recording = False
             self._recording_abort.set()

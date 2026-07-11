@@ -32,12 +32,12 @@ def test_defaults_hotkey() -> None:
         double_tap_window_seconds=0.35,
         cancel_binding="KEY_ESC",
         device=None,
-        prompt_binding="KEY_RIGHTSHIFT",
+        prompt_binding="KEY_RIGHTALT",
     )
 
 
 def test_defaults_include_prompt_binding() -> None:
-    assert Config.defaults().hotkey.prompt_binding == "KEY_RIGHTSHIFT"
+    assert Config.defaults().hotkey.prompt_binding == "KEY_RIGHTALT"
 
 
 def test_defaults_audio() -> None:
@@ -302,6 +302,18 @@ def test_prompt_binding_invalid_key_rejected(tmp_path: pathlib.Path) -> None:
     p.write_text('[stenographer]\nhotkey.prompt_binding = "NOT_A_KEY"\n')
     with pytest.raises(ConfigError, match=r"hotkey.prompt_binding"):
         Config.load(p)
+
+
+def test_prompt_binding_empty_disables_prompt_mode(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.prompt_binding = ""\n')
+    assert Config.load(p).hotkey.prompt_binding == ""
+
+
+def test_prompt_binding_null_disables_prompt_mode(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nhotkey.prompt_binding = null\n")
+    assert Config.load(p).hotkey.prompt_binding == ""
 
 
 def test_validate_hotkey_binding_empty_rejected(tmp_path: pathlib.Path) -> None:

@@ -1227,6 +1227,71 @@ def test_prompt_mode_disables_silence_flush_segments() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Recording ownership: the two hotkeys must not end each other's recordings
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_stop_ignored_while_dictate_recording_active() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    session.on_recording_start()  # dictate owns the recording
+
+    # A prompt-hotkey press/release cycle whose start was ignored must not
+    # stop the dictate recording, let alone re-route it through the LLM.
+    session.on_recording_stop("ptt", source="prompt")
+
+    c["recorder"].stop.assert_not_called()
+    assert session._recording
+    assert session._utterance_queue.qsize() == 0
+
+
+def test_dictate_stop_ignored_while_prompt_recording_active() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    session.on_recording_start(source="prompt")
+
+    session.on_recording_stop("ptt", source="dictate")
+
+    c["recorder"].stop.assert_not_called()
+    assert session._recording
+
+
+def test_prompt_tap_discard_ignored_while_dictate_recording_active() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    session.on_recording_start()  # dictate owns the recording
+
+    # A lone prompt-hotkey tap expires its double-tap window and fires
+    # discard; the in-flight dictation must survive it.
+    session.discard_recording(source="prompt")
+
+    c["recorder"].stop.assert_not_called()
+    assert session._recording
+    assert not session._recording_abort.is_set()
+
+    # The owning hotkey can still stop the recording normally afterwards.
+    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
+    session.on_recording_stop("ptt")
+    *_rest, source = session._utterance_queue.get_nowait()
+    assert source == "dictate"
+
+
+def test_owner_discard_still_discards_prompt_recording() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    session.on_recording_start(source="prompt")
+
+    session.discard_recording(source="prompt")
+
+    c["recorder"].stop.assert_called_once()
+    assert not session._recording
+
+
+# ---------------------------------------------------------------------------
 # Prompt-mode distinct per-stage notifications (FTHR-005)
 # ---------------------------------------------------------------------------
 

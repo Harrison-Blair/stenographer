@@ -163,7 +163,7 @@ class Config:
                 double_tap_window_seconds=0.35,
                 cancel_binding="KEY_ESC",
                 device=None,
-                prompt_binding="KEY_RIGHTSHIFT",
+                prompt_binding="KEY_RIGHTALT",
             ),
             audio=AudioConfig(
                 sample_rate=16000,
@@ -333,21 +333,21 @@ def _build_hotkey(
                 shared,
             )
             cancel_binding = ""
+    # Empty / `null` disables prompt mode entirely (no second listener).
     prompt_binding = _expect_str(table, "prompt_binding", "hotkey.prompt_binding", path)
-    if not prompt_binding:
-        raise ConfigError(path, "hotkey.prompt_binding", "must be a non-empty string")
-    try:
-        prompt = HotkeyBinding.parse(prompt_binding)
-    except _BaseConfigError as exc:
-        raise ConfigError(path, "hotkey.prompt_binding", str(exc)) from exc
-    overlap = set(prompt.keys) & set(main.keys)
-    if overlap:
-        shared = ", ".join(sorted(overlap))
-        raise ConfigError(
-            path,
-            "hotkey.prompt_binding",
-            f"must not share keys with hotkey.binding: {shared}",
-        )
+    if prompt_binding:
+        try:
+            prompt = HotkeyBinding.parse(prompt_binding)
+        except _BaseConfigError as exc:
+            raise ConfigError(path, "hotkey.prompt_binding", str(exc)) from exc
+        overlap = set(prompt.keys) & set(main.keys)
+        if overlap:
+            shared = ", ".join(sorted(overlap))
+            raise ConfigError(
+                path,
+                "hotkey.prompt_binding",
+                f"must not share keys with hotkey.binding: {shared}",
+            )
     device = _expect_optional_path(table, "device", "hotkey.device", path)
     return HotkeyConfig(
         binding=binding,
@@ -701,6 +701,7 @@ def _format_default_toml() -> str:
         f"hotkey.double_tap_window_seconds = {h.double_tap_window_seconds}",
         f"hotkey.cancel_binding = {_toml_str(h.cancel_binding)}",
         f"hotkey.device = {_toml_optional(h.device)}",
+        "# Prompt-crafting mode hotkey; set to null to disable prompt mode.",
         f"hotkey.prompt_binding = {_toml_str(h.prompt_binding)}",
         "",
         "# Audio capture",
