@@ -43,7 +43,7 @@ All in `tests/test_llm.py`, mocking `urllib.request.urlopen` (`unittest.mock.pat
 Implementation order: write all tests above, run against the unchanged/nonexistent module and confirm they fail for the expected reason (`ModuleNotFoundError`/`ImportError`), then implement `llm.py` until all pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `rewrite_prompt()` sends a spec-conformant OpenAI-compatible chat-completions request built from `LlmConfig` and the transcript (satisfies PLM-002 FC-2).
-- [ ] AC-3: Every failure mode (unreachable, timeout, non-2xx, malformed/empty response) raises `LlmError` rather than returning a partial result or propagating a raw stdlib exception (satisfies half of PLM-002 FC-4).
-- [ ] AC-4: `.venv/bin/pytest -m "not integration"` passes with no regressions; no real network access occurs during the test run.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `rewrite_prompt()` sends a spec-conformant OpenAI-compatible chat-completions request built from `LlmConfig` and the transcript (satisfies PLM-002 FC-2).
+- [x] AC-3: Every failure mode (unreachable, timeout, non-2xx, malformed/empty response) raises `LlmError` rather than returning a partial result or propagating a raw stdlib exception (satisfies half of PLM-002 FC-4).
+- [x] AC-4: `.venv/bin/pytest -m "not integration"` passes with no regressions; no real network access occurs during the test run.
