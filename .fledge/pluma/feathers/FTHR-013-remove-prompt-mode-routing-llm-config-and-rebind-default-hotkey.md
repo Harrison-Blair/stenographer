@@ -45,12 +45,12 @@ Adjust the existing suites in place (all failing-then-passing, since removing co
 Implementation order: write/adjust the 6 new/changed test cases above against the unchanged code, capture them FAILING (e.g. `AttributeError`/`ImportError`/assertion mismatch) in `.fledge/molt/FTHR-013.md` under `## AC-1`, then implement the removal until they pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `stenographer.llm` and `tests/test_llm.py` do not exist; no import of `stenographer.llm` remains anywhere in `src/` or `tests/`. Satisfies PLM-007 FC-1.
-- [ ] AC-3: `Session` has no `attach_prompt_listener` method, no `_prompt_listener` attribute, and no code path checks `source == "prompt"`. Satisfies PLM-007 FC-2.
-- [ ] AC-4: `HotkeyConfig` has no `prompt_binding` field (attribute access raises `AttributeError`) and no config-loading code references it. Satisfies PLM-007 FC-3.
-- [ ] AC-5: `Config.defaults().hotkey.binding == "KEY_RIGHTALT"`; `Config.defaults().hotkey.cancel_binding == "KEY_ESC"` (unchanged). Satisfies PLM-007 FC-4.
-- [ ] AC-6: `LlmError` does not exist in `stenographer.errors`. Satisfies PLM-007 FC-6.
-- [ ] AC-7: `_format_default_toml()` emits no `llm.*` lines and no `hotkey.prompt_binding` line, and does emit `hotkey.binding = "KEY_RIGHTALT"`. Satisfies PLM-007 FC-7.
-- [ ] AC-8: Loading a config file with a stray `[stenographer.llm]` table and `hotkey.prompt_binding` key succeeds without raising. Satisfies PLM-007 FC-8.
-- [ ] AC-9: `.venv/bin/pytest -m "not integration"` and `.venv/bin/ruff check .` / `.venv/bin/ruff format --check .` all pass with the changes in this feather's Affected Modules. Contributes to PLM-007 FC-9 (full FC-9 also depends on FTHR-014).
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `stenographer.llm` and `tests/test_llm.py` do not exist; no import of `stenographer.llm` remains anywhere in `src/` or `tests/`. Satisfies PLM-007 FC-1.
+- [x] AC-3: `Session` has no `attach_prompt_listener` method, no `_prompt_listener` attribute, and no code path checks `source == "prompt"`. Satisfies PLM-007 FC-2.
+- [x] AC-4: `HotkeyConfig` has no `prompt_binding` field (attribute access raises `AttributeError`) and no config-loading code references it. Satisfies PLM-007 FC-3.
+- [x] AC-5: `Config.defaults().hotkey.binding == "KEY_RIGHTALT"`; `Config.defaults().hotkey.cancel_binding == "KEY_ESC"` (unchanged). Satisfies PLM-007 FC-4.
+- [x] AC-6: `LlmError` does not exist in `stenographer.errors`. Satisfies PLM-007 FC-6.
+- [x] AC-7: `_format_default_toml()` emits no `llm.*` lines and no `hotkey.prompt_binding` line, and does emit `hotkey.binding = "KEY_RIGHTALT"`. Satisfies PLM-007 FC-7.
+- [x] AC-8: Loading a config file with a stray `[stenographer.llm]` table and `hotkey.prompt_binding` key succeeds without raising. Satisfies PLM-007 FC-8.
+- [x] AC-9: `.venv/bin/pytest -m "not integration"` and `.venv/bin/ruff check .` / `.venv/bin/ruff format --check .` all pass with the changes in this feather's Affected Modules. Contributes to PLM-007 FC-9 (full FC-9 also depends on FTHR-014).
