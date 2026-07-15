@@ -316,6 +316,24 @@ def test_prompt_binding_null_disables_prompt_mode(tmp_path: pathlib.Path) -> Non
     assert Config.load(p).hotkey.prompt_binding == ""
 
 
+def test_prompt_binding_overlap_with_cancel_binding_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.prompt_binding = "KEY_ESC"\n')
+    with pytest.raises(ConfigError, match=r"hotkey.prompt_binding"):
+        Config.load(p)
+
+
+def test_prompt_binding_overlap_with_explicit_cancel_binding_rejected(
+    tmp_path: pathlib.Path,
+) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        '[stenographer]\nhotkey.cancel_binding = "KEY_F9"\nhotkey.prompt_binding = "KEY_F9"\n'
+    )
+    with pytest.raises(ConfigError, match=r"hotkey.prompt_binding"):
+        Config.load(p)
+
+
 def test_validate_hotkey_binding_empty_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text('[stenographer]\nhotkey.binding = ""\n')
@@ -627,6 +645,30 @@ def test_validate_cue_readable_file_accepted(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text(f'[stenographer.feedback.cues]\nptt_on = "{cue}"\n')
     assert Config.load(p).feedback.cues["ptt_on"] == str(cue)
+
+
+def test_prompt_cue_names_accepted_as_overrides(tmp_path: pathlib.Path) -> None:
+    for name in ("ptt_on_prompt", "ptt_off_prompt", "toggle_on_prompt", "toggle_off_prompt"):
+        cue = tmp_path / f"{name}.wav"
+        cue.write_text("data")
+        p = tmp_path / "config.toml"
+        p.write_text(f'[stenographer.feedback.cues]\n{name} = "{cue}"\n')
+        assert Config.load(p).feedback.cues[name] == str(cue)
+
+
+def test_unknown_cue_name_still_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer.feedback.cues]\nbogus_cue_name = "/no/such/file.wav"\n')
+    with pytest.raises(ConfigError, match=r"feedback.cues.bogus_cue_name"):
+        Config.load(p)
+
+
+def test_cue_names_matches_cue_name_literal_args() -> None:
+    import typing
+
+    from stenographer.audio.feedback import CueName
+
+    assert set(CUE_NAMES) == set(typing.get_args(CueName))
 
 
 def test_validate_hotkey_device_missing_rejected(tmp_path: pathlib.Path) -> None:
