@@ -6,7 +6,7 @@ Harness runtime behavior for fledge's Tier C team loop on Claude Code. The workf
 
 `fledge init` wrote `.claude/settings.json` with `teammateMode: tmux` and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Teammates (brooders and skuas) run in their own tmux panes so you can watch them work.
 
-**Precondition:** the session is inside tmux (`test -n "$TMUX"`). If not, split-pane teammate display is unavailable. `implementation.md` §1 surfaces this via a `confirm-gate`: stop and restart inside tmux (recommended), or proceed degraded with in-process teammates (no panes; teammates still run, you just can't watch them in split view).
+**Precondition:** the session is inside tmux (`test -n "$TMUX"`). This auto-resolves with no `confirm-gate` — tmux present → proceed with panes; tmux absent → proceed degraded with in-process teammates (no panes; teammates still run). Report which path was taken as one line of plain, non-blocking run narration (not a gate, no wait for a response), e.g. "tmux detected — spawning teammates in panes" or "tmux not detected — proceeding degraded, in-process teammates".
 
 ## Orchestrator name (how teammates reach you)
 

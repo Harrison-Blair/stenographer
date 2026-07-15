@@ -46,7 +46,7 @@
     },
     ".claude/team-loop.md": {
       "policy": "overwrite",
-      "sha256": "dd07fb9d6e63ccb1586138faa1a76e8646ff0cb735d397f6c7b2236686371bdc"
+      "sha256": "7df66f7f5b43cc7ab93a0ee69beb3e418c22c328ab0b241ca82be531c12e19fa"
     },
     ".fledge/broods/.gitkeep": {
       "policy": "default",
@@ -78,7 +78,7 @@
     },
     ".fledge/skills/fledge-orchestrate/implementation.md": {
       "policy": "core",
-      "sha256": "162190f8c2e540050e6ddcbfb7aa84ea1973c8810add4978772106b096a74841"
+      "sha256": "ba9a439b86434c31dfdb50e2d546c0044879d6b408d2992c3c0770d210b7aa98"
     },
     ".fledge/skills/fledge-orchestrate/planning.md": {
       "policy": "core",
@@ -102,7 +102,7 @@
     },
     ".fledge/skills/fledge-orchestrate/worker-protocols.md": {
       "policy": "core",
-      "sha256": "88e70904f3ef26ba652704f78c2eb1835c68b14dc397951b0af1683b621bb287"
+      "sha256": "98d2bb2fdf71b1b47707f8b231c26f86843be88e742b089eafda3460211f9b03"
     },
     ".fledgeignore": {
       "policy": "default",

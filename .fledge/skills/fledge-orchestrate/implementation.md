@@ -42,7 +42,7 @@ Then gate:
 - Context freshness: apply the freshness gate from `planning.md` step 1 (compare `.fledge/nest/index.md` commit to HEAD; ask before regenerating).
 - The working tree on main is clean and the full test suite passes (see `.fledge/nest/testing.md` for how). Do not start onto a broken baseline.
 - The feather specs, plumages, and `.fledge/nest/` docs are committed — worktrees are created from main and only contain committed files. If they aren't, present the uncommitted paths and run a `confirm-gate` (decision): commit them now, or stop so the user can handle it.
-- **Tier C only — harness piping preconditions:** see your adapter's piping file for teammate-display and permission-mode preconditions (e.g. running inside tmux, and a permission mode that won't prompt per-action in teammate panes). If a precondition is unmet, your piping file states the fallback (commonly: proceed degraded with in-process teammates, or stop and restart). Never silently proceed past a precondition your piping file says to surface.
+- **Tier C only — harness piping preconditions:** see your adapter's piping file for teammate-display and permission-mode preconditions (e.g. running inside tmux, and a permission mode that won't prompt per-action in teammate panes). Some preconditions auto-resolve without a gate — your piping file states which ones and what each resolved path is. For any precondition your piping file says to gate instead, never silently proceed past it unmet.
 
 ## 2. Solo implementation (Tier A and B)
 
