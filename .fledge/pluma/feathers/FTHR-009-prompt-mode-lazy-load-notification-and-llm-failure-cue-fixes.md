@@ -2,7 +2,7 @@
 id: FTHR-009
 title: Prompt-mode lazy-load notification and LLM-failure cue fixes
 plumage: PLM-003
-status: hatching
+status: fledged
 priority: P0
 depends_on: []
 authored: 2026-07-15T05:21:04Z
