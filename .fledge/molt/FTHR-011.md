@@ -41,7 +41,7 @@ mixing loud speech with true digital silence (RMS exactly 0.0) computes
 enough" and never trim it. Strict `>` fixes this boundary case and is
 consistent with "cutoff must be exceeded to count as non-silent."
 
-## AC-1: tests observed failing before implementation, passing after
+## AC-1
 
 Per the spec's Tests section: the two existing tests' call sites were updated
 to drop `rms_threshold=` (signature changed) and the four new tests were
@@ -114,7 +114,7 @@ short-window skip) landed together in one test-first pass per the spec's
 stated implementation order. The short-window skip logic itself is exercised
 and passes post-fix (see AC-3 below).
 
-## AC-2: gate is relative to the window's own 10th-percentile step RMS
+## AC-2
 
 `_cut_trailing_silence` (src/stenographer/live.py) computes
 `floor = np.percentile(step_rms, 10)` and `cutoff = floor * _NOISE_FLOOR_MULTIPLIER`
@@ -134,7 +134,7 @@ $ grep -n "silence_rms_threshold\|_NOISE_FLOOR_MULTIPLIER\|percentile" src/steno
 
 (`silence_rms_threshold` no longer appears in `live.py` at all — see AC-4.)
 
-## AC-3: windows with fewer than 10 steps (0.5s) are returned unchanged
+## AC-3
 
 ```python
 n_steps = mono.shape[0] // step
@@ -147,7 +147,7 @@ if n_steps < 10:
 `out.shape[0] == mixed.shape[0]` and `np.array_equal(out, mixed)` — PASSED
 (see AC-1 post-fix output above).
 
-## AC-4: `audio.silence_rms_threshold` / capture.py / other LiveStreamer methods untouched
+## AC-4
 
 ```
 $ git diff --stat -- src/stenographer/audio/capture.py src/stenographer/config.py
@@ -165,7 +165,7 @@ touched — confirmed by `git diff src/stenographer/live.py` showing changes
 confined to: the two new module constants, the `_step` call-site, and the
 body of `_cut_trailing_silence` itself.
 
-## AC-5: quiet-mic trailing speech preserved; normal/loud-mic true silence still trimmed
+## AC-5
 
 `test_cut_trailing_silence_preserves_quiet_mic_trailing_speech`: builds a
 window with quiet-mic speech (RMS 0.003, well under the old fixed 0.01
@@ -181,7 +181,7 @@ i.e. the silent tail is still trimmed on a normal/loud mic. PASSED.
 
 Both shown PASSED in the AC-1 post-fix output above.
 
-## AC-6: purity — identical input produces identical output
+## AC-6
 
 `test_cut_trailing_silence_is_pure` calls `_cut_trailing_silence` twice with
 the same window (quiet-mic fixture, long enough to trigger a real trim) and
@@ -190,7 +190,7 @@ The function reads no `self` state (it is a module-level free function with
 no globals mutated) — confirmed by inspection of the diff: no assignment to
 any name outside the function's own locals.
 
-## AC-7: full unit suite passes with no regressions
+## AC-7
 
 Command: `.venv/bin/pytest -m "not integration" -q`
 
