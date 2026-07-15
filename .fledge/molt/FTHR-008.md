@@ -1,6 +1,6 @@
 # FTHR-008 Evidence — Classify connection-level failures as LlmError
 
-## AC-1: Tests observed failing before implementation, passing after
+## AC-1
 
 ### Pre-implementation (unchanged `llm.py`): tests fail for the expected reason
 
@@ -89,7 +89,7 @@ tests/test_session.py::test_session_processor_survives_llm_connection_failure PA
 ============================== 84 passed in 0.55s ==============================
 ```
 
-## AC-2: `rewrite_prompt` raises `LlmError` for connection-level failures
+## AC-2
 
 `src/stenographer/llm.py` now catches `(ConnectionError, http.client.IncompleteRead)`
 in the same `try` statement as the existing `HTTPError`/`URLError`/`TimeoutError`
@@ -122,7 +122,7 @@ tests/test_llm.py::test_rewrite_prompt_empty_content_raises_llm_error PASSED
 ========================== 10 passed in 0.06s ==========================
 ```
 
-## AC-3: Session-processor thread survives a connection-level LLM failure
+## AC-3
 
 `tests/test_session.py::test_session_processor_survives_llm_connection_failure`
 exercises the real `stenographer.llm` module (not the `sys.modules` fake used
@@ -154,7 +154,7 @@ No change was made to `session.py` (per the spec's Approach) — `_process`'s
 existing `except llm_module.LlmError` handling already covers the now-widened
 `LlmError`.
 
-## AC-4: Full unit suite passes with no regressions
+## AC-4
 
 Command:
 ```

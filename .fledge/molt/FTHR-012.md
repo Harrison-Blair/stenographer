@@ -1,6 +1,6 @@
 # FTHR-012 evidence
 
-## AC-1: Tests observed failing before implementation, passing after
+## AC-1
 
 ### Pre-implementation (unchanged code)
 
@@ -130,7 +130,7 @@ so `HeuristicFormatter` correctly emits `"I think so \n"`. Fixed the
 assertion to match the real, correct formatter output — the test still
 distinguishes formatted from raw output, since raw is `"i think so\n"`.)
 
-## AC-2: `run stop` / `run disable` → pointed nonzero error, `run` unaffected
+## AC-2
 
 Implementation: `main()` in `cli.py` scans `argv` for an adjacent `"run"`
 followed by `"stop"`/`"disable"` before calling `parser.parse_args`, prints a
@@ -162,7 +162,7 @@ names the replacement command, and stderr does NOT contain argparse's
 false-positive). `run`'s subparser (`_parser.py`) is unchanged — it still
 takes no arguments.
 
-## AC-3: `transcribe FILE` (no flag) still formats via HeuristicFormatter
+## AC-3
 
 `cmd_transcribe`'s default (`raw=False`) path is unchanged from before this
 feather: `HeuristicFormatter(...).format_batch(result.segments)`.
@@ -174,7 +174,7 @@ capitalized/spaced per `HeuristicFormatter` conventions (matches the
 existing `test_format_batch_accepts_segments` convention in
 `tests/test_formatter.py`), not the raw `"i think so"`.
 
-## AC-4: `transcribe FILE --raw` emits `result.text` verbatim
+## AC-4
 
 `cmd_transcribe`'s `raw=True` path bypasses `HeuristicFormatter` entirely and
 writes `result.text` as-is.
@@ -186,7 +186,7 @@ unformatted `result.text`).
 Also covered by `test_parser_accepts_transcribe_raw_flag`: `--raw` parses to
 `args.raw is True`; omitting it defaults to `args.raw is False`.
 
-## AC-5: README documents default formatted output and `--raw`
+## AC-5
 
 `README.md` under `## Run` now reads:
 
@@ -198,7 +198,7 @@ stenographer transcribe FILE --raw # batch: print the raw, unformatted transcrip
 (previously a single line: `stenographer transcribe FILE     # batch: print transcript to stdout`).
 Not test-driven per the spec; verified by reading the file.
 
-## AC-6: Full unit suite passes with no regressions
+## AC-6
 
 Command:
 
