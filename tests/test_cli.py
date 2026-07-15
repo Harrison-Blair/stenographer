@@ -77,43 +77,9 @@ def test_dictate_listener_uses_unmapped_feedback(monkeypatch: pytest.MonkeyPatch
 
     session = cli._build_session(Config.defaults(), _caps(), one_shot=False)
     try:
-        assert len(calls) == 2
-        dictate_feedback = calls[0]["feedback"]
-        prompt_feedback = calls[1]["feedback"]
-        assert isinstance(dictate_feedback, Feedback)
-        assert not isinstance(prompt_feedback, Feedback)
-        assert prompt_feedback is not dictate_feedback
-    finally:
-        session.stop()
-
-
-def test_prompt_listener_discard_is_source_tagged(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "HotkeyListener", _FakeHotkeyListener)
-    monkeypatch.setattr(_FakeHotkeyListener, "calls", [])
-    calls = _FakeHotkeyListener.calls
-
-    session = cli._build_session(Config.defaults(), _caps(), one_shot=False)
-    try:
-        prompt_discard = calls[1]["on_discard"]
-        assert prompt_discard.keywords == {"source": "prompt"}
-    finally:
-        session.stop()
-
-
-def test_empty_prompt_binding_disables_prompt_listener(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dataclasses import replace
-
-    monkeypatch.setattr(cli, "HotkeyListener", _FakeHotkeyListener)
-    monkeypatch.setattr(_FakeHotkeyListener, "calls", [])
-    calls = _FakeHotkeyListener.calls
-
-    cfg = Config.defaults()
-    cfg = replace(cfg, hotkey=replace(cfg.hotkey, prompt_binding=""))
-
-    session = cli._build_session(cfg, _caps(), one_shot=False)
-    try:
         assert len(calls) == 1
-        assert session._prompt_listener is None
+        dictate_feedback = calls[0]["feedback"]
+        assert isinstance(dictate_feedback, Feedback)
     finally:
         session.stop()
 

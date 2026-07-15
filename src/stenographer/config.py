@@ -49,7 +49,6 @@ class HotkeyConfig:
     double_tap_window_seconds: float
     cancel_binding: str
     device: str | None
-    prompt_binding: str
 
 
 @dataclass(frozen=True)
@@ -122,16 +121,6 @@ class UpdateConfig:
 
 
 @dataclass(frozen=True)
-class LlmConfig:
-    base_url: str
-    model: str
-    system_prompt: str
-    timeout_seconds: float
-    temperature: float
-    max_tokens: int
-
-
-@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig
     audio: AudioConfig
@@ -142,18 +131,16 @@ class Config:
     streaming: StreamingConfig
     formatting: FormattingConfig
     update: UpdateConfig
-    llm: LlmConfig
 
     @classmethod
     def defaults(cls) -> Config:
         return cls(
             hotkey=HotkeyConfig(
-                binding="KEY_RIGHTCTRL",
+                binding="KEY_RIGHTALT",
                 toggle_threshold_seconds=0.5,
                 double_tap_window_seconds=0.35,
                 cancel_binding="KEY_ESC",
                 device=None,
-                prompt_binding="KEY_RIGHTALT",
             ),
             audio=AudioConfig(
                 sample_rate=16000,
@@ -202,17 +189,6 @@ class Config:
                 base_url="https://api.github.com",
                 asset_pattern="stenographer-{version}-linux-x86_64.tar.gz",
                 timeout_seconds=60,
-            ),
-            llm=LlmConfig(
-                base_url="http://localhost:8080",
-                model="",
-                system_prompt=(
-                    "Reformat the following dictated text: fix punctuation, capitalization, "
-                    "and paragraph breaks, without changing the words or their meaning."
-                ),
-                timeout_seconds=30.0,
-                temperature=0.2,
-                max_tokens=512,
             ),
         )
 
@@ -267,7 +243,6 @@ class Config:
             streaming=_build_streaming(table["streaming"], path),
             formatting=_build_formatting(table["formatting"], path),
             update=_build_update(table["update"], path),
-            llm=_build_llm(table["llm"], path),
         )
 
 
@@ -323,33 +298,6 @@ def _build_hotkey(
                 shared,
             )
             cancel_binding = ""
-    # Empty / `null` disables prompt mode entirely (no second listener).
-    prompt_binding = _expect_str(table, "prompt_binding", "hotkey.prompt_binding", path)
-    if prompt_binding:
-        try:
-            prompt = HotkeyBinding.parse(prompt_binding)
-        except _BaseConfigError as exc:
-            raise ConfigError(path, "hotkey.prompt_binding", str(exc)) from exc
-        overlap = set(prompt.keys) & set(main.keys)
-        if overlap:
-            shared = ", ".join(sorted(overlap))
-            raise ConfigError(
-                path,
-                "hotkey.prompt_binding",
-                f"must not share keys with hotkey.binding: {shared}",
-            )
-        cancel_overlap = (
-            set(prompt.keys) & set(HotkeyBinding.parse(cancel_binding).keys)
-            if cancel_binding
-            else set()
-        )
-        if cancel_overlap:
-            shared = ", ".join(sorted(cancel_overlap))
-            raise ConfigError(
-                path,
-                "hotkey.prompt_binding",
-                f"must not share keys with hotkey.cancel_binding: {shared}",
-            )
     device = _expect_optional_path(table, "device", "hotkey.device", path)
     return HotkeyConfig(
         binding=binding,
@@ -357,7 +305,6 @@ def _build_hotkey(
         double_tap_window_seconds=window,
         cancel_binding=cancel_binding,
         device=device,
-        prompt_binding=prompt_binding,
     )
 
 
@@ -578,37 +525,6 @@ def _build_update(table: dict[str, Any], path: pathlib.Path) -> UpdateConfig:
     )
 
 
-def _build_llm(table: dict[str, Any], path: pathlib.Path) -> LlmConfig:
-    base_url = _expect_str(table, "base_url", "llm.base_url", path)
-    if not base_url.startswith(("http://", "https://")):
-        raise ConfigError(
-            path,
-            "llm.base_url",
-            f"must be an http(s) URL, got {base_url!r}",
-        )
-    model = _expect_str(table, "model", "llm.model", path)
-    system_prompt = _expect_str(table, "system_prompt", "llm.system_prompt", path)
-    if not system_prompt:
-        raise ConfigError(path, "llm.system_prompt", "must be a non-empty string")
-    timeout_seconds = _expect_number(table, "timeout_seconds", "llm.timeout_seconds", path)
-    if not (0 < timeout_seconds <= 300):
-        raise ConfigError(path, "llm.timeout_seconds", "must satisfy 0 < x <= 300")
-    temperature = _expect_number(table, "temperature", "llm.temperature", path)
-    if not (0 <= temperature <= 2):
-        raise ConfigError(path, "llm.temperature", "must satisfy 0 <= x <= 2")
-    max_tokens = _expect_int(table, "max_tokens", "llm.max_tokens", path)
-    if not (1 <= max_tokens <= 8192):
-        raise ConfigError(path, "llm.max_tokens", "must satisfy 1 <= x <= 8192")
-    return LlmConfig(
-        base_url=base_url.rstrip("/"),
-        model=model,
-        system_prompt=system_prompt,
-        timeout_seconds=timeout_seconds,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-
-
 def _expect_str(table: dict, key: str, dotted: str, path: pathlib.Path) -> str:
     value = table.get(key)
     if not isinstance(value, str):
@@ -691,7 +607,6 @@ def _format_default_toml() -> str:
     s = cfg.streaming
     fm = cfg.formatting
     u = cfg.update
-    llm = cfg.llm
     lines: list[str] = [
         "# stenographer configuration",
         "",
@@ -703,8 +618,6 @@ def _format_default_toml() -> str:
         f"hotkey.double_tap_window_seconds = {h.double_tap_window_seconds}",
         f"hotkey.cancel_binding = {_toml_str(h.cancel_binding)}",
         f"hotkey.device = {_toml_optional(h.device)}",
-        "# Prompt-crafting mode hotkey; set to null to disable prompt mode.",
-        f"hotkey.prompt_binding = {_toml_str(h.prompt_binding)}",
         "",
         "# Audio capture",
         f"audio.sample_rate = {a.sample_rate}",
@@ -757,15 +670,6 @@ def _format_default_toml() -> str:
         f"update.base_url = {_toml_str(u.base_url)}",
         f"update.asset_pattern = {_toml_str(u.asset_pattern)}",
         f"update.timeout_seconds = {u.timeout_seconds}",
-        "",
-        "# Local LLM (prompt mode): values must match a locally-reachable",
-        "# OpenAI-compatible server.",
-        f"llm.base_url = {_toml_str(llm.base_url)}",
-        f"llm.model = {_toml_str(llm.model)}",
-        f"llm.system_prompt = {_toml_str(llm.system_prompt)}",
-        f"llm.timeout_seconds = {llm.timeout_seconds}",
-        f"llm.temperature = {llm.temperature}",
-        f"llm.max_tokens = {llm.max_tokens}",
         "",
         "[stenographer.feedback.cues]",
     ]
