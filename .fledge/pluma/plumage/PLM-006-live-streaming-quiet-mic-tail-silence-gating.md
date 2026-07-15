@@ -1,7 +1,7 @@
 ---
 id: PLM-006
 title: Live streaming quiet-mic tail-silence gating
-status: hatched
+status: fledged
 priority: P1
 authored: 2026-07-15T05:15:11Z
 agent: fledge-orchestrate/planning
@@ -27,11 +27,11 @@ This plumage replaces the fixed-threshold comparison with one relative to the re
 5. FC-5: On a quiet-mic audio fixture (speech RMS ~0.001-0.005, ambient ~0.0002, per repo memory), real trailing speech in an interim window is preserved (not shaved) where the old fixed-0.01 threshold would have shaved or emptied it. On a normal-mic fixture (speech well above 0.01), true trailing silence is still trimmed as before.
 
 ## Acceptance Criteria
-- [ ] AC-1: A test demonstrates that on a quiet-mic fixture (speech RMS ~0.001-0.005, ambient ~0.0002) where the OLD absolute-0.01 behavior would shave real trailing speech or return an empty window, the new floor-relative gate preserves that trailing speech.
-- [ ] AC-2: A test demonstrates that on a normal/loud-mic fixture (speech well above 0.01), genuine trailing silence is still trimmed, matching pre-fix behavior for that case.
-- [ ] AC-3: A test demonstrates that a window shorter than 10 steps (0.5s) is returned unchanged regardless of its content (no cut applied).
-- [ ] AC-4: A test demonstrates `_cut_trailing_silence` remains a pure function with no new state on `LiveStreamer` (i.e. calling it twice with the same window input yields the same output — no hidden cross-call memory).
-- [ ] AC-5: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions to existing live-streaming or silence-detection behavior.
+- [x] AC-1: A test demonstrates that on a quiet-mic fixture (speech RMS ~0.001-0.005, ambient ~0.0002) where the OLD absolute-0.01 behavior would shave real trailing speech or return an empty window, the new floor-relative gate preserves that trailing speech.
+- [x] AC-2: A test demonstrates that on a normal/loud-mic fixture (speech well above 0.01), genuine trailing silence is still trimmed, matching pre-fix behavior for that case.
+- [x] AC-3: A test demonstrates that a window shorter than 10 steps (0.5s) is returned unchanged regardless of its content (no cut applied).
+- [x] AC-4: A test demonstrates `_cut_trailing_silence` remains a pure function with no new state on `LiveStreamer` (i.e. calling it twice with the same window input yields the same output — no hidden cross-call memory).
+- [x] AC-5: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions to existing live-streaming or silence-detection behavior.
 
 ## Out of Scope
 - Any change to `audio.silence_rms_threshold` itself or its other use in `capture.py`'s mid-recording segment-flush silence detection.
