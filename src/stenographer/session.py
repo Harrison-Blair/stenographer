@@ -563,7 +563,10 @@ class Session:
             with self._lock:
                 if self._recording:
                     try:
-                        self._notification.show_listening()
+                        if self._recording_source == "prompt":
+                            self._notification.show_listening_prompt()
+                        else:
+                            self._notification.show_listening()
                     except Exception as exc:
                         log.error("session: show_listening failed: %s", exc)
 
@@ -592,6 +595,7 @@ class Session:
         future.add_done_callback(lambda _f: segment_queue.put(None))
 
         paste_mode = self._cfg.output.injection_method == "paste"
+        prompt_llm_failed = False
 
         injected_text = ""
         while True:
@@ -694,6 +698,7 @@ class Session:
                     self._notification.show_prompt_ready()
             except llm_module.LlmError as exc:
                 log.error("session: rewrite_prompt failed: %s", exc)
+                prompt_llm_failed = True
                 if self._notification is not None:
                     self._notification.show_prompt_failed()
                 if not self._stop_event.is_set():
@@ -734,7 +739,7 @@ class Session:
                     self._clipboard.copy(text)
                 except Exception as exc:
                     log.error("session: clipboard.copy raised: %s", exc)
-        if not self._stop_event.is_set():
+        if not self._stop_event.is_set() and not prompt_llm_failed:
             with contextlib.suppress(Exception):
                 self._feedback.play("transcribe_done")
 
