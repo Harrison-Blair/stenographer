@@ -1,7 +1,7 @@
 ---
 id: PLM-004
 title: "Prompt-mode config validation & registration"
-status: hatched
+status: fledged
 priority: P1
 authored: 2026-07-15T04:58:14Z
 agent: fledge-orchestrate/planning
@@ -29,11 +29,11 @@ This plumage closes the `prompt_binding`/`cancel_binding` overlap gap and fixes 
 4. FC-4: A genuinely unknown cue name in `feedback.cues.*` still raises `ConfigError` exactly as before — the derivation does not loosen validation.
 
 ## Acceptance Criteria
-- [ ] AC-1: A test demonstrates that a config with `hotkey.prompt_binding` set to the same key(s) as `hotkey.cancel_binding` raises `ConfigError` on load.
-- [ ] AC-2: A test demonstrates that a config overriding `feedback.cues.ptt_on_prompt` (and the other three prompt cue names) loads without error.
-- [ ] AC-3: A test demonstrates that a config with an unrecognized `feedback.cues.<bogus-name>` key still raises `ConfigError`.
-- [ ] AC-4: A test demonstrates that `CUE_NAMES` (config.py) is exactly the set of `CueName`'s Literal args (feedback.py) — guarding against future divergence between the two.
-- [ ] AC-5: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions to existing config-loading behavior.
+- [x] AC-1: A test demonstrates that a config with `hotkey.prompt_binding` set to the same key(s) as `hotkey.cancel_binding` raises `ConfigError` on load.
+- [x] AC-2: A test demonstrates that a config overriding `feedback.cues.ptt_on_prompt` (and the other three prompt cue names) loads without error.
+- [x] AC-3: A test demonstrates that a config with an unrecognized `feedback.cues.<bogus-name>` key still raises `ConfigError`.
+- [x] AC-4: A test demonstrates that `CUE_NAMES` (config.py) is exactly the set of `CueName`'s Literal args (feedback.py) — guarding against future divergence between the two.
+- [x] AC-5: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions to existing config-loading behavior.
 
 ## Out of Scope
 - Any change to `hotkey.binding` vs `hotkey.cancel_binding`'s existing defaults-vs-explicit warn/disable behavior — untouched; only the new `prompt_binding` vs `cancel_binding` check is added, as a hard `ConfigError`.

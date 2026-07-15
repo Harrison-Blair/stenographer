@@ -1,7 +1,7 @@
 ---
 id: PLM-005
 title: CLI regressions (dictate/transcribe surface)
-status: hatched
+status: fledged
 priority: P2
 authored: 2026-07-15T05:05:29Z
 agent: fledge-orchestrate/planning
@@ -30,12 +30,12 @@ This plumage makes the `run stop`/`run disable` failure self-diagnosing (without
 4. FC-4: The README's `transcribe` entry documents both the default formatted output and the `--raw` verbatim option.
 
 ## Acceptance Criteria
-- [ ] AC-1: A test demonstrates that `stenographer run stop` exits nonzero and its stderr names `stenographer stop` as the replacement (not argparse's generic "unrecognized arguments" text).
-- [ ] AC-2: A test demonstrates the same for `stenographer run disable` naming `stenographer disable`.
-- [ ] AC-3: A test demonstrates that `stenographer transcribe FILE` (no flag) on a known input produces `HeuristicFormatter`-formatted output (e.g. capitalized/spacing-normalized), matching today's behavior.
-- [ ] AC-4: A test demonstrates that `stenographer transcribe FILE --raw` on the same input produces the exact verbatim `result.text`, unaltered by the formatter.
-- [ ] AC-5: The README's `transcribe` line/section documents both the default formatted behavior and `--raw`.
-- [ ] AC-6: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions to existing CLI behavior.
+- [x] AC-1: A test demonstrates that `stenographer run stop` exits nonzero and its stderr names `stenographer stop` as the replacement (not argparse's generic "unrecognized arguments" text).
+- [x] AC-2: A test demonstrates the same for `stenographer run disable` naming `stenographer disable`.
+- [x] AC-3: A test demonstrates that `stenographer transcribe FILE` (no flag) on a known input produces `HeuristicFormatter`-formatted output (e.g. capitalized/spacing-normalized), matching today's behavior.
+- [x] AC-4: A test demonstrates that `stenographer transcribe FILE --raw` on the same input produces the exact verbatim `result.text`, unaltered by the formatter.
+- [x] AC-5: The README's `transcribe` line/section documents both the default formatted behavior and `--raw`.
+- [x] AC-6: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions to existing CLI behavior.
 
 ## Out of Scope
 - Restoring the removed `run stop`/`run disable` nested subcommands, or any deprecated-alias forwarding that silently makes them work again.

@@ -1,7 +1,7 @@
 ---
 id: PLM-003
 title: Prompt-mode utterance-processing reliability
-status: hatched
+status: fledged
 priority: P0
 authored: 2026-07-15T04:53:54Z
 agent: fledge-orchestrate/planning
@@ -31,11 +31,11 @@ This plumage fixes all three so prompt mode's failure and lazy-load paths behave
 4. FC-4: On an LLM rewrite failure in prompt mode, exactly one cue plays for that utterance — `error` — and the existing `transcribe_done` success cue does not also play; the raw-transcript typed/clipboard fallback (PLM-002 FC-4) is unchanged.
 
 ## Acceptance Criteria
-- [ ] AC-1: A test demonstrates that `rewrite_prompt` raises `LlmError` (not a raw exception) when the underlying HTTP call raises a connection-level read failure (e.g. `http.client.IncompleteRead` or `ConnectionResetError`) partway through reading the response.
-- [ ] AC-2: A test demonstrates that when `_process` handles an `LlmError` for a prompt-mode utterance, the session-processor thread is still alive and able to process a subsequent utterance afterward (no thread death).
-- [ ] AC-3: A test demonstrates that a prompt-mode recording whose first utterance triggers lazy model loading shows the prompt-mode listening notification (not the plain one) once the model finishes loading while still recording.
-- [ ] AC-4: A test demonstrates that on an LLM rewrite failure in prompt mode, the `error` cue plays, the `transcribe_done` cue does not play, and the raw transcript is still typed and copied to the clipboard.
-- [ ] AC-5: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions to existing dictation-mode or prompt-mode behavior.
+- [x] AC-1: A test demonstrates that `rewrite_prompt` raises `LlmError` (not a raw exception) when the underlying HTTP call raises a connection-level read failure (e.g. `http.client.IncompleteRead` or `ConnectionResetError`) partway through reading the response.
+- [x] AC-2: A test demonstrates that when `_process` handles an `LlmError` for a prompt-mode utterance, the session-processor thread is still alive and able to process a subsequent utterance afterward (no thread death).
+- [x] AC-3: A test demonstrates that a prompt-mode recording whose first utterance triggers lazy model loading shows the prompt-mode listening notification (not the plain one) once the model finishes loading while still recording.
+- [x] AC-4: A test demonstrates that on an LLM rewrite failure in prompt mode, the `error` cue plays, the `transcribe_done` cue does not play, and the raw transcript is still typed and copied to the clipboard.
+- [x] AC-5: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions to existing dictation-mode or prompt-mode behavior.
 
 ## Out of Scope
 - Retry/backoff logic for LLM calls.
