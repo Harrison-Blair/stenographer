@@ -2,7 +2,7 @@
 id: FTHR-014
 title: "Remove prompt-mode cues, notifications, and asset generation"
 plumage: PLM-007
-status: egg
+status: fledged
 priority: P1
 depends_on: [FTHR-013]
 authored: 2026-07-15T17:57:35Z
