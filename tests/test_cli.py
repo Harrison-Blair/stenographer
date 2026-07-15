@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Tests for the prompt-mode cue-remapping adapter in :mod:`stenographer.cli`."""
+"""Tests for :mod:`stenographer.cli`."""
 
 from __future__ import annotations
 
 import pathlib
 from typing import ClassVar
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -16,33 +15,8 @@ from stenographer.capabilities import Capabilities
 from stenographer.config import Config
 
 
-def test_prompt_cue_adapter_remaps_start_stop_cues() -> None:
-    underlying = MagicMock()
-    adapter = cli._PromptCueAdapter(underlying)
-
-    adapter.play("ptt_on")
-    adapter.play("toggle_on")
-    adapter.play("ptt_off")
-    adapter.play("toggle_off")
-
-    assert underlying.play.call_args_list == [
-        (("ptt_on_prompt",), {}),
-        (("toggle_on_prompt",), {}),
-        (("ptt_off_prompt",), {}),
-        (("toggle_off_prompt",), {}),
-    ]
-
-
-@pytest.mark.parametrize(
-    "cue_name", ["cancel", "discard", "error", "segment", "transcribe_done", "model_loading"]
-)
-def test_prompt_cue_adapter_passes_through_other_cues_unchanged(cue_name: str) -> None:
-    underlying = MagicMock()
-    adapter = cli._PromptCueAdapter(underlying)
-
-    adapter.play(cue_name)
-
-    underlying.play.assert_called_once_with(cue_name)
+def test_cli_has_no_prompt_cue_adapter() -> None:
+    assert hasattr(cli, "_PromptCueAdapter") is False
 
 
 def _caps() -> Capabilities:
