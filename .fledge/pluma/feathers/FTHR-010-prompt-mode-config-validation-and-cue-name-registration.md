@@ -39,8 +39,8 @@ All in `tests/test_config.py`:
 Implementation order: write all five tests, run against the unchanged code and confirm they FAIL for the expected reason (the two overlap tests fail because no `ConfigError` is raised; the cue-override test fails with `ConfigError('unknown cue name...')`; the unknown-cue test currently already passes today — note this and confirm it still passes post-change, it's a regression guard not a new-behavior pin; the matches-literal test fails because `CUE_NAMES` is currently a separate hand-written tuple lacking the four prompt names), then implement both fixes until all pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after (except the pre-existing-passing unknown-cue-name regression guard, which is confirmed still passing).
-- [ ] AC-2: `Config.load` raises `ConfigError` when `hotkey.prompt_binding`'s keys overlap `hotkey.cancel_binding`'s keys, in both the default-cancel-binding and explicit-cancel-binding cases (satisfies PLM-004 FC-1).
-- [ ] AC-3: `CUE_NAMES` is derived from `feedback.CueName` via `typing.get_args`, and `set(CUE_NAMES) == set(typing.get_args(CueName))` holds (satisfies PLM-004 FC-2).
-- [ ] AC-4: All four prompt-mode cue names are accepted as valid `feedback.cues.*` overrides, and an unrecognized cue name is still rejected (satisfies PLM-004 FC-3 and FC-4).
-- [ ] AC-5: `.venv/bin/pytest -m "not integration"` passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after (except the pre-existing-passing unknown-cue-name regression guard, which is confirmed still passing).
+- [x] AC-2: `Config.load` raises `ConfigError` when `hotkey.prompt_binding`'s keys overlap `hotkey.cancel_binding`'s keys, in both the default-cancel-binding and explicit-cancel-binding cases (satisfies PLM-004 FC-1).
+- [x] AC-3: `CUE_NAMES` is derived from `feedback.CueName` via `typing.get_args`, and `set(CUE_NAMES) == set(typing.get_args(CueName))` holds (satisfies PLM-004 FC-2).
+- [x] AC-4: All four prompt-mode cue names are accepted as valid `feedback.cues.*` overrides, and an unrecognized cue name is still rejected (satisfies PLM-004 FC-3 and FC-4).
+- [x] AC-5: `.venv/bin/pytest -m "not integration"` passes with no regressions.

@@ -6,26 +6,16 @@ import os
 import pathlib
 import re
 import tomllib
+import typing
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from stenographer.audio.feedback import CueName
 from stenographer.errors import ConfigError as _BaseConfigError
 
 logger = logging.getLogger(__name__)
 
-CUE_NAMES: tuple[str, ...] = (
-    "ptt_on",
-    "ptt_off",
-    "toggle_on",
-    "toggle_off",
-    "cancel",
-    "discard",
-    "error",
-    "segment",
-    "transcribe_done",
-    "model_loading",
-    "model_ready",
-)
+CUE_NAMES: tuple[str, ...] = typing.get_args(CueName)
 
 ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
     {"int8", "int8_float16", "float16", "float32", "default"}
@@ -347,6 +337,18 @@ def _build_hotkey(
                 path,
                 "hotkey.prompt_binding",
                 f"must not share keys with hotkey.binding: {shared}",
+            )
+        cancel_overlap = (
+            set(prompt.keys) & set(HotkeyBinding.parse(cancel_binding).keys)
+            if cancel_binding
+            else set()
+        )
+        if cancel_overlap:
+            shared = ", ".join(sorted(cancel_overlap))
+            raise ConfigError(
+                path,
+                "hotkey.prompt_binding",
+                f"must not share keys with hotkey.cancel_binding: {shared}",
             )
     device = _expect_optional_path(table, "device", "hotkey.device", path)
     return HotkeyConfig(
