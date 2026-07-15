@@ -37,6 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     transcribe = sub.add_parser("transcribe", help="Transcribe an audio file and print to stdout.")
     transcribe.add_argument("file", type=pathlib.Path)
+    transcribe.add_argument(
+        "--raw", action="store_true", help="Emit the raw ASR transcript, unformatted."
+    )
 
     sub.add_parser("dictate", help="One-shot dictation.")
 
