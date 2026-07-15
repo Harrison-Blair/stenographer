@@ -13,7 +13,7 @@ from stenographer.asr.model import WordInfo
 from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.asr.worker import CancelledError
 from stenographer.config import Config
-from stenographer.live import LiveStreamer, _cut_trailing_silence
+from stenographer.live import _TAIL_CUSHION_SECONDS, LiveStreamer, _cut_trailing_silence
 from stenographer.output.formatter import HeuristicFormatter
 
 SR = 16000
@@ -256,7 +256,7 @@ def test_cut_trailing_silence_trims_quiet_tail() -> None:
     speech = np.full((SR, 1), 0.5, dtype=np.float32)
     silence = np.zeros((SR, 1), dtype=np.float32)
     window = np.concatenate([speech, silence])
-    out = _cut_trailing_silence(window, SR, rms_threshold=0.01)
+    out = _cut_trailing_silence(window, SR)
     # Speech plus the 0.25 s cushion survives; the rest of the second of
     # trailing silence is cut.
     assert SR <= out.shape[0] <= SR + int(0.3 * SR)
@@ -264,14 +264,80 @@ def test_cut_trailing_silence_trims_quiet_tail() -> None:
 
 def test_cut_trailing_silence_keeps_loud_audio() -> None:
     speech = np.full((SR, 1), 0.5, dtype=np.float32)
-    out = _cut_trailing_silence(speech, SR, rms_threshold=0.01)
+    out = _cut_trailing_silence(speech, SR)
     assert out.shape[0] == SR
 
 
 def test_cut_trailing_silence_all_silent_returns_empty() -> None:
     silence = np.zeros((SR, 1), dtype=np.float32)
-    out = _cut_trailing_silence(silence, SR, rms_threshold=0.01)
+    out = _cut_trailing_silence(silence, SR)
+    # Every step is dead air (max step RMS < _SILENCE_FLOOR_RMS), so the
+    # absolute silence-floor check fires before the self-relative trim gate
+    # even runs, returning empty -- same behavior as pre-fix.
     assert out.shape[0] == 0
+
+
+def test_cut_trailing_silence_preserves_quiet_mic_trailing_speech() -> None:
+    # Quiet-mic speech (RMS ~0.003) followed by quiet ambient noise
+    # (RMS ~0.0002, NOT exact zero) -- a real ambient floor. >=10 steps
+    # (0.5s) of speech, well over 10 steps of trailing "silence".
+    rng = np.random.default_rng(0)
+    speech = np.full((SR, 1), 0.003, dtype=np.float32)
+    ambient = (rng.normal(0.0, 0.0002, (SR, 1))).astype(np.float32)
+    window = np.concatenate([speech, ambient])
+
+    # Motivating contrast: the OLD fixed-0.01 gate would treat every step
+    # (speech included, since 0.003 < 0.01) as sub-threshold and trim to
+    # empty -- shaving/emptying real trailing speech on a quiet mic.
+    old_gate_result_len = 0  # every step is < 0.01, so the old loop trims to 0
+
+    out = _cut_trailing_silence(window, SR)
+
+    assert out.shape[0] > old_gate_result_len
+    # The trailing speech segment (1s) plus cushion must be kept, not just
+    # the ambient-truncated tail.
+    assert out.shape[0] >= SR + int(_TAIL_CUSHION_SECONDS * SR) - int(0.05 * SR)
+
+
+def test_cut_trailing_silence_normal_mic_still_trims_true_silence() -> None:
+    # Loud speech (RMS ~0.5) followed by >=10 steps (1s) of true silence.
+    speech = np.full((SR, 1), 0.5, dtype=np.float32)
+    silence = np.zeros((SR, 1), dtype=np.float32)
+    window = np.concatenate([speech, silence])
+
+    out = _cut_trailing_silence(window, SR)
+
+    # Trimmed to roughly speech + cushion, not the full 2s window.
+    assert SR <= out.shape[0] <= SR + int(0.3 * SR)
+
+
+def test_cut_trailing_silence_short_window_returned_unchanged() -> None:
+    # 0.3s at 16kHz = 6 steps of 50ms -- fewer than the 10-step minimum.
+    rng = np.random.default_rng(1)
+    n = int(0.3 * SR)
+    mixed = np.concatenate(
+        [
+            np.full((n // 2, 1), 0.5, dtype=np.float32),
+            (rng.normal(0.0, 0.0002, (n - n // 2, 1))).astype(np.float32),
+        ]
+    )
+
+    out = _cut_trailing_silence(mixed, SR)
+
+    assert out.shape[0] == mixed.shape[0]
+    assert np.array_equal(out, mixed)
+
+
+def test_cut_trailing_silence_is_pure() -> None:
+    rng = np.random.default_rng(2)
+    speech = np.full((SR, 1), 0.003, dtype=np.float32)
+    ambient = (rng.normal(0.0, 0.0002, (SR, 1))).astype(np.float32)
+    window = np.concatenate([speech, ambient])
+
+    out1 = _cut_trailing_silence(window, SR)
+    out2 = _cut_trailing_silence(window, SR)
+
+    assert np.array_equal(out1, out2)
 
 
 def test_all_silent_window_skips_decode() -> None:

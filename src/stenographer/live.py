@@ -45,6 +45,19 @@ _MIN_TRIM_SECONDS = 1.0
 # a word's decaying tail is never cut off.
 _TAIL_CUSHION_SECONDS = 0.25
 
+# The tail-silence guard's cutoff is this many times the window's own
+# 10th-percentile step RMS, so it auto-scales to the mic's noise floor
+# instead of a fixed absolute threshold.
+_NOISE_FLOOR_MULTIPLIER = 3
+
+# Dead-air detector, NOT the trim gate: a window whose loudest step never
+# clears this is genuinely silent throughout (no speech anywhere in it), so
+# the self-relative trim below -- which cannot tell uniform-loud from
+# uniform-silent -- is skipped in favor of returning empty outright. Set
+# deliberately below quiet-mic speech RMS (~0.001-0.005) and above ambient
+# noise floor (~0.0002) per repo memory `quiet-mic-rms.md`.
+_SILENCE_FLOOR_RMS = 0.0005
+
 _SENTENCE_TERMINALS = ".?!"
 
 
@@ -135,11 +148,7 @@ class LiveStreamer:
         """One interim re-decode. Returns False when aborted mid-decode."""
         window = self._recorder.snapshot(self._trim_offset)
         window_seconds = window.shape[0] / self._cfg.audio.sample_rate
-        guarded = _cut_trailing_silence(
-            window,
-            self._cfg.audio.sample_rate,
-            self._cfg.audio.silence_rms_threshold,
-        )
+        guarded = _cut_trailing_silence(window, self._cfg.audio.sample_rate)
         if guarded.shape[0] == 0:
             return True
         words, ok = self._decode(guarded, beam_size=self._interim_beam_size())
@@ -244,25 +253,47 @@ class LiveStreamer:
         log.debug("live: trimmed %.1fs off decode window (offset=%.1fs)", dropped, last.end)
 
 
-def _cut_trailing_silence(window: np.ndarray, rate: int, rms_threshold: float) -> np.ndarray:
-    """Drop trailing sub-RMS audio before an interim re-decode.
+def _cut_trailing_silence(window: np.ndarray, rate: int) -> np.ndarray:
+    """Drop trailing sub-noise-floor audio before an interim re-decode.
 
     Whisper hallucinates over trailing silence, and word-level decoding loses
-    the per-segment no_speech_prob gate — this guard is its replacement. A
-    cushion is kept past the last non-silent window; the final decode (which
-    skips this guard) covers whatever the guard shaved off.
+    the per-segment no_speech_prob gate — this guard is its replacement. The
+    cutoff is relative to the window's own 10th-percentile step RMS (its
+    observed noise floor), not a fixed absolute threshold, so the guard
+    auto-scales to any mic. A cushion is kept past the last non-silent
+    window; the final decode (which skips this guard) covers whatever the
+    guard shaved off.
     """
-    if window.shape[0] == 0:
-        return window
     mono = window[:, 0] if window.ndim == 2 else window
     step = max(1, rate // 20)  # 50 ms windows
+    n_steps = mono.shape[0] // step
+    if n_steps < 10:
+        return window
+    # End-aligned, so these are exactly the chunks the backward-walk trim
+    # loop below evaluates (any leading remainder shorter than one step is
+    # excluded from both).
+    tail = mono[mono.shape[0] - n_steps * step :]
+    step_rms = np.sqrt(np.mean(np.square(tail.reshape(n_steps, step)), axis=1))
+    if np.max(step_rms) < _SILENCE_FLOOR_RMS:
+        # Dead air throughout: even the loudest step never reaches speech
+        # level, so there is nothing to decode.
+        return window[:0]
+    floor = np.percentile(step_rms, 10)
+    cutoff = floor * _NOISE_FLOOR_MULTIPLIER
     end = mono.shape[0]
     while end >= step:
         rms = float(np.sqrt(np.mean(np.square(mono[end - step : end]))))
-        if rms >= rms_threshold:
+        # Strict >: a step exactly at cutoff (e.g. both 0 for a window with a
+        # true-digital-silence tail, where the 10th-percentile floor is
+        # itself exactly 0) must not count as "above" it.
+        if rms > cutoff:
             break
         end -= step
     else:
-        return window[:0]
+        # No step ever reached cutoff: the window has no internal RMS
+        # variance to distinguish a quiet tail from the rest (e.g. uniformly
+        # loud speech, or uniform silence) -- a self-relative cutoff cannot
+        # tell those apart, so there is nothing safe to trim.
+        return window
     end = min(mono.shape[0], end + round(_TAIL_CUSHION_SECONDS * rate))
     return window[:end]
