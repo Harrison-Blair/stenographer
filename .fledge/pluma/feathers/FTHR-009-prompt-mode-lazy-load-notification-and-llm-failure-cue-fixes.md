@@ -42,7 +42,7 @@ Both in `tests/test_session.py`:
 Implementation order: write both tests, run against the unchanged code and confirm they FAIL for the expected reason (first test: `show_listening` called instead of `show_listening_prompt`; second test: `transcribe_done` IS present in the play call list), then implement both fixes until they pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: A prompt-mode recording whose first utterance triggers lazy model loading shows `show_listening_prompt()`, not `show_listening()`, once loading completes while still recording (satisfies PLM-003 FC-3).
-- [ ] AC-3: On an LLM rewrite failure in prompt mode, `feedback.play("error")` fires and `feedback.play("transcribe_done")` does not, while the raw transcript is still typed and clipboarded (satisfies PLM-003 FC-4).
-- [ ] AC-4: `.venv/bin/pytest -m "not integration"` passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: A prompt-mode recording whose first utterance triggers lazy model loading shows `show_listening_prompt()`, not `show_listening()`, once loading completes while still recording (satisfies PLM-003 FC-3).
+- [x] AC-3: On an LLM rewrite failure in prompt mode, `feedback.play("error")` fires and `feedback.play("transcribe_done")` does not, while the raw transcript is still typed and clipboarded (satisfies PLM-003 FC-4).
+- [x] AC-4: `.venv/bin/pytest -m "not integration"` passes with no regressions.
