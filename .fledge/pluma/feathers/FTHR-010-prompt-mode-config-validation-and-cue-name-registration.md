@@ -2,7 +2,7 @@
 id: FTHR-010
 title: Prompt-mode config validation and cue-name registration
 plumage: PLM-004
-status: pipping
+status: hatching
 priority: P1
 depends_on: []
 authored: 2026-07-15T05:23:29Z

@@ -2,7 +2,7 @@
 id: FTHR-011
 title: Noise-floor-relative tail-silence gating for live streaming
 plumage: PLM-006
-status: pipping
+status: hatching
 priority: P1
 depends_on: []
 authored: 2026-07-15T14:26:27Z

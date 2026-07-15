@@ -2,7 +2,7 @@
 id: FTHR-008
 title: Classify connection-level failures as LlmError
 plumage: PLM-003
-status: pipping
+status: hatching
 priority: P0
 depends_on: []
 authored: 2026-07-15T05:19:36Z
