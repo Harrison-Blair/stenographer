@@ -1,7 +1,7 @@
 ---
 id: PLM-007
 title: Remove LLM rewrite (prompt) mode and rebind default dictation hotkey
-status: hatched
+status: fledged
 priority: P1
 authored: 2026-07-15T17:51:05Z
 agent: fledge-orchestrate/planning
@@ -29,11 +29,11 @@ The LLM rewrite ("prompt") mode is an unused/unhelpful feature: it depends on an
 9. FC-9: The full test suite (`pytest -m "not integration"`) and `ruff check .` pass with zero references to `llm`/prompt-mode remaining in test names/fixtures for the removed behavior.
 
 ## Acceptance Criteria
-- [ ] AC-1: `grep -riE "llm|prompt" src/ tests/` (excluding legitimate non-feature hits: interactive-prompt usages in `live.py`/`update.py`/`_parser.py`/`packaging/install.sh`, and generic English words) returns no LLM-rewrite-feature references.
-- [ ] AC-2: `.venv/bin/pytest -m "not integration"` passes with zero prompt-mode/LLM tests remaining (they're deleted, not skipped).
-- [ ] AC-3: `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .` pass.
-- [ ] AC-4: A fresh `stenographer` run with a fresh default config binds only one hotkey listener, on `KEY_RIGHTALT`, and pressing the old default (`KEY_RIGHTCTRL`) does nothing.
-- [ ] AC-5: Loading a config file containing a leftover `[stenographer.llm]` table and `hotkey.prompt_binding` key succeeds without error (keys silently ignored).
+- [x] AC-1: `grep -riE "llm|prompt" src/ tests/` (excluding legitimate non-feature hits: interactive-prompt usages in `live.py`/`update.py`/`_parser.py`/`packaging/install.sh`, and generic English words) returns no LLM-rewrite-feature references.
+- [x] AC-2: `.venv/bin/pytest -m "not integration"` passes with zero prompt-mode/LLM tests remaining (they're deleted, not skipped).
+- [x] AC-3: `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .` pass.
+- [x] AC-4: A fresh `stenographer` run with a fresh default config binds only one hotkey listener, on `KEY_RIGHTALT`, and pressing the old default (`KEY_RIGHTCTRL`) does nothing.
+- [x] AC-5: Loading a config file containing a leftover `[stenographer.llm]` table and `hotkey.prompt_binding` key succeeds without error (keys silently ignored).
 
 ## Out of Scope
 - The user's live `~/.config/stenographer/config.toml` (editing/migrating it) — outside the repo, handled by the orchestrator, not a feather.
