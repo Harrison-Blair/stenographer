@@ -11,6 +11,7 @@ internals.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import urllib.error
@@ -61,6 +62,9 @@ def rewrite_prompt(cfg: LlmConfig, transcript: str) -> str:
     except TimeoutError as exc:
         logger.error("llm: timed out calling %s", url)
         raise LlmError(f"llm: timed out calling {url}") from exc
+    except (ConnectionError, http.client.IncompleteRead) as exc:
+        logger.error("llm: connection error calling %s: %s", url, exc)
+        raise LlmError(f"llm: connection error calling {url}: {exc}") from exc
 
     try:
         response = json.loads(raw)
