@@ -53,10 +53,6 @@ class UpdateError(StenographerError):
     """
 
 
-class LlmError(StenographerError):
-    """Raised when the local LLM HTTP call fails or returns an unusable response."""
-
-
 def notify_failure(reason: str) -> None:
     """Log ``notify_failure: <reason>`` at ERROR level."""
     log.error("notify_failure: %s", reason)

@@ -15,7 +15,6 @@ from stenographer.config import (
     Config,
     ConfigError,
     HotkeyConfig,
-    LlmConfig,
     OutputConfig,
     UpdateConfig,
     load_or_default,
@@ -27,17 +26,48 @@ from stenographer.config import (
 
 def test_defaults_hotkey() -> None:
     assert Config.defaults().hotkey == HotkeyConfig(
-        binding="KEY_RIGHTCTRL",
+        binding="KEY_RIGHTALT",
         toggle_threshold_seconds=0.5,
         double_tap_window_seconds=0.35,
         cancel_binding="KEY_ESC",
         device=None,
-        prompt_binding="KEY_RIGHTALT",
     )
 
 
-def test_defaults_include_prompt_binding() -> None:
-    assert Config.defaults().hotkey.prompt_binding == "KEY_RIGHTALT"
+def test_defaults_have_no_prompt_binding_field() -> None:
+    assert not hasattr(Config.defaults().hotkey, "prompt_binding")
+
+
+def test_defaults_have_no_llm_field() -> None:
+    assert not hasattr(Config.defaults(), "llm")
+
+
+def test_default_hotkey_binding_is_right_alt() -> None:
+    assert Config.defaults().hotkey.binding == "KEY_RIGHTALT"
+
+
+def test_legacy_llm_and_prompt_binding_keys_ignored(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            hotkey.prompt_binding = "KEY_RIGHTALT"
+
+            [stenographer.llm]
+            base_url = "http://localhost:9090"
+            model = "qwen2.5-7b"
+            """)
+    )
+    Config.load(p)  # must not raise
+
+
+def test_format_default_toml_has_no_llm_or_prompt_binding() -> None:
+    from stenographer.config import _format_default_toml
+
+    text = _format_default_toml()
+    assert "llm." not in text
+    assert "prompt_binding" not in text
+    assert 'hotkey.binding = "KEY_RIGHTALT"' in text
 
 
 def test_defaults_audio() -> None:
@@ -92,18 +122,6 @@ def test_defaults_update() -> None:
         asset_pattern="stenographer-{version}-linux-x86_64.tar.gz",
         timeout_seconds=60,
     )
-
-
-def test_defaults_include_llm_config() -> None:
-    assert Config.defaults().llm == LlmConfig(
-        base_url="http://localhost:8080",
-        model="",
-        system_prompt=Config.defaults().llm.system_prompt,
-        timeout_seconds=30.0,
-        temperature=0.2,
-        max_tokens=512,
-    )
-    assert Config.defaults().llm.system_prompt != ""
 
 
 def test_defaults_is_frozen() -> None:
@@ -279,7 +297,7 @@ def test_validate_cancel_binding_unknown_key_rejected(tmp_path: pathlib.Path) ->
 
 def test_validate_cancel_binding_overlap_with_main_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\nhotkey.cancel_binding = "KEY_RIGHTCTRL"\n')
+    p.write_text('[stenographer]\nhotkey.cancel_binding = "KEY_RIGHTALT"\n')
     with pytest.raises(ConfigError, match=r"hotkey.cancel_binding"):
         Config.load(p)
 
@@ -288,50 +306,6 @@ def test_validate_cancel_binding_empty_disables(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text('[stenographer]\nhotkey.cancel_binding = ""\n')
     assert Config.load(p).hotkey.cancel_binding == ""
-
-
-def test_prompt_binding_overlap_with_main_binding_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\nhotkey.prompt_binding = "KEY_RIGHTCTRL"\n')
-    with pytest.raises(ConfigError, match=r"hotkey.prompt_binding"):
-        Config.load(p)
-
-
-def test_prompt_binding_invalid_key_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\nhotkey.prompt_binding = "NOT_A_KEY"\n')
-    with pytest.raises(ConfigError, match=r"hotkey.prompt_binding"):
-        Config.load(p)
-
-
-def test_prompt_binding_empty_disables_prompt_mode(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\nhotkey.prompt_binding = ""\n')
-    assert Config.load(p).hotkey.prompt_binding == ""
-
-
-def test_prompt_binding_null_disables_prompt_mode(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer]\nhotkey.prompt_binding = null\n")
-    assert Config.load(p).hotkey.prompt_binding == ""
-
-
-def test_prompt_binding_overlap_with_cancel_binding_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\nhotkey.prompt_binding = "KEY_ESC"\n')
-    with pytest.raises(ConfigError, match=r"hotkey.prompt_binding"):
-        Config.load(p)
-
-
-def test_prompt_binding_overlap_with_explicit_cancel_binding_rejected(
-    tmp_path: pathlib.Path,
-) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text(
-        '[stenographer]\nhotkey.cancel_binding = "KEY_F9"\nhotkey.prompt_binding = "KEY_F9"\n'
-    )
-    with pytest.raises(ConfigError, match=r"hotkey.prompt_binding"):
-        Config.load(p)
 
 
 def test_validate_hotkey_binding_empty_rejected(tmp_path: pathlib.Path) -> None:
@@ -561,56 +535,6 @@ def test_validate_update_timeout_too_high_rejected(tmp_path: pathlib.Path) -> No
     p.write_text("[stenographer]\nupdate.timeout_seconds = 1000\n")
     with pytest.raises(ConfigError, match=r"update.timeout_seconds"):
         Config.load(p)
-
-
-def test_llm_base_url_must_be_http(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\nllm.base_url = "ftp://example.com"\n')
-    with pytest.raises(ConfigError, match=r"llm.base_url"):
-        Config.load(p)
-
-
-def test_llm_timeout_out_of_range_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer]\nllm.timeout_seconds = 0\n")
-    with pytest.raises(ConfigError, match=r"llm.timeout_seconds"):
-        Config.load(p)
-
-
-def test_llm_temperature_out_of_range_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer]\nllm.temperature = 2.1\n")
-    with pytest.raises(ConfigError, match=r"llm.temperature"):
-        Config.load(p)
-
-
-def test_llm_max_tokens_out_of_range_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer]\nllm.max_tokens = 0\n")
-    with pytest.raises(ConfigError, match=r"llm.max_tokens"):
-        Config.load(p)
-
-
-def test_load_full_config_with_llm_overrides(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text(
-        textwrap.dedent("""\
-            [stenographer]
-            llm.base_url = "http://192.168.1.5:9090/"
-            llm.model = "qwen2.5-7b"
-            llm.system_prompt = "Reformat this dictated text."
-            llm.timeout_seconds = 10
-            llm.temperature = 0.7
-            llm.max_tokens = 256
-            """)
-    )
-    cfg = Config.load(p)
-    assert cfg.llm.base_url == "http://192.168.1.5:9090"
-    assert cfg.llm.model == "qwen2.5-7b"
-    assert cfg.llm.system_prompt == "Reformat this dictated text."
-    assert cfg.llm.timeout_seconds == 10
-    assert cfg.llm.temperature == 0.7
-    assert cfg.llm.max_tokens == 256
 
 
 def test_validate_injection_method_invalid_rejected(tmp_path: pathlib.Path) -> None:

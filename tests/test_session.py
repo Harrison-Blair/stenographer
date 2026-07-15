@@ -3,18 +3,14 @@
 
 from __future__ import annotations
 
-import json
-import sys
 import threading
 import time
-import types
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 
 from stenographer.asr.model import SegmentInfo, TranscriptionResult
 from stenographer.asr.worker import CancelledError
-from stenographer.config import LlmConfig
 from stenographer.session import Session
 
 
@@ -706,6 +702,11 @@ def test_on_recording_start_lazy_first_press_shows_loading_notification() -> Non
     assert any("Loading speech model" in " ".join(str(a) for a in args) for args in cmd_lines)
 
 
+def test_session_has_no_attach_prompt_listener() -> None:
+    session, _m = _make_session()
+    assert not hasattr(session, "attach_prompt_listener")
+
+
 def test_on_recording_start_eager_mode_does_not_trigger_load() -> None:
     session, _m = _make_session()
     c = _components(session)
@@ -732,18 +733,6 @@ def test_on_model_loaded_plays_ready_cue_and_shows_listening_while_recording() -
     session._on_model_loaded()
     c["feedback"].play.assert_called_once_with("model_ready")
     notif.show_listening.assert_called_once()
-
-
-def test_prompt_mode_lazy_model_load_shows_prompt_listening_notification() -> None:
-    notif = MagicMock()
-    session, _m = _make_session(notification=notif)
-    c = _components(session)
-    c["cfg"].asr.mode = "lazy"
-    c["worker"].is_model_loaded.return_value = False
-    session.on_recording_start(source="prompt")
-    session._on_model_loaded()
-    notif.show_listening_prompt.assert_called_once()
-    notif.show_listening.assert_not_called()
 
 
 def test_on_model_loaded_leaves_notification_alone_when_not_recording() -> None:
@@ -1001,43 +990,6 @@ def _drain_signals(streamer) -> list[tuple[str, object]]:
     return signals
 
 
-def test_prompt_stop_during_stale_final_decode_takes_batch_path() -> None:
-    """A prompt recording stopped while a previous streamed utterance's final
-    decode is still running must be enqueued as a tagged batch item (the LLM
-    path), not routed into the stale streamer as a second final signal."""
-    session, _m = _make_session(cfg=_streaming_cfg())
-    c = _components(session)
-    dictate_tail = np.ones((16000, 1), dtype=np.float32)
-    c["recorder"].stop.return_value = dictate_tail
-
-    session.on_recording_start()  # streamed dictation
-    stale = session._live_streamer
-    assert stale is not None
-    session.on_recording_stop("ptt")
-    # The driver has not consumed the final yet; the processing reference
-    # lingers exactly as it does while a real final decode is in flight.
-    assert session._live_streamer is stale
-
-    prompt_samples = np.full((8000, 1), 0.5, dtype=np.float32)
-    c["recorder"].stop.return_value = prompt_samples
-    session.on_recording_start(source="prompt")
-    session.on_recording_stop("ptt", source="prompt")
-
-    items = []
-    while session._utterance_queue.qsize() > 0:
-        items.append(session._utterance_queue.get_nowait())
-    batch_items = [item for item in items if isinstance(item, tuple)]
-    assert len(batch_items) == 1
-    samples, _mode, _abort, _gen, source = batch_items[0]
-    assert source == "prompt"
-    assert np.array_equal(samples, prompt_samples)
-
-    # The stale streamer saw exactly one final: the dictation tail.
-    finals = [s for s in _drain_signals(stale) if s[0] == "final"]
-    assert len(finals) == 1
-    assert np.array_equal(finals[0][1], dictate_tail)
-
-
 def test_discard_does_not_abort_stale_streamer_final_decode() -> None:
     """Discarding a new recording must not signal abort into a previous
     utterance's streamer that is still finishing its final decode."""
@@ -1069,377 +1021,6 @@ def test_discard_aborts_active_streamed_recording() -> None:
     assert "abort" in kinds
 
 
-# ---------------------------------------------------------------------------
-# Prompt-mode routing (source-tagged recordings, LLM rewrite)
-# ---------------------------------------------------------------------------
-#
-# FTHR-003 (stenographer.llm) is developed in parallel and may not be merged
-# yet, so these tests inject a stand-in module into sys.modules rather than
-# importing/patching the real thing.
-
-
-def _fake_llm_module(
-    *, rewritten: str | None = None, raise_error: bool = False
-) -> types.ModuleType:
-    mod = types.ModuleType("stenographer.llm")
-
-    class LlmError(Exception):
-        pass
-
-    mod.LlmError = LlmError  # type: ignore[attr-defined]
-
-    def rewrite_prompt(cfg: object, transcript: str) -> str:
-        if raise_error:
-            raise LlmError("llm call failed")
-        return rewritten if rewritten is not None else transcript
-
-    mod.rewrite_prompt = MagicMock(side_effect=rewrite_prompt)  # type: ignore[attr-defined]
-    return mod
-
-
-def _process_prompt(
-    session: Session,
-    c: dict[str, MagicMock],
-    *,
-    text: str = "hello world",
-    rewritten: str | None = None,
-    raise_error: bool = False,
-) -> types.ModuleType:
-    c["cfg"].clipboard.enabled = True
-    future = _fake_future()
-    future.result.return_value = TranscriptionResult(text=text, duration_seconds=0.5, segments=[])
-    c["worker"].submit.return_value = future
-    llm_mod = _fake_llm_module(rewritten=rewritten, raise_error=raise_error)
-    samples = np.zeros((16000, 1), dtype=np.float32)
-    with patch.dict(sys.modules, {"stenographer.llm": llm_mod}):
-        session._process(samples, "ptt", threading.Event(), source="prompt")
-    return llm_mod
-
-
-def test_prompt_mode_recording_calls_rewrite_prompt() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    llm_mod = _process_prompt(session, c, text="hello world")
-    llm_mod.rewrite_prompt.assert_called_once_with(c["cfg"].llm, "hello world")
-
-
-def test_prompt_mode_types_rewritten_text_not_raw_transcript() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    _process_prompt(session, c, text="hello world", rewritten="Hello, world!")
-    c["injector"].type_text.assert_called_once_with("Hello, world!")
-    c["clipboard"].copy.assert_called_once_with("Hello, world!")
-
-
-def test_prompt_mode_falls_back_to_raw_transcript_on_llm_error() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    _process_prompt(session, c, text="hello world", raise_error=True)
-    c["injector"].type_text.assert_called_once_with("hello world")
-    c["clipboard"].copy.assert_called_once_with("hello world")
-    c["feedback"].play.assert_any_call("error")
-
-
-def test_prompt_mode_llm_failure_plays_only_error_cue_not_transcribe_done() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    _process_prompt(session, c, text="hello world", raise_error=True)
-    c["feedback"].play.assert_any_call("error")
-    played_cues = [call.args[0] for call in c["feedback"].play.call_args_list]
-    assert "transcribe_done" not in played_cues
-    c["injector"].type_text.assert_called_once_with("hello world")
-    c["clipboard"].copy.assert_called_once_with("hello world")
-
-
-def test_prompt_mode_paste_mode_uses_rewritten_text_not_reformatted() -> None:
-    """output.injection_method="paste" is the real default (config.py); the
-    LLM's rewritten text must survive it, not get overwritten by format_batch
-    reformatting the raw ASR segments."""
-    session, _m = _make_session()
-    c = _components(session)
-    c["cfg"].asr.silence_threshold = 0.6
-    c["cfg"].clipboard.enabled = True
-    c["cfg"].output.injection_method = "paste"
-
-    segments = [
-        SegmentInfo(0.0, 0.5, "hello", 0.1),
-        SegmentInfo(0.5, 1.0, " world", 0.1),
-    ]
-    result = TranscriptionResult(text="hello world", duration_seconds=1.0, segments=segments)
-    future = _fake_future()
-    future.result.return_value = result
-    c["worker"].submit.return_value = future
-
-    llm_mod = _fake_llm_module(rewritten="Hello, world!")
-    samples = np.zeros((16000, 1), dtype=np.float32)
-    with (
-        patch.dict(sys.modules, {"stenographer.llm": llm_mod}),
-        patch.object(session._formatter, "format_batch") as format_batch,
-    ):
-        session._process(samples, "ptt", threading.Event(), source="prompt")
-
-    format_batch.assert_not_called()
-    c["clipboard"].copy.assert_called_once_with("Hello, world!")
-    c["injector"].paste.assert_called_once()
-
-
-def test_session_processor_survives_llm_connection_failure() -> None:
-    """A connection-level LLM failure on one prompt-mode utterance (FTHR-008)
-    must not kill the session-processor thread's run loop; a subsequent
-    queued utterance must still be fully processed.
-
-    Exercises the *real* stenographer.llm module (not the sys.modules fake
-    used elsewhere in this file) with urlopen mocked, so this test's outcome
-    is genuinely tied to rewrite_prompt's exception classification: before
-    FTHR-008, the first utterance's raw ConnectionResetError is not an
-    LlmError, so Session._process's `except llm_module.LlmError` does not
-    catch it and it kills the processor thread's run loop, leaving the
-    second utterance unprocessed.
-    """
-    session, _m = _make_session()
-    c = _components(session)
-    c["cfg"].clipboard.enabled = True
-    c["cfg"].llm = LlmConfig(
-        base_url="http://localhost:11434",
-        model="test-model",
-        system_prompt="Rewrite the following transcript.",
-        timeout_seconds=5.0,
-        temperature=0.2,
-        max_tokens=512,
-    )
-
-    future1 = _fake_future()
-    future1.result.return_value = TranscriptionResult(
-        text="first utterance", duration_seconds=0.5, segments=[]
-    )
-    future2 = _fake_future()
-    future2.result.return_value = TranscriptionResult(
-        text="second utterance", duration_seconds=0.5, segments=[]
-    )
-    c["worker"].submit.side_effect = [future1, future2]
-
-    second_response = MagicMock()
-    second_response.read.return_value = json.dumps(
-        {"choices": [{"message": {"content": "second utterance"}}]}
-    ).encode("utf-8")
-    second_response.__enter__.return_value = second_response
-    second_response.__exit__.return_value = False
-
-    samples = np.zeros((16000, 1), dtype=np.float32)
-    with patch(
-        "stenographer.llm.urllib.request.urlopen",
-        side_effect=[ConnectionResetError("connection reset by peer"), second_response],
-    ):
-        session._utterance_queue.put(
-            (samples, "ptt", threading.Event(), session._cancel_generation, "prompt")
-        )
-        session._utterance_queue.put(
-            (samples, "ptt", threading.Event(), session._cancel_generation, "prompt")
-        )
-        session._utterance_queue.put(None)
-        session._process_utterance_queue()
-
-    # The first utterance's LLM failure falls back to its raw transcript
-    # (existing behaviour, untouched by this feather); what this test pins
-    # is that the second utterance was still processed afterward, proving
-    # the processor thread's run loop survived the first utterance's
-    # connection-level failure instead of dying with it.
-    c["injector"].type_text.assert_any_call("second utterance")
-    c["clipboard"].copy.assert_any_call("second utterance")
-    assert c["injector"].type_text.call_count == 2
-
-
-def test_dictate_mode_unaffected_by_prompt_mode_addition() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    c["cfg"].clipboard.enabled = True
-    future = _fake_future()
-    future.result.return_value = TranscriptionResult(
-        text="hello world", duration_seconds=0.5, segments=[]
-    )
-    c["worker"].submit.return_value = future
-    samples = np.zeros((16000, 1), dtype=np.float32)
-    session._process(samples, "ptt", threading.Event())  # source defaults to "dictate"
-    c["injector"].type_text.assert_called_once_with("hello world")
-    c["clipboard"].copy.assert_called_once_with("hello world")
-
-
-def test_prompt_mode_hotkey_independent_trigger_rules() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    c["cfg"].asr.mode = "eager"
-    prompt_listener = MagicMock()
-    session.attach_prompt_listener(prompt_listener)
-
-    session.start_listener()
-    c["listener"].start.assert_called_once()
-    prompt_listener.start.assert_called_once()
-
-    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
-
-    # Dictate hotkey (default source) is tagged "dictate".
-    session.on_recording_start()
-    session.on_recording_stop("ptt")
-    _samples, mode, _abort, _generation, *rest = session._utterance_queue.get_nowait()
-    assert (rest[0] if rest else "dictate") == "dictate"
-    assert mode == "ptt"
-
-    # Prompt hotkey is tagged "prompt" and its own PTT/toggle mechanics are
-    # unaffected by the dictate hotkey's prior use.
-    session.on_recording_start(source="prompt")
-    session.on_recording_stop("toggle", source="prompt")
-    _samples2, mode2, _abort2, _generation2, *rest2 = session._utterance_queue.get_nowait()
-    assert rest2[0] == "prompt"
-    assert mode2 == "toggle"
-
-    session.stop()
-    prompt_listener.stop.assert_called_once()
-
-
-def test_prompt_mode_never_streams() -> None:
-    session, _m = _make_session(cfg=_streaming_cfg())
-    c = _components(session)
-    session.on_recording_start(source="prompt")
-    assert session._live_streamer is None
-    kwargs = c["recorder"].start.call_args.kwargs
-    assert "on_partial" not in kwargs
-    assert kwargs.get("on_segment") is None
-
-
-def test_prompt_mode_disables_silence_flush_segments() -> None:
-    cfg = _mock_cfg()
-    cfg.audio.silence_detection = True
-    cfg.asr.mode = "eager"
-    cfg.streaming.enabled = False
-    session, _m = _make_session(cfg=cfg)
-    c = _components(session)
-    session.on_recording_start(source="prompt")
-    assert c["recorder"].start.call_args.kwargs["on_segment"] is None
-
-
-# ---------------------------------------------------------------------------
-# Recording ownership: the two hotkeys must not end each other's recordings
-# ---------------------------------------------------------------------------
-
-
-def test_prompt_stop_ignored_while_dictate_recording_active() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    c["cfg"].asr.mode = "eager"
-    session.on_recording_start()  # dictate owns the recording
-
-    # A prompt-hotkey press/release cycle whose start was ignored must not
-    # stop the dictate recording, let alone re-route it through the LLM.
-    session.on_recording_stop("ptt", source="prompt")
-
-    c["recorder"].stop.assert_not_called()
-    assert session._recording
-    assert session._utterance_queue.qsize() == 0
-
-
-def test_dictate_stop_ignored_while_prompt_recording_active() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    c["cfg"].asr.mode = "eager"
-    session.on_recording_start(source="prompt")
-
-    session.on_recording_stop("ptt", source="dictate")
-
-    c["recorder"].stop.assert_not_called()
-    assert session._recording
-
-
-def test_prompt_tap_discard_ignored_while_dictate_recording_active() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    c["cfg"].asr.mode = "eager"
-    session.on_recording_start()  # dictate owns the recording
-
-    # A lone prompt-hotkey tap expires its double-tap window and fires
-    # discard; the in-flight dictation must survive it.
-    session.discard_recording(source="prompt")
-
-    c["recorder"].stop.assert_not_called()
-    assert session._recording
-    assert not session._recording_abort.is_set()
-
-    # The owning hotkey can still stop the recording normally afterwards.
-    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
-    session.on_recording_stop("ptt")
-    *_rest, source = session._utterance_queue.get_nowait()
-    assert source == "dictate"
-
-
-def test_owner_discard_still_discards_prompt_recording() -> None:
-    session, _m = _make_session()
-    c = _components(session)
-    c["cfg"].asr.mode = "eager"
-    session.on_recording_start(source="prompt")
-
-    session.discard_recording(source="prompt")
-
-    c["recorder"].stop.assert_called_once()
-    assert not session._recording
-
-
-# ---------------------------------------------------------------------------
-# Prompt-mode distinct per-stage notifications (FTHR-005)
-# ---------------------------------------------------------------------------
-
-
-def test_prompt_mode_recording_start_shows_prompt_listening_notification() -> None:
-    notif = MagicMock()
-    session, _m = _make_session(notification=notif)
-    c = _components(session)
-    c["cfg"].asr.mode = "eager"
-
-    session.on_recording_start(source="prompt")
-
-    notif.show_listening_prompt.assert_called_once()
-    notif.show_listening.assert_not_called()
-
-
-def test_prompt_mode_recording_stop_shows_prompt_transcribing_notification() -> None:
-    notif = MagicMock()
-    session, _m = _make_session(notification=notif)
-    c = _components(session)
-    c["cfg"].asr.mode = "eager"
-    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
-
-    session.on_recording_start(source="prompt")
-    session.on_recording_stop("ptt", source="prompt")
-
-    notif.show_transcribing_prompt.assert_called_once()
-    notif.show_transcribing.assert_not_called()
-
-
-def test_prompt_mode_llm_call_shows_rewriting_notification() -> None:
-    notif = MagicMock()
-    session, _m = _make_session(notification=notif)
-    c = _components(session)
-    _process_prompt(session, c, text="hello world", rewritten="Hello, world!")
-    notif.show_rewriting.assert_called_once()
-
-
-def test_prompt_mode_success_shows_prompt_ready_notification() -> None:
-    notif = MagicMock()
-    session, _m = _make_session(notification=notif)
-    c = _components(session)
-    _process_prompt(session, c, text="hello world", rewritten="Hello, world!")
-    notif.show_prompt_ready.assert_called_once()
-    notif.show_prompt_failed.assert_not_called()
-
-
-def test_prompt_mode_llm_failure_shows_prompt_failed_notification() -> None:
-    notif = MagicMock()
-    session, _m = _make_session(notification=notif)
-    c = _components(session)
-    _process_prompt(session, c, text="hello world", raise_error=True)
-    notif.show_prompt_failed.assert_called_once()
-    notif.show_prompt_ready.assert_not_called()
-    c["feedback"].play.assert_any_call("error")
-
-
 def test_dictate_mode_notifications_unchanged() -> None:
     notif = MagicMock()
     session, _m = _make_session(notification=notif)
@@ -1452,8 +1033,3 @@ def test_dictate_mode_notifications_unchanged() -> None:
 
     notif.show_listening.assert_called_once()
     notif.show_transcribing.assert_called_once()
-    notif.show_listening_prompt.assert_not_called()
-    notif.show_transcribing_prompt.assert_not_called()
-    notif.show_rewriting.assert_not_called()
-    notif.show_prompt_ready.assert_not_called()
-    notif.show_prompt_failed.assert_not_called()
