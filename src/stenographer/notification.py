@@ -68,26 +68,6 @@ class DesktopNotification:
         """Display 'Transcribing...' as a persistent notification."""
         self._enqueue("Transcribing…", 0)
 
-    def show_listening_prompt(self) -> None:
-        """Display 'Listening (prompt)...' as a persistent notification."""
-        self._enqueue("Listening (prompt)…", 0)
-
-    def show_transcribing_prompt(self) -> None:
-        """Display 'Transcribing (prompt)...' as a persistent notification."""
-        self._enqueue("Transcribing (prompt)…", 0)
-
-    def show_rewriting(self) -> None:
-        """Display 'Rewriting with local LLM...' as a persistent notification."""
-        self._enqueue("Rewriting with local LLM…", 0)
-
-    def show_prompt_ready(self) -> None:
-        """Display a transient 'Prompt ready' notification."""
-        self._enqueue("Prompt ready", 3000)
-
-    def show_prompt_failed(self) -> None:
-        """Display a transient prompt-crafting-failure notification."""
-        self._enqueue("Prompt-crafting failed — using raw transcript", 5000)
-
     def show_model_loading(self) -> None:
         self._enqueue("Loading speech model\u2009\u2014\u2009listening\u2026", 0)
 

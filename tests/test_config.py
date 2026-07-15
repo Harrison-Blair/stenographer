@@ -571,15 +571,6 @@ def test_validate_cue_readable_file_accepted(tmp_path: pathlib.Path) -> None:
     assert Config.load(p).feedback.cues["ptt_on"] == str(cue)
 
 
-def test_prompt_cue_names_accepted_as_overrides(tmp_path: pathlib.Path) -> None:
-    for name in ("ptt_on_prompt", "ptt_off_prompt", "toggle_on_prompt", "toggle_off_prompt"):
-        cue = tmp_path / f"{name}.wav"
-        cue.write_text("data")
-        p = tmp_path / "config.toml"
-        p.write_text(f'[stenographer.feedback.cues]\n{name} = "{cue}"\n')
-        assert Config.load(p).feedback.cues[name] == str(cue)
-
-
 def test_unknown_cue_name_still_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text('[stenographer.feedback.cues]\nbogus_cue_name = "/no/such/file.wav"\n')

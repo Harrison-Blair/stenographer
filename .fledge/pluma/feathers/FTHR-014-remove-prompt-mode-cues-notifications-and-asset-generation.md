@@ -40,10 +40,10 @@ Adjust existing suites in place (each fails immediately once the corresponding c
 Implementation order: write/adjust the 2 new test cases above plus the notification/gen_cues/cli suite prunings against the unchanged (FTHR-013-merged) code, capture them FAILING (e.g. assertion mismatch, `AttributeError`) in `.fledge/molt/FTHR-014.md` under `## AC-1`, then implement the removal until they pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `CueName` contains exactly the 11 non-prompt cue names (`ptt_on`, `ptt_off`, `toggle_on`, `toggle_off`, `cancel`, `discard`, `error`, `segment`, `transcribe_done`, `model_loading`, `model_ready`) — `typing.get_args(CueName)` confirms no `*_prompt` entries. Satisfies PLM-007 FC-5.
-- [ ] AC-3: `Notification` (in `notification.py`) has none of `show_listening_prompt`, `show_transcribing_prompt`, `show_rewriting`, `show_prompt_ready`, `show_prompt_failed`. Satisfies PLM-007 FC-5.
-- [ ] AC-4: `cli._PromptCueAdapter` and `cli._PROMPT_CUE_REMAP` do not exist. Satisfies PLM-007 FC-5.
-- [ ] AC-5: `scripts/gen_cues.py`'s `build_cues()` output contains no `*_prompt` keys, and none of the 4 `*_prompt.wav` files exist under `src/stenographer/assets/sounds/`. Satisfies PLM-007 FC-5.
-- [ ] AC-6: `.venv/bin/pytest -m "not integration"` and `.venv/bin/ruff check .` / `.venv/bin/ruff format --check .` pass for the full repo (both feathers combined). Satisfies PLM-007 FC-9 in full.
-- [ ] AC-7: `grep -riE "llm|prompt" src/ tests/`, excluding the known non-feature hits in `live.py`/`update.py`/`_parser.py`/`packaging/install.sh` and generic English words, returns no LLM-rewrite-feature references. Satisfies PLM-007 AC-1 (full-repo check).
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `CueName` contains exactly the 11 non-prompt cue names (`ptt_on`, `ptt_off`, `toggle_on`, `toggle_off`, `cancel`, `discard`, `error`, `segment`, `transcribe_done`, `model_loading`, `model_ready`) — `typing.get_args(CueName)` confirms no `*_prompt` entries. Satisfies PLM-007 FC-5.
+- [x] AC-3: `Notification` (in `notification.py`) has none of `show_listening_prompt`, `show_transcribing_prompt`, `show_rewriting`, `show_prompt_ready`, `show_prompt_failed`. Satisfies PLM-007 FC-5.
+- [x] AC-4: `cli._PromptCueAdapter` and `cli._PROMPT_CUE_REMAP` do not exist. Satisfies PLM-007 FC-5.
+- [x] AC-5: `scripts/gen_cues.py`'s `build_cues()` output contains no `*_prompt` keys, and none of the 4 `*_prompt.wav` files exist under `src/stenographer/assets/sounds/`. Satisfies PLM-007 FC-5.
+- [x] AC-6: `.venv/bin/pytest -m "not integration"` and `.venv/bin/ruff check .` / `.venv/bin/ruff format --check .` pass for the full repo (both feathers combined). Satisfies PLM-007 FC-9 in full.
+- [x] AC-7: `grep -riE "llm|prompt" src/ tests/`, excluding the known non-feature hits in `live.py`/`update.py`/`_parser.py`/`packaging/install.sh` and generic English words, returns no LLM-rewrite-feature references. Satisfies PLM-007 AC-1 (full-repo check).

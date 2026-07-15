@@ -70,22 +70,6 @@ def build_cues(sample_rate: int) -> dict[str, np.ndarray]:
                 tone(440.0, 0.080, DBFS_BEEP, sample_rate),
             ]
         ),
-        "ptt_on_prompt": tone(220.0, 0.080, DBFS_BEEP, sample_rate),
-        "ptt_off_prompt": np.concatenate(
-            [
-                tone(220.0, 0.080, DBFS_BEEP, sample_rate),
-                silence(GAP_S, sample_rate),
-                tone(220.0, 0.080, DBFS_BEEP, sample_rate),
-            ]
-        ),
-        "toggle_on_prompt": tone(110.0, 0.080, DBFS_BEEP, sample_rate),
-        "toggle_off_prompt": np.concatenate(
-            [
-                tone(110.0, 0.080, DBFS_BEEP, sample_rate),
-                silence(GAP_S, sample_rate),
-                tone(110.0, 0.080, DBFS_BEEP, sample_rate),
-            ]
-        ),
         "cancel": np.concatenate(
             [
                 tone(440.0, 0.080, DBFS_BEEP, sample_rate),
