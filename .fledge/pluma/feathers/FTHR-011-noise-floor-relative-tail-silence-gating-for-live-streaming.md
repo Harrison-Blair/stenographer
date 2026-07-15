@@ -40,10 +40,10 @@ All in `tests/test_live.py`'s `# -- tail-silence guard --` section:
 Implementation order: update the two existing tests' call sites and write the four new tests first, run against the unchanged (pre-fix) code and confirm the new quiet-mic-preservation test FAILS for the expected reason (old absolute-0.01 gate shaves/empties the quiet speech), the short-window test currently passes trivially only for the `shape[0]==0` case (note: for a genuinely short-but-nonzero window like 0.3s, the OLD code does NOT skip — it still runs the RMS gate — so this test SHOULD fail pre-fix too, confirming the cold-start skip is new behavior), then implement until all pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation (for the expected reasons — old absolute-threshold gate shaves quiet-mic speech; old code doesn't skip short-but-nonzero windows) and pass after.
-- [ ] AC-2: `_cut_trailing_silence`'s gate is computed relative to the window's own 10th-percentile step RMS, multiplied by hardcoded `_NOISE_FLOOR_MULTIPLIER = 3`, not `audio.silence_rms_threshold` (satisfies PLM-006 FC-1, FC-2).
-- [ ] AC-3: Windows with fewer than 10 steps (0.5s) are returned unchanged, regardless of content (satisfies PLM-006 FC-3).
-- [ ] AC-4: `audio.silence_rms_threshold` and its use in `capture.py`'s mid-recording flush are untouched; no other `LiveStreamer` method changes (satisfies PLM-006 FC-4).
-- [ ] AC-5: On the quiet-mic fixture, trailing speech is preserved where the old absolute-0.01 gate would have shaved/emptied it; on the normal/loud-mic fixture, true trailing silence is still trimmed (satisfies PLM-006 FC-5).
-- [ ] AC-6: `_cut_trailing_silence` remains pure — two calls with an identical window input produce identical output.
-- [ ] AC-7: `.venv/bin/pytest -m "not integration"` passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation (for the expected reasons — old absolute-threshold gate shaves quiet-mic speech; old code doesn't skip short-but-nonzero windows) and pass after.
+- [x] AC-2: `_cut_trailing_silence`'s gate is computed relative to the window's own 10th-percentile step RMS, multiplied by hardcoded `_NOISE_FLOOR_MULTIPLIER = 3`, not `audio.silence_rms_threshold` (satisfies PLM-006 FC-1, FC-2).
+- [x] AC-3: Windows with fewer than 10 steps (0.5s) are returned unchanged, regardless of content (satisfies PLM-006 FC-3).
+- [x] AC-4: `audio.silence_rms_threshold` and its use in `capture.py`'s mid-recording flush are untouched; no other `LiveStreamer` method changes (satisfies PLM-006 FC-4).
+- [x] AC-5: On the quiet-mic fixture, trailing speech is preserved where the old absolute-0.01 gate would have shaved/emptied it; on the normal/loud-mic fixture, true trailing silence is still trimmed (satisfies PLM-006 FC-5).
+- [x] AC-6: `_cut_trailing_silence` remains pure — two calls with an identical window input produce identical output.
+- [x] AC-7: `.venv/bin/pytest -m "not integration"` passes with no regressions.
