@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 from unittest.mock import MagicMock, patch
@@ -93,6 +94,29 @@ def test_rewrite_prompt_http_error_raises_llm_error():
     )
     with (
         patch("stenographer.llm.urllib.request.urlopen", side_effect=err),
+        pytest.raises(LlmError),
+    ):
+        rewrite_prompt(_cfg(), "raw transcript")
+
+
+def test_rewrite_prompt_connection_reset_raises_llm_error():
+    with (
+        patch(
+            "stenographer.llm.urllib.request.urlopen",
+            side_effect=ConnectionResetError("connection reset by peer"),
+        ),
+        pytest.raises(LlmError),
+    ):
+        rewrite_prompt(_cfg(), "raw transcript")
+
+
+def test_rewrite_prompt_incomplete_read_raises_llm_error():
+    resp = MagicMock()
+    resp.read.side_effect = http.client.IncompleteRead(b"partial")
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
+    with (
+        patch("stenographer.llm.urllib.request.urlopen", return_value=resp),
         pytest.raises(LlmError),
     ):
         rewrite_prompt(_cfg(), "raw transcript")

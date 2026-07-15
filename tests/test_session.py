@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -13,6 +14,7 @@ import numpy as np
 
 from stenographer.asr.model import SegmentInfo, TranscriptionResult
 from stenographer.asr.worker import CancelledError
+from stenographer.config import LlmConfig
 from stenographer.session import Session
 
 
@@ -1156,6 +1158,72 @@ def test_prompt_mode_paste_mode_uses_rewritten_text_not_reformatted() -> None:
     format_batch.assert_not_called()
     c["clipboard"].copy.assert_called_once_with("Hello, world!")
     c["injector"].paste.assert_called_once()
+
+
+def test_session_processor_survives_llm_connection_failure() -> None:
+    """A connection-level LLM failure on one prompt-mode utterance (FTHR-008)
+    must not kill the session-processor thread's run loop; a subsequent
+    queued utterance must still be fully processed.
+
+    Exercises the *real* stenographer.llm module (not the sys.modules fake
+    used elsewhere in this file) with urlopen mocked, so this test's outcome
+    is genuinely tied to rewrite_prompt's exception classification: before
+    FTHR-008, the first utterance's raw ConnectionResetError is not an
+    LlmError, so Session._process's `except llm_module.LlmError` does not
+    catch it and it kills the processor thread's run loop, leaving the
+    second utterance unprocessed.
+    """
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].clipboard.enabled = True
+    c["cfg"].llm = LlmConfig(
+        base_url="http://localhost:11434",
+        model="test-model",
+        system_prompt="Rewrite the following transcript.",
+        timeout_seconds=5.0,
+        temperature=0.2,
+        max_tokens=512,
+    )
+
+    future1 = _fake_future()
+    future1.result.return_value = TranscriptionResult(
+        text="first utterance", duration_seconds=0.5, segments=[]
+    )
+    future2 = _fake_future()
+    future2.result.return_value = TranscriptionResult(
+        text="second utterance", duration_seconds=0.5, segments=[]
+    )
+    c["worker"].submit.side_effect = [future1, future2]
+
+    second_response = MagicMock()
+    second_response.read.return_value = json.dumps(
+        {"choices": [{"message": {"content": "second utterance"}}]}
+    ).encode("utf-8")
+    second_response.__enter__.return_value = second_response
+    second_response.__exit__.return_value = False
+
+    samples = np.zeros((16000, 1), dtype=np.float32)
+    with patch(
+        "stenographer.llm.urllib.request.urlopen",
+        side_effect=[ConnectionResetError("connection reset by peer"), second_response],
+    ):
+        session._utterance_queue.put(
+            (samples, "ptt", threading.Event(), session._cancel_generation, "prompt")
+        )
+        session._utterance_queue.put(
+            (samples, "ptt", threading.Event(), session._cancel_generation, "prompt")
+        )
+        session._utterance_queue.put(None)
+        session._process_utterance_queue()
+
+    # The first utterance's LLM failure falls back to its raw transcript
+    # (existing behaviour, untouched by this feather); what this test pins
+    # is that the second utterance was still processed afterward, proving
+    # the processor thread's run loop survived the first utterance's
+    # connection-level failure instead of dying with it.
+    c["injector"].type_text.assert_any_call("second utterance")
+    c["clipboard"].copy.assert_any_call("second utterance")
+    assert c["injector"].type_text.call_count == 2
 
 
 def test_dictate_mode_unaffected_by_prompt_mode_addition() -> None:
