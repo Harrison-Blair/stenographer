@@ -1,48 +1,61 @@
 ---
-generated: 2026-07-11T05:16:32Z
-commit: f5694b5bffd265badb03101b726304b5e6a0efb4
+generated: 2026-07-15T17:38:33Z
+commit: d621b46261d9509fccbdffc4686be0b876c7951e
 agent: fledge-forager
-fledge_version: 0.4.0
+fledge_version: 0.5.4
 ---
 
 # Testing
 
-Frameworks, how to run, and coverage patterns.
+How the test suite is organized, run, and gated — frameworks, commands, marker conventions, and what's covered where.
 
-## Framework
-pytest (>=8) with `pytest-asyncio` (>=0.23) support (`pyproject.toml [tool.pytest.ini_options]`). No other test framework in use.
+## Framework & layout
 
-## Running
-- Unit only (default for iteration): `.venv/bin/pytest -m "not integration"`
-- Full suite, including env-touching tests: `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest`
-- Single test: `.venv/bin/pytest tests/test_session.py::test_name`
-- CI (`release.yml` `lint-test` job) runs the unit-only subset after ruff lint/format checks.
-- Never invoke the system `pytest` — always `.venv/bin/pytest` (project-wide convention, `CLAUDE.md`/`AGENTS.md`).
+- `pytest` (+ `pytest-asyncio` for async support), ~7,400 lines across 24 files in `tests/`, mirroring `src/stenographer/` 1:1 (`tests.md`, `root.md`).
+- `tests/__init__.py` is empty (src-layout marker); `tests/fixtures/.gitkeep` is an empty placeholder — no fixture files currently in use; test data is inline or built with helper functions (`_cfg()`, `_mock_cfg()`, `_make_components()`, `_make_session()`) rather than pytest fixtures (`tests.md`).
+- `pyproject.toml`: `testpaths = ["tests"]`, `addopts = "-ra"` (short summary of pass/fail/skip reasons).
 
-## `integration` marker
-Tests marked `@pytest.mark.integration` touch the real Wayland clipboard, real audio devices, or real display and are skipped unless `STENOGRAPHER_INTEGRATION=1` is set. Examples: `test_clipboard.py:test_real_wl_copy_round_trip`, `test_inject.py:test_real_wtype_injects_into_focused_window`.
+## Running tests
 
-## Layout
-`tests/` mirrors `src/stenographer/` one-to-one: `test_<module>.py` per source file (e.g. `test_capture.py` ↔ `audio/capture.py`, `test_hotkey.py` ↔ `hotkey/*.py`, `test_session.py` ↔ `session.py`). Shared fixtures under `tests/fixtures/`.
+- Unit only: `.venv/bin/pytest -m "not integration"`.
+- All, including environment-touching: `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest`.
+- Single test: `.venv/bin/pytest tests/test_session.py::test_name`.
+- CI (`ci.yml`, `release.yml`) always runs `pytest -m "not integration"` — integration tests are never run in GitHub Actions; they require a manual/special environment (real display, audio, evdev) (`.github.md`).
 
-Known test files (by area):
-- Hotkey: `test_hotkey.py` (binding parser, pure state machine, listener integration with a fake evdev device).
-- Audio: `test_capture.py` (Recorder), `test_feedback.py` (cue playback/asset resolution/muting).
-- ASR: `test_lazy_model.py` (lazy load/idle-unload lifecycle), `test_worker_cancel.py` (job cancellation), `test_streaming.py` (`StreamingTranscriber` LocalAgreement-N), `test_transcription.py`.
-- Session/orchestration: `test_session.py` (876 lines, 31 tests — recording lifecycle, `_process`, async queue/processor, lazy-model callbacks, cancel/discard, live-streaming wiring), `test_live.py` (LiveStreamer integration).
-- Output: `test_inject.py` (Injector — wtype subprocess success/failure/timeout/truncation/raw mode), `test_clipboard.py` (ClipboardManager — wl-copy/wl-paste success/failure), `test_formatter.py` (HeuristicFormatter — spacing, capitalization, paragraph breaks, incremental-vs-batch equivalence).
-- Cross-cutting: `test_config.py`, `test_capabilities.py`, `test_errors.py`, `test_notification.py`, `test_update.py`, `test_bench.py`, `test_cli_completion.py`, `test_cli_systemd.py`, `test_cli_update.py`.
+## Marker & skip conventions
 
-## Patterns
-- Heavy `unittest.mock.MagicMock` use to isolate a component under test: `test_session.py` mocks Recorder, Worker, Injector, Clipboard, Feedback, and Listener wholesale via `_make_components()`/`_make_session()` fixture helpers.
-- Naming convention for test helpers: `_make_x()` (build a fixture), `_fake_x()` (stub with canned behavior, e.g. `_fake_future()` — a worker Future that fires its callback immediately).
-- Assertions via `assert_called_once_with()`, `assert_not_called()`, etc., rather than manual call inspection.
-- Audio sample fixtures: `np.ndarray` shape `(N, 1)`, dtype `float32`.
-- ASR result fixtures: `SegmentInfo(start, end, text, no_speech_prob)`, `TranscriptionResult(text, duration_seconds, segments)`.
-- Concurrency/race tests use deferred-future patterns (e.g. threading a submit deferral, `release_second_segment` events in `test_session.py`) to exercise cancellation ordering deterministically.
-- `caplog` fixture used to assert on log messages for degraded-capability / failure paths (e.g. `test_inject.py`'s `caplog.LogCaptureFixture` parameter).
-- Pure state machines (`HotkeyStateMachine`, `StreamingTranscriber`) are tested with no mocking at all — direct construction and method calls, since they have no I/O.
-- `HotkeyListener` integration tests fake the evdev layer entirely: `_FakeDevice` with `read_loop()`/`close()` substituting for `evdev.InputDevice`, and short-circuited retry-timing constants.
+- `@pytest.mark.integration` gates tests that touch real clipboard, audio, display, or PortAudio; combined with manual checks like `if not os.environ.get("STENOGRAPHER_INTEGRATION"): pytest.skip(...)` (`tests.md`).
+- ASR/model tests additionally skip if the model isn't locally cached (checked via `huggingface_hub.try_to_load_from_cache`); `test_transcription.py` requires `Systran/faster-whisper-large-v3` downloaded via `scripts/download_model.py` (session-scoped fixture, loads once per run) (`tests.md`).
 
-## Pre-change verification workflow (per `CLAUDE.md`/`AGENTS.md`)
-Before considering a change complete: `ruff check .`, `ruff format --check .`, and `.venv/bin/pytest -m "not integration"` must all pass.
+## Mocking patterns
+
+- `unittest.mock.MagicMock`/`patch`/`patch.dict`/`patch.object` for CLI, subprocess, HTTP, `sounddevice`, `evdev`.
+- `monkeypatch` for simple swaps: env vars, `sys.exit`, filesystem paths.
+- Hand-rolled fakes for scripted behavior: `_FakeEvent`/`_FakeDevice`/`_ListenerCallbacks` (hotkey tests), `_FakeRecorder`/`_FakeWorker` (live-streaming tests) — used in place of real hardware/model calls (`src-hotkey.md`, `tests.md`).
+- Pure-function tests use no mocking at all: `test_bench.py`, `test_streaming.py`, `test_gen_cues.py` exercise algorithms directly (WER calculation, LocalAgreement commit logic, cue-tone generation).
+- State-transition assertions: hotkey/session tests pin the exact transition sequence (e.g. `on_keydown` → `start_recording` → `RECORDING_PTT`), not just the final outcome.
+- Error tests assert both exception type and message content via `pytest.raises(..., match=...)`.
+
+## Coverage by area (file → what it covers)
+
+- `test_session.py` (1,460 lines) — the core orchestrator: recording lifecycle, utterance queue, partial segment injection, paste mode, silence filtering, live-streaming wiring, prompt-mode LLM rewrite, dual-hotkey ownership tracking.
+- `test_config.py` (885 lines, 65+ tests) — TOML parsing, schema validation (binding overlap, sample-rate/beam-size ranges, silence thresholds), defaults merging, write/load round-trip.
+- `test_update.py` (593 lines) — update-check/download flow, SHA-256 verification, atomic install swap.
+- `test_hotkey.py` (581 lines, 35+ tests) — binding parser, state machine (PTT/toggle/double-tap/cancel), listener event loop, stuck-key recovery.
+- `test_capture.py` (558 lines) — device opening/fallback, sample accumulation, overflow handling, silence-flush, resampling (48→16 kHz), partial snapshots.
+- `test_live.py` (524 lines, 35+ tests) — coalescing, tail-silence guard, window trimming, paragraph-break timing across trims, prefix-invariant typing deltas (property test tagged "M6").
+- `test_cli_update.py` (292 lines), `test_lazy_model.py` (279 lines), `test_notification.py` (275 lines), `test_inject.py` (264 lines) — CLI update flow; lazy load/unload timer behavior; notification command building; text injection (truncation, unicode, leading-dash handling, paste mode).
+- `test_cli.py` (221 lines), `test_clipboard.py` (178 lines), `test_feedback.py` (180 lines), `test_formatter.py` (175 lines), `test_notification.py` — subcommand dispatch; wl-copy/wl-paste round-trip; cue playback; formatting (spacing/capitalization/paragraph breaks, batch vs. incremental).
+- `test_worker_cancel.py` (147 lines), `test_llm.py` (152 lines), `test_errors.py` (130 lines) — per-job ASR cancellation; LLM rewrite fallback on error; `notify_failure`/`fatal`/`degrade_capability` policy.
+- `test_streaming.py` (127 lines), `test_cli_systemd.py` (99 lines), `test_transcription.py` (75 lines) — LocalAgreement-N committer (`longest_common_prefix`, agreement_n); systemd unit enable/start/stop; end-to-end batch transcription against a real model.
+- `test_cli_completion.py` (59 lines), `test_bench.py` (53 lines), `test_gen_cues.py` (53 lines), `test_capabilities.py` (43 lines), `test_packaging.py` (12 lines) — argcomplete; WER/number normalization; cue-tone generation; capability probing; packaging smoke test.
+
+## Integration tests (all gated by `STENOGRAPHER_INTEGRATION=1`)
+
+Real PortAudio (`test_capture.py`, `test_transcription.py`), real `wtype` injection (`test_inject.py`), real `wl-copy`/`wl-paste` (`test_clipboard.py`), real `pw-play` (`test_feedback.py`), real `notify-send` (`test_notification.py`).
+
+## Open Questions
+
+- No project-root `conftest.py` was found in the assigned scout files — unclear if one exists and is auto-discovered by pytest (`tests.md`).
+- `test_session.py` patches `sys.modules["stenographer.llm"]` as a workaround for the optional LLM feature — unclear if this indicates the real module is sometimes absent in certain build/feather states (`tests.md`).
+- Which capabilities are actually exercised under `STENOGRAPHER_INTEGRATION=1` in practice (local dev only, since CI never sets it), and which remain effectively untested end-to-end? (`root.md`, `.github.md`)

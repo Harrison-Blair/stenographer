@@ -1,61 +1,78 @@
 ---
-generated: 2026-07-11T05:16:32Z
-commit: f5694b5bffd265badb03101b726304b5e6a0efb4
+generated: 2026-07-15T17:38:33Z
+commit: d621b46261d9509fccbdffc4686be0b876c7951e
 agent: fledge-forager
-fledge_version: 0.4.0
+fledge_version: 0.5.4
 ---
 
 # Data Model
 
-Core types and schemas defined in the codebase, with file references. No database — all state is in-process dataclasses and config-derived structures.
+The dataclasses, protocols, and state-carrying types that flow through the recording→transcription→output pipeline, plus config and packaging-adjacent schemas.
 
-## Config (`config.py`)
-`Config` — frozen dataclass, the entire user/system configuration, loaded once at startup from TOML. Nested sections:
-- `HotkeyConfig`: `binding` (str, evdev key name or `+`-joined chord, e.g. `"KEY_RIGHTCTRL"`), `toggle_threshold_seconds` (float, default 0.5), `double_tap_window_seconds` (float, default 0.35), `cancel_binding` (str), `device` (str | None — auto-detect if empty).
-- `AudioConfig`: `sample_rate` (int), `frames_per_buffer` (int), `input_device` (str | None), `max_recording_seconds` (int), `silence_detection` (bool), `silence_rms_threshold` (float, default 0.01), `silence_duration_seconds` (float, default 1.5).
-- `AsrConfig`: `model` (str, default `"Systran/faster-distil-whisper-medium.en"`), `language` (str), `beam_size` (int), `compute_type` (str, default `"int8"`), `silence_threshold` (float — no-speech-prob cutoff), `mode` (str ∈ `["eager", "lazy"]`), `idle_unload_seconds` (int).
-- `FeedbackConfig`: `volume` (float ∈ [0,1]), `cues` (dict[str, str | None] — per-cue WAV override), `mute` (bool).
-- `OutputConfig`: `injection_method` (str ∈ `["text", "paste"]`), `append_trailing_space` (bool), `max_chars` (int, default 4096 — truncation limit in `Injector._prepare`).
-- `ClipboardConfig`: `enabled` (bool).
-- `StreamingConfig`: `enabled` (bool), `min_chunk_seconds` (float), `agreement_n` (int), `beam_size` (int | None — interim decode beam, may differ from finish beam), `max_buffer_seconds` (float).
-- `FormattingConfig`: `paragraph_pause_seconds` (float), `capitalize_sentences` (bool), `normalize_spacing` (bool).
-- `UpdateConfig`: `repo` (str, `"OWNER/REPO"`), `channel` (str ∈ `["stable", "latest"]`), `base_url` (str), `asset_pattern` (str, contains `{version}`), `timeout_seconds` (int).
+## Configuration (`src/stenographer/config.py`)
 
-## Capabilities (`capabilities.py`)
-`Capabilities` — frozen dataclass, 7 booleans: `has_wtype`, `has_wl_copy`, `has_pw_play`, `has_paplay`, `has_input_group`, `has_mic`, `has_asr_model`. Produced by `Capabilities.probe(cfg)`.
+`Config` is the top-level dataclass loaded once from TOML at startup, with nine nested sub-configs (`src-core.md`):
+- `HotkeyConfig` — `binding`, `toggle_threshold_seconds`, `double_tap_window_seconds`, `cancel_binding`, `device`, `prompt_binding`.
+- `AudioConfig` — `sample_rate`, `frames_per_buffer`, `input_device`, `max_recording_seconds`, `silence_detection`, `silence_rms_threshold`, `silence_duration_seconds`.
+- `AsrConfig` — `model`, `language`, `beam_size`, `compute_type`, `silence_threshold`, `mode` (`"eager"`/`"lazy"`), `idle_unload_seconds`.
+- `FeedbackConfig` — `volume`, `cues` (dict keyed by `CueName`), `mute`.
+- `OutputConfig` — `injection_method`, `append_trailing_space`, `max_chars`.
+- `ClipboardConfig` — `enabled`.
+- `StreamingConfig` — `enabled`, `min_chunk_seconds`, `agreement_n`, `beam_size`, `max_buffer_seconds`.
+- `FormattingConfig` — `paragraph_pause_seconds`, `capitalize_sentences`, `normalize_spacing`.
+- `UpdateConfig` — `repo`, `channel`, `base_url`, `asset_pattern`, `timeout_seconds`.
+- `LlmConfig` — `base_url`, `model`, `system_prompt`, `timeout_seconds`, `temperature`, `max_tokens`.
 
-## ASR types (`asr/model.py`)
-- `SegmentInfo` (frozen): `start: float, end: float, text: str, no_speech_prob: float` — segment-level batch transcription metadata.
-- `WordInfo` (frozen): `start: float, end: float, word: str, probability: float` — word-level timestamp/confidence, used by the streaming path.
-- `TranscriptionResult` (frozen): `text: str, duration_seconds: float, segments: list[SegmentInfo] = []` — batch transcription result container.
+Each section has a `_build_*` builder function with exhaustive range/enum validation; a bad value raises `ConfigError` with the dotted key path and reason (`src-core.md`).
 
-## ASR worker types (`asr/worker.py`)
-- `Job` (dataclass): `samples: np.ndarray, future: concurrent.futures.Future, on_segment: Callable | None, cancel_event: threading.Event | None, kind: Literal["segments","words"] = "segments", beam_size: int | None = None`.
-- `CancelledError(Exception)` — raised when the Worker aborts an in-flight transcription.
-- `_UNLOAD` sentinel — object marker on the job queue signaling an idle-unload request.
+## ASR types (`src/stenographer/asr/model.py`, `worker.py`, `streaming.py`)
 
-## Session types (`session.py`)
-- `Session` — the orchestrator itself (not a data type but the central state container); relevant fields: `_recording: bool`, `_recording_abort: threading.Event`, `_active_abort: threading.Event | None`, `_cancel_generation: int`, `_utterance_queue: queue.Queue[tuple[np.ndarray, Literal["ptt","toggle"], threading.Event, int] | _LiveItem | None]`, `_live_streamer: LiveStreamer | None`.
-- `_LiveItem` (dataclass): `streamer: LiveStreamer, generation: int` — queue payload for a streamed (as opposed to batch) utterance.
+- `SegmentInfo` (frozen) — `start: float`, `end: float`, `text: str`, `no_speech_prob: float`.
+- `WordInfo` (frozen) — `start: float`, `end: float`, `word: str`, `probability: float`; the unit streaming operates on.
+- `TranscriptionResult` (frozen) — `text: str`, `duration_seconds: float`, `segments: list[SegmentInfo]`.
+- `Job` (worker.py) — `samples: np.ndarray`, `future: Future[...]`, `on_segment`, `cancel_event`, `kind: Literal["segments","words"]`, `beam_size`. Enqueued by `submit()`/`submit_words()`.
+- `CancelledError` — raised on the worker thread when cancellation fires mid-transcription; propagated via `Future.set_exception()`.
+- `_UNLOAD` sentinel (worker.py) — distinguishes a lazy-model-unload request from a real `Job` on the queue.
 
-## Hotkey types (`hotkey/state_machine.py`, `hotkey/binding.py`)
-- `State` (Literal): `"IDLE" | "RECORDING_PTT" | "PENDING_TAP" | "TOGGLE_LATCHED" | "TOGGLE_STOPPING"`.
-- `Action` (Literal): `"start_recording" | "stop_recording_ptt" | "stop_recording_toggle" | "latch_toggle" | "await_double_tap" | "discard_recording" | "cancel" | "noop"`.
-- `Transition` (NamedTuple): `action: Action, cue: str | None`.
-- `HotkeyBinding` — immutable; `_keys: tuple[str, ...]` (case-insensitively sorted for chord canonicalization); methods `parse()`, `to_evdev_codes()`, `matches(set[int])`.
+## Session / live-streaming state (`session.py`, `live.py`)
 
-## Audio types (`audio/feedback.py`)
-- `CueName` (Literal, 11 members): `"ptt_on" | "ptt_off" | "toggle_on" | "toggle_off" | "cancel" | "discard" | "error" | "segment" | "transcribe_done" | "model_loading" | "model_ready"`.
+- `_BatchItem` — `samples`, `mode` (`"ptt"`/`"toggle"`), `abort`, `generation`, implicit source.
+- `_LiveItem` — `streamer`, `generation`.
+- Session tracks `_recording` flag, `_recording_source` (`"dictate"`/`"prompt"`), `_cancel_generation` counter, per-recording abort `Event`, all guarded by an `RLock`.
+- `live.py` sentinels: `_PARTIAL`, `_FINAL`, `_ABORT` (module-level strings); `_HIDE` object for the notification queue.
 
-## Update types (`update.py`)
-- `UpdateInfo` (frozen dataclass): `current_version: str, latest_version: str, tag_name: str, asset_url: str, asset_size: int, sha256_url: str, release_notes: str, prerelease: bool`.
+## Capabilities & updates
 
-## Benchmark types (`bench.py`)
-- `BatchRow` (dataclass): `model: str, beam: int, compute: str, load_s: float, rtf: float, wer: float | None, is_gold: bool, text: str`.
-- `Clip` (dataclass): `name: str, samples: np.ndarray (N,1) float32, duration: float`.
+- `Capabilities` (frozen, `capabilities.py`) — booleans: `has_wtype`, `has_wl_copy`, `has_pw_play`, `has_paplay`, `has_input_group`, `has_mic`, `has_asr_model`.
+- `UpdateInfo` (frozen, `update.py`) — `current_version`, `latest_version`, `tag_name`, `asset_url`, `asset_size`, `sha256_url`, `release_notes`, `prerelease`.
 
-## Error types (`errors.py`)
-- `StenographerError` (base, stores `message`) → `ConfigError` (adds `path`, `key`, `reason`), `CapabilityError`, `AudioCaptureError`, `TranscriptionError`, `UpdateError`.
+## Hotkey types (`hotkey/state_machine.py`, `binding.py`)
 
-## Output layer (no persistent types)
-`output/inject.py:Injector`, `output/clipboard.py:ClipboardManager`, `output/formatter.py:HeuristicFormatter` are stateful/stateless wrapper classes, not data schemas — see `modules.md` / `architecture.md` for their contracts.
+- `State` (Literal) — `"IDLE" | "RECORDING_PTT" | "PENDING_TAP" | "TOGGLE_LATCHED" | "TOGGLE_STOPPING"`.
+- `Action` (Literal) — `"start_recording" | "stop_recording_ptt" | "stop_recording_toggle" | "latch_toggle" | "await_double_tap" | "discard_recording" | "cancel" | "noop"`.
+- `Transition` (NamedTuple) — `action: Action`, `cue: str | None` (e.g. `"ptt_on"`, `"toggle_off"`, `"discard"`, `"cancel"`, or `None`).
+- `HotkeyBinding` — immutable, hashable; stores canonicalised `_keys: tuple[str, ...]`.
+- Internal state-machine fields: `_state`, `_press_start`, `_chord_active`, `_consumed`, `_pending_generation` (invalidates stale double-tap timeouts).
+
+## Audio/output types (`audio/capture.py`, `audio/feedback.py`, `output/*.py`)
+
+- `CueName` (Literal union, `feedback.py`) — the 14 cue identifiers: `ptt_on`/`ptt_off`/`toggle_on`/`toggle_off` (+ `_prompt` variants), `cancel`, `discard`, `error`, `segment`, `transcribe_done`, `model_loading`, `model_ready`. Referenced by `FeedbackConfig.cues` in config, and must match `AudioConfig`/config schema.
+- `_Token` (Protocol, `formatter.py`) — anything with `start: float`, `end: float`, and either a `word` or `text` field; satisfied by both `WordInfo` and `SegmentInfo`.
+- `_FALLBACK_SAMPLE_RATES = (48000, 44100, 22050, 16000, 8000)`, `_FALLBACK_CHANNELS = (2, 1)`, `_MIN_SPEECH_SECONDS = 0.25` (capture.py fallback/gating constants).
+
+## Benchmarking types (`bench.py`)
+
+- `Clip` — `name`, `samples: np.ndarray`, `duration`.
+- `BatchRow` — `model`, `beam`, `compute`, `load_s`, `rtf`, `wer`, `is_gold`, `text`.
+
+## Packaging/release-adjacent schemas
+
+- GitHub Actions workflow YAML schema (`on`, `jobs`, `runs-on`, `steps`, `permissions`, `concurrency`) (`.github.md`).
+- Badge JSON (shields.io format): `{"schemaVersion": 1, "label": "release", "message": "<tag|unreleased>", "color": "<brightgreen|orange>"}` (`.github.md`).
+- Version string: `X.Y.Z` extracted from `pyproject.toml` via `tomllib`, tagged `v${VERSION}` (`.github.md`).
+
+## Open Questions
+
+- What `compute_type` values does `AsrConfig` accept, and what are their CPU/GPU trade-offs? (`src-asr.md`)
+- Are there size limits on audio samples passed to `transcribe`/`transcribe_words`, or does faster-whisper handle arbitrary lengths internally? (`src-asr.md`)
+- Is `CueName` ever used to dispatch cue playback outside of `config.cues`, or is `Feedback.play()` always called by literal name string? (`src-core.md`)

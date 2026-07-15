@@ -1,60 +1,73 @@
 ---
-generated: 2026-07-11T05:16:32Z
-commit: f5694b5bffd265badb03101b726304b5e6a0efb4
+generated: 2026-07-15T17:38:33Z
+commit: d621b46261d9509fccbdffc4686be0b876c7951e
 agent: fledge-forager
-fledge_version: 0.4.0
+fledge_version: 0.5.4
 ---
 
 # Modules
 
-Repo map: each module, its purpose, key files, and where to look for what.
+A per-directory map of the repository: what each module is for, its key files, and where to look for specific behavior.
 
-## `src/stenographer/` (root package)
-Purpose: package root — CLI entry point, config, cross-cutting policy (errors, capabilities, notifications, self-update, benchmarking).
-Key files: `cli.py` (`main()`, all `cmd_*` handlers, `_build_session()`), `_parser.py` (argcomplete-light argument parser), `config.py` (`Config` schema/loading), `capabilities.py` (`Capabilities.probe()`), `errors.py` (exception hierarchy + policy fns), `notification.py` (`DesktopNotification`), `update.py` (self-update), `bench.py` (ASR benchmarking harness), `__init__.py` (`__version__` from importlib.metadata), `session.py` (`Session` orchestrator), `live.py` (`LiveStreamer`).
-Look here for: CLI subcommand wiring, config schema/defaults, error-handling policy, capability probing, desktop notifications, self-update flow, the per-utterance state machine (`session.py`), and the live-streaming driver (`live.py`).
+## root
 
-## `src/stenographer/hotkey/`
-Purpose: global hotkey binding parsing, pure trigger state machine, and the evdev listener thread(s).
-Key files: `binding.py` (`HotkeyBinding.parse/to_evdev_codes/matches`), `state_machine.py` (`HotkeyStateMachine`, `State`, `Action`, `Transition`), `listener.py` (`HotkeyListener`, `auto_detect_path(s)`, multi-HID reader threads).
-Look here for: adding/changing a keybind, changing PTT-vs-toggle timing rules, evdev device auto-detection, chord parsing/validation.
+Project metadata and top-level docs: `pyproject.toml` (hatchling, version, deps, ruff/pytest config), `README.md`, `BUILD.md`, `AGENTS.md`/`CLAUDE.md` (dev guidance), `LICENSE` (GPL-3.0-or-later), `.python-version` (3.14).
+Look here for: release/version source of truth, top-level dependency list, license/SPDX policy.
 
-## `src/stenographer/audio/`
-Purpose: microphone capture (with silence detection and resampling) and audio-cue feedback playback.
-Key files: `capture.py` (`Recorder`, `_resample_poly`), `feedback.py` (`Feedback`, `CueName` — 11 named cues).
-Look here for: recording lifecycle, silence-detection thresholds, sample-rate/channel negotiation, adding a new audio cue, cue playback (pw-play/paplay), volume/mute handling.
+## .github
 
-## `src/stenographer/asr/`
-Purpose: offline speech-to-text via faster-whisper — batch transcription, word-timestamped transcription, off-thread execution with cancellation, and the live word-commit policy.
-Key files: `model.py` (`Model`, `LazyModel`, `SegmentInfo`, `WordInfo`, `TranscriptionResult`), `worker.py` (`Worker`, `Job`, `CancelledError`), `streaming.py` (`StreamingTranscriber`, LocalAgreement-N).
-Look here for: ASR model loading/unloading, submitting transcription jobs, cancellation semantics, the live streaming commit algorithm (word agreement, rebase/trim).
+Automation: pre-commit hook, CI, and release pipelines.
+Key files: `.githooks/pre-commit` (ruff format on staged Python), `.github/workflows/ci.yml` (lint/test/build on PR), `.github/workflows/release.yml` (version extraction, build, GitHub Release publish on push to main), `.github/workflows/release-badge.yml` (shields.io badge on `badges` orphan branch).
+Look here for: what CI actually gates, how releases get versioned/published, why a merge to main might be rejected (duplicate version tag).
 
-## `src/stenographer/output/`
-Purpose: turning final/committed transcript text into typed keystrokes and clipboard content, with heuristic text formatting in between.
-Key files: `inject.py` (`Injector` — `type_text()`, `paste()`, both via `wtype` subprocess), `clipboard.py` (`ClipboardManager` — `copy()`/`read()` via `wl-copy`/`wl-paste`), `formatter.py` (`HeuristicFormatter` — `feed()` incremental, `format_batch()` one-shot; spacing/capitalization/paragraph-pause rules).
-Look here for: how transcript text is typed at the cursor, clipboard fallback behavior, spacing/capitalization/paragraph-break rules, adding a new output sink or formatting rule.
+## packaging
 
-## `tests/`
-Purpose: pytest suite mirroring `src/stenographer/` one-to-one (e.g. `test_capture.py` ↔ `audio/capture.py`), plus `fixtures/` for shared test data.
-Key files: one `test_<module>.py` per source module (`test_session.py`, `test_hotkey.py`, `test_lazy_model.py`, `test_worker_cancel.py`, `test_streaming.py`, `test_capture.py`, `test_feedback.py`, `test_inject.py`, `test_clipboard.py`, `test_formatter.py`, `test_config.py`, `test_capabilities.py`, `test_errors.py`, `test_notification.py`, `test_update.py`, `test_bench.py`, `test_transcription.py`, `test_cli_completion.py`, `test_cli_systemd.py`, `test_cli_update.py`, `test_live.py`).
-Look here for: existing test conventions/fixtures for a module before writing a new test file; the `integration` marker pattern for tests touching real audio/clipboard/display.
+PyInstaller bundling and end-user install script.
+Key files: `stenographer.spec` (Analysis/EXE/COLLECT config, `collect_submodules("stenographer")`), `hook-sounddevice.py` (excludes system audio libs from bundle), `rthooks/py_rth_portaudio.py` (sets `LD_LIBRARY_PATH` at runtime), `install.sh` (curl-able installer: deps check, download+SHA-256 verify, systemd setup), `stenographer.service.in` (systemd user unit template), `stenographer-completion.bash` (argcomplete bash/zsh completion).
+Look here for: what's bundled vs. expected on the system at runtime, how the frozen binary resolves native libraries, the end-user install flow.
 
-## `scripts/`
-Purpose: developer/build utility scripts — not shipped in the package.
-Key files: `build.sh` (PyInstaller build), `install.sh` (source install + systemd), `build-and-install.sh` (wrapper), `download_model.py` (HF `snapshot_download`), `gen_cues.py` (synthesizes the 11 WAV cues into `assets/sounds/`), `install-hooks.sh` (git hooks config).
-Look here for: how the standalone binary is built/installed, how ASR models are fetched, how audio cues are generated (useful if a feature needs a new cue).
+## scripts
 
-## `packaging/`
-Purpose: PyInstaller packaging config and end-user distribution assets.
-Key files: `stenographer.spec` (PyInstaller entry point/hidden imports/data files), `hook-sounddevice.py` + `rthooks/py_rth_portaudio.py` (exclude/relink system audio libs), `install.sh` (curl-pipeable installer for prebuilt releases), `stenographer.service.in` (systemd user unit template), `stenographer-completion.bash` (shell completion).
-Look here for: what ships in the frozen binary, systemd unit contents, the end-user (non-source) install flow.
+Build/install/asset-generation tooling invoked by developers and by `install.sh`.
+Key files: `build.sh` (wraps `pyinstaller` on `packaging/stenographer.spec`), `build-and-install.sh` (build.sh + install.sh wrapper), `install.sh` (6-step local deploy: build if missing, copy to `~/.local/share/stenographer/`, symlink, install completion, systemd unit, enable+start), `install-hooks.sh` (`git config core.hooksPath .githooks`), `download_model.py` (fetches ASR model via `huggingface_hub.snapshot_download`), `gen_cues.py` (generates the 13/16 WAV feedback cues into `assets/sounds/`).
+Look here for: how the standalone binary gets built and installed locally, how audio cues are (re)generated, how the ASR model is fetched.
 
-## `.github/` + `.githooks/` (misc/CI)
-Purpose: git hooks and CI/CD — pre-commit formatting, release pipeline, badge updates.
-Key files: `.githooks/pre-commit` (ruff format on staged files), `.github/workflows/release.yml` (lint → test → build → publish GitHub Release on push to `main`), `.github/workflows/release-badge.yml` (updates orphan `badges` branch).
-Look here for: what CI enforces before a merge to `main` is releasable (version bump requirement, lint/test gates).
+## src/stenographer (core: cli, config, session, cross-cutting)
 
-## Root files
-Purpose: project metadata and docs.
-Key files: `pyproject.toml` (hatchling; single source of truth for metadata/deps/version; ruff/pytest config), `CLAUDE.md`/`AGENTS.md` (agent-facing dev guidance), `README.md` (user-facing install/config/usage), `BUILD.md` (binary build instructions + runtime deps table), `LICENSE` (GPL-3.0).
-Look here for: dependency versions, version bump location (`[project].version`), documented runtime requirements.
+Top-level dispatch, config schema, and the per-utterance orchestrator; everything not owned by a component submodule.
+Key files: `cli.py` (`main`, subcommand dispatch), `_parser.py` (lightweight argparse for argcomplete), `config.py` (`Config` dataclass hierarchy + TOML load/validate), `session.py` (`Session` orchestrator), `live.py` (`LiveStreamer`), `errors.py` (`StenographerError` hierarchy + policy functions), `capabilities.py` (`Capabilities.probe()`), `notification.py` (`DesktopNotification`), `update.py` (self-update), `llm.py` (`rewrite_prompt`, prompt-mode LLM rewrite), `bench.py` (ASR benchmarking: WER, RTF).
+Look here for: subcommand behavior, config schema/validation rules, session/cancel/discard semantics, error-handling policy, self-update mechanics.
+
+## src/stenographer/hotkey
+
+Hotkey binding parsing, evdev listener, and the pure PTT/toggle state machine.
+Key files: `binding.py` (`HotkeyBinding.parse`), `listener.py` (`HotkeyListener`, multi-device evdev reader threads), `state_machine.py` (`HotkeyStateMachine`: IDLE/RECORDING_PTT/PENDING_TAP/TOGGLE_LATCHED/TOGGLE_STOPPING).
+Look here for: how the hybrid PTT/toggle trigger works, double-tap timing, cancel-chord handling, multi-HID keyboard quirks.
+
+## src/stenographer/audio
+
+Microphone capture and audio feedback cues.
+Key files: `capture.py` (`Recorder`: PortAudio stream, RMS silence detection, polyphase FIR resample fallback), `feedback.py` (`Feedback`: `pw-play`/`paplay` cue playback).
+Look here for: silence-detection thresholds, sample-rate/channel fallback behavior, cue playback.
+
+## src/stenographer/output
+
+Text injection and clipboard.
+Key files: `inject.py` (`Injector`: `wtype` text injection, paste-via-Ctrl+V fallback), `clipboard.py` (`ClipboardManager`: `wl-copy`/`wl-paste`), `formatter.py` (`HeuristicFormatter`: append-only spacing/capitalisation/paragraph-break formatting).
+Look here for: how text reaches the screen/clipboard, truncation limits, formatting heuristics.
+
+## src/stenographer/asr
+
+faster-whisper wrapper, background worker, and the streaming word committer.
+Key files: `model.py` (`Model`, `LazyModel`, `SegmentInfo`/`WordInfo`/`TranscriptionResult`), `worker.py` (`Worker`: job queue, cancellation, idle-unload plumbing), `streaming.py` (`StreamingTranscriber`: pure LocalAgreement-N committer).
+Look here for: batch vs. word-timestamped transcription, model lazy-load/idle-unload, the streaming commit algorithm.
+
+## tests
+
+~7,400-line pytest suite mirroring `src/stenographer/`, 24 files.
+Key files: `test_session.py` (1,460 lines — the core orchestrator), `test_config.py` (885 lines), `test_update.py` (593 lines), `test_hotkey.py` (581 lines), `test_capture.py` (558 lines), `test_live.py` (524 lines).
+Look here for: expected behavior/edge cases of any component; `integration`-marked tests show what touches real hardware/tools.
+
+## Open Questions
+
+- How does `scripts/install.sh`'s `stenographer.service.in` → `stenographer.service` templating step relate to the one embedded directly in `scripts/install.sh` (unit content built inline)? Two systemd-unit generation paths are referenced across `packaging.md` and `scripts.md` — unclear if they're kept in sync or one is stale.

@@ -1,70 +1,72 @@
 ---
-generated: 2026-07-11T05:16:32Z
-commit: f5694b5bffd265badb03101b726304b5e6a0efb4
+generated: 2026-07-15T17:38:33Z
+commit: d621b46261d9509fccbdffc4686be0b876c7951e
 agent: fledge-forager
-fledge_version: 0.4.0
+fledge_version: 0.5.4
 ---
 
 # Conventions
 
-Coding, tooling, and process conventions observed across the repository, reconciled across modules.
+Coding, tooling, and process conventions observed across the repository, reconciled where scout reports overlapped or disagreed.
 
 ## Licensing & headers
-- Every `.py` file (source, scripts, and PyInstaller hooks) starts with `# SPDX-License-Identifier: GPL-3.0-or-later`.
-- CI workflow YAML files also carry the SPDX header.
+
+- Every source file (Python, bash, YAML workflows) carries `# SPDX-License-Identifier: GPL-3.0-or-later` at the top (`root.md`, `.github.md`, `packaging.md`, `scripts.md`, `src-asr.md`, `src-audio.md`, `src-core.md`, `src-hotkey.md`, `tests.md`).
+- Project license: GNU GPL v3-or-later (`LICENSE`).
+
+## Python style
+
+- `from __future__ import annotations` used for forward references (`src-audio.md`).
+- Comprehensive type hints throughout; `TYPE_CHECKING`-gated imports to avoid runtime import cycles (`src-asr.md`, `src-core.md`).
+- Dataclasses used heavily; data-carrying types (`SegmentInfo`, `WordInfo`, `TranscriptionResult`, `Capabilities`, `UpdateInfo`) are `frozen=True` (immutable) (`src-asr.md`, `src-core.md`).
+- Naming: public classes in `TitleCase` (`Recorder`, `Injector`, `HotkeyListener`); private methods/attributes/constants prefixed `_` (`_on_audio`, `_FALLBACK_SAMPLE_RATES`); callbacks named `on_*` (`on_segment`, `on_loaded`) (`src-audio.md`, `src-hotkey.md`, `src-core.md`).
+- Keyword-only arguments after `*` in constructors and public methods, e.g. `Recorder.__init__(self, *, sample_rate=..., device=...)` (`src-audio.md`).
+- Module-level loggers via `log = logging.getLogger(__name__)`; debug-level logging for expected/no-op paths (e.g. tool unavailable), error-level for real failures; full transcript text is logged only at DEBUG (privacy) (`src-audio.md`, `src-core.md`).
+- Sentinel objects used to distinguish special queue/state values from real data (`_UNLOAD` in `asr/worker.py`, `_PARTIAL`/`_FINAL`/`_ABORT` in `live.py`) (`src-asr.md`, `src-core.md`).
+- Pure vs. stateful separation is deliberate: `HotkeyStateMachine` and `StreamingTranscriber` are pure (no I/O/timers/side effects) so they're easy to unit-test; I/O-touching components (`Recorder`, `Injector`, `ClipboardManager`) wrap subprocess/hardware calls and expose `close()` for uniform cleanup (`src-hotkey.md`, `src-asr.md`, `src-audio.md`).
 
 ## Linting & formatting
-- `ruff` line-length 100, `target-version py314`, rule set `["E", "F", "I", "B", "UP", "N", "SIM", "RUF"]` (`pyproject.toml [tool.ruff]`).
-- Pre-commit hook (`.githooks/pre-commit`, enabled via `scripts/install-hooks.sh` → `git config core.hooksPath`) auto-formats staged `.py` files with ruff and re-stages them; looks up `.venv/bin/ruff` before falling back to system `ruff`.
-- CI (`release.yml` `lint-test` job) runs `ruff check` and `ruff format --check` before tests.
 
-## Layout
-- src-layout: `src/stenographer/`. `tests/` mirrors it file-for-file (`test_<module>.py` ↔ `<module>.py`).
-- `pyproject.toml` (hatchling backend) is the single source of truth for metadata, runtime/dev/build dependencies, entry point, and wheel-included assets (`assets/sounds/*.{wav,ogg}`, `assets/icons/*.png`).
+- `ruff` — `line-length = 100`, `target-version = "py314"`, rules `E,F,I,B,UP,N,SIM,RUF` (`root.md`, `src-core.md`).
+- `.githooks/pre-commit` runs `ruff format` on staged `*.py` files and re-stages them; prefers `.venv/bin/ruff`, falls back to system `ruff` (`.github.md`). Enabled via `scripts/install-hooks.sh` (`git config core.hooksPath .githooks`).
+- CI (`ci.yml`) checks lint and `ruff format --check` before test/build.
+
+## Build & packaging conventions
+
+- `hatchling` via `pyproject.toml` is the single source of truth for metadata/deps — no `setup.py`/`setup.cfg` (`root.md`).
+- src-layout package (`src/stenographer/`); tests mirror it 1:1 (`tests/test_*.py`) (`root.md`).
+- PyInstaller spec (`packaging/stenographer.spec`) documents in comments which system libraries are intentionally excluded from the bundle (`packaging.md`).
+- All `.sh` scripts open with `#!/usr/bin/env bash` and `set -euo pipefail` (`scripts.md`, `packaging.md`).
+- Bash conventions: helper functions (`info`, `warn`, `err`, `ok`) for consistent colored messaging; `ask_yn`/`ask_default` with `/dev/tty` fallback for prompts when piped through `curl`; section delimiters (`# ── label ──`) (`packaging.md`, `scripts.md`).
+- Python CLI scripts use `argparse.ArgumentParser` and `if __name__ == "__main__": sys.exit(main())` (`scripts.md`).
 
 ## Error handling policy
-- All components raise `StenographerError` subclasses (`errors.py`): `ConfigError`, `CapabilityError`, `AudioCaptureError`, `TranscriptionError`, `UpdateError`. Never invent ad hoc error behavior.
-- Three policy functions gate what happens on failure: `notify_failure()` (log ERROR, continue), `fatal()` (log CRITICAL, `sys.exit(78)` default — EX_CONFIG), `degrade_capability()` (log WARNING, continue with reduced functionality).
-- `doctor` subcommand and `run`/`dictate` capability checks exit 78 when a *required* capability (input group, mic, ASR model) is missing; optional capabilities (wtype, wl-copy, notify-send) degrade gracefully with a WARNING and the daemon continues.
+
+- All components raise `StenographerError` subclasses (`ConfigError`, `CapabilityError`, `AudioCaptureError`, `TranscriptionError`, `UpdateError`, `LlmError`) rather than inventing ad hoc behavior; policy funneled through `notify_failure`, `fatal`, `degrade_capability` (`errors.py`, per `root.md`, `src-core.md`).
+- Missing required capability (hotkey device, mic, ASR model) → exit code 78 (`EX_CONFIG`) (`root.md`).
+- Bad config value → `ConfigError` with dotted key path and reason, exit 78 (`src-core.md`).
+- Fire-and-forget cleanup (e.g. cue playback on shutdown) wrapped in `contextlib.suppress` (`src-core.md`).
+- I/O components (`audio/`, `output/`) check an `available`/`_available` flag before acting and no-op gracefully if the underlying tool is missing; subprocess calls wrapped for `CalledProcessError`, `TimeoutExpired`, `FileNotFoundError` with explicit timeouts and `DEVNULL` stdio (`src-audio.md`).
 
 ## Threading & concurrency
-- Reentrant locks (`threading.RLock`) protect shared mutable state where callbacks may re-enter (e.g. `Session._lock` shared with the hotkey listener's dispatch path; `LazyModel`'s internal RLock).
-- Generation counters are the repo's standing pattern for invalidating stale async work rather than cancellation exceptions: `Session._cancel_generation` (queue items), `LazyModel._load_generation` (idle-unload requests), `HotkeyStateMachine._pending_generation` (double-tap timeout callbacks).
-- Callbacks invoked directly from a non-owning thread (e.g. the PortAudio callback thread calling `Session._enqueue_flush_segment`) deliberately avoid taking the shared lock — they touch only thread-safe primitives (`queue.Queue`) and plain-read attributes, and must stay non-blocking.
-- Off-main-thread work (ASR transcription, model unload) goes through a dedicated worker thread with a job queue, never as a fire-and-forget `Thread` per call.
 
-## Dataclasses & immutability
-- Value/result types are frozen dataclasses: `SegmentInfo`, `WordInfo`, `TranscriptionResult` (asr/model.py), `Capabilities`, `UpdateInfo`, `Config` and its nested sub-configs.
-- "Committed"/immutable-once-set semantics recur deliberately: `StreamingTranscriber`'s committed prefix is never revised; typed output in the live path is likewise never revised (an explicit invariant documented in `live.py`).
-
-## Naming & style
-- Private members prefixed `_`, no double-underscore name mangling.
-- `Literal` types for closed string enums (`CueName`, hotkey `State`/`Action`, `AsrConfig.mode`, `OutputConfig.injection_method`).
-- `NamedTuple` for small immutable return bundles (`Transition`).
-- Public API surfaced through package `__init__.py` exports (`hotkey/__init__.py`, `asr/__init__.py`); internal helpers stay unexported.
-
-## Config
-- TOML, loaded once at startup. `Config.defaults()` is the single source of truth for default values; `Config.load(path)` parses, validates per-section (`_build_hotkey`, `_build_audio`, etc.), and merges with defaults.
-- Resolution order: `$STENOGRAPHER_CONFIG` env override → `$XDG_CONFIG_HOME/stenographer/config.toml` (default `~/.config/stenographer/config.toml`); default TOML written on first run.
-- `null` TOML values are rewritten to `""` at load time so users can explicitly blank an optional string key.
-
-## Logging
-- Module-level `logger = logging.getLogger(__name__)` per file; log messages prefixed with a context marker, e.g. `"session: ..."`, `"output.inject: ..."`.
-- stderr + `RotatingFileHandler` at `$XDG_STATE_HOME/stenographer/stenographer.log` (default `~/.local/state/stenographer/`); level overridable via `STENOGRAPHER_LOG_LEVEL` env.
-- DEBUG for routine events (keypresses, resampling fallbacks), WARNING/ERROR for degraded capabilities and failures.
-
-## Process/build
-- Bash scripts (`scripts/*.sh`, `packaging/install.sh`) uniformly use `set -euo pipefail`, `cd "$(git rev-parse --show-toplevel)"` or `cd "$(dirname "$0")"` for path independence, and dedicated `err()/warn()/ok()/info()` helper functions with ANSI colors (stripped if not a TTY).
-- All Python tooling invoked through `.venv/bin/...` — never system `python`/`pip`/`ruff`/`pytest` (CLAUDE.md, scripts/build.sh).
-- Standalone binary: PyInstaller `--onedir` via `packaging/stenographer.spec`; `_resolve_asset_root()`/`_resolve_icon_root()` in `cli.py` handle both wheel-install and frozen-binary asset paths.
+- `Session` guards all state with an `RLock` shared with hotkey-listener callbacks (`src-core.md`).
+- Generation counters (`_pending_generation` in the hotkey state machine, `_cancel_generation` in Session) invalidate stale timeouts/callbacks after a state transition supersedes them (`src-hotkey.md`, `src-core.md`).
+- `queue.Queue` for thread-safe job/utterance pipelines; `threading.Event` for cancel/abort signals; `threading.Timer` for idle-unload and double-tap windows (`src-asr.md`, `src-core.md`, `src-hotkey.md`).
+- `LazyModel` holds a `weakref` to its `Worker` to permit cleanup without a circular reference (`src-asr.md`).
 
 ## Release process
-- Develop on `dev`; merge to `main` triggers `.github/workflows/release.yml` (lint → test → build → publish `v<version>` GitHub Release via `softprops/action-gh-release@v3`).
-- The workflow refuses to reuse an existing release tag — **every merge to `main` must bump `[project].version` in `pyproject.toml`** first.
-- Release notes generated from `git log` since the previous tag.
 
-## Tests
-- pytest (+ `pytest-asyncio`) exclusively; one `test_<module>.py` file per source module, mirroring `src/stenographer/` layout.
-- `integration` marker for tests touching real clipboard/audio/display — skipped by default, run via `STENOGRAPHER_INTEGRATION=1`.
-- Heavy use of `unittest.mock.MagicMock` to isolate components (e.g. `test_session.py` mocks Recorder, Worker, Injector, Clipboard, Feedback, Listener entirely).
-- Assertions via `assert_called_once_with()`, `assert_not_called()`, etc.; fixtures follow a `_make_x()` / `_fake_x()` naming convention.
+- Develop on `dev`; merging `dev` → `main` triggers `.github/workflows/release.yml` (lint, test, build, publish `v<version>` GitHub Release) (`root.md`).
+- Every merge to `main` must bump `[project].version` in `pyproject.toml` — the release workflow refuses to reuse an existing version tag (`root.md`, `.github.md`).
+- Release notes auto-generated from `git log <prev-tag>..v${VERSION} --oneline` (`.github.md`).
+- `release-badge.yml` updates a shields.io JSON badge on an orphan `badges` branch after each release, committed as `github-actions[bot]` (`.github.md`).
+
+## Testing conventions
+
+See `testing.md` for full detail; key conventions: `pytest` with an `integration` marker (opt-in, `STENOGRAPHER_INTEGRATION=1`), helper functions instead of fixtures for building test prerequisites (`_cfg()`, `_make_session()`), and fake/mock objects (`_FakeDevice`, `_FakeRecorder`) over real hardware (`tests.md`).
+
+## Open Questions
+
+- The exact enforcement mechanism for "system libraries not bundled" (spec comment) — is it verified anywhere in CI, or purely convention? (`packaging.md`)
+- Type-checking (mypy/pyright) is noted elsewhere as a "future addition" with no adoption yet — no target date found in scout reports (`root.md`).

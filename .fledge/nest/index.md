@@ -1,40 +1,43 @@
 ---
-generated: 2026-07-11T05:16:32Z
-commit: f5694b5bffd265badb03101b726304b5e6a0efb4
+generated: 2026-07-15T17:38:33Z
+commit: d621b46261d9509fccbdffc4686be0b876c7951e
 agent: fledge-forager
-fledge_version: 0.4.0
+fledge_version: 0.5.4
 ---
 
 # Context Index
 
+Generated: 2026-07-15T17:38:04Z
+Commit: d621b46261d9509fccbdffc4686be0b876c7951e
+
 ## architecture.md
-Traces the end-to-end utterance flow (hotkey → record → transcribe → output), the `Session` orchestrator's role as the single lock-guarded state-transition point, the four injected component layers (hotkey/audio/asr/output), the live-streaming driver, cross-cutting concerns (config, capabilities, errors, notifications, update, bench), and the concurrency model (RLock + generation-counter pattern).
-Read this when: understanding how a new mode or component would wire into `Session`, tracing a bug across threads, or planning any change that touches more than one layer.
+Describes how the pipeline fits together: `Session` as the lock-guarded orchestrator, the hotkey→record→ASR→output component chain, the live-streaming invariant (typed text is never revised), and cross-cutting policies (config, capabilities, errors, notifications, update, single-instance lock). Also covers the packaging/distribution architecture (frozen binary vs. system libraries).
+Read this when: you need to understand how components wire together, are tracing a callback/state-transition path across module boundaries, or are deciding where a new cross-cutting concern belongs.
 
 ## modules.md
-Repo map — each top-level module (root package, `hotkey/`, `audio/`, `asr/`, `output/`, `tests/`, `scripts/`, `packaging/`, CI) with its purpose, key files, and a "Look here for" routing line.
-Read this when: deciding which files/module a change belongs in, or getting oriented in an unfamiliar part of the tree.
+A per-directory map (root, .github, packaging, scripts, src/stenographer core, hotkey, audio, output, asr, tests) — purpose, key files, and "Look here for" pointers for each.
+Read this when: you know roughly what you're looking for but not which file/directory owns it, or you're getting oriented in the repo for the first time.
 
 ## conventions.md
-Reconciled coding/process conventions: SPDX headers, ruff config, error-handling policy (`StenographerError` + `notify_failure`/`fatal`/`degrade_capability`), the RLock + generation-counter concurrency pattern, config loading rules, logging format, release process (version bump gate), and test conventions.
-Read this when: writing new code and needing to match existing style, error handling, logging, or concurrency idioms; before bumping the version for a release.
+Reconciled coding/tooling/process conventions: Python style (dataclasses, naming, pure-vs-stateful split), ruff/pytest config, build conventions (hatchling, PyInstaller, bash script conventions), error-handling policy, threading patterns, and the release process (dev→main version bump gate).
+Read this when: writing new code and need to match existing style, adding a new component and unsure how it should handle errors/threading, or preparing a release/PR.
 
 ## data-model.md
-Every dataclass/type in the codebase with fields and file references: `Config` and its nested sub-configs, `Capabilities`, ASR types (`SegmentInfo`, `WordInfo`, `TranscriptionResult`, `Job`), `Session`/`_LiveItem` state, hotkey `State`/`Action`/`Transition`/`HotkeyBinding`, `CueName`, `UpdateInfo`, benchmark types, error hierarchy.
-Read this when: adding a new config field, a new data type, or needing exact field names/types for an existing type.
+Every dataclass/Protocol/Literal type in the pipeline: the 9-part `Config` hierarchy, ASR types (`SegmentInfo`, `WordInfo`, `TranscriptionResult`, `Job`), session/live-streaming state, `Capabilities`, `UpdateInfo`, hotkey `State`/`Action`/`Transition`, `CueName`, and benchmarking types.
+Read this when: you need exact field names/types for a dataclass, are wiring new config, or need to know what shape of data flows between two components.
 
 ## dependencies.md
-Every external dependency (Python packages, system CLIs invoked via subprocess, native libraries, services) with what it's used for and where.
-Read this when: adding a new dependency, checking whether a capability is already probed, or working with subprocess-invoked tools (wtype, wl-copy, pw-play/paplay, notify-send, systemctl).
+Deduplicated external dependency list with usage notes: Python runtime/dev/build deps, required system CLIs and libraries (wtype, wl-copy, libportaudio, libevdev), external services (GitHub Releases, Hugging Face Hub, optional local LLM endpoint), and CI-specific dependencies.
+Read this when: adding/removing a dependency, debugging a missing-tool/capability failure, or checking what a fresh install/CI environment needs.
 
 ## entry-points.md
-CLI subcommands and exit codes; the `Session` constructor boundary and every constructor-injected component's public method surface (the seams a new feature plugs into); config/capabilities/update entry points; systemd integration; build/install/release entry points.
-Read this when: adding a CLI subcommand, wiring a new component into `Session`, or needing the exact public API of an existing component (Injector, ClipboardManager, HeuristicFormatter, Recorder, Worker, LazyModel, etc.).
+Every way into the system: the `stenographer` CLI and its subcommands (run, dictate, transcribe, model download, bench, update, doctor, devices, enable/disable/start/stop), each component's public class/method API, and the build/install/test/release commands.
+Read this when: you need to invoke or extend a subcommand, call a component's public API, or need the exact command to build/install/lint/test the project.
 
 ## testing.md
-pytest conventions: how to run (unit vs. full vs. single test), the `integration` marker, the 1:1 `tests/` ↔ `src/stenographer/` file mapping, per-area test file inventory, and recurring test patterns (MagicMock fixtures, `_make_x()`/`_fake_x()` naming, frozen-dataclass fixtures, caplog usage).
-Read this when: writing tests for a new feature — find the existing pattern for the component type you're touching (pure state machine vs. subprocess wrapper vs. threaded orchestrator).
+How the ~7,400-line pytest suite is organized: running unit vs. integration tests, marker/skip conventions, mocking patterns (fakes vs. monkeypatch vs. pure-function tests), and a file-by-file coverage map of all 24 test files.
+Read this when: writing a new test and need to match existing patterns, deciding whether a test should be `integration`-marked, or figuring out which existing test file already covers a given behavior.
 
 ## domain.md
-Glossary: recording trigger modes (PTT, toggle, double-tap, chord, cancel chord, generation), utterance lifecycle (segment, silence detection, batch vs. streaming, injection method), ASR concepts (compute type, beam size, lazy/eager, LocalAgreement-N, WER/RTF), output concepts (formatter, clipboard fallback), platform concepts (Wayland-only, input group, capability degradation), release/versioning terms.
-Read this when: unsure what a domain term means in a spec, PR, or code comment; scoping a new feature that needs to reuse existing vocabulary correctly (e.g. distinguishing PTT from toggle from streaming).
+Glossary of dictation-domain and project-specific terms: hotkey/recording modes (PTT, toggle, chord, cancel, discard, prompt mode), transcription/streaming terms (LocalAgreement-N, committed, RTF, WER, tail-silence guard), audio/output terms (RMS threshold, cue, injection, clipboard fallback), and packaging/release terms (frozen binary, onedir, SHA-256 verification).
+Read this when: you encounter an unfamiliar term in code, comments, or a spec/plumage, and need its precise meaning in this codebase.

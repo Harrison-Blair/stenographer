@@ -1,74 +1,63 @@
 ---
-generated: 2026-07-11T05:16:32Z
-commit: f5694b5bffd265badb03101b726304b5e6a0efb4
+generated: 2026-07-15T17:38:33Z
+commit: d621b46261d9509fccbdffc4686be0b876c7951e
 agent: fledge-forager
-fledge_version: 0.4.0
+fledge_version: 0.5.4
 ---
 
 # Entry Points
 
-How to run, build, and interact with the project; the boundaries components expose to each other.
+Where to start reading for each user- or developer-facing surface: the CLI, its subcommands, public component APIs, and how to build/install/run the project.
 
-## CLI (`stenographer.cli:main`, declared in `pyproject.toml [project.scripts]`)
-Argument parsing lives in `_parser.py` (kept import-light for the argcomplete hot path); heavy imports (faster-whisper, sounddevice) are deferred into each `cmd_*` handler in `cli.py`.
+## CLI entry point
 
-Subcommands:
-- `run` — foreground daemon; holds a single-instance `fcntl.flock` on `$XDG_RUNTIME_DIR/stenographer.lock`; builds the full `Session` via `cli.py:_build_session()` and blocks on `Session.run()`.
-- `dictate` — one-shot arm/dictate/exit (`Session(one_shot=True)`), used for scripted/manual single-utterance invocation.
-- `transcribe FILE` — batch transcription of an existing audio file (no hotkey/recorder involved).
-- `bench` — offline ASR benchmarking harness (`bench.py:run()`); compares (model × beam × compute_type) tuples on load time, RTF, WER.
-- `model download` — fetches the ASR model via `huggingface_hub.snapshot_download` (also available standalone as `scripts/download_model.py`).
-- `update [--check]` — self-update from GitHub Releases (`update.py`).
-- `doctor` — runs `Capabilities.probe()` and reports; exits 78 if a required capability is missing.
-- `devices` — lists audio input devices (sounddevice query).
-- `enable` / `start` / `stop` / `disable` — systemd user-unit lifecycle management.
-- `--version` — prints `__version__` (from `importlib.metadata`, falls back to `"0.0.0+unknown"`).
+`stenographer` command (`[project.scripts]` in `pyproject.toml`) → `stenographer.cli:main`. `main(argv)` in `cli.py` parses args (via the separate lightweight `_parser.py`, kept import-light for the argcomplete hot path), handles `--config`/`--version`, and dispatches to `cmd_*` functions (`root.md`, `src-core.md`).
 
-Exit codes: `0` success, `1` runtime error, `2` usage error, `78` (EX_CONFIG) config/capability error.
+### Subcommands
 
-## Session boundary (`session.py:Session`)
-Constructed by `cli.py:_build_session(cfg, caps, one_shot)`, given: `cfg`, `capabilities`, `listener` (may be late-bound via `attach_listener()`), `recorder`, `worker`, `feedback`, `injector`, `clipboard`, `notification=None`, `one_shot=False`.
-Public surface: `attach_listener()`, `start_listener()`, `start()`, `run()`, `stop()`; properties `stop_event`, `is_one_shot`, `lock`, `notification`; hotkey callbacks `on_recording_start()`, `on_recording_stop(mode)`, `on_toggle_off()`, `discard_recording()`, `cancel_all()`.
+- `run` — foreground daemon; holds a `fcntl.flock` on `$XDG_RUNTIME_DIR/stenographer.lock` for single-instance enforcement.
+- `dictate` — one-shot: arm, dictate, exit.
+- `transcribe FILE` — batch mode, formatted or `--raw` output.
+- `model download [--repo-id ...]` — fetches the ASR model (~800 MB) via `huggingface_hub`.
+- `bench` — ASR benchmarking harness (word error rate, RTF across model/beam/compute_type matrix).
+- `update [--check]` — self-update from GitHub Releases.
+- `doctor` — probes capabilities (`Capabilities.probe()`) and prints resolved config; exits 78 if a required capability is missing.
+- `devices` — lists audio devices.
+- `enable`/`disable`/`start`/`stop` — systemd user-service management (deprecated `run stop`/`run disable` syntax detected and rejected).
+- `--version` — prints package version.
 
-## Component boundaries (constructor-injected into Session — the seams a new mode/output plugs into)
-- **`hotkey.HotkeyListener`** — `start()`, `stop(timeout=2.0)`, `is_running`; invokes `on_start`/`on_stop`/`on_toggle_off`/`on_discard`/`on_cancel` callbacks under an optional shared `RLock`.
-- **`hotkey.HotkeyBinding`** — `HotkeyBinding.parse(s)`, `.to_evdev_codes()`, `.matches(event_keys)`.
-- **`audio.Recorder`** — `start(on_segment=None, on_partial=None, min_partial_seconds=1.0)`, `stop() -> np.ndarray`, `snapshot(start_seconds=0.0) -> np.ndarray`, `is_active`, `default_input_device_name()`.
-- **`audio.Feedback`** — `play(name: CueName)`, `close()`.
-- **`asr.LazyModel` / `asr.Model`** — `ensure_loaded()`, `is_loaded()`, `close()`, `transcribe()`, `transcribe_words()`, `attach_worker()`; properties `language`, `beam_size`.
-- **`asr.Worker`** — `start()`, `submit()` (batch), `submit_words()` (word-timestamped re-decode), `request_unload()`, `cancel()`, `stop()`, `ensure_model_loaded()`, `is_model_loaded()`; property `is_running`.
-- **`asr.streaming.StreamingTranscriber`** — pure LocalAgreement-N committer (not directly injected into Session; used inside `live.py:LiveStreamer`).
-- **`live.LiveStreamer`** — constructed with `cfg, recorder, worker, injector, transcriber, formatter, clipboard, caps, abort`; `run() -> str`, `signal_partial()`, `signal_final(samples)`, `signal_abort()`.
-- **`output.Injector`** — `type_text(text, raw=False) -> bool`, `paste() -> bool`, `close()`.
-- **`output.ClipboardManager`** — `copy(text) -> bool`, `read() -> str | None` (test-only), `close()`.
-- **`output.HeuristicFormatter`** — `feed(tokens) -> str` (incremental), `finalize() -> str`, `reset()`, `format_batch(tokens) -> str` (one-shot).
-- **`notification.DesktopNotification`** — `show_startup(binding)`, `show_listening()`, `show_transcribing()`, `show_model_loading()`, `show_model_unloaded()`, `hide()`, `flush()`; `DesktopNotification.probe()`.
+## Component public interfaces
 
-## Config entry point (`config.py`)
-- `Config.defaults() -> Config`
-- `Config.load(path) -> Config`
-- `Config.write_default(path)` — writes the default TOML on first run.
-- Resolution order: `$STENOGRAPHER_CONFIG` env → `$XDG_CONFIG_HOME/stenographer/config.toml` (default `~/.config/stenographer/config.toml`).
+- **`Session`** (`session.py`) — constructed by `cli.py`'s `run`/`dictate` paths; callbacks `on_recording_start`/`on_recording_stop`, `discard_recording`, `cancel_all`; queues batch/live utterances to an internal processor thread (`src-core.md`).
+- **`LiveStreamer`** (`live.py`) — streams partials through `worker.submit_words`, LocalAgreement committer, formatter, typed delta with tail-silence guard and sentence-boundary trim.
+- **`Config`** (`config.py`) — `Config.load(path)`, `Config.defaults()`, `Config.write_default(path)`; raises `ConfigError` with dotted key path on invalid values.
+- **`Capabilities`** (`capabilities.py`) — `Capabilities.probe(cfg)` static method, returns a frozen instance.
+- **`HotkeyListener`/`HotkeyBinding`/`HotkeyStateMachine`** (`hotkey/`) — see `architecture.md` for wiring; `auto_detect_paths()`/`auto_detect_path()` scan `/dev/input/event*` for keyboard-like devices.
+- **`Recorder`** (`audio/capture.py`) — `start(*, on_segment=None, on_partial=None, ...)`, `stop() -> np.ndarray`, `snapshot(start_seconds=0.0) -> np.ndarray`, `is_active`, `default_input_device_name()`.
+- **`Feedback`** (`audio/feedback.py`) — `play(name: CueName)`, `close()`.
+- **`Injector`** (`output/inject.py`) — `type_text(text, *, raw=False) -> bool`, `paste() -> bool`, `close()`.
+- **`ClipboardManager`** (`output/clipboard.py`) — `copy(text) -> bool`, `read() -> str | None`, `close()`.
+- **`HeuristicFormatter`** (`output/formatter.py`) — `feed(tokens) -> str` (streaming), `format_batch(tokens) -> str` (batch), `finalize()`, `reset()`.
+- **`Model`/`LazyModel`** (`asr/model.py`) — `transcribe(...)`, `transcribe_words(...)`, `close()`; `LazyModel.ensure_loaded(on_loaded=None, on_unloaded=None)`.
+- **`Worker`** (`asr/worker.py`) — `start()`, `submit(...)`, `submit_words(...)`, `cancel()`, `stop(timeout=30)`.
+- **`StreamingTranscriber`** (`asr/streaming.py`) — `insert(hypothesis)`, `flush()`, `rebase(dropped_seconds)`, `reset()`.
+- **`update` module** (`update.py`) — `check_for_update`, `download_update`, `extract_to_staging`, `apply_update`, `detect_install_root`, `stop_daemon`, `start_daemon`, `acquire_update_lock`.
+- **`DesktopNotification`** (`notification.py`) — `show_startup`, `show_listening`, `show_transcribing`, `show_rewriting`, `show_prompt_ready`/`show_prompt_failed`, `show_model_loading`/`show_model_unloaded`.
 
-## Capabilities entry point (`capabilities.py`)
-- `Capabilities.probe(cfg) -> Capabilities`.
+## Build / install / run
 
-## Update entry points (`update.py`)
-- `check_for_update(cfg, current_version=None, prerelease=False) -> UpdateInfo | None`
-- `download_update(info, cfg, staging_dir=None) -> Path`
-- `extract_to_staging(tarball, install_root) -> Path`
-- `apply_update(bundle, install_root)`
-- `stop_daemon() -> bool`, `start_daemon() -> bool`
+- **Recreate the dev venv**: `python3 -m venv .venv && .venv/bin/pip install -e ".[dev,build]"` — never use system `python`/`pip`/`ruff`/`pytest` (CLAUDE.md, root.md).
+- **Lint/format**: `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .`.
+- **Unit tests**: `.venv/bin/pytest -m "not integration"`.
+- **All tests**: `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest`.
+- **Build standalone binary**: `scripts/build.sh` → wraps `pyinstaller --noconfirm --clean packaging/stenographer.spec` → `dist/stenographer/stenographer` (onedir, ~370 MB).
+- **Full source install**: `scripts/install.sh` — builds if missing, copies to `~/.local/share/stenographer/`, symlinks launcher into `~/.local/bin/`, installs bash completion, generates + enables systemd user unit. Options: `--no-enable`, `--no-start`, `--install-dir DIR`.
+- **Convenience wrapper**: `scripts/build-and-install.sh` — `build.sh` then `install.sh`, passing through args.
+- **End-user install (prebuilt binary)**: `curl -fsSL https://github.com/Harrison-Blair/stenographer/releases/latest/download/install.sh | bash` (or `packaging/install.sh` downloaded from a release) — verifies SHA-256, checks system deps, joins `input` group, generates config, downloads ASR model, enables systemd service.
+- **Enable git hooks**: `scripts/install-hooks.sh` (run once after cloning) — points `git` at `.githooks/` so `ruff format` runs pre-commit.
+- **CI entry points**: `.github/workflows/ci.yml` (PR gate: lint, test, build), `.github/workflows/release.yml` (push-to-main: version extraction, build, GitHub Release publish), `.github/workflows/release-badge.yml` (post-release badge update).
 
-## systemd integration
-User-level unit at `~/.config/systemd/user/stenographer.service` (rendered from `packaging/stenographer.service.in`; `Type=simple`, `ExecStart=%h/.local/share/stenographer/stenographer run`, `Restart=on-failure`, binds to `graphical-session.target`, depends on `pipewire.service`/`pulseaudio.service`). Registered by the `enable` CLI subcommand or manually.
+## Open Questions
 
-## Build / install entry points
-- `scripts/build.sh` → `dist/stenographer/stenographer` (PyInstaller `--onedir` via `packaging/stenographer.spec`).
-- `scripts/install.sh [--no-enable] [--no-start] [--install-dir DIR]` — full source install (build, install to `~/.local/share/stenographer/`, symlink, completion, systemd).
-- `scripts/build-and-install.sh [ARGS]` — wrapper forwarding to both.
-- `packaging/install.sh` — curl-pipeable installer for prebuilt GitHub Release binaries (flags `--version`, `--yes`, `--no-deps`; env overrides `STENOGRAPHER_REPO`, `STENOGRAPHER_VERSION`).
-- `scripts/install-hooks.sh` — one-shot git hook configuration (`core.hooksPath .githooks`).
-
-## Release entry point
-Merge `dev` → `main` triggers `.github/workflows/release.yml` (lint → test → build → publish `v<version>` release); requires `[project].version` in `pyproject.toml` bumped beforehand (workflow refuses to reuse a release tag).
+- Does `scripts/build.sh`'s `pyinstaller --noconfirm --clean` fully rebuild `dist/` each time, or does PyInstaller cache incrementally? Affects local rebuild latency (`scripts.md`).
+- If `scripts/build.sh` fails during the release workflow, does it halt before GitHub Release creation (preventing a partial/broken release)? (`.github.md`)

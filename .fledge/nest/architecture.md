@@ -1,42 +1,48 @@
 ---
-generated: 2026-07-11T05:16:32Z
-commit: f5694b5bffd265badb03101b726304b5e6a0efb4
+generated: 2026-07-15T17:38:27Z
+commit: d621b46261d9509fccbdffc4686be0b876c7951e
 agent: fledge-forager
-fledge_version: 0.4.0
+fledge_version: 0.5.4
 ---
 
 # Architecture
 
-Stenographer is a Wayland-only, local-only push-to-talk / toggle dictation daemon (Python ≥ 3.14). This document traces how a spoken utterance flows through the system end to end and how the major layers depend on each other.
+How stenographer's pieces fit together end to end: the orchestrator, the pipeline it drives, and the cross-cutting policies every component follows.
 
-## Layering
+## Overview
 
-`cli.py` (`main()`) is the process entry point: it parses args via `_parser.py`, probes `Capabilities` (`capabilities.py`), loads `Config` (`config.py`), and — for `run`/`dictate` — wires every component together in `_build_session()` before constructing a `Session`.
+`stenographer` is a Wayland-only, local-only, offline dictation daemon: hotkey → record → transcribe → output (`src/stenographer/*`, per `root.md`). `cli.py:main` dispatches subcommands; the argument parser lives separately in `_parser.py` so the argcomplete hot path avoids heavy imports (`root.md`).
 
-`session.py:Session` is the single orchestrator for one utterance's lifecycle: hotkey → record → transcribe → output. Every callback from the hotkey listener, the recorder, and the ASR worker funnels through `Session` methods guarded by a shared `threading.RLock` (`session.py:_lock`), so concurrent key events, recorder callbacks (which run on the PortAudio thread), and shutdown signals cannot race.
+## The orchestrator: Session
 
-Below `Session` sit four component layers, each independently testable and wired only through constructor injection (no module-level singletons):
+`session.py:Session` is the single point of state transitions for one utterance. It funnels every callback — hotkey listener, recorder, ASR worker — through methods guarded by a re-entrant lock (`_lock`), so concurrent key events and shutdown signals can't race (`src-core.md`). It queues batch items (`_BatchItem`) and live items (`_LiveItem`) onto a processor thread, and exposes lifecycle callbacks for lazy ASR model loading (`src-core.md`).
 
-- **`hotkey/`** — turns raw evdev key events into high-level actions. `binding.py:HotkeyBinding` parses/validates the configured key or chord; `state_machine.py:HotkeyStateMachine` is a **pure** (no I/O) state machine implementing the hybrid trigger (chord held ≥ threshold_seconds = PTT, short tap + second tap within double_tap_window_seconds = latched toggle); `listener.py:HotkeyListener` runs the evdev read loop (one reader thread per `/dev/input/event*` device, for multi-HID keyboards) and drives the state machine, invoking `Session` callbacks (`on_recording_start`, `on_recording_stop`, `on_toggle_off`, `discard_recording`, `cancel_all`).
-- **`audio/`** — `capture.py:Recorder` captures mic audio via `sounddevice`/PortAudio, with a mono float32 ring buffer, sample-rate negotiation/resampling (`_resample_poly`, no scipy), and RMS-based silence detection; `feedback.py:Feedback` plays WAV cues (`assets/sounds/*.wav`) via `pw-play`/`paplay` subprocess, one of 11 named cues (`CueName`).
-- **`asr/`** — `model.py:Model`/`LazyModel` wrap `faster_whisper.WhisperModel` for batch (`transcribe()`) and word-timestamped (`transcribe_words()`) decoding; `LazyModel` adds lazy load-on-first-use and idle-unload-after-timeout. `worker.py:Worker` runs transcription off the main thread via a job queue, supporting per-job cancellation (`threading.Event`) and unload routing (CTranslate2 `ReplicaPool` cleanup must happen on the worker thread). `streaming.py:StreamingTranscriber` is a **pure** LocalAgreement-N committer: a word is committed (and becomes typeable) only once the last N consecutive re-decodes agree on it, and the committed prefix is never revised.
-- **`output/`** — `inject.py:Injector` types text at the cursor via `wtype` subprocess (stateless, degrades to a no-op + `False` return when `wtype` missing); `clipboard.py:ClipboardManager` writes (and, for tests, reads) the Wayland clipboard via `wl-copy`/`wl-paste` subprocess, populated independently of injection so it is the fallback when injection fails; `formatter.py:HeuristicFormatter` is a stateful, **append-only** formatter (spacing normalization, capitalization, pause-based paragraph breaks) — `feed()` for the live/incremental path (each committed token passes through exactly once), `format_batch()` for one-shot batch paths (paste mode, `transcribe FILE`).
+Session owns cancel/discard semantics: **Cancel** (ESC / `cancel_binding`) discards all active recording, queued utterances, and in-flight transcription, but leaves already-typed text in place — there is no undo. **Discard** throws away a short-tap recording only if the hotkey that owns the active recording requests it (`src-core.md`). A `_cancel_generation` counter and per-recording abort `Event` prevent stale callbacks from acting on superseded state.
 
-`live.py:LiveStreamer` is the live-streaming driver that composes recorder partials → `worker.submit_words()` re-decode → `StreamingTranscriber` → `HeuristicFormatter.feed()` → `Injector.type_text(raw=True)`, active only in `injection_method == "text"` mode with `streaming.enabled`. Invariant: typed text is never revised, including on cancel — every intermediate typed state must be a prefix of the final transcript.
+## Component pipeline
 
-## Cross-cutting concerns
+1. **`hotkey/`** (`src-hotkey.md`) — `listener.py:HotkeyListener` reads `/dev/input/event*` via `evdev`, multiplexing multiple HID interfaces for keyboards that expose several device paths, and dispatches through a **pure** state machine (`state_machine.py:HotkeyStateMachine`, no I/O/timers) implementing the hybrid trigger: short press (<0.5s) = toggle, long press (≥0.5s) = push-to-talk. `binding.py:HotkeyBinding` parses config strings like `"KEY_LEFTCTRL+KEY_RIGHTCTRL"` into canonical key-chord tuples.
+2. **`audio/capture.py:Recorder`** (`src-audio.md`) — wraps PortAudio via `sounddevice`; RMS-based silence detection flushes segments; falls back across sample rates/channels on device errors, resampling with a dependency-free polyphase FIR filter.
+3. **`asr/`** (`src-asr.md`) — `model.py:Model`/`LazyModel` wrap `faster-whisper`; `worker.py:Worker` runs transcription off the main thread with per-job cancellation (`submit` for batch, `submit_words` for word-timestamped re-decode); `streaming.py:StreamingTranscriber` is a **pure** LocalAgreement-N committer — a word is typed only after N consecutive re-decodes agree, and the committed prefix is never revised.
+4. **`output/`** (`src-audio.md`) — `inject.py:Injector` types via `wtype` (falls back to clipboard paste on failure); `clipboard.py:ClipboardManager` writes via `wl-copy` independently, so it's always the fallback; `formatter.py:HeuristicFormatter` does append-only spacing/capitalisation/paragraph-break formatting, safe to call incrementally in the live typing path.
+5. **`live.py:LiveStreamer`** (`src-core.md`) — the live streaming driver (`[streaming]` config, `text` mode only): recorder partials → coalesce → `submit_words` re-decode → committer → formatter → typed delta, with a tail-silence guard and window trimming at sentence boundaries or `max_buffer_seconds`. **Invariant: typed text is never revised** — every intermediate typed state is a prefix of the final transcript, including on cancel.
 
-- **`config.py`** — frozen `Config` dataclass, nested per-concern sub-configs (`HotkeyConfig`, `AudioConfig`, `AsrConfig`, `FeedbackConfig`, `OutputConfig`, `ClipboardConfig`, `StreamingConfig`, `FormattingConfig`, `UpdateConfig`). `Config.defaults()` is the single source of truth for defaults; `Config.load(path)` parses TOML, validates per-section, merges with defaults.
-- **`capabilities.py`** — `Capabilities.probe(cfg)` returns a frozen dataclass of 7 booleans (has_wtype, has_wl_copy, has_pw_play, has_paplay, has_input_group, has_mic, has_asr_model), checked before `run`/`dictate` launch; `doctor` subcommand surfaces these and exits 78 if a required one is missing.
-- **`errors.py`** — `StenographerError` base and subclasses (`ConfigError`, `CapabilityError`, `AudioCaptureError`, `TranscriptionError`, `UpdateError`); policy functions `notify_failure()` (log ERROR, continue), `fatal()` (log CRITICAL, exit 78 default), `degrade_capability()` (log WARNING, continue). Components must raise these rather than inventing ad hoc error handling.
-- **`notification.py`** — `DesktopNotification` wraps `notify-send` on a background worker thread (never blocks the caller); shows startup hint and listening/transcribing/model-loading/model-unloaded states; reuses notification IDs via `-p`/`-r`; no-ops and self-heals (with cooldown) if `notify-send` is unavailable.
-- **`update.py`** — self-update from GitHub Releases: pure functions `check_for_update()`, `download_update()` (SHA-256 verified), `extract_to_staging()`, `apply_update()` (atomic two-step `os.rename` swap); `stop_daemon()`/`start_daemon()` wrap `systemctl --user`; `cli.py` wires these to an interactive prompt.
-- **`bench.py`** — offline benchmarking harness (model × beam × compute_type matrix): cold-load time, RTF, WER (word-error-rate, with numeral normalization).
+## Cross-cutting policies
 
-## Concurrency model
+- **`config.py`** — TOML schema (`Config` dataclass, 9 nested sub-configs), loaded once at startup; validated with exhaustive per-field range/enum checks; restart required to pick up edits (`src-core.md`).
+- **`capabilities.py`** — `Capabilities.probe()` checks `wtype`, `wl-copy`, `pw-play`/`paplay`, `input` group membership, mic availability, and cached ASR model presence; backs the `doctor` subcommand.
+- **`errors.py`** — all components raise `StenographerError` subclasses and route through `notify_failure` / `fatal` / `degrade_capability` rather than inventing ad hoc error handling; `doctor` and daemon startup exit 78 (`EX_CONFIG`) when a required capability is missing.
+- **`notification.py`** — desktop notifications via `notify-send`, no-op if absent.
+- **`update.py`** — self-update from GitHub Releases (SHA-256 verify, atomic two-rename install swap, daemon stop/start, exclusive flock update lock).
+- **Single instance** — `cli.py` holds a `fcntl.flock` on `$XDG_RUNTIME_DIR/stenographer.lock` for the `run` subcommand.
 
-Three threads of control converge on `Session`: the hotkey listener's supervisor/reader threads, the recorder's PortAudio callback thread, and the ASR worker's job thread. `Session._lock` (RLock, reentrant so nested callback re-entry from `on_start`/`on_stop`/`on_toggle_off` doesn't deadlock) guards all mutable state transitions. One exception: `Session._enqueue_flush_segment()` (silence-detection flush callback, invoked directly on the PortAudio thread) touches only the thread-safe `queue.Queue` and reads plain attributes without taking the lock, by design (must be non-blocking). A generation counter (`Session._cancel_generation`) is bumped by `cancel_all()` so stale queue items (enqueued before cancellation) are dropped by the processor thread rather than processed — this pattern (generation tokens to invalidate stale async work) recurs in `LazyModel._load_generation` (idle-unload) and `HotkeyStateMachine._pending_generation` (double-tap timeout).
+## Packaging & distribution architecture
+
+The frozen binary (PyInstaller, `packaging/stenographer.spec`) bundles the Python runtime and `stenographer` package (`collect_submodules`) but deliberately excludes system libraries (`libevdev`, `libportaudio`, `libGL`/Vulkan for onnxruntime) that must be present on the target machine — enforced by `hook-sounddevice.py` (excludes bundled audio libs) and `rthooks/py_rth_portaudio.py` (sets `LD_LIBRARY_PATH` at startup) (`packaging.md`). `scripts/install.sh` deploys the onedir bundle to `~/.local/share/stenographer/`, symlinks a launcher, and wires a systemd **user** service (`stenographer.service.in`, `WantedBy=graphical-session.target`) (`scripts.md`).
 
 ## Open Questions
-- Exact interaction between `Session._recording_abort` (per-recording) and `LiveStreamer.abort` (per-streamer) — confirmed separate objects by inspection, but the full handoff sequence on cancel spans both `session.py` and `live.py`.
-- Whether `Session.stop()`'s `join(timeout=60.0)` on the processor thread can leave work undrained if the thread hangs.
+
+- What is the exact lock-acquisition sequence for `Session.cancel_all()` vs. a concurrent `on_recording_stop()` arriving from two hotkey listeners on different threads? (`src-core.md`)
+- How does `Session.attach_listener()` ordering prevent races during the window where `self._listener is None`? (`src-core.md`)
+- Measured real-time factor (RTF) of live-streaming re-decodes on typical CPU hardware is still unmeasured (`root.md`, `src-core.md`).
+- Why is `stenographer.llm` imported via `importlib.import_module()` in `session.py` (~line 691) rather than a top-level import? (`src-core.md`)
