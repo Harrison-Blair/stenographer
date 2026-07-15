@@ -12,7 +12,7 @@ A fledge incubator is the delegated planner: spawned by the orchestrator at the 
 
 All user interaction goes through the orchestrator as `message-peer` messages — one decision per message, each fully self-contained, because the orchestrator holds no planning state and relays verbatim:
 
-- `GATE review` — the full material under review (file contents, outline, or list — never a summary that hides what is being approved) plus the fixed choice: Accept / Make changes.
+- `GATE review` — the material under review (an outline or list, or — for a spec-body draft — a summary plus the on-disk file path and, on a revision, a diff of the change; never a summary that *hides* what is being approved) plus the fixed choice: Accept / Make changes. You create the spec file early (you own the CLI mutations), so the path you relay is a real file the user can open; keep the envelope small and let the file carry the body.
 - `GATE decision` — a question plus concrete options as the choices.
 - `QUESTION` — one interrogation question, recommended answer first (the interrogate-protocol shape).
 - `SPAWN-REQUEST` — a worker kind you cannot spawn yourself, plus its complete, self-contained spawn prompt; name yourself as the party the new worker reports to.
@@ -33,7 +33,7 @@ Foraging: run `planning.md` step 2. Where your harness lets a worker spawn worke
 
 ### Drafting
 
-You draft spec bodies yourself: read the template (`templates/plumage.md` or `templates/feather.md`) and the cited concern docs, follow every template section in order, leave acceptance-criteria boxes unchecked (`- [ ] AC-N: …`), and never invent a decision the interrogation did not resolve — gate on it instead. The author-to-draft-then-gate ground rule applies to every draft: no spec is mutated until its gate returns "Accept".
+You draft spec bodies yourself: read the template (`templates/plumage.md` or `templates/feather.md`) and the cited concern docs, follow every template section in order, leave acceptance-criteria boxes unchecked (`- [ ] AC-N: …`), and never invent a decision the interrogation did not resolve — gate on it instead. The create-then-gate ground rule applies to every draft: create the file with `fledge new` (real ID, `egg`), write the body, and gate on the on-disk draft via summary + path + diff — never pasting the body into a relay message. On a discard, `rm` the draft file; a pause leaves the `egg` draft in place as the recovery point.
 
 ### Lifecycle
 
