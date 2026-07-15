@@ -185,7 +185,8 @@ fix what it lists, then re-run.
 ```sh
 stenographer run                 # foreground daemon, Ctrl-C to stop
 stenographer dictate             # one-shot: arm, dictate, exit
-stenographer transcribe FILE     # batch: print transcript to stdout
+stenographer transcribe FILE     # batch: print formatted transcript to stdout (default)
+stenographer transcribe FILE --raw # batch: print the raw, unformatted transcript verbatim
 stenographer model download      # fetch the ASR model
 stenographer update [--check]    # self-update from GitHub Releases
 stenographer doctor              # print capabilities + resolved config

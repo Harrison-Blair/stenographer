@@ -16,6 +16,7 @@ if "_ARGCOMPLETE" in os.environ:  # completion hot path: skip the heavy imports 
 import contextlib
 import fcntl
 import functools
+import itertools
 import logging
 import logging.handlers
 import pathlib
@@ -522,7 +523,7 @@ def cmd_dictate(cfg: Config) -> int:
     return 0
 
 
-def cmd_transcribe(cfg: Config, path: pathlib.Path) -> int:
+def cmd_transcribe(cfg: Config, path: pathlib.Path, *, raw: bool) -> int:
     if not path.exists():
         print(f"stenographer: file not found: {path}", file=sys.stderr)
         return 2
@@ -543,10 +544,13 @@ def cmd_transcribe(cfg: Config, path: pathlib.Path) -> int:
     log.info("transcribe: loading model %s", cfg.asr.model)
     model = Model(cfg.asr)
     result = model.transcribe(samples, cfg.asr.language, cfg.asr.beam_size)
-    formatter = HeuristicFormatter(
-        cfg.formatting, append_trailing_space=cfg.output.append_trailing_space
-    )
-    text = formatter.format_batch(result.segments)
+    if raw:
+        text = result.text
+    else:
+        formatter = HeuristicFormatter(
+            cfg.formatting, append_trailing_space=cfg.output.append_trailing_space
+        )
+        text = formatter.format_batch(result.segments)
     sys.stdout.write(text)
     sys.stdout.write("\n")
     return 0
@@ -781,6 +785,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     multiprocessing.freeze_support()
     _configure_logging()
+
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    for token, following in itertools.pairwise(argv_list):
+        if token == "run" and following in ("stop", "disable"):
+            print(
+                f"stenographer: `run {following}` was removed; "
+                f"use `stenographer {following}` instead.",
+                file=sys.stderr,
+            )
+            return 1
+
     parser = build_parser()
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
@@ -806,7 +821,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.subcommand == "run":
         return cmd_run(cfg)
     if args.subcommand == "transcribe":
-        return cmd_transcribe(cfg, args.file)
+        return cmd_transcribe(cfg, args.file, raw=args.raw)
     if args.subcommand == "dictate":
         return cmd_dictate(cfg)
     if args.subcommand == "model" and args.model_command == "download":

@@ -45,9 +45,9 @@ All in `tests/test_cli.py`:
 Implementation order: write all six tests, run against the unchanged code and confirm they FAIL for the expected reason (the two `run` tests fail because argparse's generic message/exit-2-without-daemon-context is what's observed instead of the pointed one; the raw-flag parser test fails with `AttributeError`/`unrecognized arguments --raw`; the two transcribe-output tests fail because `cmd_transcribe` has no `raw` parameter at all), then implement F2 and F3 until all pass. Update the README line as part of the same change (not test-driven, but required by FC-4).
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `stenographer run stop` / `stenographer run disable` exit nonzero with stderr naming the correct replacement command, distinguishable from argparse's generic "unrecognized arguments" message; `run` continues to take no arguments and no nested subcommand is restored (satisfies PLM-005 FC-1).
-- [ ] AC-3: `stenographer transcribe FILE` (no flag) continues to emit `HeuristicFormatter`-formatted output, unchanged from today (satisfies PLM-005 FC-2).
-- [ ] AC-4: `stenographer transcribe FILE --raw` emits `result.text` verbatim (satisfies PLM-005 FC-3).
-- [ ] AC-5: The README's `transcribe` entry documents both the default formatted output and `--raw` (satisfies PLM-005 FC-4).
-- [ ] AC-6: `.venv/bin/pytest -m "not integration"` passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `stenographer run stop` / `stenographer run disable` exit nonzero with stderr naming the correct replacement command, distinguishable from argparse's generic "unrecognized arguments" message; `run` continues to take no arguments and no nested subcommand is restored (satisfies PLM-005 FC-1).
+- [x] AC-3: `stenographer transcribe FILE` (no flag) continues to emit `HeuristicFormatter`-formatted output, unchanged from today (satisfies PLM-005 FC-2).
+- [x] AC-4: `stenographer transcribe FILE --raw` emits `result.text` verbatim (satisfies PLM-005 FC-3).
+- [x] AC-5: The README's `transcribe` entry documents both the default formatted output and `--raw` (satisfies PLM-005 FC-4).
+- [x] AC-6: `.venv/bin/pytest -m "not integration"` passes with no regressions.
