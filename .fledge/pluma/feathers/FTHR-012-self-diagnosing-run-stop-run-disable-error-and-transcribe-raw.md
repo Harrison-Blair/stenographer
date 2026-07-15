@@ -2,7 +2,7 @@
 id: FTHR-012
 title: Self-diagnosing run stop/run disable error and transcribe --raw
 plumage: PLM-005
-status: hatching
+status: fledged
 priority: P2
 depends_on: []
 authored: 2026-07-15T14:28:16Z
