@@ -732,6 +732,18 @@ def test_on_model_loaded_plays_ready_cue_and_shows_listening_while_recording() -
     notif.show_listening.assert_called_once()
 
 
+def test_prompt_mode_lazy_model_load_shows_prompt_listening_notification() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    c["cfg"].asr.mode = "lazy"
+    c["worker"].is_model_loaded.return_value = False
+    session.on_recording_start(source="prompt")
+    session._on_model_loaded()
+    notif.show_listening_prompt.assert_called_once()
+    notif.show_listening.assert_not_called()
+
+
 def test_on_model_loaded_leaves_notification_alone_when_not_recording() -> None:
     notif = MagicMock()
     session, _m = _make_session(notification=notif)
@@ -1124,6 +1136,17 @@ def test_prompt_mode_falls_back_to_raw_transcript_on_llm_error() -> None:
     c["injector"].type_text.assert_called_once_with("hello world")
     c["clipboard"].copy.assert_called_once_with("hello world")
     c["feedback"].play.assert_any_call("error")
+
+
+def test_prompt_mode_llm_failure_plays_only_error_cue_not_transcribe_done() -> None:
+    session, _m = _make_session()
+    c = _components(session)
+    _process_prompt(session, c, text="hello world", raise_error=True)
+    c["feedback"].play.assert_any_call("error")
+    played_cues = [call.args[0] for call in c["feedback"].play.call_args_list]
+    assert "transcribe_done" not in played_cues
+    c["injector"].type_text.assert_called_once_with("hello world")
+    c["clipboard"].copy.assert_called_once_with("hello world")
 
 
 def test_prompt_mode_paste_mode_uses_rewritten_text_not_reformatted() -> None:
