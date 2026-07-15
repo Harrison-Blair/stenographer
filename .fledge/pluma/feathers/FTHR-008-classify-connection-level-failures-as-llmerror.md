@@ -38,7 +38,7 @@ Per `.fledge/nest/architecture.md` (cross-cutting `errors.py` policy) and `.fled
 Implementation order: write all three tests above, run against the unchanged code and confirm they FAIL for the expected reason (the two `test_llm.py` tests fail with the raw exception propagating instead of `LlmError`; the `test_session.py` test fails because the raw exception either propagates out of the test call or the second utterance is never processed), then implement the `llm.py` change until all three pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `rewrite_prompt` raises `LlmError` (never a raw `ConnectionError`/`http.client.IncompleteRead`) for connection-level failures during the HTTP call or response read (satisfies PLM-003 FC-1).
-- [ ] AC-3: A prompt-mode utterance whose LLM call fails with a connection-level error does not kill the session-processor thread; a subsequent utterance in the queue is still processed (satisfies PLM-003 FC-2).
-- [ ] AC-4: `.venv/bin/pytest -m "not integration"` passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `rewrite_prompt` raises `LlmError` (never a raw `ConnectionError`/`http.client.IncompleteRead`) for connection-level failures during the HTTP call or response read (satisfies PLM-003 FC-1).
+- [x] AC-3: A prompt-mode utterance whose LLM call fails with a connection-level error does not kill the session-processor thread; a subsequent utterance in the queue is still processed (satisfies PLM-003 FC-2).
+- [x] AC-4: `.venv/bin/pytest -m "not integration"` passes with no regressions.
