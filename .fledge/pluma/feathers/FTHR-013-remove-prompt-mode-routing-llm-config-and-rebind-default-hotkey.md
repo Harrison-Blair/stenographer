@@ -2,7 +2,7 @@
 id: FTHR-013
 title: "Remove prompt-mode routing, LLM config, and rebind default hotkey"
 plumage: PLM-007
-status: pipping
+status: fledged
 priority: P1
 depends_on: []
 authored: 2026-07-15T17:55:03Z
