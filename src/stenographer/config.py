@@ -42,6 +42,9 @@ class ConfigError(_BaseConfigError):
         super().__init__(f"{path}: {key}: {reason}")
 
 
+ALLOWED_TRIGGER_MODES: frozenset[str] = frozenset({"hybrid", "toggle"})
+
+
 @dataclass(frozen=True)
 class HotkeyConfig:
     binding: str
@@ -49,6 +52,7 @@ class HotkeyConfig:
     double_tap_window_seconds: float
     cancel_binding: str
     device: str | None
+    trigger_mode: str
 
 
 @dataclass(frozen=True)
@@ -141,6 +145,7 @@ class Config:
                 double_tap_window_seconds=0.35,
                 cancel_binding="KEY_ESC",
                 device=None,
+                trigger_mode="hybrid",
             ),
             audio=AudioConfig(
                 sample_rate=16000,
@@ -299,12 +304,18 @@ def _build_hotkey(
             )
             cancel_binding = ""
     device = _expect_optional_path(table, "device", "hotkey.device", path)
+    trigger_mode = _expect_str(table, "trigger_mode", "hotkey.trigger_mode", path)
+    if trigger_mode not in ALLOWED_TRIGGER_MODES:
+        raise ConfigError(
+            path, "hotkey.trigger_mode", f"must be one of {sorted(ALLOWED_TRIGGER_MODES)}"
+        )
     return HotkeyConfig(
         binding=binding,
         toggle_threshold_seconds=threshold,
         double_tap_window_seconds=window,
         cancel_binding=cancel_binding,
         device=device,
+        trigger_mode=trigger_mode,
     )
 
 
@@ -618,6 +629,7 @@ def _format_default_toml() -> str:
         f"hotkey.double_tap_window_seconds = {h.double_tap_window_seconds}",
         f"hotkey.cancel_binding = {_toml_str(h.cancel_binding)}",
         f"hotkey.device = {_toml_optional(h.device)}",
+        f"hotkey.trigger_mode = {_toml_str(h.trigger_mode)}",
         "",
         "# Audio capture",
         f"audio.sample_rate = {a.sample_rate}",

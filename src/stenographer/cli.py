@@ -219,6 +219,7 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
     sm = HotkeyStateMachine(
         threshold_seconds=cfg.hotkey.toggle_threshold_seconds,
         double_tap_window_seconds=cfg.hotkey.double_tap_window_seconds,
+        mode=cfg.hotkey.trigger_mode,
     )
     session = Session(
         cfg=cfg,

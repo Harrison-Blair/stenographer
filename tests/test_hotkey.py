@@ -264,6 +264,53 @@ def test_reset_returns_to_idle() -> None:
     assert not sm.is_chord_active
 
 
+def test_toggle_mode_single_press_latches() -> None:
+    sm = HotkeyStateMachine(threshold_seconds=0.5, mode="toggle")
+    sm.mark_chord_active(True)
+    t = sm.on_keydown(0.0)
+    assert t.action == "start_recording"
+    assert t.cue == "toggle_on"
+    assert sm.state == "TOGGLE_LATCHED"
+    sm.mark_chord_active(False)
+    # Releasing the key does not stop or reclassify the recording.
+    assert sm.on_keyup(0.2).action == "noop"
+    assert sm.state == "TOGGLE_LATCHED"
+    # A second press stops, regardless of how long either press was held.
+    sm.mark_chord_active(True)
+    assert sm.on_keydown(5.0).action == "noop"
+    assert sm.state == "TOGGLE_STOPPING"
+    sm.mark_chord_active(False)
+    t = sm.on_keyup(5.1)
+    assert t.action == "stop_recording_toggle"
+    assert t.cue == "toggle_off"
+    assert sm.state == "IDLE"
+
+
+def test_toggle_mode_long_hold_is_not_ptt() -> None:
+    sm = HotkeyStateMachine(threshold_seconds=0.5, mode="toggle")
+    sm.mark_chord_active(True)
+    assert sm.on_keydown(0.0).action == "start_recording"
+    sm.mark_chord_active(False)
+    assert sm.on_keyup(2.0).action == "noop"
+    assert sm.state == "TOGGLE_LATCHED"
+
+
+def test_toggle_mode_cancel_consumes_keyup() -> None:
+    sm = HotkeyStateMachine(threshold_seconds=0.5, mode="toggle")
+    sm.mark_chord_active(True)
+    sm.on_keydown(0.0)
+    t = sm.on_cancel()
+    assert t.action == "cancel"
+    assert sm.state == "IDLE"
+    sm.mark_chord_active(False)
+    assert sm.on_keyup(0.3).action == "noop"
+
+
+def test_state_machine_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError):
+        HotkeyStateMachine(mode="ptt")
+
+
 def test_threshold_validation() -> None:
     with pytest.raises(ValueError):
         HotkeyStateMachine(threshold_seconds=0)

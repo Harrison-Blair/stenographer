@@ -31,6 +31,7 @@ def test_defaults_hotkey() -> None:
         double_tap_window_seconds=0.35,
         cancel_binding="KEY_ESC",
         device=None,
+        trigger_mode="hybrid",
     )
 
 
@@ -245,6 +246,25 @@ def test_load_missing_file_raises(tmp_path: pathlib.Path) -> None:
 
 
 # --- load(): validation rules ---
+
+
+def test_hotkey_trigger_mode_toggle_parses(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.trigger_mode = "toggle"\n')
+    assert Config.load(p).hotkey.trigger_mode == "toggle"
+
+
+def test_hotkey_trigger_mode_invalid_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.trigger_mode = "ptt"\n')
+    with pytest.raises(ConfigError, match=r"hotkey.trigger_mode"):
+        Config.load(p)
+
+
+def test_format_default_toml_has_trigger_mode() -> None:
+    from stenographer.config import _format_default_toml
+
+    assert 'hotkey.trigger_mode = "hybrid"' in _format_default_toml()
 
 
 def test_validate_hotkey_threshold_zero_rejected(tmp_path: pathlib.Path) -> None:
