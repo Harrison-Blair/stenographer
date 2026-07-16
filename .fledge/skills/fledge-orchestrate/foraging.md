@@ -4,6 +4,26 @@ Agent-neutral context-gathering protocol used by the planning phase when the `sp
 
 A spawn prompt is a worker's entire context — it inherits no conversation history — and must be fully self-contained.
 
+## Commissioner
+
+You are the commissioner when you spawn a forager and wait on it: the orchestrator on a standalone context-regeneration request or when planning runs inline, or the incubator when planning is delegated. This section is the single source of truth for how to wait — `planning.md` §2 and `worker-protocols.md` point here. Your entire job while the forager runs is to **wait correctly and cheaply**. The forager does the work; you must not shadow it.
+
+**Obtain the forager.** Spawn a `fledge-forager` worker (named per the species scheme in `implementation.md` §3.1), or — if you cannot spawn workers yourself — request one via the channel your protocol defines, naming yourself as the party it reports to. Foragers are one-shot: obtain a fresh one for each regeneration. If you provide no `spawn-worker` at all, you have no forager to wait on — run the forager pipeline below yourself, sequentially, instead of reading this section.
+
+**Wait as a two-input state machine.** Once the forager is running, exactly one signal means it is done: **its explicit by-name final message** (the coverage summary it sends you). Everything else is noise for this decision:
+
+- **You are re-invoked by events, so you never poll.** Your harness wakes you when the forager sends a message or its lifecycle changes. Do **not** run `sleep`, timed wait-loops, or repeated status checks to "wait." Do **not** `wc`, `cat`, `ls`, or otherwise eyeball `.fledge/nest/` to judge progress — a half-written nest is the *expected* mid-run state (scaffolded stubs, raw reports filling in, concern docs synthesizing) and tells you nothing about whether the forager is done or stuck. Eyeballing that state is exactly what produces false stalls and wasteful churn.
+- **Idle is neither done nor stalled.** A "teammate finished/idle" or "worker finished" lifecycle notification is **not** the final message — a persistent worker goes idle whenever its turn ends, including harmlessly between its own pipeline steps. Receiving one is not permission to conclude anything.
+
+**Disambiguate a suspected stall with the CLI, not your eyes.** If — and only if — you get a genuine idle with no final message and want to know whether the forager actually still owes work, run `fledge nest status` **once**. It is the authoritative done-check (all concern docs synthesized, index stamped to HEAD): exit 0 / `complete: true` means the nest is finished, exit non-zero names exactly what is still missing or a stub.
+
+- `complete: true`, but no final message yet → the forager finished the work but hasn't announced. Send it one by-name message asking it to send its final coverage summary; do not churn or respawn it.
+- `complete: false` → it genuinely still owes synthesis. Send it **one** by-name message asking it to continue and report when done, then go back to waiting for the next event. Repeat at most a few times across successive idles — never in a tight loop, never with `sleep`. This CLI verdict is the *only* sanctioned reading of on-disk state, and it only ever decides nudge-vs-wait; it never declares the forager done. Only its final message does that.
+
+If repeated by-name nudges across successive idles still produce no final message, do not decide unilaterally: surface the situation to the user through a `confirm-gate` (intervene — terminate and respawn a fresh forager, or fall back to inline synthesis — or keep waiting). Only the user chooses to abandon a forager.
+
+**On the final message, verify and release.** When the by-name final message arrives, confirm the result with `fledge nest status` (it should report complete, with `index.md`'s `commit` at HEAD), relay the forager's coverage notes, and request the forager's graceful shutdown by name; the party holding the `spawn-worker`/kill primitive (on Claude Code, the orchestrator, `team-lead`) force-terminates it if it does not exit promptly — acknowledging a shutdown request is not the same as ending its session. Its species frees only once shutdown is confirmed.
+
 ## Forager
 
 You produce the `.fledge/nest/` document set that downstream planning agents rely on. You orchestrate cheap scouts to do the reading; you do the synthesis. You never modify source code — your writes are confined to `.fledge/nest/`.
@@ -33,6 +53,7 @@ You produce the `.fledge/nest/` document set that downstream planning agents rel
 
    Synthesize — do not concatenate. Resolve contradictions between reports by re-reading the source file in question. Carry forward unresolved scout Open Questions into the relevant doc under an `## Open Questions` section.
 6. **Write the index.** Write `.fledge/nest/index.md` last. Header records generated datetime and `git rev-parse HEAD`. One entry per concern doc: filename, 2–3 sentence summary of what it actually contains (not a generic description), and a `Read this when:` line. This index is what downstream agents read first to decide which docs to load — write the summaries for that decision.
+7. **Verify before you report.** Run `fledge nest status`. It must report complete (exit 0 / `complete: true`): every concern doc synthesized past its template stub, and `index.md` stamped to HEAD. If it reports anything incomplete, you are **not** done — it names exactly which docs are still stubs or missing; finish those (and re-stamp the index if HEAD moved), then re-run it until it is clean. Only then send your final message. This check is what distinguishes "my scouts finished" from "the nest is done" — passing it is the gate on reporting.
 
 ### Frontmatter
 
@@ -44,7 +65,7 @@ Report: modules scanned, scouts spawned (and any re-spawns), documents written, 
 
 ### Lifecycle
 
-A forager is one-shot, but "one-shot" ends at step 6, not at the scout fan-out. You are done only once all six pipeline steps are written **and** you have sent your final message. Going idle before that final message is a stall, not completion: if you find yourself idle with the raw reports present and the concern docs still stubs, you have stopped mid-pipeline — resume synthesis immediately rather than waiting to be prompted. After the final message you have no further work. In harnesses where workers persist after their final message, the worker that commissioned it (the incubator or the orchestrator) will request its shutdown by name once the nest output is verified — comply promptly. Scouts are unnamed (no species): they self-terminate on their one-line final message and are never addressed by name.
+A forager is one-shot, but "one-shot" ends when `fledge nest status` reports complete (step 7), not at the scout fan-out. You are done only once every pipeline step is written, `fledge nest status` passes, **and** you have sent your final message. Going idle before that final message is a stall, not completion: if you find yourself idle with the raw reports present and the concern docs still stubs, you have stopped mid-pipeline — resume synthesis immediately rather than waiting to be prompted. `fledge nest status` is your objective check for exactly this: run it on any wake to see whether you still owe synthesis. After the final message you have no further work. In harnesses where workers persist after their final message, the party that commissioned it requests its shutdown by name once the nest output is verified — comply promptly, and expect the orchestrator (on Claude Code, `team-lead`; the party holding the `spawn-worker`/kill primitive) to force-terminate you if you do not exit promptly, since acknowledging a shutdown request is not the same as ending your session. Scouts are unnamed (no species): they self-terminate on their one-line final message and are never addressed by name.
 
 ## Scout
 
@@ -58,6 +79,7 @@ A scout's prompt assigns a module name and an explicit list of files. Its entire
 - Follow the section order in `templates/scout-report.md` in this skill's directory exactly — every section present, in order. Write `None observed.` under any section with nothing to report; never omit a section.
 - Frontmatter is stamped by `fledge nest scout`; refresh it with `fledge nest stamp <file>` if needed.
 - Report facts you observed, with file paths. Do not speculate about code you did not read; put uncertainties under Open Questions.
+- Any count, total, or enumerated size you state (e.g. "N commands," "N fixtures," "N files in module X") must come from an exact computation run at write time — a `grep -c`, a `find`/glob count, `wc -l`, or equivalent — never estimated by eye or recalled from memory. Cite or show the command that produced it so the count is re-derivable by a later reader, not merely asserted. This applies equally to counts carried into any synthesized doc.
 - Be dense: bullet points, file references, identifier names. No prose padding.
 
 ### Final message

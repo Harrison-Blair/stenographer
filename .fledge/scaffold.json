@@ -1,12 +1,12 @@
 {
-  "fledgeVersion": "0.5.4",
+  "fledgeVersion": "0.5.8",
   "agents": [
     "claude"
   ],
   "files": {
     ".claude/agents/fledge-brooder.md": {
       "policy": "default",
-      "sha256": "78df71a98443f981799e110b8151f4a1ce0421954f9a2cf765a1f98f645d4ef2"
+      "sha256": "914ad273d281cb87e21b6b4f701189a6f679b6ebaf5f716b1c001ca754cd7a7d"
     },
     ".claude/agents/fledge-context-scout.md": {
       "policy": "default",
@@ -14,7 +14,7 @@
     },
     ".claude/agents/fledge-forager.md": {
       "policy": "default",
-      "sha256": "39a990b7e52aa06b7a1a3350ead8e2ae7fb64bc17509f72f984dca00c97e6149"
+      "sha256": "afe79be18fd7bd3204644361777cc08189825da03c8c83a7cdcb042ec04a3ffc"
     },
     ".claude/agents/fledge-incubator.md": {
       "policy": "default",
@@ -34,7 +34,7 @@
     },
     ".claude/settings.local.json": {
       "policy": "generate",
-      "sha256": "a0de69d0313ebce586cec612f6e13fa4022cd2fb93b01b3d18ed4c67d343b71f"
+      "sha256": "179cbf16f2fd9f1c655aa212cc6248902dfa39b9ec87f9f8f856021b407aa788"
     },
     ".claude/skills/fledge-interrogate": {
       "policy": "symlink",
@@ -46,7 +46,7 @@
     },
     ".claude/team-loop.md": {
       "policy": "overwrite",
-      "sha256": "7df66f7f5b43cc7ab93a0ee69beb3e418c22c328ab0b241ca82be531c12e19fa"
+      "sha256": "f34e7f4f42564a4afd6d2fea58682d240370e75c4ca9a13b879e4c4712f38c09"
     },
     ".fledge/broods/.gitkeep": {
       "policy": "default",
@@ -70,19 +70,19 @@
     },
     ".fledge/skills/fledge-orchestrate/SKILL.md": {
       "policy": "core",
-      "sha256": "025363c8d98ba4df5a32a2a7b910d80d76abfa58b5b2113550d20279bac4277f"
+      "sha256": "284949a6016c92aca7ba060a0484fa630d376354ecbbb63e2e8e1fa1ee201da4"
     },
     ".fledge/skills/fledge-orchestrate/foraging.md": {
       "policy": "core",
-      "sha256": "c0e9a8bd53b82d5bdd41f21f40b923c74c168a6093d8631fcd5edec7105e899a"
+      "sha256": "3f6b86ab5d91e72ed205fe614f56875765f9cb43ee8ff78233ad86d4088a53ab"
     },
     ".fledge/skills/fledge-orchestrate/implementation.md": {
       "policy": "core",
-      "sha256": "ba9a439b86434c31dfdb50e2d546c0044879d6b408d2992c3c0770d210b7aa98"
+      "sha256": "68b35416a5b8d8e97dc5ac0c5066c1d4fc6a9157ff2bc82c00fc5712ba5d0b15"
     },
     ".fledge/skills/fledge-orchestrate/planning.md": {
       "policy": "core",
-      "sha256": "d13839d90cf477b1c59a7c44bd70ccfb1c3d83838752b3ba24a0eb9c997f77c0"
+      "sha256": "bf1de77b7f2f8e9281d33b518920bb7aff5fdfda4a879c240e3d0a223dc3eb34"
     },
     ".fledge/skills/fledge-orchestrate/templates/context-doc.md": {
       "policy": "core",
@@ -102,7 +102,7 @@
     },
     ".fledge/skills/fledge-orchestrate/worker-protocols.md": {
       "policy": "core",
-      "sha256": "98d2bb2fdf71b1b47707f8b231c26f86843be88e742b089eafda3460211f9b03"
+      "sha256": "de42d0a29a8404ac03a457132d9186dbf4dfa4c08ca8a78dfbee858085664149"
     },
     ".fledgeignore": {
       "policy": "default",
@@ -112,7 +112,9 @@
       "policy": "append",
       "lines": [
         ".fledge/nest/raw/",
-        ".fledge/broods/"
+        ".fledge/broods/",
+        ".fledge/roster/",
+        ".alloc.lock"
       ]
     },
     "CLAUDE.md": {

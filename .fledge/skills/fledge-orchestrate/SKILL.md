@@ -14,6 +14,7 @@ Determine which phase the user's request calls for and load that phase's instruc
 | Request looks like | Phase | Instructions |
 |---|---|---|
 | "make a plan", "plan <feature>", "write plumages for…", "break this into feathers", "author feathers for PLM-###" | Planning | Read `planning.md` in this skill's directory and follow it |
+| "regenerate context", "refresh the nest", "update project context", "forage" (context regeneration on its own, not as part of planning a feature) | Foraging | Read `foraging.md` in this skill's directory. You are the **commissioner**: follow its "Commissioner" section to obtain and wait on a forager, then its freshness check |
 | "implement", "implement PLM-###", "implement FTHR-###", "start implementation", "run the feathers" | Implementation | Read `implementation.md` in this skill's directory and follow it |
 | Anything else (review, …) | Not built yet | Say so plainly; offer an existing phase if it fits |
 

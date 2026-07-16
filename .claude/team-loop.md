@@ -14,8 +14,9 @@ The agent-neutral skill calls you `fledge-orchestrator`; on Claude Code that rol
 
 ## Spawning and addressing teammates
 
-- Spawn a teammate of a given agent type (e.g. `fledge-brooder`) named per the penguin-species scheme in `implementation.md` §3.1. The teammate's agent definition (`.claude/agents/fledge-<role>.md`) is its system prompt; the spawn prompt you pass is its task context. Both are the teammate's entire context — it inherits no conversation history.
-- Address a teammate by name via `SendMessage`. A teammate may go idle; idle is not completion. It stays alive and addressable until you shut it down (see "Shutting down teammates" below).
+- Spawn a teammate of a given agent type (e.g. `fledge-brooder`) — the spawn tool's `name` argument must be the complete `fledge-<role>-<species>` string, e.g. `name: "fledge-brooder-adelie"`, never just `name: "adelie"`. The species scheme in `implementation.md` §3.1 governs which species token to append; the role prefix is fixed by which kind of worker you are spawning. The teammate's agent definition (`.claude/agents/fledge-<role>.md`) is its system prompt; the spawn prompt you pass is its task context. Both are the teammate's entire context — it inherits no conversation history.
+- After the spawn call returns, confirm the teammate appears in the team roster under that exact full name before proceeding — a cheap self-check that catches a dropped role prefix immediately, rather than downstream in a failed `SendMessage` or a mis-named task-list entry.
+- Address a teammate by name via `SendMessage`. A teammate may go idle; idle is not completion. It stays alive and addressable until you shut it down (see "Shutting down teammates" below). A worker's completion signal is the `SendMessage` it addresses to you (e.g. a forager's coverage summary); a "Teammate … finished/idle" system notification is a lifecycle event, **not** that message — do not treat it as the worker reporting done. When you need to know whether an idle forager still owes work, run `fledge nest status` once (per `foraging.md` §Commissioner) rather than polling or inspecting the nest by hand.
 - Teammates inherit your permission mode at spawn. Brooders must edit files and run tests unattended in their panes — `implementation.md` §1 surfaces the current mode via a `confirm-gate` and asks whether to proceed or stop while the user switches to a mode without per-action prompts (e.g. `acceptEdits`). Without this, brooder panes stall awaiting approvals.
 
 ## Shutting down teammates
@@ -24,8 +25,8 @@ This is the Claude Code realization of the core skill's teammate teardown (`impl
 
 - **A `SendMessage` shutdown request does not, by itself, terminate a teammate.** Named teammates do not self-exit — a request can only prompt an acknowledgement and leave the teammate idle in its pane. Idle is not gone.
 - **`TaskStop <name>` is what actually terminates a teammate.** Use it as the real teardown mechanism, not merely an escalation.
-- **Procedure per worker** (do this for the brooder *and* its paired skua at green teardown): first `SendMessage` the graceful shutdown request by name (lets it finish an in-flight commit or reply and reach quiescence), then `TaskStop <name>` to actually terminate it. Issue the `TaskStop` regardless of whether the teammate acked — do not wait indefinitely for a reply.
-- **Confirmed shutdown** = the teammate no longer appears in the team roster and its tmux pane has closed. That observed absence — not the teammate's acknowledgement — is what frees its species for reuse (`implementation.md` §3.1). If a teammate does not quiesce, `TaskStop` it anyway and confirm it is gone.
+- **Procedure per worker** (do this for all four teammate roles — brooder, skua, forager, incubator — at that role's teardown moment: green teardown for a brooder/skua pair per `implementation.md` §3.2, phase close for an incubator per `planning.md` §0, and nest-status verification for a forager per `foraging.md` §Commissioner): first `SendMessage` the graceful shutdown request by name (lets it finish an in-flight commit or reply and reach quiescence), then `TaskStop <name>` to actually terminate it. Issue the `TaskStop` regardless of whether the teammate acked — do not wait indefinitely for a reply.
+- **Confirmed shutdown** = the teammate no longer appears in the team roster and, if it was given a pane, that pane has closed (no-tmux/degraded sessions have no pane to check — roster absence alone suffices there). That observed absence — not the teammate's acknowledgement — is what frees its species for reuse (`implementation.md` §3.1). If a teammate does not quiesce, `TaskStop` it anyway and confirm it is gone.
 
 ## Planning delegation
 
@@ -33,6 +34,7 @@ The planning phase (`planning.md` §0) is delegated to a `fledge-incubator-<spec
 
 - Relay each `GATE`/`QUESTION` message from the incubator to the user via AskUserQuestion, verbatim and in full, and SendMessage the user's choice (and any feedback) back verbatim. Never answer on the user's behalf.
 - Teammates cannot spawn teammates: when the incubator needs a forager it sends you a `SPAWN-REQUEST`; spawn the `fledge-forager-<species>` teammate yourself with exactly the spawn prompt provided (it names the incubator as the report target), then confirm back to the incubator.
+- Both callouts above already pass the complete `fledge-incubator-<species>`/`fledge-forager-<species>` string as the `name` argument, consistent with the binding in "Spawning and addressing teammates" above.
 
 ## The team task list
 

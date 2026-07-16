@@ -229,3 +229,6 @@ dist/
 .fledge/nest/raw/
 .fledge/broods/
 .fledge/burrows/
+# fledge — per-run intermediates, regenerable
+.fledge/roster/
+.alloc.lock
