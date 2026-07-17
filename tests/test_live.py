@@ -141,8 +141,10 @@ def test_partials_commit_and_type_deltas_then_final_flushes() -> None:
     # Each delta was copied as it was pasted; the final re-copy leaves the
     # whole utterance on the clipboard.
     assert clipboard.copy.call_args_list == [
-        call("Hello"),
-        call(" world again "),
+        call("Hello", primary=True),
+        call(" world again ", primary=True),
+        # The _finish() fallback copy is not a paste, so it must not touch the
+        # user's primary selection.
         call("Hello world again "),
     ]
 
@@ -178,7 +180,7 @@ def test_abort_stops_typing_and_keeps_typed_text() -> None:
     # and nothing further is pasted or copied (no _finish() re-copy).
     assert injector.pasted == ["Keep"]
     assert typed == "Keep"
-    assert clipboard.copy.call_args_list == [call("Keep")]
+    assert clipboard.copy.call_args_list == [call("Keep", primary=True)]
 
 
 def test_abort_wins_over_queued_final() -> None:
@@ -520,13 +522,16 @@ def test_delta_pastes_fire_per_committed_word() -> None:
     assert streamer._step()
     # First delta pasted mid-utterance, before any further steps or _finish().
     assert injector.pasted == ["One"]
-    assert clipboard.copy.call_args_list == [call("One")]
+    assert clipboard.copy.call_args_list == [call("One", primary=True)]
 
     assert streamer._step()
     assert streamer._step()
     # Second delta fires its own pair, again mid-utterance.
     assert injector.pasted == ["One", " two"]
-    assert clipboard.copy.call_args_list == [call("One"), call(" two")]
+    assert clipboard.copy.call_args_list == [
+        call("One", primary=True),
+        call(" two", primary=True),
+    ]
 
 
 def test_finish_recopies_full_transcript() -> None:
@@ -788,3 +793,71 @@ def test_max_chars_clipboard_unchanged() -> None:
     # `_transcript != _typed` comparison instead of on the latch would fail
     # here -- the condition is true in this case too.
     assert clipboard.copy.call_args_list[-1] == call("Hello")
+
+
+def test_max_chars_latches_and_never_pastes_past_the_gap() -> None:
+    """A delta skipped for exceeding output.max_chars latches output off.
+
+    Without the latch a later, shorter delta still fits under the cap and is
+    pasted -- delivering text that continues past the skipped delta, so what
+    is at the cursor has a hole in the middle and is no longer a prefix of the
+    transcript. Cutting the utterance short is the documented behaviour.
+    """
+    import dataclasses
+
+    cfg = _cfg()
+    cfg = dataclasses.replace(cfg, output=dataclasses.replace(cfg.output, max_chars=10))
+    streamer, injector, _worker, _clip = _make_streamer(
+        windows=[_speech(1.0)], hypotheses=[[]], cfg=cfg
+    )
+    streamer._emit("12345")  # typed=5, under the cap
+    streamer._emit("123456")  # 5+6=11 > 10 -> skipped, latches
+    streamer._emit("1")  # 5+1=6 <= 10, but pasting it would skip the gap
+    assert injector.pasted == ["12345"]
+
+
+def test_final_decode_failure_still_flushes_uncommitted_tail() -> None:
+    """A failed final decode must not discard the words already agreed on.
+
+    _decode returns no words on failure; feeding that to insert() as an empty
+    hypothesis overwrites the transcriber's tail, so flush() returns nothing
+    and the user's last words vanish while the success cue plays.
+    """
+    streamer, _injector, _worker, _clip = _make_streamer(
+        windows=[_speech(1.0), _speech(2.0)],
+        hypotheses=[
+            _words((" hello", 0.0, 0.5)),
+            _words((" hello", 0.0, 0.5), (" world", 0.5, 1.0)),
+            RuntimeError("ctranslate2 blew up"),
+        ],
+    )
+    assert streamer._step()
+    assert streamer._step()  # commits "hello"; "world" is the uncommitted tail
+    typed = streamer._finish(_speech(2.5))
+    assert "world" in typed, f"tail was discarded on final-decode failure: {typed!r}"
+
+
+def test_forced_trim_fires_during_agreement_free_stretch() -> None:
+    """max_buffer_seconds must bound the window even when nothing commits.
+
+    Gating the trim on a non-empty delta means an agreement-free stretch --
+    exactly when the window is growing -- never trims, so re-decode cost grows
+    without bound and live typing stalls.
+    """
+    streamer, _injector, _worker, _clip = _make_streamer(
+        # 30s windows are past the 20s default max_buffer_seconds.
+        windows=[_speech(3.0), _speech(3.0), _speech(30.0), _speech(30.0)],
+        hypotheses=[
+            _words((" hello", 0.0, 2.0)),
+            _words((" hello", 0.0, 2.0), (" world", 2.0, 2.5)),
+            # Now the tail never agrees twice running, so nothing commits.
+            _words((" hello", 0.0, 2.0), (" alpha", 2.0, 2.5)),
+            _words((" hello", 0.0, 2.0), (" beta", 2.0, 2.5)),
+        ],
+    )
+    assert streamer._step()
+    assert streamer._step()  # commits "hello" (ends at 2.0s); window still small
+    assert streamer._trim_offset == 0.0
+    assert streamer._step()  # agreement-free, window now over budget
+    assert streamer._step()  # still agreement-free
+    assert streamer._trim_offset == 2.0, "forced trim never fired without a commit"

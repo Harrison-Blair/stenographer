@@ -24,19 +24,27 @@ class ClipboardManager:
     def __init__(self, *, available: bool) -> None:
         self._available = available
 
-    def copy(self, text: str) -> bool:
-        """Copy ``text`` to the clipboard and the primary selection.
+    def copy(self, text: str, *, primary: bool = False) -> bool:
+        """Copy ``text`` to the clipboard; with *primary*, the primary selection too.
 
-        Both selections are populated with the same text: the paste chord
-        (Shift+Insert) reads the primary selection in some clients and the
-        regular clipboard in others, so populating both is what makes the
-        one chord work everywhere. Return ``True`` only if both succeed.
+        The paste chord (Shift+Insert) reads the primary selection in some
+        clients and the regular clipboard in others, so the paste paths pass
+        ``primary=True`` -- populating both is what makes the one chord work
+        everywhere, and the call returns ``True`` only if both succeed.
+
+        It defaults to False because the primary selection is the user's
+        mouse-selection buffer, not ours: callers that never fire the chord
+        (text-mode injection, ``transcribe FILE``, the streaming fallback
+        copy) would otherwise destroy whatever the user had selected.
         """
         if not self._available:
             logger.debug("wl-copy not available")
             return False
         payload = text.encode("utf-8")
-        for argv in (["wl-copy"], ["wl-copy", "--primary"]):
+        argvs = [["wl-copy"]]
+        if primary:
+            argvs.append(["wl-copy", "--primary"])
+        for argv in argvs:
             try:
                 # stdout/stderr go to DEVNULL rather than being captured:
                 # wl-copy forks and serves the selection in the background for

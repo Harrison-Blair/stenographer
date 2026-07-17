@@ -271,13 +271,19 @@ class Session:
             log.info("session: stop requested")
         self._stop_event.set()
         if self._recorder.is_active:
+            streamer = self._recording_streamer
+            self._recording_streamer = None
             try:
                 samples = self._recorder.stop()
             except Exception as exc:
                 log.error("session: recorder.stop during shutdown failed: %s", exc)
+                if streamer is not None:
+                    # Unblock the queued live item's driver so the processor
+                    # thread can reach the sentinel and the join below can
+                    # complete, rather than timing out after 60s.
+                    streamer.abort.set()
+                    streamer.signal_abort()
             else:
-                streamer = self._recording_streamer
-                self._recording_streamer = None
                 if streamer is not None:
                     # Streamed recording: the queued live item finishes the
                     # utterance once it sees the final signal.
@@ -401,6 +407,14 @@ class Session:
                 samples = self._recorder.stop()
             except Exception as exc:
                 log.error("session: recorder.stop failed: %s", exc)
+                if streamer is not None:
+                    # The live item for this recording is already queued and its
+                    # driver is blocked on the signal queue. It was popped above,
+                    # so nothing else can ever signal it -- without this the
+                    # processor thread blocks forever and every later utterance
+                    # is silently never transcribed.
+                    streamer.abort.set()
+                    streamer.signal_abort()
                 if self._one_shot:
                     self._stop_event.set()
                 return
@@ -460,7 +474,17 @@ class Session:
             with self._lock:
                 if self._live_streamer is streamer:
                     self._live_streamer = None
-        if streamer.abort.is_set() or not typed:
+        if streamer.abort.is_set():
+            return
+        if not typed:
+            # Nothing was committed: too quiet, or the tail-silence guard ate
+            # the window. The batch paths play the error cue on an empty
+            # transcript; staying silent here is indistinguishable from a
+            # successful dictation, so the user cannot tell we heard nothing.
+            log.info("session: streamed utterance produced no text")
+            if not self._stop_event.is_set():
+                with contextlib.suppress(Exception):
+                    self._feedback.play("error")
             return
         self._utterances_processed += 1
         if not self._stop_event.is_set():
@@ -714,17 +738,7 @@ class Session:
                 # Paste output goes through the heuristic formatter (spacing,
                 # capitalisation, pause-based paragraphs at segment granularity).
                 text = self._formatter.format_batch(speech_segments)
-            # Copy to clipboard, then fire the paste chord
-            if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
-                try:
-                    self._clipboard.copy(text)
-                except Exception as exc:
-                    log.error("session: clipboard.copy raised: %s", exc)
-            if self._caps.has_paste_trigger:
-                try:
-                    self._injector.paste()
-                except Exception as exc:
-                    log.error("session: injector.paste raised: %s", exc)
+            self._deliver_paste(text)
         else:
             if self._caps.has_paste_trigger and not injected_text.strip():
                 # No partial segment made it to the cursor; type the full text.
@@ -823,19 +837,40 @@ class Session:
         # Full transcripts go to the log file only at DEBUG (privacy).
         log.info("session: transcript received (%d chars)", len(text))
         log.debug("session: transcript %r", text)
-        if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
+        self._deliver_paste(text)
+        if not self._stop_event.is_set():
+            with contextlib.suppress(Exception):
+                self._feedback.play("transcribe_done")
+
+    def _deliver_paste(self, text: str) -> None:
+        """Copy *text*, then fire the paste chord to deliver it at the cursor.
+
+        The chord pastes whatever the clipboard currently holds, so it is
+        fired only after a confirmed copy: on a failed copy it would paste
+        the user's previous clipboard content into their document. Config
+        validation guarantees clipboard.enabled in paste mode, so there is no
+        flag to honour here -- the clipboard is the transport.
+        """
+        max_chars = self._cfg.output.max_chars
+        if len(text) > max_chars:
+            # Mirrors Injector._prepare()'s cap on the text path: output.max_chars
+            # is a limit on what reaches the cursor, whichever way it gets there.
+            log.warning("session: truncating transcript from %d to %d chars", len(text), max_chars)
+            text = text[:max_chars]
+        copied = False
+        if self._caps.has_wl_copy:
             try:
-                self._clipboard.copy(text)
+                copied = self._clipboard.copy(text, primary=True)
             except Exception as exc:
                 log.error("session: clipboard.copy raised: %s", exc)
+        if not copied:
+            log.error("session: clipboard copy failed; skipping paste to avoid pasting stale text")
+            return
         if self._caps.has_paste_trigger:
             try:
                 self._injector.paste()
             except Exception as exc:
                 log.error("session: injector.paste raised: %s", exc)
-        if not self._stop_event.is_set():
-            with contextlib.suppress(Exception):
-                self._feedback.play("transcribe_done")
 
     def _drain(self, samples: np.ndarray) -> None:
         log.info("session: draining in-flight utterance on shutdown")

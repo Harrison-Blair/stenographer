@@ -83,9 +83,10 @@ The component modules it wires:
   breaks; append-only, so it is safe in the live typing path). The clipboard
   is populated independently, so it's the fallback when injection fails.
 - **`live.py`** — `LiveStreamer`, the live streaming driver (`[streaming]`
-  config, `text` mode only): recorder partials → coalesce → `submit_words`
-  re-decode → committer → formatter → typed delta, with tail-silence
-  guarding and window trimming. **Invariant: typed text is never revised**,
+  config, `paste` mode only — `config.py` rejects any other combination):
+  recorder partials → coalesce → `submit_words`
+  re-decode → committer → formatter → pasted delta, with tail-silence
+  guarding and window trimming. **Invariant: delivered text is never revised**,
   including on cancel — every intermediate typed state must be a prefix of
   the final transcript.
 

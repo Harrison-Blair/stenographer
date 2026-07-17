@@ -238,7 +238,7 @@ class Config:
     def _from_dict(
         cls, table: dict[str, Any], path: pathlib.Path, *, cancel_explicit: bool = False
     ) -> Config:
-        return cls(
+        cfg = cls(
             hotkey=_build_hotkey(table["hotkey"], path, cancel_explicit=cancel_explicit),
             audio=_build_audio(table["audio"], path),
             asr=_build_asr(table["asr"], path),
@@ -248,6 +248,37 @@ class Config:
             streaming=_build_streaming(table["streaming"], path),
             formatting=_build_formatting(table["formatting"], path),
             update=_build_update(table["update"], path),
+        )
+        _validate_cross_section(cfg, path)
+        return cfg
+
+
+def _validate_cross_section(cfg: Config, path: pathlib.Path) -> None:
+    """Reject combinations that are individually valid but incoherent together.
+
+    The per-section builders each see only their own table, so constraints
+    that span sections have to be checked once the whole config is assembled.
+    """
+    if cfg.output.injection_method == "paste" and not cfg.clipboard.enabled:
+        # Paste mode delivers text *by* copying it and firing Shift+Insert, so
+        # the clipboard is the transport, not a convenience copy. Silently
+        # honouring clipboard.enabled here would fire the chord over stale
+        # clipboard content; silently ignoring it would clobber the clipboard
+        # the user asked us to leave alone. Neither is defensible, so the
+        # combination is rejected rather than resolved.
+        raise ConfigError(
+            path,
+            "clipboard.enabled",
+            'must be true when output.injection_method = "paste" (paste mode '
+            'delivers text via the clipboard); use injection_method = "text" '
+            "to type without touching the clipboard",
+        )
+    if cfg.streaming.enabled and cfg.output.injection_method != "paste":
+        raise ConfigError(
+            path,
+            "streaming.enabled",
+            'requires output.injection_method = "paste"; live streaming pastes '
+            "each committed word as it is confirmed",
         )
 
 
@@ -661,7 +692,8 @@ def _format_default_toml() -> str:
         "# Clipboard",
         f"clipboard.enabled = {_toml_bool(c.enabled)}",
         "",
-        "# Live streaming (text mode only): type words while still recording.",
+        '# Live streaming (requires injection_method = "paste"): deliver words',
+        "# while still recording.",
         "# min_chunk_seconds / beam_size are the CPU knobs if re-decodes lag.",
         f"streaming.enabled = {_toml_bool(s.enabled)}",
         f"streaming.min_chunk_seconds = {s.min_chunk_seconds}",

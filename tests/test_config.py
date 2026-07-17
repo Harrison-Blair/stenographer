@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import textwrap
 from dataclasses import FrozenInstanceError
 
@@ -155,7 +156,7 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
             asr.compute_type = "int8"
             feedback.volume = 0.3
             feedback.mute = true
-            output.injection_method = "paste"
+            output.injection_method = "text"
             output.append_trailing_space = false
             output.max_chars = 1000
             clipboard.enabled = false
@@ -171,10 +172,43 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
     assert cfg.asr.compute_type == "int8"
     assert cfg.feedback.volume == 0.3
     assert cfg.feedback.mute is True
-    assert cfg.output.injection_method == "paste"
+    # text mode, so clipboard.enabled = false is coherent here; paste mode
+    # delivers *via* the clipboard and is covered by the cross-section tests.
+    assert cfg.output.injection_method == "text"
     assert cfg.output.append_trailing_space is False
     assert cfg.output.max_chars == 1000
     assert cfg.clipboard.enabled is False
+
+
+def test_paste_mode_requires_clipboard_enabled(tmp_path: pathlib.Path) -> None:
+    # Paste mode delivers text by copying it and firing Shift+Insert. With the
+    # clipboard disabled the chord would paste whatever the user had there
+    # before, so the combination is rejected rather than silently resolved.
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            output.injection_method = "paste"
+            clipboard.enabled = false
+            """)
+    )
+    with pytest.raises(ConfigError, match=re.escape("clipboard.enabled")):
+        Config.load(p)
+
+
+def test_streaming_requires_paste_mode(tmp_path: pathlib.Path) -> None:
+    # Streaming pastes each committed delta; in text mode it silently did
+    # nothing at all, which read as the feature being broken.
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            output.injection_method = "text"
+            streaming.enabled = true
+            """)
+    )
+    with pytest.raises(ConfigError, match=re.escape("streaming.enabled")):
+        Config.load(p)
 
 
 def test_load_partial_override_merges_over_defaults(tmp_path: pathlib.Path) -> None:

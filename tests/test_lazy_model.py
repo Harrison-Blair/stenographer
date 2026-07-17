@@ -276,3 +276,47 @@ class TestProperties:
     def test_beam_size_property(self) -> None:
         m = LazyModel(_cfg(beam_size=3))
         assert m.beam_size == 3
+
+
+class TestLoadFailure:
+    def test_is_loaded_false_after_load_failure(self) -> None:
+        """A failed load must not report as loaded.
+
+        _do_load sets _loaded_event on the failure path so _await_impl waiters
+        wake up and see the exception -- but _impl stays None. Reporting that
+        as loaded makes Session skip its "loading model" notification and its
+        on_loaded registration, so the user gets no feedback at all on the
+        utterance that fails.
+        """
+        m = LazyModel(_cfg(), idle_unload_seconds=0)
+        with patch("stenographer.asr.model.Model", side_effect=RuntimeError("corrupt model dir")):
+            m.ensure_loaded()
+            assert m._load_thread is not None
+            m._load_thread.join(timeout=2.0)
+        assert m._load_exception is not None, "precondition: the load must have failed"
+        assert not m.is_loaded()
+
+    def test_await_impl_does_not_clobber_registered_on_loaded(self) -> None:
+        """_await_impl calls ensure_loaded() with no arguments.
+
+        An unconditional `self._on_loaded_cb = on_loaded` therefore deregisters
+        the session's callback, and the "model ready" cue never fires for the
+        reload after an idle unload -- the user holds the hotkey waiting for a
+        cue that never comes.
+        """
+        m = LazyModel(_cfg(), idle_unload_seconds=0)
+        on_loaded = MagicMock()
+        m.ensure_loaded(on_loaded=on_loaded)
+        assert m._on_loaded_cb is on_loaded
+        # The state _await_impl finds after an idle unload: the event is clear
+        # and the previous loader thread is gone, so its no-arg ensure_loaded()
+        # falls past both early returns and reaches the callback assignment.
+        # (Without this setup the live-thread early return hides the defect and
+        # the test passes against unfixed code.)
+        m._loaded_event.clear()
+        m._load_thread = None
+        with patch("stenographer.asr.model.Model", side_effect=RuntimeError("boom")):
+            m.ensure_loaded()  # the no-arg call _await_impl makes
+            if m._load_thread is not None:
+                m._load_thread.join(timeout=2.0)
+        assert m._on_loaded_cb is on_loaded

@@ -52,9 +52,25 @@ def test_double_spaces_collapse() -> None:
 
 
 def test_normalize_spacing_false_passthrough() -> None:
+    # Spacing is passed through verbatim, but normalize_spacing governs spacing
+    # ONLY: capitalize_sentences is a separate knob and still applies.
     f = _fmt(normalize_spacing=False, capitalize_sentences=True)
     out = f.feed([_w(" hello", 0.0, 0.5), _w("  world.", 0.5, 1.0)])
+    assert out == " Hello  world."
+
+
+def test_normalize_spacing_false_leaves_spacing_untouched() -> None:
+    f = _fmt(normalize_spacing=False, capitalize_sentences=False)
+    out = f.feed([_w(" hello", 0.0, 0.5), _w("  world.", 0.5, 1.0)])
     assert out == " hello  world."  # tokens concatenated verbatim
+
+
+def test_normalize_spacing_false_still_breaks_paragraphs() -> None:
+    # paragraph_pause_seconds is independently configured; normalize_spacing
+    # must not silently disable it.
+    f = _fmt(normalize_spacing=False, capitalize_sentences=False, paragraph_pause_seconds=2.0)
+    out = f.feed([_w("one.", 0.0, 0.5), _w("two", 3.0, 3.5)])
+    assert "\n\n" in out
 
 
 # -- paragraph breaks --------------------------------------------------------

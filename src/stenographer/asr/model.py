@@ -224,7 +224,12 @@ class LazyModel:
             if self._load_thread is not None and self._load_thread.is_alive():
                 return
             self._loaded_event.clear()
-            self._on_loaded_cb = on_loaded
+            # Guarded like _on_unloaded_cb below: _await_impl() calls this with
+            # no arguments, so an unconditional assignment would silently
+            # deregister the session's callback and the "model ready" cue would
+            # never fire for the reload after an idle unload.
+            if on_loaded is not None:
+                self._on_loaded_cb = on_loaded
             if on_unloaded is not None:
                 self._on_unloaded_cb = on_unloaded
             self._load_thread = threading.Thread(
@@ -235,7 +240,17 @@ class LazyModel:
             self._load_thread.start()
 
     def is_loaded(self) -> bool:
-        return self._loaded_event.is_set()
+        """Whether the inner Model is actually available right now.
+
+        Not ``_loaded_event.is_set()``: that event means "the load finished",
+        which a *failed* load also satisfies (it is set so waiters in
+        :meth:`_await_impl` can wake up and see the exception). Reporting a
+        failed load as loaded makes the session skip its model-loading
+        notification and callback registration, so the user gets no feedback
+        at all on the utterance that fails.
+        """
+        with self._lock:
+            return self._impl is not None
 
     def close(self) -> None:
         """Cancel the idle-unload timer.  Does NOT unload the model."""

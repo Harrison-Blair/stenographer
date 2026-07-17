@@ -64,7 +64,7 @@ def test_copy_populates_primary_selection() -> None:
     mgr = ClipboardManager(available=True)
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.return_value = _completed()
-        assert mgr.copy("hello") is True
+        assert mgr.copy("hello", primary=True) is True
         assert run.call_count == 2
         regular, primary = run.call_args_list
         assert regular.args[0] == ["wl-copy"]
@@ -72,6 +72,18 @@ def test_copy_populates_primary_selection() -> None:
         # Both selections must carry the same text.
         assert regular.kwargs["input"] == b"hello"
         assert primary.kwargs["input"] == b"hello"
+
+
+def test_copy_leaves_primary_selection_alone_by_default() -> None:
+    # The primary selection is the user's mouse-selection buffer. Only the
+    # paste-chord paths opt in; text-mode injection and `transcribe FILE`
+    # must not destroy what the user had selected.
+    mgr = ClipboardManager(available=True)
+    with patch("stenographer.output.clipboard.subprocess.run") as run:
+        run.return_value = _completed()
+        assert mgr.copy("hello") is True
+        assert run.call_count == 1
+        assert run.call_args_list[0].args[0] == ["wl-copy"]
 
 
 def test_copy_does_not_capture_subprocess_pipes() -> None:
@@ -90,7 +102,7 @@ def test_copy_does_not_capture_subprocess_pipes() -> None:
     mgr = ClipboardManager(available=True)
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.return_value = _completed()
-        assert mgr.copy("hello") is True
+        assert mgr.copy("hello", primary=True) is True
         assert run.call_count == 2
         for call in run.call_args_list:
             assert call.kwargs.get("capture_output") is not True, (
@@ -245,7 +257,9 @@ def test_clipboard_copy_real_wl_copy_round_trip() -> None:
         token = f"stenographer-fthr021-{uuid.uuid4()}"
 
         start = time.monotonic()
-        result = mgr.copy(token)
+        # primary=True: this test pins the two-wl-copy loop against the real
+        # binary, and that loop is what the paste-chord paths ask for.
+        result = mgr.copy(token, primary=True)
         elapsed = time.monotonic() - start
 
         assert result is True, (

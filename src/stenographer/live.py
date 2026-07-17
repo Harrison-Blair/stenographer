@@ -163,10 +163,15 @@ class LiveStreamer:
         words, ok = self._decode(guarded, beam_size=self._interim_beam_size())
         if not ok:
             return False
-        delta = self._transcriber.insert(words)
-        if delta:
-            self._emit(self._formatter.feed(delta))
-            self._maybe_trim(window_seconds)
+        if words is not None:
+            delta = self._transcriber.insert(words)
+            if delta:
+                self._emit(self._formatter.feed(delta))
+        # Trimming is gated on the budget, not on this re-decode having
+        # committed anything: an agreement-free stretch commits no delta for
+        # many partials in a row, and that is exactly when the window is
+        # growing and max_buffer_seconds most needs to bound it.
+        self._maybe_trim(window_seconds)
         return True
 
     def _finish(self, samples: np.ndarray) -> str:
@@ -178,7 +183,16 @@ class LiveStreamer:
         words, ok = self._decode(window, beam_size=self._cfg.asr.beam_size)
         if not ok:
             return self._typed
-        delta = self._transcriber.insert(words)
+        delta: list = []
+        if words is None:
+            # The final decode failed. Feeding an empty hypothesis to insert()
+            # would overwrite the transcriber's uncommitted tail with [], so
+            # the flush below would return nothing and the user's last words
+            # would vanish. Skip straight to the flush: the tail is the best
+            # hypothesis we still have.
+            log.warning("live: final decode failed; flushing the uncommitted tail as-is")
+        else:
+            delta = self._transcriber.insert(words)
         delta.extend(self._transcriber.flush())
         self._emit(self._formatter.feed(delta) + self._formatter.finalize())
         # The clipboard is the independent fallback for text that did not
@@ -203,20 +217,26 @@ class LiveStreamer:
         beam = self._cfg.streaming.beam_size
         return self._cfg.asr.beam_size if beam is None else beam
 
-    def _decode(self, window: np.ndarray, *, beam_size: int) -> tuple[list, bool]:
-        """Run one re-decode on the worker; returns ``(words, ok)``."""
+    def _decode(self, window: np.ndarray, *, beam_size: int) -> tuple[list | None, bool]:
+        """Run one re-decode on the worker; returns ``(words, ok)``.
+
+        ``ok`` is False only when the utterance was cancelled. ``words`` is
+        None when the decode failed but the utterance continues -- distinct
+        from an empty list, which is a successful decode that found no
+        speech. Callers must not feed a failed decode into the committer.
+        """
         t0 = time.monotonic()
         future = self._worker.submit_words(window, beam_size=beam_size, cancel_event=self._abort)
         try:
             words = future.result()
         except CancelledError:
             log.info("live: re-decode cancelled")
-            return [], False
+            return None, False
         except Exception as exc:
             # One failed re-decode is not fatal; the next partial (or the
             # final flush) re-decodes the same audio.
             log.error("live: re-decode failed: %s", exc)
-            return [], True
+            return None, True
         elapsed = time.monotonic() - t0
         window_seconds = window.shape[0] / self._cfg.audio.sample_rate
         if window_seconds > 0:
@@ -236,15 +256,20 @@ class LiveStreamer:
         # the whole point: it is what _finish() falls back to on the
         # clipboard so the undelivered remainder stays recoverable.
         self._transcript += text
-        if self._delivery_failed:
+        if self._delivery_failed or self._max_chars_hit:
             return
         max_chars = self._cfg.output.max_chars
         if len(self._typed) + len(text) > max_chars:
             # Stop typing rather than truncate a delta mid-word. Committed
             # text stays; the utterance is simply cut short.
-            if not self._max_chars_hit:
-                self._max_chars_hit = True
-                log.warning("live: output reached output.max_chars=%d; typing stopped", max_chars)
+            #
+            # This latches: a later, shorter delta might fit under the cap,
+            # but pasting it would continue the delivered text past the delta
+            # skipped here -- a hole in the middle, no longer a prefix of the
+            # transcript. Cutting the utterance short at a word boundary is
+            # the documented behaviour; resuming past a gap is silently wrong.
+            self._max_chars_hit = True
+            log.warning("live: output reached output.max_chars=%d; typing stopped", max_chars)
             return
         delivered = False
         try:
@@ -261,7 +286,7 @@ class LiveStreamer:
             # is the only thing that makes the desync visible here. Loosening
             # it would drop the signal and leave the desync, breaking the
             # prefix invariant with nothing able to observe it.
-            if self._clipboard.copy(text):
+            if self._clipboard.copy(text, primary=True):
                 delivered = bool(self._injector.paste())
         except Exception as exc:
             log.error("live: paste delivery raised: %s", exc)

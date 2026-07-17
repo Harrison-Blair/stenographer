@@ -16,7 +16,12 @@ from stenographer.session import Session, _ChunkItem
 
 
 def _mock_cfg() -> MagicMock:
-    return MagicMock()
+    cfg = MagicMock()
+    # A real int: the paste path compares the transcript length against this,
+    # and a bare MagicMock makes that comparison raise instead of exercising
+    # the cap.
+    cfg.output.max_chars = 4096
+    return cfg
 
 
 def _make_components() -> dict[str, MagicMock]:
@@ -225,7 +230,7 @@ def test_process_paste_mode_skips_partial_injection_and_pastes_at_end() -> None:
     c["feedback"].play.assert_any_call("segment")
     c["feedback"].play.assert_any_call("transcribe_done")
     assert c["feedback"].play.call_count == 3  # 2 segments + transcribe_done
-    c["clipboard"].copy.assert_called_once_with("hello world")
+    c["clipboard"].copy.assert_called_once_with("hello world", primary=True)
     c["injector"].paste.assert_called_once()
 
 
@@ -246,11 +251,15 @@ def test_process_paste_mode_empty_transcript_skips_output() -> None:
     c["feedback"].play.assert_called_once_with("error")
 
 
-def test_process_paste_mode_clipboard_disabled_still_pastes() -> None:
+def test_process_paste_mode_does_not_paste_when_copy_fails() -> None:
+    # The chord pastes whatever the clipboard holds, so a failed copy must not
+    # fire it -- doing so pastes the user's previous clipboard content into
+    # their document. (config rejects clipboard.enabled = false in paste mode,
+    # so a failed copy is the only way the clipboard can be unpopulated here.)
     session, _m = _make_session()
     c = _components(session)
-    c["cfg"].clipboard.enabled = False
     c["cfg"].output.injection_method = "paste"
+    c["clipboard"].copy.return_value = False
 
     future = _fake_future()
     future.done.return_value = True
@@ -258,8 +267,27 @@ def test_process_paste_mode_clipboard_disabled_still_pastes() -> None:
     c["worker"].submit.return_value = future
     session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
 
-    c["clipboard"].copy.assert_not_called()
-    c["injector"].paste.assert_called_once()
+    c["clipboard"].copy.assert_called_once()
+    c["injector"].paste.assert_not_called()
+
+
+def test_process_paste_mode_truncates_at_max_chars() -> None:
+    # output.max_chars caps what reaches the cursor on the paste path too, not
+    # just the text path (where Injector._prepare enforces it).
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].output.injection_method = "paste"
+    c["cfg"].output.max_chars = 5
+
+    future = _fake_future()
+    future.done.return_value = True
+    future.result.return_value = TranscriptionResult(
+        text="abcdefghij", duration_seconds=0.0, segments=[]
+    )
+    c["worker"].submit.return_value = future
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
+
+    c["clipboard"].copy.assert_called_once_with("abcde", primary=True)
 
 
 def test_process_paste_mode_paragraph_break_on_long_segment_gap() -> None:
@@ -287,7 +315,7 @@ def test_process_paste_mode_paragraph_break_on_long_segment_gap() -> None:
     c["worker"].submit.return_value = future
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
-    c["clipboard"].copy.assert_called_once_with("First thought.\n\nSecond thought.")
+    c["clipboard"].copy.assert_called_once_with("First thought.\n\nSecond thought.", primary=True)
     c["injector"].paste.assert_called_once()
 
 
@@ -413,7 +441,7 @@ def test_process_paste_mode_clipboard_excludes_silence_segments() -> None:
 
     # The silence segment is excluded and the survivor is formatted
     # (capitalised, trailing space per output.append_trailing_space).
-    c["clipboard"].copy.assert_called_once_with("Hello ")
+    c["clipboard"].copy.assert_called_once_with("Hello ", primary=True)
     c["injector"].paste.assert_called_once()
 
 
@@ -581,7 +609,7 @@ def test_chunk_flow_decodes_flushes_but_pastes_once_at_end() -> None:
     session._process_chunk(final)
     # Gap: first chunk ends at 1.0s absolute; final's segment starts at
     # 3.0 + 0.5 = 3.5s absolute -> 2.5s pause -> paragraph break.
-    c["clipboard"].copy.assert_called_once_with("First thought.\n\nSecond thought.")
+    c["clipboard"].copy.assert_called_once_with("First thought.\n\nSecond thought.", primary=True)
     c["injector"].paste.assert_called_once()
     c["injector"].type_text.assert_not_called()
     c["feedback"].play.assert_any_call("transcribe_done")
@@ -599,7 +627,7 @@ def test_paste_gated_on_has_paste_trigger() -> None:
     ]
     session._process_chunk(_ChunkItem(np.ones((16000, 1), np.float32), abort, 0, 0.0, final=True))
     c["injector"].paste.assert_not_called()
-    c["clipboard"].copy.assert_called_once_with("A thought.")
+    c["clipboard"].copy.assert_called_once_with("A thought.", primary=True)
 
 
 def test_chunk_final_all_silence_plays_error_and_skips_output() -> None:
@@ -644,7 +672,7 @@ def test_new_recording_resets_stale_chunk_accumulation() -> None:
     session._process_chunk(
         _ChunkItem(np.ones((100, 1), np.float32), threading.Event(), 1, 0.0, final=True)
     )
-    c["clipboard"].copy.assert_called_once_with("Fresh words")
+    c["clipboard"].copy.assert_called_once_with("Fresh words", primary=True)
 
 
 def test_chunk_decode_failure_keeps_other_chunks() -> None:
@@ -661,7 +689,7 @@ def test_chunk_decode_failure_keeps_other_chunks() -> None:
     session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 0.0, final=False))
     session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 1.2, final=False))
     session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 2.4, final=True))
-    c["clipboard"].copy.assert_called_once_with("Kept words. Final words.")
+    c["clipboard"].copy.assert_called_once_with("Kept words. Final words.", primary=True)
     c["injector"].paste.assert_called_once()
 
 
@@ -675,7 +703,7 @@ def test_processor_routes_chunk_items() -> None:
     session.start()
     time.sleep(0.1)
     c["injector"].paste.assert_called_once()
-    c["clipboard"].copy.assert_called_once_with("Hello")
+    c["clipboard"].copy.assert_called_once_with("Hello", primary=True)
 
 
 def test_drain_enqueues_final_chunk_in_paste_mode() -> None:
@@ -1278,3 +1306,43 @@ def test_dictate_mode_notifications_unchanged() -> None:
 
     notif.show_listening.assert_called_once()
     notif.show_transcribing.assert_called_once()
+
+
+def test_recorder_stop_failure_signals_streamer_instead_of_stranding_it() -> None:
+    """A recorder.stop() failure must not strand the queued live item.
+
+    on_recording_stop pops _recording_streamer before stopping the recorder,
+    so returning early on failure leaves the already-queued _LiveItem with
+    nobody able to signal it. Its driver blocks forever on the signal queue,
+    wedging the session's single processor thread: every later utterance is
+    then silently never transcribed until the daemon restarts.
+    """
+    cfg = _mock_cfg()
+    cfg.streaming.enabled = True
+    cfg.output.injection_method = "paste"
+    session, _m = _make_session(cfg=cfg)
+    c = _components(session)
+    streamer = MagicMock()
+    streamer.abort = threading.Event()
+    session._recording = True
+    session._recording_streamer = streamer
+    c["recorder"].stop.side_effect = RuntimeError("device unplugged")
+
+    session.on_recording_stop("ptt")
+
+    assert streamer.abort.is_set()
+    streamer.signal_abort.assert_called_once()
+
+
+def test_run_live_plays_error_cue_when_nothing_was_committed() -> None:
+    """An empty streamed utterance must sound like the batch paths' empty
+    transcript (error cue), not like a silent success."""
+    session, _m = _make_session()
+    c = _components(session)
+    streamer = MagicMock()
+    streamer.abort = threading.Event()
+    streamer.run.return_value = ""
+
+    session._run_live(streamer)
+
+    c["feedback"].play.assert_called_once_with("error")
