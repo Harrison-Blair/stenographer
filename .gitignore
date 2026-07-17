@@ -234,3 +234,22 @@ dist/
 .alloc.lock
 # fledge — per-run intermediates, regenerable
 .fledge/scratch/
+# fledge dev mode — symlinked into a local fledge source checkout (fledge init --dev)
+.claude/agents/fledge-brooder.md
+.claude/agents/fledge-context-scout.md
+.claude/agents/fledge-forager.md
+.claude/agents/fledge-incubator.md
+.claude/agents/fledge-skua.md
+.fledge/skills/fledge-interrogate/SKILL.md
+.fledge/skills/fledge-orchestrate/SKILL.md
+.fledge/skills/fledge-orchestrate/brooder.md
+.fledge/skills/fledge-orchestrate/foraging.md
+.fledge/skills/fledge-orchestrate/implementation.md
+.fledge/skills/fledge-orchestrate/incubator.md
+.fledge/skills/fledge-orchestrate/planning.md
+.fledge/skills/fledge-orchestrate/skua.md
+.fledge/skills/fledge-orchestrate/templates/context-doc.md
+.fledge/skills/fledge-orchestrate/templates/feather.md
+.fledge/skills/fledge-orchestrate/templates/plumage.md
+.fledge/skills/fledge-orchestrate/templates/scout-report.md
+.fledge/skills/fledge-orchestrate/worker-protocols.md

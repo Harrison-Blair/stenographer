@@ -1,28 +1,28 @@
 {
-  "fledgeVersion": "0.5.8",
+  "fledgeVersion": "0.6.6",
   "agents": [
     "claude"
   ],
   "files": {
     ".claude/agents/fledge-brooder.md": {
-      "policy": "default",
-      "sha256": "d770a6baeb7311bcb35cd21ac257ecb951611856e2b0bb35f2c9360838b7ab3d"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/adapters/claude/agents/fledge-brooder.md"
     },
     ".claude/agents/fledge-context-scout.md": {
-      "policy": "default",
-      "sha256": "209d3f245422797b1bf89f1d7747223eca750f423028f45f9222ad97e2096b57"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/adapters/claude/agents/fledge-context-scout.md"
     },
     ".claude/agents/fledge-forager.md": {
-      "policy": "default",
-      "sha256": "afe79be18fd7bd3204644361777cc08189825da03c8c83a7cdcb042ec04a3ffc"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/adapters/claude/agents/fledge-forager.md"
     },
     ".claude/agents/fledge-incubator.md": {
-      "policy": "default",
-      "sha256": "8dd322264aad47aa62d9a0b050e8ae0957b07c5559d60e533271946c18ebdd8c"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/adapters/claude/agents/fledge-incubator.md"
     },
     ".claude/agents/fledge-skua.md": {
-      "policy": "default",
-      "sha256": "fc84bf0a5db93d012bc4e4e85e1f62d25d748a46e951cc37fb2d2438e4e91301"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/adapters/claude/agents/fledge-skua.md"
     },
     ".claude/fledge-adapter.md": {
       "policy": "primitive_map",
@@ -34,7 +34,7 @@
     },
     ".claude/settings.local.json": {
       "policy": "generate",
-      "sha256": "179cbf16f2fd9f1c655aa212cc6248902dfa39b9ec87f9f8f856021b407aa788"
+      "sha256": "bdfb252a0ff62571ecc175755999f7410da23fab201331a3d41890e7153ed1f2"
     },
     ".claude/skills/fledge-interrogate": {
       "policy": "symlink",
@@ -65,56 +65,56 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     ".fledge/skills/fledge-interrogate/SKILL.md": {
-      "policy": "core",
-      "sha256": "c3c106d9a5128458716a2db78a2bfabf930e1485a1a695ebfd213b0583cc6b59"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-interrogate/SKILL.md"
     },
     ".fledge/skills/fledge-orchestrate/SKILL.md": {
-      "policy": "core",
-      "sha256": "284949a6016c92aca7ba060a0484fa630d376354ecbbb63e2e8e1fa1ee201da4"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/SKILL.md"
     },
     ".fledge/skills/fledge-orchestrate/brooder.md": {
-      "policy": "core",
-      "sha256": "61f20639916d05ae2fc378d8b6271703803e3eb9b73254880a0134bf0ea12144"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/brooder.md"
     },
     ".fledge/skills/fledge-orchestrate/foraging.md": {
-      "policy": "core",
-      "sha256": "7b5b7599d71dd91a12ab01d8793d877786691c8f1a5f284d23d105e3204e5df5"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/foraging.md"
     },
     ".fledge/skills/fledge-orchestrate/implementation.md": {
-      "policy": "core",
-      "sha256": "ad1220269bb8da08a51bcfff211ae9a32de5e399984efbffe7dce999a50710d9"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/implementation.md"
     },
     ".fledge/skills/fledge-orchestrate/incubator.md": {
-      "policy": "core",
-      "sha256": "f2dff52caebf45f52632a472e9688679177cc95b43a20d82ac0b602a558b0a7f"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/incubator.md"
     },
     ".fledge/skills/fledge-orchestrate/planning.md": {
-      "policy": "core",
-      "sha256": "78288ccb19d74dc168557338bd58c5823ec321bbba5f81f19631dabe02dd0af6"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/planning.md"
     },
     ".fledge/skills/fledge-orchestrate/skua.md": {
-      "policy": "core",
-      "sha256": "848d848303dd964ffb3eb578c998f9c7c53c7a849e04a74370230f322be3aec8"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/skua.md"
     },
     ".fledge/skills/fledge-orchestrate/templates/context-doc.md": {
-      "policy": "core",
-      "sha256": "a67459acd7fea3df03001b1e5e013b55775ae7ebad9c5a4d94c9d7f5a5e789ac"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/templates/context-doc.md"
     },
     ".fledge/skills/fledge-orchestrate/templates/feather.md": {
-      "policy": "core",
-      "sha256": "a4d830082fd984ec0c516d243440950fd96e5f922c02f6d44da4913d7db763c7"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/templates/feather.md"
     },
     ".fledge/skills/fledge-orchestrate/templates/plumage.md": {
-      "policy": "core",
-      "sha256": "bb85ca9ebca7a3d7e75f0512a1a8c1d3a802de71650ff9587288d54648ad8d95"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/templates/plumage.md"
     },
     ".fledge/skills/fledge-orchestrate/templates/scout-report.md": {
-      "policy": "core",
-      "sha256": "2cded5914b5679dd6b380a088fe4659f84d9220ad8d0ef81ebf5ceb75f41e9f6"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/templates/scout-report.md"
     },
     ".fledge/skills/fledge-orchestrate/worker-protocols.md": {
-      "policy": "core",
-      "sha256": "6260c5ff4712d2bc7b34bcb21455a1369612df075aabca0ead81dca105f451bc"
+      "policy": "dev-link",
+      "target": "/home/penguin/source/fledge/internal/bootstrap/core/skills/fledge-orchestrate/worker-protocols.md"
     },
     ".fledgeignore": {
       "policy": "default",
@@ -136,5 +136,6 @@
         "\u003e fledge: load and follow .fledge/skills/fledge-orchestrate/SKILL.md — primitive map at .claude/fledge-adapter.md"
       ]
     }
-  }
+  },
+  "devSource": "/home/penguin/source/fledge"
 }
