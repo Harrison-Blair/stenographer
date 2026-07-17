@@ -23,7 +23,9 @@ $ .venv/bin/python -c "import stenographer; print(stenographer.__file__)"
    `if self._typed` to `if text` so a first-delta failure (`_typed == ""`) still copies.
    `_finish()` still returns `self._typed`.
 
-## AC-1 — tests observed failing before implementation, passing after
+## AC-1
+
+**tests observed failing before implementation, passing after**
 
 Implementation order was as the spec fixes it: tests first, run against unchanged source,
 failure captured verbatim at capture time, then implement.
@@ -118,7 +120,9 @@ tests/test_live.py ....                                                  [100%]
 ======================= 4 passed, 28 deselected in 0.14s =======================
 ```
 
-## AC-2 — full transcript on the clipboard after a mid-utterance failure
+## AC-2
+
+**full transcript on the clipboard after a mid-utterance failure**
 
 `test_finish_copies_full_transcript_after_delivery_failure` (new). Forces `clipboard.copy()` to
 return `False` on the delta carrying " two", mirroring FTHR-017's
@@ -130,7 +134,9 @@ passing output post-implementation both captured under AC-1.
 `copy.side_effect = [True, False, True, True]`: only the second copy fails, so later copies would
 succeed if they were attempted — nothing but the latch itself can be what stops delivery.
 
-## AC-3 — FTHR-017's `_delivery_failed` latch preserved
+## AC-3
+
+**FTHR-017's `_delivery_failed` latch preserved**
 
 `test_delivery_failure_still_stops_pasting_at_prefix` (new pin) asserts (a) no `paste()` fires for
 the failed delta or any later one — including from `_finish()`, (b) the delivered text is still a
@@ -167,7 +173,9 @@ The latch's detector count goes from **1 of 485** (the FTHR-017 situation, where
 commit deleted it with 484/485 still green) to **3 of 487**. Source restored from backup and the
 suite re-verified green immediately after.
 
-## AC-4 — `_typed` still means "text delivered to the cursor"
+## AC-4
+
+**`_typed` still means "text delivered to the cursor"**
 
 `_typed` is mutated in exactly one place, unchanged from FTHR-017: `self._typed += text` inside
 `_emit()`'s `if delivered:` branch. `_finish()` still ends `return self._typed`, and `_run()`'s
@@ -178,14 +186,18 @@ accounting, or any return value. Pinned by
 `streamer._typed == "One"` after a latched utterance whose transcript is `"One two three "` — the
 two provably diverge without conflating).
 
-## AC-5 — happy path unchanged
+## AC-5
+
+**happy path unchanged**
 
 `test_finish_recopies_full_transcript` (existing, FTHR-017) passes **unmodified** — see AC-7's run.
 On the happy path `_delivery_failed` is never set, so `_finish()` copies `self._typed` exactly as
 before; `_typed` already *is* the full transcript there. No double-copy: the copy site is still a
 single call.
 
-## AC-6 — `output/clipboard.py` untouched
+## AC-6
+
+**`output/clipboard.py` untouched**
 
 ```
 $ git diff dev --exit-code -- src/stenographer/output/clipboard.py && echo UNTOUCHED
@@ -197,7 +209,9 @@ UNTOUCHED
 it is the only thing that makes the desync detectable to `_emit()`. It was deliberately not
 touched.
 
-## AC-7 — formatter untouched, its suite passes unmodified
+## AC-7
+
+**formatter untouched, its suite passes unmodified**
 
 ```
 $ git diff dev --exit-code -- src/stenographer/output/formatter.py tests/test_formatter.py && echo UNTOUCHED
@@ -218,7 +232,9 @@ The spec's warning was heeded: the transcript is accumulated from the same
 diverge from the incrementally-fed output and put *different text* on the clipboard than was
 pasted.
 
-## AC-8 — full unit suite green, no regressions
+## AC-8
+
+**full unit suite green, no regressions**
 
 ```
 $ .venv/bin/pytest -m "not integration" -q
@@ -234,7 +250,9 @@ All checks passed!
 55 files already formatted
 ```
 
-## AC-9 — `output.max_chars` path unchanged; gated on the latch, not a value comparison
+## AC-9
+
+**`output.max_chars` path unchanged; gated on the latch, not a value comparison**
 
 The fork: `_emit()` has **two** early returns before delivery (the latch check *and* the
 `max_chars` cap), so accumulating "before the latch check" positionally lands the accumulation
@@ -264,7 +282,9 @@ The rejected form leaks the full uncapped transcript onto the clipboard and the 
 confirming both that the fork was real and that this test observes it. Source restored; suite
 re-verified at 489 passed.
 
-## AC-10 — first-delta failure (`_typed == ""`) still copies the full transcript
+## AC-10
+
+**first-delta failure (`_typed == ""`) still copies the full transcript**
 
 `test_first_delta_failure_still_copies_full_transcript` (new). Forces `copy()` to fail on the
 **first** delta, so `_typed` stays `""` and `injector.pasted == []` — nothing reached the cursor,
