@@ -2,7 +2,7 @@
 id: FTHR-021
 title: Fix ClipboardManager.copy() hanging on captured wl-copy pipes
 plumage: PLM-010
-status: hatching
+status: fledged
 priority: P0
 depends_on: []
 authored: 2026-07-17T04:05:50Z
