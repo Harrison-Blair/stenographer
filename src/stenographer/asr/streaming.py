@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Streaming (intra-utterance) transcription via LocalAgreement-N.
+"""Word-level commit policy for live streaming via LocalAgreement-N.
 
-The daemon today transcribes each utterance in one batch pass. This module
-prototypes an alternative: re-decode a rolling audio buffer every chunk, and
-only *commit* the word-prefix that has agreed across the last ``N`` decodes.
-The still-unstable tail is re-decoded (with the committed text supplied as
-``initial_prompt`` for context) on the next chunk, so earlier provisional words
-can be revised backwards as more audio arrives.
+The live path re-decodes a growing audio window while recording and types
+each word the moment it is *committed*. ``wtype`` cannot un-type, so a word
+is committed only once the last ``N`` consecutive re-decodes agree on it —
+committed text is immutable and every intermediate typed state is a prefix
+of the final transcript.
 
-It is decoupled from audio I/O: the offline benchmark drives it with
-:meth:`push`; a future live path can drive it from the recorder callback.
+This class is a pure committer: the driver owns audio capture and decoding
+and feeds each full hypothesis (word list for the current window) into
+:meth:`insert`.
 
 Reference: Macháček et al., "Turning Whisper into Real-Time Transcription
 System" (whisper_streaming), the LocalAgreement-n policy.
@@ -17,82 +17,67 @@ System" (whisper_streaming), the LocalAgreement-n policy.
 
 from __future__ import annotations
 
+import dataclasses
 from collections import deque
-from dataclasses import dataclass, field
 
-import numpy as np
+from stenographer.asr.model import WordInfo
 
-from stenographer.asr.model import Model, WordInfo
+# Tolerance (s) when matching re-decoded words against the committed prefix.
+_EPSILON = 0.05
 
 
-def _norm(word: str) -> str:
-    """Normalise a word token for agreement comparison (not for output)."""
-    return word.strip().lower().strip(".,!?;:\"'“”‘’…-")  # noqa: RUF001
+def _agreement_key(word: str) -> str:
+    """Normalise a word token for agreement comparison (not for output).
+
+    Case-insensitive but punctuation-SENSITIVE: ``"world."`` and ``"world"``
+    do not agree, so typed punctuation never needs revision. Casing is owned
+    by the formatter downstream, so ``"The"`` and ``"the"`` do agree.
+    """
+    return word.strip().lower()
 
 
 def longest_common_prefix(hyps: list[list[str]]) -> int:
     """Length of the longest common prefix across all token lists in *hyps*.
 
-    Comparison is case/punctuation-insensitive via :func:`_norm`.
+    Comparison is case-insensitive (punctuation-sensitive) via
+    :func:`_agreement_key`.
     """
     if not hyps or any(not h for h in hyps):
         return 0
     shortest = min(len(h) for h in hyps)
     n = 0
     while n < shortest:
-        token = _norm(hyps[0][n])
-        if token == "" or any(_norm(h[n]) != token for h in hyps):
+        token = _agreement_key(hyps[0][n])
+        if token == "" or any(_agreement_key(h[n]) != token for h in hyps):
             break
         n += 1
     return n
 
 
-@dataclass
-class StepResult:
-    """Outcome of one :meth:`StreamingTranscriber.push`."""
-
-    newly_committed: list[WordInfo] = field(default_factory=list)
-    # Absolute audio end-time (s from utterance start) of each newly committed word.
-    committed_audio_ends: list[float] = field(default_factory=list)
-    provisional: str = ""
-    # True when the provisional tail changed vs the previous step (a revision).
-    revised: bool = False
-
-
 class StreamingTranscriber:
-    """LocalAgreement-N streaming transcriber with backward revision.
+    """LocalAgreement-N committer over successive window re-decodes.
 
-    Feed audio with :meth:`push` (any chunk size); call :meth:`finish` once the
-    utterance ends to flush the remaining tail. ``committed_text`` holds the
-    stabilised transcript at any point.
+    Feed the full word list of each re-decode with :meth:`insert`; it returns
+    only the words newly confirmed since the last call, with timestamps
+    converted to absolute utterance time. Call :meth:`flush` at end of
+    utterance to commit the residual tail, and :meth:`rebase` after the
+    driver trims the audio window.
+
+    The committed prefix is append-only: it is never revised, matching the
+    irreversibility of typed output.
     """
 
-    def __init__(
-        self,
-        model: Model,
-        *,
-        sample_rate: int,
-        agree: int = 2,
-        use_context: bool = True,
-        beam_size: int | None = None,
-    ) -> None:
-        if agree < 1:
-            raise ValueError("agree must be >= 1")
-        self._model = model
-        self._sample_rate = sample_rate
-        self._agree = agree
-        self._use_context = use_context
-        self._beam_size = beam_size
-        # Rolling window of not-yet-committed audio (mono float32).
-        self._buffer = np.empty((0,), dtype=np.float32)
-        # Audio-time (s) at the start of the buffer = total audio trimmed off.
-        self._buffer_offset = 0.0
-        # Total audio pushed so far (s) — "now" in the simulated stream.
-        self._audio_pushed = 0.0
+    def __init__(self, *, agreement_n: int = 2) -> None:
+        if agreement_n < 1:
+            raise ValueError("agreement_n must be >= 1")
+        self._agreement_n = agreement_n
+        # Seconds of audio the driver has trimmed off the window start.
+        self._offset = 0.0
         self._committed: list[WordInfo] = []
-        # Recent uncommitted-tail hypotheses (token lists), for agreement.
-        self._history: deque[list[str]] = deque(maxlen=agree)
-        self._prev_provisional = ""
+        # Recent uncommitted-tail hypotheses (agreement-key lists).
+        self._history: deque[list[str]] = deque(maxlen=agreement_n)
+        # The uncommitted tail of the most recent hypothesis (window-local).
+        self._last_tail: list[WordInfo] = []
 
     @property
     def committed_text(self) -> str:
@@ -102,69 +87,63 @@ class StreamingTranscriber:
     def committed_words(self) -> list[WordInfo]:
         return list(self._committed)
 
-    def push(self, samples: np.ndarray) -> StepResult:
-        """Append audio, re-decode the buffer, and commit any stable prefix."""
-        chunk = self._flatten(samples)
-        self._audio_pushed += chunk.shape[0] / self._sample_rate
-        self._buffer = np.concatenate([self._buffer, chunk])
+    def insert(self, hypothesis: list[WordInfo]) -> list[WordInfo]:
+        """Feed the latest re-decode of the current window; return new commits.
 
-        prompt = self.committed_text if self._use_context else None
-        words = self._model.transcribe_words(
-            self._buffer, beam_size=self._beam_size, initial_prompt=prompt or None
-        )
+        *hypothesis* carries window-local timestamps and still contains the
+        committed words that remain in the untrimmed window; they are skipped
+        by time (re-decodes may retokenise the committed region, so index
+        alignment cannot be trusted).
+        """
+        tail = self._skip_committed(hypothesis)
+        self._last_tail = tail
+        self._history.append([_agreement_key(w.word) for w in tail])
 
-        tokens = [w.word for w in words]
-        self._history.append(tokens)
+        if len(self._history) < self._agreement_n:
+            return []
+        commit_n = longest_common_prefix(list(self._history))
+        if commit_n == 0:
+            return []
+        newly = [self._to_absolute(w) for w in tail[:commit_n]]
+        self._committed.extend(newly)
+        self._last_tail = tail[commit_n:]
+        for h in self._history:
+            del h[:commit_n]
+        return newly
 
-        commit_n = (
-            longest_common_prefix(list(self._history)) if len(self._history) >= self._agree else 0
-        )
-
-        result = StepResult()
-        if commit_n > 0:
-            committed = words[:commit_n]
-            cut_time = committed[-1].end  # buffer-local seconds
-            for w in committed:
-                self._committed.append(w)
-                result.committed_audio_ends.append(self._buffer_offset + w.end)
-            result.newly_committed = committed
-            self._trim(cut_time)
-            # Re-align stored hypotheses to the trimmed buffer.
-            for h in self._history:
-                del h[:commit_n]
-            # Recompute the provisional tail from the leftover of this decode.
-            words = words[commit_n:]
-
-        provisional = "".join(w.word for w in words).strip()
-        result.provisional = provisional
-        result.revised = provisional != self._prev_provisional
-        self._prev_provisional = provisional
-        return result
-
-    def finish(self) -> str:
-        """Flush the remaining buffer: decode it once more and commit all words."""
-        if self._buffer.shape[0] > 0:
-            prompt = self.committed_text if self._use_context else None
-            words = self._model.transcribe_words(
-                self._buffer, beam_size=self._beam_size, initial_prompt=prompt or None
-            )
-            self._committed.extend(words)
-            self._trim(self._buffer.shape[0] / self._sample_rate)
+    def flush(self) -> list[WordInfo]:
+        """End of utterance: commit the residual tail of the last hypothesis."""
+        newly = [self._to_absolute(w) for w in self._last_tail]
+        self._committed.extend(newly)
         self._history.clear()
-        self._prev_provisional = ""
-        return self.committed_text
+        self._last_tail = []
+        return newly
+
+    def rebase(self, dropped_seconds: float) -> None:
+        """Record that the driver trimmed *dropped_seconds* off the window.
+
+        Subsequent hypotheses are window-local to the new start; committed
+        words are already stored in absolute time and are untouched.
+        """
+        self._offset += dropped_seconds
+
+    def reset(self) -> None:
+        self._offset = 0.0
+        self._committed = []
+        self._history.clear()
+        self._last_tail = []
 
     # -- internal ------------------------------------------------------------
 
-    def _flatten(self, samples: np.ndarray) -> np.ndarray:
-        arr = np.asarray(samples, dtype=np.float32)
-        if arr.ndim == 2:
-            arr = arr[:, 0]
-        return arr
+    def _skip_committed(self, hypothesis: list[WordInfo]) -> list[WordInfo]:
+        """Drop the hypothesis prefix that re-decodes already-committed audio."""
+        if not self._committed:
+            return list(hypothesis)
+        cutoff = self._committed[-1].end - self._offset
+        for i, w in enumerate(hypothesis):
+            if (w.start + w.end) / 2 >= cutoff - _EPSILON:
+                return list(hypothesis[i:])
+        return []
 
-    def _trim(self, cut_time: float) -> None:
-        """Drop the first *cut_time* seconds of the rolling buffer."""
-        cut = round(cut_time * self._sample_rate)
-        cut = max(0, min(cut, self._buffer.shape[0]))
-        self._buffer = self._buffer[cut:]
-        self._buffer_offset += cut / self._sample_rate
+    def _to_absolute(self, w: WordInfo) -> WordInfo:
+        return dataclasses.replace(w, start=w.start + self._offset, end=w.end + self._offset)

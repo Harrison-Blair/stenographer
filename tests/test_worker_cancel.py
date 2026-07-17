@@ -11,7 +11,7 @@ import threading
 import numpy as np
 import pytest
 
-from stenographer.asr.model import SegmentInfo, TranscriptionResult
+from stenographer.asr.model import SegmentInfo, TranscriptionResult, WordInfo
 from stenographer.asr.worker import CancelledError, Worker
 
 
@@ -23,6 +23,10 @@ class _StubModel:
 
     def __init__(self) -> None:
         self.transcribe_calls = 0
+        self.transcribe_words_calls = 0
+        self.word_beam_sizes: list[int | None] = []
+        # Optional hook fired between the two "segments" of a word decode.
+        self.between_word_segments = None
 
     def transcribe(self, samples, language, beam_size, on_segment=None):
         self.transcribe_calls += 1
@@ -34,6 +38,20 @@ class _StubModel:
             for seg in segments:
                 on_segment(seg)
         return TranscriptionResult(text="hello world", duration_seconds=1.0, segments=segments)
+
+    def transcribe_words(self, samples, *, beam_size=None, check_cancel=None):
+        self.transcribe_words_calls += 1
+        self.word_beam_sizes.append(beam_size)
+        words = []
+        for i, (word, hook) in enumerate(
+            [(" hello", self.between_word_segments), (" world", None)]
+        ):
+            if check_cancel is not None:
+                check_cancel()
+            words.append(WordInfo(start=i * 0.5, end=(i + 1) * 0.5, word=word, probability=1.0))
+            if hook is not None:
+                hook()
+        return words
 
     def close(self) -> None:
         pass
@@ -77,5 +95,52 @@ def test_job_cancelled_before_pickup_skips_model() -> None:
         with pytest.raises(CancelledError):
             fut.result(timeout=5.0)
         assert model.transcribe_calls == 0
+    finally:
+        worker.stop(timeout=5.0)
+
+
+def test_submit_words_returns_word_list_and_passes_beam_size() -> None:
+    model = _StubModel()
+    worker = Worker(model)
+    worker.start()
+    try:
+        fut = worker.submit_words(np.zeros(16000, dtype=np.float32), beam_size=2)
+        words = fut.result(timeout=5.0)
+        assert [w.word for w in words] == [" hello", " world"]
+        assert model.word_beam_sizes == [2]
+    finally:
+        worker.stop(timeout=5.0)
+
+
+def test_word_job_cancel_event_aborts_mid_decode() -> None:
+    model = _StubModel()
+    worker = Worker(model)
+    worker.start()
+    try:
+        cancel = threading.Event()
+        model.between_word_segments = cancel.set  # fires after the first word
+        fut = worker.submit_words(np.zeros(16000, dtype=np.float32), cancel_event=cancel)
+        with pytest.raises(CancelledError):
+            fut.result(timeout=5.0)
+
+        # The worker survives a per-job cancel: the next word job runs normally.
+        model.between_word_segments = None
+        fut2 = worker.submit_words(np.zeros(16000, dtype=np.float32))
+        assert [w.word for w in fut2.result(timeout=5.0)] == [" hello", " world"]
+    finally:
+        worker.stop(timeout=5.0)
+
+
+def test_word_job_cancelled_before_pickup_skips_model() -> None:
+    model = _StubModel()
+    worker = Worker(model)
+    cancel = threading.Event()
+    cancel.set()
+    fut = worker.submit_words(np.zeros(16000, dtype=np.float32), cancel_event=cancel)
+    worker.start()
+    try:
+        with pytest.raises(CancelledError):
+            fut.result(timeout=5.0)
+        assert model.transcribe_words_calls == 0
     finally:
         worker.stop(timeout=5.0)

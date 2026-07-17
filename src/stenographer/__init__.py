@@ -3,8 +3,7 @@
 
 The version is read from the installed package metadata (which is
 populated from ``pyproject.toml`` ``[project].version``). This keeps
-``pyproject.toml`` as the single source of truth; see
-``spec/11-ci-release.md``.
+``pyproject.toml`` as the single source of truth.
 """
 
 from __future__ import annotations

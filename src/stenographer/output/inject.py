@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Wayland text injection via ``wtype``.
 
-See ``spec/05-text-output.md`` for the full behaviour contract. The
-Injector degrades to a no-op when ``wtype`` is not on ``PATH``; on a
+The Injector degrades to a no-op when ``wtype`` is not on ``PATH``; on a
 runtime failure the session falls back to the clipboard, which is
 always populated independently.
 """
@@ -74,17 +73,21 @@ class Injector:
         return True
 
     def paste(self) -> bool:
-        """Simulate Ctrl+V via ``wtype``. Return ``True`` on success.
+        """Simulate Shift+Insert via ``wtype``. Return ``True`` on success.
 
         Used by paste-mode injection: the Session copies text to the
         clipboard first, then calls this to paste it at the cursor.
+        Shift+Insert is the chord validated across the target apps; it
+        reads the primary selection in some clients (kitty) and the
+        regular clipboard in others, which is why
+        :meth:`ClipboardManager.copy` populates both.
         """
         if not self._available:
             logger.warning("output.inject: wtype not available; cannot paste")
             return False
         try:
             subprocess.run(
-                ["wtype", "-M", "ctrl", "v", "-m", "ctrl"],
+                ["wtype", "-M", "shift", "-k", "Insert", "-m", "shift"],
                 check=True,
                 timeout=5.0,
                 capture_output=True,

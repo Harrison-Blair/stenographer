@@ -26,11 +26,21 @@ class Transition(NamedTuple):
 class HotkeyStateMachine:
     """Decides what a hotkey press means based on its duration.
 
-    Press duration >= ``threshold_seconds`` => push-to-talk (PTT).
-    A short tap enters PENDING_TAP: recording continues while waiting
-    for a second tap within ``double_tap_window_seconds``. A second tap
-    latches toggle mode; if the window expires (the listener delivers
-    ``on_timeout``), the recording is discarded.
+    In ``hybrid`` mode (the default), press duration >=
+    ``threshold_seconds`` => push-to-talk (PTT). A short tap enters
+    PENDING_TAP: recording continues while waiting for a second tap
+    within ``double_tap_window_seconds``. A second tap latches toggle
+    mode; if the window expires (the listener delivers ``on_timeout``),
+    the recording is discarded.
+
+    In ``toggle`` mode, a single press latches the recording
+    immediately (no PTT, no double-tap window); the next press stops
+    it. Press duration never matters.
+
+    In ``ptt`` mode, every press starts recording and every release
+    stops it (no double-tap window, no latching). Press duration never
+    matters, so PENDING_TAP, TOGGLE_LATCHED, and TOGGLE_STOPPING are
+    unreachable.
 
     The state machine is pure: it does not call the audio feedback
     player, the recorder, any timer, or any I/O. The caller observes
@@ -45,6 +55,7 @@ class HotkeyStateMachine:
         self,
         threshold_seconds: float = 0.5,
         double_tap_window_seconds: float = 0.35,
+        mode: Literal["hybrid", "toggle", "ptt"] = "hybrid",
     ) -> None:
         if threshold_seconds <= 0 or threshold_seconds > 5:
             raise ValueError(f"threshold_seconds must be in (0, 5], got {threshold_seconds}")
@@ -52,8 +63,11 @@ class HotkeyStateMachine:
             raise ValueError(
                 f"double_tap_window_seconds must be in (0, 2], got {double_tap_window_seconds}"
             )
+        if mode not in ("hybrid", "toggle", "ptt"):
+            raise ValueError(f"mode must be 'hybrid', 'toggle', or 'ptt', got {mode!r}")
         self._threshold = threshold_seconds
         self._double_tap_window = double_tap_window_seconds
+        self._mode = mode
         self._state: State = "IDLE"
         self._press_start: float | None = None
         self._chord_active: bool = False
@@ -91,7 +105,13 @@ class HotkeyStateMachine:
         if not self._chord_active:
             return Transition("noop", None)
         if self._state == "IDLE":
-            self._press_start = timestamp
+            if self._mode == "toggle":
+                self._state = "TOGGLE_LATCHED"
+                return Transition("start_recording", "toggle_on")
+            if self._mode != "ptt":
+                # ptt stops unconditionally on release, so it never records
+                # (nor consults) the press start time.
+                self._press_start = timestamp
             self._state = "RECORDING_PTT"
             return Transition("start_recording", "ptt_on")
         if self._state == "PENDING_TAP":
@@ -109,6 +129,9 @@ class HotkeyStateMachine:
             self._consumed = False
             return Transition("noop", None)
         if self._state == "RECORDING_PTT":
+            if self._mode == "ptt":
+                self._state = "IDLE"
+                return Transition("stop_recording_ptt", "ptt_off")
             if self._press_start is None:
                 return Transition("noop", None)
             duration = timestamp - self._press_start

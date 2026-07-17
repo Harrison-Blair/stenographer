@@ -119,15 +119,15 @@ class Model:
         samples: np.ndarray,
         *,
         beam_size: int | None = None,
-        initial_prompt: str | None = None,
+        check_cancel: Callable[[], None] | None = None,
     ) -> list[WordInfo]:
-        """Low-level word-timestamped transcription for the streaming path.
+        """Low-level word-timestamped transcription for the live streaming path.
 
         Unlike :meth:`transcribe` (the batch daemon path, left untouched),
-        this requests ``word_timestamps=True`` and accepts an
-        ``initial_prompt`` so a rolling window can be re-decoded with the
-        already-committed text as context.  Returns a flat, time-ordered
-        list of words.
+        this requests ``word_timestamps=True``.  *check_cancel* is invoked
+        once per decoded segment so an in-flight re-decode can be aborted
+        (it should raise to abort).  Returns a flat, time-ordered list of
+        words.
         """
         if samples.size == 0:
             return []
@@ -140,10 +140,11 @@ class Model:
             vad_filter=False,
             condition_on_previous_text=False,
             word_timestamps=True,
-            initial_prompt=initial_prompt,
         )
         words: list[WordInfo] = []
         for seg in segments_iter:
+            if check_cancel is not None:
+                check_cancel()
             for w in seg.words or ():
                 words.append(
                     WordInfo(start=w.start, end=w.end, word=w.word, probability=w.probability)
@@ -214,16 +215,26 @@ class LazyModel:
         loader thread exactly once after the model becomes available
         (or re-available after an idle unload).  *on_unloaded* fires
         on the timer thread when idle unload completes.
+
+        Gated on ``_impl``, not on ``_loaded_event``: a failed load also sets
+        the event, so gating on it would make this a no-op forever after the
+        first failure while :meth:`is_loaded` kept reporting False -- the
+        caller would register a callback that never fires and wait on a load
+        that never starts. A failed load is therefore retried here.
         """
-        if self._loaded_event.is_set():
-            return
         with self._lock:
-            if self._loaded_event.is_set():
+            if self._impl is not None:
                 return
             if self._load_thread is not None and self._load_thread.is_alive():
                 return
             self._loaded_event.clear()
-            self._on_loaded_cb = on_loaded
+            self._load_exception = None
+            # Guarded like _on_unloaded_cb below: _await_impl() calls this with
+            # no arguments, so an unconditional assignment would silently
+            # deregister the session's callback and the "model ready" cue would
+            # never fire for the reload after an idle unload.
+            if on_loaded is not None:
+                self._on_loaded_cb = on_loaded
             if on_unloaded is not None:
                 self._on_unloaded_cb = on_unloaded
             self._load_thread = threading.Thread(
@@ -234,7 +245,17 @@ class LazyModel:
             self._load_thread.start()
 
     def is_loaded(self) -> bool:
-        return self._loaded_event.is_set()
+        """Whether the inner Model is actually available right now.
+
+        Not ``_loaded_event.is_set()``: that event means "the load finished",
+        which a *failed* load also satisfies (it is set so waiters in
+        :meth:`_await_impl` can wake up and see the exception). Reporting a
+        failed load as loaded makes the session skip its model-loading
+        notification and callback registration, so the user gets no feedback
+        at all on the utterance that fails.
+        """
+        with self._lock:
+            return self._impl is not None
 
     def close(self) -> None:
         """Cancel the idle-unload timer.  Does NOT unload the model."""
@@ -254,6 +275,37 @@ class LazyModel:
 
         Reschedules the idle-unload timer on every successful call.
         """
+        impl = self._await_impl()
+        result = impl.transcribe(samples, language, beam_size, on_segment=on_segment)
+        self._load_generation += 1
+        self._schedule_unload()
+        return result
+
+    def transcribe_words(
+        self,
+        samples: np.ndarray,
+        *,
+        beam_size: int | None = None,
+        check_cancel: Callable[[], None] | None = None,
+    ) -> list[WordInfo]:
+        """Wait until the model is loaded (blocking), then run a word decode.
+
+        Reschedules the idle-unload timer on every successful call.
+        """
+        impl = self._await_impl()
+        result = impl.transcribe_words(samples, beam_size=beam_size, check_cancel=check_cancel)
+        self._load_generation += 1
+        self._schedule_unload()
+        return result
+
+    # -- internal -------------------------------------------------------
+
+    def _await_impl(self) -> Model:
+        """Block until the inner Model is loaded and return it.
+
+        Re-raises a stored load exception (clearing state so a later
+        call retries the load).
+        """
         while True:
             if not self._loaded_event.is_set():
                 self.ensure_loaded()
@@ -269,12 +321,7 @@ class LazyModel:
                     raise exc
                 impl = self._impl
             assert impl is not None
-            result = impl.transcribe(samples, language, beam_size, on_segment=on_segment)
-            self._load_generation += 1
-            self._schedule_unload()
-            return result
-
-    # -- internal -------------------------------------------------------
+            return impl
 
     def _do_load(self) -> None:
         try:

@@ -9,10 +9,11 @@ import queue
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
-from stenographer.asr.model import LazyModel, Model, SegmentInfo, TranscriptionResult
+from stenographer.asr.model import LazyModel, Model, SegmentInfo, TranscriptionResult, WordInfo
 
 log = logging.getLogger(__name__)
 
@@ -30,14 +31,24 @@ signal that the lazy model should be disposed on the worker thread."""
 @dataclass
 class Job:
     samples: np.ndarray
-    future: concurrent.futures.Future[TranscriptionResult]
+    future: (
+        concurrent.futures.Future[TranscriptionResult] | concurrent.futures.Future[list[WordInfo]]
+    )
     on_segment: Callable[[SegmentInfo], None] | None = None
     cancel_event: threading.Event | None = None
+    kind: Literal["segments", "words"] = "segments"
+    beam_size: int | None = None
 
 
 class Worker:
-    def __init__(self, model: Model | LazyModel) -> None:
+    def __init__(
+        self,
+        model: Model | LazyModel,
+        *,
+        sample_rate: int = 16000,
+    ) -> None:
         self._model = model
+        self._sample_rate = sample_rate
         self._queue: queue.Queue[Job | object] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._cancel_event = threading.Event()
@@ -58,6 +69,31 @@ class Worker:
         future: concurrent.futures.Future[TranscriptionResult] = concurrent.futures.Future()
         self._queue.put(
             Job(samples=samples, future=future, on_segment=on_segment, cancel_event=cancel_event)
+        )
+        return future
+
+    def submit_words(
+        self,
+        samples: np.ndarray,
+        *,
+        beam_size: int | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> concurrent.futures.Future[list[WordInfo]]:
+        """Enqueue a single word-timestamped re-decode of *samples*.
+
+        Used by the live streaming driver: one job per interim re-decode of
+        the growing utterance window.  Honors the same mid-job cancellation
+        and lazy model loading as :meth:`submit`.
+        """
+        future: concurrent.futures.Future[list[WordInfo]] = concurrent.futures.Future()
+        self._queue.put(
+            Job(
+                samples=samples,
+                future=future,
+                cancel_event=cancel_event,
+                kind="words",
+                beam_size=beam_size,
+            )
         )
         return future
 
@@ -146,12 +182,19 @@ class Worker:
                 continue
 
             try:
-                result = self._model.transcribe(
-                    job.samples,
-                    self._model.language,
-                    self._model.beam_size,
-                    on_segment=on_segment,
-                )
+                if job.kind == "words":
+                    result = self._model.transcribe_words(
+                        job.samples,
+                        beam_size=job.beam_size,
+                        check_cancel=lambda _cancel=job.cancel_event: self._check_cancel(_cancel),
+                    )
+                else:
+                    result = self._model.transcribe(
+                        job.samples,
+                        self._model.language,
+                        self._model.beam_size,
+                        on_segment=on_segment,
+                    )
             except CancelledError as exc:
                 log.debug("ASR worker: transcription cancelled")
                 job.future.set_exception(exc)
@@ -161,6 +204,13 @@ class Worker:
                 job.future.set_exception(exc)
                 continue
             job.future.set_result(result)
+
+    def _check_cancel(self, job_cancel: threading.Event | None) -> None:
+        """Raise :class:`CancelledError` if a global or per-job cancel fired."""
+        if self._cancel_event.is_set():
+            raise CancelledError("transcription cancelled")
+        if job_cancel is not None and job_cancel.is_set():
+            raise CancelledError("transcription cancelled")
 
 
 def _trim_arena() -> None:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import textwrap
 from dataclasses import FrozenInstanceError
 
@@ -26,12 +27,49 @@ from stenographer.config import (
 
 def test_defaults_hotkey() -> None:
     assert Config.defaults().hotkey == HotkeyConfig(
-        binding="KEY_RIGHTCTRL",
+        binding="KEY_RIGHTALT",
         toggle_threshold_seconds=0.5,
         double_tap_window_seconds=0.35,
         cancel_binding="KEY_ESC",
         device=None,
+        trigger_mode="ptt",
     )
+
+
+def test_defaults_have_no_prompt_binding_field() -> None:
+    assert not hasattr(Config.defaults().hotkey, "prompt_binding")
+
+
+def test_defaults_have_no_llm_field() -> None:
+    assert not hasattr(Config.defaults(), "llm")
+
+
+def test_default_hotkey_binding_is_right_alt() -> None:
+    assert Config.defaults().hotkey.binding == "KEY_RIGHTALT"
+
+
+def test_legacy_llm_and_prompt_binding_keys_ignored(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            hotkey.prompt_binding = "KEY_RIGHTALT"
+
+            [stenographer.llm]
+            base_url = "http://localhost:9090"
+            model = "qwen2.5-7b"
+            """)
+    )
+    Config.load(p)  # must not raise
+
+
+def test_format_default_toml_has_no_llm_or_prompt_binding() -> None:
+    from stenographer.config import _format_default_toml
+
+    text = _format_default_toml()
+    assert "llm." not in text
+    assert "prompt_binding" not in text
+    assert 'hotkey.binding = "KEY_RIGHTALT"' in text
 
 
 def test_defaults_audio() -> None:
@@ -118,7 +156,7 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
             asr.compute_type = "int8"
             feedback.volume = 0.3
             feedback.mute = true
-            output.injection_method = "paste"
+            output.injection_method = "text"
             output.append_trailing_space = false
             output.max_chars = 1000
             clipboard.enabled = false
@@ -134,10 +172,43 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
     assert cfg.asr.compute_type == "int8"
     assert cfg.feedback.volume == 0.3
     assert cfg.feedback.mute is True
-    assert cfg.output.injection_method == "paste"
+    # text mode, so clipboard.enabled = false is coherent here; paste mode
+    # delivers *via* the clipboard and is covered by the cross-section tests.
+    assert cfg.output.injection_method == "text"
     assert cfg.output.append_trailing_space is False
     assert cfg.output.max_chars == 1000
     assert cfg.clipboard.enabled is False
+
+
+def test_paste_mode_requires_clipboard_enabled(tmp_path: pathlib.Path) -> None:
+    # Paste mode delivers text by copying it and firing Shift+Insert. With the
+    # clipboard disabled the chord would paste whatever the user had there
+    # before, so the combination is rejected rather than silently resolved.
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            output.injection_method = "paste"
+            clipboard.enabled = false
+            """)
+    )
+    with pytest.raises(ConfigError, match=re.escape("clipboard.enabled")):
+        Config.load(p)
+
+
+def test_streaming_requires_paste_mode(tmp_path: pathlib.Path) -> None:
+    # Streaming pastes each committed delta; in text mode it silently did
+    # nothing at all, which read as the feature being broken.
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            output.injection_method = "text"
+            streaming.enabled = true
+            """)
+    )
+    with pytest.raises(ConfigError, match=re.escape("streaming.enabled")):
+        Config.load(p)
 
 
 def test_load_partial_override_merges_over_defaults(tmp_path: pathlib.Path) -> None:
@@ -211,6 +282,40 @@ def test_load_missing_file_raises(tmp_path: pathlib.Path) -> None:
 # --- load(): validation rules ---
 
 
+def test_hotkey_trigger_mode_toggle_parses(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.trigger_mode = "toggle"\n')
+    assert Config.load(p).hotkey.trigger_mode == "toggle"
+
+
+def test_hotkey_trigger_mode_invalid_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.trigger_mode = "bogus"\n')
+    with pytest.raises(ConfigError, match=r"hotkey.trigger_mode"):
+        Config.load(p)
+
+
+def test_trigger_mode_accepts_ptt(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.trigger_mode = "ptt"\n')
+    assert Config.load(p).hotkey.trigger_mode == "ptt"
+    # ...and an unknown value still raises the existing ConfigError shape.
+    q = tmp_path / "bad.toml"
+    q.write_text('[stenographer]\nhotkey.trigger_mode = "nonsense"\n')
+    with pytest.raises(ConfigError, match=r"hotkey.trigger_mode"):
+        Config.load(q)
+
+
+def test_defaults_trigger_mode_is_ptt() -> None:
+    assert Config.defaults().hotkey.trigger_mode == "ptt"
+
+
+def test_format_default_toml_has_trigger_mode() -> None:
+    from stenographer.config import _format_default_toml
+
+    assert 'hotkey.trigger_mode = "ptt"' in _format_default_toml()
+
+
 def test_validate_hotkey_threshold_zero_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text("[stenographer]\nhotkey.toggle_threshold_seconds = 0\n")
@@ -261,7 +366,7 @@ def test_validate_cancel_binding_unknown_key_rejected(tmp_path: pathlib.Path) ->
 
 def test_validate_cancel_binding_overlap_with_main_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\nhotkey.cancel_binding = "KEY_RIGHTCTRL"\n')
+    p.write_text('[stenographer]\nhotkey.cancel_binding = "KEY_RIGHTALT"\n')
     with pytest.raises(ConfigError, match=r"hotkey.cancel_binding"):
         Config.load(p)
 
@@ -535,6 +640,21 @@ def test_validate_cue_readable_file_accepted(tmp_path: pathlib.Path) -> None:
     assert Config.load(p).feedback.cues["ptt_on"] == str(cue)
 
 
+def test_unknown_cue_name_still_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer.feedback.cues]\nbogus_cue_name = "/no/such/file.wav"\n')
+    with pytest.raises(ConfigError, match=r"feedback.cues.bogus_cue_name"):
+        Config.load(p)
+
+
+def test_cue_names_matches_cue_name_literal_args() -> None:
+    import typing
+
+    from stenographer.audio.feedback import CueName
+
+    assert set(CUE_NAMES) == set(typing.get_args(CueName))
+
+
 def test_validate_hotkey_device_missing_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text('[stenographer]\nhotkey.device = "/no/such/device"\n')
@@ -579,6 +699,74 @@ def test_validate_bool_rejected_for_int_field(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text("[stenographer]\naudio.sample_rate = true\n")
     with pytest.raises(ConfigError, match=r"audio.sample_rate"):
+        Config.load(p)
+
+
+# --- [streaming] / [formatting] ---
+
+
+def test_streaming_defaults() -> None:
+    cfg = Config.defaults()
+    assert cfg.streaming.enabled is False
+    assert cfg.streaming.min_chunk_seconds == 1.0
+    assert cfg.streaming.agreement_n == 2
+    assert cfg.streaming.beam_size is None
+    assert cfg.streaming.max_buffer_seconds == 20.0
+    assert cfg.formatting.capitalize_sentences is True
+    assert cfg.formatting.normalize_spacing is True
+
+
+def test_default_paragraph_pause_seconds_is_zero() -> None:
+    assert Config.defaults().formatting.paragraph_pause_seconds == 0.0
+
+
+def test_streaming_overrides_load(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[stenographer]\n"
+        "streaming.enabled = true\n"
+        "streaming.min_chunk_seconds = 0.5\n"
+        "streaming.agreement_n = 3\n"
+        "streaming.beam_size = 2\n"
+        "streaming.max_buffer_seconds = 30\n"
+        "formatting.paragraph_pause_seconds = 3.5\n"
+        "formatting.capitalize_sentences = false\n"
+    )
+    cfg = Config.load(p)
+    assert cfg.streaming.enabled is True
+    assert cfg.streaming.min_chunk_seconds == 0.5
+    assert cfg.streaming.agreement_n == 3
+    assert cfg.streaming.beam_size == 2
+    assert cfg.streaming.max_buffer_seconds == 30.0
+    assert cfg.formatting.paragraph_pause_seconds == 3.5
+    assert cfg.formatting.capitalize_sentences is False
+
+
+def test_streaming_beam_size_null_means_asr_beam(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nstreaming.beam_size = null\n")
+    assert Config.load(p).streaming.beam_size is None
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("streaming.min_chunk_seconds", "0.1"),
+        ("streaming.min_chunk_seconds", "6"),
+        ("streaming.agreement_n", "1"),
+        ("streaming.agreement_n", "5"),
+        ("streaming.beam_size", "0"),
+        ("streaming.beam_size", "11"),
+        ("streaming.max_buffer_seconds", "4"),
+        ("streaming.max_buffer_seconds", "121"),
+        ("formatting.paragraph_pause_seconds", "-1"),
+        ("formatting.paragraph_pause_seconds", "11"),
+    ],
+)
+def test_streaming_out_of_range_rejected(tmp_path: pathlib.Path, key: str, value: str) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\n{key} = {value}\n")
+    with pytest.raises(ConfigError, match=key.replace(".", r"\.")):
         Config.load(p)
 
 

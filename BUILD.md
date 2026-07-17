@@ -64,7 +64,7 @@ contributors are CTranslate2 (~60 MB) and ONNX Runtime (~55 MB).
 | Asset                                | How the user gets it                            |
 |--------------------------------------|-------------------------------------------------|
 | ASR model (`distil-whisper-medium.en`, ~800 MB) | `./dist/stenographer/stenographer model download` |
-| System CLIs (`wtype`, `wl-copy`, `pw-play`, `paplay`, `notify-send`) | Distro packages — see `spec/10-packaging.md` |
+| System CLIs (`wtype`, `wl-copy`, `pw-play`, `paplay`, `notify-send`) | Distro packages — see the Requirements table in `README.md` |
 | System libraries (`libevdev`, `libportaudio`) | Distro packages                  |
 
 ## Runtime dependencies on the target machine

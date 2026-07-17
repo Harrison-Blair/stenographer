@@ -19,7 +19,7 @@
 import certifi
 from pathlib import Path
 
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 block_cipher = None
 
@@ -32,7 +32,7 @@ a = Analysis(
     pathex=[str(PROJECT_ROOT / "src")],
     binaries=[],
     datas=[(str(ASSET_SRC), "stenographer/assets/sounds"), (str(ICON_SRC), "stenographer/assets/icons"), (certifi.where(), "certifi"), *copy_metadata("stenographer")],
-    hiddenimports=["sounddevice", "evdev", "evdev._ecodes", "certifi", "argcomplete"],
+    hiddenimports=["sounddevice", "evdev", "evdev._ecodes", "certifi", "argcomplete", *collect_submodules("stenographer")],
     hookspath=[str(PROJECT_ROOT / "packaging")],
     hooksconfig={},
     runtime_hooks=[str(PROJECT_ROOT / "packaging" / "rthooks" / "py_rth_portaudio.py")],

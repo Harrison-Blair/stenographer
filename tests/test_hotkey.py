@@ -264,6 +264,114 @@ def test_reset_returns_to_idle() -> None:
     assert not sm.is_chord_active
 
 
+def test_toggle_mode_single_press_latches() -> None:
+    sm = HotkeyStateMachine(threshold_seconds=0.5, mode="toggle")
+    sm.mark_chord_active(True)
+    t = sm.on_keydown(0.0)
+    assert t.action == "start_recording"
+    assert t.cue == "toggle_on"
+    assert sm.state == "TOGGLE_LATCHED"
+    sm.mark_chord_active(False)
+    # Releasing the key does not stop or reclassify the recording.
+    assert sm.on_keyup(0.2).action == "noop"
+    assert sm.state == "TOGGLE_LATCHED"
+    # A second press stops, regardless of how long either press was held.
+    sm.mark_chord_active(True)
+    assert sm.on_keydown(5.0).action == "noop"
+    assert sm.state == "TOGGLE_STOPPING"
+    sm.mark_chord_active(False)
+    t = sm.on_keyup(5.1)
+    assert t.action == "stop_recording_toggle"
+    assert t.cue == "toggle_off"
+    assert sm.state == "IDLE"
+
+
+def test_toggle_mode_long_hold_is_not_ptt() -> None:
+    sm = HotkeyStateMachine(threshold_seconds=0.5, mode="toggle")
+    sm.mark_chord_active(True)
+    assert sm.on_keydown(0.0).action == "start_recording"
+    sm.mark_chord_active(False)
+    assert sm.on_keyup(2.0).action == "noop"
+    assert sm.state == "TOGGLE_LATCHED"
+
+
+def test_toggle_mode_cancel_consumes_keyup() -> None:
+    sm = HotkeyStateMachine(threshold_seconds=0.5, mode="toggle")
+    sm.mark_chord_active(True)
+    sm.on_keydown(0.0)
+    t = sm.on_cancel()
+    assert t.action == "cancel"
+    assert sm.state == "IDLE"
+    sm.mark_chord_active(False)
+    assert sm.on_keyup(0.3).action == "noop"
+
+
+def test_ptt_mode_keydown_always_starts_recording() -> None:
+    # Duration is unknown at keydown time; ptt must start recording either way.
+    for keyup_at in (0.01, 5.0):
+        sm = HotkeyStateMachine(threshold_seconds=0.5, mode="ptt")
+        sm.mark_chord_active(True)
+        t = sm.on_keydown(0.0)
+        assert t.action == "start_recording"
+        assert t.cue == "ptt_on"
+        assert sm.state == "RECORDING_PTT"
+        sm.mark_chord_active(False)
+        assert sm.on_keyup(keyup_at).action == "stop_recording_ptt"
+
+
+def test_ptt_mode_keyup_always_stops_unconditionally() -> None:
+    # A 10ms tap and a 5s hold both stop: the threshold is never consulted.
+    for keyup_at in (0.01, 5.0):
+        sm = HotkeyStateMachine(threshold_seconds=0.5, mode="ptt")
+        sm.mark_chord_active(True)
+        sm.on_keydown(0.0)
+        sm.mark_chord_active(False)
+        t = sm.on_keyup(keyup_at)
+        assert t.action == "stop_recording_ptt"
+        assert t.cue == "ptt_off"
+        assert sm.state == "IDLE"
+
+
+def test_ptt_mode_short_tap_does_not_enter_pending_tap() -> None:
+    sm = HotkeyStateMachine(threshold_seconds=0.5, mode="ptt")
+    # Tap 1: well under the threshold -> still a clean PTT stop, no grace window.
+    sm.mark_chord_active(True)
+    sm.on_keydown(0.0)
+    sm.mark_chord_active(False)
+    assert sm.on_keyup(0.05).action == "stop_recording_ptt"
+    assert sm.state == "IDLE"
+    # Tap 2 inside what would be the double-tap window: must NOT latch toggle.
+    sm.mark_chord_active(True)
+    t = sm.on_keydown(0.1)
+    assert t.action == "start_recording"  # not "latch_toggle"
+    assert sm.state == "RECORDING_PTT"  # not "TOGGLE_LATCHED"
+    sm.mark_chord_active(False)
+    assert sm.on_keyup(0.15).action == "stop_recording_ptt"
+    assert sm.state == "IDLE"
+
+
+def test_ptt_mode_cancel_aborts_recording() -> None:
+    sm = HotkeyStateMachine(threshold_seconds=0.5, mode="ptt")
+    sm.mark_chord_active(True)
+    sm.on_keydown(0.0)
+    assert sm.state == "RECORDING_PTT"
+    t = sm.on_cancel()
+    assert t.action == "cancel"
+    assert t.cue == "cancel"
+    assert sm.state == "IDLE"
+    # The cancelled press's keyup is consumed: no stop, hence no output.
+    sm.mark_chord_active(False)
+    assert sm.on_keyup(1.0).action == "noop"
+    # The next press starts fresh.
+    sm.mark_chord_active(True)
+    assert sm.on_keydown(2.0).action == "start_recording"
+
+
+def test_state_machine_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError):
+        HotkeyStateMachine(mode="bogus")
+
+
 def test_threshold_validation() -> None:
     with pytest.raises(ValueError):
         HotkeyStateMachine(threshold_seconds=0)

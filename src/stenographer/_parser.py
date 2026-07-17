@@ -37,6 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     transcribe = sub.add_parser("transcribe", help="Transcribe an audio file and print to stdout.")
     transcribe.add_argument("file", type=pathlib.Path)
+    transcribe.add_argument(
+        "--raw", action="store_true", help="Emit the raw ASR transcript, unformatted."
+    )
 
     sub.add_parser("dictate", help="One-shot dictation.")
 
@@ -61,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("devices", help="List audio input devices.")
 
-    bench = sub.add_parser("bench", help="Benchmark ASR configs (batch matrix + streaming sim).")
+    bench = sub.add_parser("bench", help="Benchmark ASR configs (batch matrix).")
     bench.add_argument(
         "file",
         type=pathlib.Path,
@@ -90,23 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="int8,int8_float16",
         help="Comma-separated compute types (default int8,int8_float16).",
     )
-    bench.add_argument("--no-streaming", action="store_true", help="Skip the streaming simulation.")
     bench.add_argument(
         "--show-text", action="store_true", help="Print each config's full transcript."
-    )
-    bench.add_argument(
-        "--stream-model",
-        default=None,
-        help="Model id for the streaming sim (default: large-v3 gold).",
-    )
-    bench.add_argument(
-        "--chunk", type=float, default=1.0, help="Streaming step size in seconds (default 1.0)."
-    )
-    bench.add_argument("--agree", type=int, default=2, help="LocalAgreement window N (default 2).")
-    bench.add_argument(
-        "--no-context",
-        action="store_true",
-        help="Disable committed-text context prompt in streaming.",
     )
 
     return parser

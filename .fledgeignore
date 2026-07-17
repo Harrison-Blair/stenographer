@@ -1,0 +1,22 @@
+# .fledgeignore — gitignore syntax.
+# Paths matched here are excluded from context gathering (`fledge scan`).
+.git/
+.fledge/
+.fledgeignore
+.claude/
+node_modules/
+dist/
+build/
+out/
+target/
+vendor/
+.vscode/
+.idea/
+.cache/
+coverage/
+*.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+go.sum
+Cargo.lock

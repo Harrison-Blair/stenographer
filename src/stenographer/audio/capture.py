@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Audio capture: the ``Recorder`` component (see ``spec/02-audio-capture.md``)."""
+"""Audio capture: the ``Recorder`` component."""
 
 from __future__ import annotations
 
 import logging
 import math
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -102,6 +103,11 @@ class Recorder:
         self._silence_duration_seconds = silence_duration_seconds
         self._stream: sounddevice.InputStream | None = None
         self._buffer: bytearray | None = None
+        # Guards _buffer appends/reads shared between the PortAudio callback
+        # and snapshot() on the streaming driver thread. Held only around the
+        # extend/copy themselves, so the callback stays effectively
+        # non-blocking.
+        self._buffer_lock = threading.Lock()
         self._overflow = False
         self._capped = False
         self._active = False
@@ -112,8 +118,27 @@ class Recorder:
         self._speech_frames = 0
         self._seen_speech = False
         self._flushed = False
+        # Live-streaming partial signal, reset every start().
+        self._on_partial: Callable[[], None] | None = None
+        self._min_partial_seconds = 1.0
+        self._partial_frames = 0
 
-    def start(self, *, on_segment: Callable[[np.ndarray], None] | None = None) -> None:
+    def start(
+        self,
+        *,
+        on_segment: Callable[[np.ndarray], None] | None = None,
+        on_partial: Callable[[], None] | None = None,
+        min_partial_seconds: float = 1.0,
+    ) -> None:
+        """Open the input stream.
+
+        *on_segment* (silence-flush) and *on_partial* (streaming signal) are
+        mutually exclusive; the session wires one or the other. *on_partial*
+        fires on the PortAudio thread every *min_partial_seconds* of newly
+        captured audio and must only enqueue a signal and return.
+        """
+        if on_segment is not None and on_partial is not None:
+            raise ValueError("on_segment and on_partial are mutually exclusive")
         self._buffer = bytearray()
         self._overflow = False
         self._capped = False
@@ -122,6 +147,9 @@ class Recorder:
         self._speech_frames = 0
         self._seen_speech = False
         self._flushed = False
+        self._on_partial = on_partial
+        self._min_partial_seconds = min_partial_seconds
+        self._partial_frames = 0
         rates_to_try = [self._sample_rate] + [
             r for r in _FALLBACK_SAMPLE_RATES if r != self._sample_rate
         ]
@@ -185,9 +213,15 @@ class Recorder:
             else:
                 if indata.shape[1] > 1:
                     indata = indata[:, 0:1]
-                self._buffer.extend(indata.tobytes())
+                with self._buffer_lock:
+                    self._buffer.extend(indata.tobytes())
                 if self._silence_detection and self._on_segment is not None:
                     self._detect_silence(indata[:, 0], frames)
+                if self._on_partial is not None:
+                    self._partial_frames += frames
+                    if self._partial_frames >= self._min_partial_seconds * self._sample_rate:
+                        self._partial_frames = 0
+                        self._on_partial()
         if status is not None and getattr(status, "input_overflow", False):
             self._overflow = True
 
@@ -222,7 +256,9 @@ class Recorder:
         if arr.shape[0] > 0 and self._on_segment is not None:
             self._on_segment(arr)
 
-    def _finalize(self, buffer: bytearray | None, *, log_resample: bool = True) -> np.ndarray:
+    def _finalize(
+        self, buffer: bytearray | bytes | None, *, log_resample: bool = True
+    ) -> np.ndarray:
         """Convert a raw capture buffer to a mono ``(N, 1)`` float32 array,
         resampling from the actual device rate to the configured rate if the
         device fell back to a different rate. Shared by ``stop()`` and the
@@ -242,6 +278,24 @@ class Recorder:
                     arr.shape[0],
                 )
         return arr
+
+    def snapshot(self, start_seconds: float = 0.0) -> np.ndarray:
+        """Copy the captured audio from *start_seconds* (configured-rate
+        seconds) to now, as a mono ``(N, 1)`` float32 array at the configured
+        rate.
+
+        Called from the streaming driver thread while the PortAudio callback
+        is still appending. The raw device-rate buffer is sliced under the
+        lock (cost proportional to the window, not the recording) and
+        resampled outside it. Second-based slicing keeps the boundary
+        rate-agnostic when the device fell back to another rate.
+        """
+        offset = round(start_seconds * self._sample_rate) * 4
+        with self._buffer_lock:
+            if self._buffer is None or offset >= len(self._buffer):
+                return np.empty((0, 1), dtype=np.float32)
+            window = bytes(self._buffer[offset:])
+        return self._finalize(window, log_resample=False)
 
     def stop(self) -> np.ndarray:
         if self._stream is not None:

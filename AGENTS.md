@@ -2,53 +2,40 @@
 
 ## Current state
 
-The project is a Wayland push-to-talk / toggle dictation daemon
-(`spec/00-overview.md`). Source of truth for design is the
-`spec/` directory; the code under `src/`, the tests under `tests/`,
-the build assets under `packaging/` and `scripts/`, and `BUILD.md`
-all exist but are not yet committed.
+The project is a Wayland push-to-talk / toggle dictation daemon. The
+whole tree — `src/`, `tests/`, `packaging/`, `scripts/`, `BUILD.md` —
+is committed and released (current version in `pyproject.toml`).
 
-Tracked in git:
+Key tracked paths:
 
-- `README.md` — project readme (user description + auto-generated
-  install / run / configure sections).
+- `README.md` — project readme (user-owned description + auto-generated
+  install / run / configure sections; do not edit above the "DO NOT EDIT"
+  line).
+- `BUILD.md` — standalone-binary build instructions.
 - `LICENSE` — GNU GPL v3-or-later.
-- `.gitignore` — Python defaults plus `build/`, `dist/`, `*.spec.bak`
-  for PyInstaller.
 - `.python-version` — pins Python 3.14 (consumable by `pyenv` / `uv`).
 - `pyproject.toml` — project metadata, runtime + dev + build
   `optional-dependencies`, hatchling build, ruff config, pytest
   config (with an `integration` marker, opt-in via
   `STENOGRAPHER_INTEGRATION=1`).
-- `AGENTS.md` — this file.
-- `spec/00-overview.md` … `spec/12-update.md` — thirteen spec docs
-  that fix the shape, behaviour, build, and self-update of the
-  system. The spec is canonical; the code must match it.
-- `.github/workflows/release.yml` — release CI workflow (runs on merge to
-  `main`; see `spec/11-ci-release.md`).
-
-Present on disk but not yet committed (untracked):
-
-- `BUILD.md` — standalone-binary build instructions.
-- `src/stenographer/` — the package (cli, config, session,
-  capabilities, errors, hotkey/, audio/, asr/, output/, assets/sounds/).
+- `src/stenographer/` — the package (cli, `_parser`, session,
+  capabilities, config, errors, notification, update, bench, and the
+  `hotkey/`, `audio/`, `asr/`, `output/` subpackages + `assets/`).
 - `tests/` — pytest suite mirroring `src/` plus `tests/fixtures/`.
-- `packaging/stenographer.service.in` — systemd user unit template.
-- `packaging/stenographer.spec` — PyInstaller spec.
-- `scripts/build.sh`, `scripts/download_model.py`, `scripts/gen_cues.py`.
+- `packaging/` — `stenographer.service.in` (systemd user unit template),
+  `stenographer.spec` (PyInstaller), PyInstaller hooks, bash completion.
+- `scripts/` — `build.sh`, `install.sh`, `build-and-install.sh`,
+  `install-hooks.sh`, `download_model.py`, `gen_cues.py`.
+- `.github/workflows/release.yml` — release CI (runs on merge to `main`).
 
-Also gitignored:
-
-- `.venv/` — Python virtual environment at the repo root, created
-  with `python3 -m venv .venv`. Contains `ruff` and the dev /
-  build extras; see **Tooling**.
-- `build/`, `dist/` — PyInstaller working / output directories.
+Gitignored: `.venv/` (the project virtualenv; see **Tooling**), and
+`build/` / `dist/` (PyInstaller working / output directories).
 
 The release workflow lives at `.github/workflows/release.yml` and runs on
 every merge to `main` (plus `workflow_dispatch`): it lints, tests, builds the
 binary, and publishes a `v<version>` release. Features are developed on the
 `dev` branch and merged to `main` to release; each such merge must bump
-`[project].version` in `pyproject.toml`. See `spec/11-ci-release.md`.
+`[project].version` in `pyproject.toml`.
 
 ## Tooling
 
@@ -86,8 +73,7 @@ is `.python-version` (3.14).
   requirements on the target machine: `wtype`, `wl-clipboard`,
   `pipewire` (or `pulseaudio`), `libevdev1`, `libportaudio2`,
   `libnotify` (`notify-send`), plus the user's `input` group
-  membership. See `BUILD.md` and
-  `spec/10-packaging.md`.
+  membership. See `BUILD.md`.
 
 ## Post-change workflow
 
@@ -109,36 +95,29 @@ steps in order:
    ```
    Output goes to `dist/stenographer/stenographer`.
 
-## Spec-first workflow
+## Development workflow
 
-The `spec/` directory is the source of truth. Code is downstream of spec.
+The code and tests are the source of truth. `session.py`
+is the orchestrator that wires the components together — start there when
+tracing behaviour.
 
-**New feature or new component.** Before writing anything under
-`src/` or `tests/`, draft a new spec doc in `spec/`. Use the next
-free two-digit number prefix (currently `14-…`, after
-`13-asset-retention.md`). Match the existing template:
-`SPDX-License-Identifier: GPL-3.0-or-later` front matter, a
-`## Dependencies` section listing which other spec docs this doc
-consumes and which it blocks, and (for leaf components) a row in
-the "Build order" DAG in `spec/00-overview.md`. Then implement.
+**New feature or new component.** Add the module under the matching
+subpackage (`hotkey/`, `audio/`, `asr/`, `output/`, or top-level for
+cross-cutting concerns), give it a docstring describing its contract,
+mirror it with a `tests/test_*.py`, and wire it into `Session` /
+`cli.py`. Every new source file carries the SPDX header.
 
-**Requirement change that affects an existing spec doc.** Edit the
-relevant spec doc first. Update its `## Dependencies` and any DAG
-rows in `00-overview.md` that it touches. Then change the code. If
-the change crosses docs (e.g. config schema + process model), update
-all of them before writing code.
+**Requirement or behaviour change.** Change the code and update the
+tests that pin the old behaviour in the same change. If the change
+touches config, keep the `Config` dataclass, `doctor`, and the README's
+generated config section in sync.
 
-**Pure bug fix that the spec already covers.** No spec edit needed;
-fix the code so it matches the spec.
-
-**Conflict.** Spec wins. If code disagrees with spec, fix the code;
-if you believe the spec is wrong, open an "Open questions" item in
-the relevant spec doc and ask before changing the spec.
+**Bug fix.** Write a test that reproduces the bug (confirm it fails
+against the unfixed code), then fix.
 
 ## Established stack
 
-These decisions are baked into `pyproject.toml` and the spec, and
-are not open to renegotiation without a spec change.
+These decisions are baked into `pyproject.toml`.
 
 - **Stack:** Python 3.14 CLI daemon.
 - **Layout:** `src/stenographer/` (src-layout); `tests/` mirrors
@@ -147,8 +126,7 @@ are not open to renegotiation without a spec change.
   truth. Built with `hatchling`.
 - **Tests:** `pytest`, with `pytest-asyncio` available and an
   `integration` marker. Run via the venv.
-- **Types:** not yet enforced. `mypy` or `pyright` is a future
-  addition; the spec does not require it.
+- **Types:** not yet enforced. `mypy` or `pyright` is a future addition.
 - **License:** GPL-3.0-or-later — every new source file MUST carry
   `SPDX-License-Identifier: GPL-3.0-or-later` at the top.
 - **Distribution:** `pip install` (or `pipx install`) via the wheel
@@ -157,30 +135,24 @@ are not open to renegotiation without a spec change.
   want a `pip install` at all. The ASR model (~800 MB) is **not**
   bundled; users fetch it once with `stenographer model download`.
 
-## Authoritative references
+## Where to look
 
-When in doubt, read these in order:
+When in doubt, read the code in this order:
 
-1. `spec/00-overview.md` — shape, glossary, capability probe.
-2. The component spec for the area being changed
-   (`01-hotkey`, `02-audio-capture`, `03-transcription`,
-   `04-audio-feedback`, `05-text-output`, `06-clipboard`).
-3. `spec/07-configuration.md` — config schema (including
-   `[stenographer.update]`).
-4. `spec/08-process-model.md` — CLI surface, lifecycle, signals,
-   the `update` subcommand.
-5. `spec/09-error-handling.md` — degradation policy and exit codes
-   (including `UpdateError` and the network / sha256 / systemd
-   rows).
-6. `spec/10-packaging.md` — deps, asset layout, PyInstaller,
-   systemd.
-7. `spec/11-ci-release.md` — the GitHub Actions release workflow
-   and the tag ↔ version contract.
-8. `spec/12-update.md` — the `update` subcommand: GitHub Releases
-   transport, onedir self-replace, daemon stop / start.
-
-The code MUST match the spec; if it does not, the spec wins (open
-a question in the relevant spec doc and fix the code).
+1. `src/stenographer/session.py` — the orchestrator; how one utterance
+   flows hotkey → record → transcribe → output.
+2. `src/stenographer/cli.py` + `_parser.py` — CLI surface, subcommands,
+   process lifecycle, signals, single-instance lock.
+3. The component module for the area being changed:
+   `hotkey/` (binding, listener, state machine), `audio/` (capture,
+   feedback), `asr/` (model, worker), `output/` (inject,
+   clipboard).
+4. `config.py` — config schema (including `[stenographer.update]`).
+5. `errors.py` — degradation policy and exit codes.
+6. `capabilities.py` — the `doctor` probe.
+7. `update.py` — the `update` subcommand (GitHub Releases transport,
+   onedir self-replace, daemon stop / start).
+8. `README.md` / `BUILD.md` — install, run, and packaging behaviour.
 
 ## When this file goes stale
 
@@ -190,9 +162,7 @@ a question in the relevant spec doc and fix the code).
   pytest marker, ruff rule change, hatch config), keep the
   **Established stack** and **Tooling** blocks in sync.
 - If a new component is added to `src/`, mirror it under `tests/`
-  and reference its spec doc in **Authoritative references**.
-- If a spec doc is added, renumbered, or split, update both the
-  tracked-files list and **Authoritative references**.
+  and reference it in **Where to look**.
 - If CI is added, document required services, env vars, and test
   prerequisites here.
 - If a new top-level layout decision is made (e.g. monorepo,

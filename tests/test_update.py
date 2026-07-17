@@ -225,8 +225,8 @@ def test_check_for_update_missing_sha_raises() -> None:
         check_for_update(_DEFAULT_CFG, current_version="0.6.0")
 
 
-def test_check_for_update_accepts_spec_compliant_sha_name() -> None:
-    # Regression test: the CI workflow (and spec/12-update.md) produce
+def test_check_for_update_accepts_stripped_suffix_sha_name() -> None:
+    # Regression test: the CI workflow produces
     # the .sha256 sibling with the archive suffix stripped
     # ("stenographer-0.7.0-linux-x86_64.sha256"), not
     # "...tar.gz.sha256". The earlier code naively appended ".sha256"
@@ -238,8 +238,8 @@ def test_check_for_update_accepts_spec_compliant_sha_name() -> None:
 
 
 def test_check_for_update_rejects_targz_sha_name() -> None:
-    # The old buggy expectation: *.tar.gz.sha256 is not what the spec or
-    # the CI workflow produce, so it must be rejected.
+    # The old buggy expectation: *.tar.gz.sha256 is not what the
+    # CI workflow produces, so it must be rejected.
     releases = [_release("v0.7.0", sha_name="stenographer-0.7.0-linux-x86_64.tar.gz.sha256")]
     expected_msg = "missing the asset 'stenographer-0.7.0-linux-x86_64.sha256'"
     with (

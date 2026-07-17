@@ -6,26 +6,16 @@ import os
 import pathlib
 import re
 import tomllib
+import typing
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from stenographer.audio.feedback import CueName
 from stenographer.errors import ConfigError as _BaseConfigError
 
 logger = logging.getLogger(__name__)
 
-CUE_NAMES: tuple[str, ...] = (
-    "ptt_on",
-    "ptt_off",
-    "toggle_on",
-    "toggle_off",
-    "cancel",
-    "discard",
-    "error",
-    "segment",
-    "transcribe_done",
-    "model_loading",
-    "model_ready",
-)
+CUE_NAMES: tuple[str, ...] = typing.get_args(CueName)
 
 ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
     {"int8", "int8_float16", "float16", "float32", "default"}
@@ -52,6 +42,9 @@ class ConfigError(_BaseConfigError):
         super().__init__(f"{path}: {key}: {reason}")
 
 
+ALLOWED_TRIGGER_MODES: frozenset[str] = frozenset({"hybrid", "toggle", "ptt"})
+
+
 @dataclass(frozen=True)
 class HotkeyConfig:
     binding: str
@@ -59,6 +52,7 @@ class HotkeyConfig:
     double_tap_window_seconds: float
     cancel_binding: str
     device: str | None
+    trigger_mode: str
 
 
 @dataclass(frozen=True)
@@ -106,6 +100,22 @@ class ClipboardConfig:
 
 
 @dataclass(frozen=True)
+class StreamingConfig:
+    enabled: bool
+    min_chunk_seconds: float
+    agreement_n: int
+    beam_size: int | None
+    max_buffer_seconds: float
+
+
+@dataclass(frozen=True)
+class FormattingConfig:
+    paragraph_pause_seconds: float
+    capitalize_sentences: bool
+    normalize_spacing: bool
+
+
+@dataclass(frozen=True)
 class UpdateConfig:
     repo: str
     channel: str
@@ -122,17 +132,20 @@ class Config:
     feedback: FeedbackConfig
     output: OutputConfig
     clipboard: ClipboardConfig
+    streaming: StreamingConfig
+    formatting: FormattingConfig
     update: UpdateConfig
 
     @classmethod
     def defaults(cls) -> Config:
         return cls(
             hotkey=HotkeyConfig(
-                binding="KEY_RIGHTCTRL",
+                binding="KEY_RIGHTALT",
                 toggle_threshold_seconds=0.5,
                 double_tap_window_seconds=0.35,
                 cancel_binding="KEY_ESC",
                 device=None,
+                trigger_mode="ptt",
             ),
             audio=AudioConfig(
                 sample_rate=16000,
@@ -163,6 +176,18 @@ class Config:
                 max_chars=4096,
             ),
             clipboard=ClipboardConfig(enabled=True),
+            streaming=StreamingConfig(
+                enabled=False,
+                min_chunk_seconds=1.0,
+                agreement_n=2,
+                beam_size=None,
+                max_buffer_seconds=20.0,
+            ),
+            formatting=FormattingConfig(
+                paragraph_pause_seconds=0.0,
+                capitalize_sentences=True,
+                normalize_spacing=True,
+            ),
             update=UpdateConfig(
                 repo="Harrison-Blair/stenographer",
                 channel="stable",
@@ -179,9 +204,9 @@ class Config:
         except OSError as e:
             raise ConfigError(path, "<file>", f"cannot read: {e}") from e
 
-        # TOML 1.0 has no null; rewrite bare `null` values to "" so the
-        # spec's example syntax parses. Looks only at token boundaries so
-        # the word "null" inside a string is left alone.
+        # TOML 1.0 has no null; rewrite a bare `null` value to "" so users
+        # can blank an optional key with `null`. Looks only at token
+        # boundaries so the word "null" inside a string is left alone.
         content = _NULL_VALUE_RE.sub('""', content)
 
         try:
@@ -213,14 +238,47 @@ class Config:
     def _from_dict(
         cls, table: dict[str, Any], path: pathlib.Path, *, cancel_explicit: bool = False
     ) -> Config:
-        return cls(
+        cfg = cls(
             hotkey=_build_hotkey(table["hotkey"], path, cancel_explicit=cancel_explicit),
             audio=_build_audio(table["audio"], path),
             asr=_build_asr(table["asr"], path),
             feedback=_build_feedback(table["feedback"], path),
             output=_build_output(table["output"], path),
             clipboard=_build_clipboard(table["clipboard"], path),
+            streaming=_build_streaming(table["streaming"], path),
+            formatting=_build_formatting(table["formatting"], path),
             update=_build_update(table["update"], path),
+        )
+        _validate_cross_section(cfg, path)
+        return cfg
+
+
+def _validate_cross_section(cfg: Config, path: pathlib.Path) -> None:
+    """Reject combinations that are individually valid but incoherent together.
+
+    The per-section builders each see only their own table, so constraints
+    that span sections have to be checked once the whole config is assembled.
+    """
+    if cfg.output.injection_method == "paste" and not cfg.clipboard.enabled:
+        # Paste mode delivers text *by* copying it and firing Shift+Insert, so
+        # the clipboard is the transport, not a convenience copy. Silently
+        # honouring clipboard.enabled here would fire the chord over stale
+        # clipboard content; silently ignoring it would clobber the clipboard
+        # the user asked us to leave alone. Neither is defensible, so the
+        # combination is rejected rather than resolved.
+        raise ConfigError(
+            path,
+            "clipboard.enabled",
+            'must be true when output.injection_method = "paste" (paste mode '
+            'delivers text via the clipboard); use injection_method = "text" '
+            "to type without touching the clipboard",
+        )
+    if cfg.streaming.enabled and cfg.output.injection_method != "paste":
+        raise ConfigError(
+            path,
+            "streaming.enabled",
+            'requires output.injection_method = "paste"; live streaming pastes '
+            "each committed word as it is confirmed",
         )
 
 
@@ -277,12 +335,18 @@ def _build_hotkey(
             )
             cancel_binding = ""
     device = _expect_optional_path(table, "device", "hotkey.device", path)
+    trigger_mode = _expect_str(table, "trigger_mode", "hotkey.trigger_mode", path)
+    if trigger_mode not in ALLOWED_TRIGGER_MODES:
+        raise ConfigError(
+            path, "hotkey.trigger_mode", f"must be one of {sorted(ALLOWED_TRIGGER_MODES)}"
+        )
     return HotkeyConfig(
         binding=binding,
         toggle_threshold_seconds=threshold,
         double_tap_window_seconds=window,
         cancel_binding=cancel_binding,
         device=device,
+        trigger_mode=trigger_mode,
     )
 
 
@@ -420,6 +484,52 @@ def _build_clipboard(table: dict[str, Any], path: pathlib.Path) -> ClipboardConf
     return ClipboardConfig(enabled=enabled)
 
 
+def _build_streaming(table: dict[str, Any], path: pathlib.Path) -> StreamingConfig:
+    enabled = _expect_bool(table, "enabled", "streaming.enabled", path)
+    min_chunk_seconds = _expect_number(
+        table, "min_chunk_seconds", "streaming.min_chunk_seconds", path
+    )
+    if not (0.25 <= min_chunk_seconds <= 5):
+        raise ConfigError(path, "streaming.min_chunk_seconds", "must satisfy 0.25 <= x <= 5")
+    agreement_n = _expect_int(table, "agreement_n", "streaming.agreement_n", path)
+    if not (2 <= agreement_n <= 4):
+        raise ConfigError(path, "streaming.agreement_n", "must satisfy 2 <= x <= 4")
+    beam_size = _expect_optional_int(table, "beam_size", "streaming.beam_size", path)
+    if beam_size is not None and not (1 <= beam_size <= 10):
+        raise ConfigError(path, "streaming.beam_size", "must be null or satisfy 1 <= x <= 10")
+    max_buffer_seconds = _expect_number(
+        table, "max_buffer_seconds", "streaming.max_buffer_seconds", path
+    )
+    if not (5 <= max_buffer_seconds <= 120):
+        raise ConfigError(path, "streaming.max_buffer_seconds", "must satisfy 5 <= x <= 120")
+    return StreamingConfig(
+        enabled=enabled,
+        min_chunk_seconds=min_chunk_seconds,
+        agreement_n=agreement_n,
+        beam_size=beam_size,
+        max_buffer_seconds=max_buffer_seconds,
+    )
+
+
+def _build_formatting(table: dict[str, Any], path: pathlib.Path) -> FormattingConfig:
+    paragraph_pause_seconds = _expect_number(
+        table, "paragraph_pause_seconds", "formatting.paragraph_pause_seconds", path
+    )
+    if not (0 <= paragraph_pause_seconds <= 10):
+        raise ConfigError(path, "formatting.paragraph_pause_seconds", "must satisfy 0 <= x <= 10")
+    capitalize_sentences = _expect_bool(
+        table, "capitalize_sentences", "formatting.capitalize_sentences", path
+    )
+    normalize_spacing = _expect_bool(
+        table, "normalize_spacing", "formatting.normalize_spacing", path
+    )
+    return FormattingConfig(
+        paragraph_pause_seconds=paragraph_pause_seconds,
+        capitalize_sentences=capitalize_sentences,
+        normalize_spacing=normalize_spacing,
+    )
+
+
 def _build_update(table: dict[str, Any], path: pathlib.Path) -> UpdateConfig:
     repo = _expect_str(table, "repo", "update.repo", path)
     if "/" not in repo:
@@ -485,6 +595,19 @@ def _expect_bool(table: dict, key: str, dotted: str, path: pathlib.Path) -> bool
     return value
 
 
+def _expect_optional_int(table: dict, key: str, dotted: str, path: pathlib.Path) -> int | None:
+    value = table.get(key)
+    if value is None or value == "":  # `key = null` is rewritten to "" at load
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ConfigError(
+            path,
+            dotted,
+            f"expected int or null, got {type(value).__name__}: {value!r}",
+        )
+    return value
+
+
 def _expect_optional_str(table: dict, key: str, dotted: str, path: pathlib.Path) -> str | None:
     value = table.get(key)
     if value is None or value == "":
@@ -523,10 +646,11 @@ def _format_default_toml() -> str:
     f = cfg.feedback
     o = cfg.output
     c = cfg.clipboard
+    s = cfg.streaming
+    fm = cfg.formatting
     u = cfg.update
     lines: list[str] = [
         "# stenographer configuration",
-        "# See spec/07-configuration.md for the full schema.",
         "",
         "[stenographer]",
         "",
@@ -536,6 +660,7 @@ def _format_default_toml() -> str:
         f"hotkey.double_tap_window_seconds = {h.double_tap_window_seconds}",
         f"hotkey.cancel_binding = {_toml_str(h.cancel_binding)}",
         f"hotkey.device = {_toml_optional(h.device)}",
+        f"hotkey.trigger_mode = {_toml_str(h.trigger_mode)}",
         "",
         "# Audio capture",
         f"audio.sample_rate = {a.sample_rate}",
@@ -567,7 +692,23 @@ def _format_default_toml() -> str:
         "# Clipboard",
         f"clipboard.enabled = {_toml_bool(c.enabled)}",
         "",
-        "# Update (see spec/12-update.md)",
+        '# Live streaming (requires injection_method = "paste"): deliver words',
+        "# while still recording.",
+        "# min_chunk_seconds / beam_size are the CPU knobs if re-decodes lag.",
+        f"streaming.enabled = {_toml_bool(s.enabled)}",
+        f"streaming.min_chunk_seconds = {s.min_chunk_seconds}",
+        f"streaming.agreement_n = {s.agreement_n}",
+        "streaming.beam_size = null"
+        if s.beam_size is None
+        else f"streaming.beam_size = {s.beam_size}",
+        f"streaming.max_buffer_seconds = {s.max_buffer_seconds}",
+        "",
+        "# Formatting heuristics (applies to all output modes)",
+        f"formatting.paragraph_pause_seconds = {fm.paragraph_pause_seconds}",
+        f"formatting.capitalize_sentences = {_toml_bool(fm.capitalize_sentences)}",
+        f"formatting.normalize_spacing = {_toml_bool(fm.normalize_spacing)}",
+        "",
+        "# Update",
         f"update.repo = {_toml_str(u.repo)}",
         f"update.channel = {_toml_str(u.channel)}",
         f"update.base_url = {_toml_str(u.base_url)}",

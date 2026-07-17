@@ -21,7 +21,7 @@ instructions.
 > [!NOTE]
 > This `README.md` was generated with AI, but reviewed for accuracy by a human
 
-See [Install](#install) for the install steps and a [Quick start](#quick-start) for the post-install flow. Default hotkey: right-Ctrl (short press <0.5 s toggles recording; long press ≥0.5 s is push-to-talk — see `spec/01-hotkey.md`).
+See [Install](#install) for the install steps and a [Quick start](#quick-start) for the post-install flow. Default hotkey: right-Ctrl (short press <0.5 s toggles recording; long press ≥0.5 s is push-to-talk).
 
 
 <!--
@@ -127,7 +127,7 @@ The canonical single-user source install is the onedir binary built and
 installed by `scripts/install.sh` from a local source tree. It builds the
 binary, copies it to `~/.local/share/stenographer/`, symlinks the launcher
 into `~/.local/bin/stenographer`, and installs + enables the systemd
-user unit (see `spec/10-packaging.md`).
+user unit.
 
 ```sh
 # prereq: the system packages listed in Requirements above
@@ -185,7 +185,8 @@ fix what it lists, then re-run.
 ```sh
 stenographer run                 # foreground daemon, Ctrl-C to stop
 stenographer dictate             # one-shot: arm, dictate, exit
-stenographer transcribe FILE     # batch: print transcript to stdout
+stenographer transcribe FILE     # batch: print formatted transcript to stdout (default)
+stenographer transcribe FILE --raw # batch: print the raw, unformatted transcript verbatim
 stenographer model download      # fetch the ASR model
 stenographer update [--check]    # self-update from GitHub Releases
 stenographer doctor              # print capabilities + resolved config
@@ -262,7 +263,7 @@ feedback.mute                        = false
 clipboard.enabled                    = true
 ```
 
-See `spec/07-configuration.md` for the full schema and validation rules.
+See `stenographer.config` for the full schema and validation rules.
 
 ## Run under systemd
 

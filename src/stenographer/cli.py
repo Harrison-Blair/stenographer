@@ -15,6 +15,7 @@ if "_ARGCOMPLETE" in os.environ:  # completion hot path: skip the heavy imports 
 
 import contextlib
 import fcntl
+import itertools
 import logging
 import logging.handlers
 import pathlib
@@ -40,6 +41,7 @@ from stenographer.hotkey.listener import HotkeyListener
 from stenographer.hotkey.state_machine import HotkeyStateMachine
 from stenographer.notification import DesktopNotification
 from stenographer.output.clipboard import ClipboardManager
+from stenographer.output.formatter import HeuristicFormatter
 from stenographer.output.inject import Injector
 from stenographer.session import Session
 from stenographer.update import (
@@ -138,8 +140,8 @@ def _build_feedback(cfg: Config, caps: Capabilities) -> Feedback:
 def _install_signal_handlers(session: Session) -> None:
     """Install SIGINT/SIGTERM handlers that drain and stop the session.
 
-    Per ``spec/08-process-model.md`` lifecycle: SIGINT and SIGTERM
-    trigger a clean drain (finish in-flight utterance, close
+    Lifecycle: SIGINT and SIGTERM trigger a clean drain
+    (finish in-flight utterance, close
     components, release the lock) and exit 0.
     """
 
@@ -178,7 +180,7 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
             cfg.asr,
             idle_unload_seconds=cfg.asr.idle_unload_seconds or None,
         )
-    worker = Worker(model)
+    worker = Worker(model, sample_rate=cfg.audio.sample_rate)
     worker.start()
     if isinstance(model, LazyModel):
         model.attach_worker(worker)
@@ -202,7 +204,7 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         silence_duration_seconds=cfg.audio.silence_duration_seconds,
     )
     injector = Injector(
-        available=caps.has_wtype,
+        available=caps.has_paste_trigger,
         append_trailing_space=cfg.output.append_trailing_space,
         max_chars=cfg.output.max_chars,
     )
@@ -217,6 +219,7 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
     sm = HotkeyStateMachine(
         threshold_seconds=cfg.hotkey.toggle_threshold_seconds,
         double_tap_window_seconds=cfg.hotkey.double_tap_window_seconds,
+        mode=cfg.hotkey.trigger_mode,
     )
     session = Session(
         cfg=cfg,
@@ -476,7 +479,7 @@ def cmd_dictate(cfg: Config) -> int:
     return 0
 
 
-def cmd_transcribe(cfg: Config, path: pathlib.Path) -> int:
+def cmd_transcribe(cfg: Config, path: pathlib.Path, *, raw: bool) -> int:
     if not path.exists():
         print(f"stenographer: file not found: {path}", file=sys.stderr)
         return 2
@@ -497,9 +500,13 @@ def cmd_transcribe(cfg: Config, path: pathlib.Path) -> int:
     log.info("transcribe: loading model %s", cfg.asr.model)
     model = Model(cfg.asr)
     result = model.transcribe(samples, cfg.asr.language, cfg.asr.beam_size)
-    text = result.text
-    if cfg.output.append_trailing_space:
-        text = text.rstrip() + " "
+    if raw:
+        text = result.text
+    else:
+        formatter = HeuristicFormatter(
+            cfg.formatting, append_trailing_space=cfg.output.append_trailing_space
+        )
+        text = formatter.format_batch(result.segments)
     sys.stdout.write(text)
     sys.stdout.write("\n")
     return 0
@@ -551,12 +558,7 @@ def cmd_bench(cfg: Config, args) -> int:
         models=models,
         beams=beams,
         computes=computes,
-        streaming=not args.no_streaming,
-        chunk=args.chunk,
-        agree=args.agree,
-        context=not args.no_context,
         show_text=args.show_text,
-        stream_model=args.stream_model,
     )
 
 
@@ -581,8 +583,7 @@ def cmd_model_download(cfg: Config) -> int:
 def _print_changelog(info: UpdateInfo) -> None:
     """Print ``info.release_notes`` in a bordered box to stderr.
 
-    See ``spec/12-update.md`` "Display the change log" step. The body
-    is taken verbatim from the GitHub release; if empty, a
+    The body is taken verbatim from the GitHub release; if empty, a
     placeholder line is shown so the box is still framed.
     """
     rule = "=" * _CHANGELOG_BOX_WIDTH
@@ -608,7 +609,7 @@ def cmd_update(
     prerelease: bool,
     repo: str | None,
 ) -> int:
-    """Self-update subcommand. See ``spec/12-update.md``."""
+    """Self-update subcommand."""
     from dataclasses import replace
 
     from stenographer.update import acquire_update_lock
@@ -713,7 +714,8 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     print(f"config:         {config_path}")
     print(f"asr.model:      {cfg.asr.model}")
     print(f"hotkey:         {cfg.hotkey.binding}")
-    print(f"wtype:          {'yes' if caps.has_wtype else 'NO  (cursor injection disabled)'}")
+    wtype_status = "yes" if caps.has_paste_trigger else "NO  (cursor injection disabled)"
+    print(f"wtype:          {wtype_status}")
     print(f"wl-copy:        {'yes' if caps.has_wl_copy else 'NO  (clipboard disabled)'}")
     has_audio = caps.has_pw_play or caps.has_paplay
     audio_str = "yes" if has_audio else "NO  (audio feedback disabled)"
@@ -740,6 +742,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     multiprocessing.freeze_support()
     _configure_logging()
+
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    for token, following in itertools.pairwise(argv_list):
+        if token == "run" and following in ("stop", "disable"):
+            print(
+                f"stenographer: `run {following}` was removed; "
+                f"use `stenographer {following}` instead.",
+                file=sys.stderr,
+            )
+            return 1
+
     parser = build_parser()
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
@@ -765,7 +778,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.subcommand == "run":
         return cmd_run(cfg)
     if args.subcommand == "transcribe":
-        return cmd_transcribe(cfg, args.file)
+        return cmd_transcribe(cfg, args.file, raw=args.raw)
     if args.subcommand == "dictate":
         return cmd_dictate(cfg)
     if args.subcommand == "model" and args.model_command == "download":

@@ -10,13 +10,24 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from stenographer.asr.model import SegmentInfo, TranscriptionResult
-from stenographer.session import Session
+from stenographer.asr.worker import CancelledError
+from stenographer.config import FormattingConfig
+from stenographer.session import Session, _ChunkItem
+
+
+def _mock_cfg() -> MagicMock:
+    cfg = MagicMock()
+    # A real int: the paste path compares the transcript length against this,
+    # and a bare MagicMock makes that comparison raise instead of exercising
+    # the cap.
+    cfg.output.max_chars = 4096
+    return cfg
 
 
 def _make_components() -> dict[str, MagicMock]:
     return {
-        "cfg": MagicMock(),
-        "caps": MagicMock(has_wtype=True, has_wl_copy=True),
+        "cfg": _mock_cfg(),
+        "caps": MagicMock(has_paste_trigger=True, has_wl_copy=True),
         "listener": MagicMock(),
         "recorder": MagicMock(is_active=False),
         "worker": MagicMock(),
@@ -128,7 +139,7 @@ def test_process_submits_to_worker_and_outputs() -> None:
     c["worker"].submit.assert_called_once()
     future.result.assert_called_once()
     c["injector"].type_text.assert_called_once_with("hello world")
-    c["clipboard"].copy.assert_called_once_with("hello world")
+    c["clipboard"].copy.assert_called_once_with("hello world", primary=True)
 
 
 def test_process_empty_transcript_skips_output() -> None:
@@ -144,10 +155,10 @@ def test_process_empty_transcript_skips_output() -> None:
     c["feedback"].play.assert_called_once_with("error")
 
 
-def test_process_injector_skipped_when_wtype_unavailable() -> None:
+def test_process_injector_skipped_when_paste_trigger_unavailable() -> None:
     session, _m = _make_session()
     c = _components(session)
-    c["caps"].has_wtype = False
+    c["caps"].has_paste_trigger = False
     c["cfg"].clipboard.enabled = True
     future = _fake_future()
     future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
@@ -168,7 +179,7 @@ def test_process_clipboard_skipped_when_disabled() -> None:
     c["clipboard"].copy.assert_not_called()
 
 
-def test_process_streaming_injects_partial_segments_and_skips_duplicate_final() -> None:
+def test_process_injects_partial_segments_and_skips_duplicate_final() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
@@ -191,10 +202,10 @@ def test_process_streaming_injects_partial_segments_and_skips_duplicate_final() 
     c["injector"].type_text.assert_any_call(" hello", raw=True)
     c["injector"].type_text.assert_any_call(" world", raw=True)
     assert c["injector"].type_text.call_count == 2
-    c["clipboard"].copy.assert_called_once_with("hello world")
+    c["clipboard"].copy.assert_called_once_with("hello world", primary=True)
 
 
-def test_process_paste_mode_skips_streaming_and_pastes_at_end() -> None:
+def test_process_paste_mode_skips_partial_injection_and_pastes_at_end() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
@@ -219,7 +230,7 @@ def test_process_paste_mode_skips_streaming_and_pastes_at_end() -> None:
     c["feedback"].play.assert_any_call("segment")
     c["feedback"].play.assert_any_call("transcribe_done")
     assert c["feedback"].play.call_count == 3  # 2 segments + transcribe_done
-    c["clipboard"].copy.assert_called_once_with("hello world")
+    c["clipboard"].copy.assert_called_once_with("hello world", primary=True)
     c["injector"].paste.assert_called_once()
 
 
@@ -240,11 +251,37 @@ def test_process_paste_mode_empty_transcript_skips_output() -> None:
     c["feedback"].play.assert_called_once_with("error")
 
 
-def test_process_paste_mode_clipboard_disabled_still_pastes() -> None:
+def test_process_paste_mode_does_not_paste_when_copy_fails() -> None:
+    # The chord pastes whatever the clipboard holds, so a failed copy must not
+    # fire it -- doing so pastes the user's previous clipboard content into
+    # their document. (config rejects clipboard.enabled = false in paste mode,
+    # so a failed copy is the only way the clipboard can be unpopulated here.)
     session, _m = _make_session()
     c = _components(session)
-    c["cfg"].clipboard.enabled = False
     c["cfg"].output.injection_method = "paste"
+    c["clipboard"].copy.return_value = False
+
+    future = _fake_future()
+    future.done.return_value = True
+    future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
+    c["worker"].submit.return_value = future
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
+
+    c["clipboard"].copy.assert_called_once()
+    c["injector"].paste.assert_not_called()
+    # The clipboard is the only transport in paste mode, so a failed copy means
+    # the utterance reached neither the cursor nor the clipboard. A success cue
+    # here tells the user their words landed somewhere when they landed nowhere.
+    c["feedback"].play.assert_called_once_with("error")
+
+
+def test_process_paste_mode_without_wl_copy_reports_failure() -> None:
+    # wl-copy absent: nothing can be delivered, so the cue must say so rather
+    # than chime success over a silently dropped utterance.
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].output.injection_method = "paste"
+    c["caps"].has_wl_copy = False
 
     future = _fake_future()
     future.done.return_value = True
@@ -253,6 +290,72 @@ def test_process_paste_mode_clipboard_disabled_still_pastes() -> None:
     session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["clipboard"].copy.assert_not_called()
+    c["injector"].paste.assert_not_called()
+    c["feedback"].play.assert_called_once_with("error")
+
+
+def test_process_paste_mode_failed_paste_chord_reports_failure() -> None:
+    # The copy landed but the chord did not fire: nothing reached the cursor.
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].output.injection_method = "paste"
+    c["clipboard"].copy.return_value = True
+    c["injector"].paste.return_value = False
+
+    future = _fake_future()
+    future.done.return_value = True
+    future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
+    c["worker"].submit.return_value = future
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
+
+    c["feedback"].play.assert_called_once_with("error")
+
+
+def test_process_paste_mode_truncates_at_max_chars() -> None:
+    # output.max_chars caps what reaches the cursor on the paste path too, not
+    # just the text path (where Injector._prepare enforces it).
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].output.injection_method = "paste"
+    c["cfg"].output.max_chars = 5
+
+    future = _fake_future()
+    future.done.return_value = True
+    future.result.return_value = TranscriptionResult(
+        text="abcdefghij", duration_seconds=0.0, segments=[]
+    )
+    c["worker"].submit.return_value = future
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
+
+    c["clipboard"].copy.assert_called_once_with("abcde", primary=True)
+
+
+def test_process_paste_mode_paragraph_break_on_long_segment_gap() -> None:
+    cfg = _mock_cfg()
+    cfg.formatting = FormattingConfig(
+        paragraph_pause_seconds=2.0, capitalize_sentences=True, normalize_spacing=True
+    )
+    cfg.output.append_trailing_space = False
+    cfg.output.injection_method = "paste"
+    session, _m = _make_session(cfg=cfg)
+    c = _components(session)
+    c["cfg"].asr.silence_threshold = 0.6
+    c["cfg"].clipboard.enabled = True
+
+    future = _fake_future()
+    future.done.return_value = True
+    future.result.return_value = TranscriptionResult(
+        text="first thought. second thought.",
+        duration_seconds=5.0,
+        segments=[
+            SegmentInfo(0.0, 1.0, " first thought.", 0.1),
+            SegmentInfo(3.5, 5.0, " second thought.", 0.1),
+        ],
+    )
+    c["worker"].submit.return_value = future
+    session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
+
+    c["clipboard"].copy.assert_called_once_with("First thought.\n\nSecond thought.", primary=True)
     c["injector"].paste.assert_called_once()
 
 
@@ -293,11 +396,11 @@ def test_process_silence_no_speech_prob_below_threshold_outputs() -> None:
     c["worker"].submit.return_value = future
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_called_once_with("hello")
-    c["clipboard"].copy.assert_called_once_with("hello")
+    c["clipboard"].copy.assert_called_once_with("hello", primary=True)
 
 
-def test_process_streaming_silence_segments_never_reach_cursor() -> None:
-    """Hallucinated segments over silence must not be typed during streaming."""
+def test_process_silence_segments_never_reach_cursor() -> None:
+    """Hallucinated segments over silence must not be typed at the cursor."""
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
@@ -325,7 +428,7 @@ def test_process_streaming_silence_segments_never_reach_cursor() -> None:
     c["feedback"].play.assert_called_once_with("error")
 
 
-def test_process_streaming_types_speech_but_skips_silence_segments() -> None:
+def test_process_types_speech_but_skips_silence_segments() -> None:
     session, _m = _make_session()
     c = _components(session)
     c["cfg"].asr.silence_threshold = 0.6
@@ -349,7 +452,7 @@ def test_process_streaming_types_speech_but_skips_silence_segments() -> None:
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["injector"].type_text.assert_called_once_with(" hello", raw=True)
-    c["clipboard"].copy.assert_called_once_with("hello")
+    c["clipboard"].copy.assert_called_once_with("hello", primary=True)
 
 
 def test_process_paste_mode_clipboard_excludes_silence_segments() -> None:
@@ -358,6 +461,11 @@ def test_process_paste_mode_clipboard_excludes_silence_segments() -> None:
     c["cfg"].asr.silence_threshold = 0.6
     c["cfg"].clipboard.enabled = True
     c["cfg"].output.injection_method = "paste"
+    # The formatter holds cfg.formatting (captured at construction); pin its
+    # fields so the formatted paste output is deterministic.
+    c["cfg"].formatting.paragraph_pause_seconds = 2.0
+    c["cfg"].formatting.capitalize_sentences = True
+    c["cfg"].formatting.normalize_spacing = True
 
     future = _fake_future()
     future.result.return_value = TranscriptionResult(
@@ -371,7 +479,9 @@ def test_process_paste_mode_clipboard_excludes_silence_segments() -> None:
     c["worker"].submit.return_value = future
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
-    c["clipboard"].copy.assert_called_once_with("hello")
+    # The silence segment is excluded and the survivor is formatted
+    # (capitalised, trailing space per output.append_trailing_space).
+    c["clipboard"].copy.assert_called_once_with("Hello ", primary=True)
     c["injector"].paste.assert_called_once()
 
 
@@ -404,7 +514,7 @@ def test_process_silence_some_segments_below_threshold_outputs_speech_only() -> 
     c["worker"].submit.return_value = future
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_called_once_with("world")
-    c["clipboard"].copy.assert_called_once_with("world")
+    c["clipboard"].copy.assert_called_once_with("world", primary=True)
 
 
 # ---------------------------------------------------------------------------
@@ -431,22 +541,223 @@ def test_on_recording_stop_enqueues_and_recorder_stops() -> None:
 
 
 def test_silence_detection_disabled_when_one_shot() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
     session, _m = _make_session(one_shot=True, cfg=cfg)
     assert session._silence_detection is False
 
 
-def test_silence_detection_enabled_for_daemon() -> None:
-    cfg = MagicMock()
+def test_silence_detection_enabled_for_text_mode_daemon() -> None:
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
+    cfg.output.injection_method = "text"
+    cfg.streaming.enabled = False
     session, _m = _make_session(one_shot=False, cfg=cfg)
     assert session._silence_detection is True
 
 
-def test_recording_start_wires_flush_callback_when_enabled() -> None:
-    cfg = MagicMock()
+def _paste_chunk_cfg() -> MagicMock:
+    """Config for the aggregated paste-mode chunk flow (real formatting values
+    so the session-level formatter behaves, real sample rate for offsets)."""
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
+    cfg.audio.sample_rate = 16000
+    cfg.output.injection_method = "paste"
+    cfg.output.append_trailing_space = False
+    cfg.streaming.enabled = False
+    cfg.asr.mode = "eager"
+    cfg.asr.silence_threshold = 0.6
+    cfg.clipboard.enabled = True
+    cfg.formatting = FormattingConfig(
+        paragraph_pause_seconds=2.0, capitalize_sentences=True, normalize_spacing=True
+    )
+    return cfg
+
+
+def _chunk_result(segments: list[SegmentInfo]) -> MagicMock:
+    future = _fake_future()
+    future.done.return_value = True
+    future.result.return_value = TranscriptionResult(
+        text="".join(s.text for s in segments).strip(),
+        duration_seconds=segments[-1].end if segments else 0.0,
+        segments=segments,
+    )
+    return future
+
+
+def test_recording_start_wires_flush_callback_in_paste_mode() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    session.on_recording_start()
+    assert c["recorder"].start.call_args.kwargs["on_segment"] == session._enqueue_flush_segment
+
+
+def test_flush_enqueues_chunk_items_with_cumulative_offsets() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    arr = np.ones((16000, 1), dtype=np.float32)  # 1.0s at 16 kHz
+    session._enqueue_flush_segment(arr)
+    session._enqueue_flush_segment(arr)
+    first = session._utterance_queue.get_nowait()
+    second = session._utterance_queue.get_nowait()
+    assert isinstance(first, _ChunkItem) and not first.final
+    assert first.offset_seconds == 0.0
+    assert isinstance(second, _ChunkItem) and not second.final
+    assert second.offset_seconds == 1.0
+
+
+def test_recording_stop_enqueues_final_chunk_even_with_empty_tail() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    c["recorder"].stop.return_value = np.empty((0, 1), dtype=np.float32)
+    session.on_recording_start()
+    session.on_recording_stop("toggle")
+    item = session._utterance_queue.get_nowait()
+    assert isinstance(item, _ChunkItem) and item.final
+    assert item.samples.shape[0] == 0
+    assert item.mode == "toggle"
+
+
+def test_chunk_flow_decodes_flushes_but_pastes_once_at_end() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    abort = threading.Event()
+    c["worker"].submit.side_effect = [
+        _chunk_result([SegmentInfo(0.0, 1.0, " first thought.", 0.1)]),
+        _chunk_result([SegmentInfo(0.5, 2.0, " second thought.", 0.1)]),
+    ]
+
+    flush = _ChunkItem(
+        samples=np.ones((32000, 1), dtype=np.float32),
+        abort=abort,
+        generation=0,
+        offset_seconds=0.0,
+        final=False,
+    )
+    session._process_chunk(flush)
+    # Mid-recording: decoded and accumulated, but nothing reaches the cursor.
+    c["injector"].paste.assert_not_called()
+    c["clipboard"].copy.assert_not_called()
+    c["feedback"].play.assert_any_call("segment")
+
+    final = _ChunkItem(
+        samples=np.ones((16000, 1), dtype=np.float32),
+        abort=abort,
+        generation=0,
+        offset_seconds=3.0,
+        final=True,
+    )
+    session._process_chunk(final)
+    # Gap: first chunk ends at 1.0s absolute; final's segment starts at
+    # 3.0 + 0.5 = 3.5s absolute -> 2.5s pause -> paragraph break.
+    c["clipboard"].copy.assert_called_once_with("First thought.\n\nSecond thought.", primary=True)
+    c["injector"].paste.assert_called_once()
+    c["injector"].type_text.assert_not_called()
+    c["feedback"].play.assert_any_call("transcribe_done")
+
+
+def test_paste_gated_on_has_paste_trigger() -> None:
+    """The paste call-site reads caps.has_paste_trigger, not a wtype-specific
+    field. The clipboard is still populated — it is the fallback."""
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    c["caps"].has_paste_trigger = False
+    abort = threading.Event()
+    c["worker"].submit.side_effect = [
+        _chunk_result([SegmentInfo(0.0, 1.0, " a thought.", 0.1)]),
+    ]
+    session._process_chunk(_ChunkItem(np.ones((16000, 1), np.float32), abort, 0, 0.0, final=True))
+    c["injector"].paste.assert_not_called()
+    c["clipboard"].copy.assert_called_once_with("A thought.", primary=True)
+
+
+def test_chunk_final_all_silence_plays_error_and_skips_output() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    abort = threading.Event()
+    c["worker"].submit.side_effect = [
+        _chunk_result([SegmentInfo(0.0, 1.0, " Thank you.", 0.95)]),
+        _chunk_result([SegmentInfo(0.0, 1.0, " Thanks.", 0.9)]),
+    ]
+    session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 0.0, final=False))
+    session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 1.0, final=True))
+    c["injector"].paste.assert_not_called()
+    c["clipboard"].copy.assert_not_called()
+    c["feedback"].play.assert_any_call("error")
+
+
+def test_chunk_abort_before_final_drops_accumulated() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    abort = threading.Event()
+    c["worker"].submit.return_value = _chunk_result([SegmentInfo(0.0, 1.0, " hello", 0.1)])
+    session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 0.0, final=False))
+    abort.set()
+    session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 1.0, final=True))
+    c["injector"].paste.assert_not_called()
+    c["clipboard"].copy.assert_not_called()
+
+
+def test_new_recording_resets_stale_chunk_accumulation() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    c["worker"].submit.side_effect = [
+        _chunk_result([SegmentInfo(0.0, 1.0, " stale words", 0.1)]),
+        _chunk_result([SegmentInfo(0.0, 1.0, " fresh words", 0.1)]),
+    ]
+    # A flush whose recording never delivered its final item (cancelled while
+    # queued) must not leak into the next recording's paste.
+    session._process_chunk(
+        _ChunkItem(np.ones((100, 1), np.float32), threading.Event(), 0, 0.0, final=False)
+    )
+    session._process_chunk(
+        _ChunkItem(np.ones((100, 1), np.float32), threading.Event(), 1, 0.0, final=True)
+    )
+    c["clipboard"].copy.assert_called_once_with("Fresh words", primary=True)
+
+
+def test_chunk_decode_failure_keeps_other_chunks() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    abort = threading.Event()
+    failing = _fake_future()
+    failing.result.side_effect = RuntimeError("boom")
+    c["worker"].submit.side_effect = [
+        _chunk_result([SegmentInfo(0.0, 1.0, " kept words.", 0.1)]),
+        failing,
+        _chunk_result([SegmentInfo(0.0, 1.0, " final words.", 0.1)]),
+    ]
+    session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 0.0, final=False))
+    session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 1.2, final=False))
+    session._process_chunk(_ChunkItem(np.ones((100, 1), np.float32), abort, 0, 2.4, final=True))
+    c["clipboard"].copy.assert_called_once_with("Kept words. Final words.", primary=True)
+    c["injector"].paste.assert_called_once()
+
+
+def test_processor_routes_chunk_items() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    c["worker"].submit.return_value = _chunk_result([SegmentInfo(0.0, 1.0, " hello", 0.1)])
+    session._utterance_queue.put(
+        _ChunkItem(np.ones((100, 1), np.float32), threading.Event(), 0, 0.0, final=True)
+    )
+    session.start()
+    time.sleep(0.1)
+    c["injector"].paste.assert_called_once()
+    c["clipboard"].copy.assert_called_once_with("Hello", primary=True)
+
+
+def test_drain_enqueues_final_chunk_in_paste_mode() -> None:
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    session._drain(np.ones((100, 1), dtype=np.float32))
+    item = session._utterance_queue.get_nowait()
+    assert isinstance(item, _ChunkItem) and item.final
+
+
+def test_recording_start_wires_flush_callback_when_enabled() -> None:
+    cfg = _mock_cfg()
+    cfg.audio.silence_detection = True
+    cfg.output.injection_method = "text"
+    cfg.streaming.enabled = False
     cfg.asr.mode = "eager"  # avoid the lazy-load branch
     session, _m = _make_session(cfg=cfg)
     c = _components(session)
@@ -455,7 +766,7 @@ def test_recording_start_wires_flush_callback_when_enabled() -> None:
 
 
 def test_recording_start_no_flush_callback_when_disabled() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = False
     cfg.asr.mode = "eager"
     session, _m = _make_session(cfg=cfg)
@@ -474,8 +785,10 @@ def test_enqueue_flush_segment_tags_ptt_and_processes() -> None:
 
 
 def test_on_recording_stop_skips_empty_tail_when_silence_detection() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
+    cfg.output.injection_method = "text"
+    cfg.streaming.enabled = False
     cfg.asr.mode = "eager"
     session, _m = _make_session(cfg=cfg)
     c = _components(session)
@@ -489,7 +802,7 @@ def test_on_recording_stop_skips_empty_tail_when_silence_detection() -> None:
 
 
 def test_on_recording_stop_enqueues_empty_tail_when_disabled() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = False
     cfg.asr.mode = "eager"
     session, _m = _make_session(cfg=cfg)
@@ -518,8 +831,10 @@ def test_on_recording_stop_shows_transcribing_notification() -> None:
 
 
 def test_on_recording_stop_hides_notification_when_nothing_queued() -> None:
-    cfg = MagicMock()
+    cfg = _mock_cfg()
     cfg.audio.silence_detection = True
+    cfg.output.injection_method = "text"
+    cfg.streaming.enabled = False
     cfg.asr.mode = "eager"
     notif = MagicMock()
     session, _m = _make_session(cfg=cfg, notification=notif)
@@ -690,6 +1005,11 @@ def test_on_recording_start_lazy_first_press_shows_loading_notification() -> Non
     assert any("Loading speech model" in " ".join(str(a) for a in args) for args in cmd_lines)
 
 
+def test_session_has_no_attach_prompt_listener() -> None:
+    session, _m = _make_session()
+    assert not hasattr(session, "attach_prompt_listener")
+
+
 def test_on_recording_start_eager_mode_does_not_trigger_load() -> None:
     session, _m = _make_session()
     c = _components(session)
@@ -821,7 +1141,6 @@ def test_cancel_all_aborts_in_flight_processing() -> None:
             first_segment_delivered.set()
             release_second_segment.wait(timeout=2.0)
             on_segment(SegmentInfo(0.5, 1.0, " world", 0.1))
-            from stenographer.asr.worker import CancelledError
 
             fut.result.side_effect = CancelledError("transcription cancelled")
             for cb in done_callbacks:
@@ -878,3 +1197,192 @@ def test_cancel_all_drops_dequeued_but_unprocessed_item() -> None:
         time.sleep(0.01)
     time.sleep(0.05)
     c["worker"].submit.assert_not_called()
+
+
+# --- live streaming wiring ---
+
+
+def _streaming_cfg() -> MagicMock:
+    cfg = _mock_cfg()
+    cfg.asr.mode = "eager"  # avoid the lazy-load branch
+    cfg.streaming.enabled = True
+    cfg.streaming.agreement_n = 2
+    cfg.streaming.min_chunk_seconds = 1.0
+    cfg.output.injection_method = "paste"
+    return cfg
+
+
+def test_streaming_recording_start_wires_on_partial_and_enqueues_live_item() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    c = _components(session)
+    session.on_recording_start()
+    kwargs = c["recorder"].start.call_args.kwargs
+    assert "on_segment" not in kwargs  # silence-flush path disabled
+    assert callable(kwargs["on_partial"])
+    assert kwargs["min_partial_seconds"] == 1.0
+    item = session._utterance_queue.get_nowait()
+    from stenographer.session import _LiveItem
+
+    assert isinstance(item, _LiveItem)
+    assert item.streamer is session._live_streamer
+
+
+def test_streaming_recording_stop_signals_final_not_enqueue() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    c = _components(session)
+    tail = np.ones((16000, 1), dtype=np.float32)
+    c["recorder"].stop.return_value = tail
+
+    session.on_recording_start()
+    streamer = session._live_streamer
+    assert streamer is not None
+    session.on_recording_stop("ptt")
+
+    # Only the live item is queued; the tail went to the streamer as final.
+    assert session._utterance_queue.qsize() == 1
+    kind, samples = streamer._signals.get_nowait()
+    assert kind == "final"
+    assert np.array_equal(samples, tail)
+
+
+def test_streaming_enabled_with_paste_injection() -> None:
+    """Live streaming is the paste-mode pipeline now: deltas are pasted as
+    they are committed."""
+    cfg = _streaming_cfg()
+    cfg.output.injection_method = "paste"
+    session, _m = _make_session(cfg=cfg)
+    assert session._streaming is True
+
+
+def test_streaming_not_active_in_text_mode() -> None:
+    """The inverse of the old routing: text mode no longer streams."""
+    cfg = _streaming_cfg()
+    cfg.output.injection_method = "text"
+    session, _m = _make_session(cfg=cfg)
+    assert session._streaming is False
+
+
+def test_cancel_all_signals_live_streamer_abort() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    session.on_recording_start()
+    streamer = session._live_streamer
+    assert streamer is not None
+    session.cancel_all()
+    assert streamer.abort.is_set()
+    kinds = []
+    while True:
+        try:
+            kinds.append(streamer._signals.get_nowait()[0])
+        except Exception:
+            break
+    assert "abort" in kinds
+
+
+def test_processor_drops_cancelled_live_item() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    session.on_recording_start()
+    streamer = session._live_streamer
+    session.cancel_all()  # drains the queue and bumps the generation
+    # Re-enqueue a stale-generation live item to exercise the processor drop.
+    from stenographer.session import _LiveItem
+
+    session._live_streamer = streamer
+    session._utterance_queue.put(_LiveItem(streamer, session._cancel_generation - 1))
+    session._utterance_queue.put(None)
+    session._process_utterance_queue()
+    assert session._live_streamer is None  # dangling reference cleared
+
+
+def _drain_signals(streamer) -> list[tuple[str, object]]:
+    signals = []
+    while True:
+        try:
+            signals.append(streamer._signals.get_nowait())
+        except Exception:
+            break
+    return signals
+
+
+def test_discard_does_not_abort_stale_streamer_final_decode() -> None:
+    """Discarding a new recording must not signal abort into a previous
+    utterance's streamer that is still finishing its final decode."""
+    session, _m = _make_session(cfg=_streaming_cfg())
+    c = _components(session)
+    c["recorder"].stop.return_value = np.ones((16000, 1), dtype=np.float32)
+
+    session.on_recording_start()  # streamed dictation
+    stale = session._live_streamer
+    assert stale is not None
+    session.on_recording_stop("ptt")  # stale streamer now finishing
+
+    session.on_recording_start(source="prompt")
+    session.discard_recording()
+
+    assert not stale.abort.is_set()
+    kinds = [kind for kind, _ in _drain_signals(stale)]
+    assert "abort" not in kinds
+
+
+def test_discard_aborts_active_streamed_recording() -> None:
+    session, _m = _make_session(cfg=_streaming_cfg())
+    session.on_recording_start()
+    streamer = session._live_streamer
+    assert streamer is not None
+    session.discard_recording()
+    assert streamer.abort.is_set()
+    kinds = [kind for kind, _ in _drain_signals(streamer)]
+    assert "abort" in kinds
+
+
+def test_dictate_mode_notifications_unchanged() -> None:
+    notif = MagicMock()
+    session, _m = _make_session(notification=notif)
+    c = _components(session)
+    c["cfg"].asr.mode = "eager"
+    c["recorder"].stop.return_value = np.zeros((100, 1), dtype=np.float32)
+
+    session.on_recording_start()
+    session.on_recording_stop("ptt")
+
+    notif.show_listening.assert_called_once()
+    notif.show_transcribing.assert_called_once()
+
+
+def test_recorder_stop_failure_signals_streamer_instead_of_stranding_it() -> None:
+    """A recorder.stop() failure must not strand the queued live item.
+
+    on_recording_stop pops _recording_streamer before stopping the recorder,
+    so returning early on failure leaves the already-queued _LiveItem with
+    nobody able to signal it. Its driver blocks forever on the signal queue,
+    wedging the session's single processor thread: every later utterance is
+    then silently never transcribed until the daemon restarts.
+    """
+    cfg = _mock_cfg()
+    cfg.streaming.enabled = True
+    cfg.output.injection_method = "paste"
+    session, _m = _make_session(cfg=cfg)
+    c = _components(session)
+    streamer = MagicMock()
+    streamer.abort = threading.Event()
+    session._recording = True
+    session._recording_streamer = streamer
+    c["recorder"].stop.side_effect = RuntimeError("device unplugged")
+
+    session.on_recording_stop("ptt")
+
+    assert streamer.abort.is_set()
+    streamer.signal_abort.assert_called_once()
+
+
+def test_run_live_plays_error_cue_when_nothing_was_committed() -> None:
+    """An empty streamed utterance must sound like the batch paths' empty
+    transcript (error cue), not like a silent success."""
+    session, _m = _make_session()
+    c = _components(session)
+    streamer = MagicMock()
+    streamer.abort = threading.Event()
+    streamer.run.return_value = ""
+
+    session._run_live(streamer)
+
+    c["feedback"].play.assert_called_once_with("error")

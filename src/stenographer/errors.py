@@ -3,8 +3,7 @@
 
 Components MUST raise :class:`StenographerError` subclasses and call
 :func:`notify_failure`, :func:`fatal`, and :func:`degrade_capability`
-rather than invent their own error behaviour. See
-``spec/09-error-handling.md``.
+rather than invent their own error behaviour.
 """
 
 import logging
@@ -49,8 +48,7 @@ class TranscriptionError(StenographerError):
 class UpdateError(StenographerError):
     """Raised by ``stenographer update`` on any non-recoverable failure.
 
-    See ``spec/12-update.md`` for the full error policy. Callers
-    SHOULD map this to exit code 1 (network / sha256 / install
+    Callers SHOULD map this to exit code 1 (network / sha256 / install
     failure), not 78.
     """
 
