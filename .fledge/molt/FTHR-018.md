@@ -55,10 +55,12 @@ SKIPPED [1] tests/test_inject.py:321: set STENOGRAPHER_INTEGRATION=1 to run inte
 ```
 
 **Then it failed for a second, better reason.** Its first real-hardware
-execution (AC-2, run 0) failed against `copy()` returning `False` after a 10s
-hang — the FTHR-021 P0. So this test has been observed failing twice, for two
+execution (AC-2, run 0, branch state `eed9370`) failed on iteration 1 —
+`copy()` returned `False` after a 10s hang, the FTHR-021 P0 — and produced no
+measurement at all. So this test has been observed failing twice, for two
 distinct and legitimate reasons: first because it did not exist, then because
-the code under it was genuinely broken.
+the code beneath it was genuinely broken. The second failure is the more
+valuable of the two.
 
 **Passing run** — the user's attended run at commit 049888a (AC-2, run 1):
 
@@ -109,36 +111,62 @@ Three runs are recorded below, in order. The narrative deliberately starts at
 the **failing** run, not at the first passing one: this test's first real
 execution found a P0, and that is the most useful thing this feather did.
 
-- **Run 0** — first real-hardware attempt, **pre-FTHR-021**. Failed. Exposed the
-  clipboard-hang P0.
-- **Run 1** — post-FTHR-021 merge, pre-*this test's own* teardown fix. Passed
-  with real numbers, slowly (the teardown defect under AC-4).
-- **Run 2** — post-teardown-fix, at current HEAD. The confirming run.
+| | branch state | result | wall-clock | measurement produced? |
+|---|---|---|---|---|
+| **Run 0** | `eed9370`, pre-`dev`-merge → **pre-FTHR-021** | **FAILED** | 20.05s | **No** — found the P0 |
+| **Run 1** | `049888a`, post-FTHR-021, pre-teardown-fix | PASSED | 10.40s | **Yes** — the measurement of record |
+| **Run 2** | `89b9faf`, post-teardown-fix (current HEAD) | pending | — | confirming run |
+
+The three are distinct and must not be conflated: only run 1 produced the
+numbers under AC-4, and only run 0 failed.
 
 ### Run 0 — first real-hardware attempt, pre-FTHR-021 (FAILED)
 
-This run predates the FTHR-021 merge (8d6d5df) and therefore ran against the
-old `clipboard.py`, where `copy()` captured `wl-copy`'s pipes.
+Branch state `eed9370`, before `dev` was merged in — so `clipboard.py` still
+carried `capture_output=True` on `wl-copy`. User-executed, verbatim:
 
-Observed result, **as relayed to the brooder secondhand — the brooder does not
-hold this run's verbatim log**:
+```
+tests/test_inject.py::test_paste_round_trip_latency FAILED
 
-- `ClipboardManager.copy()` returned `False` after a ~10.01s hang (the
-  `wl-copy` pipe-capture timeout).
-- Total run time ~20.05s.
-- The test failed at its first `assert clip.copy(...) is True`.
+=================================== FAILURES ===================================
+_____________________ test_paste_round_trip_latency _____________________
 
-This is recorded at lower fidelity than runs 1 and 2 because a verbatim log was
-never relayed to the brooder; the figures above are as reported by the
-orchestrator, and are marked as such rather than reconstructed into a log-shaped
-block that would imply a precision this record does not have.
+        durations: list[float] = []
+        for i in range(_LATENCY_ITERATIONS):
+            start = time.monotonic()
+>           assert clip.copy(_LATENCY_DELTA) is True
+E           AssertionError: assert False is True
+E            +  where False = copy(' streaming')
+E            +    where copy = <stenographer.output.clipboard.ClipboardManager object at 0x7fd2c4578440>.copy
 
-**Why this run matters more than its numbers.** It is the run that exposed
-FTHR-021 — a v1-era latent P0 in which `copy()` always returned `False` after
-hanging 10s, meaning live streaming delivered nothing and every dictation
-stalled. 490 mocked unit tests were green throughout, because they mocked
-`subprocess.run` and so mocked away the very fork behaviour that broke. This
-feather's failure, not its measurement, is what caught that.
+tests/test_inject.py:337: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_inject.py::test_paste_round_trip_latency - AssertionError: assert False is True
+============================== 1 failed in 20.05s ==============================
+```
+
+It died on **iteration 1**: `copy()` never once succeeded, so **no latency was
+measured at all**. Per the orchestrator's analysis, the 20.05s decomposes as
+`_save_clipboard`'s 10s timeout plus `copy()`'s first `wl-copy` 10s timeout.
+
+**Why this run matters more than the measurement.** It is the run that produced
+FTHR-021 — a v1-era latent P0 (`capture_output=True` on `wl-copy` since
+f20ee52) in which `copy()` hung 10s and then returned `False` **every time**,
+meaning live streaming delivered nothing, the primary selection was never
+populated, and every dictation stalled 10s. The feature had been dead since v1.
+
+The whole suite was green throughout — 489 unit tests passing while `copy()`
+could not complete a single call — because those tests mock `subprocess.run`,
+and mocking `subprocess.run` mocks away the exact fork-and-hold-the-pipes
+behaviour that was broken. **A mocked suite proves intent, not behaviour.** The
+first time this code met a real `wl-copy`, it failed instantly and on iteration
+1. That is what this feather's failing run bought, and it is worth more than the
+number the feather was commissioned to produce.
+
+*Provenance note:* this run happened in the orchestrator's session with the
+user, before this branch had `dev` merged, so it exists nowhere in this
+worktree's history. It was supplied by the orchestrator and is recorded here
+verbatim so it survives outside a conversation.
 
 ### Run 1 — post-FTHR-021, pre-teardown-fix (commit 049888a)
 
@@ -240,7 +268,7 @@ spawning fewer processes per delta.
 
 ### Finding: the same clipboard-restore bug existed in three copies
 
-The user's run took **10.40s** wall-clock while the ten measured iterations sum
+Run 1 took **10.40s** wall-clock while the ten measured iterations sum
 to ~0.37s. The missing ~10s was `_restore_clipboard` in this file — FTHR-021's
 exact defect (`capture_output=True` on `wl-copy`, whose forked daemon inherits
 and holds the pipes until the 10s timeout fires), in a third copy of the
@@ -253,6 +281,13 @@ file's helper (found here). Each was written and reviewed separately and each
 carried the same bug. **The pattern was the problem, not any one instance** —
 which is the strongest available argument that `capture_output=True` on a
 daemonizing process is a trap worth naming rather than fixing case by case.
+
+Note the escalation across the three: in `clipboard.py` it was a P0 that killed
+the feature (run 0). In this file's helper it was invisible — `contextlib.suppress`
+ate the exception, the test passed, and the only symptom was a wall-clock number
+in a test whose entire job is reporting wall-clock numbers. The same defect is
+fatal in one place and silent in another, which is precisely why the pattern
+needs a name rather than three separate fixes.
 
 Fixed in this branch to match `clipboard.py`'s shipped form
 (`stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL`), with a comment
