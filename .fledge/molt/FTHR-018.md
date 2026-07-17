@@ -74,12 +74,23 @@ half attributed to the user rather than to the brooder.
 
 ## AC-2
 
-**Satisfied by the user's attended run.** Command:
+**Satisfied by the user's attended runs.** Both runs were executed by the user
+on their hardware and relayed verbatim by the orchestrator. Command (identical
+for both):
 
 ```sh
 cd /home/penguin/source/stenographer/.fledge/burrows/FTHR-018
 STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest tests/test_inject.py::test_paste_round_trip_latency -s --log-cli-level=INFO
 ```
+
+Two complete logs are recorded below. Run 1 is the first measurement, taken
+while this test's own teardown still carried the FTHR-021 defect described
+under AC-4. Run 2 is the first execution with correct save/restore. Both are
+kept in full: run 1 is the evidence that the measured figures predate the
+teardown fix, and run 2 stands on its own without requiring a reader to work
+out which parts of run 1 survived it.
+
+### Run 1 — pre-teardown-fix (commit 049888a)
 
 Verbatim output as relayed by the orchestrator:
 
@@ -104,9 +115,14 @@ PASSED
 ```
 
 This is the real logged measurement PLM-010 FC-7/AC-7 asks for. The `10.40s`
-wall-clock in that run is teardown overhead, not measurement — see the finding
-under AC-4; it does not affect the per-iteration numbers, which are timed
-individually around `copy()` + `paste()` only.
+wall-clock is teardown overhead, not measurement — see the finding under AC-4;
+it does not affect the per-iteration numbers, which are timed individually
+around `copy()` + `paste()` only.
+
+### Run 2 — post-teardown-fix (commit 89b9faf)
+
+_Pending: awaiting the user's confirming run. The log will be recorded here in
+full, verbatim, on the same terms as run 1._
 
 ## AC-3
 
