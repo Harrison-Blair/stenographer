@@ -2,9 +2,10 @@
 id: FTHR-018
 title: Measure per-delta paste round-trip latency
 plumage: PLM-010
-status: egg
+status: hatching
 priority: P1
 depends_on: [FTHR-017]
+oversight: during
 authored: 2026-07-17T02:36:27Z
 agent: fledge-orchestrate/planning
 fledge_version: 0.5.8
