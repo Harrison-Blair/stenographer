@@ -2,7 +2,7 @@
 id: FTHR-017
 title: Convert LiveStreamer to paste-based delta output
 plumage: PLM-010
-status: hatching
+status: fledged
 priority: P1
 depends_on: [FTHR-016]
 authored: 2026-07-17T02:35:14Z
