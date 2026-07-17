@@ -1140,7 +1140,7 @@ def _streaming_cfg() -> MagicMock:
     cfg.streaming.enabled = True
     cfg.streaming.agreement_n = 2
     cfg.streaming.min_chunk_seconds = 1.0
-    cfg.output.injection_method = "text"
+    cfg.output.injection_method = "paste"
     return cfg
 
 
@@ -1177,9 +1177,19 @@ def test_streaming_recording_stop_signals_final_not_enqueue() -> None:
     assert np.array_equal(samples, tail)
 
 
-def test_streaming_not_active_in_paste_mode() -> None:
+def test_streaming_enabled_with_paste_injection() -> None:
+    """Live streaming is the paste-mode pipeline now: deltas are pasted as
+    they are committed."""
     cfg = _streaming_cfg()
     cfg.output.injection_method = "paste"
+    session, _m = _make_session(cfg=cfg)
+    assert session._streaming is True
+
+
+def test_streaming_not_active_in_text_mode() -> None:
+    """The inverse of the old routing: text mode no longer streams."""
+    cfg = _streaming_cfg()
+    cfg.output.injection_method = "text"
     session, _m = _make_session(cfg=cfg)
     assert session._streaming is False
 

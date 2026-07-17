@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import numpy as np
 
@@ -27,7 +27,7 @@ def _cfg(**streaming_overrides: object) -> Config:
     import dataclasses
 
     cfg = Config.defaults()
-    cfg = dataclasses.replace(cfg, output=dataclasses.replace(cfg.output, injection_method="text"))
+    cfg = dataclasses.replace(cfg, output=dataclasses.replace(cfg.output, injection_method="paste"))
     streaming = dataclasses.replace(cfg.streaming, **{"enabled": True, **streaming_overrides})
     return dataclasses.replace(cfg, streaming=streaming)
 
@@ -67,12 +67,24 @@ class _FakeWorker:
 
 
 class _FakeInjector:
-    def __init__(self) -> None:
+    """Records paste() deliveries; type_text() must not be used by the live path."""
+
+    def __init__(self, clipboard: MagicMock | None = None) -> None:
         self.typed: list[str] = []
+        # The clipboard text actually in place at each paste() — i.e. what the
+        # chord really delivers. Reconstructing from this (rather than from
+        # copy() calls) is what makes the prefix invariant machine-checkable.
+        self.pasted: list[str] = []
+        self._clipboard = clipboard
 
     def type_text(self, text: str, *, raw: bool = False) -> bool:
         assert raw is True  # the live path must never re-prepare deltas
         self.typed.append(text)
+        return True
+
+    def paste(self) -> bool:
+        assert self._clipboard is not None
+        self.pasted.append(self._clipboard.copy.call_args.args[0])
         return True
 
 
@@ -88,9 +100,10 @@ def _make_streamer(
     cfg: Config | None = None,
 ) -> tuple[LiveStreamer, _FakeInjector, _FakeWorker, MagicMock]:
     cfg = cfg or _cfg()
-    injector = _FakeInjector()
     worker = _FakeWorker(hypotheses)
     clipboard = MagicMock()
+    clipboard.copy.return_value = True
+    injector = _FakeInjector(clipboard)
     streamer = LiveStreamer(
         cfg=cfg,
         recorder=_FakeRecorder(windows),  # type: ignore[arg-type]
@@ -123,9 +136,15 @@ def test_partials_commit_and_type_deltas_then_final_flushes() -> None:
     typed = streamer._finish(_speech(2.5))
     # Step 2 commits "hello" (agreed across both interim decodes); the final
     # decode + flush commits the rest and appends the trailing space.
-    assert injector.typed == ["Hello", " world again "]
+    assert injector.pasted == ["Hello", " world again "]
     assert typed == "Hello world again "
-    clipboard.copy.assert_called_once_with("Hello world again ")
+    # Each delta was copied as it was pasted; the final re-copy leaves the
+    # whole utterance on the clipboard.
+    assert clipboard.copy.call_args_list == [
+        call("Hello"),
+        call(" world again "),
+        call("Hello world again "),
+    ]
 
 
 def test_prequeued_partials_coalesce_into_the_final() -> None:
@@ -155,11 +174,11 @@ def test_abort_stops_typing_and_keeps_typed_text() -> None:
     streamer.abort.set()
     streamer.signal_abort()
     typed = streamer.run()
-    # "keep" was committed and typed before the abort; it is never un-typed,
-    # and nothing further is typed or copied.
-    assert injector.typed == ["Keep"]
+    # "keep" was committed and pasted before the abort; it is never revised,
+    # and nothing further is pasted or copied (no _finish() re-copy).
+    assert injector.pasted == ["Keep"]
     assert typed == "Keep"
-    clipboard.copy.assert_not_called()
+    assert clipboard.copy.call_args_list == [call("Keep")]
 
 
 def test_abort_wins_over_queued_final() -> None:
@@ -171,7 +190,7 @@ def test_abort_wins_over_queued_final() -> None:
     streamer.abort.set()
     streamer.signal_abort()
     assert streamer.run() == ""
-    assert injector.typed == []
+    assert injector.pasted == []
 
 
 def test_cancelled_decode_ends_utterance_quietly() -> None:
@@ -181,7 +200,7 @@ def test_cancelled_decode_ends_utterance_quietly() -> None:
     )
     streamer.signal_partial()
     assert streamer.run() == ""
-    assert injector.typed == []
+    assert injector.pasted == []
 
 
 def test_failed_decode_is_not_fatal() -> None:
@@ -197,7 +216,7 @@ def test_failed_decode_is_not_fatal() -> None:
     assert streamer._step()
     typed = streamer._finish(_speech(2.0))
     assert typed == "Ok "
-    assert injector.typed == ["Ok "]
+    assert injector.pasted == ["Ok "]
 
 
 def test_max_chars_stops_typing_without_truncating_delta() -> None:
@@ -221,7 +240,7 @@ def test_max_chars_stops_typing_without_truncating_delta() -> None:
     typed = streamer._finish(_speech(2.0))
     # "Hello" fits (5 <= 8); " overflowing" would exceed the cap and is
     # dropped whole rather than truncated mid-word.
-    assert injector.typed == ["Hello"]
+    assert injector.pasted == ["Hello"]
     assert typed == "Hello"
 
 
@@ -349,7 +368,7 @@ def test_all_silent_window_skips_decode() -> None:
     streamer._finish(_speech(1.0))
     # The all-silent interim window is skipped; only the final decode runs.
     assert len(worker.calls) == 1
-    assert injector.typed == ["Ghost "]  # final decode is not silence-gated
+    assert injector.pasted == ["Ghost "]  # final decode is not silence-gated
 
 
 # -- trimming + absolute-time bookkeeping (M5) ----------------------------------
@@ -442,7 +461,7 @@ def test_paragraph_pause_straddling_trim_emits_one_break() -> None:
     )
     for _ in range(4):
         assert streamer._step()
-    typed = "".join(injector.typed)
+    typed = "".join(injector.pasted)
     assert typed == "One.\n\nTwo"
     assert typed.count("\n\n") == 1
 
@@ -460,18 +479,129 @@ def test_final_flush_after_trims_completes_transcript() -> None:
     assert streamer._step()
     typed = streamer._finish(_speech(3.0))
     assert typed == "First. Tail "
-    assert "".join(injector.typed) == typed
+    assert "".join(injector.pasted) == typed
+
+
+# -- paste-based delta output ----------------------------------------------------
+
+
+def test_emit_uses_paste_not_type_text() -> None:
+    """The live path delivers via clipboard.copy() + injector.paste(), never
+    via Injector.type_text()."""
+    streamer, injector, _worker, clipboard = _make_streamer(
+        windows=[_speech(1.0), _speech(2.0)],
+        hypotheses=[
+            _words((" hello", 0.0, 0.5)),
+            _words((" hello", 0.0, 0.5), (" world", 0.5, 1.0)),
+        ],
+    )
+    assert streamer._step()
+    assert streamer._step()
+    streamer._finish(_speech(2.0))
+
+    assert injector.typed == []  # type_text is never reached
+    assert clipboard.copy.called
+    assert injector.pasted  # delivery went through the paste chord
+
+
+def test_delta_pastes_fire_per_committed_word() -> None:
+    """Each committed delta is delivered live during the utterance — a
+    copy()+paste() pair per delta, not deferred to _finish()."""
+    streamer, injector, _worker, clipboard = _make_streamer(
+        windows=[_speech(1.0), _speech(2.0), _speech(3.0), _speech(4.0)],
+        hypotheses=[
+            _words((" one", 0.0, 0.5)),
+            _words((" one", 0.0, 0.5)),  # commits "one"
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0)),
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0)),  # commits "two"
+        ],
+    )
+    assert streamer._step()
+    assert streamer._step()
+    # First delta pasted mid-utterance, before any further steps or _finish().
+    assert injector.pasted == ["One"]
+    assert clipboard.copy.call_args_list == [call("One")]
+
+    assert streamer._step()
+    assert streamer._step()
+    # Second delta fires its own pair, again mid-utterance.
+    assert injector.pasted == ["One", " two"]
+    assert clipboard.copy.call_args_list == [call("One"), call(" two")]
+
+
+def test_finish_recopies_full_transcript() -> None:
+    """_finish() still re-copies the complete accumulated transcript at
+    utterance end — the independent clipboard fallback."""
+    streamer, _injector, _worker, clipboard = _make_streamer(
+        windows=[_speech(1.0), _speech(2.0)],
+        hypotheses=[
+            _words((" hello", 0.0, 0.5)),
+            _words((" hello", 0.0, 0.5), (" world", 0.5, 1.0)),
+            _words((" hello", 0.0, 0.5), (" world", 0.5, 1.0), (" again", 1.0, 1.5)),
+        ],
+    )
+    assert streamer._step()
+    assert streamer._step()
+    typed = streamer._finish(_speech(2.5))
+
+    assert typed == "Hello world again "
+    # The last thing on the clipboard is the whole utterance, so a manual
+    # paste after the utterance delivers everything.
+    assert clipboard.copy.call_args_list[-1] == call("Hello world again ")
+
+
+def test_failed_copy_skips_paste_and_stops_at_prefix() -> None:
+    """Partial-clipboard hazard: copy() returns False when it populated the
+    clipboard but not the primary selection, leaving the two selections
+    disagreeing. Pasting then would deliver a stale/out-of-order word, so the
+    delta must not be pasted — and no later delta may be pasted past that gap,
+    or the delivered text stops being a prefix of the final transcript."""
+    streamer, injector, _worker, clipboard = _make_streamer(
+        windows=[_speech(1.0)] * 6,
+        hypotheses=[
+            _words((" one", 0.0, 0.5)),
+            _words((" one", 0.0, 0.5)),  # commits "one"   -> copy succeeds
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0)),
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0)),  # commits "two" -> copy FAILS
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0), (" three", 1.0, 1.5)),
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0), (" three", 1.0, 1.5)),  # commits
+        ],
+    )
+    clipboard.copy.side_effect = [True, False, True, True]
+
+    for _ in range(6):
+        assert streamer._step()
+
+    # (a) the failed delta is not pasted, and nothing is pasted after it.
+    assert injector.pasted == ["One"]
+
+    # (b) the delivered text is still a prefix of the final transcript.
+    fresh = HeuristicFormatter(
+        streamer._cfg.formatting,
+        append_trailing_space=streamer._cfg.output.append_trailing_space,
+    )
+    full = fresh.format_batch(streamer._transcriber.committed_words)
+    delivered = "".join(injector.pasted)
+    assert full.startswith(delivered)
+    assert delivered == "One"
+    # A gap would look like "One three" — delivered past the dropped delta.
+    assert "three" not in delivered
 
 
 # -- prefix-invariant property test (M6) -----------------------------------------
 
 
-def test_prefix_invariant_deltas_reconstruct_final_transcript() -> None:
-    """The machine-checkable form of the core invariant: every intermediate
-    typed state is a prefix of the final transcript, and the typed deltas
-    reconstruct exactly the formatted final transcript (no duplicated,
-    missing, or reordered words) — across tail revisions, punctuation churn,
-    a sentence-boundary trim, and a paragraph-length pause."""
+def test_prefix_invariant_paste_mode() -> None:
+    """The machine-checkable form of the core invariant, in paste mode: every
+    intermediate delivered state is a prefix of the final transcript, and the
+    pasted deltas reconstruct exactly the formatted final transcript (no
+    duplicated, missing, or reordered words) — across tail revisions,
+    punctuation churn, a sentence-boundary trim, and a paragraph-length pause.
+
+    Renamed from test_prefix_invariant_deltas_reconstruct_final_transcript and
+    re-seated on the paste seam: the delivered text is now reconstructed from
+    the clipboard payload in place at each paste(), not from type_text() args.
+    Same script, same assertions."""
     hypotheses = [
         _words((" it", 0.0, 0.3)),
         _words((" it", 0.0, 0.3), (" wors", 0.3, 0.8)),  # commits "it"; noisy tail
@@ -504,9 +634,9 @@ def test_prefix_invariant_deltas_reconstruct_final_transcript() -> None:
         assert streamer._step()
     final_typed = streamer._finish(_speech(7.0))
 
-    # (a) every intermediate concatenation is a prefix of the final text.
+    # (a) every intermediate delivered concatenation is a prefix of the final.
     concat = ""
-    for delta in injector.typed:
+    for delta in injector.pasted:
         concat += delta
         assert final_typed.startswith(concat)
     assert concat == final_typed
