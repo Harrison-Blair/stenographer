@@ -31,7 +31,7 @@ def test_defaults_hotkey() -> None:
         double_tap_window_seconds=0.35,
         cancel_binding="KEY_ESC",
         device=None,
-        trigger_mode="hybrid",
+        trigger_mode="ptt",
     )
 
 
@@ -256,15 +256,30 @@ def test_hotkey_trigger_mode_toggle_parses(tmp_path: pathlib.Path) -> None:
 
 def test_hotkey_trigger_mode_invalid_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\nhotkey.trigger_mode = "ptt"\n')
+    p.write_text('[stenographer]\nhotkey.trigger_mode = "bogus"\n')
     with pytest.raises(ConfigError, match=r"hotkey.trigger_mode"):
         Config.load(p)
+
+
+def test_trigger_mode_accepts_ptt(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.trigger_mode = "ptt"\n')
+    assert Config.load(p).hotkey.trigger_mode == "ptt"
+    # ...and an unknown value still raises the existing ConfigError shape.
+    q = tmp_path / "bad.toml"
+    q.write_text('[stenographer]\nhotkey.trigger_mode = "nonsense"\n')
+    with pytest.raises(ConfigError, match=r"hotkey.trigger_mode"):
+        Config.load(q)
+
+
+def test_defaults_trigger_mode_is_ptt() -> None:
+    assert Config.defaults().hotkey.trigger_mode == "ptt"
 
 
 def test_format_default_toml_has_trigger_mode() -> None:
     from stenographer.config import _format_default_toml
 
-    assert 'hotkey.trigger_mode = "hybrid"' in _format_default_toml()
+    assert 'hotkey.trigger_mode = "ptt"' in _format_default_toml()
 
 
 def test_validate_hotkey_threshold_zero_rejected(tmp_path: pathlib.Path) -> None:
