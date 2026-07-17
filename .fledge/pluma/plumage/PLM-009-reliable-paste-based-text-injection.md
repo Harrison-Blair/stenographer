@@ -1,7 +1,7 @@
 ---
 id: PLM-009
 title: Reliable paste-based text injection
-status: hatched
+status: fledged
 priority: P0
 authored: 2026-07-17T02:19:20Z
 agent: fledge-orchestrate/planning
@@ -37,15 +37,15 @@ Under the validated design, `wtype` is reduced to firing one fixed keystroke (Sh
 8. FC-8: `Injector.paste()`'s trigger mechanism stays behind its existing method-call seam (`Session`/callers only ever call `injector.paste()`) so that a future swap to an alternative delivery tool (e.g. `ydotool`, not installed today and requiring a new system dependency/daemon/uinput permissions) would be a implementation swap behind that seam, not a rewrite of calling code — built only if a future need actually arises, not built speculatively now.
 
 ## Acceptance Criteria
-- [ ] AC-1: A test demonstrates `ClipboardManager.copy()` calls `wl-copy` for the regular clipboard AND `wl-copy --primary` for the primary selection, both with the same text, on a single `copy()` call.
-- [ ] AC-2: A test demonstrates `Injector.paste()` invokes `wtype` with a Shift+Insert key sequence (not Ctrl+V).
-- [ ] AC-3: The validation feather's human-executed steps and pass/fail bar are documented precisely enough that the user can run them against kitty/Claude Code, VSCodium's integrated terminal/Claude Code, and VSCodium's editor pane, and record a clear pass/fail per target.
-- [ ] AC-4: If validation passes 3/3: `Injector.paste()` and `ClipboardManager.copy()` ship exactly as FC-1/FC-2 describe, with no fallback-path code added.
-- [ ] AC-5: If validation fails on any target: `output.paste_chord` (FC-5) is implemented, defaulting to `"ctrl+v"`, configurable, and `Injector.paste()` uses it instead of a hardcoded chord; the dual clipboard/primary population from FC-1 is reverted or gated off (only needed for the Shift+Insert design).
-- [ ] AC-6: A test demonstrates `capabilities.py::Capabilities` exposes `has_paste_trigger` (renamed/generalized from `has_wtype`) and `session.py`'s paste-gate at line ~831 reads that field, not a wtype-specific one.
-- [ ] AC-7: A test demonstrates `Capabilities.probe()` performs presence-only checks (no runtime keystroke-delivery verification) for the paste-trigger capability.
-- [ ] AC-8: The existing `output/` and `session.py` unit test suites pass with no regressions to the non-paste (`"text"`) injection method or to the always-independent clipboard fallback.
-- [ ] AC-9: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
+- [x] AC-1: A test demonstrates `ClipboardManager.copy()` calls `wl-copy` for the regular clipboard AND `wl-copy --primary` for the primary selection, both with the same text, on a single `copy()` call.
+- [x] AC-2: A test demonstrates `Injector.paste()` invokes `wtype` with a Shift+Insert key sequence (not Ctrl+V).
+- [x] AC-3: The validation feather's human-executed steps and pass/fail bar are documented precisely enough that the user can run them against kitty/Claude Code, VSCodium's integrated terminal/Claude Code, and VSCodium's editor pane, and record a clear pass/fail per target.
+- [x] AC-4: If validation passes 3/3: `Injector.paste()` and `ClipboardManager.copy()` ship exactly as FC-1/FC-2 describe, with no fallback-path code added.
+- [x] AC-5: If validation fails on any target: `output.paste_chord` (FC-5) is implemented, defaulting to `"ctrl+v"`, configurable, and `Injector.paste()` uses it instead of a hardcoded chord; the dual clipboard/primary population from FC-1 is reverted or gated off (only needed for the Shift+Insert design).
+- [x] AC-6: A test demonstrates `capabilities.py::Capabilities` exposes `has_paste_trigger` (renamed/generalized from `has_wtype`) and `session.py`'s paste-gate at line ~831 reads that field, not a wtype-specific one.
+- [x] AC-7: A test demonstrates `Capabilities.probe()` performs presence-only checks (no runtime keystroke-delivery verification) for the paste-trigger capability.
+- [x] AC-8: The existing `output/` and `session.py` unit test suites pass with no regressions to the non-paste (`"text"`) injection method or to the always-independent clipboard fallback.
+- [x] AC-9: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
 
 ## Out of Scope
 - Building `ydotool` (or any alternative delivery-mechanism) support unconditionally — only build it if a future need is identified; not part of this plumage regardless of validation outcome.

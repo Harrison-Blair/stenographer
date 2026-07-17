@@ -1,7 +1,7 @@
 ---
 id: PLM-008
 title: Push-to-talk hotkey trigger mode
-status: hatched
+status: fledged
 priority: P1
 authored: 2026-07-17T02:03:34Z
 agent: fledge-orchestrate/planning
@@ -27,13 +27,13 @@ The user wants an unambiguous push-to-talk mode: a short accidental tap must nev
 5. FC-5: `"hybrid"` and `"toggle"` mode behavior is unchanged by this plumage — same states, transitions, and timing as before.
 
 ## Acceptance Criteria
-- [ ] AC-1: A test demonstrates that in `"ptt"` mode, `HotkeyStateMachine.on_keydown` always transitions to a recording state and `on_keyup` always transitions back to idle and stops recording, for both a very short (e.g. 10ms) and a long (e.g. 5s) simulated press duration — no threshold branching.
-- [ ] AC-2: A test demonstrates that in `"ptt"` mode, a short tap does NOT open a pending-double-tap state and a second rapid tap does NOT latch a toggle recording — i.e. the `PENDING_TAP`/`TOGGLE_LATCHED` states are unreachable from `"ptt"` mode.
-- [ ] AC-3: A test demonstrates `config.py` accepts `hotkey.trigger_mode = "ptt"` and rejects an unknown value with the existing `ConfigError` shape/message pattern.
-- [ ] AC-4: A test demonstrates `Config.defaults()` now returns `trigger_mode == "ptt"`.
-- [ ] AC-5: A test demonstrates the cancel binding still aborts an active `"ptt"` recording without emitting any recording-stop/output side effect.
-- [ ] AC-6: The existing `"hybrid"` and `"toggle"` mode test suites still pass unmodified, confirming no regression to those modes.
-- [ ] AC-7: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
+- [x] AC-1: A test demonstrates that in `"ptt"` mode, `HotkeyStateMachine.on_keydown` always transitions to a recording state and `on_keyup` always transitions back to idle and stops recording, for both a very short (e.g. 10ms) and a long (e.g. 5s) simulated press duration — no threshold branching.
+- [x] AC-2: A test demonstrates that in `"ptt"` mode, a short tap does NOT open a pending-double-tap state and a second rapid tap does NOT latch a toggle recording — i.e. the `PENDING_TAP`/`TOGGLE_LATCHED` states are unreachable from `"ptt"` mode.
+- [x] AC-3: A test demonstrates `config.py` accepts `hotkey.trigger_mode = "ptt"` and rejects an unknown value with the existing `ConfigError` shape/message pattern.
+- [x] AC-4: A test demonstrates `Config.defaults()` now returns `trigger_mode == "ptt"`.
+- [x] AC-5: A test demonstrates the cancel binding still aborts an active `"ptt"` recording without emitting any recording-stop/output side effect.
+- [x] AC-6: The existing `"hybrid"` and `"toggle"` mode test suites still pass unmodified, confirming no regression to those modes.
+- [x] AC-7: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
 
 ## Out of Scope
 - Removing or deprecating `"hybrid"` or `"toggle"` trigger modes — both stay in the codebase, unchanged, as configurable alternatives.
