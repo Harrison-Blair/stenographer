@@ -91,7 +91,11 @@ class LiveStreamer:
         self._signals: queue.Queue[tuple[str, np.ndarray | None]] = queue.Queue()
         # Seconds of audio trimmed off the start of the decode window.
         self._trim_offset = 0.0
+        # What actually reached the cursor (the prefix invariant, and run()'s
+        # return value) vs. everything the user said. These answer different
+        # questions and diverge exactly when delivery latches off below.
         self._typed = ""
+        self._transcript = ""
         self._max_chars_hit = False
         # Latched when a delta fails to deliver: no further delta may be
         # pasted, or the delivered text would continue past a gap.
@@ -177,9 +181,18 @@ class LiveStreamer:
         delta = self._transcriber.insert(words)
         delta.extend(self._transcriber.flush())
         self._emit(self._formatter.feed(delta) + self._formatter.finalize())
-        if self._typed and self._cfg.clipboard.enabled and self._caps.has_wl_copy:
+        # The clipboard is the independent fallback for text that did not
+        # reach the cursor, so once delivery latched off it must carry the
+        # full transcript rather than the delivered prefix -- otherwise the
+        # undelivered remainder is neither pasted nor recoverable. On every
+        # other path _typed is copied exactly as before: on the happy path it
+        # already IS the full transcript, and an output.max_chars cap is a
+        # deliberate limit on output that the clipboard must not quietly
+        # override.
+        text = self._transcript if self._delivery_failed else self._typed
+        if text and self._cfg.clipboard.enabled and self._caps.has_wl_copy:
             try:
-                self._clipboard.copy(self._typed)
+                self._clipboard.copy(text)
             except Exception as exc:
                 log.error("live: clipboard.copy raised: %s", exc)
         return self._typed
@@ -216,7 +229,14 @@ class LiveStreamer:
         return words, True
 
     def _emit(self, text: str) -> None:
-        if not text or self._delivery_failed:
+        if not text:
+            return
+        # Accumulated before the latch check and independently of delivery
+        # success, so it keeps growing after output has stopped -- that is
+        # the whole point: it is what _finish() falls back to on the
+        # clipboard so the undelivered remainder stays recoverable.
+        self._transcript += text
+        if self._delivery_failed:
             return
         max_chars = self._cfg.output.max_chars
         if len(self._typed) + len(text) > max_chars:

@@ -2,7 +2,7 @@
 id: FTHR-020
 title: Preserve full transcript on clipboard when delta delivery fails
 plumage: PLM-010
-status: egg
+status: fledged
 priority: P2
 depends_on: [FTHR-017]
 authored: 2026-07-17T03:30:36Z
@@ -66,12 +66,39 @@ re-copy regardless of what was delivered.
 
 Prefer the smallest change that reads honestly. The likely shape: accumulate the
 formatted text into a separate attribute (e.g. `self._transcript`) in `_emit()`
-*before* the latch check and independently of delivery success, leaving
-`self._typed` as the record of what was actually delivered (`_typed` is
-`_finish()`'s return value and the basis of the prefix invariant — do not
-conflate the two, and do not change what `_typed` means). Then `_finish()` copies
-`self._transcript` when it is non-empty and differs from `_typed`, else `_typed`
-as today.
+independently of delivery success, leaving `self._typed` as the record of what
+was actually delivered (`_typed` is `_finish()`'s return value and the basis of
+the prefix invariant — do not conflate the two, and do not change what `_typed`
+means). Then `_finish()` copies `self._transcript` **when and only when
+`self._delivery_failed` is set**, else `_typed` exactly as today.
+
+**Gate on the latch, not on a value comparison — and confine this to the failure
+path.** `_emit()` has two early returns before delivery: the `_delivery_failed`
+latch check, and the `output.max_chars` cap. Accumulating "before the latch
+check" positionally would land the accumulation before the `max_chars` cap too,
+so an utterance capped by `max_chars` would put the *full uncapped* transcript on
+the clipboard. That is a behavior change nobody asked for: `max_chars` is an
+explicit, user-configured **output** cap, the clipboard is output, and overriding
+it via the clipboard is a policy call the user has not made. AC-2 is deliberately
+scoped to "after a mid-utterance delivery failure" — nothing here licenses a
+`max_chars` change. For the same reason, do **not** gate the `_finish()` copy on
+"`_transcript` is non-empty and differs from `_typed`": that condition is also
+true in the `max_chars` case and would capture it as a silent side effect. Gate
+on `self._delivery_failed` explicitly.
+
+Note that **both choices pass the existing suite** —
+`test_max_chars_stops_typing_without_truncating_delta` asserts on `typed`/`pasted`
+and never on the clipboard — so this fork is unobserved by the tests and must be
+decided deliberately rather than discovered. (Fork identified by the FTHR-020
+brooder and resolved with the orchestrator before implementation; recorded here so
+it does not depend on conversation memory.)
+
+`_finish()`'s existing copy is gated `if self._typed and ...`. Widen that gate so
+a non-empty transcript is still copied when `_typed` is empty: if the *first*
+delta fails, `_typed` is `""` and today nothing is copied at all — the worst case
+of the very bug this feather closes (the utterance vanishes from cursor and
+clipboard both). This is inside AC-2 and needs its own test; it is a distinct code
+path from the mid-utterance failure case.
 
 Note the two attributes answer different questions and both are needed:
 `_typed` = "what reached the cursor" (invariant, return value); the new
@@ -101,6 +128,18 @@ the signal and leave the bug, with every test still passing.
   failure, no `paste()` fires for the failed delta or any later one, and the
   delivered text remains a prefix of the final transcript. This must keep passing
   unchanged in substance.
+- `test_live.py::test_first_delta_failure_still_copies_full_transcript` — the
+  empty-`_typed` case. Force `clipboard.copy()` to fail on the **first** delta, so
+  `_typed` stays `""`, and assert the full transcript still reaches the clipboard.
+  Distinct code path from the mid-utterance test above (it exercises the widened
+  `if self._typed` gate in `_finish()`), and the worst case of the bug this
+  feather closes: today nothing is copied at all and the utterance vanishes.
+- `test_live.py::test_max_chars_clipboard_unchanged` — pins the fork decision.
+  With deliveries succeeding but `output.max_chars` capping the utterance, assert
+  the clipboard still carries the **capped** text (`_typed`), not the full
+  uncapped transcript — i.e. the accumulator does not leak into the `max_chars`
+  path. The existing `test_max_chars_stops_typing_without_truncating_delta` never
+  asserts on the clipboard, which is why this fork is otherwise unobserved.
 - `test_live.py::test_finish_recopies_full_transcript` (existing, FTHR-017) — run
   unmodified to confirm the happy path still copies the full transcript exactly
   once and is not double-copied or altered.
@@ -113,11 +152,13 @@ the signal and leave the bug, with every test still passing.
   transcript); (3) implement until they pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: After a mid-utterance delivery failure, `_finish()` copies the full formatted transcript to the clipboard, not the delivered prefix — so the undelivered remainder is recoverable by a manual paste. Extends PLM-010 FC-3/AC-3's "clipboard is the independent fallback" guarantee to the failure path.
-- [ ] AC-3: FTHR-017's `_delivery_failed` latch is preserved: after a failed delta, no later delta is pasted, and the delivered text remains a prefix of the final transcript — satisfies PLM-010 AC-8, unweakened.
-- [ ] AC-4: `self._typed` still means "text actually delivered to the cursor" and remains `_finish()`'s return value — the clipboard change does not conflate delivered text with the transcript.
-- [ ] AC-5: The happy path is unchanged: with all deliveries succeeding, `_finish()` copies the full transcript exactly once, as today (existing `test_finish_recopies_full_transcript` passes unmodified).
-- [ ] AC-6: `ClipboardManager.copy()`'s strict return is unchanged and `output/clipboard.py` is untouched.
-- [ ] AC-7: `HeuristicFormatter`'s existing test suite passes unmodified — no formatting-rule change.
-- [ ] AC-8: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: After a mid-utterance delivery failure, `_finish()` copies the full formatted transcript to the clipboard, not the delivered prefix — so the undelivered remainder is recoverable by a manual paste. Extends PLM-010 FC-3/AC-3's "clipboard is the independent fallback" guarantee to the failure path.
+- [x] AC-3: FTHR-017's `_delivery_failed` latch is preserved: after a failed delta, no later delta is pasted, and the delivered text remains a prefix of the final transcript — satisfies PLM-010 AC-8, unweakened.
+- [x] AC-4: `self._typed` still means "text actually delivered to the cursor" and remains `_finish()`'s return value — the clipboard change does not conflate delivered text with the transcript.
+- [x] AC-5: The happy path is unchanged: with all deliveries succeeding, `_finish()` copies the full transcript exactly once, as today (existing `test_finish_recopies_full_transcript` passes unmodified).
+- [x] AC-6: `ClipboardManager.copy()`'s strict return is unchanged and `output/clipboard.py` is untouched.
+- [x] AC-7: `HeuristicFormatter`'s existing test suite passes unmodified — no formatting-rule change.
+- [x] AC-8: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
+- [x] AC-9: The `output.max_chars` path is unchanged: a capped utterance still puts the capped text on the clipboard, not the full uncapped transcript. The clipboard change is gated on `self._delivery_failed`, not on a `_transcript`/`_typed` value comparison. (Fork resolved deliberately — both choices pass the pre-existing suite.)
+- [x] AC-10: A first-delta delivery failure (`_typed == ""`) still copies the full transcript to the clipboard — `_finish()`'s `if self._typed` gate is widened so the utterance is not lost entirely.

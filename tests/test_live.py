@@ -651,3 +651,140 @@ def test_prefix_invariant_paste_mode() -> None:
 
     # Sanity: the content is what the script says, incl. break + capitals.
     assert final_typed == "It works now.\n\nAnd I agree "
+
+
+# -- clipboard fallback on delivery failure (FTHR-020) ---------------------------
+
+
+def _failed_delta_streamer() -> tuple[LiveStreamer, _FakeInjector, MagicMock]:
+    """The FTHR-017 forced-failure script: "one two three", where the delta
+    carrying " two" fails to copy mid-utterance and latches output off."""
+    streamer, injector, _worker, clipboard = _make_streamer(
+        windows=[_speech(1.0)] * 6,
+        hypotheses=[
+            _words((" one", 0.0, 0.5)),
+            _words((" one", 0.0, 0.5)),  # commits "one"   -> copy succeeds
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0)),
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0)),  # commits "two" -> copy FAILS
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0), (" three", 1.0, 1.5)),
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0), (" three", 1.0, 1.5)),  # commits
+        ],
+    )
+    # Only the second copy fails; later copies would succeed if attempted, so
+    # nothing but the latch itself can be what stops delivery.
+    clipboard.copy.side_effect = [True, False, True, True]
+    return streamer, injector, clipboard
+
+
+def test_finish_copies_full_transcript_after_delivery_failure() -> None:
+    """Once the latch engages, `_typed` freezes at the delivered prefix — but
+    the clipboard is the independent fallback, so it must carry the WHOLE
+    transcript, not the prefix. Otherwise "two three" is neither pasted nor
+    recoverable: lost outright."""
+    streamer, injector, clipboard = _failed_delta_streamer()
+
+    for _ in range(6):
+        assert streamer._step()
+    typed = streamer._finish(_speech(2.0))
+
+    # The delivered text still stops at the prefix (that is FTHR-017's latch,
+    # and it is correct) ...
+    assert typed == "One"
+    assert injector.pasted == ["One"]
+    # ... but the clipboard now holds everything the user actually said, so
+    # the undelivered remainder is recoverable with a manual paste.
+    assert clipboard.copy.call_args_list[-1] == call("One two three ")
+
+
+def test_delivery_failure_still_stops_pasting_at_prefix() -> None:
+    """Pins FTHR-017's `_delivery_failed` latch against regression by
+    FTHR-020: the clipboard change must not cause a delta to be pasted past
+    the gap. A `docs:`-labelled commit once deleted this latch with 484/485
+    tests still green — a passing suite is not evidence the latch survived."""
+    streamer, injector, _clipboard = _failed_delta_streamer()
+
+    for _ in range(6):
+        assert streamer._step()
+    typed = streamer._finish(_speech(2.0))
+
+    # (a) the failed delta is not pasted, and nothing is pasted after it --
+    # not by a later step, and not by _finish().
+    assert injector.pasted == ["One"]
+
+    # (b) the delivered text is still a prefix of the final transcript.
+    fresh = HeuristicFormatter(
+        streamer._cfg.formatting,
+        append_trailing_space=streamer._cfg.output.append_trailing_space,
+    )
+    full = fresh.format_batch(streamer._transcriber.committed_words)
+    delivered = "".join(injector.pasted)
+    assert full.startswith(delivered)
+    assert delivered == "One"
+    # A gap would look like "One three" -- delivered past the dropped delta.
+    assert "three" not in delivered
+
+    # (c) _typed still means "text actually delivered to the cursor" and is
+    # still _finish()'s return value -- the clipboard fallback must not be
+    # conflated with the delivered text.
+    assert typed == "One"
+    assert streamer._typed == "One"
+
+
+def test_first_delta_failure_still_copies_full_transcript() -> None:
+    """The worst case: the FIRST delta fails, so `_typed` stays "" and
+    _finish()'s `if self._typed` gate would skip the copy entirely -- the
+    utterance vanishing from cursor and clipboard both. A distinct code path
+    from the mid-utterance failure (that one has a non-empty `_typed`)."""
+    streamer, injector, _worker, clipboard = _make_streamer(
+        windows=[_speech(1.0)] * 4,
+        hypotheses=[
+            _words((" one", 0.0, 0.5)),
+            _words((" one", 0.0, 0.5)),  # commits "one" -> copy FAILS on delta #1
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0)),
+            _words((" one", 0.0, 0.5), (" two", 0.5, 1.0)),  # commits "two" -> latched
+        ],
+    )
+    clipboard.copy.side_effect = [False, True, True]
+
+    for _ in range(4):
+        assert streamer._step()
+    typed = streamer._finish(_speech(2.0))
+
+    # Nothing ever reached the cursor ...
+    assert typed == ""
+    assert injector.pasted == []
+    # ... so the clipboard is the only surviving copy of the utterance. It
+    # must hold all of it.
+    assert clipboard.copy.call_args_list[-1] == call("One two ")
+
+
+def test_max_chars_clipboard_unchanged() -> None:
+    """Pins the max_chars fork: the transcript accumulator must NOT leak into
+    the output.max_chars path. A cap is a deliberate, user-configured limit on
+    output; the clipboard is output, so it must carry the capped text, not the
+    full uncapped transcript. Deliveries all succeed here -- the latch never
+    engages -- which is exactly what gates the fallback off."""
+    import dataclasses
+
+    cfg = _cfg()
+    cfg = dataclasses.replace(
+        cfg, output=dataclasses.replace(cfg.output, injection_method="text", max_chars=8)
+    )
+    streamer, _injector, _worker, clipboard = _make_streamer(
+        windows=[_speech(1.0), _speech(2.0)],
+        hypotheses=[
+            _words((" hello", 0.0, 0.5)),
+            _words((" hello", 0.0, 0.5), (" overflowing", 0.5, 1.5)),
+            _words((" hello", 0.0, 0.5), (" overflowing", 0.5, 1.5)),
+        ],
+        cfg=cfg,
+    )
+    assert streamer._step()
+    assert streamer._step()
+    typed = streamer._finish(_speech(2.0))
+
+    assert typed == "Hello"
+    # The capped text, NOT "Hello overflowing ". Gating the fallback on a
+    # `_transcript != _typed` comparison instead of on the latch would fail
+    # here -- the condition is true in this case too.
+    assert clipboard.copy.call_args_list[-1] == call("Hello")
