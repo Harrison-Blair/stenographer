@@ -54,7 +54,13 @@ SKIPPED [1] tests/test_inject.py:321: set STENOGRAPHER_INTEGRATION=1 to run inte
 ============================== 1 skipped in 0.04s ==============================
 ```
 
-**Passing run** — from the user's attended run (see AC-2 for the full log):
+**Then it failed for a second, better reason.** Its first real-hardware
+execution (AC-2, run 0) failed against `copy()` returning `False` after a 10s
+hang — the FTHR-021 P0. So this test has been observed failing twice, for two
+distinct and legitimate reasons: first because it did not exist, then because
+the code under it was genuinely broken.
+
+**Passing run** — the user's attended run at commit 049888a (AC-2, run 1):
 
 ```
 tests/test_inject.py::test_paste_round_trip_latency  streaming
@@ -64,33 +70,77 @@ PASSED
 ================================= 1 passed in 10.40s ==================================
 ```
 
-**Provenance, stated plainly:** the pre-implementation failing run and the
-collected/skipped runs were executed by the brooder. The passing run above was
-**not** — it was executed by the user on their hardware and relayed verbatim by
-the orchestrator, because `oversight: during` forbids the brooder from firing
-`wtype` at the user's live desktop. AC-1 is satisfied by those two runs taken
-together (observed failing before, observed passing after), with the passing
-half attributed to the user rather than to the brooder.
+### Status: AC-1 is not yet satisfied
+
+Stated plainly, because an earlier revision of this document overclaimed it:
+
+- The failing runs (collection failure, and run 0's real failure) are observed
+  and real.
+- The passing run above is observed and real — but it is a pass of commit
+  **049888a**, and `tests/test_inject.py` changed at **89b9faf** (teardown
+  helpers and their call sites). **No passing run exists for current HEAD.**
+- The unit suite does not close that gap: this test is `integration`-marked, so
+  it skips there. A mistake in the teardown edit would not be caught by
+  `490 passed`.
+
+AC-1 asks for a pass *after* implementation, and the implementation moved after
+the last observed pass. It is claimed once run 2 lands. See AC-2, run 2.
+
+**Provenance.** The brooder executed the pre-implementation failing run and the
+collected/skipped runs. The brooder executed **none** of the real-hardware runs
+— runs 0, 1, and 2 are the user's, on their hardware, relayed by the
+orchestrator, because `oversight: during` forbids the brooder from firing
+`wtype` at the user's live desktop.
 
 ## AC-2
 
-**Satisfied by the user's attended runs.** Both runs were executed by the user
-on their hardware and relayed verbatim by the orchestrator. Command (identical
-for both):
+**Not yet claimed — pending run 2** (see the status note under run 2 below).
+A real measurement has been produced (run 1), but not against current HEAD.
+
+Every real-hardware run was executed by the user, on their hardware, and
+relayed by the orchestrator. Command (identical for all):
 
 ```sh
 cd /home/penguin/source/stenographer/.fledge/burrows/FTHR-018
 STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest tests/test_inject.py::test_paste_round_trip_latency -s --log-cli-level=INFO
 ```
 
-Two complete logs are recorded below. Run 1 is the first measurement, taken
-while this test's own teardown still carried the FTHR-021 defect described
-under AC-4. Run 2 is the first execution with correct save/restore. Both are
-kept in full: run 1 is the evidence that the measured figures predate the
-teardown fix, and run 2 stands on its own without requiring a reader to work
-out which parts of run 1 survived it.
+Three runs are recorded below, in order. The narrative deliberately starts at
+the **failing** run, not at the first passing one: this test's first real
+execution found a P0, and that is the most useful thing this feather did.
 
-### Run 1 — pre-teardown-fix (commit 049888a)
+- **Run 0** — first real-hardware attempt, **pre-FTHR-021**. Failed. Exposed the
+  clipboard-hang P0.
+- **Run 1** — post-FTHR-021 merge, pre-*this test's own* teardown fix. Passed
+  with real numbers, slowly (the teardown defect under AC-4).
+- **Run 2** — post-teardown-fix, at current HEAD. The confirming run.
+
+### Run 0 — first real-hardware attempt, pre-FTHR-021 (FAILED)
+
+This run predates the FTHR-021 merge (8d6d5df) and therefore ran against the
+old `clipboard.py`, where `copy()` captured `wl-copy`'s pipes.
+
+Observed result, **as relayed to the brooder secondhand — the brooder does not
+hold this run's verbatim log**:
+
+- `ClipboardManager.copy()` returned `False` after a ~10.01s hang (the
+  `wl-copy` pipe-capture timeout).
+- Total run time ~20.05s.
+- The test failed at its first `assert clip.copy(...) is True`.
+
+This is recorded at lower fidelity than runs 1 and 2 because a verbatim log was
+never relayed to the brooder; the figures above are as reported by the
+orchestrator, and are marked as such rather than reconstructed into a log-shaped
+block that would imply a precision this record does not have.
+
+**Why this run matters more than its numbers.** It is the run that exposed
+FTHR-021 — a v1-era latent P0 in which `copy()` always returned `False` after
+hanging 10s, meaning live streaming delivered nothing and every dictation
+stalled. 490 mocked unit tests were green throughout, because they mocked
+`subprocess.run` and so mocked away the very fork behaviour that broke. This
+feather's failure, not its measurement, is what caught that.
+
+### Run 1 — post-FTHR-021, pre-teardown-fix (commit 049888a)
 
 Verbatim output as relayed by the orchestrator:
 
@@ -119,10 +169,21 @@ wall-clock is teardown overhead, not measurement — see the finding under AC-4;
 it does not affect the per-iteration numbers, which are timed individually
 around `copy()` + `paste()` only.
 
-### Run 2 — post-teardown-fix (commit 89b9faf)
+### Run 2 — post-teardown-fix (commit 89b9faf) — PENDING
 
-_Pending: awaiting the user's confirming run. The log will be recorded here in
-full, verbatim, on the same terms as run 1._
+_Awaiting the user's confirming run. The log will be recorded here in full,
+verbatim, on the same terms as run 1._
+
+**AC-1 and AC-2 are therefore NOT yet claimed.** The reason is narrower than
+"a re-run is outstanding", and worth stating precisely: run 1 passed against
+the test as it stood at 049888a, but `tests/test_inject.py` has been modified
+since (89b9faf changed the teardown helpers and their call sites). No passing
+run exists for the code at current HEAD. The unit suite cannot cover that gap —
+this test is `integration`-marked and skips there, so a helper-level mistake in
+the teardown edit would not surface. The measured path (`copy()` / `paste()`)
+was not touched, so the ~37 ms figures are expected to hold; but "expected to
+hold" is a prediction, and AC-1's "passes after" asks for an observation. It
+will be claimed when run 2 lands, and not before.
 
 ## AC-3
 
