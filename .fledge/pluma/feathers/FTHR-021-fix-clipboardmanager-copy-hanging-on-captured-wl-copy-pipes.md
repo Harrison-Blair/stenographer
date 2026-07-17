@@ -158,12 +158,12 @@ the user's clipboard, hence the save/restore). Confirm with the orchestrator
 before the first real run.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after. The integration test's pre-fix failure is the real timeout (~10s elapsed), captured verbatim — not a skip, not an import error.
-- [ ] AC-2: `ClipboardManager.copy()` returns `True` against a real `wl-copy` and completes without hitting its timeout — paste mode is functional on real hardware.
-- [ ] AC-3: Both selections are populated by a single `copy()` call, verified by reading the token back from `wl-paste` **and** `wl-paste --primary` — PLM-009 FC-1/FC-2's dual-population design executes in production for the first time.
-- [ ] AC-4: `copy()`'s strict return contract is unchanged: `True` only if both writes succeed. The loop now genuinely reaches the second call.
-- [ ] AC-5: A unit-level pin prevents a future refactor from reintroducing captured pipes, and the evidence states honestly that it pins the call shape rather than the behavior.
-- [ ] AC-6: `Injector.paste()`'s `capture_output=True` was explicitly checked against real `wtype` behavior and the finding reported — fixed if affected, documented as unaffected if not. Not assumed either way.
-- [ ] AC-7: `live.py`, `session.py`, and `formatter.py` are untouched; FTHR-017's `_delivery_failed` latch and FTHR-020's clipboard-fallback behavior are unchanged (their tests pass unmodified).
-- [ ] AC-8: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
-- [ ] AC-9: The evidence records that this is a v1-era latent defect (`capture_output=True` present since `f20ee52`), not a regression introduced by PLM-009/PLM-010, and notes that PLM-009's FC-1/FC-2 were satisfied in code but never executed.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after. The integration test's pre-fix failure is the real timeout (~10s elapsed), captured verbatim — not a skip, not an import error.
+- [x] AC-2: `ClipboardManager.copy()` returns `True` against a real `wl-copy` and completes without hitting its timeout — paste mode is functional on real hardware.
+- [x] AC-3: Both selections are populated by a single `copy()` call, verified by reading the token back from `wl-paste` **and** `wl-paste --primary` — PLM-009 FC-1/FC-2's dual-population design executes in production for the first time.
+- [x] AC-4: `copy()`'s strict return contract is unchanged: `True` only if both writes succeed. The loop now genuinely reaches the second call.
+- [x] AC-5: A unit-level pin prevents a future refactor from reintroducing captured pipes, and the evidence states honestly that it pins the call shape rather than the behavior.
+- [x] AC-6: `Injector.paste()`'s `capture_output=True` was explicitly checked against real `wtype` behavior and the finding reported — fixed if affected, documented as unaffected if not. Not assumed either way.
+- [x] AC-7: `live.py`, `session.py`, and `formatter.py` are untouched; FTHR-017's `_delivery_failed` latch and FTHR-020's clipboard-fallback behavior are unchanged (their tests pass unmodified).
+- [x] AC-8: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
+- [x] AC-9: The evidence records that this is a v1-era latent defect (`capture_output=True` present since `f20ee52`), not a regression introduced by PLM-009/PLM-010, and notes that PLM-009's FC-1/FC-2 were satisfied in code but never executed.

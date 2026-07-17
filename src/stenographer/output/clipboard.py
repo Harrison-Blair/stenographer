@@ -38,12 +38,20 @@ class ClipboardManager:
         payload = text.encode("utf-8")
         for argv in (["wl-copy"], ["wl-copy", "--primary"]):
             try:
+                # stdout/stderr go to DEVNULL rather than being captured:
+                # wl-copy forks and serves the selection in the background for
+                # as long as it is offered, and the forked child inherits any
+                # pipes we create. subprocess.run waits for EOF on them, so
+                # capturing here blocks until the timeout fires -- even though
+                # wl-copy has already set the clipboard. The return code is
+                # still collected, so check=True works unchanged.
                 subprocess.run(
                     argv,
                     input=payload,
                     check=True,
                     timeout=10.0,
-                    capture_output=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
             except (
                 subprocess.CalledProcessError,
