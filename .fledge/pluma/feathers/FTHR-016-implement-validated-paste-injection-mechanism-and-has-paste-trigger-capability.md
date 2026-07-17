@@ -43,10 +43,10 @@ Keep the branch chosen by FTHR-015's `RESULT:` line as the only code path built 
 - Implementation order is fixed: (1) write the tests above (only for the branch FTHR-015 selected); (2) run them against the unchanged code and confirm they FAIL for the expected reason (e.g. old tests referencing `has_wtype` or the hardcoded Ctrl+V chord); (3) implement until they pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: If FTHR-015's `RESULT:` was 3/3 pass: `ClipboardManager.copy()` populates both clipboard and primary selection, and `Injector.paste()` fires Shift+Insert — satisfies PLM-009 FC-1/FC-2/AC-4.
-- [ ] AC-3: If FTHR-015's `RESULT:` was a fallback: `output.paste_chord` exists (default `"ctrl+v"`, configurable), `Injector.paste()` uses it, and no primary-selection population is added — satisfies PLM-009 FC-5/AC-5.
-- [ ] AC-4: `Capabilities.has_paste_trigger` exists (replacing `has_wtype`), and `session.py`'s paste-gate reads it — satisfies PLM-009 FC-6/AC-6.
-- [ ] AC-5: `Capabilities.probe()` remains presence-only for the paste-trigger capability (no delivery-verification) — satisfies PLM-009 FC-7/AC-7.
-- [ ] AC-6: Existing `output/` and `session.py` unit tests unrelated to this change pass with no regressions.
-- [ ] AC-7: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: If FTHR-015's `RESULT:` was 3/3 pass: `ClipboardManager.copy()` populates both clipboard and primary selection, and `Injector.paste()` fires Shift+Insert — satisfies PLM-009 FC-1/FC-2/AC-4.
+- [x] AC-3: If FTHR-015's `RESULT:` was a fallback: `output.paste_chord` exists (default `"ctrl+v"`, configurable), `Injector.paste()` uses it, and no primary-selection population is added — satisfies PLM-009 FC-5/AC-5.
+- [x] AC-4: `Capabilities.has_paste_trigger` exists (replacing `has_wtype`), and `session.py`'s paste-gate reads it — satisfies PLM-009 FC-6/AC-6.
+- [x] AC-5: `Capabilities.probe()` remains presence-only for the paste-trigger capability (no delivery-verification) — satisfies PLM-009 FC-7/AC-7.
+- [x] AC-6: Existing `output/` and `session.py` unit tests unrelated to this change pass with no regressions.
+- [x] AC-7: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
