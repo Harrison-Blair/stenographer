@@ -25,25 +25,33 @@ class ClipboardManager:
         self._available = available
 
     def copy(self, text: str) -> bool:
-        """Copy ``text`` to the Wayland clipboard. Return ``True`` on success."""
+        """Copy ``text`` to the clipboard and the primary selection.
+
+        Both selections are populated with the same text: the paste chord
+        (Shift+Insert) reads the primary selection in some clients and the
+        regular clipboard in others, so populating both is what makes the
+        one chord work everywhere. Return ``True`` only if both succeed.
+        """
         if not self._available:
             logger.debug("wl-copy not available")
             return False
-        try:
-            subprocess.run(
-                ["wl-copy"],
-                input=text.encode("utf-8"),
-                check=True,
-                timeout=10.0,
-                capture_output=True,
-            )
-        except (
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            FileNotFoundError,
-        ) as exc:
-            logger.debug("output.clipboard: wl-copy failed: %s", exc)
-            return False
+        payload = text.encode("utf-8")
+        for argv in (["wl-copy"], ["wl-copy", "--primary"]):
+            try:
+                subprocess.run(
+                    argv,
+                    input=payload,
+                    check=True,
+                    timeout=10.0,
+                    capture_output=True,
+                )
+            except (
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+                FileNotFoundError,
+            ) as exc:
+                logger.debug("output.clipboard: %s failed: %s", " ".join(argv), exc)
+                return False
         return True
 
     def read(self) -> str | None:

@@ -44,13 +44,29 @@ def test_copy_success_returns_true_and_pipes_input() -> None:
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.return_value = _completed()
         assert mgr.copy("hello") is True
-        run.assert_called_once()
-        call = run.call_args
+        # The primary-selection call is asserted by
+        # test_copy_populates_primary_selection; this test pins the regular
+        # clipboard invocation's arguments.
+        call = run.call_args_list[0]
         assert call.args[0] == ["wl-copy"]
         assert call.kwargs["input"] == b"hello"
         assert call.kwargs["check"] is True
         assert call.kwargs["timeout"] == 10.0
         assert call.kwargs["capture_output"] is True
+
+
+def test_copy_populates_primary_selection() -> None:
+    mgr = ClipboardManager(available=True)
+    with patch("stenographer.output.clipboard.subprocess.run") as run:
+        run.return_value = _completed()
+        assert mgr.copy("hello") is True
+        assert run.call_count == 2
+        regular, primary = run.call_args_list
+        assert regular.args[0] == ["wl-copy"]
+        assert primary.args[0] == ["wl-copy", "--primary"]
+        # Both selections must carry the same text.
+        assert regular.kwargs["input"] == b"hello"
+        assert primary.kwargs["input"] == b"hello"
 
 
 def test_copy_called_process_error_returns_false() -> None:

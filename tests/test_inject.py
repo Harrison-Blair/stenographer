@@ -178,14 +178,16 @@ def test_close_is_noop() -> None:
 # --- paste() tests ---
 
 
-def test_paste_success_invokes_wtype_ctrl_v() -> None:
+def test_paste_fires_shift_insert() -> None:
     inj = Injector(available=True)
     with patch("stenographer.output.inject.subprocess.run") as run:
         run.return_value = _completed()
         assert inj.paste() is True
         run.assert_called_once()
         call = run.call_args
-        assert call.args[0] == ["wtype", "-M", "ctrl", "v", "-m", "ctrl"]
+        assert call.args[0] == ["wtype", "-M", "shift", "-k", "Insert", "-m", "shift"]
+        assert "ctrl" not in call.args[0]
+        assert "v" not in call.args[0]
         assert call.kwargs["check"] is True
         assert call.kwargs["timeout"] == 5.0
         assert call.kwargs["capture_output"] is True
