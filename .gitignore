@@ -253,3 +253,6 @@ dist/
 .fledge/skills/fledge-orchestrate/templates/plumage.md
 .fledge/skills/fledge-orchestrate/templates/scout-report.md
 .fledge/skills/fledge-orchestrate/worker-protocols.md
+
+# fledge scaffold stamp — machine-local dev-link state (devSource path)
+.fledge/scaffold.json
