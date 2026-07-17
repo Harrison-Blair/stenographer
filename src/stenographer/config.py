@@ -42,7 +42,7 @@ class ConfigError(_BaseConfigError):
         super().__init__(f"{path}: {key}: {reason}")
 
 
-ALLOWED_TRIGGER_MODES: frozenset[str] = frozenset({"hybrid", "toggle"})
+ALLOWED_TRIGGER_MODES: frozenset[str] = frozenset({"hybrid", "toggle", "ptt"})
 
 
 @dataclass(frozen=True)
@@ -145,7 +145,7 @@ class Config:
                 double_tap_window_seconds=0.35,
                 cancel_binding="KEY_ESC",
                 device=None,
-                trigger_mode="hybrid",
+                trigger_mode="ptt",
             ),
             audio=AudioConfig(
                 sample_rate=16000,

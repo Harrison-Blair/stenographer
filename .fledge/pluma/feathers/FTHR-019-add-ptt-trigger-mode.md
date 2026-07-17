@@ -35,11 +35,11 @@ Follow `toggle` mode's existing precedent for ignoring duration/timing fields: `
 - Implementation order is fixed: (1) write the new tests above; (2) run them against the unchanged code and confirm they FAIL for the expected reason (`"ptt"` not a valid mode yet); (3) implement until they pass, then re-run the full existing `hybrid`/`toggle` suite to confirm no regressions.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `HotkeyStateMachine(mode="ptt")` always starts recording on keydown and always stops on keyup, for both very short and long press durations — satisfies PLM-008 FC-2/AC-1.
-- [ ] AC-3: `PENDING_TAP`/`TOGGLE_LATCHED` states are unreachable in `ptt` mode — a short tap never opens a toggle window — satisfies PLM-008 FC-2/AC-2.
-- [ ] AC-4: `config.py` accepts `hotkey.trigger_mode = "ptt"` and rejects unknown values with the existing error shape — satisfies PLM-008 FC-1/AC-3.
-- [ ] AC-5: `Config.defaults()` returns `trigger_mode == "ptt"` — satisfies PLM-008 FC-1/AC-4.
-- [ ] AC-6: The cancel binding still aborts an active `ptt` recording with no output side effect — satisfies PLM-008 FC-4/AC-5.
-- [ ] AC-7: Existing `hybrid` and `toggle` mode tests pass unmodified — satisfies PLM-008 FC-5/AC-6.
-- [ ] AC-8: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions — satisfies PLM-008 AC-7.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `HotkeyStateMachine(mode="ptt")` always starts recording on keydown and always stops on keyup, for both very short and long press durations — satisfies PLM-008 FC-2/AC-1.
+- [x] AC-3: `PENDING_TAP`/`TOGGLE_LATCHED` states are unreachable in `ptt` mode — a short tap never opens a toggle window — satisfies PLM-008 FC-2/AC-2.
+- [x] AC-4: `config.py` accepts `hotkey.trigger_mode = "ptt"` and rejects unknown values with the existing error shape — satisfies PLM-008 FC-1/AC-3.
+- [x] AC-5: `Config.defaults()` returns `trigger_mode == "ptt"` — satisfies PLM-008 FC-1/AC-4.
+- [x] AC-6: The cancel binding still aborts an active `ptt` recording with no output side effect — satisfies PLM-008 FC-4/AC-5.
+- [x] AC-7: Existing `hybrid` and `toggle` mode tests pass unmodified — satisfies PLM-008 FC-5/AC-6.
+- [x] AC-8: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions — satisfies PLM-008 AC-7.
