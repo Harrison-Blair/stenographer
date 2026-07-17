@@ -2,7 +2,7 @@
 id: FTHR-020
 title: Preserve full transcript on clipboard when delta delivery fails
 plumage: PLM-010
-status: hatching
+status: fledged
 priority: P2
 depends_on: [FTHR-017]
 authored: 2026-07-17T03:30:36Z
