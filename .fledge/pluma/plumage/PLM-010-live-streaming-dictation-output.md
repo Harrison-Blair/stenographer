@@ -1,7 +1,7 @@
 ---
 id: PLM-010
 title: Live streaming dictation output
-status: hatched
+status: fledged
 priority: P1
 authored: 2026-07-17T02:27:34Z
 agent: fledge-orchestrate/planning
@@ -39,15 +39,15 @@ Streaming's real-hardware RTF/latency remains genuinely unmeasured, and delta-pa
 7. FC-7: A measurement feather captures real wall-clock latency for one delta's full round-trip (`wl-copy` + `wl-copy --primary` if applicable + `wtype` paste trigger) on the user's actual hardware during a live dictation session, and reports the measured numbers (e.g. via logging or a bench-style script) — it does not gate pass/fail on any latency threshold.
 
 ## Acceptance Criteria
-- [ ] AC-1: A test demonstrates `LiveStreamer._emit()` calls `ClipboardManager.copy()` and `Injector.paste()` for a committed delta, and never calls `Injector.type_text()`.
-- [ ] AC-2: A test demonstrates streaming is selected (`Session._streaming` or equivalent) when `cfg.streaming.enabled` and `cfg.output.injection_method == "paste"`.
-- [ ] AC-3: A test demonstrates `LiveStreamer._finish()` still re-copies the full transcript to the clipboard once at utterance end.
-- [ ] AC-4: A test demonstrates that under the universal-chord PLM-009 outcome, each committed word/chunk delta triggers its own paste during the utterance (not just one at the end).
-- [ ] AC-5: A test demonstrates that under the static/manual-chord PLM-009 fallback outcome, no paste fires until utterance end, where exactly one paste delivers the full accumulated transcript.
-- [ ] AC-6: A test demonstrates `HeuristicFormatter`'s existing test suite passes unmodified — no behavioral change to its formatting rules.
-- [ ] AC-7: The measurement feather produces a recorded real-hardware measurement of per-delta round-trip latency (documented in its molt evidence), with no pass/fail assertion tied to a latency number.
-- [ ] AC-8: A test demonstrates the never-revised/prefix invariant still holds under delta-paste: the sequence of clipboard-populate-then-paste operations for committed deltas, concatenated, reconstructs the same text as the final batch transcript (the paste-mode analogue of the existing `test_live.py::test_prefix_invariant_M6` typed-delta check).
-- [ ] AC-9: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
+- [x] AC-1: A test demonstrates `LiveStreamer._emit()` calls `ClipboardManager.copy()` and `Injector.paste()` for a committed delta, and never calls `Injector.type_text()`.
+- [x] AC-2: A test demonstrates streaming is selected (`Session._streaming` or equivalent) when `cfg.streaming.enabled` and `cfg.output.injection_method == "paste"`.
+- [x] AC-3: A test demonstrates `LiveStreamer._finish()` still re-copies the full transcript to the clipboard once at utterance end.
+- [x] AC-4: A test demonstrates that under the universal-chord PLM-009 outcome, each committed word/chunk delta triggers its own paste during the utterance (not just one at the end).
+- [x] AC-5: A test demonstrates that under the static/manual-chord PLM-009 fallback outcome, no paste fires until utterance end, where exactly one paste delivers the full accumulated transcript. **Checked as VACUOUS — no such test exists, deliberately.** This AC is conditional on FTHR-015's binary outcome selecting the fallback branch. FTHR-015 recorded `RESULT: 3/3 PASS — build universal chord (PLM-009 FC-1/FC-2)`, so the fallback was never built and AC-4's per-word branch shipped instead. The condition never obtained; the criterion is vacuously satisfied rather than tested. Same reasoning as PLM-009's AC-5, ruled vacuous by the user on the identical FTHR-015 result. See `.fledge/molt/FTHR-015.md` and FTHR-017 AC-6.
+- [x] AC-6: A test demonstrates `HeuristicFormatter`'s existing test suite passes unmodified — no behavioral change to its formatting rules.
+- [x] AC-7: The measurement feather produces a recorded real-hardware measurement of per-delta round-trip latency (documented in its molt evidence), with no pass/fail assertion tied to a latency number.
+- [x] AC-8: A test demonstrates the never-revised/prefix invariant still holds under delta-paste: the sequence of clipboard-populate-then-paste operations for committed deltas, concatenated, reconstructs the same text as the final batch transcript (the paste-mode analogue of the existing `test_live.py::test_prefix_invariant_M6` typed-delta check).
+- [x] AC-9: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
 
 ## Out of Scope
 - Any change to `asr/streaming.py`'s LocalAgreement-N commit algorithm itself.
