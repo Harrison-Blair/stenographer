@@ -271,3 +271,34 @@ re-verified at 489 passed.
 making the clipboard the only surviving copy of the utterance. Asserts the last `copy()` carries
 `"One two "`. Requires the widened gate (`if text` rather than `if self._typed`); pre-implementation
 failure captured under AC-1 showing the old gate skipping the copy entirely.
+
+## Residual: `max_chars` + delivery-failure interaction (orchestrator note, post-merge)
+
+Recorded by the orchestrator after the feather merged and the pair was torn down. The
+FTHR-020 brooder named this in its sign-off and stated it was documented here; it was not,
+so it is written down now rather than lost with that agent's context. **Not a defect and not
+a regression** — behavior is as specced. Filed so a future reader finds it deliberate.
+
+`_emit()` does `self._transcript += text` before *both* early returns (the `_delivery_failed`
+latch and the `max_chars` cap). AC-9 confines the *use* of `_transcript` to the failure path,
+so the pure `max_chars` path is genuinely unchanged and `test_max_chars_clipboard_unchanged`
+pins it. But the two paths can compose:
+
+1. Delta A fits the cap and delivers → `_typed == "A"`.
+2. Delta B exceeds the cap → dropped from `_typed`, `_max_chars_hit` set — **but `_transcript`
+   already grew to `"AB"`** (the accumulation precedes the cap check).
+3. A later, shorter delta C still satisfies `len(_typed) + len(C) > max_chars` as false —
+   because `_typed` never grew past A — so C is attempted. If C's `copy()` fails,
+   `_delivery_failed` latches.
+4. `_finish()` then copies `_transcript` (`"ABC"`), which exceeds `output.max_chars`.
+
+So a capped utterance *that later suffers a delivery failure* can put over-cap text on the
+clipboard. Reachable only through that specific ordering; no test covers it, and both the
+AC-9 pin and the AC-2/AC-10 tests pass regardless — another unobserved fork, of the same
+family AC-9 resolved.
+
+The underlying tension is a genuine spec question, not a coding error: `max_chars` is an
+output cap, while the failure path's contract is "the clipboard carries what you said so the
+remainder is recoverable". Those disagree here, and nothing in PLM-010 says which wins. AC-2
+is scoped to the failure path and is satisfied as written. Resolving it needs a user decision
+about which guarantee dominates — it was not taken, and should not be inferred from this note.
