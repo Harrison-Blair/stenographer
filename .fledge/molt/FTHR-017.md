@@ -80,11 +80,63 @@ $ .venv/bin/pytest -m "not integration" -q \
 6 passed in 0.15s
 ```
 
+### The guard regressed on this branch once — and the test caught it
+
+Recorded rather than quietly amended, because it is the strongest evidence in
+this file that `test_failed_copy_skips_paste_and_stops_at_prefix` earns its
+keep.
+
+Commit `4bfd8ab` was authored and announced as docs-only (adding the strict-return
+reasoning below). Its diff also contained an unintended source hunk that dropped
+the `_delivery_failed` clause from `_emit()`'s entry guard:
+
+```
+-        if not text or self._delivery_failed:
++        if not text:
+```
+
+That is **Mutation 2 of this very file, live on the branch tip** — delivery
+un-latches after a failed copy, a later delta lands past the gap, and delivered
+text stops being a prefix. Caught by the skua on review:
+
+```
+$ git log --oneline -1        # 4bfd8ab
+$ .venv/bin/pytest -m "not integration" -q
+1 failed, 484 passed, 4 deselected in 15.47s
+FAILED tests/test_live.py::test_failed_copy_skips_paste_and_stops_at_prefix
+  AssertionError: assert ['One', ' three'] == ['One']
+```
+
+Fixed in `a443b40`, restoring the clause exactly as committed in `d66b7cc`.
+Bisect confirming the guard was correct until `4bfd8ab` and is correct again:
+
+```
+c274524  if not text:                                (pre-implementation)
+d66b7cc  if not text or self._delivery_failed:       (implementation)
+699f541  if not text or self._delivery_failed:       (evidence capture)
+4bfd8ab  if not text:                                <- REGRESSION
+a443b40  if not text or self._delivery_failed:       (restored)
+```
+
+Two things worth the next reader's attention:
+
+1. **The regression was silent in every respect except that one test.** 484 of
+   485 tests passed with the invariant broken. This is exactly the rot the
+   strict-return section below warns about, and it happened here, on this
+   branch, within an hour of that warning being written.
+2. **My verification was the weak link, not the test.** I claimed "docs only, no
+   behaviour change" from a working-tree test run taken before committing, and
+   did not inspect the commit's diff. A green working tree is not evidence about
+   what a commit contains. Verification now runs against the **commit object**
+   (`git show HEAD -- src/`, `git show HEAD:<file>`), which is what caught the
+   fix as correct rather than merely assumed.
+
 ### Mutation check (the repo's test-verification rule)
 
 A test only counts if it fails when the behaviour breaks. The hazard guard is
 the novel logic here, so it was mutation-tested two ways against the shipped
-test:
+test (and re-run after `a443b40` to confirm the restored guard is genuinely
+load-bearing, not just present):
 
 ```
 ### MUTATION 1: paste unconditionally (ignore copy() result) ###
