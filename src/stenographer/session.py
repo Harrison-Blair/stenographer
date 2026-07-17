@@ -150,9 +150,9 @@ class Session:
         # far for the recording identified by _chunk_abort.
         self._chunk_abort: threading.Event | None = None
         self._chunk_segments: list[SegmentInfo] = []
-        # Live word-level streaming only applies to direct typing; paste mode
-        # assembles the utterance and pastes once.
-        self._streaming = bool(cfg.streaming.enabled and cfg.output.injection_method == "text")
+        # Live word-level streaming pastes each committed delta as it is
+        # confirmed; text mode assembles the utterance and types it.
+        self._streaming = bool(cfg.streaming.enabled and cfg.output.injection_method == "paste")
         # The streamer of the recording currently capturing audio. Popped by
         # the stop/discard path that ends that recording, so a following
         # recording can never be routed into a previous utterance's streamer

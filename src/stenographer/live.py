@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Live streaming driver: type committed words while recording continues.
+"""Live streaming driver: paste committed words while recording continues.
 
 ``LiveStreamer`` runs one streamed utterance on the session-processor thread.
 The recorder's PortAudio callback posts cheap partial signals; each partial
 triggers a re-decode of the current audio window via the worker, the
 LocalAgreement committer confirms a stable word prefix, and only the newly
-confirmed delta is formatted and typed. Typed text is never revised — every
-intermediate state is a prefix of the final transcript — so cancel simply
-stops typing and leaves what is at the cursor.
+confirmed delta is formatted, copied to the clipboard and pasted at the
+cursor. Delivered text is never revised — every intermediate state is a
+prefix of the final transcript — so cancel simply stops pasting and leaves
+what is at the cursor. A delta that fails to deliver latches output off for
+the rest of the utterance rather than pasting a later delta past the gap.
 """
 
 from __future__ import annotations
@@ -62,7 +64,7 @@ _SENTENCE_TERMINALS = ".?!"
 
 
 class LiveStreamer:
-    """Drives one streamed utterance: partials -> commit -> format -> type."""
+    """Drives one streamed utterance: partials -> commit -> format -> paste."""
 
     def __init__(
         self,
@@ -91,6 +93,9 @@ class LiveStreamer:
         self._trim_offset = 0.0
         self._typed = ""
         self._max_chars_hit = False
+        # Latched when a delta fails to deliver: no further delta may be
+        # pasted, or the delivered text would continue past a gap.
+        self._delivery_failed = False
 
     @property
     def abort(self) -> threading.Event:
@@ -211,7 +216,7 @@ class LiveStreamer:
         return words, True
 
     def _emit(self, text: str) -> None:
-        if not text:
+        if not text or self._delivery_failed:
             return
         max_chars = self._cfg.output.max_chars
         if len(self._typed) + len(text) > max_chars:
@@ -221,13 +226,41 @@ class LiveStreamer:
                 self._max_chars_hit = True
                 log.warning("live: output reached output.max_chars=%d; typing stopped", max_chars)
             return
-        typed = False
+        delivered = False
         try:
-            typed = bool(self._injector.type_text(text, raw=True))
+            # Paste only on a fully successful copy. ClipboardManager.copy()
+            # populates the regular clipboard AND the primary selection, and
+            # returns False if either failed -- so a False here can mean the
+            # two selections now disagree (clipboard holds this delta, primary
+            # still holds the previous one). The chord reads whichever
+            # selection the client prefers, so pasting now could deliver a
+            # stale, out-of-order word.
+            #
+            # copy()'s strict return does not cause that desync -- a partial
+            # wl-copy failure desyncs the selections whatever it returns -- it
+            # is the only thing that makes the desync visible here. Loosening
+            # it would drop the signal and leave the desync, breaking the
+            # prefix invariant with nothing able to observe it.
+            if self._clipboard.copy(text):
+                delivered = bool(self._injector.paste())
         except Exception as exc:
-            log.error("live: injector.type_text raised: %s", exc)
-        if typed:
+            log.error("live: paste delivery raised: %s", exc)
+        if delivered:
             self._typed += text
+            return
+        # Never deliver past a gap. A later delta pasted after a dropped one
+        # would leave the delivered text with a hole in it -- no longer a
+        # prefix of the final transcript, and silently wrong rather than a
+        # visible error. Stopping cleanly at a prefix boundary is correct;
+        # guessing at a resynchronisation is not. _finish() still re-copies
+        # the accumulated transcript, so the clipboard fallback survives.
+        if not self._delivery_failed:
+            self._delivery_failed = True
+            log.warning(
+                "live: delta delivery failed; output stopped at %d chars to keep "
+                "delivered text a prefix of the transcript",
+                len(self._typed),
+            )
 
     def _maybe_trim(self, window_seconds: float) -> None:
         """Trim the decode window at a safe committed boundary.
