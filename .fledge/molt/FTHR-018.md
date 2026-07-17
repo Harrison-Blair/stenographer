@@ -8,10 +8,16 @@ All commands run with the worktree-local venv (`.venv/bin/...`), which resolves
 **Oversight note (`oversight: during`).** This feather's test fires real
 Shift+Insert keystrokes via `wtype` into whatever window has focus on the
 user's live desktop, and mutates the real clipboard. A git worktree does not
-isolate that — `wtype` talks to the real compositor. The brooder therefore did
-**not** run the measurement. Every run recorded below is a *skipped-without-env-var*
-run. AC-2 and AC-4 depend on a human-attended run and are recorded as pending
-below; no numbers are simulated, mocked, or estimated.
+isolate that — `wtype` talks to the real compositor. The brooder therefore
+never ran the measurement. Every run the brooder executed was a
+*skipped-without-env-var* run. **The measured numbers below come from the
+user's own attended run on their hardware, relayed verbatim via the
+orchestrator; the brooder simulated, mocked, and estimated nothing.**
+
+This branch also merged `dev` (commit 8d6d5df) to pick up FTHR-021, the P0
+clipboard-hang fix that this feather's first measurement run exposed. The
+numbers recorded here are therefore post-fix and represent a functioning
+paste path.
 
 ## AC-1
 
@@ -48,32 +54,59 @@ SKIPPED [1] tests/test_inject.py:321: set STENOGRAPHER_INTEGRATION=1 to run inte
 ============================== 1 skipped in 0.04s ==============================
 ```
 
-**Honesty boundary:** the "after" state observed here is *collected and skipped*,
-not *passed*. The test now exists and its node ID resolves (which is what the
-pre-run failed on), and it correctly declines to run unattended. Its passing run
-is the human-attended run pending under AC-2 — the brooder has not observed this
-test pass.
+**Passing run** — from the user's attended run (see AC-2 for the full log):
+
+```
+tests/test_inject.py::test_paste_round_trip_latency  streaming
+...
+PASSED
+
+================================= 1 passed in 10.40s ==================================
+```
+
+**Provenance, stated plainly:** the pre-implementation failing run and the
+collected/skipped runs were executed by the brooder. The passing run above was
+**not** — it was executed by the user on their hardware and relayed verbatim by
+the orchestrator, because `oversight: during` forbids the brooder from firing
+`wtype` at the user's live desktop. AC-1 is satisfied by those two runs taken
+together (observed failing before, observed passing after), with the passing
+half attributed to the user rather than to the brooder.
 
 ## AC-2
 
-**PENDING — requires a human-attended run.** Not satisfiable by the brooder; see
-the oversight note above.
-
-Command handed to the orchestrator for the user to run at a moment of their
-choosing, from the worktree root:
+**Satisfied by the user's attended run.** Command:
 
 ```sh
 cd /home/penguin/source/stenographer/.fledge/burrows/FTHR-018
 STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest tests/test_inject.py::test_paste_round_trip_latency -s --log-cli-level=INFO
 ```
 
-Before running: focus a scratch window that is safe to receive ten pasted
-copies of the string `" streaming"` (a blank editor buffer or throwaway
-terminal). The test saves and restores the clipboard around itself, but it
-cannot undo text pasted into the focused window.
+Verbatim output as relayed by the orchestrator:
 
-Expected log output: ten per-iteration lines plus a `min=/median=/max=` summary
-line and a raw-durations list.
+```
+tests/test_inject.py::test_paste_round_trip_latency  streaming
+-------------------------------- live log call ---------------------------------
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 1/10: 38.4 ms
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 2/10: 37.9 ms
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 3/10: 37.9 ms
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 4/10: 37.5 ms
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 5/10: 37.3 ms
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 6/10: 37.5 ms
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 7/10: 37.3 ms
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 8/10: 37.3 ms
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 9/10: 37.3 ms
+INFO     tests.test_inject:test_inject.py:341 paste round-trip iteration 10/10: 37.4 ms
+INFO     tests.test_inject:test_inject.py:348 paste round-trip latency over 10 iterations (delta=' streaming'): min=37.3 ms median=37.4 ms max=38.4 ms
+INFO     tests.test_inject:test_inject.py:357 paste round-trip raw durations (ms): [38.4, 37.9, 37.9, 37.5, 37.3, 37.5, 37.3, 37.3, 37.3, 37.4]
+PASSED
+
+================================= 1 passed in 10.40s ==================================
+```
+
+This is the real logged measurement PLM-010 FC-7/AC-7 asks for. The `10.40s`
+wall-clock in that run is teardown overhead, not measurement — see the finding
+under AC-4; it does not affect the per-iteration numbers, which are timed
+individually around `copy()` + `paste()` only.
 
 ## AC-3
 
@@ -94,26 +127,86 @@ FC-7/AC-7), so no threshold was invented.
 
 ## AC-4
 
-**PENDING — depends on AC-2.** The measured numbers will be written into this
-section verbatim once the orchestrator returns them from the user's attended
-run. Deliberately left empty rather than filled with a mocked or estimated
-figure: the point of this feather is an honest real-hardware number, and a
-fabricated one would be worse than none.
+### The measurement
+
+One streamed delta's full paste round-trip — `ClipboardManager.copy()` (which
+is 2× `wl-copy`: regular clipboard + primary selection) followed by
+`Injector.paste()` (1× `wtype` Shift+Insert):
+
+| | ms |
+|---|---|
+| min | **37.3** |
+| median | **37.4** |
+| max | **38.4** |
+
+Raw per-iteration durations (ms): `[38.4, 37.9, 37.9, 37.5, 37.3, 37.5, 37.3,
+37.3, 37.3, 37.4]`
+
+**Conditions.** User's hardware, Hyprland/Wayland, Python 3.14.6, run from the
+FTHR-018 burrow with its worktree-local venv, `delta=' streaming'`, 10
+iterations, post-FTHR-021. Measured with `time.monotonic()` around `copy()` +
+`paste()` only.
+
+**Scope of the claim.** This is ~37 ms of *cost to deliver one delta*, measured
+per committed word. It is not end-to-end dictation latency: ASR decode time is
+excluded entirely. Whether ~37 ms/word is acceptable is deliberately not
+assessed here — the user declined a latency budget (PLM-010 FC-7/AC-7), so this
+section records what the cost is and leaves the judgement to the reader.
+
+**One observation about the distribution**, offered as fact rather than verdict:
+the spread is ~1.1 ms across 10 runs (37.3–38.4), and 8 of 10 iterations fall
+within 0.6 ms of each other. A cost that tight is characteristic of fixed
+process-spawn overhead (three `subprocess.run` calls) rather than of anything
+that varies with content or system load. The practical consequence for a future
+reader: this number is unlikely to improve by tuning, and would move mainly by
+spawning fewer processes per delta.
+
+### Finding: the same clipboard-restore bug existed in three copies
+
+The user's run took **10.40s** wall-clock while the ten measured iterations sum
+to ~0.37s. The missing ~10s was `_restore_clipboard` in this file — FTHR-021's
+exact defect (`capture_output=True` on `wl-copy`, whose forked daemon inherits
+and holds the pipes until the 10s timeout fires), in a third copy of the
+helper. `contextlib.suppress` swallowed the `TimeoutExpired`, so the restore
+landed and the test passed; the 10s was eaten silently in teardown.
+
+That makes three independent copies of the same defect: `clipboard.py`
+(FTHR-021, production), `test_clipboard.py`'s helper (FTHR-021), and this
+file's helper (found here). Each was written and reviewed separately and each
+carried the same bug. **The pattern was the problem, not any one instance** —
+which is the strongest available argument that `capture_output=True` on a
+daemonizing process is a trap worth naming rather than fixing case by case.
+
+Fixed in this branch to match `clipboard.py`'s shipped form
+(`stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL`), with a comment
+pointing at FTHR-021. `_save_clipboard` uses `wl-paste` and keeps
+`capture_output=True`, which is correct and not the same case: `wl-paste` does
+not daemonize, and its stdout is the data being read.
+
+### Second fix: the primary selection was not being restored
+
+Found while fixing the above. `copy()` writes **both** the regular clipboard
+and the primary selection (FTHR-016's universal-chord behaviour), but the
+save/restore here only covered the regular clipboard — so each run left
+`" streaming"` sitting in the user's primary selection. `_save_clipboard` /
+`_restore_clipboard` now take a `primary` flag and the test saves and restores
+both. This is cleanup of the test's own mess, not scope creep: the test was
+clobbering user state it had failed to preserve.
+
+Neither fix touches the measured code path (`copy()` / `paste()`), so the
+numbers above stand as recorded. Both affect only teardown.
 
 ## AC-5
 
 `.venv/bin/pytest -m "not integration"`:
 
 ```
-tests/test_transcription.py ....                                         [ 91%]
-tests/test_update.py ...................................                 [ 98%]
-tests/test_worker_cancel.py .....                                        [100%]
-
-====================== 485 passed, 5 deselected in 16.48s ======================
+====================== 490 passed, 5 deselected in 15.17s ======================
 ```
 
-485 passed, no failures. The new test is `@pytest.mark.integration`, so it is
-among the 5 deselected and adds nothing to the unit run.
+490 passed, no failures. (485 before merging `dev`; FTHR-021 added 5 unit tests
+pinning the DEVNULL call shape.) The new test is `@pytest.mark.integration`, so
+it is among the 5 deselected and adds nothing to the unit run.
 
 Lint clean — `.venv/bin/ruff check tests/test_inject.py` → `All checks passed!`;
 `.venv/bin/ruff format --check tests/test_inject.py` → `1 file already formatted`.
@@ -130,7 +223,9 @@ One file touched: `tests/test_inject.py`.
 - Added local `_save_clipboard` / `_restore_clipboard` helpers, mirroring
   `test_clipboard.py`'s existing pair (that file's `_completed` helper is
   likewise duplicated across the two test modules, so this matches existing
-  style rather than introducing shared test infrastructure).
+  style rather than introducing shared test infrastructure). Both take a
+  `primary` flag so the test restores both selections `copy()` writes.
+  `_restore_clipboard` uses DEVNULL, not `capture_output` — see AC-4.
 - Skip guards match the repo convention exactly: `STENOGRAPHER_INTEGRATION=1`,
   plus `wl-copy` / `wtype` on PATH and `WAYLAND_DISPLAY` set.
 

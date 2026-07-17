@@ -285,10 +285,13 @@ _LATENCY_ITERATIONS = 10
 _LATENCY_DELTA = " streaming"
 
 
-def _save_clipboard() -> bytes | None:
+def _save_clipboard(*, primary: bool = False) -> bytes | None:
+    # capture_output is correct here: wl-paste does not daemonize, and its
+    # stdout is the data we are after.
+    argv = ["wl-paste", "--no-newline"] + (["--primary"] if primary else [])
     try:
         result = subprocess.run(
-            ["wl-paste", "--no-newline"],
+            argv,
             check=True,
             capture_output=True,
             timeout=10.0,
@@ -302,16 +305,23 @@ def _save_clipboard() -> bytes | None:
     return result.stdout
 
 
-def _restore_clipboard(value: bytes | None) -> None:
+def _restore_clipboard(value: bytes | None, *, primary: bool = False) -> None:
+    argv = ["wl-copy"] + (["--primary"] if primary else [])
     with contextlib.suppress(
         subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError
     ):
+        # stdout/stderr are DEVNULL, not captured: wl-copy forks a daemon that
+        # inherits captured pipes and holds them open, so subprocess.run waits
+        # for EOF until the timeout fires. contextlib.suppress would swallow
+        # that TimeoutExpired, silently adding 10s of teardown to a test whose
+        # entire purpose is measuring wall-clock time. See FTHR-021.
         subprocess.run(
-            ["wl-copy"],
+            argv,
             input=value if value is not None else b"",
             check=True,
             timeout=10.0,
-            capture_output=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
 
@@ -326,7 +336,11 @@ def test_paste_round_trip_latency() -> None:
     if not os.environ.get("WAYLAND_DISPLAY"):
         pytest.skip("WAYLAND_DISPLAY is not set")
 
+    # copy() writes both the regular clipboard and the primary selection, so
+    # both must be saved and restored -- otherwise this test leaves the delta
+    # string sitting in the user's primary selection.
     saved = _save_clipboard()
+    saved_primary = _save_clipboard(primary=True)
     try:
         clip = ClipboardManager(available=True)
         inj = Injector(available=True, append_trailing_space=False)
@@ -360,3 +374,4 @@ def test_paste_round_trip_latency() -> None:
         )
     finally:
         _restore_clipboard(saved)
+        _restore_clipboard(saved_primary, primary=True)
