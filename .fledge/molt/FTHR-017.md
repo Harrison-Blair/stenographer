@@ -274,6 +274,39 @@ The invariant is additionally pinned under failure by
 `test_failed_copy_skips_paste_and_stops_at_prefix` (AC-1, incl. its mutation
 check) — the partial-clipboard hazard from the spec's Approach.
 
+### Why `ClipboardManager.copy()`'s strict return must stay
+
+Recorded at the orchestrator's direction, from the FTHR-016 brooder that built
+the mechanism this feather calls. It corrects a misreading the spec's Approach
+text invites, and it is the reason `test_failed_copy_skips_paste_and_stops_at_prefix`
+exists. **The strict return does not CAUSE the hazard — it is the only thing
+that makes the hazard DETECTABLE.**
+
+A partial `wl-copy` failure desyncs the clipboard from the primary selection
+*regardless of what `copy()` returns*. The desync is in the world, not in the
+return value. `copy()` returning `True` only when both `wl-copy` calls succeed
+is what surfaces that desync to `_emit()`, which is the entire basis of the
+guard below.
+
+The tempting "fix" is therefore exactly wrong: loosening the return (e.g.
+returning `True` when only the regular clipboard succeeded) would **destroy the
+signal while leaving the desync in place**. That is strictly worse than doing
+nothing, because the prefix invariant would then break with nothing able to
+observe it — silently wrong text, no failing test, no error.
+
+Consequences for anyone editing this code:
+
+- Do not loosen `copy()`'s return to "fix" a delivery gap. The gap is the
+  symptom; the strict return is the smoke alarm, not the fire.
+- `src/stenographer/output/clipboard.py` is **out of scope** for this feather
+  and was not touched (`git diff --name-only -- src/` lists only `live.py` and
+  `session.py`). Anyone wanting to change `copy()`'s contract should stop and
+  escalate rather than edit it in passing.
+- `test_failed_copy_skips_paste_and_stops_at_prefix` is what pins this. Without
+  it, someone loosens the return, every remaining test still passes, and the
+  invariant rots silently. Its mutation check (AC-1) shows both failure shapes
+  it catches.
+
 ### The hazard guard, as shipped
 
 `_emit()` pastes only on a fully successful `copy()`, and latches output off for

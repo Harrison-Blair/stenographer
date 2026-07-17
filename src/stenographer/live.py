@@ -216,7 +216,7 @@ class LiveStreamer:
         return words, True
 
     def _emit(self, text: str) -> None:
-        if not text or self._delivery_failed:
+        if not text:
             return
         max_chars = self._cfg.output.max_chars
         if len(self._typed) + len(text) > max_chars:
@@ -235,6 +235,12 @@ class LiveStreamer:
             # still holds the previous one). The chord reads whichever
             # selection the client prefers, so pasting now could deliver a
             # stale, out-of-order word.
+            #
+            # copy()'s strict return does not cause that desync -- a partial
+            # wl-copy failure desyncs the selections whatever it returns -- it
+            # is the only thing that makes the desync visible here. Loosening
+            # it would drop the signal and leave the desync, breaking the
+            # prefix invariant with nothing able to observe it.
             if self._clipboard.copy(text):
                 delivered = bool(self._injector.paste())
         except Exception as exc:
