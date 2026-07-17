@@ -22,7 +22,7 @@ def _mock_cfg() -> MagicMock:
 def _make_components() -> dict[str, MagicMock]:
     return {
         "cfg": _mock_cfg(),
-        "caps": MagicMock(has_wtype=True, has_wl_copy=True),
+        "caps": MagicMock(has_paste_trigger=True, has_wl_copy=True),
         "listener": MagicMock(),
         "recorder": MagicMock(is_active=False),
         "worker": MagicMock(),
@@ -150,10 +150,10 @@ def test_process_empty_transcript_skips_output() -> None:
     c["feedback"].play.assert_called_once_with("error")
 
 
-def test_process_injector_skipped_when_wtype_unavailable() -> None:
+def test_process_injector_skipped_when_paste_trigger_unavailable() -> None:
     session, _m = _make_session()
     c = _components(session)
-    c["caps"].has_wtype = False
+    c["caps"].has_paste_trigger = False
     c["cfg"].clipboard.enabled = True
     future = _fake_future()
     future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
@@ -585,6 +585,21 @@ def test_chunk_flow_decodes_flushes_but_pastes_once_at_end() -> None:
     c["injector"].paste.assert_called_once()
     c["injector"].type_text.assert_not_called()
     c["feedback"].play.assert_any_call("transcribe_done")
+
+
+def test_paste_gated_on_has_paste_trigger() -> None:
+    """The paste call-site reads caps.has_paste_trigger, not a wtype-specific
+    field. The clipboard is still populated — it is the fallback."""
+    session, _m = _make_session(cfg=_paste_chunk_cfg())
+    c = _components(session)
+    c["caps"].has_paste_trigger = False
+    abort = threading.Event()
+    c["worker"].submit.side_effect = [
+        _chunk_result([SegmentInfo(0.0, 1.0, " a thought.", 0.1)]),
+    ]
+    session._process_chunk(_ChunkItem(np.ones((16000, 1), np.float32), abort, 0, 0.0, final=True))
+    c["injector"].paste.assert_not_called()
+    c["clipboard"].copy.assert_called_once_with("A thought.")
 
 
 def test_chunk_final_all_silence_plays_error_and_skips_output() -> None:

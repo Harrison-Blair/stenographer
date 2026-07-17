@@ -714,19 +714,19 @@ class Session:
                 # Paste output goes through the heuristic formatter (spacing,
                 # capitalisation, pause-based paragraphs at segment granularity).
                 text = self._formatter.format_batch(speech_segments)
-            # Copy to clipboard, then simulate Ctrl+V
+            # Copy to clipboard, then fire the paste chord
             if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
                 try:
                     self._clipboard.copy(text)
                 except Exception as exc:
                     log.error("session: clipboard.copy raised: %s", exc)
-            if self._caps.has_wtype:
+            if self._caps.has_paste_trigger:
                 try:
                     self._injector.paste()
                 except Exception as exc:
                     log.error("session: injector.paste raised: %s", exc)
         else:
-            if self._caps.has_wtype and not injected_text.strip():
+            if self._caps.has_paste_trigger and not injected_text.strip():
                 # No partial segment made it to the cursor; type the full text.
                 try:
                     self._injector.type_text(text)
@@ -828,7 +828,7 @@ class Session:
                 self._clipboard.copy(text)
             except Exception as exc:
                 log.error("session: clipboard.copy raised: %s", exc)
-        if self._caps.has_wtype:
+        if self._caps.has_paste_trigger:
             try:
                 self._injector.paste()
             except Exception as exc:

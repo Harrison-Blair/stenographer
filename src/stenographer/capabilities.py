@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Capabilities:
-    has_wtype: bool
+    has_paste_trigger: bool
     has_wl_copy: bool
     has_pw_play: bool
     has_paplay: bool
@@ -27,7 +27,7 @@ class Capabilities:
 
     @classmethod
     def probe(cls, cfg: Config) -> Capabilities:
-        has_wtype = shutil.which("wtype") is not None
+        has_paste_trigger = shutil.which("wtype") is not None
         has_wl_copy = shutil.which("wl-copy") is not None
         has_pw_play = shutil.which("pw-play") is not None
         has_paplay = shutil.which("paplay") is not None
@@ -63,7 +63,7 @@ class Capabilities:
             has_asr_model = False
 
         return cls(
-            has_wtype=has_wtype,
+            has_paste_trigger=has_paste_trigger,
             has_wl_copy=has_wl_copy,
             has_pw_play=has_pw_play,
             has_paplay=has_paplay,

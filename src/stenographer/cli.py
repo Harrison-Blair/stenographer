@@ -204,7 +204,7 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         silence_duration_seconds=cfg.audio.silence_duration_seconds,
     )
     injector = Injector(
-        available=caps.has_wtype,
+        available=caps.has_paste_trigger,
         append_trailing_space=cfg.output.append_trailing_space,
         max_chars=cfg.output.max_chars,
     )
@@ -714,7 +714,8 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     print(f"config:         {config_path}")
     print(f"asr.model:      {cfg.asr.model}")
     print(f"hotkey:         {cfg.hotkey.binding}")
-    print(f"wtype:          {'yes' if caps.has_wtype else 'NO  (cursor injection disabled)'}")
+    wtype_status = "yes" if caps.has_paste_trigger else "NO  (cursor injection disabled)"
+    print(f"wtype:          {wtype_status}")
     print(f"wl-copy:        {'yes' if caps.has_wl_copy else 'NO  (clipboard disabled)'}")
     has_audio = caps.has_pw_play or caps.has_paplay
     audio_str = "yes" if has_audio else "NO  (audio feedback disabled)"

@@ -21,7 +21,7 @@ def test_cli_has_no_prompt_cue_adapter() -> None:
 
 def _caps() -> Capabilities:
     return Capabilities(
-        has_wtype=False,
+        has_paste_trigger=False,
         has_wl_copy=False,
         has_pw_play=False,
         has_paplay=False,
@@ -113,7 +113,7 @@ class _StubCapabilitiesProbe:
     @staticmethod
     def probe(cfg: object) -> Capabilities:
         return Capabilities(
-            has_wtype=False,
+            has_paste_trigger=False,
             has_wl_copy=False,
             has_pw_play=False,
             has_paplay=False,
