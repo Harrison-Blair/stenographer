@@ -14,13 +14,13 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from stenographer.asr.model import SegmentInfo
 from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.asr.worker import CancelledError
 from stenographer.live import LiveStreamer
 from stenographer.output.formatter import HeuristicFormatter
 
 if TYPE_CHECKING:
-    from stenographer.asr.model import SegmentInfo
     from stenographer.asr.worker import Worker
     from stenographer.audio.capture import Recorder
     from stenographer.audio.feedback import Feedback
@@ -47,6 +47,24 @@ class _LiveItem:
 
     streamer: LiveStreamer
     generation: int
+
+
+@dataclass
+class _ChunkItem:
+    """Utterance-queue entry for one chunk of an aggregated paste-mode
+    recording: silence-flushed chunks are decoded as they arrive (decoding
+    overlaps recording) but nothing reaches the cursor until the final chunk
+    assembles the whole utterance and pastes once. ``offset_seconds`` is the
+    chunk's position in the recording, so segment timestamps can be restored
+    to absolute recording time for the paragraph-pause heuristic."""
+
+    samples: np.ndarray
+    abort: threading.Event
+    generation: int
+    offset_seconds: float
+    final: bool
+    mode: Literal["ptt", "toggle"] = "ptt"
+    source: Literal["dictate"] = "dictate"
 
 
 class Session:
@@ -103,7 +121,9 @@ class Session:
         # drains the queue.
         self._cancel_generation = 0
 
-        self._utterance_queue: queue.Queue[_BatchItem | _TaggedBatchItem | _LiveItem | None]
+        self._utterance_queue: queue.Queue[
+            _BatchItem | _TaggedBatchItem | _LiveItem | _ChunkItem | None
+        ]
         self._utterance_queue = queue.Queue()
         self._processor: threading.Thread | None = None
         self._processing_times: collections.deque[float] = collections.deque(maxlen=10)
@@ -115,6 +135,21 @@ class Session:
         # In one-shot mode the processor tears the session down after the first
         # queued item, which would truncate dictation at the first pause.
         self._silence_detection = cfg.audio.silence_detection and not one_shot
+        # In paste mode, flushed chunks are still decoded as they arrive so
+        # transcription overlaps recording, but they are aggregated: nothing
+        # reaches the cursor until the final chunk assembles the utterance and
+        # pastes once. Pasting per flush would interrupt dictation and split
+        # the recording into separate utterances, destroying the segment-
+        # timestamp gaps the formatter's paragraph-pause heuristic needs.
+        self._aggregate_chunks = self._silence_detection and cfg.output.injection_method == "paste"
+        # Seconds of audio already flushed for the active recording — the next
+        # chunk's offset into the recording. Written on the PortAudio callback
+        # thread; read by the stop path after the stream has stopped.
+        self._flushed_seconds = 0.0
+        # Chunk aggregation state (processor thread only): segments decoded so
+        # far for the recording identified by _chunk_abort.
+        self._chunk_abort: threading.Event | None = None
+        self._chunk_segments: list[SegmentInfo] = []
         # Live word-level streaming only applies to direct typing; paste mode
         # assembles the utterance and pastes once.
         self._streaming = bool(cfg.streaming.enabled and cfg.output.injection_method == "text")
@@ -175,6 +210,9 @@ class Session:
             if isinstance(item, _LiveItem):
                 generation = item.generation
                 abort = item.streamer.abort
+            elif isinstance(item, _ChunkItem):
+                generation = item.generation
+                abort = item.abort
             else:
                 # Batch item: (samples, mode, abort, generation[, source]).
                 # The trailing source element is optional so directly-queued
@@ -193,6 +231,8 @@ class Session:
             t0 = time.monotonic()
             if isinstance(item, _LiveItem):
                 self._run_live(item.streamer)
+            elif isinstance(item, _ChunkItem):
+                self._process_chunk(item)
             else:
                 samples, mode, abort, generation, *rest = item
                 source = rest[0] if rest else "dictate"
@@ -286,6 +326,7 @@ class Session:
             self._recording = True
             self._recording_source = source
             self._recording_abort = threading.Event()
+            self._flushed_seconds = 0.0
             try:
                 is_lazy_first = self._cfg.asr.mode == "lazy" and not self._worker.is_model_loaded()
                 if is_lazy_first:
@@ -371,6 +412,23 @@ class Session:
             if self._notification is not None:
                 self._notification.show_transcribing()
             return
+        if self._aggregate_chunks:
+            # Even an empty tail must be queued: the final item is what
+            # assembles the flushed chunks and pastes the utterance.
+            self._utterance_queue.put(
+                _ChunkItem(
+                    samples,
+                    self._recording_abort,
+                    self._cancel_generation,
+                    self._flushed_seconds,
+                    final=True,
+                    mode=mode,
+                    source=source,
+                )
+            )
+            if self._notification is not None:
+                self._notification.show_transcribing()
+            return
         if self._silence_detection and samples.shape[0] == 0:
             # Nothing left after the final flush; the spoken chunks were already
             # enqueued mid-recording. Skip the empty tail to avoid a stray cue.
@@ -427,7 +485,20 @@ class Session:
         tagged ``"ptt"``. The abort event and generation are plain attribute
         reads; a stale generation read around a concurrent cancel only makes
         the flush item eligible for dropping, which is the desired outcome.
+
+        In paste mode the flush becomes an aggregated chunk (decoded now,
+        pasted with the rest of the utterance at the end); in text mode it is
+        a standalone utterance typed as soon as it is transcribed.
         """
+        if self._aggregate_chunks:
+            offset = self._flushed_seconds
+            self._flushed_seconds += samples.shape[0] / self._sample_rate
+            self._utterance_queue.put(
+                _ChunkItem(
+                    samples, self._recording_abort, self._cancel_generation, offset, final=False
+                )
+            )
+            return
         self._utterance_queue.put((samples, "ptt", self._recording_abort, self._cancel_generation))
 
     def on_toggle_off(self, source: Literal["dictate"] = "dictate") -> None:
@@ -675,6 +746,111 @@ class Session:
             with contextlib.suppress(Exception):
                 self._feedback.play("transcribe_done")
 
+    def _process_chunk(self, item: _ChunkItem) -> None:
+        """Decode one chunk of an aggregated paste-mode recording.
+
+        Flush chunks (``final=False``) are transcribed as they arrive so
+        decoding overlaps the recording, but their segments are only
+        accumulated — nothing reaches the cursor. The final chunk (the tail
+        captured at key release) restores every segment's absolute position
+        in the recording via ``offset_seconds``, formats the whole utterance,
+        and pastes once.
+        """
+        if self._chunk_abort is not item.abort:
+            # First chunk of a new recording. Any leftover segments belong to
+            # a recording whose final item never arrived (cancelled while
+            # queued); drop them.
+            self._chunk_abort = item.abort
+            self._chunk_segments = []
+        if item.abort.is_set():
+            self._chunk_segments = []
+            return
+        accumulated = len(self._chunk_segments)
+        if item.samples.shape[0] > 0:
+            log.info(
+                "session: processing %s chunk (%d samples, offset %.1fs)",
+                "final" if item.final else "flush",
+                item.samples.shape[0],
+                item.offset_seconds,
+            )
+            future = self._worker.submit(item.samples, cancel_event=item.abort)
+            try:
+                result = future.result()
+            except CancelledError:
+                log.info("session: chunk transcription cancelled")
+                self._chunk_segments = []
+                return
+            except Exception as exc:
+                # Best effort: keep what already decoded; the final assembly
+                # pastes whatever survived.
+                log.error("session: chunk transcription failed: %s", exc)
+                result = None
+            if result is not None:
+                for seg in result.segments:
+                    if seg.no_speech_prob >= self._cfg.asr.silence_threshold:
+                        log.info("session: skipping probable-silence segment")
+                        log.debug("session: silence segment %r", seg.text)
+                        continue
+                    if not seg.text.strip():
+                        continue
+                    self._chunk_segments.append(
+                        SegmentInfo(
+                            start=seg.start + item.offset_seconds,
+                            end=seg.end + item.offset_seconds,
+                            text=seg.text,
+                            no_speech_prob=seg.no_speech_prob,
+                        )
+                    )
+        if not item.final:
+            if len(self._chunk_segments) > accumulated and not self._stop_event.is_set():
+                with contextlib.suppress(Exception):
+                    self._feedback.play("segment")
+            return
+        segments = self._chunk_segments
+        self._chunk_segments = []
+        self._chunk_abort = None
+        if item.abort.is_set():
+            log.info("session: aggregated utterance discarded after cancel")
+            return
+        if not segments:
+            log.info("session: silence detected, skipping output")
+            if not self._stop_event.is_set():
+                with contextlib.suppress(Exception):
+                    self._feedback.play("error")
+            return
+        self._utterances_processed += 1
+        text = self._formatter.format_batch(segments)
+        # Full transcripts go to the log file only at DEBUG (privacy).
+        log.info("session: transcript received (%d chars)", len(text))
+        log.debug("session: transcript %r", text)
+        if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
+            try:
+                self._clipboard.copy(text)
+            except Exception as exc:
+                log.error("session: clipboard.copy raised: %s", exc)
+        if self._caps.has_wtype:
+            try:
+                self._injector.paste()
+            except Exception as exc:
+                log.error("session: injector.paste raised: %s", exc)
+        if not self._stop_event.is_set():
+            with contextlib.suppress(Exception):
+                self._feedback.play("transcribe_done")
+
     def _drain(self, samples: np.ndarray) -> None:
         log.info("session: draining in-flight utterance on shutdown")
+        if self._aggregate_chunks:
+            # The recording's flushed chunks are already queued under
+            # _recording_abort; the tail must join them so the shutdown paste
+            # covers the whole utterance.
+            self._utterance_queue.put(
+                _ChunkItem(
+                    samples,
+                    self._recording_abort,
+                    self._cancel_generation,
+                    self._flushed_seconds,
+                    final=True,
+                )
+            )
+            return
         self._utterance_queue.put((samples, "ptt", threading.Event(), self._cancel_generation))

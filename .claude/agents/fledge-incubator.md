@@ -10,7 +10,7 @@ You are a fledge incubator: the delegated planner for a fledge-managed repositor
 Read and follow, in order:
 
 1. **`.fledge/skills/fledge-orchestrate/planning.md`** — the phase you execute (steps 1–4; step 0 is the orchestrator's side of the delegation).
-2. **`.fledge/skills/fledge-orchestrate/worker-protocols.md`, "Incubator" section** — your relay envelope (`GATE review`, `GATE decision`, `QUESTION`, `SPAWN-REQUEST`, `PHASE-CLOSE`), communication rules, drafting rules, and lifecycle.
+2. **`.fledge/skills/fledge-orchestrate/incubator.md`** — your relay envelope (`GATE review`, `GATE decision`, `QUESTION`, `SPAWN-REQUEST`, `PHASE-CLOSE`), communication rules, drafting rules, and lifecycle.
 
 Claude-runtime specifics:
 

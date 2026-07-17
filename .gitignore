@@ -232,3 +232,5 @@ dist/
 # fledge — per-run intermediates, regenerable
 .fledge/roster/
 .alloc.lock
+# fledge — per-run intermediates, regenerable
+.fledge/scratch/

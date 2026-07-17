@@ -25,10 +25,12 @@ Fledge's workflow is written to six primitives. Your adapter declares which it p
 **Instructed rules (not primitives — stated here at point of use):**
 - "Never hand-edit spec frontmatter the CLI can write" — all spec mutation goes through `run-fledge`.
 - Role-specific shell constraints: scouts read-only; foragers write-confined to `.fledge/nest/`; brooders work only in their worktree. These are instructed rules; real safety backstop lives in the CLI + git + locks.
-- Communication topology (brooder↔skua↔orchestrator only) is an instructed rule, not the `message-peer` primitive. (The planning phase adds incubator↔orchestrator and forager→incubator channels — see `planning.md` §0 and `worker-protocols.md` §Incubator.)
+- Communication topology (brooder↔skua↔orchestrator only) is an instructed rule, not the `message-peer` primitive. (The planning phase adds incubator↔orchestrator and forager→incubator channels — see `planning.md` §0 and `incubator.md`.)
 - The team task list / roster is orchestrator bookkeeping, not a primitive.
 
 ## 1. Resolve scope
+
+If `.fledge/scratch/digest-planning.md` exists, read it first as grounding context — it is the planning phase's close-out digest (what was decided, what was produced, where to look), written so you don't have to rely on the conversation still holding that detail. Reading it is best-effort: a missing file (e.g. no planning phase has run in this repo yet) means proceed without it.
 
 Map the user's request to a feather set:
 
@@ -91,7 +93,7 @@ A skua idle while its brooder implements is normal — idle is not completion; i
 
 **Naming scheme:** a worker's name is its role name plus a unique species identifier — `<role>-<species>`, e.g. `fledge-brooder-adelie`, `fledge-skua-emperor`. The species come from `internal/roster`'s canonical species list — the single source of truth for the set and its allocation order; don't re-enumerate it here. The name is set at spawn and is how you and other workers address it. The scheme covers every `spawn-worker` you create, including the incubator and forager spawned during planning (`fledge-incubator-<species>`, `fledge-forager-<species>`); scouts (spawned by the forager, never addressed by name) are exempt and take no species. Species identifiers are for spawned workers only — you never take a species (your fledge role is `fledge-orchestrator`; teammates reach you by your harness-assigned name — see §orchestrator identity above and your adapter's piping file). One species per **worker pair** — a feather's brooder and skua share the species (`fledge-brooder-adelie` + `fledge-skua-adelie`); solo spawns like the forager take a species of their own.
 
-Allocate species through the roster CLI, never by tracking usage in context. For a feather's pair, run `fledge roster assign --feather FTHR-### --pair`; it reserves the first unused species and prints the two names to use (`fledge-brooder-<species>` and `fledge-skua-<species>`). For a solo spawn (e.g. a forager or incubator), run the same command without `--pair` to reserve a single species. The roster persists the current name→feather assignments, so it — not your context — is the record of what is in use; when every base species is taken the CLI automatically hands out a numeric-suffixed variant (`adelie-2`, `-3`, …), so allocation never blocks dispatch. A species is not freed until you release it (§3.2), and you release it only once every worker bearing it is **confirmed shut down** — observably gone per your adapter's piping file (absent from the roster / its session ended), not merely having acked a shutdown request; a named worker cannot end its own session, so it may ack and then linger idle. Report a one-line roster delta to the user whenever it changes (e.g. `+ fledge-brooder-gentoo, fledge-skua-gentoo → FTHR-007`); `fledge roster` lists the current name→feather assignments on request.
+Allocate species through the roster CLI, never by tracking usage in context. For a feather's pair, run `fledge roster assign --feather FTHR-### --pair`; it reserves the first unused species and prints the two names to use (`fledge-brooder-<species>` and `fledge-skua-<species>`). For a solo planning-phase spawn no feather exists yet — run `fledge roster assign --for planning` (incubator) or `fledge roster assign --for foraging` (forager) to reserve a single species, recorded under that purpose. The roster persists the current name→feather assignments, so it — not your context — is the record of what is in use; when every base species is taken the CLI automatically hands out a numeric-suffixed variant (`adelie-2`, `-3`, …), so allocation never blocks dispatch. A species is not freed until you release it (§3.2), and you release it only once every worker bearing it is **confirmed shut down** — observably gone per your adapter's piping file (absent from the roster / its session ended), not merely having acked a shutdown request; a named worker cannot end its own session, so it may ack and then linger idle. Report a one-line roster delta to the user whenever it changes (e.g. `+ fledge-brooder-gentoo, fledge-skua-gentoo → FTHR-007`); `fledge roster` lists the current name→feather assignments on request.
 
 ### 3.2 On approval
 
@@ -122,6 +124,8 @@ When no feathers remain in the set that are unfinished and dispatchable, verify 
 - feathers completed (merged, suite green) vs. blocked or escalated, with reasons
 - merges performed and the final suite status on main
 - any feathers newly unblocked outside the run's scope that could be implemented next
+
+Then write `.fledge/scratch/digest-implementation.md` (`write-file`, overwriting any prior one — only the latest run's outcome matters) containing: the outcome (which feathers merged, the current suite status on main), the key decisions made during escalation triage (§4) if any — the resolved decisions and their rationale, not the full exchange — and pointers to the merged feathers' spec files. It is prose, not a transcript replay; the next phase reads it instead of assuming this conversation is still available.
 
 ## 6. Recovery after resume
 

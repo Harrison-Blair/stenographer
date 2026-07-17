@@ -36,6 +36,10 @@ The planning phase (`planning.md` §0) is delegated to a `fledge-incubator-<spec
 - Teammates cannot spawn teammates: when the incubator needs a forager it sends you a `SPAWN-REQUEST`; spawn the `fledge-forager-<species>` teammate yourself with exactly the spawn prompt provided (it names the incubator as the report target), then confirm back to the incubator.
 - Both callouts above already pass the complete `fledge-incubator-<species>`/`fledge-forager-<species>` string as the `name` argument, consistent with the binding in "Spawning and addressing teammates" above.
 
+## Digest and compaction
+
+Once a phase's digest file is written (`digest-planning.md`, `digest-foraging.md`, or `digest-implementation.md`, per `planning.md`/`foraging.md`/`implementation.md`), your close-out reply to the user for that phase includes a one-line note that `/compact` is safe to run now if the session's context has grown large. This applies to all three phase closes. It is user-facing guidance only — Claude Code exposes no mechanism for an agent to compact its own context mid-session, so there is no automated trigger to wire up; whether to run `/compact` is the user's call.
+
 ## The team task list
 
 You are the **sole writer** of the shared team task list. Create one team task per dispatched feather titled `FTHR-###: <title>`, assigned to that brooder teammate, state in-progress. Workers never create, claim, or update entries. Mark a task completed yourself when its feather merges green. The task list is a visibility mirror only; spec frontmatter is the source of truth and wins on any disagreement.
