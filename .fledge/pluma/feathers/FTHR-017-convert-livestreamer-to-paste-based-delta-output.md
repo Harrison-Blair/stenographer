@@ -51,12 +51,12 @@ The prefix-invariant test (PLM-010 AC-8) is the paste-mode analogue of the exist
 - Implementation order is fixed: (1) write the tests above (only for the branch FTHR-015 selected, plus the branch-independent ones); (2) run them against the unchanged code and confirm they FAIL for the expected reason; (3) implement until they pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: `LiveStreamer._emit()` never calls `Injector.type_text()` — satisfies PLM-010 FC-1/AC-1.
-- [ ] AC-3: `Session._streaming` is selected on `injection_method == "paste"` — satisfies PLM-010 FC-2/AC-2.
-- [ ] AC-4: `_finish()` still re-copies the full transcript at utterance end — satisfies PLM-010 FC-3/AC-3.
-- [ ] AC-5: If FTHR-015's `RESULT:` was 3/3 pass: each committed delta fires its own paste during the utterance — satisfies PLM-010 FC-4/AC-4.
-- [ ] AC-6: If FTHR-015's `RESULT:` was the fallback: no paste fires until `_finish()`, which delivers the full transcript in one call — satisfies PLM-010 FC-5/AC-5.
-- [ ] AC-7: `HeuristicFormatter`'s existing test suite passes unmodified — satisfies PLM-010 FC-6/AC-6.
-- [ ] AC-8: The paste-mode prefix-invariant test passes, demonstrating the never-revised guarantee holds under delta-paste — satisfies PLM-010 AC-8.
-- [ ] AC-9: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: `LiveStreamer._emit()` never calls `Injector.type_text()` — satisfies PLM-010 FC-1/AC-1.
+- [x] AC-3: `Session._streaming` is selected on `injection_method == "paste"` — satisfies PLM-010 FC-2/AC-2.
+- [x] AC-4: `_finish()` still re-copies the full transcript at utterance end — satisfies PLM-010 FC-3/AC-3.
+- [x] AC-5: If FTHR-015's `RESULT:` was 3/3 pass: each committed delta fires its own paste during the utterance — satisfies PLM-010 FC-4/AC-4.
+- [x] AC-6: If FTHR-015's `RESULT:` was the fallback: no paste fires until `_finish()`, which delivers the full transcript in one call — satisfies PLM-010 FC-5/AC-5.
+- [x] AC-7: `HeuristicFormatter`'s existing test suite passes unmodified — satisfies PLM-010 FC-6/AC-6.
+- [x] AC-8: The paste-mode prefix-invariant test passes, demonstrating the never-revised guarantee holds under delta-paste — satisfies PLM-010 AC-8.
+- [x] AC-9: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
