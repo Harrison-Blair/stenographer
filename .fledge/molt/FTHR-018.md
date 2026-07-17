@@ -62,31 +62,36 @@ distinct and legitimate reasons: first because it did not exist, then because
 the code beneath it was genuinely broken. The second failure is the more
 valuable of the two.
 
-**Passing run** — the user's attended run at commit 049888a (AC-2, run 1):
+**Passing run at current HEAD** — the user's attended run at commit 89b9faf
+(AC-2, run 2; full log there):
 
 ```
 tests/test_inject.py::test_paste_round_trip_latency  streaming
 ...
+INFO     ... paste round-trip latency over 10 iterations (delta=' streaming'): min=37.3 ms median=37.5 ms max=38.3 ms
 PASSED
 
-================================= 1 passed in 10.40s ==================================
+================================== 1 passed in 0.42s ===================================
 ```
 
-### Status: AC-1 is not yet satisfied
+### Status: AC-1 satisfied
 
-Stated plainly, because an earlier revision of this document overclaimed it:
+Stated precisely, because an earlier revision of this document claimed it on
+weaker grounds than it had:
 
-- The failing runs (collection failure, and run 0's real failure) are observed
-  and real.
-- The passing run above is observed and real — but it is a pass of commit
-  **049888a**, and `tests/test_inject.py` changed at **89b9faf** (teardown
-  helpers and their call sites). **No passing run exists for current HEAD.**
-- The unit suite does not close that gap: this test is `integration`-marked, so
-  it skips there. A mistake in the teardown edit would not be caught by
-  `490 passed`.
+- The failing runs are observed and real: the collection failure (test absent),
+  and run 0's real failure (the FTHR-021 P0).
+- Run 1 passed — but against commit **049888a**, and `tests/test_inject.py`
+  changed at **89b9faf**. That pass could not carry AC-1 for the shipped code,
+  and the unit suite could not stand in for it: the test is
+  `integration`-marked, so a mistake in the teardown edit would not have been
+  caught by `490 passed`.
+- **Run 2 passed against 89b9faf — current HEAD.** That is the observation AC-1
+  asks for, on the code actually being shipped.
 
-AC-1 asks for a pass *after* implementation, and the implementation moved after
-the last observed pass. It is claimed once run 2 lands. See AC-2, run 2.
+The document claimed AC-1 prematurely once, on the strength of run 1 plus the
+reasonable-but-unobserved inference that the teardown edit was harmless. The
+skua caught it. Run 2 is what made the claim true rather than merely likely.
 
 **Provenance.** The brooder executed the pre-implementation failing run and the
 collected/skipped runs. The brooder executed **none** of the real-hardware runs
@@ -96,8 +101,10 @@ orchestrator, because `oversight: during` forbids the brooder from firing
 
 ## AC-2
 
-**Not yet claimed — pending run 2** (see the status note under run 2 below).
-A real measurement has been produced (run 1), but not against current HEAD.
+**Satisfied.** Runs 1 and 2 each produced a logged real measurement of the
+delta round-trip on the user's hardware — min/median/max plus raw per-iteration
+durations — which is what PLM-010 FC-7/AC-7 asks for. Run 2 is the one against
+current HEAD.
 
 Every real-hardware run was executed by the user, on their hardware, and
 relayed by the orchestrator. Command (identical for all):
@@ -114,11 +121,12 @@ execution found a P0, and that is the most useful thing this feather did.
 | | branch state | result | wall-clock | measurement produced? |
 |---|---|---|---|---|
 | **Run 0** | `eed9370`, pre-`dev`-merge → **pre-FTHR-021** | **FAILED** | 20.05s | **No** — found the P0 |
-| **Run 1** | `049888a`, post-FTHR-021, pre-teardown-fix | PASSED | 10.40s | **Yes** — the measurement of record |
-| **Run 2** | `89b9faf`, post-teardown-fix (current HEAD) | pending | — | confirming run |
+| **Run 1** | `049888a`, post-FTHR-021, pre-teardown-fix | PASSED | 10.40s | Yes — min 37.3 / **med 37.4** / max 38.4 ms |
+| **Run 2** | `89b9faf`, post-teardown-fix (**current HEAD**) | PASSED | **0.42s** | Yes — min 37.3 / **med 37.5** / max 38.3 ms |
 
-The three are distinct and must not be conflated: only run 1 produced the
-numbers under AC-4, and only run 0 failed.
+The three are distinct and must not be conflated: only run 0 failed, and only
+run 2 exercised the code at current HEAD. Runs 1 and 2 independently reproduce
+the same measurement; run 2 is the one AC-1 rests on.
 
 ### Run 0 — first real-hardware attempt, pre-FTHR-021 (FAILED)
 
@@ -197,21 +205,53 @@ wall-clock is teardown overhead, not measurement — see the finding under AC-4;
 it does not affect the per-iteration numbers, which are timed individually
 around `copy()` + `paste()` only.
 
-### Run 2 — post-teardown-fix (commit 89b9faf) — PENDING
+### Run 2 — post-teardown-fix (commit 89b9faf, current HEAD) — PASSED
 
-_Awaiting the user's confirming run. The log will be recorded here in full,
-verbatim, on the same terms as run 1._
+The passing run against the code actually being shipped. User-executed,
+verbatim:
 
-**AC-1 and AC-2 are therefore NOT yet claimed.** The reason is narrower than
-"a re-run is outstanding", and worth stating precisely: run 1 passed against
-the test as it stood at 049888a, but `tests/test_inject.py` has been modified
-since (89b9faf changed the teardown helpers and their call sites). No passing
-run exists for the code at current HEAD. The unit suite cannot cover that gap —
-this test is `integration`-marked and skips there, so a helper-level mistake in
-the teardown edit would not surface. The measured path (`copy()` / `paste()`)
-was not touched, so the ~37 ms figures are expected to hold; but "expected to
-hold" is a prediction, and AC-1's "passes after" asks for an observation. It
-will be claimed when run 2 lands, and not before.
+```
+tests/test_inject.py::test_paste_round_trip_latency  streaming
+-------------------------------- live log call ---------------------------------
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 1/10: 38.3 ms
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 2/10: 37.4 ms
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 3/10: 38.0 ms
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 4/10: 37.3 ms
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 5/10: 37.3 ms
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 6/10: 37.5 ms
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 7/10: 37.4 ms
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 8/10: 37.3 ms
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 9/10: 37.5 ms
+INFO     tests.test_inject:test_inject.py:355 paste round-trip iteration 10/10: 37.5 ms
+INFO     tests.test_inject:test_inject.py:362 paste round-trip latency over 10 iterations (delta=' streaming'): min=37.3 ms median=37.5 ms max=38.3 ms
+INFO     tests.test_inject:test_inject.py:371 paste round-trip raw durations (ms): [38.3, 37.4, 38.0, 37.3, 37.3, 37.5, 37.4, 37.3, 37.5, 37.5]
+PASSED
+
+================================== 1 passed in 0.42s ===================================
+```
+
+Two things this run establishes, both of which were open questions before it:
+
+**1. AC-1 is satisfied for the code being shipped.** Run 1 passed against
+049888a, but `tests/test_inject.py` changed at 89b9faf (teardown helpers and
+their call sites), so no passing run existed for current HEAD — and the unit
+suite could not close that gap, since this test is `integration`-marked and
+skips there. Run 2 closes it by observation. The log's line numbers moved
+(341→355), which is consistent with the helper edits and corroborates that this
+ran against post-89b9faf code rather than a stale checkout.
+
+**2. The teardown fix works, and the prediction became evidence.** Wall-clock
+fell **10.40s → 0.42s**; the ten iterations sum to ~0.375s, so residual
+overhead is ~45 ms and the ~10s `_restore_clipboard` timeout is gone. The
+measured numbers held across the change (median 37.5 vs 37.4 ms, identical
+37.3 ms floor, max 38.3 vs 38.4 ms).
+
+That second point is worth stating precisely, because an earlier revision of
+this document got it wrong. The claim "nothing in the measured path moved, so
+the numbers stand" was, before run 2, a **prediction dressed as evidence** — it
+was reasonable, and it turned out correct, but it had not been observed. Run 2
+is what converted it. The distinction is the whole subject of run 0's lesson
+below, and it applied to this document's own reasoning too.
 
 ## AC-3
 
@@ -236,16 +276,23 @@ FC-7/AC-7), so no threshold was invented.
 
 One streamed delta's full paste round-trip — `ClipboardManager.copy()` (which
 is 2× `wl-copy`: regular clipboard + primary selection) followed by
-`Injector.paste()` (1× `wtype` Shift+Insert):
+`Injector.paste()` (1× `wtype` Shift+Insert).
 
-| | ms |
-|---|---|
-| min | **37.3** |
-| median | **37.4** |
-| max | **38.4** |
+**Measured twice, independently, on two different commits:**
 
-Raw per-iteration durations (ms): `[38.4, 37.9, 37.9, 37.5, 37.3, 37.5, 37.3,
-37.3, 37.3, 37.4]`
+| | run 1 (049888a) | run 2 (89b9faf, HEAD) |
+|---|---|---|
+| min | 37.3 ms | **37.3 ms** |
+| median | 37.4 ms | **37.5 ms** |
+| max | 38.4 ms | **38.3 ms** |
+
+Raw per-iteration durations (ms):
+
+- Run 1: `[38.4, 37.9, 37.9, 37.5, 37.3, 37.5, 37.3, 37.3, 37.3, 37.4]`
+- Run 2: `[38.3, 37.4, 38.0, 37.3, 37.3, 37.5, 37.4, 37.3, 37.5, 37.5]`
+
+**Take ~37.5 ms as the figure of record** (run 2, current HEAD). The two runs
+agree to 0.1 ms of median and share an identical 37.3 ms floor.
 
 **Conditions.** User's hardware, Hyprland/Wayland, Python 3.14.6, run from the
 FTHR-018 burrow with its worktree-local venv, `delta=' streaming'`, 10
@@ -258,13 +305,23 @@ excluded entirely. Whether ~37 ms/word is acceptable is deliberately not
 assessed here — the user declined a latency budget (PLM-010 FC-7/AC-7), so this
 section records what the cost is and leaves the judgement to the reader.
 
-**One observation about the distribution**, offered as fact rather than verdict:
-the spread is ~1.1 ms across 10 runs (37.3–38.4), and 8 of 10 iterations fall
-within 0.6 ms of each other. A cost that tight is characteristic of fixed
-process-spawn overhead (three `subprocess.run` calls) rather than of anything
-that varies with content or system load. The practical consequence for a future
-reader: this number is unlikely to improve by tuning, and would move mainly by
-spawning fewer processes per delta.
+**Observations about the distribution**, offered as fact rather than verdict:
+
+- *Within* each run the spread is ~1 ms (37.3–38.4), with most iterations
+  falling within 0.6 ms of each other.
+- *Across* the two runs — different commits, minutes apart — the medians agree
+  to 0.1 ms and the floor is identical at 37.3 ms.
+
+A cost that tight, and that reproducible across runs, is characteristic of
+fixed process-spawn overhead (three `subprocess.run` calls per delta) rather
+than of anything varying with content, load, or run conditions. The two runs
+agreeing is stronger evidence for that reading than either alone: it makes the
+figure a property of the machine and the three spawns, not an artifact of one
+run's circumstances.
+
+The practical consequence for a future reader: this number is unlikely to
+improve by tuning, and would move mainly by spawning fewer processes per delta.
+Whether it *should* move is not assessed here — see the scope note above.
 
 ### Finding: the same clipboard-restore bug existed in three copies
 
@@ -289,7 +346,9 @@ in a test whose entire job is reporting wall-clock numbers. The same defect is
 fatal in one place and silent in another, which is precisely why the pattern
 needs a name rather than three separate fixes.
 
-Fixed in this branch to match `clipboard.py`'s shipped form
+Fixed in this branch, and **confirmed by run 2: 10.40s → 0.42s** (ten
+iterations sum to ~0.375s, so ~45 ms of residual overhead remains and the ~10s
+timeout is gone). Fixed to match `clipboard.py`'s shipped form
 (`stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL`), with a comment
 pointing at FTHR-021. `_save_clipboard` uses `wl-paste` and keeps
 `capture_output=True`, which is correct and not the same case: `wl-paste` does
@@ -305,8 +364,10 @@ save/restore here only covered the regular clipboard — so each run left
 both. This is cleanup of the test's own mess, not scope creep: the test was
 clobbering user state it had failed to preserve.
 
-Neither fix touches the measured code path (`copy()` / `paste()`), so the
-numbers above stand as recorded. Both affect only teardown.
+Neither fix touches the measured code path (`copy()` / `paste()`) — both affect
+only teardown. That was the reasoning for expecting the numbers to survive the
+change, and **run 2 confirms it by observation** (median 37.4 → 37.5 ms,
+identical 37.3 ms floor), rather than leaving it as inference.
 
 ## AC-5
 
