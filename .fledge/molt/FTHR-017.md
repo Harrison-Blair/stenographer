@@ -118,18 +118,56 @@ d66b7cc  if not text or self._delivery_failed:       (implementation)
 a443b40  if not text or self._delivery_failed:       (restored)
 ```
 
-Two things worth the next reader's attention:
+Three things worth the next reader's attention:
 
 1. **The regression was silent in every respect except that one test.** 484 of
    485 tests passed with the invariant broken. This is exactly the rot the
    strict-return section below warns about, and it happened here, on this
-   branch, within an hour of that warning being written.
-2. **My verification was the weak link, not the test.** I claimed "docs only, no
+   branch, within an hour of that warning being written. Mutation 2 stopped
+   being a thought experiment.
+
+2. **The commit label was the dangerous part — more than the slip itself.**
+   `4bfd8ab` was titled `docs: record why ClipboardManager.copy()'s strict
+   return must stay`, and its body asserted that `clipboard.py` was untouched
+   and no behaviour changed. Every signal it sent said comment-only. It deleted
+   the latch. **A `docs:` commit that changes a conditional is the most
+   dangerous shape a commit can take, because it disarms review**: a reviewer
+   who trusts the label waves it through, and the diff is never read. This one
+   was caught only because the skua read the diff instead of the message. The
+   rule this branch now follows: a commit's *label* is a claim, and a claim
+   about a diff must be verified against the diff before it is made, never
+   after.
+
+3. **My verification was the weak link, not the test.** I claimed "docs only, no
    behaviour change" from a working-tree test run taken before committing, and
    did not inspect the commit's diff. A green working tree is not evidence about
    what a commit contains. Verification now runs against the **commit object**
-   (`git show HEAD -- src/`, `git show HEAD:<file>`), which is what caught the
-   fix as correct rather than merely assumed.
+   (`git show HEAD -- src/`, `git show HEAD:<file>`), which is what confirmed
+   the fix rather than merely assuming it. I could not reconstruct the mechanism
+   by which the hunk entered a commit whose working tree had just tested green —
+   which is itself the argument for checking the commit object every time rather
+   than trusting an earlier run.
+
+The fix in `a443b40` reverted the bad hunk **without discarding the good one**:
+the strict-return reasoning `4bfd8ab` was meant to add survives in both places
+it was written — `live.py`'s guard comment and the "Why `ClipboardManager.copy()`'s
+strict return must stay" section below. Verified against the commit object, not
+assumed:
+
+```
+$ git show HEAD:src/stenographer/live.py | grep -n "if not text"
+219:        if not text or self._delivery_failed:          <- bad hunk reverted
+
+$ git show HEAD:src/stenographer/live.py | grep -n "strict return does not cause"
+239:            # copy()'s strict return does not cause that desync -- a partial
+                                                            ^ good hunk kept
+```
+
+This episode is deliberately left in the history rather than tidied away. It is
+the strongest evidence in this file that
+`test_failed_copy_skips_paste_and_stops_at_prefix` is real rather than
+decorative — it is the only thing that stood between a mislabeled commit and
+silently wrong text reaching a user.
 
 ### Mutation check (the repo's test-verification rule)
 
