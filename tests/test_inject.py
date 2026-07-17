@@ -3,15 +3,21 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
+import statistics
 import subprocess
+import time
 from unittest.mock import patch
 
 import pytest
 
+from stenographer.output.clipboard import ClipboardManager
 from stenographer.output.inject import Injector
+
+logger = logging.getLogger(__name__)
 
 
 def _completed(
@@ -263,3 +269,109 @@ def test_real_wtype_injects_into_focused_window() -> None:
     inj = Injector(available=True, append_trailing_space=False)
     assert inj.type_text("") is True
     assert inj.type_text("ok") is True
+
+
+# --- Paste round-trip latency measurement (FTHR-018) ---
+# OPT-IN ONLY, and doubly disruptive: this test both mutates the real
+# clipboard and fires real Shift+Insert keystrokes into whichever window
+# the operator has focused, ten times over. It is purely observational:
+# it measures and logs what one streamed delta's paste round-trip costs
+# on real hardware and asserts nothing about whether that cost is
+# acceptable. There is deliberately NO latency threshold -- the test
+# cannot fail because the round-trip was slow, only because a call to
+# wl-copy or wtype itself failed.
+
+_LATENCY_ITERATIONS = 10
+_LATENCY_DELTA = " streaming"
+
+
+def _save_clipboard(*, primary: bool = False) -> bytes | None:
+    # capture_output is correct here: wl-paste does not daemonize, and its
+    # stdout is the data we are after.
+    argv = ["wl-paste", "--no-newline"] + (["--primary"] if primary else [])
+    try:
+        result = subprocess.run(
+            argv,
+            check=True,
+            capture_output=True,
+            timeout=10.0,
+        )
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):
+        return None
+    return result.stdout
+
+
+def _restore_clipboard(value: bytes | None, *, primary: bool = False) -> None:
+    argv = ["wl-copy"] + (["--primary"] if primary else [])
+    with contextlib.suppress(
+        subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError
+    ):
+        # stdout/stderr are DEVNULL, not captured: wl-copy forks a daemon that
+        # inherits captured pipes and holds them open, so subprocess.run waits
+        # for EOF until the timeout fires. contextlib.suppress would swallow
+        # that TimeoutExpired, silently adding 10s of teardown to a test whose
+        # entire purpose is measuring wall-clock time. See FTHR-021.
+        subprocess.run(
+            argv,
+            input=value if value is not None else b"",
+            check=True,
+            timeout=10.0,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+@pytest.mark.integration
+def test_paste_round_trip_latency() -> None:
+    if not os.environ.get("STENOGRAPHER_INTEGRATION"):
+        pytest.skip("set STENOGRAPHER_INTEGRATION=1 to run integration tests")
+    if shutil.which("wl-copy") is None:
+        pytest.skip("wl-copy not on PATH")
+    if shutil.which("wtype") is None:
+        pytest.skip("wtype not on PATH")
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        pytest.skip("WAYLAND_DISPLAY is not set")
+
+    # copy() writes both the regular clipboard and the primary selection, so
+    # both must be saved and restored -- otherwise this test leaves the delta
+    # string sitting in the user's primary selection.
+    saved = _save_clipboard()
+    saved_primary = _save_clipboard(primary=True)
+    try:
+        clip = ClipboardManager(available=True)
+        inj = Injector(available=True, append_trailing_space=False)
+
+        durations: list[float] = []
+        for i in range(_LATENCY_ITERATIONS):
+            start = time.monotonic()
+            assert clip.copy(_LATENCY_DELTA) is True
+            assert inj.paste() is True
+            elapsed = time.monotonic() - start
+            durations.append(elapsed)
+            logger.info(
+                "paste round-trip iteration %d/%d: %.1f ms",
+                i + 1,
+                _LATENCY_ITERATIONS,
+                elapsed * 1000,
+            )
+
+        logger.info(
+            "paste round-trip latency over %d iterations (delta=%r): "
+            "min=%.1f ms median=%.1f ms max=%.1f ms",
+            _LATENCY_ITERATIONS,
+            _LATENCY_DELTA,
+            min(durations) * 1000,
+            statistics.median(durations) * 1000,
+            max(durations) * 1000,
+        )
+        logger.info(
+            "paste round-trip raw durations (ms): %s",
+            [round(d * 1000, 1) for d in durations],
+        )
+    finally:
+        _restore_clipboard(saved)
+        _restore_clipboard(saved_primary, primary=True)
