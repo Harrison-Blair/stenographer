@@ -29,8 +29,8 @@ Add one `@pytest.mark.integration` test that: constructs a real `ClipboardManage
 - Implementation order is fixed: (1) write the test; (2) run it against the unchanged code and confirm it fails for the expected reason (the measurement helper/test doesn't exist yet); (3) implement until it passes and produces real logged numbers.
 
 ## Acceptance Criteria
-- [ ] AC-1: The test listed above was observed failing before implementation (test/helper did not exist) and passes after.
-- [ ] AC-2: Running `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest tests/test_inject.py::test_paste_round_trip_latency -s` on real hardware produces a logged real measurement (min/median/max or raw per-iteration durations) for the delta round-trip — satisfies PLM-010 FC-7/AC-7.
+- [x] AC-1: The test listed above was observed failing before implementation (test/helper did not exist) and passes after.
+- [x] AC-2: Running `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest tests/test_inject.py::test_paste_round_trip_latency -s` on real hardware produces a logged real measurement (min/median/max or raw per-iteration durations) for the delta round-trip — satisfies PLM-010 FC-7/AC-7.
 - [x] AC-3: No assertion in the test compares the measured latency against a threshold or budget — the test cannot fail due to slowness, only due to the calls themselves failing.
-- [ ] AC-4: The measured result is recorded in `.fledge/molt/FTHR-018.md` (the actual numbers observed on the user's hardware, not just "test passed") so it's available to a future reader without re-running the measurement.
+- [x] AC-4: The measured result is recorded in `.fledge/molt/FTHR-018.md` (the actual numbers observed on the user's hardware, not just "test passed") so it's available to a future reader without re-running the measurement.
 - [x] AC-5: The full unit test suite (`.venv/bin/pytest -m "not integration"`) still passes with no regressions (the new test is integration-only and excluded from that run).
