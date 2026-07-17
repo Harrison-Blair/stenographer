@@ -152,13 +152,13 @@ the signal and leave the bug, with every test still passing.
   transcript); (3) implement until they pass.
 
 ## Acceptance Criteria
-- [ ] AC-1: The tests listed above were observed failing before implementation and pass after.
-- [ ] AC-2: After a mid-utterance delivery failure, `_finish()` copies the full formatted transcript to the clipboard, not the delivered prefix — so the undelivered remainder is recoverable by a manual paste. Extends PLM-010 FC-3/AC-3's "clipboard is the independent fallback" guarantee to the failure path.
-- [ ] AC-3: FTHR-017's `_delivery_failed` latch is preserved: after a failed delta, no later delta is pasted, and the delivered text remains a prefix of the final transcript — satisfies PLM-010 AC-8, unweakened.
-- [ ] AC-4: `self._typed` still means "text actually delivered to the cursor" and remains `_finish()`'s return value — the clipboard change does not conflate delivered text with the transcript.
-- [ ] AC-5: The happy path is unchanged: with all deliveries succeeding, `_finish()` copies the full transcript exactly once, as today (existing `test_finish_recopies_full_transcript` passes unmodified).
-- [ ] AC-6: `ClipboardManager.copy()`'s strict return is unchanged and `output/clipboard.py` is untouched.
-- [ ] AC-7: `HeuristicFormatter`'s existing test suite passes unmodified — no formatting-rule change.
-- [ ] AC-8: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
-- [ ] AC-9: The `output.max_chars` path is unchanged: a capped utterance still puts the capped text on the clipboard, not the full uncapped transcript. The clipboard change is gated on `self._delivery_failed`, not on a `_transcript`/`_typed` value comparison. (Fork resolved deliberately — both choices pass the pre-existing suite.)
-- [ ] AC-10: A first-delta delivery failure (`_typed == ""`) still copies the full transcript to the clipboard — `_finish()`'s `if self._typed` gate is widened so the utterance is not lost entirely.
+- [x] AC-1: The tests listed above were observed failing before implementation and pass after.
+- [x] AC-2: After a mid-utterance delivery failure, `_finish()` copies the full formatted transcript to the clipboard, not the delivered prefix — so the undelivered remainder is recoverable by a manual paste. Extends PLM-010 FC-3/AC-3's "clipboard is the independent fallback" guarantee to the failure path.
+- [x] AC-3: FTHR-017's `_delivery_failed` latch is preserved: after a failed delta, no later delta is pasted, and the delivered text remains a prefix of the final transcript — satisfies PLM-010 AC-8, unweakened.
+- [x] AC-4: `self._typed` still means "text actually delivered to the cursor" and remains `_finish()`'s return value — the clipboard change does not conflate delivered text with the transcript.
+- [x] AC-5: The happy path is unchanged: with all deliveries succeeding, `_finish()` copies the full transcript exactly once, as today (existing `test_finish_recopies_full_transcript` passes unmodified).
+- [x] AC-6: `ClipboardManager.copy()`'s strict return is unchanged and `output/clipboard.py` is untouched.
+- [x] AC-7: `HeuristicFormatter`'s existing test suite passes unmodified — no formatting-rule change.
+- [x] AC-8: The full unit test suite (`.venv/bin/pytest -m "not integration"`) passes with no regressions.
+- [x] AC-9: The `output.max_chars` path is unchanged: a capped utterance still puts the capped text on the clipboard, not the full uncapped transcript. The clipboard change is gated on `self._delivery_failed`, not on a `_transcript`/`_typed` value comparison. (Fork resolved deliberately — both choices pass the pre-existing suite.)
+- [x] AC-10: A first-delta delivery failure (`_typed == ""`) still copies the full transcript to the clipboard — `_finish()`'s `if self._typed` gate is widened so the utterance is not lost entirely.
