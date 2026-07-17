@@ -2,7 +2,7 @@
 id: FTHR-016
 title: Implement validated paste injection mechanism and has_paste_trigger capability
 plumage: PLM-009
-status: hatching
+status: fledged
 priority: P0
 depends_on: [FTHR-015]
 authored: 2026-07-17T02:33:52Z
