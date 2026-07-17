@@ -206,7 +206,12 @@ class LiveStreamer:
         text = self._transcript if self._delivery_failed else self._typed
         if text and self._cfg.clipboard.enabled and self._caps.has_wl_copy:
             try:
-                self._clipboard.copy(text)
+                # primary=True to match _emit(): every delivered delta already
+                # wrote the primary selection, so the user's mouse selection is
+                # gone either way. Copying the regular clipboard alone would
+                # leave primary holding just the last delta -- a middle-click
+                # would paste a stray word or two instead of the transcript.
+                self._clipboard.copy(text, primary=True)
             except Exception as exc:
                 log.error("live: clipboard.copy raised: %s", exc)
         return self._typed

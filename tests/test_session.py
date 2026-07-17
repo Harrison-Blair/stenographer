@@ -139,7 +139,7 @@ def test_process_submits_to_worker_and_outputs() -> None:
     c["worker"].submit.assert_called_once()
     future.result.assert_called_once()
     c["injector"].type_text.assert_called_once_with("hello world")
-    c["clipboard"].copy.assert_called_once_with("hello world")
+    c["clipboard"].copy.assert_called_once_with("hello world", primary=True)
 
 
 def test_process_empty_transcript_skips_output() -> None:
@@ -202,7 +202,7 @@ def test_process_injects_partial_segments_and_skips_duplicate_final() -> None:
     c["injector"].type_text.assert_any_call(" hello", raw=True)
     c["injector"].type_text.assert_any_call(" world", raw=True)
     assert c["injector"].type_text.call_count == 2
-    c["clipboard"].copy.assert_called_once_with("hello world")
+    c["clipboard"].copy.assert_called_once_with("hello world", primary=True)
 
 
 def test_process_paste_mode_skips_partial_injection_and_pastes_at_end() -> None:
@@ -269,6 +269,46 @@ def test_process_paste_mode_does_not_paste_when_copy_fails() -> None:
 
     c["clipboard"].copy.assert_called_once()
     c["injector"].paste.assert_not_called()
+    # The clipboard is the only transport in paste mode, so a failed copy means
+    # the utterance reached neither the cursor nor the clipboard. A success cue
+    # here tells the user their words landed somewhere when they landed nowhere.
+    c["feedback"].play.assert_called_once_with("error")
+
+
+def test_process_paste_mode_without_wl_copy_reports_failure() -> None:
+    # wl-copy absent: nothing can be delivered, so the cue must say so rather
+    # than chime success over a silently dropped utterance.
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].output.injection_method = "paste"
+    c["caps"].has_wl_copy = False
+
+    future = _fake_future()
+    future.done.return_value = True
+    future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
+    c["worker"].submit.return_value = future
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
+
+    c["clipboard"].copy.assert_not_called()
+    c["injector"].paste.assert_not_called()
+    c["feedback"].play.assert_called_once_with("error")
+
+
+def test_process_paste_mode_failed_paste_chord_reports_failure() -> None:
+    # The copy landed but the chord did not fire: nothing reached the cursor.
+    session, _m = _make_session()
+    c = _components(session)
+    c["cfg"].output.injection_method = "paste"
+    c["clipboard"].copy.return_value = True
+    c["injector"].paste.return_value = False
+
+    future = _fake_future()
+    future.done.return_value = True
+    future.result.return_value = TranscriptionResult(text="hi", duration_seconds=0.0, segments=[])
+    c["worker"].submit.return_value = future
+    session._process(np.zeros((1, 1), dtype=np.float32), "ptt", threading.Event())
+
+    c["feedback"].play.assert_called_once_with("error")
 
 
 def test_process_paste_mode_truncates_at_max_chars() -> None:
@@ -356,7 +396,7 @@ def test_process_silence_no_speech_prob_below_threshold_outputs() -> None:
     c["worker"].submit.return_value = future
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_called_once_with("hello")
-    c["clipboard"].copy.assert_called_once_with("hello")
+    c["clipboard"].copy.assert_called_once_with("hello", primary=True)
 
 
 def test_process_silence_segments_never_reach_cursor() -> None:
@@ -412,7 +452,7 @@ def test_process_types_speech_but_skips_silence_segments() -> None:
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
 
     c["injector"].type_text.assert_called_once_with(" hello", raw=True)
-    c["clipboard"].copy.assert_called_once_with("hello")
+    c["clipboard"].copy.assert_called_once_with("hello", primary=True)
 
 
 def test_process_paste_mode_clipboard_excludes_silence_segments() -> None:
@@ -474,7 +514,7 @@ def test_process_silence_some_segments_below_threshold_outputs_speech_only() -> 
     c["worker"].submit.return_value = future
     session._process(np.zeros((16000, 1), dtype=np.float32), "ptt", threading.Event())
     c["injector"].type_text.assert_called_once_with("world")
-    c["clipboard"].copy.assert_called_once_with("world")
+    c["clipboard"].copy.assert_called_once_with("world", primary=True)
 
 
 # ---------------------------------------------------------------------------

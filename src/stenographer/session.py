@@ -17,6 +17,7 @@ import numpy as np
 from stenographer.asr.model import SegmentInfo
 from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.asr.worker import CancelledError
+from stenographer.errors import notify_failure
 from stenographer.live import LiveStreamer
 from stenographer.output.formatter import HeuristicFormatter
 
@@ -463,9 +464,11 @@ class Session:
     def _run_live(self, streamer: LiveStreamer) -> None:
         """Drive one streamed utterance to completion on the processor thread."""
         typed = ""
+        failed = False
         try:
             typed = streamer.run()
         except Exception as exc:
+            failed = True
             log.error("session: live streamer failed: %s", exc)
             if not self._stop_event.is_set():
                 with contextlib.suppress(Exception):
@@ -474,7 +477,9 @@ class Session:
             with self._lock:
                 if self._live_streamer is streamer:
                     self._live_streamer = None
-        if streamer.abort.is_set():
+        if streamer.abort.is_set() or failed:
+            # The except block above already played the error cue; the empty
+            # `typed` below is that failure, not a separate silent utterance.
             return
         if not typed:
             # Nothing was committed: too quiet, or the tail-silence guard ate
@@ -738,7 +743,11 @@ class Session:
                 # Paste output goes through the heuristic formatter (spacing,
                 # capitalisation, pause-based paragraphs at segment granularity).
                 text = self._formatter.format_batch(speech_segments)
-            self._deliver_paste(text)
+            if not self._deliver_paste(text):
+                if not self._stop_event.is_set():
+                    with contextlib.suppress(Exception):
+                        self._feedback.play("error")
+                return
         else:
             if self._caps.has_paste_trigger and not injected_text.strip():
                 # No partial segment made it to the cursor; type the full text.
@@ -753,7 +762,12 @@ class Session:
                 log.warning("session: partial injection incomplete; full transcript on clipboard")
             if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
                 try:
-                    self._clipboard.copy(text)
+                    # primary=True: this is the fallback the user reaches for
+                    # when injection dropped text, and the paste chord reads
+                    # the primary selection in some clients. Populating only
+                    # the regular clipboard makes the fallback unreachable
+                    # there -- Shift+Insert would paste their old selection.
+                    self._clipboard.copy(text, primary=True)
                 except Exception as exc:
                     log.error("session: clipboard.copy raised: %s", exc)
         if not self._stop_event.is_set():
@@ -837,12 +851,12 @@ class Session:
         # Full transcripts go to the log file only at DEBUG (privacy).
         log.info("session: transcript received (%d chars)", len(text))
         log.debug("session: transcript %r", text)
-        self._deliver_paste(text)
+        delivered = self._deliver_paste(text)
         if not self._stop_event.is_set():
             with contextlib.suppress(Exception):
-                self._feedback.play("transcribe_done")
+                self._feedback.play("transcribe_done" if delivered else "error")
 
-    def _deliver_paste(self, text: str) -> None:
+    def _deliver_paste(self, text: str) -> bool:
         """Copy *text*, then fire the paste chord to deliver it at the cursor.
 
         The chord pastes whatever the clipboard currently holds, so it is
@@ -850,6 +864,11 @@ class Session:
         the user's previous clipboard content into their document. Config
         validation guarantees clipboard.enabled in paste mode, so there is no
         flag to honour here -- the clipboard is the transport.
+
+        Returns True when the text reached the cursor. Callers must not play
+        the success cue on a False: the clipboard is the only transport, so a
+        failed copy means the utterance reached neither the cursor nor the
+        clipboard and the user has nothing to recover.
         """
         max_chars = self._cfg.output.max_chars
         if len(text) > max_chars:
@@ -857,20 +876,27 @@ class Session:
             # is a limit on what reaches the cursor, whichever way it gets there.
             log.warning("session: truncating transcript from %d to %d chars", len(text), max_chars)
             text = text[:max_chars]
+        if not self._caps.has_wl_copy:
+            notify_failure("paste mode requires wl-copy; nothing delivered")
+            return False
         copied = False
-        if self._caps.has_wl_copy:
-            try:
-                copied = self._clipboard.copy(text, primary=True)
-            except Exception as exc:
-                log.error("session: clipboard.copy raised: %s", exc)
+        try:
+            copied = self._clipboard.copy(text, primary=True)
+        except Exception as exc:
+            log.error("session: clipboard.copy raised: %s", exc)
         if not copied:
-            log.error("session: clipboard copy failed; skipping paste to avoid pasting stale text")
-            return
-        if self._caps.has_paste_trigger:
-            try:
-                self._injector.paste()
-            except Exception as exc:
-                log.error("session: injector.paste raised: %s", exc)
+            notify_failure("clipboard copy failed; skipping paste to avoid pasting stale text")
+            return False
+        if not self._caps.has_paste_trigger:
+            # The text is on the clipboard, so it is recoverable by hand, but
+            # nothing reached the cursor -- not a success.
+            log.error("session: no paste trigger available; transcript left on the clipboard")
+            return False
+        try:
+            return bool(self._injector.paste())
+        except Exception as exc:
+            log.error("session: injector.paste raised: %s", exc)
+            return False
 
     def _drain(self, samples: np.ndarray) -> None:
         log.info("session: draining in-flight utterance on shutdown")

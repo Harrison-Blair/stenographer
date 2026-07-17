@@ -73,16 +73,20 @@ class HeuristicFormatter:
     # -- internal ------------------------------------------------------------
 
     def _feed_token(self, text: str, start: float, end: float) -> str:
-        # normalize_spacing governs spacing and nothing else. capitalize_sentences
-        # and paragraph_pause_seconds are separately configured and stay in force
-        # either way; an early return here would collapse all three into one flag.
-        normalize = self._cfg.normalize_spacing
-        # When normalizing, strip the token's own leading/trailing space and
-        # collapse internal runs so the separator below is the single source of
-        # spacing. Otherwise the token carries its own spacing verbatim.
-        core = " ".join(text.split()) if normalize else text
-        stripped = core.strip()
-        if not stripped:
+        if not self._cfg.normalize_spacing:
+            # Raw passthrough: the token is emitted exactly as the model
+            # produced it. Deriving a separator, a capital, or a paragraph
+            # break here means emitting a character the model did not, which
+            # is the one thing this mode exists to opt out of -- and in the
+            # live path it is pasted irreversibly.
+            self._started = True
+            self._prev_end = end
+            return text
+
+        # Strip the token's own leading/trailing space and collapse any
+        # internal runs; the separator below is the single source of spacing.
+        core = " ".join(text.split())
+        if not core:
             return ""
 
         pause = self._cfg.paragraph_pause_seconds
@@ -92,22 +96,17 @@ class HeuristicFormatter:
             sep = ""
         elif paragraph:
             sep = "\n\n"
-        elif not normalize:
-            # The token supplies its own spacing; a separator would double it.
-            sep = ""
-        elif stripped[0] in _NO_SPACE_BEFORE:
+        elif core[0] in _NO_SPACE_BEFORE:
             sep = ""
         else:
             sep = " "
 
         if self._cfg.capitalize_sentences:
-            if stripped == "i":
-                core = core.replace("i", "I", 1)
+            if core == "i":
+                core = "I"
             if paragraph or self._capitalize_next:
-                # _capitalize targets the first alphabetic character, so any
-                # leading whitespace kept above is preserved.
                 core = self._capitalize(core)
-            self._capitalize_next = stripped[-1] in _SENTENCE_TERMINALS
+            self._capitalize_next = core[-1] in _SENTENCE_TERMINALS
 
         self._started = True
         self._prev_end = end

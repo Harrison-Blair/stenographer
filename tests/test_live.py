@@ -143,9 +143,10 @@ def test_partials_commit_and_type_deltas_then_final_flushes() -> None:
     assert clipboard.copy.call_args_list == [
         call("Hello", primary=True),
         call(" world again ", primary=True),
-        # The _finish() fallback copy is not a paste, so it must not touch the
-        # user's primary selection.
-        call("Hello world again "),
+        # The _finish() re-copy must set primary too: the deltas above already
+        # clobbered the selection, so leaving it on the last delta would make a
+        # middle-click paste a stray word instead of the transcript.
+        call("Hello world again ", primary=True),
     ]
 
 
@@ -552,7 +553,7 @@ def test_finish_recopies_full_transcript() -> None:
     assert typed == "Hello world again "
     # The last thing on the clipboard is the whole utterance, so a manual
     # paste after the utterance delivers everything.
-    assert clipboard.copy.call_args_list[-1] == call("Hello world again ")
+    assert clipboard.copy.call_args_list[-1] == call("Hello world again ", primary=True)
 
 
 def test_failed_copy_skips_paste_and_stops_at_prefix() -> None:
@@ -698,7 +699,7 @@ def test_finish_copies_full_transcript_after_delivery_failure() -> None:
     assert injector.pasted == ["One"]
     # ... but the clipboard now holds everything the user actually said, so
     # the undelivered remainder is recoverable with a manual paste.
-    assert clipboard.copy.call_args_list[-1] == call("One two three ")
+    assert clipboard.copy.call_args_list[-1] == call("One two three ", primary=True)
 
 
 def test_delivery_failure_still_stops_pasting_at_prefix() -> None:
@@ -760,7 +761,7 @@ def test_first_delta_failure_still_copies_full_transcript() -> None:
     assert injector.pasted == []
     # ... so the clipboard is the only surviving copy of the utterance. It
     # must hold all of it.
-    assert clipboard.copy.call_args_list[-1] == call("One two ")
+    assert clipboard.copy.call_args_list[-1] == call("One two ", primary=True)
 
 
 def test_max_chars_clipboard_unchanged() -> None:
@@ -792,7 +793,7 @@ def test_max_chars_clipboard_unchanged() -> None:
     # The capped text, NOT "Hello overflowing ". Gating the fallback on a
     # `_transcript != _typed` comparison instead of on the latch would fail
     # here -- the condition is true in this case too.
-    assert clipboard.copy.call_args_list[-1] == call("Hello")
+    assert clipboard.copy.call_args_list[-1] == call("Hello", primary=True)
 
 
 def test_max_chars_latches_and_never_pastes_past_the_gap() -> None:

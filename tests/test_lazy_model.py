@@ -68,6 +68,27 @@ class TestEnsureLoaded:
             m.ensure_loaded()
             do_load.assert_not_called()
 
+    def test_ensure_loaded_retries_after_a_failed_load(self) -> None:
+        # A failed load also sets _loaded_event (so _await_impl waiters wake and
+        # see the exception), but leaves _impl None. Gating on the event would
+        # make this a permanent no-op while is_loaded() keeps reporting False:
+        # the caller registers a callback that never fires and shows a
+        # model-loading notification that nothing ever resolves.
+        m = LazyModel(_cfg(), idle_unload_seconds=0)
+        m._loaded_event.set()
+        m._load_exception = RuntimeError("first load failed")
+        on_loaded = MagicMock()
+        started = threading.Event()
+
+        def fake_do_load() -> None:
+            started.set()
+
+        with patch.object(m, "_do_load", side_effect=fake_do_load):
+            m.ensure_loaded(on_loaded=on_loaded)
+            assert started.wait(2.0), "a failed load must be retried, not skipped"
+        assert m._on_loaded_cb is on_loaded
+        assert m._load_exception is None, "the stale exception must not outlive the retry"
+
 
 class TestTranscribe:
     def test_transcribe_blocks_until_loaded(self) -> None:

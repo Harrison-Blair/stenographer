@@ -215,15 +215,20 @@ class LazyModel:
         loader thread exactly once after the model becomes available
         (or re-available after an idle unload).  *on_unloaded* fires
         on the timer thread when idle unload completes.
+
+        Gated on ``_impl``, not on ``_loaded_event``: a failed load also sets
+        the event, so gating on it would make this a no-op forever after the
+        first failure while :meth:`is_loaded` kept reporting False -- the
+        caller would register a callback that never fires and wait on a load
+        that never starts. A failed load is therefore retried here.
         """
-        if self._loaded_event.is_set():
-            return
         with self._lock:
-            if self._loaded_event.is_set():
+            if self._impl is not None:
                 return
             if self._load_thread is not None and self._load_thread.is_alive():
                 return
             self._loaded_event.clear()
+            self._load_exception = None
             # Guarded like _on_unloaded_cb below: _await_impl() calls this with
             # no arguments, so an unconditional assignment would silently
             # deregister the session's callback and the "model ready" cue would

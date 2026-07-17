@@ -33,9 +33,11 @@ class ClipboardManager:
         everywhere, and the call returns ``True`` only if both succeed.
 
         It defaults to False because the primary selection is the user's
-        mouse-selection buffer, not ours: callers that never fire the chord
-        (text-mode injection, ``transcribe FILE``, the streaming fallback
-        copy) would otherwise destroy whatever the user had selected.
+        mouse-selection buffer, not ours: ``transcribe FILE`` merely stashes a
+        transcript the user never asked to have pasted, so clobbering their
+        selection would be pure collateral damage. Every path the user is
+        expected to paste from -- including the fallback copies, which exist
+        precisely to be pasted by hand -- passes ``primary=True``.
         """
         if not self._available:
             logger.debug("wl-copy not available")

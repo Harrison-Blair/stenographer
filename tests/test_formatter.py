@@ -52,25 +52,26 @@ def test_double_spaces_collapse() -> None:
 
 
 def test_normalize_spacing_false_passthrough() -> None:
-    # Spacing is passed through verbatim, but normalize_spacing governs spacing
-    # ONLY: capitalize_sentences is a separate knob and still applies.
+    # Raw mode is verbatim: capitalize_sentences must not reach the token.
     f = _fmt(normalize_spacing=False, capitalize_sentences=True)
-    out = f.feed([_w(" hello", 0.0, 0.5), _w("  world.", 0.5, 1.0)])
-    assert out == " Hello  world."
-
-
-def test_normalize_spacing_false_leaves_spacing_untouched() -> None:
-    f = _fmt(normalize_spacing=False, capitalize_sentences=False)
     out = f.feed([_w(" hello", 0.0, 0.5), _w("  world.", 0.5, 1.0)])
     assert out == " hello  world."  # tokens concatenated verbatim
 
 
-def test_normalize_spacing_false_still_breaks_paragraphs() -> None:
-    # paragraph_pause_seconds is independently configured; normalize_spacing
-    # must not silently disable it.
+def test_normalize_spacing_false_emits_no_paragraph_breaks() -> None:
+    # A paragraph break is a character the model never produced; raw mode
+    # opts out of inventing those.
     f = _fmt(normalize_spacing=False, capitalize_sentences=False, paragraph_pause_seconds=2.0)
     out = f.feed([_w("one.", 0.0, 0.5), _w("two", 3.0, 3.5)])
-    assert "\n\n" in out
+    assert out == "one.two"
+
+
+def test_normalize_spacing_false_tracks_prev_end_across_blank_tokens() -> None:
+    # A whitespace-only token must still advance _prev_end; measuring the next
+    # token's pause from a stale end is what invents a spurious break.
+    f = _fmt(normalize_spacing=False, capitalize_sentences=False, paragraph_pause_seconds=2.0)
+    out = f.feed([_w("one", 0.0, 5.0), _w("   ", 5.0, 8.0), _w("two", 8.1, 8.5)])
+    assert out == "one   two"
 
 
 # -- paragraph breaks --------------------------------------------------------

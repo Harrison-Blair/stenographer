@@ -93,6 +93,15 @@ The component modules it wires:
 **Cross-cutting:**
 
 - **`config.py`** — TOML config schema and loading (`Config` dataclass).
+  `_validate_cross_section` enforces two invariants *at load time*, raising
+  `ConfigError` rather than coercing: `streaming.enabled` requires
+  `output.injection_method = "paste"`, and `paste` requires
+  `clipboard.enabled` (the clipboard is the paste transport). Both are
+  **breaking for configs valid before v0.8.4** — notably `streaming` +
+  `text`, which earlier docs recommended. There is deliberately no migration:
+  a rejected config fails `run` at startup, so the user must hand-edit it.
+  Any new cross-section rule inherits that cost — weigh it against coercing
+  with a warning.
 - **`capabilities.py`** — the probe behind `doctor`: checks `wtype`, `wl-copy`,
   audio player, `input` group membership, mic, and the ASR model.
 - **`errors.py`** — error-handling policy. Components MUST raise
