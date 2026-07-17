@@ -216,7 +216,7 @@ class LiveStreamer:
         return words, True
 
     def _emit(self, text: str) -> None:
-        if not text:
+        if not text or self._delivery_failed:
             return
         max_chars = self._cfg.output.max_chars
         if len(self._typed) + len(text) > max_chars:
