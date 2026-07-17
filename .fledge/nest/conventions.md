@@ -1,72 +1,61 @@
 ---
-generated: 2026-07-15T17:38:33Z
-commit: d621b46261d9509fccbdffc4686be0b876c7951e
+generated: 2026-07-17T01:39:59Z
+commit: 939420f205b102d61ab3d7ed257a1680a61483dc
 agent: fledge-forager
-fledge_version: 0.5.4
+fledge_version: 0.5.8
 ---
 
 # Conventions
 
-Coding, tooling, and process conventions observed across the repository, reconciled where scout reports overlapped or disagreed.
+Naming, error-handling, layering, and style conventions observed across stenographer's source, tests, packaging, and CI, reconciled where scout reports overlapped.
 
-## Licensing & headers
+## Licensing & style
 
-- Every source file (Python, bash, YAML workflows) carries `# SPDX-License-Identifier: GPL-3.0-or-later` at the top (`root.md`, `.github.md`, `packaging.md`, `scripts.md`, `src-asr.md`, `src-audio.md`, `src-core.md`, `src-hotkey.md`, `tests.md`).
-- Project license: GNU GPL v3-or-later (`LICENSE`).
+- Every source file (Python, shell, YAML) carries `# SPDX-License-Identifier: GPL-3.0-or-later` at the top (root:CLAUDE.md; observed in every scouted module — github.md, packaging.md, scripts.md, src-*.md).
+- ruff: line length 100, target py314, rules `E,F,I,B,UP,N,SIM,RUF` (pyproject.toml, root.md).
+- src-layout: package at `src/stenographer/`; `tests/` mirrors it file-for-file (root.md, modules.md).
+- Shell scripts: `#!/usr/bin/env bash` + `set -euo pipefail` throughout (scripts.md, packaging.md).
+- Python scripts: `#!/usr/bin/env python3` shebang; `from __future__ import annotations` + `TYPE_CHECKING` forward refs used in ASR/output modules (src-asr.md, src-output.md).
 
-## Python style
+## Error handling
 
-- `from __future__ import annotations` used for forward references (`src-audio.md`).
-- Comprehensive type hints throughout; `TYPE_CHECKING`-gated imports to avoid runtime import cycles (`src-asr.md`, `src-core.md`).
-- Dataclasses used heavily; data-carrying types (`SegmentInfo`, `WordInfo`, `TranscriptionResult`, `Capabilities`, `UpdateInfo`) are `frozen=True` (immutable) (`src-asr.md`, `src-core.md`).
-- Naming: public classes in `TitleCase` (`Recorder`, `Injector`, `HotkeyListener`); private methods/attributes/constants prefixed `_` (`_on_audio`, `_FALLBACK_SAMPLE_RATES`); callbacks named `on_*` (`on_segment`, `on_loaded`) (`src-audio.md`, `src-hotkey.md`, `src-core.md`).
-- Keyword-only arguments after `*` in constructors and public methods, e.g. `Recorder.__init__(self, *, sample_rate=..., device=...)` (`src-audio.md`).
-- Module-level loggers via `log = logging.getLogger(__name__)`; debug-level logging for expected/no-op paths (e.g. tool unavailable), error-level for real failures; full transcript text is logged only at DEBUG (privacy) (`src-audio.md`, `src-core.md`).
-- Sentinel objects used to distinguish special queue/state values from real data (`_UNLOAD` in `asr/worker.py`, `_PARTIAL`/`_FINAL`/`_ABORT` in `live.py`) (`src-asr.md`, `src-core.md`).
-- Pure vs. stateful separation is deliberate: `HotkeyStateMachine` and `StreamingTranscriber` are pure (no I/O/timers/side effects) so they're easy to unit-test; I/O-touching components (`Recorder`, `Injector`, `ClipboardManager`) wrap subprocess/hardware calls and expose `close()` for uniform cleanup (`src-hotkey.md`, `src-asr.md`, `src-audio.md`).
+- All components MUST raise `StenographerError` subclasses (`ConfigError`, `CapabilityError`, `AudioCaptureError`, `TranscriptionError`, `UpdateError`) and use `errors.py`'s `notify_failure()` / `fatal()` / `degrade_capability()` rather than inventing ad-hoc error behavior (root:CLAUDE.md, src-cli.md).
+- Exit-code convention: 78 (`EX_CONFIG`) for config/capability errors (`doctor`, `run`, `dictate`, `transcribe` fail fast when a required capability is missing); 1 for runtime/update errors (src-cli.md).
+- `ConfigError` carries `(path, key, reason)` for precise messages, e.g. `"~/.config/stenographer/config.toml: hotkey.binding: must be a non-empty string"` (src-cli.md, root.md).
+- Output/audio components (`Injector`, `ClipboardManager`, `Feedback`, `DesktopNotification`) take an `available: bool` capability flag at construction; on unavailability, methods return `False`/`None` and log rather than raise — graceful degradation, not crash (src-output.md, src-audio.md, src-cli.md).
+- Subprocess-calling code (inject.py, clipboard.py) catches an explicit tuple `(CalledProcessError, TimeoutExpired, FileNotFoundError)` at every call site, logging returncode/stderr/exception type (src-output.md).
+- Session-level: worker/injector/clipboard/feedback exceptions are caught, logged, and never re-raised from the processing loop; `contextlib.suppress` used for non-critical operations (src-session-live.md).
 
-## Linting & formatting
+## Concurrency & locking
 
-- `ruff` — `line-length = 100`, `target-version = "py314"`, rules `E,F,I,B,UP,N,SIM,RUF` (`root.md`, `src-core.md`).
-- `.githooks/pre-commit` runs `ruff format` on staged `*.py` files and re-stages them; prefers `.venv/bin/ruff`, falls back to system `ruff` (`.github.md`). Enabled via `scripts/install-hooks.sh` (`git config core.hooksPath .githooks`).
-- CI (`ci.yml`) checks lint and `ruff format --check` before test/build.
+- `Session._lock` (RLock) is the single lock guarding all state transitions (`_recording`, `_recording_streamer`, `_live_streamer`, `_cancel_generation`, etc.); PortAudio callback threads and the hotkey listener thread touch only thread-safe queues or briefly-locked buffers, never block on `Session._lock` for long operations (src-session-live.md).
+- Generation counters guard against stale async work: `Session._cancel_generation` (bumped by `cancel_all()`, drops stale queue items), `HotkeyStateMachine._pending_generation` (invalidates stale double-tap timers), `LazyModel._load_generation` (drops stale idle-unload requests) — the same pattern recurs in session.py, hotkey/state_machine.py, and asr/model.py (src-session-live.md, src-hotkey.md, src-asr.md).
+- Daemon threads throughout (`daemon=True`) for background work (hotkey reader/supervisor threads, notification worker thread, ASR worker thread) so they don't block process shutdown (src-hotkey.md, src-cli.md, src-asr.md).
+- Pure logic is kept out of threads: `hotkey/state_machine.py::HotkeyStateMachine` and `asr/streaming.py::StreamingTranscriber` are both explicitly "pure" (no I/O, fully testable in isolation) — the listener/live-streamer wrap them and perform actual I/O (src-hotkey.md, src-asr.md).
 
-## Build & packaging conventions
+## Config conventions
 
-- `hatchling` via `pyproject.toml` is the single source of truth for metadata/deps — no `setup.py`/`setup.cfg` (`root.md`).
-- src-layout package (`src/stenographer/`); tests mirror it 1:1 (`tests/test_*.py`) (`root.md`).
-- PyInstaller spec (`packaging/stenographer.spec`) documents in comments which system libraries are intentionally excluded from the bundle (`packaging.md`).
-- All `.sh` scripts open with `#!/usr/bin/env bash` and `set -euo pipefail` (`scripts.md`, `packaging.md`).
-- Bash conventions: helper functions (`info`, `warn`, `err`, `ok`) for consistent colored messaging; `ask_yn`/`ask_default` with `/dev/tty` fallback for prompts when piped through `curl`; section delimiters (`# ── label ──`) (`packaging.md`, `scripts.md`).
-- Python CLI scripts use `argparse.ArgumentParser` and `if __name__ == "__main__": sys.exit(main())` (`scripts.md`).
+- All config dataclasses are **frozen** (immutable), validated once on load (`Config.load()` in config.py); enum-like fields use `frozenset` allow-lists, e.g. `ALLOWED_TRIGGER_MODES = frozenset({"hybrid", "toggle"})`, `ALLOWED_COMPUTE_TYPES`, `ALLOWED_INJECTION_METHODS` (src-cli.md, src-hotkey.md).
+- TOML bare `null` is rewritten to `""` on load since TOML 1.0 has no null type, letting users blank optional keys (src-cli.md).
+- Config resolution order: `$STENOGRAPHER_CONFIG` → `$XDG_CONFIG_HOME/stenographer/config.toml` → write defaults on first start (root.md).
 
-## Error handling policy
+## Path / asset resolution
 
-- All components raise `StenographerError` subclasses (`ConfigError`, `CapabilityError`, `AudioCaptureError`, `TranscriptionError`, `UpdateError`, `LlmError`) rather than inventing ad hoc behavior; policy funneled through `notify_failure`, `fatal`, `degrade_capability` (`errors.py`, per `root.md`, `src-core.md`).
-- Missing required capability (hotkey device, mic, ASR model) → exit code 78 (`EX_CONFIG`) (`root.md`).
-- Bad config value → `ConfigError` with dotted key path and reason, exit 78 (`src-core.md`).
-- Fire-and-forget cleanup (e.g. cue playback on shutdown) wrapped in `contextlib.suppress` (`src-core.md`).
-- I/O components (`audio/`, `output/`) check an `available`/`_available` flag before acting and no-op gracefully if the underlying tool is missing; subprocess calls wrapped for `CalledProcessError`, `TimeoutExpired`, `FileNotFoundError` with explicit timeouts and `DEVNULL` stdio (`src-audio.md`).
-
-## Threading & concurrency
-
-- `Session` guards all state with an `RLock` shared with hotkey-listener callbacks (`src-core.md`).
-- Generation counters (`_pending_generation` in the hotkey state machine, `_cancel_generation` in Session) invalidate stale timeouts/callbacks after a state transition supersedes them (`src-hotkey.md`, `src-core.md`).
-- `queue.Queue` for thread-safe job/utterance pipelines; `threading.Event` for cancel/abort signals; `threading.Timer` for idle-unload and double-tap windows (`src-asr.md`, `src-core.md`, `src-hotkey.md`).
-- `LazyModel` holds a `weakref` to its `Worker` to permit cleanup without a circular reference (`src-asr.md`).
-
-## Release process
-
-- Develop on `dev`; merging `dev` → `main` triggers `.github/workflows/release.yml` (lint, test, build, publish `v<version>` GitHub Release) (`root.md`).
-- Every merge to `main` must bump `[project].version` in `pyproject.toml` — the release workflow refuses to reuse an existing version tag (`root.md`, `.github.md`).
-- Release notes auto-generated from `git log <prev-tag>..v${VERSION} --oneline` (`.github.md`).
-- `release-badge.yml` updates a shields.io JSON badge on an orphan `badges` branch after each release, committed as `github-actions[bot]` (`.github.md`).
+- PyInstaller onedir vs. wheel-install path resolution is handled via `sys.frozen` + `sys._MEIPASS` checks (`_resolve_asset_root()`/`_resolve_icon_root()` in cli.py), falling back to module-relative paths for source installs (src-cli.md).
+- Scripts resolve the repo root relative to their own location (`dirname "$0"` in bash, `Path(__file__).resolve().parent.parent` in Python) rather than assuming CWD (scripts.md).
+- Asset override resolution follows a fixed chain: explicit override dict → bundled `assets/sounds/` → log-and-skip (src-audio.md).
 
 ## Testing conventions
 
-See `testing.md` for full detail; key conventions: `pytest` with an `integration` marker (opt-in, `STENOGRAPHER_INTEGRATION=1`), helper functions instead of fixtures for building test prerequisites (`_cfg()`, `_make_session()`), and fake/mock objects (`_FakeDevice`, `_FakeRecorder`) over real hardware (`tests.md`).
+See `testing.md` for the full breakdown; key repo-wide patterns: `@pytest.mark.integration` gates any test touching real audio/clipboard/display, skipped by default and requiring `STENOGRAPHER_INTEGRATION=1`; helper naming `_make_*`/`_fake_*`/`_cfg()`/`_completed()` recurs across test files; `unittest.mock.patch` context managers over `subprocess.run`/hardware I/O (tests.md).
+
+## CI / release conventions
+
+- Concurrency groups with `cancel-in-progress` on CI and release-badge workflows (github.md).
+- Release tags are `v${VERSION}`; every merge to `main` must bump `[project].version` in `pyproject.toml` or the release workflow refuses to republish an existing tag (root:CLAUDE.md, github.md).
+- Pre-commit hook runs `ruff format` on staged `.py` files only, re-staging them; installed via `scripts/install-hooks.sh` setting `core.hooksPath` (github.md, scripts.md).
 
 ## Open Questions
 
-- The exact enforcement mechanism for "system libraries not bundled" (spec comment) — is it verified anywhere in CI, or purely convention? (`packaging.md`)
-- Type-checking (mypy/pyright) is noted elsewhere as a "future addition" with no adoption yet — no target date found in scout reports (`root.md`).
+- Whether pre-existing dead code exists outside the specifically scouted files was not assessed (src-session-live.md).
+- Whether `set -euo pipefail` in the pre-commit hook causes commit abort on a ruff-format failure, or whether re-staging masks it (github.md).

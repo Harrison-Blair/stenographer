@@ -1,71 +1,70 @@
 ---
-generated: 2026-07-15T17:38:33Z
-commit: d621b46261d9509fccbdffc4686be0b876c7951e
+generated: 2026-07-17T01:39:59Z
+commit: 939420f205b102d61ab3d7ed257a1680a61483dc
 agent: fledge-forager
-fledge_version: 0.5.4
+fledge_version: 0.5.8
 ---
 
 # Domain
 
-Glossary of dictation-domain and project-specific terms used throughout the code and docs.
+Glossary of dictation/hotkey/streaming domain vocabulary used throughout stenographer's code, tests, and docs.
 
-## Hotkey & recording modes
+## Hotkey & trigger modes
 
-- **Hotkey binding** — an evdev key name (e.g. `KEY_RIGHTCTRL`) or `+`-separated chord (e.g. `KEY_LEFTCTRL+KEY_RIGHTCTRL`), user-configurable in `[stenographer.hotkey]` (`root.md`, `src-hotkey.md`).
-- **PTT (push-to-talk)** — hold the chord ≥ `toggle_threshold_seconds` (default 0.5s), release to stop; emits `ptt_on`/`ptt_off` cues.
-- **Toggle** — press the chord for less than the threshold, then a second tap within `double_tap_window_seconds` (default 0.35s) latches recording on; a third press stops it; emits `toggle_on`/`toggle_off` cues.
-- **Chord** — one or more keys pressed simultaneously; order-invariant after `HotkeyBinding` canonicalization.
-- **Double-tap** — the two quick presses that transition `PENDING_TAP` → `TOGGLE_LATCHED`.
-- **Generation (counter)** — invalidates stale double-tap timeouts / cancel callbacks once a state transition has superseded them (`hotkey/state_machine.py`, `session.py`).
-- **Device reacquisition** — if all evdev devices are lost, the listener re-scans `/dev/input/event*` with exponential backoff (retry interval 2s, timeout 30s).
-- **Multi-HID keyboard** — one physical keyboard exposing multiple `/dev/input/event*` interfaces (e.g. QMK/VIA firmware); the listener multiplexes all of them and shares the held-key set so a keydown on one and release on another still resolves correctly.
-- **Cancel** — ESC (or configured `cancel_binding`) discards all active recording, queued utterances, and in-flight transcription; already-typed text is left in place (no undo).
-- **Discard** — throws away a short-tap recording on double-tap-window expiry; only the owning hotkey may discard it.
-- **Prompt / prompt mode** — an optional secondary hotkey (`prompt_binding`) that captures a batch recording and routes it to a local LLM for rewriting before typing (`source="prompt"`).
+- **Chord** — the set of evdev key codes currently held down (unioned across all attached HID devices for multi-function keyboards); exact-match against the configured binding.
+- **Hotkey binding** — the configured evdev key name or chord (default `KEY_RIGHTCTRL`/`KEY_RIGHTALT` depending on doc), parsed by `hotkey/binding.py`.
+- **Cancel binding** — separate hotkey (e.g. `KEY_ESC`) that aborts recording mid-stream; never lets already-typed text be un-typed.
+- **Push-to-Talk (PTT)** — press-and-hold ≥ `toggle_threshold_seconds` (default 0.5s); recording active only while held; release stops.
+- **Toggle** — short press (< threshold) latches recording on; a second short press latches it off.
+- **Hybrid trigger mode** (`trigger_mode = "hybrid"`, default) — combines both: a short tap starts a double-tap window (second tap within it latches toggle); a long hold (≥ threshold) is PTT.
+- **Toggle-only mode** (`trigger_mode = "toggle"`) — every press latches; hold duration never matters; double-tap window unused. `ALLOWED_TRIGGER_MODES = {"hybrid", "toggle"}` — no third "ptt-only" value exists yet (relevant to the planned trigger-mode work).
+- **Double-tap window** — grace period (default 0.35s) after a short tap release during which a second tap latches toggle mode; expiry discards the pending tap.
+- **Pending tap** — state between a short-tap release and either a second keydown (→ toggle latch) or timeout (→ discard).
+- **Generation (hotkey)** — counter incremented on state transitions that invalidate a pending timer; the timer checks generation on fire to detect staleness (race-safe cancellation).
+- **Main keyboard (auto-detection)** — a `/dev/input/event*` device with ≥10 letter keys and no "mouse"/"touchpad"/"consumer control" tokens in its name; used to auto-select the hotkey source device.
 
-## Transcription & streaming
+## Recording & audio
 
-- **ASR** — Automatic Speech Recognition; offline, English-only, via `faster-whisper`.
-- **Utterance** — one press-release hotkey cycle (PTT/toggle) or one `dictate` invocation, routed through the session queue.
-- **Batch / batch item** — a pre-stop or mid-recording silence-flushed audio segment queued whole for transcription.
-- **Model mode** — `"eager"` loads the ASR model at daemon startup; `"lazy"` defers load to first recording and unloads after `idle_unload_seconds` of inactivity.
-- **LazyModel / idle-unload** — deferred model loading; drops the loaded `WhisperModel` after a configurable idle period to free memory.
-- **Segment** — one contiguous span of ASR output with text and a `no_speech_prob` confidence score.
-- **beam_size** — faster-whisper decoding parameter trading quality for speed.
-- **compute_type** — faster-whisper backend precision (int8/float16/float32/etc.), set in `AsrConfig`.
-- **Live streaming** — optional mode (`[stenographer.streaming]`, `text` output mode only): partial transcription → coalesce → word-timestamped re-decode → commit → format → typed delta.
-- **Re-decode** — the live driver re-processes a growing audio window on each recording chunk to produce updated word hypotheses.
-- **LocalAgreement-N** — word-commitment policy: a word is committed (typed) only after N consecutive re-decodes agree on it; the committed prefix is never revised (reference: Macháček et al., "Turning Whisper into Real-Time Transcription System").
-- **Committed / commitment** — words confirmed by LocalAgreement-N and passed to output; irreversible, since `wtype` cannot un-type.
-- **Window-local timestamps** — times relative to the current trimmed audio window; converted to absolute time via an internal offset.
-- **Tail-silence guard** — trims trailing silence from the live audio window while preserving quiet-mic speech (noise-floor relative, not an absolute RMS default — Harrison's own speech can fall below RMS 0.01).
-- **Rebase** — updates the streaming committer's internal offset after the audio window is trimmed.
-- **RTF (real-time factor)** — ratio of transcription wall-clock time to audio duration; used in `bench.py` and noted as still unmeasured on real CPU hardware for streaming mode.
-- **WER (word error rate)** — benchmarking metric in `bench.py`, computed with number-word normalization.
+- **Silence detection** — RMS-based energy thresholding (`silence_rms_threshold`, default 0.01; `silence_duration_seconds`, default 1.5) used to flush mid-recording segments at pauses.
+- **Flush** — emitting a buffered audio segment at a detected pause, guarded by a minimum-speech-duration floor (`_MIN_SPEECH_SECONDS = 0.25`) so short clicks/coughs don't trigger empty flushes.
+- **Resampling (fallback)** — polyphase-FIR downsampling applied when the audio device only opens at a rate different from the configured one (cascades 48k→44.1k→22.05k→16k→8k).
+- **Recorder snapshot** — a windowed view of currently-buffered audio from a given start offset, used by live streaming to grab the current partial window for re-decode.
+- **Feedback cue** — a short WAV audio cue (`ptt_on`, `ptt_off`, `toggle_on`, `toggle_off`, `cancel`, `discard`, `error`, `segment`, `transcribe_done`, `model_loading`, `model_ready`) played via `pw-play`/`paplay` on state transitions.
 
-## Audio capture & output
+## ASR & streaming
 
-- **RMS threshold** — root-mean-square energy floor (0.01 default, user-configurable) below which audio is classified as silence.
-- **Silence detection** — frame-by-frame RMS tracking; flushes a segment after `silence_duration_seconds` of continuous low energy, guarded by a minimum accumulated real-speech duration (`_MIN_SPEECH_SECONDS`) to avoid flushing on clicks/coughs.
-- **Polyphase FIR resampling** — dependency-free (no scipy) rational-rate audio resampling used when the device falls back to a different sample rate than requested.
-- **Cue** — a short synthetic audio feedback signal (`ptt_on`, `toggle_off`, `error`, etc., 44.1 kHz PCM_16 WAV) confirming a state transition or alerting to an error.
-- **Injection / Injector** — typing text at the active cursor position in the focused Wayland window via the `wtype` subprocess.
-- **Clipboard fallback** — since `wl-copy` writes the transcript independently of injection, the clipboard is always the fallback if `wtype` injection fails.
-- **Append-only formatter** — `HeuristicFormatter` in the streaming path: every fed token only ever appends to output; the committed prefix is never revised (mirrors the LocalAgreement invariant).
-- **Finalize** — end-of-utterance cleanup: emits a trailing space if configured, then resets formatter state.
+- **ASR model** — the faster-whisper checkpoint (default `Systran/faster-distil-whisper-medium.en`, ~800 MB); not bundled, fetched via `stenographer model download`; loaded lazily and unloaded after idle.
+- **Lazy loading** — deferring ASR model load until first `transcribe()` call (`LazyModel`); model is dropped (with `gc.collect()`) after `idle_unload_seconds` of inactivity.
+- **Generation token (ASR)** — `LazyModel._load_generation`, incremented on each transcribe; stale idle-unload requests (predating the latest transcribe) are dropped by comparing tokens.
+- **Real-time factor (RTF)** — ratio of inference time to audio duration; RTF=1.0 means transcription takes exactly as long as the speech itself. Unmeasured on real (non-benchmark) hardware as of this scan.
+- **Word error rate (WER)** — normalized Levenshtein edit distance over word tokens (`edits / max(ref_words, 1)`); used by `bench.py` against a gold reference config.
+- **Streaming** (live output) — `live.py::LiveStreamer` pipeline: recorder partials → coalesce → `submit_words()` re-decode → LocalAgreement-N committer → formatter → typed delta.
+- **Re-decode** — a fresh, full-window transcription hypothesis produced during live streaming; each re-decode is compared against prior ones for word agreement.
+- **LocalAgreement-N** — the streaming commit policy (`asr/streaming.py::StreamingTranscriber`): a word is committed (and thus typed) only once it appears identically in the last N consecutive re-decodes. Reference: Macháček et al., "Turning Whisper into Real-Time Transcription System."
+- **Committed word / committed prefix (invariant)** — once a word is committed by the LocalAgreement-N committer, it is never revised — the typed text is always a prefix of the eventual final transcript. Enforced jointly by `StreamingTranscriber` and the append-only `HeuristicFormatter`.
+- **Window-local vs. absolute timestamps** — re-decode hypotheses carry timestamps relative to the current (possibly trimmed) decode window; converted to absolute utterance time via a running `_offset`.
+- **Trim / rebase** — removing audio from the start of the decode window at a safe boundary (sentence terminal or `max_buffer_seconds`) to bound re-decode cost; `rebase()` adjusts the committer's time offset so subsequent commits keep correct absolute timestamps.
+- **Tail-silence guard** — trims trailing sub-noise-floor audio before each interim re-decode, auto-scaled to the mic's ambient noise floor, to prevent Whisper from hallucinating text over silence.
+- **no_speech_prob** — Whisper's per-segment confidence that a segment is silence/hallucination; segments at or above `asr.silence_threshold` are dropped rather than typed/pasted.
+- **Chunk aggregation** — the paste-mode pipeline where silence-triggered chunks are decoded immediately but accumulated, with the final chunk triggering one assembled paste (as opposed to text mode's per-word streaming typing).
 
-## Packaging & release
+## Output & formatting
 
-- **Frozen binary** — the PyInstaller-bundled executable (`dist/stenographer/stenographer`), a self-contained "onedir" with Python runtime, modules, assets, and launcher stub.
-- **PyInstaller hook / runtime hook** — a `hook-*.py` customizes what PyInstaller bundles/excludes at analysis time; a `rthooks/py_rth_*.py` runs at frozen-binary startup to prepare the environment (e.g. setting `LD_LIBRARY_PATH` so `sounddevice` finds system `libportaudio`).
-- **onedir** — PyInstaller bundling mode producing a directory of the binary + dependencies, as opposed to a single-file "onefile" archive.
-- **SHA-256 verification** — `install.sh` and `update.py` both verify downloaded release tarballs against a published checksum before installing.
-- **Systemd user service** — a per-user (not system-wide) daemon unit (`WantedBy=graphical-session.target`), managed via `stenographer enable`/`start`/`stop`/`disable`.
-- **Release** — a versioned GitHub Release tied to git tag `v${VERSION}`, published with a tarball, SHA-256 checksum, and `install.sh`; the release workflow refuses to republish an already-used version.
-- **Badge** — a shields.io-format JSON status file on an orphan `badges` branch reflecting the latest release tag.
+- **Injection** — typing text at the OS cursor via `wtype` (`Injector.type_text()`); the primary output path in `"text"` injection mode.
+- **Paste mode** — output via clipboard population (`ClipboardManager.copy()`) followed by a simulated Ctrl+V (`Injector.paste()`); the alternate `injection_method` value, and the existing basis for the planned wtype→paste injection change.
+- **Clipboard** — the Wayland clipboard (via `wl-copy`/`wl-paste`), populated independently of injection outcome so it always serves as a manual-paste fallback.
+- **Formatting / append-only** — `HeuristicFormatter`'s spacing, capitalisation, and pause-based-paragraph-break logic; "append-only" means once text is emitted via `feed()`, it is never revised — required for the live-typing invariant to hold.
+- **Paragraph pause** — a silence gap between tokens ≥ `formatting.paragraph_pause_seconds` that triggers a `\n\n` break and capitalises the next word.
+- **Capability degradation** — the pattern (`available: bool` flag on `Injector`/`ClipboardManager`/`Feedback`/`DesktopNotification`) of suppressing and logging rather than raising when a required external tool is missing, so the daemon can still start in a degraded mode.
+
+## Daemon / operational
+
+- **Doctor** — the `stenographer doctor` capability probe; validates wtype, wl-copy, audio player, input group, mic, ASR model presence; exits 78 if a required capability is missing.
+- **Input group** — the Linux group required to read `/dev/input/event*` for hotkey detection; users must be a member.
+- **Single-instance lock** — `fcntl.flock` on `$XDG_RUNTIME_DIR/stenographer.lock`, preventing concurrent daemon instances; the lock file also stores the daemon PID for manual recovery.
+- **Onedir bundle** — the PyInstaller `--onedir` self-contained binary tree; self-update swaps the entire directory atomically (two-step rename: target→backup, source→target).
 
 ## Open Questions
 
-- Are there plans for multi-language support, or is English-only a permanent design constraint? (`root.md`)
-- Is the noise-floor / tail-silence estimation validated for non-speech audio, or tuned specifically for speech? (`src-core.md`)
-- What Wayland compositors (wlroots, Hyprland, Sway, KWin, Mutter) are actually tested vs. merely mentioned in docs? (`root.md`)
+- Whether a dedicated "ptt-only" (no toggle) trigger mode is a planned third `ALLOWED_TRIGGER_MODES` value, distinct from today's "hybrid" (src-hotkey.md).
+- Whether the default `silence_rms_threshold` of 0.01 needs revisiting for quiet mic input, per existing project memory that Harrison's speech can fall below RMS 0.01 (src-audio.md; corroborated by project MEMORY.md's "Quiet mic RMS" note).
