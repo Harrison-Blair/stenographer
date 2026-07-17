@@ -88,14 +88,24 @@ under "Existing tests changed" below, with their true before/after status.
 
 ### Post-implementation run
 
-Same 8 node IDs, after implementing `state_machine.py` + `config.py`:
+The same six node IDs as the pre-implementation run above — no more, no less —
+after implementing `state_machine.py` + `config.py`:
 
 ```
-$ .venv/bin/pytest -m "not integration" <same 8 node ids>
-tests/test_hotkey.py ....                                                [ 50%]
-tests/test_config.py ....                                                [100%]
+$ .venv/bin/pytest -m "not integration" \
+    tests/test_hotkey.py::test_ptt_mode_keydown_always_starts_recording \
+    tests/test_hotkey.py::test_ptt_mode_keyup_always_stops_unconditionally \
+    tests/test_hotkey.py::test_ptt_mode_short_tap_does_not_enter_pending_tap \
+    tests/test_hotkey.py::test_ptt_mode_cancel_aborts_recording \
+    tests/test_config.py::test_trigger_mode_accepts_ptt \
+    tests/test_config.py::test_defaults_trigger_mode_is_ptt
 
-============================== 8 passed in 0.03s ===============================
+collected 6 items
+
+tests/test_hotkey.py ....                                                [ 66%]
+tests/test_config.py ..                                                  [100%]
+
+============================== 6 passed in 0.03s ===============================
 ```
 
 ### Test sensitivity (mutation checks)
@@ -215,120 +225,6 @@ tests/test_hotkey.py .......................                             [100%]
 (For the four existing tests this feather MODIFIED, see the separate section
 below — they are not AC-7 evidence and are not part of the AC-1 chain.)
 
-# Existing tests changed (NOT part of the AC-1 failing-first chain)
-
-Four existing tests were changed. None is a `hybrid`/`toggle` behavior test; all
-four asserted the exact facts this feather is chartered to change. Escalated to
-`team-lead` before implementing; resolution approved.
-
-They fall into two categories with **materially different** before/after
-behavior, deliberately not conflated:
-
-| # | Test | Change | Before impl | After impl | Nature |
-|---|------|--------|-------------|------------|--------|
-| 1 | `test_hotkey.py::test_state_machine_rejects_unknown_mode` | sentinel `"ptt"` → `"bogus"` | **PASS** | PASS | preserved regression guard |
-| 2 | `test_config.py::test_hotkey_trigger_mode_invalid_rejected` | sentinel `"ptt"` → `"bogus"` | **PASS** | PASS | preserved regression guard |
-| 3 | `test_config.py::test_defaults_hotkey` | `trigger_mode` `"hybrid"` → `"ptt"` | **FAIL** | PASS | fail-then-pass (AC-5) |
-| 4 | `test_config.py::test_format_default_toml_has_trigger_mode` | `"hybrid"` → `"ptt"` | **FAIL** | PASS | fail-then-pass (AC-5) |
-
-**Category A (1–2) pass both before and after.** They are preserved regression
-guards, NOT failing-first tests, and are not evidence for AC-1. Repointing the
-sentinel changes only the example that stopped being unknown; the assertion
-(unknown modes are rejected) is untouched.
-
-**Category B (3–4) legitimately fail-then-pass**, so they bind to the new
-intended default rather than having been retrofitted to match it. Their
-pre-implementation failure:
-
-```
-E       AssertionError: assert HotkeyConfig(...mode='hybrid') == HotkeyConfig(...er_mode='ptt')
-E         Differing attributes:
-E         ['trigger_mode']
-E           trigger_mode: 'hybrid' != 'ptt'
-```
-
-## The Category A contradiction (the finding itself)
-
-Before this feather, tests 1 and 2 **passed while asserting the exact opposite
-of what the feather delivers**: that `"ptt"` is an INVALID value. Captured by
-checking the pre-feather commit `2093e59` back out and running its own tests
-against its own source:
-
-```
-$ git checkout 2093e59 -- src tests
-$ .venv/bin/python -c "import stenographer.config as c; print(sorted(c.ALLOWED_TRIGGER_MODES))"
-ALLOWED_TRIGGER_MODES = ['hybrid', 'toggle']
-
-$ .venv/bin/pytest -m "not integration" \
-    tests/test_hotkey.py::test_state_machine_rejects_unknown_mode \
-    tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected -v
-tests/test_hotkey.py::test_state_machine_rejects_unknown_mode PASSED     [ 50%]
-tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected PASSED   [100%]
-============================== 2 passed in 0.08s ===============================
-```
-
-What they asserted at `2093e59` (`git show 2093e59:tests/...`):
-
-```python
-def test_state_machine_rejects_unknown_mode() -> None:
-    with pytest.raises(ValueError):
-        HotkeyStateMachine(mode="ptt")          # <-- "ptt" AS THE INVALID EXAMPLE
-
-def test_hotkey_trigger_mode_invalid_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\nhotkey.trigger_mode = "ptt"\n')   # <-- likewise
-    with pytest.raises(ConfigError, match=r"hotkey.trigger_mode"):
-        Config.load(p)
-```
-
-This is the contradiction: `"ptt is rejected"` (these tests) and `"ptt is
-accepted"` (AC-2/AC-4) cannot both hold. Leaving them as-is would fail the
-suite; the only resolutions are repoint or delete, and repointing preserves the
-intent. AC-4 mandates the outcome.
-
-## Verification of the before/after claims in the table
-
-Category A repointed tests, run against **unchanged pre-feather `src/`** — they
-pass without any implementation, proving they are not failing-first artifacts:
-
-```
-$ git checkout 2093e59 -- src        # current (repointed) tests vs old src
-$ .venv/bin/pytest -m "not integration" \
-    tests/test_hotkey.py::test_state_machine_rejects_unknown_mode \
-    tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected -v
-tests/test_hotkey.py::test_state_machine_rejects_unknown_mode PASSED     [ 50%]
-tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected PASSED   [100%]
-============================== 2 passed in 0.03s ===============================
-```
-
-Category B, same unchanged `src/` — fails, as a real AC-5 fail-then-pass:
-
-```
-$ .venv/bin/pytest -m "not integration" \
-    tests/test_config.py::test_defaults_hotkey \
-    tests/test_config.py::test_format_default_toml_has_trigger_mode -v
-tests/test_config.py::test_defaults_hotkey FAILED                        [ 50%]
-tests/test_config.py::test_format_default_toml_has_trigger_mode FAILED   [100%]
-============================== 2 failed in 0.03s ===============================
-```
-
-All four against the **implemented** `src/`:
-
-```
-$ git checkout HEAD -- src
-$ .venv/bin/pytest -m "not integration" <all four> -v
-tests/test_hotkey.py::test_state_machine_rejects_unknown_mode PASSED     [ 25%]
-tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected PASSED   [ 50%]
-tests/test_config.py::test_defaults_hotkey PASSED                        [ 75%]
-tests/test_config.py::test_format_default_toml_has_trigger_mode PASSED   [100%]
-============================== 4 passed in 0.03s ===============================
-```
-
-Note on counting: the escalation to `team-lead` listed *five* conflicts, but one
-of those (`config.py:632` `_format_default_toml` emitting `trigger_mode` from
-`defaults()`) is source behavior, not a test — it is why test 4 tracks AC-5
-automatically. **Four tests** were changed; no fifth test exists.
-
 ## AC-8
 
 Full unit suite passes, no regressions:
@@ -373,3 +269,116 @@ final state              : IDLE
 A 10ms tap through the real default config path starts and stops recording —
 the AC-2/AC-5 behavior wired together as the daemon would.
 
+## Existing tests changed (NOT part of the AC-1 failing-first chain)
+
+Four existing tests were changed. None is a `hybrid`/`toggle` behavior test; all
+four asserted the exact facts this feather is chartered to change. Escalated to
+`team-lead` before implementing; resolution approved.
+
+They fall into two categories with **materially different** before/after
+behavior, deliberately not conflated:
+
+| # | Test | Change | Before impl | After impl | Nature |
+|---|------|--------|-------------|------------|--------|
+| 1 | `test_hotkey.py::test_state_machine_rejects_unknown_mode` | sentinel `"ptt"` → `"bogus"` | **PASS** | PASS | preserved regression guard |
+| 2 | `test_config.py::test_hotkey_trigger_mode_invalid_rejected` | sentinel `"ptt"` → `"bogus"` | **PASS** | PASS | preserved regression guard |
+| 3 | `test_config.py::test_defaults_hotkey` | `trigger_mode` `"hybrid"` → `"ptt"` | **FAIL** | PASS | fail-then-pass (AC-5) |
+| 4 | `test_config.py::test_format_default_toml_has_trigger_mode` | `"hybrid"` → `"ptt"` | **FAIL** | PASS | fail-then-pass (AC-5) |
+
+**Category A (1–2) pass both before and after.** They are preserved regression
+guards, NOT failing-first tests, and are not evidence for AC-1. Repointing the
+sentinel changes only the example that stopped being unknown; the assertion
+(unknown modes are rejected) is untouched.
+
+**Category B (3–4) legitimately fail-then-pass**, so they bind to the new
+intended default rather than having been retrofitted to match it. Their
+pre-implementation failure:
+
+```
+E       AssertionError: assert HotkeyConfig(...mode='hybrid') == HotkeyConfig(...er_mode='ptt')
+E         Differing attributes:
+E         ['trigger_mode']
+E           trigger_mode: 'hybrid' != 'ptt'
+```
+
+### The Category A contradiction (the finding itself)
+
+Before this feather, tests 1 and 2 **passed while asserting the exact opposite
+of what the feather delivers**: that `"ptt"` is an INVALID value. Captured by
+checking the pre-feather commit `2093e59` back out and running its own tests
+against its own source:
+
+```
+$ git checkout 2093e59 -- src tests
+$ .venv/bin/python -c "import stenographer.config as c; print(sorted(c.ALLOWED_TRIGGER_MODES))"
+ALLOWED_TRIGGER_MODES = ['hybrid', 'toggle']
+
+$ .venv/bin/pytest -m "not integration" \
+    tests/test_hotkey.py::test_state_machine_rejects_unknown_mode \
+    tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected -v
+tests/test_hotkey.py::test_state_machine_rejects_unknown_mode PASSED     [ 50%]
+tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected PASSED   [100%]
+============================== 2 passed in 0.08s ===============================
+```
+
+What they asserted at `2093e59` (`git show 2093e59:tests/...`):
+
+```python
+def test_state_machine_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError):
+        HotkeyStateMachine(mode="ptt")          # <-- "ptt" AS THE INVALID EXAMPLE
+
+def test_hotkey_trigger_mode_invalid_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer]\nhotkey.trigger_mode = "ptt"\n')   # <-- likewise
+    with pytest.raises(ConfigError, match=r"hotkey.trigger_mode"):
+        Config.load(p)
+```
+
+This is the contradiction: `"ptt is rejected"` (these tests) and `"ptt is
+accepted"` (AC-2/AC-4) cannot both hold. Leaving them as-is would fail the
+suite; the only resolutions are repoint or delete, and repointing preserves the
+intent. AC-4 mandates the outcome.
+
+### Verification of the before/after claims in the table
+
+Category A repointed tests, run against **unchanged pre-feather `src/`** — they
+pass without any implementation, proving they are not failing-first artifacts:
+
+```
+$ git checkout 2093e59 -- src        # current (repointed) tests vs old src
+$ .venv/bin/pytest -m "not integration" \
+    tests/test_hotkey.py::test_state_machine_rejects_unknown_mode \
+    tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected -v
+tests/test_hotkey.py::test_state_machine_rejects_unknown_mode PASSED     [ 50%]
+tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected PASSED   [100%]
+============================== 2 passed in 0.03s ===============================
+```
+
+Category B, same unchanged `src/` — fails, as a real AC-5 fail-then-pass:
+
+```
+$ .venv/bin/pytest -m "not integration" \
+    tests/test_config.py::test_defaults_hotkey \
+    tests/test_config.py::test_format_default_toml_has_trigger_mode -v
+tests/test_config.py::test_defaults_hotkey FAILED                        [ 50%]
+tests/test_config.py::test_format_default_toml_has_trigger_mode FAILED   [100%]
+============================== 2 failed in 0.03s ===============================
+```
+
+All four against the **implemented** `src/`:
+
+```
+$ git checkout HEAD -- src
+$ .venv/bin/pytest -m "not integration" <all four> -v
+tests/test_hotkey.py::test_state_machine_rejects_unknown_mode PASSED     [ 25%]
+tests/test_config.py::test_hotkey_trigger_mode_invalid_rejected PASSED   [ 50%]
+tests/test_config.py::test_defaults_hotkey PASSED                        [ 75%]
+tests/test_config.py::test_format_default_toml_has_trigger_mode PASSED   [100%]
+============================== 4 passed in 0.03s ===============================
+```
+
+Note on counting: the escalation to `team-lead` listed *five* conflicts, but one
+of those (`config.py:632` `_format_default_toml` emitting `trigger_mode` from
+`defaults()`) is source behavior, not a test — it is why test 4 tracks AC-5
+automatically. **Four tests** were changed; no fifth test exists.
