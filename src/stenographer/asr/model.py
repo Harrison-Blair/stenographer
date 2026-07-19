@@ -68,6 +68,8 @@ class Model:
         )
         self._language = cfg.language
         self._beam_size = cfg.beam_size
+        self._hotwords = cfg.hotwords
+        self._initial_prompt = cfg.initial_prompt
         log.info("ASR model loaded: %s", cfg.model)
 
     @property
@@ -95,6 +97,8 @@ class Model:
             beam_size=beam_size,
             vad_filter=False,
             condition_on_previous_text=False,
+            hotwords=self._hotwords,
+            initial_prompt=self._initial_prompt,
         )
         seg_infos: list[SegmentInfo] = []
         for seg in segments_iter:
@@ -139,6 +143,8 @@ class Model:
             beam_size=self._beam_size if beam_size is None else beam_size,
             vad_filter=False,
             condition_on_previous_text=False,
+            hotwords=self._hotwords,
+            initial_prompt=self._initial_prompt,
             word_timestamps=True,
         )
         words: list[WordInfo] = []

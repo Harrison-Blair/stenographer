@@ -93,6 +93,8 @@ def test_defaults_asr() -> None:
         silence_threshold=0.6,
         mode="lazy",
         idle_unload_seconds=300,
+        hotwords=None,
+        initial_prompt=None,
     )
 
 
@@ -314,6 +316,49 @@ def test_format_default_toml_has_trigger_mode() -> None:
     from stenographer.config import _format_default_toml
 
     assert 'hotkey.trigger_mode = "ptt"' in _format_default_toml()
+
+
+def test_asr_hotwords_and_initial_prompt_override(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            asr.hotwords = "stenographer, wtype, Wayland"
+            asr.initial_prompt = "Notes about Arch Linux tooling."
+            """)
+    )
+    cfg = Config.load(p)
+    assert cfg.asr.hotwords == "stenographer, wtype, Wayland"
+    assert cfg.asr.initial_prompt == "Notes about Arch Linux tooling."
+
+
+def test_asr_hotwords_empty_string_is_none(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            asr.hotwords = ""
+            asr.initial_prompt = null
+            """)
+    )
+    cfg = Config.load(p)
+    assert cfg.asr.hotwords is None
+    assert cfg.asr.initial_prompt is None
+
+
+def test_asr_hotwords_non_string_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nasr.hotwords = 42\n")
+    with pytest.raises(ConfigError, match=r"asr.hotwords"):
+        Config.load(p)
+
+
+def test_format_default_toml_has_vocabulary_keys() -> None:
+    from stenographer.config import _format_default_toml
+
+    toml = _format_default_toml()
+    assert 'asr.hotwords = ""' in toml
+    assert 'asr.initial_prompt = ""' in toml
 
 
 def test_validate_hotkey_threshold_zero_rejected(tmp_path: pathlib.Path) -> None:

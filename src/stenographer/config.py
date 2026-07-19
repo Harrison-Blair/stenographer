@@ -75,6 +75,8 @@ class AsrConfig:
     silence_threshold: float
     mode: str
     idle_unload_seconds: int
+    hotwords: str | None
+    initial_prompt: str | None
 
 
 @dataclass(frozen=True)
@@ -164,6 +166,8 @@ class Config:
                 silence_threshold=0.6,
                 mode="lazy",
                 idle_unload_seconds=300,
+                hotwords=None,
+                initial_prompt=None,
             ),
             feedback=FeedbackConfig(
                 volume=0.6,
@@ -411,6 +415,8 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
     idle_unload_seconds = _expect_int(table, "idle_unload_seconds", "asr.idle_unload_seconds", path)
     if not (0 <= idle_unload_seconds <= 86400):
         raise ConfigError(path, "asr.idle_unload_seconds", "must satisfy 0 <= x <= 86400")
+    hotwords = _expect_optional_str(table, "hotwords", "asr.hotwords", path)
+    initial_prompt = _expect_optional_str(table, "initial_prompt", "asr.initial_prompt", path)
     return AsrConfig(
         model=model,
         language=language,
@@ -419,6 +425,8 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
         silence_threshold=silence_threshold,
         mode=mode,
         idle_unload_seconds=idle_unload_seconds,
+        hotwords=hotwords,
+        initial_prompt=initial_prompt,
     )
 
 
@@ -679,6 +687,10 @@ def _format_default_toml() -> str:
         f"asr.silence_threshold = {r.silence_threshold}",
         f"asr.mode = {_toml_str(r.mode)}",
         f"asr.idle_unload_seconds = {r.idle_unload_seconds}",
+        '# hotwords: proper nouns / jargon to bias recognition toward, e.g. "wtype, Wayland"',
+        f"asr.hotwords = {_toml_optional(r.hotwords)}",
+        "# initial_prompt: free-text context prepended to decoding (style/domain hints)",
+        f"asr.initial_prompt = {_toml_optional(r.initial_prompt)}",
         "",
         "# Audio feedback",
         f"feedback.volume = {f.volume}",

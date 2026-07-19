@@ -254,6 +254,8 @@ audio.input_device                   = ""      # "" => sounddevice default
 # ASR
 asr.model                            = "Systran/faster-distil-whisper-medium.en"
 asr.compute_type                     = "int8"             # opt into "int8_float16" on CPUs with float16 hardware
+asr.hotwords                         = ""      # proper nouns / jargon to bias recognition toward, e.g. "wtype, Wayland"
+asr.initial_prompt                   = ""      # free-text context prepended to decoding (style/domain hints)
 
 # Audio feedback
 feedback.volume                      = 0.6     # 0.0..1.0
