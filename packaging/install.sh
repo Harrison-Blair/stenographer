@@ -222,6 +222,7 @@ install_binary() {
 # Each entry: "<hf repo id>|<approx download size>|<one-line description>".
 # The first entry is the recommended default.
 MODEL_CHOICES=(
+    "Systran/faster-whisper-medium.en|~1.5 GB|English-only, default with hotword support"
     "Systran/faster-distil-whisper-medium.en|~800 MB|English-only, recommended balance of speed and accuracy"
     "Systran/faster-distil-whisper-small.en|~350 MB|English-only, smallest and fastest"
     "Systran/faster-whisper-large-v3|~3 GB|multilingual, most accurate but slower"

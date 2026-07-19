@@ -24,6 +24,7 @@ import select
 import subprocess
 import sys
 import threading
+from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -107,7 +108,11 @@ class SpectrumAnalyzer:
         self._on_levels = on_levels
         self._queue: queue.Queue[tuple[np.ndarray, int] | object] = queue.Queue(maxsize=1)
         self._active = threading.Event()
+        self._reset = threading.Event()
+        self._mutex = threading.Lock()
         self._closed = False
+        # Only the worker thread touches _smoothed; other threads ask for a
+        # reset instead, so a zeroing can never be lost inside an update.
         self._smoothed = np.zeros(band_count, dtype=np.float32)
         self._worker = threading.Thread(
             target=self._run,
@@ -117,36 +122,44 @@ class SpectrumAnalyzer:
         self._worker.start()
 
     def set_active(self, active: bool) -> None:
+        self._reset.set()
         if active:
             self._active.set()
             return
         self._active.clear()
-        self._smoothed.fill(0.0)
-        self._discard_pending()
+        with self._mutex:
+            self._discard_pending()
 
     def submit(self, samples: np.ndarray, sample_rate: int) -> None:
         """Copy and enqueue a block without waiting for the analyzer."""
         if not self._active.is_set() or self._closed:
             return
         packet = (np.asarray(samples, dtype=np.float32).reshape(-1).copy(), sample_rate)
-        try:
-            self._queue.put_nowait(packet)
-            return
-        except queue.Full:
-            pass
-        self._discard_pending()
-        with contextlib.suppress(queue.Full):
-            self._queue.put_nowait(packet)
+        # The mutex keeps discard-then-put atomic against close(), which would
+        # otherwise see its stop sentinel discarded by a racing submit.
+        with self._mutex:
+            if self._closed:
+                return
+            try:
+                self._queue.put_nowait(packet)
+                return
+            except queue.Full:
+                pass
+            self._discard_pending()
+            with contextlib.suppress(queue.Full):
+                self._queue.put_nowait(packet)
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        self._active.clear()
-        self._discard_pending()
-        with contextlib.suppress(queue.Full):
+        with self._mutex:
+            if self._closed:
+                return
+            self._closed = True
+            self._active.clear()
+            self._discard_pending()
             self._queue.put_nowait(_STOP)
         self._worker.join(timeout=2.0)
+        if self._worker.is_alive():
+            logger.warning("visualizer: spectrum analyzer thread did not exit")
 
     def _discard_pending(self) -> None:
         with contextlib.suppress(queue.Empty):
@@ -157,6 +170,9 @@ class SpectrumAnalyzer:
             item = self._queue.get()
             if item is _STOP:
                 return
+            if self._reset.is_set():
+                self._reset.clear()
+                self._smoothed.fill(0.0)
             if not self._active.is_set():
                 continue
             samples, sample_rate = item  # type: ignore[misc]
@@ -171,14 +187,36 @@ class SpectrumAnalyzer:
             # visually distinct at the target 60 Hz capture cadence.
             coefficient = np.where(levels >= self._smoothed, 0.84, 0.32)
             self._smoothed += coefficient * (levels - self._smoothed)
+            smoothed = self._smoothed.tolist()
+            if not self._active.is_set():
+                # Deactivated while this block was analyzed; publishing now
+                # would freeze pre-cancel bars under a "Transcribing" label.
+                continue
             try:
-                self._on_levels(self._smoothed.tolist())
+                self._on_levels(smoothed)
             except Exception as exc:
                 logger.debug("visualizer: level consumer failed: %s", exc)
 
 
+def _terminate(process: subprocess.Popen[str]) -> None:
+    """Stop the helper process, escalating to SIGKILL if it ignores SIGTERM."""
+    process.terminate()
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
 class LayerShellOverlay:
-    """JSON-lines controller for the GTK4 layer-shell helper process."""
+    """JSON-lines controller for the GTK4 layer-shell helper process.
+
+    All pipe I/O — including the lazy helper spawn and its READY handshake —
+    happens on a dedicated writer thread. Public methods only enqueue, so a
+    wedged GTK child can never block a caller (the session holds its lock
+    across these calls, and a blocked write would deadlock the daemon).
+    """
+
+    _QUEUE_MAXSIZE = 4
 
     def __init__(
         self,
@@ -186,13 +224,19 @@ class LayerShellOverlay:
         *,
         icon_path: pathlib.Path | None = None,
         font_path: pathlib.Path | None = None,
+        on_unavailable: Callable[[], None] | None = None,
     ) -> None:
         self._cfg = cfg
         self._icon_path = icon_path
         self._font_path = font_path
+        self._on_unavailable = on_unavailable
         self._process: subprocess.Popen[str] | None = None
-        self._lock = threading.Lock()
+        self._condition = threading.Condition()
+        self._pending: deque[Any] = deque()
+        self._writer: threading.Thread | None = None
         self._unavailable = False
+        self._started = False
+        self._closed = False
 
     @staticmethod
     def probe() -> bool:
@@ -210,80 +254,196 @@ class LayerShellOverlay:
         return True
 
     def show_state(self, state: str, *, timeout_ms: int = 0) -> bool:
-        return self._send(
+        """Queue a state change; ``False`` once the overlay is known dead.
+
+        The helper is written to asynchronously, so this reports only that the
+        overlay has not degraded yet. If the writer discovers a failure later,
+        the unavailable callback replays the caller's current state through its
+        fallback.
+        """
+        return self._enqueue(
             {
                 "command": "state",
                 "state": state,
                 "timeout_ms": timeout_ms,
-            }
+            },
+            droppable=False,
         )
 
     def show_levels(self, levels: list[float]) -> None:
-        self._send({"command": "levels", "levels": levels})
+        self._enqueue({"command": "levels", "levels": levels}, droppable=True)
 
     def show_preview(self, stable: str, provisional: str) -> None:
-        self._send(
+        self._enqueue(
             {
                 "command": "preview",
                 "stable": stable,
                 "provisional": provisional,
-            }
+            },
+            droppable=False,
         )
 
     def clear_preview(self) -> None:
-        if self._process is not None:
-            self._send({"command": "preview_clear"})
+        if self._started:
+            self._enqueue({"command": "preview_clear"}, droppable=False)
 
     def hide(self) -> bool:
-        if self._process is None:
+        if not self._started:
             return False
-        return self._send({"command": "state", "state": "hidden", "timeout_ms": 0})
+        return self._enqueue(
+            {"command": "state", "state": "hidden", "timeout_ms": 0},
+            droppable=False,
+        )
 
     def close(self) -> None:
-        with self._lock:
+        with self._condition:
+            if self._closed:
+                return
+            self._closed = True
+            writer = self._writer
+            # Queued messages still drain first; the bounded join below is what
+            # keeps a wedged helper from holding up shutdown.
+            self._pending.append(_STOP)
+            self._condition.notify()
+
+        if writer is not None:
+            writer.join(timeout=2.0)
+            if writer.is_alive():
+                logger.warning("visualizer: overlay writer thread did not exit; killing helper")
+
+        with self._condition:
             process = self._process
             self._process = None
-            if process is None:
+        if process is None:
+            return
+        if writer is None or not writer.is_alive():
+            try:
+                process.wait(timeout=2.0)
                 return
-            try:
-                if process.stdin is not None:
-                    process.stdin.write('{"command":"quit"}\n')
-                    process.stdin.flush()
-                    process.stdin.close()
-            except BrokenPipeError, OSError:
-                pass
-        try:
-            process.wait(timeout=2.0)
-        except subprocess.TimeoutExpired:
-            process.terminate()
-            try:
-                process.wait(timeout=1.0)
             except subprocess.TimeoutExpired:
-                process.kill()
+                pass
+        # Terminating also unblocks a writer wedged in a full-pipe write.
+        _terminate(process)
 
-    def _send(self, message: dict[str, Any]) -> bool:
-        with self._lock:
-            if not self._ensure_started_locked():
+    def _enqueue(self, message: dict[str, Any], *, droppable: bool) -> bool:
+        """Hand a message to the writer thread. Never performs pipe I/O."""
+        saturated = False
+        with self._condition:
+            if self._unavailable or self._closed:
                 return False
-            assert self._process is not None
-            try:
-                assert self._process.stdin is not None
-                self._process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
-                self._process.stdin.flush()
+            self._coalesce_locked(message)
+            if len(self._pending) >= self._QUEUE_MAXSIZE:
+                if droppable:
+                    # 60 Hz level frames are stale by the time the writer
+                    # drains them, so shedding them is free.
+                    return True
+                # A dropped state or preview would leave a wrong label on the
+                # HUD. Shed a level frame, or degrade if the queue contains no
+                # disposable work.
+                saturated = not self._drop_oldest_levels_locked()
+            if not saturated:
+                self._pending.append(message)
+            if self._writer is None:
+                self._writer = threading.Thread(
+                    target=self._run_writer,
+                    name="overlay-writer",
+                    daemon=True,
+                )
+                self._writer.start()
+            self._condition.notify()
+        if saturated:
+            logger.warning("visualizer: overlay queue saturated; using notifications")
+            self._degrade()
+            return False
+        return True
+
+    def _coalesce_locked(self, message: dict[str, Any]) -> None:
+        """Discard queued frames superseded by *message*.
+
+        State, preview, and level updates all describe current values rather
+        than events. Keeping only their newest pending value prevents stale HUD
+        updates and makes the queue genuinely bounded when the pipe wedges.
+        """
+        command = message.get("command")
+        if command == "state":
+            superseded = {"state"}
+        elif command in {"preview", "preview_clear"}:
+            superseded = {"preview", "preview_clear"}
+        elif command == "levels":
+            superseded = {"levels"}
+        else:
+            return
+        self._pending = deque(
+            item
+            for item in self._pending
+            if not (isinstance(item, dict) and item.get("command") in superseded)
+        )
+
+    def _drop_oldest_levels_locked(self) -> bool:
+        for index, message in enumerate(self._pending):
+            if isinstance(message, dict) and message.get("command") == "levels":
+                del self._pending[index]
                 return True
-            except (BrokenPipeError, OSError) as exc:
-                logger.warning("visualizer: overlay pipe failed; using notifications: %s", exc)
-                self._unavailable = True
-                self._process = None
-                return False
+        return False
 
-    def _ensure_started_locked(self) -> bool:
+    def _run_writer(self) -> None:
+        while True:
+            with self._condition:
+                while not self._pending:
+                    self._condition.wait()
+                message = self._pending.popleft()
+            if message is _STOP:
+                self._write_quit()
+                return
+            self._write(message)
+
+    def _write(self, message: dict[str, Any]) -> None:
+        try:
+            if not self._start_helper():
+                return
+            process = self._process
+            assert process is not None
+            assert process.stdin is not None
+            process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+            process.stdin.flush()
+        except Exception as exc:
+            # Includes failures raised out of the startup handshake; every pipe
+            # error must degrade to notifications rather than kill this thread.
+            logger.warning("visualizer: overlay pipe failed; using notifications: %s", exc)
+            self._degrade()
+
+    def _write_quit(self) -> None:
+        process = self._process
+        if process is None or process.stdin is None:
+            return
+        with contextlib.suppress(BrokenPipeError, OSError, ValueError):
+            process.stdin.write('{"command":"quit"}\n')
+            process.stdin.flush()
+            process.stdin.close()
+
+    def _degrade(self) -> None:
+        callback: Callable[[], None] | None
+        with self._condition:
+            if self._unavailable:
+                return
+            self._unavailable = True
+            self._process = None
+            self._pending = deque(item for item in self._pending if item is _STOP)
+            callback = self._on_unavailable
+            self._condition.notify_all()
+        if callback is not None:
+            try:
+                callback()
+            except Exception as exc:
+                logger.debug("visualizer: overlay fallback callback failed: %s", exc)
+
+    def _start_helper(self) -> bool:
         if self._unavailable:
             return False
         if self._process is not None and self._process.poll() is None:
             return True
         if not self.probe():
-            self._unavailable = True
+            self._degrade()
             return False
 
         if getattr(sys, "frozen", False):
@@ -318,7 +478,7 @@ class LayerShellOverlay:
             )
         except OSError as exc:
             logger.warning("visualizer: cannot start overlay; using notifications: %s", exc)
-            self._unavailable = True
+            self._degrade()
             return False
 
         assert process.stdout is not None
@@ -329,24 +489,31 @@ class LayerShellOverlay:
                 "visualizer: GTK layer-shell unavailable; using notifications%s",
                 f" ({response})" if response else "",
             )
-            process.terminate()
-            try:
-                process.wait(timeout=1.0)
-            except subprocess.TimeoutExpired:
-                process.kill()
-            self._unavailable = True
+            _terminate(process)
+            self._degrade()
             return False
 
-        self._process = process
         setup = {
             "command": "configure",
             "margin_bottom": self._cfg.margin_bottom,
             "band_count": self._cfg.frequency_bands,
             "icon_path": str(self._icon_path) if self._icon_path is not None else "",
         }
-        assert process.stdin is not None
-        process.stdin.write(json.dumps(setup, separators=(",", ":")) + "\n")
-        process.stdin.flush()
+        try:
+            assert process.stdin is not None
+            process.stdin.write(json.dumps(setup, separators=(",", ":")) + "\n")
+            process.stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            # A helper that prints READY and then dies must degrade like any
+            # other pipe failure instead of raising out of the writer thread.
+            logger.warning("visualizer: overlay died during setup; using notifications: %s", exc)
+            _terminate(process)
+            self._degrade()
+            return False
+
+        with self._condition:
+            self._process = process
+            self._started = True
         logger.info("visualizer: GTK4 layer-shell overlay ready")
         return True
 
@@ -362,12 +529,10 @@ class StatusIndicator:
         font_path: pathlib.Path | None = None,
     ) -> None:
         self._desktop = DesktopNotification(icon_path=icon_path)
-        self._overlay = (
-            LayerShellOverlay(cfg, icon_path=icon_path, font_path=font_path)
-            if cfg.enabled
-            else None
-        )
+        self._state_lock = threading.RLock()
         self._desktop_visible = False
+        self._fallback_show: Callable[[], None] | None = None
+        self._fallback_replayed = False
         self._closed = False
         self._analyzer = SpectrumAnalyzer(
             band_count=cfg.frequency_bands,
@@ -375,49 +540,64 @@ class StatusIndicator:
             max_frequency=cfg.max_frequency,
             on_levels=self._show_levels,
         )
+        self._overlay = (
+            LayerShellOverlay(
+                cfg,
+                icon_path=icon_path,
+                font_path=font_path,
+                on_unavailable=self._overlay_unavailable,
+            )
+            if cfg.enabled
+            else None
+        )
 
     @staticmethod
     def overlay_probe() -> bool:
         return LayerShellOverlay.probe()
 
     def show_startup(self, binding: str) -> None:
-        self._show_overlay_or_desktop(
-            "ready",
-            5000,
-            lambda: self._desktop.show_startup(binding),
-        )
+        with self._state_lock:
+            self._show_overlay_or_desktop(
+                "ready",
+                5000,
+                lambda: self._desktop.show_startup(binding),
+            )
 
     def show_listening(self) -> None:
-        shown = self._show_overlay_or_desktop(
-            "listening",
-            0,
-            self._desktop.show_listening,
-        )
-        self._analyzer.set_active(shown)
+        with self._state_lock:
+            shown = self._show_overlay_or_desktop(
+                "listening",
+                0,
+                self._desktop.show_listening,
+            )
+            self._analyzer.set_active(shown)
 
     def show_transcribing(self) -> None:
-        self._analyzer.set_active(False)
-        self._show_overlay_or_desktop(
-            "transcribing",
-            0,
-            self._desktop.show_transcribing,
-        )
+        with self._state_lock:
+            self._analyzer.set_active(False)
+            self._show_overlay_or_desktop(
+                "transcribing",
+                0,
+                self._desktop.show_transcribing,
+            )
 
     def show_model_loading(self) -> None:
-        shown = self._show_overlay_or_desktop(
-            "loading",
-            0,
-            self._desktop.show_model_loading,
-        )
-        self._analyzer.set_active(shown)
+        with self._state_lock:
+            shown = self._show_overlay_or_desktop(
+                "loading",
+                0,
+                self._desktop.show_model_loading,
+            )
+            self._analyzer.set_active(shown)
 
     def show_model_unloaded(self) -> None:
-        self._analyzer.set_active(False)
-        self._show_overlay_or_desktop(
-            "unloaded",
-            5000,
-            self._desktop.show_model_unloaded,
-        )
+        with self._state_lock:
+            self._analyzer.set_active(False)
+            self._show_overlay_or_desktop(
+                "unloaded",
+                5000,
+                self._desktop.show_model_unloaded,
+            )
 
     def publish_audio(self, samples: np.ndarray, sample_rate: int) -> None:
         self._analyzer.submit(samples, sample_rate)
@@ -432,21 +612,26 @@ class StatusIndicator:
             self._overlay.clear_preview()
 
     def hide(self) -> None:
-        self._analyzer.set_active(False)
-        if self._overlay is not None:
-            self._overlay.hide()
-        if self._desktop_visible:
-            self._desktop.hide()
-            self._desktop_visible = False
+        with self._state_lock:
+            self._fallback_show = None
+            self._fallback_replayed = False
+            self._analyzer.set_active(False)
+            if self._overlay is not None:
+                self._overlay.hide()
+            if self._desktop_visible:
+                self._desktop.hide()
+                self._desktop_visible = False
 
     def flush(self, timeout: float = 5.0) -> None:
-        self._desktop.flush(timeout=timeout)
-        if self._closed:
-            return
-        self._closed = True
+        with self._state_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._fallback_show = None
         self._analyzer.close()
         if self._overlay is not None:
             self._overlay.close()
+        self._desktop.flush(timeout=timeout)
 
     def _show_levels(self, levels: list[float]) -> None:
         if self._overlay is not None:
@@ -458,14 +643,27 @@ class StatusIndicator:
         timeout_ms: int,
         desktop_show: Callable[[], None],
     ) -> bool:
+        self._fallback_show = desktop_show
+        self._fallback_replayed = False
         if self._overlay is not None and self._overlay.show_state(state, timeout_ms=timeout_ms):
             if self._desktop_visible:
                 self._desktop.hide()
                 self._desktop_visible = False
             return True
-        desktop_show()
+        if not self._fallback_replayed:
+            desktop_show()
         self._desktop_visible = True
         return False
+
+    def _overlay_unavailable(self) -> None:
+        """Replay the latest state if asynchronous overlay startup/I/O fails."""
+        with self._state_lock:
+            if self._closed or self._fallback_show is None or self._fallback_replayed:
+                return
+            self._analyzer.set_active(False)
+            self._fallback_show()
+            self._fallback_replayed = True
+            self._desktop_visible = True
 
 
 _OVERLAY_CSS = """

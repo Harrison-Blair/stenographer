@@ -70,6 +70,7 @@ class Model:
         self._beam_size = cfg.beam_size
         self._hotwords = cfg.hotwords
         self._initial_prompt = cfg.initial_prompt
+        self._silence_threshold = cfg.silence_threshold
         log.info("ASR model loaded: %s", cfg.model)
 
     @property
@@ -132,6 +133,10 @@ class Model:
         once per decoded segment so an in-flight re-decode can be aborted
         (it should raise to abort).  Returns a flat, time-ordered list of
         words.
+
+        Segments at or above ``asr.silence_threshold`` are dropped, the same
+        gate the batch path applies to :class:`SegmentInfo` — without it
+        Whisper's silence hallucinations ("Thank you.") reach the cursor.
         """
         if samples.size == 0:
             return []
@@ -148,13 +153,19 @@ class Model:
             word_timestamps=True,
         )
         words: list[WordInfo] = []
+        dropped = 0
         for seg in segments_iter:
             if check_cancel is not None:
                 check_cancel()
+            if seg.no_speech_prob >= self._silence_threshold:
+                dropped += 1
+                continue
             for w in seg.words or ():
                 words.append(
                     WordInfo(start=w.start, end=w.end, word=w.word, probability=w.probability)
                 )
+        if dropped:
+            log.info("asr: dropped %d probable-silence segment(s) from word decode", dropped)
         return words
 
     def close(self) -> None:

@@ -18,6 +18,10 @@ use the system `python` / `pip` / `ruff` / `pytest`.** Recreate the venv with:
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev,build]"
 ```
 
+PyGObject is a mandatory dependency, so that install needs the distro's
+GObject-introspection and Cairo development packages present; the overlay
+additionally needs GTK4 and `gtk4-layer-shell` at runtime.
+
 - **Lint / format:** `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .`
   (`.venv/bin/ruff check --fix .` to autofix).
 - **Test (unit):** `.venv/bin/pytest -m "not integration"`
@@ -48,10 +52,10 @@ existing release, so **every merge to `main` must bump `__version__` in
 The package is `src/stenographer/` (src-layout); `tests/` mirrors it.
 
 **Entry point** — `cli.py` (`main`) dispatches subcommands: `run`, `dictate`,
-`transcribe`, `model download`, `update`, `doctor`, plus systemd management
-(`enable`/`start`/`stop`/`disable`). The argument parser lives separately in
-`_parser.py` so the argcomplete hot path can build it without the heavy
-imports. `run` holds a single-instance `fcntl.flock` on
+`transcribe`, `model download`, `update`, `doctor`, `devices`, `bench`, plus
+systemd management (`enable`/`start`/`stop`/`disable`). The argument parser
+lives separately in `_parser.py` so the argcomplete hot path can build it
+without the heavy imports. `run` holds a single-instance `fcntl.flock` on
 `$XDG_RUNTIME_DIR/stenographer.lock`.
 
 **`session.py` — the orchestrator.** `Session` is the single point of state
@@ -65,8 +69,11 @@ The component modules it wires:
 
 - **`hotkey/`** — `binding.py` parses the config binding string; `listener.py`
   is the evdev read loop over `/dev/input/event*` (requires `input` group);
-  `state_machine.py` is a **pure** state machine implementing the hybrid
-  trigger (short press = toggle, ≥0.5s press = push-to-talk).
+  `state_machine.py` is a **pure** state machine implementing the three
+  `hotkey.trigger_mode` values: `ptt` (the default — record while held),
+  `toggle` (a press latches recording on, the next press stops it), and
+  `hybrid` (≥`toggle_threshold_seconds` hold = push-to-talk, a short press
+  followed by a second tap within `double_tap_window_seconds` latches toggle).
 - **`audio/`** — `capture.py` (`Recorder`) captures mic audio via
   `sounddevice`/PortAudio with silence detection; `feedback.py` plays the WAV
   cues in `assets/sounds/` via `pw-play`/`paplay`.
@@ -74,34 +81,51 @@ The component modules it wires:
   loads on first use and unloads after idle); `worker.py` runs transcription
   off the main thread with cancellation support: one batch job per utterance
   (`submit`) or one word-timestamped re-decode (`submit_words`);
-  `streaming.py` is the **pure** LocalAgreement-N committer — a word is
-  committed (and typed) only after N consecutive re-decodes agree on it, and
-  the committed prefix is never revised.
+  `streaming.py` is the **pure** LocalAgreement-N committer — a word joins the
+  committed prefix only after N consecutive re-decodes agree on it; that prefix
+  is append-only, while the latest uncommitted hypothesis is exposed as a
+  revisable provisional tail.
 - **`output/`** — `inject.py` (`Injector`, types via `wtype`),
   `clipboard.py` (`ClipboardManager`, via `wl-copy`), and `formatter.py`
   (`HeuristicFormatter`: spacing / capitalisation / pause-based paragraph
-  breaks; append-only, so it is safe in the live typing path). The clipboard
+  breaks; append-only, so it is safe in the incremental path). The clipboard
   is populated independently, so it's the fallback when injection fails.
-- **`live.py`** — `LiveStreamer`, the live streaming driver (`[streaming]`
-  config, `paste` mode only — `config.py` rejects any other combination):
-  recorder partials → coalesce → `submit_words`
-  re-decode → committer → formatter → pasted delta, with tail-silence
-  guarding and window trimming. **Invariant: delivered text is never revised**,
-  including on cancel — every intermediate typed state must be a prefix of
-  the final transcript.
+- **`live.py`** — `IncrementalDriver`, the incremental decoding driver
+  (`[incremental]` config; always on for daemon recordings, not gated by a
+  config flag or by `output.injection_method`): recorder partials → coalesce →
+  `submit_words` re-decode → committer → formatter → preview callback, with
+  tail-silence guarding and window trimming. **Invariant: it never writes to
+  the clipboard or the focused application** — it returns one final transcript
+  and `Session` delivers it exactly once. Everything it publishes en route is
+  a preview (stable prefix + revisable provisional tail) rendered only in the
+  overlay. `LiveStreamer` remains as a compatibility alias for the old name;
+  new code uses `IncrementalDriver`.
+- **`visualizer.py`** — `StatusIndicator`, the status HUD (`[visualizer]`
+  config), wired by `cli.py` and driven by `Session` state transitions.
+  `LayerShellOverlay` spawns a GTK4 layer-shell helper subprocess
+  (`stenographer _visualizer`) and talks to it over JSON-lines on stdin;
+  `SpectrumAnalyzer` does FFT band analysis on a dedicated thread fed by a
+  one-slot queue, so the PortAudio callback only ever copies a block.
+  `StatusIndicator` prefers the overlay and **transparently falls back** to
+  `notification.py` when GTK, layer shell, or Wayland is unavailable — so
+  nothing in the daemon may assume the overlay exists. Preview text goes to
+  the overlay only; it is never sent to `notify-send`.
 
 **Cross-cutting:**
 
 - **`config.py`** — TOML config schema and loading (`Config` dataclass).
-  `_validate_cross_section` enforces two invariants *at load time*, raising
-  `ConfigError` rather than coercing: `streaming.enabled` requires
-  `output.injection_method = "paste"`, and `paste` requires
-  `clipboard.enabled` (the clipboard is the paste transport). Both are
-  **breaking for configs valid before v0.8.4** — notably `streaming` +
-  `text`, which earlier docs recommended. There is deliberately no migration:
-  a rejected config fails `run` at startup, so the user must hand-edit it.
-  Any new cross-section rule inherits that cost — weigh it against coercing
-  with a warning.
+  `_validate_cross_section` enforces one invariant *at load time*, raising
+  `ConfigError` rather than coercing: `output.injection_method =
+  "clipboard_paste"` requires `clipboard.enabled`, because the clipboard is
+  the paste transport rather than a convenience copy. Renamed keys are
+  **migrated, not rejected**: `_build_output` maps the pre-0.9.2
+  `text`/`paste` spellings onto `type`/`clipboard_paste` with a deprecation
+  warning (`ALLOWED_INJECTION_METHODS` holds only the new names), and
+  `_migrate_streaming_table` folds a legacy `[streaming]` table into
+  `[incremental]`, warning that `streaming.enabled` is ignored since
+  incremental decoding is now unconditional. That is the pattern to follow:
+  a hard rejection fails `run` at startup and forces every existing config to
+  be hand-edited, so weigh it against migrating with a warning.
 - **`capabilities.py`** — the probe behind `doctor`: checks `wtype`, `wl-copy`,
   audio player, `input` group membership, mic, and the ASR model.
 - **`errors.py`** — error-handling policy. Components MUST raise

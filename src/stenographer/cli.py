@@ -215,9 +215,6 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         max_seconds=cfg.audio.max_recording_seconds,
         # Mid-recording silence flushing is a daemon (PTT/toggle) feature; the
         # one-shot processor stops after the first item, so disable it there.
-        silence_detection=cfg.audio.silence_detection and not one_shot,
-        silence_rms_threshold=cfg.audio.silence_rms_threshold,
-        silence_duration_seconds=cfg.audio.silence_duration_seconds,
         on_audio=notification.publish_audio,
         max_audio_observer_interval_seconds=(1.0 / 60.0 if cfg.visualizer.enabled else None),
     )

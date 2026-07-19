@@ -163,10 +163,18 @@ class IncrementalDriver:
         # No tail-silence guard here: the user ended the utterance, decode all
         # remaining audio with the full configured beam.
         words, ok = self._decode(window, beam_size=self._cfg.asr.beam_size)
-        if not ok or words is None:
+        if not ok:
             return None
-        delta = self._transcriber.insert(words)
-        delta.extend(self._transcriber.flush())
+        if words is None:
+            # The final decode failed but the utterance was not cancelled.
+            # Flush the last interim hypothesis instead of discarding the
+            # dictation: the audio since that hypothesis is lost either way,
+            # but everything already committed must still reach the user.
+            log.warning("incremental: final decode failed; flushing committed transcript")
+            delta = self._transcriber.flush()
+        else:
+            delta = self._transcriber.insert(words)
+            delta.extend(self._transcriber.flush())
         self._transcript += self._formatter.feed(delta) + self._formatter.finalize()
         self._publish_preview(final=True)
         return self._transcript

@@ -63,7 +63,7 @@ contributors include the GTK runtime, CTranslate2, and ONNX Runtime.
 
 | Asset                                | How the user gets it                            |
 |--------------------------------------|-------------------------------------------------|
-| ASR model (`distil-whisper-medium.en`, ~800 MB) | `./dist/stenographer/stenographer model download` |
+| ASR model (`whisper-medium.en`, ~1.5 GB) | `./dist/stenographer/stenographer model download` |
 | System CLIs (`wtype`, `wl-copy`, `pw-play`, `paplay`, `notify-send`) | Distro packages — see the Requirements table in `README.md` |
 | System libraries (`libevdev`, `libportaudio`, GTK4, `gtk4-layer-shell`) | Distro packages |
 

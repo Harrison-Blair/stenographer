@@ -61,9 +61,6 @@ class AudioConfig:
     frames_per_buffer: int
     input_device: str | None
     max_recording_seconds: int
-    silence_detection: bool
-    silence_rms_threshold: float
-    silence_duration_seconds: float
 
 
 @dataclass(frozen=True)
@@ -96,6 +93,9 @@ class VisualizerConfig:
 
 
 ALLOWED_INJECTION_METHODS: frozenset[str] = frozenset({"type", "clipboard_paste"})
+
+# Pre-0.9.2 spellings, accepted with a warning (see _build_output).
+_RENAMED_INJECTION_METHODS: dict[str, str] = {"text": "type", "paste": "clipboard_paste"}
 
 
 @dataclass(frozen=True)
@@ -163,9 +163,6 @@ class Config:
                 frames_per_buffer=1024,
                 input_device=None,
                 max_recording_seconds=600,
-                silence_detection=True,
-                silence_rms_threshold=0.01,
-                silence_duration_seconds=1.5,
             ),
             asr=AsrConfig(
                 model="Systran/faster-whisper-medium.en",
@@ -403,25 +400,11 @@ def _build_audio(table: dict[str, Any], path: pathlib.Path) -> AudioConfig:
     )
     if not (0 <= max_recording_seconds <= 86400):
         raise ConfigError(path, "audio.max_recording_seconds", "must satisfy 0 <= x <= 86400")
-    silence_detection = _expect_bool(table, "silence_detection", "audio.silence_detection", path)
-    silence_rms_threshold = _expect_number(
-        table, "silence_rms_threshold", "audio.silence_rms_threshold", path
-    )
-    if not (0.0 <= silence_rms_threshold <= 1.0):
-        raise ConfigError(path, "audio.silence_rms_threshold", "must satisfy 0.0 <= x <= 1.0")
-    silence_duration_seconds = _expect_number(
-        table, "silence_duration_seconds", "audio.silence_duration_seconds", path
-    )
-    if not (0 < silence_duration_seconds <= 10):
-        raise ConfigError(path, "audio.silence_duration_seconds", "must satisfy 0 < x <= 10")
     return AudioConfig(
         sample_rate=sample_rate,
         frames_per_buffer=frames_per_buffer,
         input_device=input_device,
         max_recording_seconds=max_recording_seconds,
-        silence_detection=silence_detection,
-        silence_rms_threshold=silence_rms_threshold,
-        silence_duration_seconds=silence_duration_seconds,
     )
 
 
@@ -529,6 +512,15 @@ def _build_cues(raw: Any, path: pathlib.Path) -> dict[str, str | None]:
 
 def _build_output(table: dict[str, Any], path: pathlib.Path) -> OutputConfig:
     injection_method = _expect_str(table, "injection_method", "output.injection_method", path)
+    renamed = _RENAMED_INJECTION_METHODS.get(injection_method)
+    if renamed is not None:
+        # Both values were renamed in 0.9.2. Rejecting them would hard-fail
+        # every config written before that release -- including the shipped
+        # default -- at daemon startup, so warn and accept the old spelling.
+        logger.warning(
+            'output.injection_method = "%s" is deprecated; use "%s"', injection_method, renamed
+        )
+        injection_method = renamed
     if injection_method not in ALLOWED_INJECTION_METHODS:
         raise ConfigError(
             path,
@@ -735,9 +727,6 @@ def _format_default_toml() -> str:
         f"audio.frames_per_buffer = {a.frames_per_buffer}",
         f"audio.input_device = {_toml_optional(a.input_device)}",
         f"audio.max_recording_seconds = {a.max_recording_seconds}",
-        f"audio.silence_detection = {_toml_bool(a.silence_detection)}",
-        f"audio.silence_rms_threshold = {a.silence_rms_threshold}",
-        f"audio.silence_duration_seconds = {a.silence_duration_seconds}",
         "",
         "# ASR",
         f"asr.model = {_toml_str(r.model)}",

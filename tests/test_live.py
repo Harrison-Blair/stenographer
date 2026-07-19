@@ -178,15 +178,31 @@ def test_cancelled_decode_returns_none() -> None:
     assert driver.run() is None
 
 
-def test_final_decode_failure_returns_none() -> None:
+def test_final_decode_failure_still_returns_the_committed_transcript() -> None:
+    # The audio since the last interim hypothesis is unrecoverable, but the
+    # words already agreed on must not be dropped with it.
     driver, _worker = _make_driver(
-        [_speech(1.0)],
+        [_speech(1.0)] * 3,
         [
             _words((" hello", 0.0, 0.5)),
+            _words((" hello", 0.0, 0.5), (" world", 0.5, 1.0)),
+            _words((" hello", 0.0, 0.5), (" world", 0.5, 1.0)),
             RuntimeError("final decode failed"),
         ],
     )
-    assert driver._step()
+    for _ in range(3):
+        assert driver._step()
+
+    assert driver._finish(_speech(1.5)) == "Hello world "
+
+
+def test_final_decode_failure_with_nothing_committed_returns_empty() -> None:
+    driver, _worker = _make_driver([_speech(1.0)], [RuntimeError("final decode failed")])
+    assert not driver._finish(_speech(1.0))
+
+
+def test_cancelled_final_decode_returns_none() -> None:
+    driver, _worker = _make_driver([_speech(1.0)], [CancelledError("cancelled")])
     assert driver._finish(_speech(1.0)) is None
 
 

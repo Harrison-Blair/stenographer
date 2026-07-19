@@ -101,7 +101,7 @@ def test_type_mode_delivers_once_and_optionally_copies() -> None:
 
     components["injector"].type_text.assert_called_once_with("Hello world ", raw=True)
     components["injector"].paste.assert_not_called()
-    components["clipboard"].copy.assert_called_once_with("Hello world ")
+    components["clipboard"].copy.assert_called_once_with("Hello world ", primary=True)
     components["feedback"].play.assert_called_once_with("transcribe_done")
 
 
@@ -110,6 +110,36 @@ def test_type_mode_respects_disabled_clipboard() -> None:
     assert session._deliver_final("Hello ")
     components["injector"].type_text.assert_called_once_with("Hello ", raw=True)
     components["clipboard"].copy.assert_not_called()
+
+
+def test_type_mode_without_wtype_counts_clipboard_copy_as_delivery() -> None:
+    session, components = _make_session(cfg=_cfg(mode="type", clipboard=True))
+    components["caps"].has_paste_trigger = False
+
+    assert session._deliver_final("Hello world ")
+
+    components["injector"].type_text.assert_not_called()
+    components["clipboard"].copy.assert_called_once_with("Hello world ", primary=True)
+
+
+def test_type_mode_without_wtype_plays_success_cue_not_error() -> None:
+    session, components = _make_session(cfg=_cfg(mode="type", clipboard=True))
+    components["caps"].has_paste_trigger = False
+    driver = MagicMock()
+    driver.abort = threading.Event()
+    driver.run.return_value = "Hello world "
+
+    session._run_incremental(driver, session._preview_generation)
+
+    components["feedback"].play.assert_called_once_with("transcribe_done")
+
+
+def test_type_mode_reports_failure_when_nothing_reached_the_user() -> None:
+    session, components = _make_session(cfg=_cfg(mode="type", clipboard=True))
+    components["caps"].has_paste_trigger = False
+    components["clipboard"].copy.return_value = False
+
+    assert not session._deliver_final("Hello ")
 
 
 def test_clipboard_paste_delivers_with_two_selections_then_one_chord() -> None:
@@ -140,7 +170,9 @@ def test_output_max_chars_applied_once_before_both_delivery_modes() -> None:
     type_session, type_components = _make_session(cfg=type_cfg)
     assert type_session._deliver_final("abcdefgh")
     type_components["injector"].type_text.assert_called_once_with("abcde", raw=True)
-    type_components["clipboard"].copy.assert_called_once_with("abcde")
+    # The cap bounds what is typed, not what is recoverable: the clipboard is
+    # the only place the truncated tail still exists.
+    type_components["clipboard"].copy.assert_called_once_with("abcdefgh", primary=True)
 
     paste_cfg = dataclasses.replace(
         _cfg(mode="clipboard_paste"),
@@ -233,6 +265,35 @@ def test_cancel_invalidates_and_clears_preview() -> None:
     notification.hide.assert_called_once()
 
 
+def test_cancel_hides_indicator_even_if_clearing_preview_raises() -> None:
+    notification = MagicMock()
+    notification.clear_preview.side_effect = RuntimeError("overlay pipe failed")
+    session, _components = _make_session(notification=notification)
+
+    session.cancel_all()
+
+    notification.hide.assert_called_once()
+
+
+def test_indicator_failure_at_recording_start_strands_nothing() -> None:
+    notification = MagicMock()
+    notification.show_listening.side_effect = RuntimeError("overlay pipe failed")
+    session, components = _make_session(notification=notification)
+    components["recorder"].is_active = True
+
+    session.on_recording_start()
+
+    assert not session._recording
+    assert session._recording_streamer is None
+    components["recorder"].stop.assert_called_once()
+    item = session._utterance_queue.get_nowait()
+    assert isinstance(item, _LiveItem)
+    # The queued driver must be woken, else the processor thread blocks on its
+    # signal queue forever and every later utterance is never transcribed.
+    assert item.streamer.abort.is_set()
+    assert item.streamer._signals.get_nowait()[0] == "abort"
+
+
 def test_discard_aborts_only_current_recording_and_clears_preview() -> None:
     notification = MagicMock()
     session, components = _make_session(notification=notification)
@@ -272,7 +333,7 @@ def test_batch_process_performs_no_partial_output_and_one_final_delivery() -> No
 
     components["worker"].submit.assert_called_once()
     components["injector"].type_text.assert_called_once_with("Hello world ", raw=True)
-    components["clipboard"].copy.assert_called_once_with("Hello world ")
+    components["clipboard"].copy.assert_called_once_with("Hello world ", primary=True)
 
 
 def test_stop_closes_components_and_indicator() -> None:

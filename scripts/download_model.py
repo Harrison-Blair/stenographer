@@ -13,7 +13,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Download the stenographer ASR model.")
     parser.add_argument(
         "--repo-id",
-        default="Systran/faster-distil-whisper-medium.en",
+        default="Systran/faster-whisper-medium.en",
         help="Hugging Face repo id to download (default: %(default)s)",
     )
     args = parser.parse_args()
