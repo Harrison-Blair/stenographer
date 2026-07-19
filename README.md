@@ -37,7 +37,10 @@ content. To change the project description, edit above this line.
 
 ```sh
 # system deps (Debian/Ubuntu names; adjust for your distro)
-sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 libnotify-bin
+sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 \
+  libnotify-bin libgtk-4-1 libgtk4-layer-shell0 gir1.2-freedesktop \
+  gir1.2-gtk4layershell-1.0 gir1.2-gtk-4.0 libgirepository-2.0-dev \
+  libcairo2-dev gcc pkg-config
 sudo usermod -aG input $USER   # log out / back in
 
 git clone … && cd stenographer
@@ -68,7 +71,9 @@ journalctl --user -u stenographer.service -f
 dictation daemon. Press a single configurable global hotkey, speak, and
 the recognised text is typed at the cursor and copied to the Wayland
 clipboard. A short audio cue confirms that recording has started and
-stopped. One keybinding arbitrates both modes: a press of `0.5` s or
+stopped. A bottom-center Wayland overlay keeps the Stenographer logo visible
+and shows live microphone energy across logarithmic frequency bands while
+recording. One keybinding arbitrates both modes: a press of `0.5` s or
 longer is push-to-talk, a shorter press is toggle. Offline, English
 only, GPL-3.0-or-later.
 
@@ -90,6 +95,7 @@ only, GPL-3.0-or-later.
   | `notify-send`       | `libnotify-bin`     | `libnotify`         | (desktop notifications; degrades to a no-op if absent) |
   | `libevdev` runtime  | `libevdev1`         | `libevdev`          | (also `libevdev-dev` / `libevdev-devel` headers, required at install time to build the `evdev` wheel on Python 3.14) |
   | `libportaudio`      | `libportaudio2`     | `portaudio`         | (required by `sounddevice`; bundled in the `sounddevice` wheel on most distros, but a system dep for the PyInstaller binary) |
+  | GTK4 layer shell    | `libgtk-4-1`, `libgtk4-layer-shell0`, `gir1.2-freedesktop`, `gir1.2-gtk4layershell-1.0` | `gobject-introspection`, `gtk4`, `gtk4-layer-shell` | (bottom-center spectrum overlay; falls back to `notify-send` when unavailable) |
 
 - Python ≥ 3.14 (pinned in `.python-version`).
 
@@ -260,6 +266,13 @@ asr.initial_prompt                   = ""      # free-text context prepended to 
 # Audio feedback
 feedback.volume                      = 0.6     # 0.0..1.0
 feedback.mute                        = false
+
+# Bottom-center spectrum overlay
+visualizer.enabled                   = true
+visualizer.frequency_bands           = 16
+visualizer.min_frequency             = 80.0
+visualizer.max_frequency             = 8000.0
+visualizer.margin_bottom             = 32
 
 # Clipboard
 clipboard.enabled                    = true

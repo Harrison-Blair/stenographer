@@ -7,6 +7,7 @@
 # (not bundled because they are system-level):
 #   - libevdev (for python-evdev)
 #   - libportaudio (for sounddevice)
+#   - gtk4-layer-shell (GTK4 support is collected by PyInstaller)
 #   - libGL/Vulkan (for onnxruntime, on most distros)
 # And these CLIs which are probed by `Capabilities.probe`:
 #   - wtype, wl-copy, pw-play, paplay, evdev-readable keyboards
@@ -26,15 +27,34 @@ block_cipher = None
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 ASSET_SRC = PROJECT_ROOT / "src" / "stenographer" / "assets" / "sounds"
 ICON_SRC = PROJECT_ROOT / "src" / "stenographer" / "assets" / "icons"
+FONT_SRC = PROJECT_ROOT / "src" / "stenographer" / "assets" / "fonts"
 
 a = Analysis(
     [str(PROJECT_ROOT / "src" / "stenographer" / "cli.py")],
     pathex=[str(PROJECT_ROOT / "src")],
     binaries=[],
-    datas=[(str(ASSET_SRC), "stenographer/assets/sounds"), (str(ICON_SRC), "stenographer/assets/icons"), (certifi.where(), "certifi"), *copy_metadata("stenographer")],
-    hiddenimports=["sounddevice", "evdev", "evdev._ecodes", "certifi", "argcomplete", *collect_submodules("stenographer")],
+    datas=[
+        (str(ASSET_SRC), "stenographer/assets/sounds"),
+        (str(ICON_SRC), "stenographer/assets/icons"),
+        (str(FONT_SRC), "stenographer/assets/fonts"),
+        (certifi.where(), "certifi"),
+        *copy_metadata("stenographer"),
+    ],
+    hiddenimports=[
+        "sounddevice",
+        "evdev",
+        "evdev._ecodes",
+        "certifi",
+        "argcomplete",
+        "gi.repository.Gdk",
+        "gi.repository.Gio",
+        "gi.repository.GLib",
+        "gi.repository.Gtk",
+        "gi.repository.Gtk4LayerShell",
+        *collect_submodules("stenographer"),
+    ],
     hookspath=[str(PROJECT_ROOT / "packaging")],
-    hooksconfig={},
+    hooksconfig={"gi": {"module-versions": {"Gtk": "4.0", "Gdk": "4.0"}}},
     runtime_hooks=[str(PROJECT_ROOT / "packaging" / "rthooks" / "py_rth_portaudio.py")],
     excludes=[],
     win_no_prefer_redirects=False,

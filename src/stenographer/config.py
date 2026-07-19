@@ -86,6 +86,15 @@ class FeedbackConfig:
     mute: bool
 
 
+@dataclass(frozen=True)
+class VisualizerConfig:
+    enabled: bool
+    frequency_bands: int
+    min_frequency: float
+    max_frequency: float
+    margin_bottom: int
+
+
 ALLOWED_INJECTION_METHODS: frozenset[str] = frozenset({"text", "paste"})
 
 
@@ -132,6 +141,7 @@ class Config:
     audio: AudioConfig
     asr: AsrConfig
     feedback: FeedbackConfig
+    visualizer: VisualizerConfig
     output: OutputConfig
     clipboard: ClipboardConfig
     streaming: StreamingConfig
@@ -173,6 +183,13 @@ class Config:
                 volume=0.6,
                 cues=dict.fromkeys(CUE_NAMES, None),
                 mute=False,
+            ),
+            visualizer=VisualizerConfig(
+                enabled=True,
+                frequency_bands=16,
+                min_frequency=80.0,
+                max_frequency=8000.0,
+                margin_bottom=32,
             ),
             output=OutputConfig(
                 injection_method="paste",
@@ -247,6 +264,7 @@ class Config:
             audio=_build_audio(table["audio"], path),
             asr=_build_asr(table["asr"], path),
             feedback=_build_feedback(table["feedback"], path),
+            visualizer=_build_visualizer(table["visualizer"], path),
             output=_build_output(table["output"], path),
             clipboard=_build_clipboard(table["clipboard"], path),
             streaming=_build_streaming(table["streaming"], path),
@@ -437,6 +455,35 @@ def _build_feedback(table: dict[str, Any], path: pathlib.Path) -> FeedbackConfig
     cues = _build_cues(table.get("cues", {}), path)
     mute = _expect_bool(table, "mute", "feedback.mute", path)
     return FeedbackConfig(volume=volume, cues=cues, mute=mute)
+
+
+def _build_visualizer(table: dict[str, Any], path: pathlib.Path) -> VisualizerConfig:
+    enabled = _expect_bool(table, "enabled", "visualizer.enabled", path)
+    frequency_bands = _expect_int(table, "frequency_bands", "visualizer.frequency_bands", path)
+    if not (6 <= frequency_bands <= 32):
+        raise ConfigError(path, "visualizer.frequency_bands", "must satisfy 6 <= x <= 32")
+    min_frequency = _expect_number(table, "min_frequency", "visualizer.min_frequency", path)
+    if not (20 <= min_frequency <= 2000):
+        raise ConfigError(path, "visualizer.min_frequency", "must satisfy 20 <= x <= 2000")
+    max_frequency = _expect_number(table, "max_frequency", "visualizer.max_frequency", path)
+    if not (1000 <= max_frequency <= 24000):
+        raise ConfigError(path, "visualizer.max_frequency", "must satisfy 1000 <= x <= 24000")
+    if max_frequency <= min_frequency:
+        raise ConfigError(
+            path,
+            "visualizer.max_frequency",
+            "must be greater than visualizer.min_frequency",
+        )
+    margin_bottom = _expect_int(table, "margin_bottom", "visualizer.margin_bottom", path)
+    if not (0 <= margin_bottom <= 500):
+        raise ConfigError(path, "visualizer.margin_bottom", "must satisfy 0 <= x <= 500")
+    return VisualizerConfig(
+        enabled=enabled,
+        frequency_bands=frequency_bands,
+        min_frequency=min_frequency,
+        max_frequency=max_frequency,
+        margin_bottom=margin_bottom,
+    )
 
 
 def _build_cues(raw: Any, path: pathlib.Path) -> dict[str, str | None]:
@@ -652,6 +699,7 @@ def _format_default_toml() -> str:
     a = cfg.audio
     r = cfg.asr
     f = cfg.feedback
+    v = cfg.visualizer
     o = cfg.output
     c = cfg.clipboard
     s = cfg.streaming
@@ -695,6 +743,13 @@ def _format_default_toml() -> str:
         "# Audio feedback",
         f"feedback.volume = {f.volume}",
         f"feedback.mute = {_toml_bool(f.mute)}",
+        "",
+        "# Bottom-center Wayland spectrum overlay",
+        f"visualizer.enabled = {_toml_bool(v.enabled)}",
+        f"visualizer.frequency_bands = {v.frequency_bands}",
+        f"visualizer.min_frequency = {v.min_frequency}",
+        f"visualizer.max_frequency = {v.max_frequency}",
+        f"visualizer.margin_bottom = {v.margin_bottom}",
         "",
         "# Text output",
         f"output.injection_method = {_toml_str(o.injection_method)}",

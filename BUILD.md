@@ -56,8 +56,8 @@ lives in `dist/stenographer/_internal/` (the Python interpreter, all
 dependencies, and the six sound cues under
 `_internal/stenographer/assets/sounds/`).
 
-The total directory is currently ~370 MB on Linux x86_64. The largest
-contributors are CTranslate2 (~60 MB) and ONNX Runtime (~55 MB).
+The total directory is currently ~510 MB on Linux x86_64. The largest
+contributors include the GTK runtime, CTranslate2, and ONNX Runtime.
 
 ## What the binary does NOT bundle
 
@@ -65,14 +65,16 @@ contributors are CTranslate2 (~60 MB) and ONNX Runtime (~55 MB).
 |--------------------------------------|-------------------------------------------------|
 | ASR model (`distil-whisper-medium.en`, ~800 MB) | `./dist/stenographer/stenographer model download` |
 | System CLIs (`wtype`, `wl-copy`, `pw-play`, `paplay`, `notify-send`) | Distro packages — see the Requirements table in `README.md` |
-| System libraries (`libevdev`, `libportaudio`) | Distro packages                  |
+| System libraries (`libevdev`, `libportaudio`, GTK4, `gtk4-layer-shell`) | Distro packages |
 
 ## Runtime dependencies on the target machine
 
 Install once on the target machine (Debian/Ubuntu names shown):
 
 ```sh
-sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 libnotify-bin
+sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 \
+  libnotify-bin libgtk-4-1 libgtk4-layer-shell0 gir1.2-freedesktop \
+  gir1.2-gtk4layershell-1.0
 sudo usermod -aG input $USER   # log out / back in for this to take effect
 ```
 

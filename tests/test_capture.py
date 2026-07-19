@@ -43,6 +43,38 @@ def test_start_opens_input_stream_with_expected_kwargs() -> None:
     returned_stream.close.assert_called_once()
 
 
+def test_audio_observer_can_request_a_faster_callback_cadence() -> None:
+    fake_stream = MagicMock()
+    with patch("sounddevice.InputStream", fake_stream) as patched:
+        r = Recorder(
+            sample_rate=16000,
+            frames_per_buffer=1024,
+            device=None,
+            on_error=_noop,
+            on_audio=lambda _samples, _rate: None,
+            max_audio_observer_interval_seconds=1.0 / 60.0,
+        )
+        r.start()
+    assert patched.call_args.kwargs["blocksize"] == 266
+    r.stop()
+
+
+def test_audio_observer_cadence_does_not_enlarge_configured_blocks() -> None:
+    fake_stream = MagicMock()
+    with patch("sounddevice.InputStream", fake_stream) as patched:
+        r = Recorder(
+            sample_rate=16000,
+            frames_per_buffer=128,
+            device=None,
+            on_error=_noop,
+            on_audio=lambda _samples, _rate: None,
+            max_audio_observer_interval_seconds=1.0 / 60.0,
+        )
+        r.start()
+    assert patched.call_args.kwargs["blocksize"] == 128
+    r.stop()
+
+
 def test_start_normalizes_empty_string_device_to_none() -> None:
     fake_stream = MagicMock()
     with patch("sounddevice.InputStream", fake_stream) as patched:
@@ -89,6 +121,46 @@ def test_callback_accumulates_samples_and_stop_returns_2d_float32() -> None:
     assert np.allclose(arr[:frames, 0], 1.0)
     assert np.allclose(arr[frames:, 0], 0.0)
     assert r.is_active is False
+
+
+def test_callback_publishes_mono_audio_at_actual_sample_rate() -> None:
+    observed: list[tuple[np.ndarray, int]] = []
+    fake_stream = MagicMock()
+    with patch("sounddevice.InputStream", fake_stream):
+        r = Recorder(
+            sample_rate=16000,
+            frames_per_buffer=4,
+            device=None,
+            on_error=_noop,
+            on_audio=lambda samples, rate: observed.append((samples.copy(), rate)),
+        )
+        r.start()
+    stereo = np.array(
+        [[0.1, 0.9], [0.2, 0.8], [0.3, 0.7], [0.4, 0.6]],
+        dtype=np.float32,
+    )
+    r._on_audio(stereo, 4, None, None)
+    r.stop()
+    assert len(observed) == 1
+    assert observed[0][1] == 16000
+    assert np.allclose(observed[0][0], stereo[:, 0])
+
+
+def test_callback_ignores_audio_observer_failure() -> None:
+    def fail(_samples: np.ndarray, _rate: int) -> None:
+        raise RuntimeError("visualizer failed")
+
+    with patch("sounddevice.InputStream", MagicMock()):
+        r = Recorder(
+            sample_rate=16000,
+            frames_per_buffer=4,
+            device=None,
+            on_error=_noop,
+            on_audio=fail,
+        )
+        r.start()
+    r._on_audio(np.ones((4, 1), dtype=np.float32), 4, None, None)
+    assert r.stop().shape == (4, 1)
 
 
 def test_input_overflow_calls_on_error_exactly_once_on_stop() -> None:

@@ -28,9 +28,9 @@ if TYPE_CHECKING:
     from stenographer.capabilities import Capabilities
     from stenographer.config import Config
     from stenographer.hotkey.listener import HotkeyListener
-    from stenographer.notification import DesktopNotification
     from stenographer.output.clipboard import ClipboardManager
     from stenographer.output.inject import Injector
+    from stenographer.visualizer import StatusIndicator
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class Session:
         feedback: Feedback,
         injector: Injector,
         clipboard: ClipboardManager,
-        notification: DesktopNotification | None = None,
+        notification: StatusIndicator | None = None,
         one_shot: bool = False,
     ) -> None:
         self._cfg = cfg
@@ -178,7 +178,7 @@ class Session:
         return self._lock
 
     @property
-    def notification(self) -> DesktopNotification | None:
+    def notification(self) -> StatusIndicator | None:
         return self._notification
 
     def attach_listener(self, listener: HotkeyListener) -> None:

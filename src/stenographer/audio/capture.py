@@ -91,6 +91,8 @@ class Recorder:
         silence_detection: bool = False,
         silence_rms_threshold: float = 0.01,
         silence_duration_seconds: float = 1.5,
+        on_audio: Callable[[np.ndarray, int], None] | None = None,
+        max_audio_observer_interval_seconds: float | None = None,
     ) -> None:
         self._configured_rate = sample_rate
         self._sample_rate = sample_rate
@@ -101,6 +103,8 @@ class Recorder:
         self._silence_detection = silence_detection
         self._silence_rms_threshold = silence_rms_threshold
         self._silence_duration_seconds = silence_duration_seconds
+        self._on_audio_block = on_audio
+        self._max_audio_observer_interval_seconds = max_audio_observer_interval_seconds
         self._stream: sounddevice.InputStream | None = None
         self._buffer: bytearray | None = None
         # Guards _buffer appends/reads shared between the PortAudio callback
@@ -157,11 +161,21 @@ class Recorder:
         for channels in _FALLBACK_CHANNELS:
             for rate in rates_to_try:
                 try:
+                    blocksize = self._frames_per_buffer
+                    if (
+                        self._on_audio_block is not None
+                        and self._max_audio_observer_interval_seconds is not None
+                    ):
+                        observer_blocksize = max(
+                            64,
+                            int(rate * self._max_audio_observer_interval_seconds),
+                        )
+                        blocksize = min(blocksize, observer_blocksize)
                     self._stream = sounddevice.InputStream(
                         samplerate=rate,
                         channels=channels,
                         dtype="float32",
-                        blocksize=self._frames_per_buffer,
+                        blocksize=blocksize,
                         device=self._device,
                         callback=self._on_audio,
                     )
@@ -215,6 +229,13 @@ class Recorder:
                     indata = indata[:, 0:1]
                 with self._buffer_lock:
                     self._buffer.extend(indata.tobytes())
+                if self._on_audio_block is not None:
+                    try:
+                        self._on_audio_block(indata[:, 0], self._sample_rate)
+                    except Exception as exc:
+                        # Visual feedback is optional and must never interrupt
+                        # PortAudio's real-time callback.
+                        logger.debug("recorder: audio observer failed: %s", exc)
                 if self._silence_detection and self._on_segment is not None:
                     self._detect_silence(indata[:, 0], frames)
                 if self._on_partial is not None:

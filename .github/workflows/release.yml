@@ -18,7 +18,10 @@ jobs:
       - name: Install system test deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libportaudio2
+          sudo apt-get install -y \
+            gcc gir1.2-freedesktop gir1.2-gtk-4.0 libcairo2-dev \
+            libgirepository-2.0-dev \
+            libportaudio2 pkg-config
       - name: Install dev extras
         run: |
           python -m venv .venv
@@ -46,7 +49,10 @@ jobs:
       - name: Install system build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y wtype wl-clipboard pipewire-audio libevdev-dev libportaudio2
+          sudo apt-get install -y \
+            gcc gir1.2-freedesktop gir1.2-gtk-4.0 libcairo2-dev libevdev-dev \
+            libgirepository-2.0-dev libportaudio2 pipewire-audio pkg-config \
+            wl-clipboard wtype
       - name: Install build extras
         run: |
           python -m venv .venv

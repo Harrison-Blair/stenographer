@@ -105,16 +105,16 @@ fi
 detect_deps() {  # sets PM_INSTALL and DEPS
     if command -v apt-get >/dev/null 2>&1; then
         PM_INSTALL="sudo apt-get update && sudo apt-get install -y"
-        DEPS="wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 libnotify-bin"
+        DEPS="wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 libnotify-bin libgtk-4-1 libgtk4-layer-shell0 gir1.2-freedesktop gir1.2-gtk4layershell-1.0"
     elif command -v dnf >/dev/null 2>&1; then
         PM_INSTALL="sudo dnf install -y"
-        DEPS="wtype wl-clipboard pipewire-utils libevdev portaudio libnotify"
+        DEPS="wtype wl-clipboard pipewire-utils libevdev portaudio libnotify gobject-introspection gtk4 gtk4-layer-shell"
     elif command -v pacman >/dev/null 2>&1; then
         PM_INSTALL="sudo pacman -S --needed"
-        DEPS="wtype wl-clipboard pipewire libevdev portaudio libnotify"
+        DEPS="wtype wl-clipboard pipewire libevdev portaudio libnotify gobject-introspection-runtime gtk4 gtk4-layer-shell"
     else
         PM_INSTALL=""
-        DEPS="wtype wl-clipboard pipewire libevdev libportaudio libnotify"
+        DEPS="wtype wl-clipboard pipewire libevdev libportaudio libnotify GTK4 gtk4-layer-shell"
     fi
 }
 
@@ -125,9 +125,10 @@ install_deps() {
     command -v wl-copy     >/dev/null 2>&1 || missing+=("wl-copy")
     command -v pw-play     >/dev/null 2>&1 || command -v paplay >/dev/null 2>&1 || missing+=("pw-play/paplay")
     command -v notify-send >/dev/null 2>&1 || missing+=("notify-send")
+    ldconfig -p 2>/dev/null | grep -q libgtk4-layer-shell || missing+=("gtk4-layer-shell")
 
     if [[ ${#missing[@]} -eq 0 ]]; then
-        ok "core CLIs present (wtype, wl-copy, pw-play/paplay, notify-send)"
+        ok "core CLIs and GTK4 layer shell present"
     else
         warn "missing: ${missing[*]}"
     fi

@@ -18,6 +18,7 @@ from stenographer.config import (
     HotkeyConfig,
     OutputConfig,
     UpdateConfig,
+    VisualizerConfig,
     load_or_default,
     resolve_config_path,
 )
@@ -106,6 +107,16 @@ def test_defaults_feedback() -> None:
     assert all(v is None for v in fb.cues.values())
 
 
+def test_defaults_visualizer() -> None:
+    assert Config.defaults().visualizer == VisualizerConfig(
+        enabled=True,
+        frequency_bands=16,
+        min_frequency=80.0,
+        max_frequency=8000.0,
+        margin_bottom=32,
+    )
+
+
 def test_defaults_output() -> None:
     assert Config.defaults().output == OutputConfig(
         injection_method="paste",
@@ -158,6 +169,8 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
             asr.compute_type = "int8"
             feedback.volume = 0.3
             feedback.mute = true
+            visualizer.frequency_bands = 20
+            visualizer.margin_bottom = 48
             output.injection_method = "text"
             output.append_trailing_space = false
             output.max_chars = 1000
@@ -174,6 +187,8 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
     assert cfg.asr.compute_type == "int8"
     assert cfg.feedback.volume == 0.3
     assert cfg.feedback.mute is True
+    assert cfg.visualizer.frequency_bands == 20
+    assert cfg.visualizer.margin_bottom == 48
     # text mode, so clipboard.enabled = false is coherent here; paste mode
     # delivers *via* the clipboard and is covered by the cross-section tests.
     assert cfg.output.injection_method == "text"
@@ -584,6 +599,37 @@ def test_validate_volume_too_high_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text("[stenographer]\nfeedback.volume = 1.5\n")
     with pytest.raises(ConfigError, match=r"feedback.volume"):
+        Config.load(p)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("frequency_bands", "5"),
+        ("frequency_bands", "33"),
+        ("min_frequency", "10"),
+        ("max_frequency", "25000"),
+        ("margin_bottom", "-1"),
+        ("margin_bottom", "501"),
+    ],
+)
+def test_validate_visualizer_ranges_rejected(
+    tmp_path: pathlib.Path,
+    key: str,
+    value: str,
+) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\nvisualizer.{key} = {value}\n")
+    with pytest.raises(ConfigError, match=rf"visualizer\.{key}"):
+        Config.load(p)
+
+
+def test_validate_visualizer_frequency_order_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[stenographer]\nvisualizer.min_frequency = 1500\nvisualizer.max_frequency = 1200\n"
+    )
+    with pytest.raises(ConfigError, match=r"visualizer.max_frequency"):
         Config.load(p)
 
 

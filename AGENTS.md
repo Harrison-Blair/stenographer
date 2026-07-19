@@ -20,7 +20,7 @@ Key tracked paths:
   `STENOGRAPHER_INTEGRATION=1`).
 - `src/stenographer/` — the package (cli, `_parser`, session,
   capabilities, config, errors, notification, update, bench, and the
-  `hotkey/`, `audio/`, `asr/`, `output/` subpackages + `assets/`).
+  visualizer, `hotkey/`, `audio/`, `asr/`, `output/` subpackages + `assets/`).
 - `tests/` — pytest suite mirroring `src/` plus `tests/fixtures/`.
 - `packaging/` — `stenographer.service.in` (systemd user unit template),
   `stenographer.spec` (PyInstaller), PyInstaller hooks, bash completion.
@@ -66,13 +66,16 @@ is `.python-version` (3.14).
 - **Recreating the venv.** If `.venv/` is missing or stale:
   `python3 -m venv .venv && .venv/bin/pip install -e ".[dev,build]"`.
   The `dev` extra pulls in `ruff` and `pytest`; the `build` extra
-  pulls in `pyinstaller` for the standalone binary.
+  pulls in `pyinstaller` for the standalone binary. Building the mandatory
+  PyGObject dependency also needs the distro's GObject-introspection and
+  Cairo development packages; the GTK overlay additionally needs GTK4 and
+  `gtk4-layer-shell`.
 - **Building the standalone binary.** `scripts/build.sh` (wraps
   `pyinstaller --noconfirm --clean packaging/stenographer.spec`).
   Output: `dist/stenographer/stenographer`. Runtime system
   requirements on the target machine: `wtype`, `wl-clipboard`,
   `pipewire` (or `pulseaudio`), `libevdev1`, `libportaudio2`,
-  `libnotify` (`notify-send`), plus the user's `input` group
+  GTK4, `gtk4-layer-shell`, `libnotify` (`notify-send`), plus the user's `input` group
   membership. See `BUILD.md`.
 
 ## Post-change workflow
@@ -120,6 +123,8 @@ against the unfixed code), then fix.
 These decisions are baked into `pyproject.toml`.
 
 - **Stack:** Python 3.14 CLI daemon.
+- **Wayland HUD:** PyGObject + GTK4 + `gtk4-layer-shell`, with `notify-send`
+  as the automatic fallback.
 - **Layout:** `src/stenographer/` (src-layout); `tests/` mirrors
   the package layout.
 - **Project metadata:** `pyproject.toml` is the single source of
@@ -153,6 +158,7 @@ When in doubt, read the code in this order:
 7. `update.py` — the `update` subcommand (GitHub Releases transport,
    onedir self-replace, daemon stop / start).
 8. `README.md` / `BUILD.md` — install, run, and packaging behaviour.
+9. `visualizer.py` — GTK4 layer-shell status HUD and frequency-band analysis.
 
 ## When this file goes stale
 
