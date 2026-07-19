@@ -108,7 +108,7 @@ class Recorder:
         self._stream: sounddevice.InputStream | None = None
         self._buffer: bytearray | None = None
         # Guards _buffer appends/reads shared between the PortAudio callback
-        # and snapshot() on the streaming driver thread. Held only around the
+        # and snapshot() on the incremental driver thread. Held only around the
         # extend/copy themselves, so the callback stays effectively
         # non-blocking.
         self._buffer_lock = threading.Lock()
@@ -122,7 +122,7 @@ class Recorder:
         self._speech_frames = 0
         self._seen_speech = False
         self._flushed = False
-        # Live-streaming partial signal, reset every start().
+        # Incremental-decode partial signal, reset every start().
         self._on_partial: Callable[[], None] | None = None
         self._min_partial_seconds = 1.0
         self._partial_frames = 0
@@ -136,7 +136,7 @@ class Recorder:
     ) -> None:
         """Open the input stream.
 
-        *on_segment* (silence-flush) and *on_partial* (streaming signal) are
+        *on_segment* (silence-flush) and *on_partial* (incremental signal) are
         mutually exclusive; the session wires one or the other. *on_partial*
         fires on the PortAudio thread every *min_partial_seconds* of newly
         captured audio and must only enqueue a signal and return.
@@ -305,7 +305,7 @@ class Recorder:
         seconds) to now, as a mono ``(N, 1)`` float32 array at the configured
         rate.
 
-        Called from the streaming driver thread while the PortAudio callback
+        Called from the incremental driver thread while the PortAudio callback
         is still appending. The raw device-rate buffer is sliced under the
         lock (cost proportional to the window, not the recording) and
         resampled outside it. Second-based slicing keeps the boundary

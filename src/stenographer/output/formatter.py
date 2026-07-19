@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Heuristic text formatting: spacing, capitalisation, pause-based paragraphs.
 
-Sits between the transcriber and the output sink. In the live streaming path
+Sits between the transcriber and the output sink. In the incremental path
 each committed word passes through :meth:`HeuristicFormatter.feed` exactly
-once and the result is typed immediately, so every decision may depend only
-on already-emitted left context plus the incoming token's start timestamp —
-the formatter is append-only by construction. Batch paths (paste mode,
-``transcribe FILE``) use :meth:`format_batch` over whole segments.
+once, so every decision may depend only on the stable left context plus the
+incoming token's start timestamp. The formatter is append-only by
+construction. Batch paths (such as ``transcribe FILE``) use
+:meth:`format_batch` over whole segments.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ class HeuristicFormatter:
         self._capitalize_next = True
 
     def format_batch(self, tokens: Sequence[_Token]) -> str:
-        """One-shot formatting for batch paths (paste mode, transcribe FILE)."""
+        """One-shot formatting for batch paths such as ``transcribe FILE``."""
         self.reset()
         out = self.feed(tokens) + self.finalize()
         return out
@@ -78,7 +78,7 @@ class HeuristicFormatter:
             # produced it. Deriving a separator, a capital, or a paragraph
             # break here means emitting a character the model did not, which
             # is the one thing this mode exists to opt out of -- and in the
-            # live path it is pasted irreversibly.
+            # incremental path it becomes part of the stable preview prefix.
             self._started = True
             self._prev_end = end
             return text

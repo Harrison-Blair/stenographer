@@ -743,6 +743,11 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
         print("mic device:     NO  (recording disabled)")
     print(f"asr model:      {'yes' if caps.has_asr_model else 'NO  (transcription disabled)'}")
     print(f"asr.mode:       {cfg.asr.mode}")
+    print(f"output mode:    {cfg.output.injection_method}")
+    print(
+        "incremental:    always on "
+        f"(chunk={cfg.incremental.min_chunk_seconds:g}s, agreement={cfg.incremental.agreement_n})"
+    )
     print(f"asr.idle_unload_seconds: {cfg.asr.idle_unload_seconds} (0 = disabled)")
     has_notify = DesktopNotification.probe()
     print(f"notify-send:    {'yes' if has_notify else 'NO  (desktop notification disabled)'}")

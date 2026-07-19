@@ -69,13 +69,13 @@ journalctl --user -u stenographer.service -f
 
 `stenographer` is a Wayland-only, local-only push-to-talk / toggle
 dictation daemon. Press a single configurable global hotkey, speak, and
-the recognised text is typed at the cursor and copied to the Wayland
-clipboard. A short audio cue confirms that recording has started and
-stopped. A bottom-center Wayland overlay keeps the Stenographer logo visible
-and shows live microphone energy across logarithmic frequency bands while
-recording. One keybinding arbitrates both modes: a press of `0.5` s or
-longer is push-to-talk, a shorter press is toggle. Offline, English
-only, GPL-3.0-or-later.
+the completed transcript is delivered once to the focused application.
+Incremental word-level decoding runs throughout the recording; the
+bottom-center Wayland HUD shows its stable transcript prefix and fainter
+revisable tail above the live microphone spectrum. No text is written to
+the cursor or clipboard until the final decode completes. One keybinding
+arbitrates both modes: a press of `0.5` s or longer is push-to-talk, a
+shorter press is toggle. Offline, English only, GPL-3.0-or-later.
 
 ## Requirements
 
@@ -267,18 +267,34 @@ asr.initial_prompt                   = ""      # free-text context prepended to 
 feedback.volume                      = 0.6     # 0.0..1.0
 feedback.mute                        = false
 
-# Bottom-center spectrum overlay
+# Bottom-center status, transcript preview, and spectrum overlay
 visualizer.enabled                   = true
 visualizer.frequency_bands           = 16
 visualizer.min_frequency             = 80.0
 visualizer.max_frequency             = 8000.0
 visualizer.margin_bottom             = 32
 
+# Final delivery: "type" invokes wtype once; "clipboard_paste" writes both
+# Wayland selections and sends one Shift+Insert chord.
+output.injection_method              = "clipboard_paste"
+output.append_trailing_space         = true
+output.max_chars                     = 4096
+
 # Clipboard
 clipboard.enabled                    = true
+
+# Incremental decoding is always active. These tune its cumulative re-decodes.
+incremental.min_chunk_seconds        = 1.0
+incremental.agreement_n              = 2
+incremental.beam_size                = null    # null => asr.beam_size
+incremental.max_buffer_seconds       = 20.0
 ```
 
 See `stenographer.config` for the full schema and validation rules.
+The legacy output values `text` and `paste` are rejected. Legacy
+`streaming.*` tuning keys are temporarily migrated with a warning when the
+corresponding `incremental.*` key is absent; `streaming.enabled` is ignored
+because incremental decoding is unconditional.
 
 ## Run under systemd
 

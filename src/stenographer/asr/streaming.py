@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Word-level commit policy for live streaming via LocalAgreement-N.
+"""Word-level commit policy for incremental decoding via LocalAgreement-N.
 
-The live path re-decodes a growing audio window while recording and types
-each word the moment it is *committed*. ``wtype`` cannot un-type, so a word
-is committed only once the last ``N`` consecutive re-decodes agree on it —
-committed text is immutable and every intermediate typed state is a prefix
-of the final transcript.
+The incremental path re-decodes a growing audio window while recording. A
+word is committed only once the last ``N`` consecutive re-decodes agree on
+it; the remaining latest hypothesis is exposed as a revisable preview tail.
 
 This class is a pure committer: the driver owns audio capture and decoding
 and feeds each full hypothesis (word list for the current window) into
@@ -30,8 +28,8 @@ def _agreement_key(word: str) -> str:
     """Normalise a word token for agreement comparison (not for output).
 
     Case-insensitive but punctuation-SENSITIVE: ``"world."`` and ``"world"``
-    do not agree, so typed punctuation never needs revision. Casing is owned
-    by the formatter downstream, so ``"The"`` and ``"the"`` do agree.
+    do not agree, so committed punctuation never needs revision. Casing is
+    owned by the formatter downstream, so ``"The"`` and ``"the"`` do agree.
     """
     return word.strip().lower()
 
@@ -63,8 +61,7 @@ class StreamingTranscriber:
     utterance to commit the residual tail, and :meth:`rebase` after the
     driver trims the audio window.
 
-    The committed prefix is append-only: it is never revised, matching the
-    irreversibility of typed output.
+    The committed prefix is append-only; the provisional tail may be revised.
     """
 
     def __init__(self, *, agreement_n: int = 2) -> None:
@@ -86,6 +83,11 @@ class StreamingTranscriber:
     @property
     def committed_words(self) -> list[WordInfo]:
         return list(self._committed)
+
+    @property
+    def provisional_words(self) -> list[WordInfo]:
+        """Return the latest uncommitted hypothesis with absolute timestamps."""
+        return [self._to_absolute(word) for word in self._last_tail]
 
     def insert(self, hypothesis: list[WordInfo]) -> list[WordInfo]:
         """Feed the latest re-decode of the current window; return new commits.

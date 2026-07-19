@@ -81,7 +81,7 @@ class Worker:
     ) -> concurrent.futures.Future[list[WordInfo]]:
         """Enqueue a single word-timestamped re-decode of *samples*.
 
-        Used by the live streaming driver: one job per interim re-decode of
+        Used by the incremental driver: one job per interim re-decode of
         the growing utterance window.  Honors the same mid-job cancellation
         and lazy model loading as :meth:`submit`.
         """

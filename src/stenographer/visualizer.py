@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes.util
+import html
 import importlib.util
 import itertools
 import json
@@ -220,6 +221,19 @@ class LayerShellOverlay:
     def show_levels(self, levels: list[float]) -> None:
         self._send({"command": "levels", "levels": levels})
 
+    def show_preview(self, stable: str, provisional: str) -> None:
+        self._send(
+            {
+                "command": "preview",
+                "stable": stable,
+                "provisional": provisional,
+            }
+        )
+
+    def clear_preview(self) -> None:
+        if self._process is not None:
+            self._send({"command": "preview_clear"})
+
     def hide(self) -> bool:
         if self._process is None:
             return False
@@ -408,6 +422,15 @@ class StatusIndicator:
     def publish_audio(self, samples: np.ndarray, sample_rate: int) -> None:
         self._analyzer.submit(samples, sample_rate)
 
+    def show_preview(self, stable: str, provisional: str) -> None:
+        """Update only the GTK overlay; transcript text is never notified."""
+        if self._overlay is not None:
+            self._overlay.show_preview(stable, provisional)
+
+    def clear_preview(self) -> None:
+        if self._overlay is not None:
+            self._overlay.clear_preview()
+
     def hide(self) -> None:
         self._analyzer.set_active(False)
         if self._overlay is not None:
@@ -462,7 +485,34 @@ window {
   font-size: 20px;
   font-weight: 600;
 }
+.stenographer-preview {
+  color: rgba(242, 242, 242, 0.52);
+  font-family: sans-serif;
+  font-size: 12px;
+}
 """
+
+
+def _preview_markup(stable: str, provisional: str) -> str:
+    """Return escaped Pango markup with a fainter revisable tail."""
+    stable_escaped = html.escape(stable, quote=False)
+    provisional_escaped = html.escape(provisional, quote=False)
+    return (
+        f'<span foreground="#f2f2f2" alpha="52%">{stable_escaped}</span>'
+        f'<span foreground="#f2f2f2" alpha="28%">{provisional_escaped}</span>'
+    )
+
+
+def _prepare_spectrum_context(
+    context: Any, width: int, height: int, *, clear_operator: Any
+) -> None:
+    """Clear stale pixels and clip spectrum painting to its drawing area."""
+    context.save()
+    context.set_operator(clear_operator)
+    context.paint()
+    context.restore()
+    context.rectangle(0, 0, width, height)
+    context.clip()
 
 
 def _register_application_font(font_map: Any, path: str, family: str) -> bool:
@@ -485,7 +535,7 @@ def run_overlay_process() -> int:
         gi.require_version("Gtk", "4.0")
         gi.require_version("Gdk", "4.0")
         gi.require_version("Gtk4LayerShell", "1.0")
-        from gi.repository import Gdk, Gio, GLib, Gtk, Gtk4LayerShell, PangoCairo
+        from gi.repository import Gdk, Gio, GLib, Gtk, Gtk4LayerShell, Pango, PangoCairo
     except (ImportError, ValueError, AttributeError) as exc:
         print(f"ERROR: {exc}", flush=True)
         return 1
@@ -499,6 +549,7 @@ def run_overlay_process() -> int:
             self.app.connect("activate", self._activate)
             self.window: Any | None = None
             self.status: Any | None = None
+            self.preview: Any | None = None
             self.icon: Any | None = None
             self.drawing: Any | None = None
             self.levels = [0.0] * 16
@@ -560,6 +611,17 @@ def run_overlay_process() -> int:
             self.status.add_css_class("stenographer-status")
             content.append(self.status)
 
+            self.preview = Gtk.Label()
+            self.preview.set_xalign(0.0)
+            self.preview.set_width_chars(42)
+            self.preview.set_max_width_chars(42)
+            self.preview.set_ellipsize(Pango.EllipsizeMode.START)
+            self.preview.set_single_line_mode(True)
+            self.preview.set_hexpand(True)
+            self.preview.set_visible(False)
+            self.preview.add_css_class("stenographer-preview")
+            content.append(self.preview)
+
             self.drawing = Gtk.DrawingArea()
             self.drawing.set_content_width(280)
             self.drawing.set_content_height(54)
@@ -609,6 +671,17 @@ def run_overlay_process() -> int:
                     self.levels = [float(np.clip(value, 0.0, 1.0)) for value in incoming]
                     self.drawing.queue_draw()
                 return GLib.SOURCE_REMOVE
+            if command == "preview":
+                stable = message.get("stable", "")
+                provisional = message.get("provisional", "")
+                if isinstance(stable, str) and isinstance(provisional, str):
+                    self.preview.set_markup(_preview_markup(stable, provisional))
+                    self.preview.set_visible(bool(stable or provisional))
+                return GLib.SOURCE_REMOVE
+            if command == "preview_clear":
+                self.preview.set_label("")
+                self.preview.set_visible(False)
+                return GLib.SOURCE_REMOVE
             if command == "state":
                 self._set_state(
                     str(message.get("state", "hidden")),
@@ -644,6 +717,15 @@ def run_overlay_process() -> int:
                 GLib.timeout_add(timeout_ms, hide_if_current)
 
         def _draw_spectrum(self, _area: Any, context: Any, width: int, height: int) -> None:
+            # Explicitly clear and clip every frame. Some GTK/Cairo compositor
+            # combinations otherwise retain a stale antialiased edge pixel
+            # after a tall bar shrinks, visible as a lone white HUD speck.
+            _prepare_spectrum_context(
+                context,
+                width,
+                height,
+                clear_operator=cairo.Operator.CLEAR,
+            )
             count = max(1, len(self.levels))
             gap = 5.0
             baseline = max(2.0, height - 8.0)

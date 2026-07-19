@@ -1,15 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Live streaming driver: paste committed words while recording continues.
+"""Incremental transcription driver for one recorded utterance.
 
-``LiveStreamer`` runs one streamed utterance on the session-processor thread.
-The recorder's PortAudio callback posts cheap partial signals; each partial
-triggers a re-decode of the current audio window via the worker, the
-LocalAgreement committer confirms a stable word prefix, and only the newly
-confirmed delta is formatted, copied to the clipboard and pasted at the
-cursor. Delivered text is never revised — every intermediate state is a
-prefix of the final transcript — so cancel simply stops pasting and leaves
-what is at the cursor. A delta that fails to deliver latches output off for
-the rest of the utterance rather than pasting a later delta past the gap.
+The recorder posts cheap partial signals. Each signal cumulatively re-decodes
+the current audio window, LocalAgreement commits an append-only stable prefix,
+and the newest uncommitted hypothesis is published as a revisable preview
+tail. This module never writes to the clipboard or focused application.
 """
 
 from __future__ import annotations
@@ -18,21 +13,19 @@ import logging
 import queue
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from stenographer.asr.worker import CancelledError
+from stenographer.output.formatter import HeuristicFormatter
 
 if TYPE_CHECKING:
     from stenographer.asr.streaming import StreamingTranscriber
     from stenographer.asr.worker import Worker
     from stenographer.audio.capture import Recorder
-    from stenographer.capabilities import Capabilities
     from stenographer.config import Config
-    from stenographer.output.clipboard import ClipboardManager
-    from stenographer.output.formatter import HeuristicFormatter
-    from stenographer.output.inject import Injector
 
 log = logging.getLogger(__name__)
 
@@ -63,8 +56,8 @@ _SILENCE_FLOOR_RMS = 0.0005
 _SENTENCE_TERMINALS = ".?!"
 
 
-class LiveStreamer:
-    """Drives one streamed utterance: partials -> commit -> format -> paste."""
+class IncrementalDriver:
+    """Drive partial decodes and return one fully formatted final transcript."""
 
     def __init__(
         self,
@@ -72,34 +65,22 @@ class LiveStreamer:
         cfg: Config,
         recorder: Recorder,
         worker: Worker,
-        injector: Injector,
         transcriber: StreamingTranscriber,
         formatter: HeuristicFormatter,
-        clipboard: ClipboardManager,
-        caps: Capabilities,
         abort: threading.Event,
+        on_preview: Callable[[str, str], None] | None = None,
     ) -> None:
         self._cfg = cfg
         self._recorder = recorder
         self._worker = worker
-        self._injector = injector
         self._transcriber = transcriber
         self._formatter = formatter
-        self._clipboard = clipboard
-        self._caps = caps
         self._abort = abort
+        self._on_preview = on_preview
         self._signals: queue.Queue[tuple[str, np.ndarray | None]] = queue.Queue()
         # Seconds of audio trimmed off the start of the decode window.
         self._trim_offset = 0.0
-        # What actually reached the cursor (the prefix invariant, and run()'s
-        # return value) vs. everything the user said. These answer different
-        # questions and diverge exactly when delivery latches off below.
-        self._typed = ""
         self._transcript = ""
-        self._max_chars_hit = False
-        # Latched when a delta fails to deliver: no further delta may be
-        # pasted, or the delivered text would continue past a gap.
-        self._delivery_failed = False
 
     @property
     def abort(self) -> threading.Event:
@@ -121,15 +102,15 @@ class LiveStreamer:
 
     # -- driver (session-processor thread) ------------------------------------
 
-    def run(self) -> str:
-        """Consume signals until the utterance ends; return the typed text."""
+    def run(self) -> str | None:
+        """Return the final transcript, or ``None`` after cancellation/failure."""
         try:
             return self._run()
         finally:
             self._transcriber.reset()
             self._formatter.reset()
 
-    def _run(self) -> str:
+    def _run(self) -> str | None:
         while True:
             kind, samples = self._signals.get()
             # Coalesce: re-decodes are cumulative, so pending partials collapse
@@ -145,13 +126,13 @@ class LiveStreamer:
                 if next_kind == _ABORT or (next_kind == _FINAL and kind != _ABORT):
                     kind, samples = next_kind, next_samples
             if kind == _ABORT or self._abort.is_set():
-                log.info("live: aborted; leaving %d typed chars in place", len(self._typed))
-                return self._typed
+                log.info("incremental: aborted")
+                return None
             if kind == _FINAL:
                 assert samples is not None
                 return self._finish(samples)
             if not self._step():
-                return self._typed
+                return None
 
     def _step(self) -> bool:
         """One interim re-decode. Returns False when aborted mid-decode."""
@@ -166,7 +147,8 @@ class LiveStreamer:
         if words is not None:
             delta = self._transcriber.insert(words)
             if delta:
-                self._emit(self._formatter.feed(delta))
+                self._transcript += self._formatter.feed(delta)
+            self._publish_preview()
         # Trimming is gated on the budget, not on this re-decode having
         # committed anything: an agreement-free stretch commits no delta for
         # many partials in a row, and that is exactly when the window is
@@ -174,52 +156,25 @@ class LiveStreamer:
         self._maybe_trim(window_seconds)
         return True
 
-    def _finish(self, samples: np.ndarray) -> str:
-        """Final decode on recording stop: flush the tail and finish output."""
+    def _finish(self, samples: np.ndarray) -> str | None:
+        """Final-decode, flush, and return formatted output without delivery."""
         start = round(self._trim_offset * self._cfg.audio.sample_rate)
         window = samples[start:]
         # No tail-silence guard here: the user ended the utterance, decode all
         # remaining audio with the full configured beam.
         words, ok = self._decode(window, beam_size=self._cfg.asr.beam_size)
-        if not ok:
-            return self._typed
-        delta: list = []
-        if words is None:
-            # The final decode failed. Feeding an empty hypothesis to insert()
-            # would overwrite the transcriber's uncommitted tail with [], so
-            # the flush below would return nothing and the user's last words
-            # would vanish. Skip straight to the flush: the tail is the best
-            # hypothesis we still have.
-            log.warning("live: final decode failed; flushing the uncommitted tail as-is")
-        else:
-            delta = self._transcriber.insert(words)
+        if not ok or words is None:
+            return None
+        delta = self._transcriber.insert(words)
         delta.extend(self._transcriber.flush())
-        self._emit(self._formatter.feed(delta) + self._formatter.finalize())
-        # The clipboard is the independent fallback for text that did not
-        # reach the cursor, so once delivery latched off it must carry the
-        # full transcript rather than the delivered prefix -- otherwise the
-        # undelivered remainder is neither pasted nor recoverable. On every
-        # other path _typed is copied exactly as before: on the happy path it
-        # already IS the full transcript, and an output.max_chars cap is a
-        # deliberate limit on output that the clipboard must not quietly
-        # override.
-        text = self._transcript if self._delivery_failed else self._typed
-        if text and self._cfg.clipboard.enabled and self._caps.has_wl_copy:
-            try:
-                # primary=True to match _emit(): every delivered delta already
-                # wrote the primary selection, so the user's mouse selection is
-                # gone either way. Copying the regular clipboard alone would
-                # leave primary holding just the last delta -- a middle-click
-                # would paste a stray word or two instead of the transcript.
-                self._clipboard.copy(text, primary=True)
-            except Exception as exc:
-                log.error("live: clipboard.copy raised: %s", exc)
-        return self._typed
+        self._transcript += self._formatter.feed(delta) + self._formatter.finalize()
+        self._publish_preview(final=True)
+        return self._transcript
 
     # -- internal --------------------------------------------------------------
 
     def _interim_beam_size(self) -> int:
-        beam = self._cfg.streaming.beam_size
+        beam = self._cfg.incremental.beam_size
         return self._cfg.asr.beam_size if beam is None else beam
 
     def _decode(self, window: np.ndarray, *, beam_size: int) -> tuple[list | None, bool]:
@@ -235,88 +190,53 @@ class LiveStreamer:
         try:
             words = future.result()
         except CancelledError:
-            log.info("live: re-decode cancelled")
+            log.info("incremental: re-decode cancelled")
             return None, False
         except Exception as exc:
             # One failed re-decode is not fatal; the next partial (or the
             # final flush) re-decodes the same audio.
-            log.error("live: re-decode failed: %s", exc)
+            log.error("incremental: re-decode failed: %s", exc)
             return None, True
         elapsed = time.monotonic() - t0
         window_seconds = window.shape[0] / self._cfg.audio.sample_rate
         if window_seconds > 0:
             log.debug(
-                "live: decoded %.1fs window in %.2fs (rtf=%.2f)",
+                "incremental: decoded %.1fs window in %.2fs (rtf=%.2f)",
                 window_seconds,
                 elapsed,
                 elapsed / window_seconds,
             )
         return words, True
 
-    def _emit(self, text: str) -> None:
-        if not text:
+    def _publish_preview(self, *, final: bool = False) -> None:
+        if self._on_preview is None:
             return
-        # Accumulated before the latch check and independently of delivery
-        # success, so it keeps growing after output has stopped -- that is
-        # the whole point: it is what _finish() falls back to on the
-        # clipboard so the undelivered remainder stays recoverable.
-        self._transcript += text
-        if self._delivery_failed or self._max_chars_hit:
-            return
-        max_chars = self._cfg.output.max_chars
-        if len(self._typed) + len(text) > max_chars:
-            # Stop typing rather than truncate a delta mid-word. Committed
-            # text stays; the utterance is simply cut short.
-            #
-            # This latches: a later, shorter delta might fit under the cap,
-            # but pasting it would continue the delivered text past the delta
-            # skipped here -- a hole in the middle, no longer a prefix of the
-            # transcript. Cutting the utterance short at a word boundary is
-            # the documented behaviour; resuming past a gap is silently wrong.
-            self._max_chars_hit = True
-            log.warning("live: output reached output.max_chars=%d; typing stopped", max_chars)
-            return
-        delivered = False
-        try:
-            # Paste only on a fully successful copy. ClipboardManager.copy()
-            # populates the regular clipboard AND the primary selection, and
-            # returns False if either failed -- so a False here can mean the
-            # two selections now disagree (clipboard holds this delta, primary
-            # still holds the previous one). The chord reads whichever
-            # selection the client prefers, so pasting now could deliver a
-            # stale, out-of-order word.
-            #
-            # copy()'s strict return does not cause that desync -- a partial
-            # wl-copy failure desyncs the selections whatever it returns -- it
-            # is the only thing that makes the desync visible here. Loosening
-            # it would drop the signal and leave the desync, breaking the
-            # prefix invariant with nothing able to observe it.
-            if self._clipboard.copy(text, primary=True):
-                delivered = bool(self._injector.paste())
-        except Exception as exc:
-            log.error("live: paste delivery raised: %s", exc)
-        if delivered:
-            self._typed += text
-            return
-        # Never deliver past a gap. A later delta pasted after a dropped one
-        # would leave the delivered text with a hole in it -- no longer a
-        # prefix of the final transcript, and silently wrong rather than a
-        # visible error. Stopping cleanly at a prefix boundary is correct;
-        # guessing at a resynchronisation is not. _finish() still re-copies
-        # the accumulated transcript, so the clipboard fallback survives.
-        if not self._delivery_failed:
-            self._delivery_failed = True
-            log.warning(
-                "live: delta delivery failed; output stopped at %d chars to keep "
-                "delivered text a prefix of the transcript",
-                len(self._typed),
+        stable = self._transcript
+        if final:
+            provisional = ""
+        else:
+            formatter = HeuristicFormatter(
+                self._cfg.formatting,
+                append_trailing_space=False,
             )
+            all_words = self._transcriber.committed_words + self._transcriber.provisional_words
+            complete = formatter.format_batch(all_words)
+            stable_formatter = HeuristicFormatter(
+                self._cfg.formatting,
+                append_trailing_space=False,
+            )
+            stable = stable_formatter.format_batch(self._transcriber.committed_words)
+            provisional = complete[len(stable) :]
+        try:
+            self._on_preview(stable, provisional)
+        except Exception as exc:
+            log.debug("incremental: preview consumer failed: %s", exc)
 
     def _maybe_trim(self, window_seconds: float) -> None:
         """Trim the decode window at a safe committed boundary.
 
         Preferred trim point: the last committed word when it ends a sentence
-        (that text is typed and immutable). Forced at max_buffer_seconds so
+        (that text is stable and immutable). Forced at max_buffer_seconds so
         re-decode cost stays bounded. The transcriber is rebased so later
         commits keep absolute utterance time (pause-based paragraph breaks
         that straddle a trim stay correct).
@@ -325,7 +245,7 @@ class LiveStreamer:
         if not committed:
             return
         last = committed[-1]
-        over_budget = window_seconds > self._cfg.streaming.max_buffer_seconds
+        over_budget = window_seconds > self._cfg.incremental.max_buffer_seconds
         if not (last.word.rstrip().endswith(tuple(_SENTENCE_TERMINALS)) or over_budget):
             return
         dropped = last.end - self._trim_offset
@@ -333,7 +253,12 @@ class LiveStreamer:
             return
         self._transcriber.rebase(dropped)
         self._trim_offset = last.end
-        log.debug("live: trimmed %.1fs off decode window (offset=%.1fs)", dropped, last.end)
+        log.debug("incremental: trimmed %.1fs off decode window (offset=%.1fs)", dropped, last.end)
+
+
+# Compatibility for third-party imports during the streaming-to-incremental
+# transition. New code should use IncrementalDriver.
+LiveStreamer = IncrementalDriver
 
 
 def _cut_trailing_silence(window: np.ndarray, rate: int) -> np.ndarray:

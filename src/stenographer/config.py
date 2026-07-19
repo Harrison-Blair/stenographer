@@ -95,7 +95,7 @@ class VisualizerConfig:
     margin_bottom: int
 
 
-ALLOWED_INJECTION_METHODS: frozenset[str] = frozenset({"text", "paste"})
+ALLOWED_INJECTION_METHODS: frozenset[str] = frozenset({"type", "clipboard_paste"})
 
 
 @dataclass(frozen=True)
@@ -111,8 +111,7 @@ class ClipboardConfig:
 
 
 @dataclass(frozen=True)
-class StreamingConfig:
-    enabled: bool
+class IncrementalConfig:
     min_chunk_seconds: float
     agreement_n: int
     beam_size: int | None
@@ -144,7 +143,7 @@ class Config:
     visualizer: VisualizerConfig
     output: OutputConfig
     clipboard: ClipboardConfig
-    streaming: StreamingConfig
+    incremental: IncrementalConfig
     formatting: FormattingConfig
     update: UpdateConfig
 
@@ -192,13 +191,12 @@ class Config:
                 margin_bottom=32,
             ),
             output=OutputConfig(
-                injection_method="paste",
+                injection_method="clipboard_paste",
                 append_trailing_space=True,
                 max_chars=4096,
             ),
             clipboard=ClipboardConfig(enabled=True),
-            streaming=StreamingConfig(
-                enabled=False,
+            incremental=IncrementalConfig(
                 min_chunk_seconds=1.0,
                 agreement_n=2,
                 beam_size=None,
@@ -248,6 +246,7 @@ class Config:
         user_hotkey = table.get("hotkey", {})
         cancel_explicit = isinstance(user_hotkey, dict) and bool(user_hotkey.get("cancel_binding"))
 
+        table = _migrate_streaming_table(table)
         merged = _merge(asdict(cls.defaults()), table)
         return cls._from_dict(merged, path, cancel_explicit=cancel_explicit)
 
@@ -267,7 +266,7 @@ class Config:
             visualizer=_build_visualizer(table["visualizer"], path),
             output=_build_output(table["output"], path),
             clipboard=_build_clipboard(table["clipboard"], path),
-            streaming=_build_streaming(table["streaming"], path),
+            incremental=_build_incremental(table["incremental"], path),
             formatting=_build_formatting(table["formatting"], path),
             update=_build_update(table["update"], path),
         )
@@ -281,7 +280,7 @@ def _validate_cross_section(cfg: Config, path: pathlib.Path) -> None:
     The per-section builders each see only their own table, so constraints
     that span sections have to be checked once the whole config is assembled.
     """
-    if cfg.output.injection_method == "paste" and not cfg.clipboard.enabled:
+    if cfg.output.injection_method == "clipboard_paste" and not cfg.clipboard.enabled:
         # Paste mode delivers text *by* copying it and firing Shift+Insert, so
         # the clipboard is the transport, not a convenience copy. Silently
         # honouring clipboard.enabled here would fire the chord over stale
@@ -291,17 +290,32 @@ def _validate_cross_section(cfg: Config, path: pathlib.Path) -> None:
         raise ConfigError(
             path,
             "clipboard.enabled",
-            'must be true when output.injection_method = "paste" (paste mode '
-            'delivers text via the clipboard); use injection_method = "text" '
+            'must be true when output.injection_method = "clipboard_paste" '
+            "(clipboard_paste mode delivers text via the clipboard); use "
+            'injection_method = "type" '
             "to type without touching the clipboard",
         )
-    if cfg.streaming.enabled and cfg.output.injection_method != "paste":
-        raise ConfigError(
-            path,
-            "streaming.enabled",
-            'requires output.injection_method = "paste"; live streaming pastes '
-            "each committed word as it is confirmed",
+
+
+def _migrate_streaming_table(table: dict[str, Any]) -> dict[str, Any]:
+    """Temporarily copy deprecated streaming tuning into incremental config."""
+    legacy = table.get("streaming")
+    if not isinstance(legacy, dict):
+        return table
+    logger.warning("[stenographer.streaming] is deprecated; use [stenographer.incremental]")
+    if "enabled" in legacy:
+        logger.warning(
+            "streaming.enabled is deprecated and ignored; incremental decoding is always on"
         )
+    migrated = dict(table)
+    incremental = table.get("incremental")
+    current = dict(incremental) if isinstance(incremental, dict) else {}
+    for key in ("min_chunk_seconds", "agreement_n", "beam_size", "max_buffer_seconds"):
+        if key in legacy and key not in current:
+            current[key] = legacy[key]
+            logger.warning("migrating deprecated streaming.%s to incremental.%s", key, key)
+    migrated["incremental"] = current
+    return migrated
 
 
 _NULL_VALUE_RE = re.compile(r'(?<=\s=\s)null(?=[^\w"]|\Z)', re.MULTILINE)
@@ -539,26 +553,24 @@ def _build_clipboard(table: dict[str, Any], path: pathlib.Path) -> ClipboardConf
     return ClipboardConfig(enabled=enabled)
 
 
-def _build_streaming(table: dict[str, Any], path: pathlib.Path) -> StreamingConfig:
-    enabled = _expect_bool(table, "enabled", "streaming.enabled", path)
+def _build_incremental(table: dict[str, Any], path: pathlib.Path) -> IncrementalConfig:
     min_chunk_seconds = _expect_number(
-        table, "min_chunk_seconds", "streaming.min_chunk_seconds", path
+        table, "min_chunk_seconds", "incremental.min_chunk_seconds", path
     )
     if not (0.25 <= min_chunk_seconds <= 5):
-        raise ConfigError(path, "streaming.min_chunk_seconds", "must satisfy 0.25 <= x <= 5")
-    agreement_n = _expect_int(table, "agreement_n", "streaming.agreement_n", path)
+        raise ConfigError(path, "incremental.min_chunk_seconds", "must satisfy 0.25 <= x <= 5")
+    agreement_n = _expect_int(table, "agreement_n", "incremental.agreement_n", path)
     if not (2 <= agreement_n <= 4):
-        raise ConfigError(path, "streaming.agreement_n", "must satisfy 2 <= x <= 4")
-    beam_size = _expect_optional_int(table, "beam_size", "streaming.beam_size", path)
+        raise ConfigError(path, "incremental.agreement_n", "must satisfy 2 <= x <= 4")
+    beam_size = _expect_optional_int(table, "beam_size", "incremental.beam_size", path)
     if beam_size is not None and not (1 <= beam_size <= 10):
-        raise ConfigError(path, "streaming.beam_size", "must be null or satisfy 1 <= x <= 10")
+        raise ConfigError(path, "incremental.beam_size", "must be null or satisfy 1 <= x <= 10")
     max_buffer_seconds = _expect_number(
-        table, "max_buffer_seconds", "streaming.max_buffer_seconds", path
+        table, "max_buffer_seconds", "incremental.max_buffer_seconds", path
     )
     if not (5 <= max_buffer_seconds <= 120):
-        raise ConfigError(path, "streaming.max_buffer_seconds", "must satisfy 5 <= x <= 120")
-    return StreamingConfig(
-        enabled=enabled,
+        raise ConfigError(path, "incremental.max_buffer_seconds", "must satisfy 5 <= x <= 120")
+    return IncrementalConfig(
         min_chunk_seconds=min_chunk_seconds,
         agreement_n=agreement_n,
         beam_size=beam_size,
@@ -702,7 +714,7 @@ def _format_default_toml() -> str:
     v = cfg.visualizer
     o = cfg.output
     c = cfg.clipboard
-    s = cfg.streaming
+    i = cfg.incremental
     fm = cfg.formatting
     u = cfg.update
     lines: list[str] = [
@@ -759,16 +771,14 @@ def _format_default_toml() -> str:
         "# Clipboard",
         f"clipboard.enabled = {_toml_bool(c.enabled)}",
         "",
-        '# Live streaming (requires injection_method = "paste"): deliver words',
-        "# while still recording.",
+        "# Incremental word-level decoding (always enabled).",
         "# min_chunk_seconds / beam_size are the CPU knobs if re-decodes lag.",
-        f"streaming.enabled = {_toml_bool(s.enabled)}",
-        f"streaming.min_chunk_seconds = {s.min_chunk_seconds}",
-        f"streaming.agreement_n = {s.agreement_n}",
-        "streaming.beam_size = null"
-        if s.beam_size is None
-        else f"streaming.beam_size = {s.beam_size}",
-        f"streaming.max_buffer_seconds = {s.max_buffer_seconds}",
+        f"incremental.min_chunk_seconds = {i.min_chunk_seconds}",
+        f"incremental.agreement_n = {i.agreement_n}",
+        "incremental.beam_size = null"
+        if i.beam_size is None
+        else f"incremental.beam_size = {i.beam_size}",
+        f"incremental.max_buffer_seconds = {i.max_buffer_seconds}",
         "",
         "# Formatting heuristics (applies to all output modes)",
         f"formatting.paragraph_pause_seconds = {fm.paragraph_pause_seconds}",

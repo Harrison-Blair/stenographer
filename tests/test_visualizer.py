@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
+from unittest.mock import MagicMock
 
 import numpy as np
 
@@ -13,6 +15,8 @@ from stenographer.config import VisualizerConfig
 from stenographer.visualizer import (
     LayerShellOverlay,
     SpectrumAnalyzer,
+    _prepare_spectrum_context,
+    _preview_markup,
     _register_application_font,
     analyze_frequency_bands,
 )
@@ -73,6 +77,50 @@ def test_register_application_font_uses_active_pango_font_map() -> None:
         ("changed", None),
         ("family", "Caveat"),
     ]
+
+
+def test_preview_markup_escapes_transcript_and_fades_tail() -> None:
+    markup = _preview_markup("<stable & safe>", ' "tail" & <revisable>')
+    assert "&lt;stable &amp; safe&gt;" in markup
+    assert '"tail" &amp; &lt;revisable&gt;' in markup
+    assert 'alpha="52%"' in markup
+    assert 'alpha="28%"' in markup
+
+
+def test_overlay_preview_and_clear_use_json_lines_protocol() -> None:
+    writes: list[str] = []
+    process = MagicMock()
+    process.poll.return_value = None
+    process.stdin.write.side_effect = writes.append
+    overlay = LayerShellOverlay(
+        VisualizerConfig(True, 16, 80.0, 8000.0, 32),
+    )
+    overlay._process = process
+
+    overlay.show_preview("Stable", " tail")
+    overlay.clear_preview()
+
+    messages = [json.loads(line) for line in writes]
+    assert messages == [
+        {
+            "command": "preview",
+            "stable": "Stable",
+            "provisional": " tail",
+        },
+        {"command": "preview_clear"},
+    ]
+
+
+def test_spectrum_context_is_cleared_and_clipped_each_frame() -> None:
+    context = MagicMock()
+    clear_operator = object()
+    _prepare_spectrum_context(context, 280, 54, clear_operator=clear_operator)
+    context.save.assert_called_once()
+    context.set_operator.assert_called_once_with(clear_operator)
+    context.paint.assert_called_once()
+    context.restore.assert_called_once()
+    context.rectangle.assert_called_once_with(0, 0, 280, 54)
+    context.clip.assert_called_once()
 
 
 def test_spectrum_analyzer_delivers_levels_off_caller_thread() -> None:

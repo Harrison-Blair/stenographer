@@ -125,7 +125,7 @@ class Model:
         beam_size: int | None = None,
         check_cancel: Callable[[], None] | None = None,
     ) -> list[WordInfo]:
-        """Low-level word-timestamped transcription for the live streaming path.
+        """Low-level word-timestamped transcription for incremental decoding.
 
         Unlike :meth:`transcribe` (the batch daemon path, left untouched),
         this requests ``word_timestamps=True``.  *check_cancel* is invoked

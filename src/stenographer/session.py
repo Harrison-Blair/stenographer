@@ -18,7 +18,7 @@ from stenographer.asr.model import SegmentInfo
 from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.asr.worker import CancelledError
 from stenographer.errors import notify_failure
-from stenographer.live import LiveStreamer
+from stenographer.live import IncrementalDriver
 from stenographer.output.formatter import HeuristicFormatter
 
 if TYPE_CHECKING:
@@ -44,10 +44,11 @@ _TaggedBatchItem = tuple[
 
 @dataclass
 class _LiveItem:
-    """Utterance-queue entry for a streamed recording (see LiveStreamer)."""
+    """Utterance-queue entry for an incrementally decoded recording."""
 
-    streamer: LiveStreamer
+    streamer: IncrementalDriver
     generation: int
+    preview_generation: int
 
 
 @dataclass
@@ -136,13 +137,10 @@ class Session:
         # In one-shot mode the processor tears the session down after the first
         # queued item, which would truncate dictation at the first pause.
         self._silence_detection = cfg.audio.silence_detection and not one_shot
-        # In paste mode, flushed chunks are still decoded as they arrive so
-        # transcription overlaps recording, but they are aggregated: nothing
-        # reaches the cursor until the final chunk assembles the utterance and
-        # pastes once. Pasting per flush would interrupt dictation and split
-        # the recording into separate utterances, destroying the segment-
-        # timestamp gaps the formatter's paragraph-pause heuristic needs.
-        self._aggregate_chunks = self._silence_detection and cfg.output.injection_method == "paste"
+        # Daemon recordings always use cumulative word-level decoding. The
+        # older silence-flush aggregation fields remain only for directly
+        # queued batch items used by one-shot/file-oriented callers.
+        self._aggregate_chunks = False
         # Seconds of audio already flushed for the active recording — the next
         # chunk's offset into the recording. Written on the PortAudio callback
         # thread; read by the stop path after the stream has stopped.
@@ -151,18 +149,16 @@ class Session:
         # far for the recording identified by _chunk_abort.
         self._chunk_abort: threading.Event | None = None
         self._chunk_segments: list[SegmentInfo] = []
-        # Live word-level streaming pastes each committed delta as it is
-        # confirmed; text mode assembles the utterance and types it.
-        self._streaming = bool(cfg.streaming.enabled and cfg.output.injection_method == "paste")
-        # The streamer of the recording currently capturing audio. Popped by
+        self._preview_generation = 0
+        # The incremental driver of the recording currently capturing audio. Popped by
         # the stop/discard path that ends that recording, so a following
         # recording can never be routed into a previous utterance's streamer
         # that is still finishing its final decode.
-        self._recording_streamer: LiveStreamer | None = None
-        # The streamer that has not yet finished processing (its final decode
+        self._recording_streamer: IncrementalDriver | None = None
+        # The driver that has not yet finished processing (its final decode
         # may outlive the recording); cancel_all uses it to wake the driver.
         # Cleared by _run_live when the drive completes.
-        self._live_streamer: LiveStreamer | None = None
+        self._live_streamer: IncrementalDriver | None = None
 
     @property
     def stop_event(self) -> threading.Event:
@@ -224,6 +220,7 @@ class Session:
                     log.info("session: dropping cancelled utterance")
                     if isinstance(item, _LiveItem) and self._live_streamer is item.streamer:
                         self._live_streamer = None
+                        self._clear_preview(item.preview_generation)
                     continue
                 self._active_abort = abort
             remaining = self._utterance_queue.qsize()
@@ -231,7 +228,7 @@ class Session:
                 log.info("session: processing utterance (%d queued)", remaining)
             t0 = time.monotonic()
             if isinstance(item, _LiveItem):
-                self._run_live(item.streamer)
+                self._run_incremental(item.streamer, item.preview_generation)
             elif isinstance(item, _ChunkItem):
                 self._process_chunk(item)
             else:
@@ -331,6 +328,8 @@ class Session:
                 log.warning("session: on_recording_start while already recording")
                 return
             self._recording = True
+            self._preview_generation += 1
+            preview_generation = self._preview_generation
             self._recording_source = source
             self._recording_abort = threading.Event()
             self._flushed_seconds = 0.0
@@ -342,43 +341,41 @@ class Session:
                         on_unloaded=self._on_model_unloaded,
                     )
                     self._on_model_loading()
-                if self._streaming:
-                    # Live streaming replaces the silence-flush path: the
-                    # driver's tail-silence guard covers hallucination-over-
-                    # silence, and words are typed as they stabilise.
-                    streamer = LiveStreamer(
-                        cfg=self._cfg,
-                        recorder=self._recorder,
-                        worker=self._worker,
-                        injector=self._injector,
-                        transcriber=StreamingTranscriber(
-                            agreement_n=self._cfg.streaming.agreement_n
-                        ),
-                        formatter=HeuristicFormatter(
-                            self._cfg.formatting,
-                            append_trailing_space=self._cfg.output.append_trailing_space,
-                        ),
-                        clipboard=self._clipboard,
-                        caps=self._caps,
-                        abort=self._recording_abort,
-                    )
-                    self._recorder.start(
-                        on_partial=streamer.signal_partial,
-                        min_partial_seconds=self._cfg.streaming.min_chunk_seconds,
-                    )
-                    self._recording_streamer = streamer
-                    self._live_streamer = streamer
-                    self._utterance_queue.put(_LiveItem(streamer, self._cancel_generation))
-                else:
-                    self._recorder.start(
-                        on_segment=self._enqueue_flush_segment if self._silence_detection else None
-                    )
+                if self._notification is not None:
+                    self._notification.clear_preview()
+                streamer = IncrementalDriver(
+                    cfg=self._cfg,
+                    recorder=self._recorder,
+                    worker=self._worker,
+                    transcriber=StreamingTranscriber(agreement_n=self._cfg.incremental.agreement_n),
+                    formatter=HeuristicFormatter(
+                        self._cfg.formatting,
+                        append_trailing_space=self._cfg.output.append_trailing_space,
+                    ),
+                    abort=self._recording_abort,
+                    on_preview=lambda stable, provisional: self._publish_preview(
+                        preview_generation, stable, provisional
+                    ),
+                )
+                self._recorder.start(
+                    on_partial=streamer.signal_partial,
+                    min_partial_seconds=self._cfg.incremental.min_chunk_seconds,
+                )
+                self._recording_streamer = streamer
+                self._live_streamer = streamer
+                self._utterance_queue.put(
+                    _LiveItem(streamer, self._cancel_generation, preview_generation)
+                )
                 log.info("session: recording started")
                 if not is_lazy_first and self._notification is not None:
                     self._notification.show_listening()
             except Exception as exc:
                 self._recording = False
+                self._preview_generation += 1
                 log.error("session: recorder.start failed: %s", exc)
+                if self._notification is not None:
+                    with contextlib.suppress(Exception):
+                        self._notification.clear_preview()
 
     def on_recording_stop(
         self, mode: Literal["ptt", "toggle"], source: Literal["dictate"] = "dictate"
@@ -461,15 +458,15 @@ class Session:
         if self._one_shot:
             pass  # processor thread sets _stop_event after processing
 
-    def _run_live(self, streamer: LiveStreamer) -> None:
-        """Drive one streamed utterance to completion on the processor thread."""
-        typed = ""
+    def _run_incremental(self, streamer: IncrementalDriver, preview_generation: int) -> None:
+        """Finalize one incremental utterance and deliver its transcript once."""
+        text: str | None = None
         failed = False
         try:
-            typed = streamer.run()
+            text = streamer.run()
         except Exception as exc:
             failed = True
-            log.error("session: live streamer failed: %s", exc)
+            log.error("session: incremental driver failed: %s", exc)
             if not self._stop_event.is_set():
                 with contextlib.suppress(Exception):
                     self._feedback.play("error")
@@ -477,16 +474,17 @@ class Session:
             with self._lock:
                 if self._live_streamer is streamer:
                     self._live_streamer = None
+            self._clear_preview(preview_generation)
         if streamer.abort.is_set() or failed:
-            # The except block above already played the error cue; the empty
-            # `typed` below is that failure, not a separate silent utterance.
             return
-        if not typed:
-            # Nothing was committed: too quiet, or the tail-silence guard ate
-            # the window. The batch paths play the error cue on an empty
-            # transcript; staying silent here is indistinguishable from a
-            # successful dictation, so the user cannot tell we heard nothing.
-            log.info("session: streamed utterance produced no text")
+        if not text:
+            log.info("session: incremental utterance produced no text")
+            if not self._stop_event.is_set():
+                with contextlib.suppress(Exception):
+                    self._feedback.play("error")
+            return
+        delivered = self._deliver_final(text)
+        if not delivered:
             if not self._stop_event.is_set():
                 with contextlib.suppress(Exception):
                     self._feedback.play("error")
@@ -495,6 +493,27 @@ class Session:
         if not self._stop_event.is_set():
             with contextlib.suppress(Exception):
                 self._feedback.play("transcribe_done")
+
+    # Compatibility for callers that used the private pre-incremental name.
+    def _run_live(self, streamer: IncrementalDriver) -> None:
+        self._run_incremental(streamer, self._preview_generation)
+
+    def _publish_preview(self, generation: int, stable: str, provisional: str) -> None:
+        """Publish only if this recording still owns the HUD preview."""
+        with self._lock:
+            if generation != self._preview_generation or self._notification is None:
+                return
+            try:
+                self._notification.show_preview(stable, provisional)
+            except Exception as exc:
+                log.debug("session: preview update failed: %s", exc)
+
+    def _clear_preview(self, generation: int) -> None:
+        with self._lock:
+            if generation != self._preview_generation or self._notification is None:
+                return
+            with contextlib.suppress(Exception):
+                self._notification.clear_preview()
 
     def _refresh_notification(self) -> None:
         """Show the transcribing indicator if work remains queued, else hide it."""
@@ -515,9 +534,8 @@ class Session:
         reads; a stale generation read around a concurrent cancel only makes
         the flush item eligible for dropping, which is the desired outcome.
 
-        In paste mode the flush becomes an aggregated chunk (decoded now,
-        pasted with the rest of the utterance at the end); in text mode it is
-        a standalone utterance typed as soon as it is transcribed.
+        This callback is retained for direct batch callers. Daemon recordings
+        use the incremental driver and do not register a silence-flush callback.
         """
         if self._aggregate_chunks:
             offset = self._flushed_seconds
@@ -554,6 +572,7 @@ class Session:
                 return
             self._recording = False
             self._recording_abort.set()
+            self._preview_generation += 1
             # Only the discarded recording's own streamer is aborted; a
             # previous utterance's streamer still finishing its final decode
             # must complete normally.
@@ -566,11 +585,14 @@ class Session:
             except Exception as exc:
                 log.error("session: recorder.stop during discard failed: %s", exc)
             log.info("session: recording discarded")
+            if self._notification is not None:
+                with contextlib.suppress(Exception):
+                    self._notification.clear_preview()
             self._refresh_notification()
 
     def cancel_all(self) -> None:
         """Cancel everything: active recording, queued utterances, and the
-        in-flight transcription. Already-typed text is not undone.
+        in-flight transcription. Already-delivered utterances are not undone.
 
         Wired to the cancel chord (main hotkey held + cancel key). Runs on
         the listener dispatch thread, which already holds ``_lock`` (RLock).
@@ -578,6 +600,7 @@ class Session:
         with self._lock:
             log.info("session: cancel requested")
             self._cancel_generation += 1
+            self._preview_generation += 1
             if self._recording:
                 self._recording = False
                 self._recording_abort.set()
@@ -604,6 +627,7 @@ class Session:
                 self._live_streamer.signal_abort()
             if self._notification is not None:
                 with contextlib.suppress(Exception):
+                    self._notification.clear_preview()
                     self._notification.hide()
 
     # -- lazy-mode model lifecycle callbacks (called from loader / timer threads) --
@@ -648,52 +672,18 @@ class Session:
         abort: threading.Event,
         source: Literal["dictate"] = "dictate",
     ) -> None:
+        """Batch-decode a queued item and perform one final delivery.
+
+        Daemon recordings use :class:`IncrementalDriver`; this path remains
+        for explicit batch callers and deliberately shares the same delivery
+        boundary.
+        """
         log.info(
             "session: processing %d samples (mode=%s, source=%s)", samples.shape[0], mode, source
         )
-
-        segment_queue: queue.Queue[SegmentInfo | None] = queue.Queue()
-        future = self._worker.submit(samples, on_segment=segment_queue.put, cancel_event=abort)
-        # The None sentinel unblocks the loop when transcription finishes
-        # (all segments are emitted before the future resolves).
-        future.add_done_callback(lambda _f: segment_queue.put(None))
-
-        paste_mode = self._cfg.output.injection_method == "paste"
-
-        injected_text = ""
-        while True:
-            seg = segment_queue.get()
-            if seg is None:
-                break
-            if abort.is_set():
-                # Cancelled: keep draining until the sentinel, but stop
-                # injecting. Text already typed at the cursor stays.
-                continue
-            if seg.no_speech_prob >= self._cfg.asr.silence_threshold:
-                # Likely a hallucination over silence (e.g. "Thank you.");
-                # never send it to the cursor. The post-transcription check
-                # below handles the all-silence case for clipboard/paste.
-                log.info("session: skipping probable-silence segment")
-                log.debug("session: silence segment %r", seg.text)
-                continue
-            if seg.text.strip():
-                if paste_mode:
-                    injected_text += seg.text
-                    try:
-                        self._feedback.play("segment")
-                    except Exception as exc:
-                        log.error("session: segment cue failed: %s", exc)
-                else:
-                    typed = False
-                    try:
-                        typed = bool(self._injector.type_text(seg.text, raw=True))
-                    except Exception as exc:
-                        log.error("session: injector partial failed: %s", exc)
-                    if typed:
-                        injected_text += seg.text
-
+        future = self._worker.submit(samples, cancel_event=abort)
         try:
-            result = future.result(timeout=5.0)  # done already; timeout is defensive
+            result = future.result()
         except CancelledError:
             log.info("session: transcription cancelled")
             return
@@ -712,6 +702,7 @@ class Session:
         # Full transcripts go to the log file only at DEBUG (privacy).
         log.info("session: transcript received (%d chars)", len(text))
         log.debug("session: transcript %r", text)
+        speech_segments = []
         if result.segments:
             speech_segments = [
                 seg
@@ -725,8 +716,7 @@ class Session:
                         self._feedback.play("error")
                 return
             if len(speech_segments) != len(result.segments):
-                # Drop probable-silence segments from the clipboard/paste text
-                # too, matching what the segment loop sent to the cursor.
+                # Drop probable-silence segments from final output.
                 text = "".join(seg.text for seg in speech_segments).strip()
                 log.info(
                     "session: dropped %d probable-silence segment(s) from output",
@@ -738,41 +728,42 @@ class Session:
                 with contextlib.suppress(Exception):
                     self._feedback.play("error")
             return
-        if paste_mode:
-            if result.segments:
-                # Paste output goes through the heuristic formatter (spacing,
-                # capitalisation, pause-based paragraphs at segment granularity).
-                text = self._formatter.format_batch(speech_segments)
-            if not self._deliver_paste(text):
-                if not self._stop_event.is_set():
-                    with contextlib.suppress(Exception):
-                        self._feedback.play("error")
-                return
-        else:
-            if self._caps.has_paste_trigger and not injected_text.strip():
-                # No partial segment made it to the cursor; type the full text.
-                try:
-                    self._injector.type_text(text)
-                except Exception as exc:
-                    log.error("session: injector.type_text raised: %s", exc)
-            elif injected_text.strip() != text.strip():
-                # Some segments were typed and some were not. Re-typing the
-                # full transcript would duplicate what is already at the
-                # cursor; the clipboard below holds the complete text.
-                log.warning("session: partial injection incomplete; full transcript on clipboard")
-            if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
-                try:
-                    # primary=True: this is the fallback the user reaches for
-                    # when injection dropped text, and the paste chord reads
-                    # the primary selection in some clients. Populating only
-                    # the regular clipboard makes the fallback unreachable
-                    # there -- Shift+Insert would paste their old selection.
-                    self._clipboard.copy(text, primary=True)
-                except Exception as exc:
-                    log.error("session: clipboard.copy raised: %s", exc)
+        if result.segments:
+            text = self._formatter.format_batch(speech_segments)
+        if not self._deliver_final(text):
+            if not self._stop_event.is_set():
+                with contextlib.suppress(Exception):
+                    self._feedback.play("error")
+            return
         if not self._stop_event.is_set():
             with contextlib.suppress(Exception):
                 self._feedback.play("transcribe_done")
+
+    def _deliver_final(self, text: str) -> bool:
+        """Apply the output cap once, then perform one focused-app delivery."""
+        max_chars = self._cfg.output.max_chars
+        if len(text) > max_chars:
+            log.warning("session: truncating transcript from %d to %d chars", len(text), max_chars)
+            text = text[:max_chars]
+        if not text:
+            return False
+        if self._cfg.output.injection_method == "clipboard_paste":
+            return self._deliver_paste(text)
+
+        delivered = False
+        if self._caps.has_paste_trigger:
+            try:
+                # Incremental/batch formatters already applied whitespace and
+                # trailing-space policy; raw avoids preparing it a second time.
+                delivered = bool(self._injector.type_text(text, raw=True))
+            except Exception as exc:
+                log.error("session: injector.type_text raised: %s", exc)
+        if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
+            try:
+                self._clipboard.copy(text)
+            except Exception as exc:
+                log.error("session: clipboard.copy raised: %s", exc)
+        return delivered
 
     def _process_chunk(self, item: _ChunkItem) -> None:
         """Decode one chunk of an aggregated paste-mode recording.
@@ -851,7 +842,7 @@ class Session:
         # Full transcripts go to the log file only at DEBUG (privacy).
         log.info("session: transcript received (%d chars)", len(text))
         log.debug("session: transcript %r", text)
-        delivered = self._deliver_paste(text)
+        delivered = self._deliver_final(text)
         if not self._stop_event.is_set():
             with contextlib.suppress(Exception):
                 self._feedback.play("transcribe_done" if delivered else "error")
@@ -862,22 +853,16 @@ class Session:
         The chord pastes whatever the clipboard currently holds, so it is
         fired only after a confirmed copy: on a failed copy it would paste
         the user's previous clipboard content into their document. Config
-        validation guarantees clipboard.enabled in paste mode, so there is no
-        flag to honour here -- the clipboard is the transport.
+        validation guarantees clipboard.enabled in clipboard_paste mode, so
+        there is no flag to honour here -- the clipboard is the transport.
 
         Returns True when the text reached the cursor. Callers must not play
         the success cue on a False: the clipboard is the only transport, so a
         failed copy means the utterance reached neither the cursor nor the
         clipboard and the user has nothing to recover.
         """
-        max_chars = self._cfg.output.max_chars
-        if len(text) > max_chars:
-            # Mirrors Injector._prepare()'s cap on the text path: output.max_chars
-            # is a limit on what reaches the cursor, whichever way it gets there.
-            log.warning("session: truncating transcript from %d to %d chars", len(text), max_chars)
-            text = text[:max_chars]
         if not self._caps.has_wl_copy:
-            notify_failure("paste mode requires wl-copy; nothing delivered")
+            notify_failure("clipboard_paste mode requires wl-copy; nothing delivered")
             return False
         copied = False
         try:
