@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 
 
-def test_pyproject_version_is_0_8_8():
+def test_pyproject_version_is_0_9_0():
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
-    assert data["project"]["version"] == "0.8.8"
+    assert data["project"]["version"] == "0.9.0"
