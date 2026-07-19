@@ -61,9 +61,6 @@ class AudioConfig:
     frames_per_buffer: int
     input_device: str | None
     max_recording_seconds: int
-    silence_detection: bool
-    silence_rms_threshold: float
-    silence_duration_seconds: float
 
 
 @dataclass(frozen=True)
@@ -75,6 +72,8 @@ class AsrConfig:
     silence_threshold: float
     mode: str
     idle_unload_seconds: int
+    hotwords: str | None
+    initial_prompt: str | None
 
 
 @dataclass(frozen=True)
@@ -84,7 +83,19 @@ class FeedbackConfig:
     mute: bool
 
 
-ALLOWED_INJECTION_METHODS: frozenset[str] = frozenset({"text", "paste"})
+@dataclass(frozen=True)
+class VisualizerConfig:
+    enabled: bool
+    frequency_bands: int
+    min_frequency: float
+    max_frequency: float
+    margin_bottom: int
+
+
+ALLOWED_INJECTION_METHODS: frozenset[str] = frozenset({"type", "clipboard_paste"})
+
+# Pre-0.9.2 spellings, accepted with a warning (see _build_output).
+_RENAMED_INJECTION_METHODS: dict[str, str] = {"text": "type", "paste": "clipboard_paste"}
 
 
 @dataclass(frozen=True)
@@ -100,8 +111,7 @@ class ClipboardConfig:
 
 
 @dataclass(frozen=True)
-class StreamingConfig:
-    enabled: bool
+class IncrementalConfig:
     min_chunk_seconds: float
     agreement_n: int
     beam_size: int | None
@@ -130,9 +140,10 @@ class Config:
     audio: AudioConfig
     asr: AsrConfig
     feedback: FeedbackConfig
+    visualizer: VisualizerConfig
     output: OutputConfig
     clipboard: ClipboardConfig
-    streaming: StreamingConfig
+    incremental: IncrementalConfig
     formatting: FormattingConfig
     update: UpdateConfig
 
@@ -152,32 +163,37 @@ class Config:
                 frames_per_buffer=1024,
                 input_device=None,
                 max_recording_seconds=600,
-                silence_detection=True,
-                silence_rms_threshold=0.01,
-                silence_duration_seconds=1.5,
             ),
             asr=AsrConfig(
-                model="Systran/faster-distil-whisper-medium.en",
+                model="Systran/faster-whisper-medium.en",
                 language="en",
                 beam_size=5,
                 compute_type="int8",
                 silence_threshold=0.6,
                 mode="lazy",
                 idle_unload_seconds=300,
+                hotwords=None,
+                initial_prompt=None,
             ),
             feedback=FeedbackConfig(
                 volume=0.6,
                 cues=dict.fromkeys(CUE_NAMES, None),
                 mute=False,
             ),
+            visualizer=VisualizerConfig(
+                enabled=True,
+                frequency_bands=16,
+                min_frequency=80.0,
+                max_frequency=8000.0,
+                margin_bottom=32,
+            ),
             output=OutputConfig(
-                injection_method="paste",
+                injection_method="clipboard_paste",
                 append_trailing_space=True,
                 max_chars=4096,
             ),
             clipboard=ClipboardConfig(enabled=True),
-            streaming=StreamingConfig(
-                enabled=False,
+            incremental=IncrementalConfig(
                 min_chunk_seconds=1.0,
                 agreement_n=2,
                 beam_size=None,
@@ -227,6 +243,7 @@ class Config:
         user_hotkey = table.get("hotkey", {})
         cancel_explicit = isinstance(user_hotkey, dict) and bool(user_hotkey.get("cancel_binding"))
 
+        table = _migrate_streaming_table(table)
         merged = _merge(asdict(cls.defaults()), table)
         return cls._from_dict(merged, path, cancel_explicit=cancel_explicit)
 
@@ -243,9 +260,10 @@ class Config:
             audio=_build_audio(table["audio"], path),
             asr=_build_asr(table["asr"], path),
             feedback=_build_feedback(table["feedback"], path),
+            visualizer=_build_visualizer(table["visualizer"], path),
             output=_build_output(table["output"], path),
             clipboard=_build_clipboard(table["clipboard"], path),
-            streaming=_build_streaming(table["streaming"], path),
+            incremental=_build_incremental(table["incremental"], path),
             formatting=_build_formatting(table["formatting"], path),
             update=_build_update(table["update"], path),
         )
@@ -259,7 +277,7 @@ def _validate_cross_section(cfg: Config, path: pathlib.Path) -> None:
     The per-section builders each see only their own table, so constraints
     that span sections have to be checked once the whole config is assembled.
     """
-    if cfg.output.injection_method == "paste" and not cfg.clipboard.enabled:
+    if cfg.output.injection_method == "clipboard_paste" and not cfg.clipboard.enabled:
         # Paste mode delivers text *by* copying it and firing Shift+Insert, so
         # the clipboard is the transport, not a convenience copy. Silently
         # honouring clipboard.enabled here would fire the chord over stale
@@ -269,17 +287,32 @@ def _validate_cross_section(cfg: Config, path: pathlib.Path) -> None:
         raise ConfigError(
             path,
             "clipboard.enabled",
-            'must be true when output.injection_method = "paste" (paste mode '
-            'delivers text via the clipboard); use injection_method = "text" '
+            'must be true when output.injection_method = "clipboard_paste" '
+            "(clipboard_paste mode delivers text via the clipboard); use "
+            'injection_method = "type" '
             "to type without touching the clipboard",
         )
-    if cfg.streaming.enabled and cfg.output.injection_method != "paste":
-        raise ConfigError(
-            path,
-            "streaming.enabled",
-            'requires output.injection_method = "paste"; live streaming pastes '
-            "each committed word as it is confirmed",
+
+
+def _migrate_streaming_table(table: dict[str, Any]) -> dict[str, Any]:
+    """Temporarily copy deprecated streaming tuning into incremental config."""
+    legacy = table.get("streaming")
+    if not isinstance(legacy, dict):
+        return table
+    logger.warning("[stenographer.streaming] is deprecated; use [stenographer.incremental]")
+    if "enabled" in legacy:
+        logger.warning(
+            "streaming.enabled is deprecated and ignored; incremental decoding is always on"
         )
+    migrated = dict(table)
+    incremental = table.get("incremental")
+    current = dict(incremental) if isinstance(incremental, dict) else {}
+    for key in ("min_chunk_seconds", "agreement_n", "beam_size", "max_buffer_seconds"):
+        if key in legacy and key not in current:
+            current[key] = legacy[key]
+            logger.warning("migrating deprecated streaming.%s to incremental.%s", key, key)
+    migrated["incremental"] = current
+    return migrated
 
 
 _NULL_VALUE_RE = re.compile(r'(?<=\s=\s)null(?=[^\w"]|\Z)', re.MULTILINE)
@@ -367,25 +400,11 @@ def _build_audio(table: dict[str, Any], path: pathlib.Path) -> AudioConfig:
     )
     if not (0 <= max_recording_seconds <= 86400):
         raise ConfigError(path, "audio.max_recording_seconds", "must satisfy 0 <= x <= 86400")
-    silence_detection = _expect_bool(table, "silence_detection", "audio.silence_detection", path)
-    silence_rms_threshold = _expect_number(
-        table, "silence_rms_threshold", "audio.silence_rms_threshold", path
-    )
-    if not (0.0 <= silence_rms_threshold <= 1.0):
-        raise ConfigError(path, "audio.silence_rms_threshold", "must satisfy 0.0 <= x <= 1.0")
-    silence_duration_seconds = _expect_number(
-        table, "silence_duration_seconds", "audio.silence_duration_seconds", path
-    )
-    if not (0 < silence_duration_seconds <= 10):
-        raise ConfigError(path, "audio.silence_duration_seconds", "must satisfy 0 < x <= 10")
     return AudioConfig(
         sample_rate=sample_rate,
         frames_per_buffer=frames_per_buffer,
         input_device=input_device,
         max_recording_seconds=max_recording_seconds,
-        silence_detection=silence_detection,
-        silence_rms_threshold=silence_rms_threshold,
-        silence_duration_seconds=silence_duration_seconds,
     )
 
 
@@ -411,6 +430,8 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
     idle_unload_seconds = _expect_int(table, "idle_unload_seconds", "asr.idle_unload_seconds", path)
     if not (0 <= idle_unload_seconds <= 86400):
         raise ConfigError(path, "asr.idle_unload_seconds", "must satisfy 0 <= x <= 86400")
+    hotwords = _expect_optional_str(table, "hotwords", "asr.hotwords", path)
+    initial_prompt = _expect_optional_str(table, "initial_prompt", "asr.initial_prompt", path)
     return AsrConfig(
         model=model,
         language=language,
@@ -419,6 +440,8 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
         silence_threshold=silence_threshold,
         mode=mode,
         idle_unload_seconds=idle_unload_seconds,
+        hotwords=hotwords,
+        initial_prompt=initial_prompt,
     )
 
 
@@ -429,6 +452,35 @@ def _build_feedback(table: dict[str, Any], path: pathlib.Path) -> FeedbackConfig
     cues = _build_cues(table.get("cues", {}), path)
     mute = _expect_bool(table, "mute", "feedback.mute", path)
     return FeedbackConfig(volume=volume, cues=cues, mute=mute)
+
+
+def _build_visualizer(table: dict[str, Any], path: pathlib.Path) -> VisualizerConfig:
+    enabled = _expect_bool(table, "enabled", "visualizer.enabled", path)
+    frequency_bands = _expect_int(table, "frequency_bands", "visualizer.frequency_bands", path)
+    if not (6 <= frequency_bands <= 32):
+        raise ConfigError(path, "visualizer.frequency_bands", "must satisfy 6 <= x <= 32")
+    min_frequency = _expect_number(table, "min_frequency", "visualizer.min_frequency", path)
+    if not (20 <= min_frequency <= 2000):
+        raise ConfigError(path, "visualizer.min_frequency", "must satisfy 20 <= x <= 2000")
+    max_frequency = _expect_number(table, "max_frequency", "visualizer.max_frequency", path)
+    if not (1000 <= max_frequency <= 24000):
+        raise ConfigError(path, "visualizer.max_frequency", "must satisfy 1000 <= x <= 24000")
+    if max_frequency <= min_frequency:
+        raise ConfigError(
+            path,
+            "visualizer.max_frequency",
+            "must be greater than visualizer.min_frequency",
+        )
+    margin_bottom = _expect_int(table, "margin_bottom", "visualizer.margin_bottom", path)
+    if not (0 <= margin_bottom <= 500):
+        raise ConfigError(path, "visualizer.margin_bottom", "must satisfy 0 <= x <= 500")
+    return VisualizerConfig(
+        enabled=enabled,
+        frequency_bands=frequency_bands,
+        min_frequency=min_frequency,
+        max_frequency=max_frequency,
+        margin_bottom=margin_bottom,
+    )
 
 
 def _build_cues(raw: Any, path: pathlib.Path) -> dict[str, str | None]:
@@ -460,6 +512,15 @@ def _build_cues(raw: Any, path: pathlib.Path) -> dict[str, str | None]:
 
 def _build_output(table: dict[str, Any], path: pathlib.Path) -> OutputConfig:
     injection_method = _expect_str(table, "injection_method", "output.injection_method", path)
+    renamed = _RENAMED_INJECTION_METHODS.get(injection_method)
+    if renamed is not None:
+        # Both values were renamed in 0.9.2. Rejecting them would hard-fail
+        # every config written before that release -- including the shipped
+        # default -- at daemon startup, so warn and accept the old spelling.
+        logger.warning(
+            'output.injection_method = "%s" is deprecated; use "%s"', injection_method, renamed
+        )
+        injection_method = renamed
     if injection_method not in ALLOWED_INJECTION_METHODS:
         raise ConfigError(
             path,
@@ -484,26 +545,24 @@ def _build_clipboard(table: dict[str, Any], path: pathlib.Path) -> ClipboardConf
     return ClipboardConfig(enabled=enabled)
 
 
-def _build_streaming(table: dict[str, Any], path: pathlib.Path) -> StreamingConfig:
-    enabled = _expect_bool(table, "enabled", "streaming.enabled", path)
+def _build_incremental(table: dict[str, Any], path: pathlib.Path) -> IncrementalConfig:
     min_chunk_seconds = _expect_number(
-        table, "min_chunk_seconds", "streaming.min_chunk_seconds", path
+        table, "min_chunk_seconds", "incremental.min_chunk_seconds", path
     )
     if not (0.25 <= min_chunk_seconds <= 5):
-        raise ConfigError(path, "streaming.min_chunk_seconds", "must satisfy 0.25 <= x <= 5")
-    agreement_n = _expect_int(table, "agreement_n", "streaming.agreement_n", path)
+        raise ConfigError(path, "incremental.min_chunk_seconds", "must satisfy 0.25 <= x <= 5")
+    agreement_n = _expect_int(table, "agreement_n", "incremental.agreement_n", path)
     if not (2 <= agreement_n <= 4):
-        raise ConfigError(path, "streaming.agreement_n", "must satisfy 2 <= x <= 4")
-    beam_size = _expect_optional_int(table, "beam_size", "streaming.beam_size", path)
+        raise ConfigError(path, "incremental.agreement_n", "must satisfy 2 <= x <= 4")
+    beam_size = _expect_optional_int(table, "beam_size", "incremental.beam_size", path)
     if beam_size is not None and not (1 <= beam_size <= 10):
-        raise ConfigError(path, "streaming.beam_size", "must be null or satisfy 1 <= x <= 10")
+        raise ConfigError(path, "incremental.beam_size", "must be null or satisfy 1 <= x <= 10")
     max_buffer_seconds = _expect_number(
-        table, "max_buffer_seconds", "streaming.max_buffer_seconds", path
+        table, "max_buffer_seconds", "incremental.max_buffer_seconds", path
     )
     if not (5 <= max_buffer_seconds <= 120):
-        raise ConfigError(path, "streaming.max_buffer_seconds", "must satisfy 5 <= x <= 120")
-    return StreamingConfig(
-        enabled=enabled,
+        raise ConfigError(path, "incremental.max_buffer_seconds", "must satisfy 5 <= x <= 120")
+    return IncrementalConfig(
         min_chunk_seconds=min_chunk_seconds,
         agreement_n=agreement_n,
         beam_size=beam_size,
@@ -644,9 +703,10 @@ def _format_default_toml() -> str:
     a = cfg.audio
     r = cfg.asr
     f = cfg.feedback
+    v = cfg.visualizer
     o = cfg.output
     c = cfg.clipboard
-    s = cfg.streaming
+    i = cfg.incremental
     fm = cfg.formatting
     u = cfg.update
     lines: list[str] = [
@@ -667,9 +727,6 @@ def _format_default_toml() -> str:
         f"audio.frames_per_buffer = {a.frames_per_buffer}",
         f"audio.input_device = {_toml_optional(a.input_device)}",
         f"audio.max_recording_seconds = {a.max_recording_seconds}",
-        f"audio.silence_detection = {_toml_bool(a.silence_detection)}",
-        f"audio.silence_rms_threshold = {a.silence_rms_threshold}",
-        f"audio.silence_duration_seconds = {a.silence_duration_seconds}",
         "",
         "# ASR",
         f"asr.model = {_toml_str(r.model)}",
@@ -679,10 +736,21 @@ def _format_default_toml() -> str:
         f"asr.silence_threshold = {r.silence_threshold}",
         f"asr.mode = {_toml_str(r.mode)}",
         f"asr.idle_unload_seconds = {r.idle_unload_seconds}",
+        '# hotwords: proper nouns / jargon to bias recognition toward, e.g. "wtype, Wayland"',
+        f"asr.hotwords = {_toml_optional(r.hotwords)}",
+        "# initial_prompt: free-text context prepended to decoding (style/domain hints)",
+        f"asr.initial_prompt = {_toml_optional(r.initial_prompt)}",
         "",
         "# Audio feedback",
         f"feedback.volume = {f.volume}",
         f"feedback.mute = {_toml_bool(f.mute)}",
+        "",
+        "# Bottom-center Wayland spectrum overlay",
+        f"visualizer.enabled = {_toml_bool(v.enabled)}",
+        f"visualizer.frequency_bands = {v.frequency_bands}",
+        f"visualizer.min_frequency = {v.min_frequency}",
+        f"visualizer.max_frequency = {v.max_frequency}",
+        f"visualizer.margin_bottom = {v.margin_bottom}",
         "",
         "# Text output",
         f"output.injection_method = {_toml_str(o.injection_method)}",
@@ -692,16 +760,14 @@ def _format_default_toml() -> str:
         "# Clipboard",
         f"clipboard.enabled = {_toml_bool(c.enabled)}",
         "",
-        '# Live streaming (requires injection_method = "paste"): deliver words',
-        "# while still recording.",
+        "# Incremental word-level decoding (always enabled).",
         "# min_chunk_seconds / beam_size are the CPU knobs if re-decodes lag.",
-        f"streaming.enabled = {_toml_bool(s.enabled)}",
-        f"streaming.min_chunk_seconds = {s.min_chunk_seconds}",
-        f"streaming.agreement_n = {s.agreement_n}",
-        "streaming.beam_size = null"
-        if s.beam_size is None
-        else f"streaming.beam_size = {s.beam_size}",
-        f"streaming.max_buffer_seconds = {s.max_buffer_seconds}",
+        f"incremental.min_chunk_seconds = {i.min_chunk_seconds}",
+        f"incremental.agreement_n = {i.agreement_n}",
+        "incremental.beam_size = null"
+        if i.beam_size is None
+        else f"incremental.beam_size = {i.beam_size}",
+        f"incremental.max_buffer_seconds = {i.max_buffer_seconds}",
         "",
         "# Formatting heuristics (applies to all output modes)",
         f"formatting.paragraph_pause_seconds = {fm.paragraph_pause_seconds}",

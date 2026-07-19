@@ -43,6 +43,38 @@ def test_start_opens_input_stream_with_expected_kwargs() -> None:
     returned_stream.close.assert_called_once()
 
 
+def test_audio_observer_can_request_a_faster_callback_cadence() -> None:
+    fake_stream = MagicMock()
+    with patch("sounddevice.InputStream", fake_stream) as patched:
+        r = Recorder(
+            sample_rate=16000,
+            frames_per_buffer=1024,
+            device=None,
+            on_error=_noop,
+            on_audio=lambda _samples, _rate: None,
+            max_audio_observer_interval_seconds=1.0 / 60.0,
+        )
+        r.start()
+    assert patched.call_args.kwargs["blocksize"] == 266
+    r.stop()
+
+
+def test_audio_observer_cadence_does_not_enlarge_configured_blocks() -> None:
+    fake_stream = MagicMock()
+    with patch("sounddevice.InputStream", fake_stream) as patched:
+        r = Recorder(
+            sample_rate=16000,
+            frames_per_buffer=128,
+            device=None,
+            on_error=_noop,
+            on_audio=lambda _samples, _rate: None,
+            max_audio_observer_interval_seconds=1.0 / 60.0,
+        )
+        r.start()
+    assert patched.call_args.kwargs["blocksize"] == 128
+    r.stop()
+
+
 def test_start_normalizes_empty_string_device_to_none() -> None:
     fake_stream = MagicMock()
     with patch("sounddevice.InputStream", fake_stream) as patched:
@@ -89,6 +121,46 @@ def test_callback_accumulates_samples_and_stop_returns_2d_float32() -> None:
     assert np.allclose(arr[:frames, 0], 1.0)
     assert np.allclose(arr[frames:, 0], 0.0)
     assert r.is_active is False
+
+
+def test_callback_publishes_mono_audio_at_actual_sample_rate() -> None:
+    observed: list[tuple[np.ndarray, int]] = []
+    fake_stream = MagicMock()
+    with patch("sounddevice.InputStream", fake_stream):
+        r = Recorder(
+            sample_rate=16000,
+            frames_per_buffer=4,
+            device=None,
+            on_error=_noop,
+            on_audio=lambda samples, rate: observed.append((samples.copy(), rate)),
+        )
+        r.start()
+    stereo = np.array(
+        [[0.1, 0.9], [0.2, 0.8], [0.3, 0.7], [0.4, 0.6]],
+        dtype=np.float32,
+    )
+    r._on_audio(stereo, 4, None, None)
+    r.stop()
+    assert len(observed) == 1
+    assert observed[0][1] == 16000
+    assert np.allclose(observed[0][0], stereo[:, 0])
+
+
+def test_callback_ignores_audio_observer_failure() -> None:
+    def fail(_samples: np.ndarray, _rate: int) -> None:
+        raise RuntimeError("visualizer failed")
+
+    with patch("sounddevice.InputStream", MagicMock()):
+        r = Recorder(
+            sample_rate=16000,
+            frames_per_buffer=4,
+            device=None,
+            on_error=_noop,
+            on_audio=fail,
+        )
+        r.start()
+    r._on_audio(np.ones((4, 1), dtype=np.float32), 4, None, None)
+    assert r.stop().shape == (4, 1)
 
 
 def test_input_overflow_calls_on_error_exactly_once_on_stop() -> None:
@@ -302,153 +374,12 @@ def test_stop_no_resample_when_device_opened_at_configured_rate() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _silence_recorder(
-    segments: list[np.ndarray],
-    *,
-    silence_duration_seconds: float = 1.5,
-    sample_rate: int = 16000,
-) -> Recorder:
-    """A started Recorder with silence detection on and its flush callback
-    wired to append into ``segments``. Uses the mocked InputStream."""
-    fake_stream = MagicMock()
-    with patch("sounddevice.InputStream", fake_stream):
-        r = Recorder(
-            sample_rate=sample_rate,
-            frames_per_buffer=1024,
-            device=None,
-            on_error=_noop,
-            silence_detection=True,
-            silence_rms_threshold=0.01,
-            silence_duration_seconds=silence_duration_seconds,
-        )
-        r.start(on_segment=segments.append)
-    return r
-
-
 def _speech(n: int, amp: float = 0.2) -> np.ndarray:
     return np.full((n, 1), amp, dtype=np.float32)
 
 
 def _silent(n: int) -> np.ndarray:
     return np.zeros((n, 1), dtype=np.float32)
-
-
-def test_silence_detection_flushes_segment_on_pause() -> None:
-    segments: list[np.ndarray] = []
-    r = _silence_recorder(segments)
-    n = 8000  # 0.5 s at 16 kHz; speech >= 0.25 s so _seen_speech is set
-    r._on_audio(_speech(n), n, None, None)  # speech
-    r._on_audio(_silent(n), n, None, None)  # silence 0.5 s
-    r._on_audio(_silent(n), n, None, None)  # silence 1.0 s
-    assert segments == []  # 1.0 s < 1.5 s threshold, no flush yet
-    r._on_audio(_silent(n), n, None, None)  # silence 1.5 s -> flush
-    assert len(segments) == 1
-    assert segments[0].shape == (4 * n, 1)  # speech + 3 silence blocks
-    # Buffer was reset; nothing but silence remains, so the tail is dropped.
-    assert r.stop().shape[0] == 0
-
-
-def test_silence_detection_ignores_pure_silence() -> None:
-    segments: list[np.ndarray] = []
-    r = _silence_recorder(segments)
-    n = 8000
-    for _ in range(10):  # 5 s of silence, never any speech
-        r._on_audio(_silent(n), n, None, None)
-    assert segments == []
-    # No flush ever happened, so stop() returns the whole (silent) buffer.
-    assert r.stop().shape[0] == 10 * n
-
-
-def test_silence_detection_ignores_short_click() -> None:
-    segments: list[np.ndarray] = []
-    r = _silence_recorder(segments)
-    # 1000 frames of speech = 0.0625 s < the 0.25 s minimum, then a long pause.
-    r._on_audio(_speech(1000, amp=0.5), 1000, None, None)
-    for _ in range(4):
-        r._on_audio(_silent(8000), 8000, None, None)  # 2 s of silence
-    assert segments == []
-
-
-def test_silence_detection_flushes_each_pause_in_order() -> None:
-    segments: list[np.ndarray] = []
-    r = _silence_recorder(segments)
-    n = 8000
-    r._on_audio(_speech(n, amp=0.2), n, None, None)
-    for _ in range(3):
-        r._on_audio(_silent(n), n, None, None)  # flush 1
-    r._on_audio(_speech(n, amp=0.5), n, None, None)
-    for _ in range(3):
-        r._on_audio(_silent(n), n, None, None)  # flush 2
-    assert len(segments) == 2
-    assert np.isclose(np.abs(segments[0][:, 0]).max(), 0.2)
-    assert np.isclose(np.abs(segments[1][:, 0]).max(), 0.5)
-
-
-def test_silence_detection_disabled_returns_whole_buffer() -> None:
-    segments: list[np.ndarray] = []
-    fake_stream = MagicMock()
-    with patch("sounddevice.InputStream", fake_stream):
-        r = Recorder(
-            sample_rate=16000,
-            frames_per_buffer=1024,
-            device=None,
-            on_error=_noop,
-            silence_detection=False,
-        )
-        r.start(on_segment=segments.append)
-    n = 8000
-    r._on_audio(_speech(n), n, None, None)
-    for _ in range(5):
-        r._on_audio(_silent(n), n, None, None)
-    assert segments == []  # detection off: no flush
-    assert r.stop().shape[0] == 6 * n  # entire recording returned
-
-
-def test_stop_returns_tail_speech_after_flush() -> None:
-    segments: list[np.ndarray] = []
-    r = _silence_recorder(segments)
-    n = 8000
-    r._on_audio(_speech(n, amp=0.2), n, None, None)
-    for _ in range(3):
-        r._on_audio(_silent(n), n, None, None)  # flush
-    assert len(segments) == 1
-    # New speech after the flush must be returned by stop(), not dropped.
-    r._on_audio(_speech(n, amp=0.3), n, None, None)
-    out = r.stop()
-    assert out.shape == (n, 1)
-    assert np.allclose(out[:, 0], 0.3)
-
-
-def test_silence_flush_resamples_fallback_rate() -> None:
-    segments: list[np.ndarray] = []
-    fake_stream = MagicMock()
-    with patch(
-        "sounddevice.InputStream",
-        side_effect=[
-            sounddevice.PortAudioError("Invalid sample rate", -9997),
-            fake_stream,
-        ],
-    ):
-        r = Recorder(
-            sample_rate=16000,
-            frames_per_buffer=1024,
-            device=None,
-            on_error=_noop,
-            silence_detection=True,
-            silence_rms_threshold=0.01,
-            silence_duration_seconds=0.5,
-        )
-        r.start(on_segment=segments.append)
-    assert r._sample_rate == 48000  # fell back
-    n = 48000  # 1 s at the device rate
-    t = np.arange(n, dtype=np.float32) / 48000
-    speech = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32).reshape(-1, 1)
-    r._on_audio(speech, n, None, None)  # 1 s speech
-    r._on_audio(_silent(n), n, None, None)  # 1 s silence >= 0.5 s -> flush
-    assert len(segments) == 1
-    # 2 s captured at 48 kHz, flushed and resampled to ~2 s at 16 kHz.
-    assert 31000 <= segments[0].shape[0] <= 33000
-    assert segments[0].dtype == np.float32
 
 
 def test_resample_poly_identity_and_empty() -> None:
@@ -513,13 +444,6 @@ def test_on_partial_stops_after_cap() -> None:
     assert fires == [1]
     r._on_audio(block, 16000, None, None)  # capped: no append, no partial
     assert fires == [1]
-
-
-def test_on_partial_and_on_segment_mutually_exclusive() -> None:
-    with patch("sounddevice.InputStream", MagicMock()):
-        r = Recorder(sample_rate=16000, frames_per_buffer=1024, device=None, on_error=_noop)
-        with pytest.raises(ValueError):
-            r.start(on_segment=lambda arr: None, on_partial=lambda: None)
 
 
 def test_snapshot_full_buffer_matches_finalize() -> None:

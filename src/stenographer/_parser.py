@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("disable", help="Disable (and stop) the systemd user unit.")
     sub.add_parser("start", help="Start an existing systemd user unit.")
     sub.add_parser("stop", help="Stop any running daemon (systemd or foreground).")
+    sub.add_parser("status", help="Show daemon and systemd user-unit status.")
 
     transcribe = sub.add_parser("transcribe", help="Transcribe an audio file and print to stdout.")
     transcribe.add_argument("file", type=pathlib.Path)

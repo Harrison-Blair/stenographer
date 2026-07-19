@@ -16,8 +16,10 @@ from stenographer.config import (
     Config,
     ConfigError,
     HotkeyConfig,
+    IncrementalConfig,
     OutputConfig,
     UpdateConfig,
+    VisualizerConfig,
     load_or_default,
     resolve_config_path,
 )
@@ -78,21 +80,20 @@ def test_defaults_audio() -> None:
         frames_per_buffer=1024,
         input_device=None,
         max_recording_seconds=600,
-        silence_detection=True,
-        silence_rms_threshold=0.01,
-        silence_duration_seconds=1.5,
     )
 
 
 def test_defaults_asr() -> None:
     assert Config.defaults().asr == AsrConfig(
-        model="Systran/faster-distil-whisper-medium.en",
+        model="Systran/faster-whisper-medium.en",
         language="en",
         beam_size=5,
         compute_type="int8",
         silence_threshold=0.6,
         mode="lazy",
         idle_unload_seconds=300,
+        hotwords=None,
+        initial_prompt=None,
     )
 
 
@@ -104,9 +105,19 @@ def test_defaults_feedback() -> None:
     assert all(v is None for v in fb.cues.values())
 
 
+def test_defaults_visualizer() -> None:
+    assert Config.defaults().visualizer == VisualizerConfig(
+        enabled=True,
+        frequency_bands=16,
+        min_frequency=80.0,
+        max_frequency=8000.0,
+        margin_bottom=32,
+    )
+
+
 def test_defaults_output() -> None:
     assert Config.defaults().output == OutputConfig(
-        injection_method="paste",
+        injection_method="clipboard_paste",
         append_trailing_space=True,
         max_chars=4096,
     )
@@ -156,7 +167,9 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
             asr.compute_type = "int8"
             feedback.volume = 0.3
             feedback.mute = true
-            output.injection_method = "text"
+            visualizer.frequency_bands = 20
+            visualizer.margin_bottom = 48
+            output.injection_method = "type"
             output.append_trailing_space = false
             output.max_chars = 1000
             clipboard.enabled = false
@@ -172,15 +185,15 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
     assert cfg.asr.compute_type == "int8"
     assert cfg.feedback.volume == 0.3
     assert cfg.feedback.mute is True
-    # text mode, so clipboard.enabled = false is coherent here; paste mode
-    # delivers *via* the clipboard and is covered by the cross-section tests.
-    assert cfg.output.injection_method == "text"
+    assert cfg.visualizer.frequency_bands == 20
+    assert cfg.visualizer.margin_bottom == 48
+    assert cfg.output.injection_method == "type"
     assert cfg.output.append_trailing_space is False
     assert cfg.output.max_chars == 1000
     assert cfg.clipboard.enabled is False
 
 
-def test_paste_mode_requires_clipboard_enabled(tmp_path: pathlib.Path) -> None:
+def test_clipboard_paste_mode_requires_clipboard_enabled(tmp_path: pathlib.Path) -> None:
     # Paste mode delivers text by copying it and firing Shift+Insert. With the
     # clipboard disabled the chord would paste whatever the user had there
     # before, so the combination is rejected rather than silently resolved.
@@ -188,7 +201,7 @@ def test_paste_mode_requires_clipboard_enabled(tmp_path: pathlib.Path) -> None:
     p.write_text(
         textwrap.dedent("""\
             [stenographer]
-            output.injection_method = "paste"
+            output.injection_method = "clipboard_paste"
             clipboard.enabled = false
             """)
     )
@@ -196,19 +209,40 @@ def test_paste_mode_requires_clipboard_enabled(tmp_path: pathlib.Path) -> None:
         Config.load(p)
 
 
-def test_streaming_requires_paste_mode(tmp_path: pathlib.Path) -> None:
-    # Streaming pastes each committed delta; in text mode it silently did
-    # nothing at all, which read as the feature being broken.
+def test_legacy_streaming_enabled_is_ignored(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            output.injection_method = "type"
+            streaming.enabled = true
+            """)
+    )
+    assert Config.load(p).output.injection_method == "type"
+
+
+def test_legacy_injection_method_paste_is_migrated(tmp_path: pathlib.Path) -> None:
+    # "paste" was the shipped default before 0.9.2; rejecting it would break
+    # every existing config at daemon startup.
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            output.injection_method = "paste"
+            """)
+    )
+    assert Config.load(p).output.injection_method == "clipboard_paste"
+
+
+def test_legacy_injection_method_text_is_migrated(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text(
         textwrap.dedent("""\
             [stenographer]
             output.injection_method = "text"
-            streaming.enabled = true
             """)
     )
-    with pytest.raises(ConfigError, match=re.escape("streaming.enabled")):
-        Config.load(p)
+    assert Config.load(p).output.injection_method == "type"
 
 
 def test_load_partial_override_merges_over_defaults(tmp_path: pathlib.Path) -> None:
@@ -229,7 +263,7 @@ def test_load_partial_override_merges_over_defaults(tmp_path: pathlib.Path) -> N
     assert cfg.audio.input_device is None
     assert cfg.asr.beam_size == 5
     assert cfg.feedback.volume == 0.6
-    assert cfg.output.injection_method == "paste"
+    assert cfg.output.injection_method == "clipboard_paste"
     assert cfg.output.max_chars == 4096
     assert cfg.clipboard.enabled is True
 
@@ -314,6 +348,49 @@ def test_format_default_toml_has_trigger_mode() -> None:
     from stenographer.config import _format_default_toml
 
     assert 'hotkey.trigger_mode = "ptt"' in _format_default_toml()
+
+
+def test_asr_hotwords_and_initial_prompt_override(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            asr.hotwords = "stenographer, wtype, Wayland"
+            asr.initial_prompt = "Notes about Arch Linux tooling."
+            """)
+    )
+    cfg = Config.load(p)
+    assert cfg.asr.hotwords == "stenographer, wtype, Wayland"
+    assert cfg.asr.initial_prompt == "Notes about Arch Linux tooling."
+
+
+def test_asr_hotwords_empty_string_is_none(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        textwrap.dedent("""\
+            [stenographer]
+            asr.hotwords = ""
+            asr.initial_prompt = null
+            """)
+    )
+    cfg = Config.load(p)
+    assert cfg.asr.hotwords is None
+    assert cfg.asr.initial_prompt is None
+
+
+def test_asr_hotwords_non_string_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nasr.hotwords = 42\n")
+    with pytest.raises(ConfigError, match=r"asr.hotwords"):
+        Config.load(p)
+
+
+def test_format_default_toml_has_vocabulary_keys() -> None:
+    from stenographer.config import _format_default_toml
+
+    toml = _format_default_toml()
+    assert 'asr.hotwords = ""' in toml
+    assert 'asr.initial_prompt = ""' in toml
 
 
 def test_validate_hotkey_threshold_zero_rejected(tmp_path: pathlib.Path) -> None:
@@ -412,48 +489,6 @@ def test_validate_frames_per_buffer_too_high_rejected(tmp_path: pathlib.Path) ->
         Config.load(p)
 
 
-def test_validate_silence_detection_non_bool_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer]\naudio.silence_detection = 1\n")
-    with pytest.raises(ConfigError, match=r"audio.silence_detection"):
-        Config.load(p)
-
-
-def test_validate_silence_rms_threshold_too_high_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer]\naudio.silence_rms_threshold = 1.5\n")
-    with pytest.raises(ConfigError, match=r"audio.silence_rms_threshold"):
-        Config.load(p)
-
-
-def test_validate_silence_duration_zero_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer]\naudio.silence_duration_seconds = 0\n")
-    with pytest.raises(ConfigError, match=r"audio.silence_duration_seconds"):
-        Config.load(p)
-
-
-def test_validate_silence_duration_too_high_rejected(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer]\naudio.silence_duration_seconds = 11\n")
-    with pytest.raises(ConfigError, match=r"audio.silence_duration_seconds"):
-        Config.load(p)
-
-
-def test_load_silence_override_round_trips(tmp_path: pathlib.Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text(
-        "[stenographer]\n"
-        "audio.silence_detection = false\n"
-        "audio.silence_rms_threshold = 0.05\n"
-        "audio.silence_duration_seconds = 2.5\n"
-    )
-    cfg = Config.load(p)
-    assert cfg.audio.silence_detection is False
-    assert cfg.audio.silence_rms_threshold == 0.05
-    assert cfg.audio.silence_duration_seconds == 2.5
-
-
 def test_validate_beam_size_too_low_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text("[stenographer]\nasr.beam_size = 0\n")
@@ -542,6 +577,37 @@ def test_validate_volume_too_high_rejected(tmp_path: pathlib.Path) -> None:
         Config.load(p)
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("frequency_bands", "5"),
+        ("frequency_bands", "33"),
+        ("min_frequency", "10"),
+        ("max_frequency", "25000"),
+        ("margin_bottom", "-1"),
+        ("margin_bottom", "501"),
+    ],
+)
+def test_validate_visualizer_ranges_rejected(
+    tmp_path: pathlib.Path,
+    key: str,
+    value: str,
+) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\nvisualizer.{key} = {value}\n")
+    with pytest.raises(ConfigError, match=rf"visualizer\.{key}"):
+        Config.load(p)
+
+
+def test_validate_visualizer_frequency_order_rejected(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[stenographer]\nvisualizer.min_frequency = 1500\nvisualizer.max_frequency = 1200\n"
+    )
+    with pytest.raises(ConfigError, match=r"visualizer.max_frequency"):
+        Config.load(p)
+
+
 def test_validate_max_chars_too_low_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text("[stenographer]\noutput.max_chars = 0\n")
@@ -613,16 +679,16 @@ def test_validate_injection_method_invalid_rejected(tmp_path: pathlib.Path) -> N
         Config.load(p)
 
 
-def test_validate_injection_method_text_accepted(tmp_path: pathlib.Path) -> None:
+def test_validate_injection_method_type_accepted(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\noutput.injection_method = "text"\n')
-    assert Config.load(p).output.injection_method == "text"
+    p.write_text('[stenographer]\noutput.injection_method = "type"\n')
+    assert Config.load(p).output.injection_method == "type"
 
 
-def test_validate_injection_method_paste_accepted(tmp_path: pathlib.Path) -> None:
+def test_validate_injection_method_clipboard_paste_accepted(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
-    p.write_text('[stenographer]\noutput.injection_method = "paste"\n')
-    assert Config.load(p).output.injection_method == "paste"
+    p.write_text('[stenographer]\noutput.injection_method = "clipboard_paste"\n')
+    assert Config.load(p).output.injection_method == "clipboard_paste"
 
 
 def test_validate_cue_unreadable_file_rejected(tmp_path: pathlib.Path) -> None:
@@ -702,16 +768,12 @@ def test_validate_bool_rejected_for_int_field(tmp_path: pathlib.Path) -> None:
         Config.load(p)
 
 
-# --- [streaming] / [formatting] ---
+# --- [incremental] / legacy [streaming] / [formatting] ---
 
 
-def test_streaming_defaults() -> None:
+def test_incremental_defaults() -> None:
     cfg = Config.defaults()
-    assert cfg.streaming.enabled is False
-    assert cfg.streaming.min_chunk_seconds == 1.0
-    assert cfg.streaming.agreement_n == 2
-    assert cfg.streaming.beam_size is None
-    assert cfg.streaming.max_buffer_seconds == 20.0
+    assert cfg.incremental == IncrementalConfig(1.0, 2, None, 20.0)
     assert cfg.formatting.capitalize_sentences is True
     assert cfg.formatting.normalize_spacing is True
 
@@ -720,50 +782,75 @@ def test_default_paragraph_pause_seconds_is_zero() -> None:
     assert Config.defaults().formatting.paragraph_pause_seconds == 0.0
 
 
-def test_streaming_overrides_load(tmp_path: pathlib.Path) -> None:
+def test_incremental_overrides_load(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text(
         "[stenographer]\n"
-        "streaming.enabled = true\n"
-        "streaming.min_chunk_seconds = 0.5\n"
-        "streaming.agreement_n = 3\n"
-        "streaming.beam_size = 2\n"
-        "streaming.max_buffer_seconds = 30\n"
+        "incremental.min_chunk_seconds = 0.5\n"
+        "incremental.agreement_n = 3\n"
+        "incremental.beam_size = 2\n"
+        "incremental.max_buffer_seconds = 30\n"
         "formatting.paragraph_pause_seconds = 3.5\n"
         "formatting.capitalize_sentences = false\n"
     )
     cfg = Config.load(p)
-    assert cfg.streaming.enabled is True
-    assert cfg.streaming.min_chunk_seconds == 0.5
-    assert cfg.streaming.agreement_n == 3
-    assert cfg.streaming.beam_size == 2
-    assert cfg.streaming.max_buffer_seconds == 30.0
+    assert cfg.incremental == IncrementalConfig(0.5, 3, 2, 30.0)
     assert cfg.formatting.paragraph_pause_seconds == 3.5
     assert cfg.formatting.capitalize_sentences is False
 
 
-def test_streaming_beam_size_null_means_asr_beam(tmp_path: pathlib.Path) -> None:
+def test_incremental_beam_size_null_means_asr_beam(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
-    p.write_text("[stenographer]\nstreaming.beam_size = null\n")
-    assert Config.load(p).streaming.beam_size is None
+    p.write_text("[stenographer]\nincremental.beam_size = null\n")
+    assert Config.load(p).incremental.beam_size is None
+
+
+def test_legacy_streaming_tuning_migrates_with_warnings(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[stenographer]\n"
+        "streaming.enabled = false\n"
+        "streaming.min_chunk_seconds = 0.5\n"
+        "streaming.agreement_n = 3\n"
+        "streaming.beam_size = 2\n"
+        "streaming.max_buffer_seconds = 30\n"
+    )
+    assert Config.load(p).incremental == IncrementalConfig(0.5, 3, 2, 30.0)
+    assert "deprecated" in caplog.text
+    assert "ignored" in caplog.text
+
+
+def test_new_incremental_keys_win_over_legacy_streaming(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[stenographer]\n"
+        "streaming.agreement_n = 3\n"
+        "streaming.beam_size = 2\n"
+        "incremental.agreement_n = 4\n"
+    )
+    cfg = Config.load(p)
+    assert cfg.incremental.agreement_n == 4
+    assert cfg.incremental.beam_size == 2
 
 
 @pytest.mark.parametrize(
     ("key", "value"),
     [
-        ("streaming.min_chunk_seconds", "0.1"),
-        ("streaming.min_chunk_seconds", "6"),
-        ("streaming.agreement_n", "1"),
-        ("streaming.agreement_n", "5"),
-        ("streaming.beam_size", "0"),
-        ("streaming.beam_size", "11"),
-        ("streaming.max_buffer_seconds", "4"),
-        ("streaming.max_buffer_seconds", "121"),
+        ("incremental.min_chunk_seconds", "0.1"),
+        ("incremental.min_chunk_seconds", "6"),
+        ("incremental.agreement_n", "1"),
+        ("incremental.agreement_n", "5"),
+        ("incremental.beam_size", "0"),
+        ("incremental.beam_size", "11"),
+        ("incremental.max_buffer_seconds", "4"),
+        ("incremental.max_buffer_seconds", "121"),
         ("formatting.paragraph_pause_seconds", "-1"),
         ("formatting.paragraph_pause_seconds", "11"),
     ],
 )
-def test_streaming_out_of_range_rejected(tmp_path: pathlib.Path, key: str, value: str) -> None:
+def test_incremental_out_of_range_rejected(tmp_path: pathlib.Path, key: str, value: str) -> None:
     p = tmp_path / "config.toml"
     p.write_text(f"[stenographer]\n{key} = {value}\n")
     with pytest.raises(ConfigError, match=key.replace(".", r"\.")):

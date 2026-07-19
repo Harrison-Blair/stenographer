@@ -44,6 +44,7 @@ from stenographer.output.clipboard import ClipboardManager
 from stenographer.output.formatter import HeuristicFormatter
 from stenographer.output.inject import Injector
 from stenographer.session import Session
+from stenographer.status import cmd_status
 from stenographer.update import (
     UpdateInfo,
     apply_update,
@@ -54,6 +55,7 @@ from stenographer.update import (
     start_daemon,
     stop_daemon,
 )
+from stenographer.visualizer import StatusIndicator
 
 _CHANGELOG_BOX_WIDTH = 60
 
@@ -96,6 +98,16 @@ def _resolve_icon_root() -> pathlib.Path:
 
 
 _ICON_ROOT = _resolve_icon_root()
+
+
+def _resolve_font_root() -> pathlib.Path:
+    """Return the directory holding bundled HUD fonts."""
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        return pathlib.Path(sys._MEIPASS) / "stenographer" / "assets" / "fonts"
+    return pathlib.Path(__file__).resolve().parent / "assets" / "fonts"
+
+
+_FONT_ROOT = _resolve_font_root()
 
 
 def _configure_logging() -> None:
@@ -185,6 +197,11 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
     if isinstance(model, LazyModel):
         model.attach_worker(worker)
     feedback = _build_feedback(cfg, caps)
+    notification = StatusIndicator(
+        cfg=cfg.visualizer,
+        icon_path=_ICON_ROOT / "stenographer.png",
+        font_path=_FONT_ROOT / "Caveat-wght.ttf",
+    )
 
     def _on_recorder_error(exc: Exception) -> None:
         log.error("recorder: %s", exc)
@@ -199,9 +216,8 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         max_seconds=cfg.audio.max_recording_seconds,
         # Mid-recording silence flushing is a daemon (PTT/toggle) feature; the
         # one-shot processor stops after the first item, so disable it there.
-        silence_detection=cfg.audio.silence_detection and not one_shot,
-        silence_rms_threshold=cfg.audio.silence_rms_threshold,
-        silence_duration_seconds=cfg.audio.silence_duration_seconds,
+        on_audio=notification.publish_audio,
+        max_audio_observer_interval_seconds=(1.0 / 60.0 if cfg.visualizer.enabled else None),
     )
     injector = Injector(
         available=caps.has_paste_trigger,
@@ -209,9 +225,6 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         max_chars=cfg.output.max_chars,
     )
     clipboard = ClipboardManager(available=caps.has_wl_copy)
-    notification = DesktopNotification(
-        icon_path=_ICON_ROOT / "stenographer.png",
-    )
     binding = HotkeyBinding.parse(cfg.hotkey.binding)
     cancel_binding = (
         HotkeyBinding.parse(cfg.hotkey.cancel_binding) if cfg.hotkey.cancel_binding else None
@@ -728,9 +741,16 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
         print("mic device:     NO  (recording disabled)")
     print(f"asr model:      {'yes' if caps.has_asr_model else 'NO  (transcription disabled)'}")
     print(f"asr.mode:       {cfg.asr.mode}")
+    print(f"output mode:    {cfg.output.injection_method}")
+    print(
+        "incremental:    always on "
+        f"(chunk={cfg.incremental.min_chunk_seconds:g}s, agreement={cfg.incremental.agreement_n})"
+    )
     print(f"asr.idle_unload_seconds: {cfg.asr.idle_unload_seconds} (0 = disabled)")
     has_notify = DesktopNotification.probe()
     print(f"notify-send:    {'yes' if has_notify else 'NO  (desktop notification disabled)'}")
+    overlay_status = "yes" if StatusIndicator.overlay_probe() else "NO  (notify-send fallback)"
+    print(f"GTK spectrum:   {overlay_status}")
     fatal_cap = not (caps.has_input_group and caps.has_mic and caps.has_asr_model)
     return 78 if fatal_cap else 0
 
@@ -741,9 +761,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     import argcomplete
 
     multiprocessing.freeze_support()
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    if argv_list == ["_visualizer"]:
+        from stenographer.visualizer import run_overlay_process
+
+        return run_overlay_process()
     _configure_logging()
 
-    argv_list = list(argv) if argv is not None else sys.argv[1:]
     for token, following in itertools.pairwise(argv_list):
         if token == "run" and following in ("stop", "disable"):
             print(
@@ -768,6 +792,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_start()
     if args.subcommand == "stop":
         return cmd_stop()
+    if args.subcommand == "status":
+        return cmd_status(_LOCK_PATH, _UNIT_PATH)
     if args.subcommand == "devices":
         return cmd_devices()
 

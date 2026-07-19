@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: ci
 
- # The main-branch protection rule requires the checks "lint + test" and
- # "build release binary", but release.yml only runs on push to main
-# This workflow reports checks on pull requests
-# targeting main so the required checks can actually pass before merging.
- # The build job mirrors release.yml's build without publishing anything.
+# The main-branch protection rule requires the checks "lint + test" and
+# "build release binary", but release.yml only runs on push to main.
+# This workflow reports checks on pull requests targeting main so the required
+# checks can pass before merging. The build job mirrors release.yml's build
+# without publishing anything.
 
 on:
-   pull_request:
-     branches: [main]
-   workflow_dispatch:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -28,7 +28,10 @@ jobs:
       - name: Install system test deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libportaudio2
+          sudo apt-get install -y \
+            gcc gir1.2-freedesktop gir1.2-gtk-4.0 libcairo2-dev \
+            libgirepository-2.0-dev \
+            libportaudio2 pkg-config
       - name: Install dev extras
         run: |
           python -m venv .venv
@@ -52,7 +55,10 @@ jobs:
       - name: Install system build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y wtype wl-clipboard pipewire-audio libevdev-dev libportaudio2
+          sudo apt-get install -y \
+            gcc gir1.2-freedesktop gir1.2-gtk-4.0 libcairo2-dev libevdev-dev \
+            libgirepository-2.0-dev libportaudio2 pipewire-audio pkg-config \
+            wl-clipboard wtype
       - name: Install build extras
         run: |
           python -m venv .venv

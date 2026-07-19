@@ -23,6 +23,8 @@ def _cfg(**overrides: object) -> AsrConfig:
         "silence_threshold": 0.6,
         "mode": "lazy",
         "idle_unload_seconds": 300,
+        "hotwords": None,
+        "initial_prompt": None,
     }
     defaults.update(overrides)
     return AsrConfig(**defaults)  # type: ignore[arg-type]
@@ -297,6 +299,40 @@ class TestProperties:
     def test_beam_size_property(self) -> None:
         m = LazyModel(_cfg(beam_size=3))
         assert m.beam_size == 3
+
+
+class TestVocabularyBias:
+    """asr.hotwords / asr.initial_prompt must reach both faster-whisper calls."""
+
+    def _model(self, **cfg_overrides: object):
+        from stenographer.asr.model import Model
+
+        with patch("stenographer.asr.model.WhisperModel") as whisper_cls:
+            m = Model(_cfg(**cfg_overrides))
+        fake = whisper_cls.return_value
+        fake.transcribe.return_value = ([], MagicMock(duration=0.0))
+        return m, fake
+
+    def test_transcribe_forwards_hotwords_and_initial_prompt(self) -> None:
+        m, fake = self._model(hotwords="wtype, Wayland", initial_prompt="Arch Linux notes.")
+        m.transcribe(np.zeros(100, dtype=np.float32), "en", 1)
+        kwargs = fake.transcribe.call_args.kwargs
+        assert kwargs["hotwords"] == "wtype, Wayland"
+        assert kwargs["initial_prompt"] == "Arch Linux notes."
+
+    def test_transcribe_words_forwards_hotwords_and_initial_prompt(self) -> None:
+        m, fake = self._model(hotwords="wtype, Wayland", initial_prompt="Arch Linux notes.")
+        m.transcribe_words(np.zeros(100, dtype=np.float32))
+        kwargs = fake.transcribe.call_args.kwargs
+        assert kwargs["hotwords"] == "wtype, Wayland"
+        assert kwargs["initial_prompt"] == "Arch Linux notes."
+
+    def test_unset_vocabulary_passes_none(self) -> None:
+        m, fake = self._model()
+        m.transcribe(np.zeros(100, dtype=np.float32), "en", 1)
+        kwargs = fake.transcribe.call_args.kwargs
+        assert kwargs["hotwords"] is None
+        assert kwargs["initial_prompt"] is None
 
 
 class TestLoadFailure:

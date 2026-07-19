@@ -22,12 +22,6 @@ _FALLBACK_SAMPLE_RATES: tuple[int, ...] = (48000, 44100, 22050, 16000, 8000)
 _FALLBACK_CHANNELS: tuple[int, ...] = (2, 1)
 
 
-# Minimum real speech (seconds) accumulated since the last flush before a
-# silence gap is allowed to trigger one. Guards against a click/cough followed
-# by a pause flushing a near-empty segment that Whisper would hallucinate over.
-_MIN_SPEECH_SECONDS: float = 0.25
-
-
 def _resample_poly(data: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
     """Polyphase FIR resample of mono float32 audio at integer/rational rates.
 
@@ -88,9 +82,8 @@ class Recorder:
         device: str | int | None,
         on_error: Callable[[Exception], None],
         max_seconds: int = 0,
-        silence_detection: bool = False,
-        silence_rms_threshold: float = 0.01,
-        silence_duration_seconds: float = 1.5,
+        on_audio: Callable[[np.ndarray, int], None] | None = None,
+        max_audio_observer_interval_seconds: float | None = None,
     ) -> None:
         self._configured_rate = sample_rate
         self._sample_rate = sample_rate
@@ -98,13 +91,12 @@ class Recorder:
         self._device: str | int | None = None if device == "" else device
         self._on_error = on_error
         self._max_seconds = max_seconds
-        self._silence_detection = silence_detection
-        self._silence_rms_threshold = silence_rms_threshold
-        self._silence_duration_seconds = silence_duration_seconds
+        self._on_audio_block = on_audio
+        self._max_audio_observer_interval_seconds = max_audio_observer_interval_seconds
         self._stream: sounddevice.InputStream | None = None
         self._buffer: bytearray | None = None
         # Guards _buffer appends/reads shared between the PortAudio callback
-        # and snapshot() on the streaming driver thread. Held only around the
+        # and snapshot() on the incremental driver thread. Held only around the
         # extend/copy themselves, so the callback stays effectively
         # non-blocking.
         self._buffer_lock = threading.Lock()
@@ -112,13 +104,7 @@ class Recorder:
         self._capped = False
         self._active = False
         self._channels = 1
-        # Silence-detection state, reset every start().
-        self._on_segment: Callable[[np.ndarray], None] | None = None
-        self._silent_frames = 0
-        self._speech_frames = 0
-        self._seen_speech = False
-        self._flushed = False
-        # Live-streaming partial signal, reset every start().
+        # Incremental-decode partial signal, reset every start().
         self._on_partial: Callable[[], None] | None = None
         self._min_partial_seconds = 1.0
         self._partial_frames = 0
@@ -126,27 +112,18 @@ class Recorder:
     def start(
         self,
         *,
-        on_segment: Callable[[np.ndarray], None] | None = None,
         on_partial: Callable[[], None] | None = None,
         min_partial_seconds: float = 1.0,
     ) -> None:
         """Open the input stream.
 
-        *on_segment* (silence-flush) and *on_partial* (streaming signal) are
-        mutually exclusive; the session wires one or the other. *on_partial*
-        fires on the PortAudio thread every *min_partial_seconds* of newly
-        captured audio and must only enqueue a signal and return.
+        *on_partial* (the incremental-decode signal) fires on the PortAudio
+        thread every *min_partial_seconds* of newly captured audio and must
+        only enqueue a signal and return.
         """
-        if on_segment is not None and on_partial is not None:
-            raise ValueError("on_segment and on_partial are mutually exclusive")
         self._buffer = bytearray()
         self._overflow = False
         self._capped = False
-        self._on_segment = on_segment
-        self._silent_frames = 0
-        self._speech_frames = 0
-        self._seen_speech = False
-        self._flushed = False
         self._on_partial = on_partial
         self._min_partial_seconds = min_partial_seconds
         self._partial_frames = 0
@@ -157,11 +134,21 @@ class Recorder:
         for channels in _FALLBACK_CHANNELS:
             for rate in rates_to_try:
                 try:
+                    blocksize = self._frames_per_buffer
+                    if (
+                        self._on_audio_block is not None
+                        and self._max_audio_observer_interval_seconds is not None
+                    ):
+                        observer_blocksize = max(
+                            64,
+                            int(rate * self._max_audio_observer_interval_seconds),
+                        )
+                        blocksize = min(blocksize, observer_blocksize)
                     self._stream = sounddevice.InputStream(
                         samplerate=rate,
                         channels=channels,
                         dtype="float32",
-                        blocksize=self._frames_per_buffer,
+                        blocksize=blocksize,
                         device=self._device,
                         callback=self._on_audio,
                     )
@@ -215,8 +202,13 @@ class Recorder:
                     indata = indata[:, 0:1]
                 with self._buffer_lock:
                     self._buffer.extend(indata.tobytes())
-                if self._silence_detection and self._on_segment is not None:
-                    self._detect_silence(indata[:, 0], frames)
+                if self._on_audio_block is not None:
+                    try:
+                        self._on_audio_block(indata[:, 0], self._sample_rate)
+                    except Exception as exc:
+                        # Visual feedback is optional and must never interrupt
+                        # PortAudio's real-time callback.
+                        logger.debug("recorder: audio observer failed: %s", exc)
                 if self._on_partial is not None:
                     self._partial_frames += frames
                     if self._partial_frames >= self._min_partial_seconds * self._sample_rate:
@@ -224,37 +216,6 @@ class Recorder:
                         self._on_partial()
         if status is not None and getattr(status, "input_overflow", False):
             self._overflow = True
-
-    def _detect_silence(self, mono: np.ndarray, frames: int) -> None:
-        """Track speech/silence energy and flush a segment on a long pause.
-
-        Runs on the PortAudio thread, so it is serialized with the buffer
-        appends in ``_on_audio``; no lock is needed. A flush only fires after a
-        run of trailing silence, so any brief CPU spike (e.g. resampling a
-        fallback-rate segment) lands on quiet audio rather than dropping speech.
-        """
-        if frames <= 0:
-            return
-        rms = float(np.sqrt(np.mean(np.square(mono))))
-        if rms >= self._silence_rms_threshold:
-            self._silent_frames = 0
-            self._speech_frames += frames
-            if self._speech_frames >= _MIN_SPEECH_SECONDS * self._sample_rate:
-                self._seen_speech = True
-            return
-        self._silent_frames += frames
-        if not self._seen_speech:
-            return
-        if self._silent_frames < self._silence_duration_seconds * self._sample_rate:
-            return
-        arr = self._finalize(self._buffer, log_resample=False)
-        self._buffer = bytearray()
-        self._silent_frames = 0
-        self._speech_frames = 0
-        self._seen_speech = False
-        self._flushed = True
-        if arr.shape[0] > 0 and self._on_segment is not None:
-            self._on_segment(arr)
 
     def _finalize(
         self, buffer: bytearray | bytes | None, *, log_resample: bool = True
@@ -284,7 +245,7 @@ class Recorder:
         seconds) to now, as a mono ``(N, 1)`` float32 array at the configured
         rate.
 
-        Called from the streaming driver thread while the PortAudio callback
+        Called from the incremental driver thread while the PortAudio callback
         is still appending. The raw device-rate buffer is sliced under the
         lock (cost proportional to the window, not the recording) and
         resampled outside it. Second-based slicing keeps the boundary
@@ -308,11 +269,6 @@ class Recorder:
         if self._overflow:
             self._overflow = False
             self._on_error(AudioCaptureError("input overflow during recording"))
-        if self._silence_detection and self._flushed and self._speech_frames == 0:
-            # Everything since the last flush is silence; return nothing so the
-            # session does not transcribe an empty tail (and play the error cue)
-            # right after a flush.
-            return np.empty((0, 1), dtype=np.float32)
         return self._finalize(buffer)
 
     @property

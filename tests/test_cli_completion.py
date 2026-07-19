@@ -15,6 +15,7 @@ SUBCOMMANDS = {
     "disable",
     "start",
     "stop",
+    "status",
     "transcribe",
     "dictate",
     "model",

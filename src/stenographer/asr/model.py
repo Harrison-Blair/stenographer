@@ -68,6 +68,9 @@ class Model:
         )
         self._language = cfg.language
         self._beam_size = cfg.beam_size
+        self._hotwords = cfg.hotwords
+        self._initial_prompt = cfg.initial_prompt
+        self._silence_threshold = cfg.silence_threshold
         log.info("ASR model loaded: %s", cfg.model)
 
     @property
@@ -95,6 +98,8 @@ class Model:
             beam_size=beam_size,
             vad_filter=False,
             condition_on_previous_text=False,
+            hotwords=self._hotwords,
+            initial_prompt=self._initial_prompt,
         )
         seg_infos: list[SegmentInfo] = []
         for seg in segments_iter:
@@ -121,13 +126,17 @@ class Model:
         beam_size: int | None = None,
         check_cancel: Callable[[], None] | None = None,
     ) -> list[WordInfo]:
-        """Low-level word-timestamped transcription for the live streaming path.
+        """Low-level word-timestamped transcription for incremental decoding.
 
         Unlike :meth:`transcribe` (the batch daemon path, left untouched),
         this requests ``word_timestamps=True``.  *check_cancel* is invoked
         once per decoded segment so an in-flight re-decode can be aborted
         (it should raise to abort).  Returns a flat, time-ordered list of
         words.
+
+        Segments at or above ``asr.silence_threshold`` are dropped, the same
+        gate the batch path applies to :class:`SegmentInfo` — without it
+        Whisper's silence hallucinations ("Thank you.") reach the cursor.
         """
         if samples.size == 0:
             return []
@@ -139,16 +148,24 @@ class Model:
             beam_size=self._beam_size if beam_size is None else beam_size,
             vad_filter=False,
             condition_on_previous_text=False,
+            hotwords=self._hotwords,
+            initial_prompt=self._initial_prompt,
             word_timestamps=True,
         )
         words: list[WordInfo] = []
+        dropped = 0
         for seg in segments_iter:
             if check_cancel is not None:
                 check_cancel()
+            if seg.no_speech_prob >= self._silence_threshold:
+                dropped += 1
+                continue
             for w in seg.words or ():
                 words.append(
                     WordInfo(start=w.start, end=w.end, word=w.word, probability=w.probability)
                 )
+        if dropped:
+            log.info("asr: dropped %d probable-silence segment(s) from word decode", dropped)
         return words
 
     def close(self) -> None:

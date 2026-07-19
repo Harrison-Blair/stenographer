@@ -32,6 +32,8 @@ def model() -> Model:
             silence_threshold=0.6,
             mode="eager",
             idle_unload_seconds=0,
+            hotwords=None,
+            initial_prompt=None,
         )
     )
 
