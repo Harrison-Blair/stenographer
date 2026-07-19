@@ -57,9 +57,9 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install -e ".[dev,build]"
-      - name: Set VERSION from pyproject.toml
+      - name: Set VERSION from the version module
         run: |
-          version=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          version=$(python -c "import runpy; print(runpy.run_path('src/stenographer/_version.py')['__version__'])")
           echo "VERSION=${version}" >> "$GITHUB_ENV"
       - name: Check if release already exists
         env:
@@ -67,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "v${VERSION}" &>/dev/null; then
-            echo "::error::Release v${VERSION} already exists. Bump the version in pyproject.toml."
+            echo "::error::Release v${VERSION} already exists. Bump src/stenographer/_version.py."
             exit 1
           fi
           echo "Release v${VERSION} does not exist. Proceeding."

@@ -4,8 +4,16 @@
 import tomllib
 from pathlib import Path
 
+from stenographer import __version__
 
-def test_pyproject_version_is_0_9_2():
-    pyproject = Path(__file__).parent.parent / "pyproject.toml"
+ROOT = Path(__file__).parent.parent
+
+
+def test_version_has_one_source_of_truth():
+    pyproject = ROOT / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
-    assert data["project"]["version"] == "0.9.2"
+
+    assert "version" not in data["project"]
+    assert "version" in data["project"]["dynamic"]
+    assert data["tool"]["hatch"]["version"]["path"] == "src/stenographer/_version.py"
+    assert __version__

@@ -40,8 +40,8 @@ Run the git hooks once after cloning (`./scripts/install-hooks.sh`) so
 Develop on `dev`. Merging `dev` → `main` triggers
 `.github/workflows/release.yml`, which lints, tests, builds the binary, and
 **publishes** a `v<version>` GitHub release. The workflow refuses to reuse an
-existing release, so **every merge to `main` must bump `[project].version` in
-`pyproject.toml`.**
+existing release, so **every merge to `main` must bump `__version__` in
+`src/stenographer/_version.py`.**
 
 ## Architecture
 

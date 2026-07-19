@@ -4,7 +4,8 @@
 
 The project is a Wayland push-to-talk / toggle dictation daemon. The
 whole tree — `src/`, `tests/`, `packaging/`, `scripts/`, `BUILD.md` —
-is committed and released (current version in `pyproject.toml`).
+is committed and released (current version in
+`src/stenographer/_version.py`).
 
 Key tracked paths:
 
@@ -35,7 +36,7 @@ The release workflow lives at `.github/workflows/release.yml` and runs on
 every merge to `main` (plus `workflow_dispatch`): it lints, tests, builds the
 binary, and publishes a `v<version>` release. Features are developed on the
 `dev` branch and merged to `main` to release; each such merge must bump
-`[project].version` in `pyproject.toml`.
+`__version__` in `src/stenographer/_version.py`.
 
 ## Tooling
 

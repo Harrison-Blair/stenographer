@@ -1,6 +1,6 @@
 [project]
 name = "stenographer"
-version = "0.9.2"
+dynamic = ["version"]
 description = "Local, offline, Wayland push-to-talk / toggle dictation."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -40,6 +40,9 @@ Homepage = "https://github.com/Harrison-Blair/stenographer"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/stenographer/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stenographer"]
