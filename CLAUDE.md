@@ -113,7 +113,7 @@ The component modules it wires:
   self-replace, daemon stop/start). The pure functions are unit-tested; `cli.py`
   wires them to the interactive prompt.
 
-The ASR model (~800 MB) is **never** bundled — users fetch it once with
+The ASR model (~1.5 GB) is **never** bundled — users fetch it once with
 `stenographer model download`.
 
 ## Conventions

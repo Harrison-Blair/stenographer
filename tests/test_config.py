@@ -86,7 +86,7 @@ def test_defaults_audio() -> None:
 
 def test_defaults_asr() -> None:
     assert Config.defaults().asr == AsrConfig(
-        model="Systran/faster-distil-whisper-medium.en",
+        model="Systran/faster-whisper-medium.en",
         language="en",
         beam_size=5,
         compute_type="int8",

@@ -159,7 +159,7 @@ class Config:
                 silence_duration_seconds=1.5,
             ),
             asr=AsrConfig(
-                model="Systran/faster-distil-whisper-medium.en",
+                model="Systran/faster-whisper-medium.en",
                 language="en",
                 beam_size=5,
                 compute_type="int8",
