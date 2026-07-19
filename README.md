@@ -238,6 +238,7 @@ stenographer --version
 stenographer enable [--no-start] # install + enable the unit, then start it
 stenographer start               # start an already-installed unit
 stenographer stop                # stop the daemon (systemd or foreground)
+stenographer status              # show daemon state, uptime, and systemd preview
 stenographer disable             # stop + disable the unit
 ```
 
@@ -409,6 +410,7 @@ stenographer enable             # write the unit, enable it, and start now
 stenographer enable --no-start  # write + enable, but don't start yet
 stenographer start              # start an already-installed unit
 stenographer stop               # stop the daemon
+stenographer status             # inspect daemon and systemd status
 stenographer disable            # stop + disable the unit
 journalctl --user -u stenographer.service -f
 ```
@@ -416,6 +418,14 @@ journalctl --user -u stenographer.service -f
 `enable` writes `~/.config/systemd/user/stenographer.service` with an
 `ExecStart` pointing at the running binary (backing up any existing unit
 to `…stenographer.service.bak`), runs `daemon-reload`, then enables it.
+
+`status` reports whether the daemon is running under systemd or in the
+foreground, along with its PID, uptime, unit-file path, enabled state, runtime
+lock, and systemd active state. It finishes with a plain-text
+`systemctl --user status` preview containing up to 10 recent journal lines.
+The command exits 0 only when it confirms a live daemon; stopped or
+indeterminate states exit 1. Recent journal output can contain application
+diagnostics and, when debug transcript logging is enabled, dictated text.
 
 If you'd rather wire it up by hand — e.g. against a binary unpacked to a
 non-default location like `/opt/` — the raw unit template is at

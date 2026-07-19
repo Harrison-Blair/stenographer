@@ -44,6 +44,7 @@ from stenographer.output.clipboard import ClipboardManager
 from stenographer.output.formatter import HeuristicFormatter
 from stenographer.output.inject import Injector
 from stenographer.session import Session
+from stenographer.status import cmd_status
 from stenographer.update import (
     UpdateInfo,
     apply_update,
@@ -791,6 +792,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_start()
     if args.subcommand == "stop":
         return cmd_stop()
+    if args.subcommand == "status":
+        return cmd_status(_LOCK_PATH, _UNIT_PATH)
     if args.subcommand == "devices":
         return cmd_devices()
 
