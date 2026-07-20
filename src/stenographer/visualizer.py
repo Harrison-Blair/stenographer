@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from stenographer._version import __version__
 from stenographer.notification import DesktopNotification
 
 if TYPE_CHECKING:
@@ -688,6 +689,11 @@ window {
   font-family: sans-serif;
   font-size: 12px;
 }
+.stenographer-version {
+  color: rgba(242, 242, 242, 0.40);
+  font-family: sans-serif;
+  font-size: 11px;
+}
 """
 
 
@@ -803,11 +809,19 @@ def run_overlay_process() -> int:
             box.append(self.icon)
 
             content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             self.status = Gtk.Label(label="Listening")
             self.status.set_xalign(0.0)
             self.status.set_hexpand(True)
             self.status.add_css_class("stenographer-status")
-            content.append(self.status)
+            header.append(self.status)
+
+            version = Gtk.Label(label=f"v{__version__}")
+            version.set_xalign(1.0)
+            version.set_valign(Gtk.Align.START)
+            version.add_css_class("stenographer-version")
+            header.append(version)
+            content.append(header)
 
             self.preview = Gtk.Label()
             self.preview.set_xalign(0.0)
@@ -816,7 +830,6 @@ def run_overlay_process() -> int:
             self.preview.set_ellipsize(Pango.EllipsizeMode.START)
             self.preview.set_single_line_mode(True)
             self.preview.set_hexpand(True)
-            self.preview.set_visible(False)
             self.preview.add_css_class("stenographer-preview")
             content.append(self.preview)
 
@@ -874,11 +887,9 @@ def run_overlay_process() -> int:
                 provisional = message.get("provisional", "")
                 if isinstance(stable, str) and isinstance(provisional, str):
                     self.preview.set_markup(_preview_markup(stable, provisional))
-                    self.preview.set_visible(bool(stable or provisional))
                 return GLib.SOURCE_REMOVE
             if command == "preview_clear":
                 self.preview.set_label("")
-                self.preview.set_visible(False)
                 return GLib.SOURCE_REMOVE
             if command == "state":
                 self._set_state(
