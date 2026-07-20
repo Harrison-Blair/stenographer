@@ -145,4 +145,3 @@ The ASR model (~1.5 GB) is **never** bundled — users fetch it once with
 - Every source file carries `SPDX-License-Identifier: GPL-3.0-or-later` at the top.
 - ruff: line length 100, target py314, rules `E,F,I,B,UP,N,SIM,RUF`.
 - `pyproject.toml` (hatchling) is the single source of truth for metadata/deps.
-> fledge: load and follow .fledge/skills/fledge-orchestrate/SKILL.md — primitive map at .claude/fledge-adapter.md
