@@ -51,12 +51,15 @@ class _FakeWorker:
         self.hypotheses = hypotheses
         self.calls: list[dict[str, object]] = []
 
-    def submit_words(self, samples, *, beam_size=None, cancel_event=None):
+    def submit_words(
+        self, samples, *, beam_size=None, cancel_event=None, ignore_global_cancel=False
+    ):
         self.calls.append(
             {
                 "n_samples": samples.shape[0],
                 "beam_size": beam_size,
                 "cancel_event": cancel_event,
+                "ignore_global_cancel": ignore_global_cancel,
             }
         )
         future: concurrent.futures.Future = concurrent.futures.Future()
@@ -125,6 +128,29 @@ def test_partials_publish_stable_and_revisable_tail_then_return_final() -> None:
     assert result == "Hello world again "
 
 
+def test_only_the_final_decode_is_exempt_from_the_global_cancel() -> None:
+    """Shutdown's ``Worker.cancel`` must not be able to discard the utterance.
+
+    ``Session.stop`` fires the sticky global cancel to abort in-flight interim
+    re-decodes; the final decode carries the exemption so the dictation still
+    reaches the user.
+    """
+    driver, worker = _make_driver(
+        [_speech(1.0), _speech(2.0)],
+        [
+            _words((" hello", 0.0, 0.5)),
+            _words((" hello", 0.0, 0.5), (" world", 0.5, 1.0)),
+        ],
+    )
+
+    assert driver._step()
+    driver._finish(_speech(2.0))
+
+    flags = [call["ignore_global_cancel"] for call in worker.calls]
+    assert flags[:-1] == [False] * (len(flags) - 1)  # every interim re-decode
+    assert flags[-1] is True  # the final decode
+
+
 def test_stable_preview_is_append_only_while_tail_revises() -> None:
     previews: list[tuple[str, str]] = []
     driver, _worker = _make_driver(
@@ -156,6 +182,45 @@ def test_prequeued_partials_coalesce_into_final_decode() -> None:
     driver.signal_final(_speech(3.0))
     assert driver.run() == "Hi "
     assert len(worker.calls) == 1
+
+
+def test_final_is_processed_when_shutdown_cancels_in_flight_interim() -> None:
+    """A queued final must survive cancellation of the decode before it."""
+
+    class _ControlledWorker:
+        def __init__(self) -> None:
+            self.interim: concurrent.futures.Future = concurrent.futures.Future()
+            self.interim_submitted = threading.Event()
+            self.calls = 0
+
+        def submit_words(
+            self, samples, *, beam_size=None, cancel_event=None, ignore_global_cancel=False
+        ):
+            self.calls += 1
+            if self.calls == 1:
+                self.interim_submitted.set()
+                return self.interim
+            future: concurrent.futures.Future = concurrent.futures.Future()
+            future.set_result(_words((" preserved", 0.0, 0.5)))
+            return future
+
+    driver, _worker = _make_driver([_speech(1.0)], [[]])
+    worker = _ControlledWorker()
+    driver._worker = worker  # type: ignore[assignment]
+    driver.signal_partial()
+    result: list[str | None] = []
+    thread = threading.Thread(target=lambda: result.append(driver.run()))
+    thread.start()
+    assert worker.interim_submitted.wait(timeout=1.0)
+
+    # Session.stop() performs these operations in this order.
+    driver.signal_final(_speech(1.0))
+    worker.interim.set_exception(CancelledError("global shutdown cancel"))
+
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert result == ["Preserved "]
+    assert worker.calls == 2
 
 
 def test_abort_returns_none_and_never_finalizes() -> None:
@@ -258,6 +323,62 @@ def test_trim_at_sentence_terminal_and_rebase_snapshot() -> None:
     assert driver._trim_offset == 1.5
     assert driver._step()
     assert driver._recorder.snapshot_calls[-1] == 1.5  # type: ignore[attr-defined]
+
+
+def test_post_trim_commits_carry_absolute_times() -> None:
+    """Words committed after a trim keep utterance-absolute timestamps.
+
+    ``_maybe_trim`` rebases the transcriber by the dropped duration. Without
+    that rebase the post-trim hypothesis is read as window-local time and every
+    later word is stamped earlier than it really was.
+    """
+    driver, _worker = _make_driver(
+        [_speech(2.0), _speech(1.0), _speech(1.0)],
+        [
+            _words((" first.", 0.0, 1.5)),
+            _words((" first.", 0.0, 1.5)),  # commit + trim at 1.5s
+            _words((" second", 0.5, 1.0)),  # window-local 0.5 = absolute 2.0
+            _words((" second", 0.5, 1.0)),
+        ],
+    )
+    for _ in range(4):
+        assert driver._step()
+
+    assert driver._trim_offset == 1.5
+    committed = driver._transcriber.committed_words
+    assert [w.word for w in committed] == [" first.", " second"]
+    assert committed[1].start == 2.0
+    assert committed[1].end == 2.5
+
+
+def test_paragraph_pause_straddling_trim_emits_one_break() -> None:
+    """A pause spanning a trim is measured on the absolute timeline.
+
+    "one." ends at absolute 1.0s and the trim rebases the window there. "two"
+    arrives with window-local start 2.5s = absolute 3.5s: the true gap is 2.5s
+    (>= the 2.0s threshold), but read as window-local it would be only 1.5s
+    (< threshold). Exactly one break proves the formatter saw the absolute
+    timeline across the trim.
+    """
+    cfg = _cfg()
+    cfg = dataclasses.replace(
+        cfg, formatting=dataclasses.replace(cfg.formatting, paragraph_pause_seconds=2.0)
+    )
+    driver, _worker = _make_driver(
+        [_speech(1.5), _speech(1.5), _speech(4.0)],
+        [
+            _words((" one.", 0.0, 1.0)),
+            _words((" one.", 0.0, 1.0)),  # commit + trim at 1.0s
+            _words((" two", 2.5, 3.0)),  # window-local: absolute 3.5-4.0
+            _words((" two", 2.5, 3.0)),
+        ],
+        cfg=cfg,
+    )
+    for _ in range(4):
+        assert driver._step()
+
+    assert driver._transcript == "One.\n\nTwo"
+    assert driver._transcript.count("\n\n") == 1
 
 
 def test_trim_forced_when_buffer_budget_exceeded() -> None:

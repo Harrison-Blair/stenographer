@@ -57,6 +57,28 @@ class _StubModel:
         pass
 
 
+class _BlockingModel(_StubModel):
+    """Hold inference so stop-time model closure can be observed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.close_calls = 0
+
+    def transcribe_words(self, samples, *, beam_size=None, check_cancel=None):
+        self.started.set()
+        assert self.release.wait(timeout=5.0)
+        return super().transcribe_words(
+            samples,
+            beam_size=beam_size,
+            check_cancel=check_cancel,
+        )
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
 def test_job_cancel_event_aborts_mid_stream_and_next_job_runs() -> None:
     model = _StubModel()
     worker = Worker(model)
@@ -144,3 +166,84 @@ def test_word_job_cancelled_before_pickup_skips_model() -> None:
         assert model.transcribe_words_calls == 0
     finally:
         worker.stop(timeout=5.0)
+
+
+def test_final_word_job_survives_global_cancel() -> None:
+    """Shutdown cancels interim re-decodes but must not discard the utterance.
+
+    ``Session.stop`` hands the finalized samples to the incremental driver and
+    then calls ``Worker.cancel``. Without the exemption the driver's final
+    decode is cancelled before it runs and the whole dictation is lost.
+    """
+    model = _StubModel()
+    worker = Worker(model)
+    worker.cancel()  # the sticky global cancel Session.stop() fires
+    fut = worker.submit_words(np.zeros(16000, dtype=np.float32), ignore_global_cancel=True)
+    worker.start()
+    try:
+        assert [w.word for w in fut.result(timeout=5.0)] == [" hello", " world"]
+        assert model.transcribe_words_calls == 1
+    finally:
+        worker.stop(timeout=5.0)
+
+
+def test_global_cancel_still_aborts_unflagged_word_jobs() -> None:
+    """The exemption is opt-in: interim re-decodes stay cancellable."""
+    model = _StubModel()
+    worker = Worker(model)
+    worker.cancel()
+    fut = worker.submit_words(np.zeros(16000, dtype=np.float32))
+    worker.start()
+    try:
+        with pytest.raises(CancelledError):
+            fut.result(timeout=5.0)
+        assert model.transcribe_words_calls == 0
+    finally:
+        worker.stop(timeout=5.0)
+
+
+def test_final_word_job_still_honors_its_own_cancel_event() -> None:
+    """Exempting the global cancel must not make a job uncancellable.
+
+    A genuine abort (recorder failure) fires the driver's per-job event, and
+    that must still stop the decode.
+    """
+    model = _StubModel()
+    worker = Worker(model)
+    cancel = threading.Event()
+    cancel.set()
+    fut = worker.submit_words(
+        np.zeros(16000, dtype=np.float32), cancel_event=cancel, ignore_global_cancel=True
+    )
+    worker.start()
+    try:
+        with pytest.raises(CancelledError):
+            fut.result(timeout=5.0)
+        assert model.transcribe_words_calls == 0
+    finally:
+        worker.stop(timeout=5.0)
+
+
+def test_stop_timeout_defers_model_close_until_inference_exits() -> None:
+    model = _BlockingModel()
+    worker = Worker(model)
+    worker.start()
+    future = worker.submit_words(
+        np.zeros(16000, dtype=np.float32),
+        ignore_global_cancel=True,
+    )
+    try:
+        assert model.started.wait(timeout=1.0)
+        worker.stop(timeout=0.01)
+
+        assert worker.is_running
+        assert model.close_calls == 0
+
+        model.release.set()
+        assert [word.word for word in future.result(timeout=1.0)] == [" hello", " world"]
+        worker.stop(timeout=1.0)
+        assert not worker.is_running
+        assert model.close_calls == 1
+    finally:
+        model.release.set()
+        worker.stop(timeout=1.0)

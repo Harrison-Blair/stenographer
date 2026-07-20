@@ -112,19 +112,7 @@ class IncrementalDriver:
 
     def _run(self) -> str | None:
         while True:
-            kind, samples = self._signals.get()
-            # Coalesce: re-decodes are cumulative, so pending partials collapse
-            # into the newest signal; a queued final or abort wins outright.
-            while True:
-                try:
-                    next_kind, next_samples = self._signals.get_nowait()
-                except queue.Empty:
-                    break
-                # An abort always wins; a final wins over anything but an
-                # abort; extra partials are dropped (the next re-decode reads
-                # the newest audio window anyway).
-                if next_kind == _ABORT or (next_kind == _FINAL and kind != _ABORT):
-                    kind, samples = next_kind, next_samples
+            kind, samples = self._next_signal()
             if kind == _ABORT or self._abort.is_set():
                 log.info("incremental: aborted")
                 return None
@@ -132,7 +120,42 @@ class IncrementalDriver:
                 assert samples is not None
                 return self._finish(samples)
             if not self._step():
+                # Shutdown queues the finalized samples before globally
+                # cancelling the worker. If that cancellation lands during an
+                # interim decode, consume the already-pending final instead of
+                # dropping the utterance. Never wait here: a cancellation with
+                # no final belongs to an abort/failure path.
+                pending = self._next_signal(block=False)
+                if pending is not None:
+                    pending_kind, pending_samples = pending
+                    if (
+                        pending_kind == _FINAL
+                        and pending_samples is not None
+                        and not self._abort.is_set()
+                    ):
+                        return self._finish(pending_samples)
                 return None
+
+    def _next_signal(self, *, block: bool = True) -> tuple[str, np.ndarray | None] | None:
+        """Return the highest-priority pending signal, coalescing partials."""
+        try:
+            if block:
+                kind, samples = self._signals.get()
+            else:
+                kind, samples = self._signals.get_nowait()
+        except queue.Empty:
+            return None
+        # Re-decodes are cumulative, so pending partials collapse into the
+        # newest signal; a queued final or abort wins outright.
+        while True:
+            try:
+                next_kind, next_samples = self._signals.get_nowait()
+            except queue.Empty:
+                break
+            # An abort always wins; a final wins over anything but an abort.
+            if next_kind == _ABORT or (next_kind == _FINAL and kind != _ABORT):
+                kind, samples = next_kind, next_samples
+        return kind, samples
 
     def _step(self) -> bool:
         """One interim re-decode. Returns False when aborted mid-decode."""
@@ -162,7 +185,7 @@ class IncrementalDriver:
         window = samples[start:]
         # No tail-silence guard here: the user ended the utterance, decode all
         # remaining audio with the full configured beam.
-        words, ok = self._decode(window, beam_size=self._cfg.asr.beam_size)
+        words, ok = self._decode(window, beam_size=self._cfg.asr.beam_size, final=True)
         if not ok:
             return None
         if words is None:
@@ -185,16 +208,27 @@ class IncrementalDriver:
         beam = self._cfg.incremental.beam_size
         return self._cfg.asr.beam_size if beam is None else beam
 
-    def _decode(self, window: np.ndarray, *, beam_size: int) -> tuple[list | None, bool]:
+    def _decode(
+        self, window: np.ndarray, *, beam_size: int, final: bool = False
+    ) -> tuple[list | None, bool]:
         """Run one re-decode on the worker; returns ``(words, ok)``.
 
         ``ok`` is False only when the utterance was cancelled. ``words`` is
         None when the decode failed but the utterance continues -- distinct
         from an empty list, which is a successful decode that found no
         speech. Callers must not feed a failed decode into the committer.
+
+        The *final* decode is exempt from the worker's global cancel: shutdown
+        fires it to abort interim re-decodes, and cancelling the final one
+        would discard the whole utterance. ``self._abort`` still applies.
         """
         t0 = time.monotonic()
-        future = self._worker.submit_words(window, beam_size=beam_size, cancel_event=self._abort)
+        future = self._worker.submit_words(
+            window,
+            beam_size=beam_size,
+            cancel_event=self._abort,
+            ignore_global_cancel=final,
+        )
         try:
             words = future.result()
         except CancelledError:
