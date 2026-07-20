@@ -184,6 +184,45 @@ def test_prequeued_partials_coalesce_into_final_decode() -> None:
     assert len(worker.calls) == 1
 
 
+def test_final_is_processed_when_shutdown_cancels_in_flight_interim() -> None:
+    """A queued final must survive cancellation of the decode before it."""
+
+    class _ControlledWorker:
+        def __init__(self) -> None:
+            self.interim: concurrent.futures.Future = concurrent.futures.Future()
+            self.interim_submitted = threading.Event()
+            self.calls = 0
+
+        def submit_words(
+            self, samples, *, beam_size=None, cancel_event=None, ignore_global_cancel=False
+        ):
+            self.calls += 1
+            if self.calls == 1:
+                self.interim_submitted.set()
+                return self.interim
+            future: concurrent.futures.Future = concurrent.futures.Future()
+            future.set_result(_words((" preserved", 0.0, 0.5)))
+            return future
+
+    driver, _worker = _make_driver([_speech(1.0)], [[]])
+    worker = _ControlledWorker()
+    driver._worker = worker  # type: ignore[assignment]
+    driver.signal_partial()
+    result: list[str | None] = []
+    thread = threading.Thread(target=lambda: result.append(driver.run()))
+    thread.start()
+    assert worker.interim_submitted.wait(timeout=1.0)
+
+    # Session.stop() performs these operations in this order.
+    driver.signal_final(_speech(1.0))
+    worker.interim.set_exception(CancelledError("global shutdown cancel"))
+
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert result == ["Preserved "]
+    assert worker.calls == 2
+
+
 def test_abort_returns_none_and_never_finalizes() -> None:
     previews: list[tuple[str, str]] = []
     driver, _worker = _make_driver(

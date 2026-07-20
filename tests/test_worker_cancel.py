@@ -57,6 +57,28 @@ class _StubModel:
         pass
 
 
+class _BlockingModel(_StubModel):
+    """Hold inference so stop-time model closure can be observed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.close_calls = 0
+
+    def transcribe_words(self, samples, *, beam_size=None, check_cancel=None):
+        self.started.set()
+        assert self.release.wait(timeout=5.0)
+        return super().transcribe_words(
+            samples,
+            beam_size=beam_size,
+            check_cancel=check_cancel,
+        )
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
 def test_job_cancel_event_aborts_mid_stream_and_next_job_runs() -> None:
     model = _StubModel()
     worker = Worker(model)
@@ -200,3 +222,28 @@ def test_final_word_job_still_honors_its_own_cancel_event() -> None:
         assert model.transcribe_words_calls == 0
     finally:
         worker.stop(timeout=5.0)
+
+
+def test_stop_timeout_defers_model_close_until_inference_exits() -> None:
+    model = _BlockingModel()
+    worker = Worker(model)
+    worker.start()
+    future = worker.submit_words(
+        np.zeros(16000, dtype=np.float32),
+        ignore_global_cancel=True,
+    )
+    try:
+        assert model.started.wait(timeout=1.0)
+        worker.stop(timeout=0.01)
+
+        assert worker.is_running
+        assert model.close_calls == 0
+
+        model.release.set()
+        assert [word.word for word in future.result(timeout=1.0)] == [" hello", " world"]
+        worker.stop(timeout=1.0)
+        assert not worker.is_running
+        assert model.close_calls == 1
+    finally:
+        model.release.set()
+        worker.stop(timeout=1.0)

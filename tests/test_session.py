@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
+import stenographer.session as session_module
 from stenographer.asr.model import SegmentInfo, TranscriptionResult
 from stenographer.config import Config
 from stenographer.session import Session, _LiveItem
@@ -357,6 +358,55 @@ def test_stop_closes_components_and_indicator() -> None:
     components["clipboard"].close.assert_called_once()
     notification.hide.assert_called_once()
     notification.flush.assert_called_once()
+
+
+def test_stop_forces_active_and_queued_work_after_drain_deadline(monkeypatch) -> None:
+    session, components = _make_session()
+    processor = MagicMock()
+    processor.is_alive.side_effect = [True, True, False]
+    session._processor = processor
+    active_abort = threading.Event()
+    session._active_abort = active_abort
+    live = MagicMock()
+    live.abort = threading.Event()
+    session._live_streamer = live
+    queued = MagicMock()
+    queued.abort = threading.Event()
+    session._utterance_queue.put(_LiveItem(queued, 0, 0))
+    monkeypatch.setattr(session_module, "_PROCESSOR_DRAIN_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(session_module, "_FORCED_SHUTDOWN_TIMEOUT_SECONDS", 0.0)
+
+    session.stop()
+
+    assert active_abort.is_set()
+    assert live.abort.is_set()
+    live.signal_abort.assert_called_once_with()
+    assert queued.abort.is_set()
+    queued.signal_abort.assert_called_once_with()
+    assert processor.join.call_count == 2
+    components["worker"].stop.assert_called_once_with(timeout=0.0)
+
+
+def test_stop_leaves_delivery_components_open_if_processor_outlives_abort(
+    monkeypatch,
+) -> None:
+    notification = MagicMock()
+    session, components = _make_session(notification=notification)
+    processor = MagicMock()
+    processor.is_alive.side_effect = [True, True, True]
+    session._processor = processor
+    session._active_abort = threading.Event()
+    monkeypatch.setattr(session_module, "_PROCESSOR_DRAIN_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(session_module, "_FORCED_SHUTDOWN_TIMEOUT_SECONDS", 0.0)
+
+    session.stop()
+
+    assert session._active_abort.is_set()
+    components["feedback"].close.assert_not_called()
+    components["injector"].close.assert_not_called()
+    components["clipboard"].close.assert_not_called()
+    notification.hide.assert_not_called()
+    notification.flush.assert_not_called()
 
 
 def test_on_model_loading_plays_cue_and_shows_loading_status() -> None:

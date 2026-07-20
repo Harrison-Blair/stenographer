@@ -54,6 +54,8 @@ class Worker:
         self._queue: queue.Queue[Job | object] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._cancel_event = threading.Event()
+        self._close_lock = threading.Lock()
+        self._model_closed = False
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -127,9 +129,15 @@ class Worker:
     def stop(self, timeout: float = 30.0) -> None:
         self._queue.put(None)
         thread = self._thread
-        if thread is not None:
-            thread.join(timeout=timeout)
-        self._model.close()
+        if thread is None:
+            self._close_model()
+            return
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            # Inference may not observe cancellation until the model yields its
+            # next segment. Closing it here would race that in-flight call; the
+            # worker's finally block closes it once inference actually exits.
+            log.warning("ASR worker did not stop within %.1fs; deferring model close", timeout)
 
     @property
     def is_running(self) -> bool:
@@ -151,73 +159,84 @@ class Worker:
 
     def _run(self) -> None:
         log.debug("ASR worker thread started")
-        while True:
-            job = self._queue.get()
-            if job is None:
-                log.debug("ASR worker thread exiting")
+        try:
+            while True:
+                job = self._queue.get()
+                if job is None:
+                    log.debug("ASR worker thread exiting")
+                    return
+                if isinstance(job, tuple) and len(job) == 2 and job[0] is _UNLOAD:
+                    _sentinel, token = job
+                    if isinstance(self._model, LazyModel):
+                        self._model.do_unload_on_worker(token)
+                    _trim_arena()
+                    if __debug__ and os.environ.get("STENOGRAPHER_TRACE_UNLOAD") == "1":
+                        from stenographer.asr.model import _read_rss_kb
+
+                        log.info(
+                            "trace-unload: after malloc_trim rss_kb=%s",
+                            _read_rss_kb(),
+                        )
+                    continue
+
+                def on_segment(
+                    seg: SegmentInfo,
+                    *,
+                    _user_cb: Callable[[SegmentInfo], None] | None = job.on_segment,
+                    _job_cancel: threading.Event | None = job.cancel_event,
+                    _ignore_global: bool = job.ignore_global_cancel,
+                ) -> None:
+                    if self._cancel_event.is_set() and not _ignore_global:
+                        raise CancelledError("transcription cancelled")
+                    if _job_cancel is not None and _job_cancel.is_set():
+                        raise CancelledError("transcription cancelled")
+                    if _user_cb is not None:
+                        _user_cb(seg)
+
+                if (self._cancel_event.is_set() and not job.ignore_global_cancel) or (
+                    job.cancel_event is not None and job.cancel_event.is_set()
+                ):
+                    log.debug("ASR worker: job cancelled before transcription")
+                    job.future.set_exception(CancelledError("transcription cancelled"))
+                    continue
+
+                try:
+                    if job.kind == "words":
+                        result = self._model.transcribe_words(
+                            job.samples,
+                            beam_size=job.beam_size,
+                            check_cancel=functools.partial(
+                                self._check_cancel,
+                                job.cancel_event,
+                                ignore_global=job.ignore_global_cancel,
+                            ),
+                        )
+                    else:
+                        result = self._model.transcribe(
+                            job.samples,
+                            self._model.language,
+                            self._model.beam_size,
+                            on_segment=on_segment,
+                        )
+                except CancelledError as exc:
+                    log.debug("ASR worker: transcription cancelled")
+                    job.future.set_exception(exc)
+                    continue
+                except Exception as exc:
+                    log.exception("ASR worker inference failed")
+                    job.future.set_exception(exc)
+                    continue
+                job.future.set_result(result)
+        finally:
+            self._close_model()
+
+    def _close_model(self) -> None:
+        """Close the model exactly once, never concurrently with inference."""
+        with self._close_lock:
+            if self._model_closed:
                 return
-            if isinstance(job, tuple) and len(job) == 2 and job[0] is _UNLOAD:
-                _sentinel, token = job
-                if isinstance(self._model, LazyModel):
-                    self._model.do_unload_on_worker(token)
-                _trim_arena()
-                if __debug__ and os.environ.get("STENOGRAPHER_TRACE_UNLOAD") == "1":
-                    from stenographer.asr.model import _read_rss_kb
-
-                    log.info(
-                        "trace-unload: after malloc_trim rss_kb=%s",
-                        _read_rss_kb(),
-                    )
-                continue
-
-            def on_segment(
-                seg: SegmentInfo,
-                *,
-                _user_cb: Callable[[SegmentInfo], None] | None = job.on_segment,
-                _job_cancel: threading.Event | None = job.cancel_event,
-                _ignore_global: bool = job.ignore_global_cancel,
-            ) -> None:
-                if self._cancel_event.is_set() and not _ignore_global:
-                    raise CancelledError("transcription cancelled")
-                if _job_cancel is not None and _job_cancel.is_set():
-                    raise CancelledError("transcription cancelled")
-                if _user_cb is not None:
-                    _user_cb(seg)
-
-            if (self._cancel_event.is_set() and not job.ignore_global_cancel) or (
-                job.cancel_event is not None and job.cancel_event.is_set()
-            ):
-                log.debug("ASR worker: job cancelled before transcription")
-                job.future.set_exception(CancelledError("transcription cancelled"))
-                continue
-
-            try:
-                if job.kind == "words":
-                    result = self._model.transcribe_words(
-                        job.samples,
-                        beam_size=job.beam_size,
-                        check_cancel=functools.partial(
-                            self._check_cancel,
-                            job.cancel_event,
-                            ignore_global=job.ignore_global_cancel,
-                        ),
-                    )
-                else:
-                    result = self._model.transcribe(
-                        job.samples,
-                        self._model.language,
-                        self._model.beam_size,
-                        on_segment=on_segment,
-                    )
-            except CancelledError as exc:
-                log.debug("ASR worker: transcription cancelled")
-                job.future.set_exception(exc)
-                continue
-            except Exception as exc:
-                log.exception("ASR worker inference failed")
-                job.future.set_exception(exc)
-                continue
-            job.future.set_result(result)
+            self._model.close()
+            self._model_closed = True
 
     def _check_cancel(
         self, job_cancel: threading.Event | None, *, ignore_global: bool = False

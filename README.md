@@ -386,9 +386,9 @@ although standard TOML represents these defaults as empty strings.
 requires `clipboard.enabled = true`; type mode can leave a convenience copy on
 the regular clipboard when clipboard support is enabled. In type mode,
 `output.max_chars` caps what is typed while the full transcript remains on the
-clipboard; in paste mode it caps the pasted and copied text. The pre-0.9.2
-values `"text"` and `"paste"` are accepted with a deprecation warning and
-mapped to their current names.
+clipboard; paste mode copies and pastes the full transcript without applying
+the cap. The pre-0.9.2 values `"text"` and `"paste"` are accepted with a
+deprecation warning and mapped to their current names.
 
 `asr.silence_threshold` drops segments that faster-whisper classifies as
 probable silence from both batch and incremental decoding. If a final

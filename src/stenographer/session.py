@@ -33,6 +33,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+_PROCESSOR_DRAIN_TIMEOUT_SECONDS = 60.0
+_FORCED_SHUTDOWN_TIMEOUT_SECONDS = 10.0
+
 # A queued batch recording, optionally tagged with which hotkey triggered it
 # (added by FTHR-004; the untagged 4-tuple form defaults to "dictate").
 _BatchItem = tuple[np.ndarray, Literal["ptt", "toggle"], threading.Event, int]
@@ -254,11 +257,32 @@ class Session:
         self._worker.cancel()
         self._utterance_queue.put(None)
         if self._processor is not None and self._processor.is_alive():
-            self._processor.join(timeout=60.0)
+            self._processor.join(timeout=_PROCESSOR_DRAIN_TIMEOUT_SECONDS)
+        forced_deadline: float | None = None
+        if self._processor is not None and self._processor.is_alive():
+            log.warning(
+                "session: processor did not drain within %.1fs; forcing cancellation",
+                _PROCESSOR_DRAIN_TIMEOUT_SECONDS,
+            )
+            forced_deadline = time.monotonic() + _FORCED_SHUTDOWN_TIMEOUT_SECONDS
+            self._force_shutdown_cancel()
+            self._processor.join(timeout=self._remaining_shutdown_time(forced_deadline))
         try:
-            self._worker.stop(timeout=10.0)
+            worker_timeout = (
+                _FORCED_SHUTDOWN_TIMEOUT_SECONDS
+                if forced_deadline is None
+                else self._remaining_shutdown_time(forced_deadline)
+            )
+            self._worker.stop(timeout=worker_timeout)
         except Exception as exc:
             log.error("session: worker.stop failed: %s", exc)
+        processor_alive = self._processor is not None and self._processor.is_alive()
+        if processor_alive:
+            # The active abort suppresses delivery when inference eventually
+            # returns. Keep its dependencies open until process exit rather
+            # than racing a processor that has not reached that check yet.
+            log.error("session: processor still alive; deferring delivery-component teardown")
+            return
         try:
             self._feedback.close()
         except Exception as exc:
@@ -277,6 +301,31 @@ class Session:
                 self._notification.flush(timeout=2.0)
         except Exception as exc:
             log.error("session: notification.hide failed: %s", exc)
+
+    @staticmethod
+    def _remaining_shutdown_time(deadline: float) -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    def _force_shutdown_cancel(self) -> None:
+        """Abort active work and discard queued work after the drain deadline."""
+        with self._lock:
+            self._cancel_generation += 1
+            if self._active_abort is not None:
+                self._active_abort.set()
+            if self._live_streamer is not None:
+                self._live_streamer.abort.set()
+                self._live_streamer.signal_abort()
+            while True:
+                try:
+                    item = self._utterance_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if isinstance(item, _LiveItem):
+                    item.streamer.abort.set()
+                    item.streamer.signal_abort()
+            # A processor that raced the drain either observes the generation
+            # bump or finishes its active item and consumes this sentinel.
+            self._utterance_queue.put(None)
 
     def on_recording_start(self, source: Literal["dictate"] = "dictate") -> None:
         with self._lock:

@@ -112,19 +112,7 @@ class IncrementalDriver:
 
     def _run(self) -> str | None:
         while True:
-            kind, samples = self._signals.get()
-            # Coalesce: re-decodes are cumulative, so pending partials collapse
-            # into the newest signal; a queued final or abort wins outright.
-            while True:
-                try:
-                    next_kind, next_samples = self._signals.get_nowait()
-                except queue.Empty:
-                    break
-                # An abort always wins; a final wins over anything but an
-                # abort; extra partials are dropped (the next re-decode reads
-                # the newest audio window anyway).
-                if next_kind == _ABORT or (next_kind == _FINAL and kind != _ABORT):
-                    kind, samples = next_kind, next_samples
+            kind, samples = self._next_signal()
             if kind == _ABORT or self._abort.is_set():
                 log.info("incremental: aborted")
                 return None
@@ -132,7 +120,42 @@ class IncrementalDriver:
                 assert samples is not None
                 return self._finish(samples)
             if not self._step():
+                # Shutdown queues the finalized samples before globally
+                # cancelling the worker. If that cancellation lands during an
+                # interim decode, consume the already-pending final instead of
+                # dropping the utterance. Never wait here: a cancellation with
+                # no final belongs to an abort/failure path.
+                pending = self._next_signal(block=False)
+                if pending is not None:
+                    pending_kind, pending_samples = pending
+                    if (
+                        pending_kind == _FINAL
+                        and pending_samples is not None
+                        and not self._abort.is_set()
+                    ):
+                        return self._finish(pending_samples)
                 return None
+
+    def _next_signal(self, *, block: bool = True) -> tuple[str, np.ndarray | None] | None:
+        """Return the highest-priority pending signal, coalescing partials."""
+        try:
+            if block:
+                kind, samples = self._signals.get()
+            else:
+                kind, samples = self._signals.get_nowait()
+        except queue.Empty:
+            return None
+        # Re-decodes are cumulative, so pending partials collapse into the
+        # newest signal; a queued final or abort wins outright.
+        while True:
+            try:
+                next_kind, next_samples = self._signals.get_nowait()
+            except queue.Empty:
+                break
+            # An abort always wins; a final wins over anything but an abort.
+            if next_kind == _ABORT or (next_kind == _FINAL and kind != _ABORT):
+                kind, samples = next_kind, next_samples
+        return kind, samples
 
     def _step(self) -> bool:
         """One interim re-decode. Returns False when aborted mid-decode."""
