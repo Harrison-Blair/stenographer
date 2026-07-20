@@ -684,7 +684,7 @@ class Session:
                 delivered = bool(self._injector.type_text(injected, raw=True))
             except Exception as exc:
                 log.error("session: injector.type_text raised: %s", exc)
-        if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
+        if self._cfg.clipboard.enabled and self._caps.has_clipboard:
             copied = False
             try:
                 # The full transcript, not the capped one: the clipboard is the
@@ -717,8 +717,8 @@ class Session:
         failed copy means the utterance reached neither the cursor nor the
         clipboard and the user has nothing to recover.
         """
-        if not self._caps.has_wl_copy:
-            notify_failure("clipboard_paste mode requires wl-copy; nothing delivered")
+        if not self._caps.has_clipboard:
+            notify_failure("clipboard_paste mode requires a clipboard tool; nothing delivered")
             return False
         copied = False
         try:

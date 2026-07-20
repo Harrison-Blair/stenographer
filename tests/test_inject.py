@@ -38,18 +38,18 @@ def _completed(
 
 
 def test_type_text_unavailable_does_not_call_subprocess(caplog: pytest.LogCaptureFixture) -> None:
-    inj = Injector(available=False)
+    inj = Injector(backend=None)
     with (
         caplog.at_level(logging.WARNING),
         patch("stenographer.output.inject.subprocess.run") as run,
     ):
         assert inj.type_text("hello") is False
         run.assert_not_called()
-    assert any("wtype not available" in rec.message for rec in caplog.records)
+    assert any("no injection backend available" in rec.message for rec in caplog.records)
 
 
 def test_type_text_success_invokes_wtype_with_trailing_space() -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with patch("stenographer.output.inject.subprocess.run") as run:
         run.return_value = _completed()
         assert inj.type_text("hello") is True
@@ -62,7 +62,7 @@ def test_type_text_success_invokes_wtype_with_trailing_space() -> None:
 
 
 def test_type_text_without_trailing_space_omits_it() -> None:
-    inj = Injector(available=True, append_trailing_space=False)
+    inj = Injector(backend="wtype", append_trailing_space=False)
     with patch("stenographer.output.inject.subprocess.run") as run:
         run.return_value = _completed()
         assert inj.type_text("hello") is True
@@ -70,21 +70,21 @@ def test_type_text_without_trailing_space_omits_it() -> None:
 
 
 def test_type_text_empty_returns_true_without_subprocess() -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with patch("stenographer.output.inject.subprocess.run") as run:
         assert inj.type_text("") is True
         run.assert_not_called()
 
 
 def test_type_text_whitespace_only_returns_true_without_subprocess() -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with patch("stenographer.output.inject.subprocess.run") as run:
         assert inj.type_text("   ") is True
         run.assert_not_called()
 
 
 def test_type_text_called_process_error_returns_false(caplog: pytest.LogCaptureFixture) -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with (
         caplog.at_level(logging.ERROR),
         patch("stenographer.output.inject.subprocess.run") as run,
@@ -98,7 +98,7 @@ def test_type_text_called_process_error_returns_false(caplog: pytest.LogCaptureF
 
 
 def test_type_text_timeout_returns_false(caplog: pytest.LogCaptureFixture) -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with (
         caplog.at_level(logging.ERROR),
         patch("stenographer.output.inject.subprocess.run") as run,
@@ -111,7 +111,7 @@ def test_type_text_timeout_returns_false(caplog: pytest.LogCaptureFixture) -> No
 
 
 def test_type_text_file_not_found_returns_false(caplog: pytest.LogCaptureFixture) -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with (
         caplog.at_level(logging.ERROR),
         patch("stenographer.output.inject.subprocess.run") as run,
@@ -124,7 +124,7 @@ def test_type_text_file_not_found_returns_false(caplog: pytest.LogCaptureFixture
 
 
 def test_type_text_truncates_long_transcript(caplog: pytest.LogCaptureFixture) -> None:
-    inj = Injector(available=True, max_chars=10, append_trailing_space=False)
+    inj = Injector(backend="wtype", max_chars=10, append_trailing_space=False)
     payload = "x" * 25
     with (
         caplog.at_level(logging.WARNING),
@@ -138,7 +138,7 @@ def test_type_text_truncates_long_transcript(caplog: pytest.LogCaptureFixture) -
 
 
 def test_type_text_leading_dash_passed_as_positional() -> None:
-    inj = Injector(available=True, append_trailing_space=False)
+    inj = Injector(backend="wtype", append_trailing_space=False)
     with patch("stenographer.output.inject.subprocess.run") as run:
         run.return_value = _completed()
         assert inj.type_text("-rf /") is True
@@ -146,7 +146,7 @@ def test_type_text_leading_dash_passed_as_positional() -> None:
 
 
 def test_type_text_unicode_passes_through() -> None:
-    inj = Injector(available=True, append_trailing_space=False)
+    inj = Injector(backend="wtype", append_trailing_space=False)
     with patch("stenographer.output.inject.subprocess.run") as run:
         run.return_value = _completed()
         assert inj.type_text("héllo ☃") is True
@@ -154,7 +154,7 @@ def test_type_text_unicode_passes_through() -> None:
 
 
 def test_type_text_raw_preserves_leading_whitespace_and_skips_trailing_space() -> None:
-    inj = Injector(available=True, append_trailing_space=True, max_chars=5)
+    inj = Injector(backend="wtype", append_trailing_space=True, max_chars=5)
     with patch("stenographer.output.inject.subprocess.run") as run:
         run.return_value = _completed()
         assert inj.type_text("  hello world", raw=True) is True
@@ -162,7 +162,7 @@ def test_type_text_raw_preserves_leading_whitespace_and_skips_trailing_space() -
 
 
 def test_type_text_raw_bypasses_truncation() -> None:
-    inj = Injector(available=True, max_chars=3, append_trailing_space=False)
+    inj = Injector(backend="wtype", max_chars=3, append_trailing_space=False)
     with patch("stenographer.output.inject.subprocess.run") as run:
         run.return_value = _completed()
         assert inj.type_text("abcdefg", raw=True) is True
@@ -170,14 +170,14 @@ def test_type_text_raw_bypasses_truncation() -> None:
 
 
 def test_type_text_raw_empty_skips_subprocess() -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with patch("stenographer.output.inject.subprocess.run") as run:
         assert inj.type_text("", raw=True) is True
         run.assert_not_called()
 
 
 def test_close_is_noop() -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     assert inj.close() is None
 
 
@@ -185,7 +185,7 @@ def test_close_is_noop() -> None:
 
 
 def test_paste_fires_shift_insert() -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with patch("stenographer.output.inject.subprocess.run") as run:
         run.return_value = _completed()
         assert inj.paste() is True
@@ -200,7 +200,7 @@ def test_paste_fires_shift_insert() -> None:
 
 
 def test_paste_unavailable_returns_false(caplog: pytest.LogCaptureFixture) -> None:
-    inj = Injector(available=False)
+    inj = Injector(backend=None)
     with (
         caplog.at_level(logging.WARNING),
         patch("stenographer.output.inject.subprocess.run") as run,
@@ -211,7 +211,7 @@ def test_paste_unavailable_returns_false(caplog: pytest.LogCaptureFixture) -> No
 
 
 def test_paste_called_process_error_returns_false(caplog: pytest.LogCaptureFixture) -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with (
         caplog.at_level(logging.ERROR),
         patch("stenographer.output.inject.subprocess.run") as run,
@@ -224,7 +224,7 @@ def test_paste_called_process_error_returns_false(caplog: pytest.LogCaptureFixtu
 
 
 def test_paste_timeout_returns_false(caplog: pytest.LogCaptureFixture) -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with (
         caplog.at_level(logging.ERROR),
         patch("stenographer.output.inject.subprocess.run") as run,
@@ -237,7 +237,7 @@ def test_paste_timeout_returns_false(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_paste_file_not_found_returns_false(caplog: pytest.LogCaptureFixture) -> None:
-    inj = Injector(available=True)
+    inj = Injector(backend="wtype")
     with (
         caplog.at_level(logging.ERROR),
         patch("stenographer.output.inject.subprocess.run") as run,
@@ -247,6 +247,46 @@ def test_paste_file_not_found_returns_false(caplog: pytest.LogCaptureFixture) ->
     errs = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert errs
     assert "wtype paste failed" in errs[-1].message
+
+
+# --- xdotool (X11) backend ---
+
+
+def test_type_text_xdotool_backend_builds_xdotool_argv() -> None:
+    inj = Injector(backend="xdotool", append_trailing_space=False)
+    with patch("stenographer.output.inject.subprocess.run") as run:
+        run.return_value = _completed()
+        assert inj.type_text("hello") is True
+        assert run.call_args.args[0] == ["xdotool", "type", "--clearmodifiers", "--", "hello"]
+
+
+def test_type_text_xdotool_leading_dash_passed_after_separator() -> None:
+    inj = Injector(backend="xdotool", append_trailing_space=False)
+    with patch("stenographer.output.inject.subprocess.run") as run:
+        run.return_value = _completed()
+        assert inj.type_text("-rf /") is True
+        assert run.call_args.args[0] == ["xdotool", "type", "--clearmodifiers", "--", "-rf /"]
+
+
+def test_paste_xdotool_fires_shift_insert() -> None:
+    inj = Injector(backend="xdotool")
+    with patch("stenographer.output.inject.subprocess.run") as run:
+        run.return_value = _completed()
+        assert inj.paste() is True
+        assert run.call_args.args[0] == ["xdotool", "key", "--clearmodifiers", "shift+Insert"]
+
+
+def test_type_text_xdotool_error_names_backend(caplog: pytest.LogCaptureFixture) -> None:
+    inj = Injector(backend="xdotool")
+    with (
+        caplog.at_level(logging.ERROR),
+        patch("stenographer.output.inject.subprocess.run") as run,
+    ):
+        run.side_effect = FileNotFoundError("xdotool not on PATH")
+        assert inj.type_text("hello") is False
+    errs = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert errs
+    assert "xdotool failed" in errs[-1].message
 
 
 # --- Integration test (live wtype against a real Wayland session) ---
@@ -266,7 +306,7 @@ def test_real_wtype_injects_into_focused_window() -> None:
     if not os.environ.get("WAYLAND_DISPLAY"):
         pytest.skip("WAYLAND_DISPLAY is not set")
 
-    inj = Injector(available=True, append_trailing_space=False)
+    inj = Injector(backend="wtype", append_trailing_space=False)
     assert inj.type_text("") is True
     assert inj.type_text("ok") is True
 
@@ -342,8 +382,8 @@ def test_paste_round_trip_latency() -> None:
     saved = _save_clipboard()
     saved_primary = _save_clipboard(primary=True)
     try:
-        clip = ClipboardManager(available=True)
-        inj = Injector(available=True, append_trailing_space=False)
+        clip = ClipboardManager(backend="wl-clipboard")
+        inj = Injector(backend="wtype", append_trailing_space=False)
 
         durations: list[float] = []
         for i in range(_LATENCY_ITERATIONS):

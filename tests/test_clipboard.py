@@ -34,14 +34,14 @@ def _completed(
 
 
 def test_copy_unavailable_does_not_call_subprocess() -> None:
-    mgr = ClipboardManager(available=False)
+    mgr = ClipboardManager(backend=None)
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         assert mgr.copy("hello") is False
         run.assert_not_called()
 
 
 def test_copy_success_returns_true_and_pipes_input() -> None:
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.return_value = _completed()
         assert mgr.copy("hello") is True
@@ -61,7 +61,7 @@ def test_copy_success_returns_true_and_pipes_input() -> None:
 
 
 def test_copy_populates_primary_selection() -> None:
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.return_value = _completed()
         assert mgr.copy("hello", primary=True) is True
@@ -78,7 +78,7 @@ def test_copy_leaves_primary_selection_alone_by_default() -> None:
     # The primary selection is the user's mouse-selection buffer. Only the
     # paste-chord paths opt in; text-mode injection and `transcribe FILE`
     # must not destroy what the user had selected.
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.return_value = _completed()
         assert mgr.copy("hello") is True
@@ -99,7 +99,7 @@ def test_copy_does_not_capture_subprocess_pipes() -> None:
     without noticing. ``test_clipboard_copy_real_wl_copy_round_trip`` is the
     test that proves the behaviour.
     """
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.return_value = _completed()
         assert mgr.copy("hello", primary=True) is True
@@ -114,7 +114,7 @@ def test_copy_does_not_capture_subprocess_pipes() -> None:
 
 
 def test_copy_called_process_error_returns_false() -> None:
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.side_effect = subprocess.CalledProcessError(
             returncode=1,
@@ -125,21 +125,21 @@ def test_copy_called_process_error_returns_false() -> None:
 
 
 def test_copy_timeout_returns_false() -> None:
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.side_effect = subprocess.TimeoutExpired(cmd=["wl-copy"], timeout=10.0)
         assert mgr.copy("hello") is False
 
 
 def test_copy_file_not_found_returns_false() -> None:
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.side_effect = FileNotFoundError("wl-copy not on PATH")
         assert mgr.copy("hello") is False
 
 
 def test_read_success_strips_trailing_newline() -> None:
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.return_value = _completed(stdout=b"clipboard contents\n")
         assert mgr.read() == "clipboard contents"
@@ -152,21 +152,21 @@ def test_read_success_strips_trailing_newline() -> None:
 
 
 def test_read_success_without_trailing_newline() -> None:
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.return_value = _completed(stdout=b"clipboard contents")
         assert mgr.read() == "clipboard contents"
 
 
 def test_read_unavailable_returns_none() -> None:
-    mgr = ClipboardManager(available=False)
+    mgr = ClipboardManager(backend=None)
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         assert mgr.read() is None
         run.assert_not_called()
 
 
 def test_read_called_process_error_returns_none() -> None:
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     with patch("stenographer.output.clipboard.subprocess.run") as run:
         run.side_effect = subprocess.CalledProcessError(
             returncode=1,
@@ -177,8 +177,49 @@ def test_read_called_process_error_returns_none() -> None:
 
 
 def test_close_is_noop() -> None:
-    mgr = ClipboardManager(available=True)
+    mgr = ClipboardManager(backend="wl-clipboard")
     assert mgr.close() is None
+
+
+# --- X11 backends (xclip / xsel) ---
+
+
+def test_copy_xclip_backend_builds_selection_argv() -> None:
+    mgr = ClipboardManager(backend="xclip")
+    with patch("stenographer.output.clipboard.subprocess.run") as run:
+        run.return_value = _completed()
+        assert mgr.copy("hello", primary=True) is True
+        regular, primary = run.call_args_list
+        assert regular.args[0] == ["xclip", "-selection", "clipboard"]
+        assert primary.args[0] == ["xclip", "-selection", "primary"]
+        assert regular.kwargs["input"] == b"hello"
+        assert regular.kwargs["stdout"] is subprocess.DEVNULL
+
+
+def test_copy_xsel_backend_builds_selection_argv() -> None:
+    mgr = ClipboardManager(backend="xsel")
+    with patch("stenographer.output.clipboard.subprocess.run") as run:
+        run.return_value = _completed()
+        assert mgr.copy("hello", primary=True) is True
+        regular, primary = run.call_args_list
+        assert regular.args[0] == ["xsel", "--clipboard", "--input"]
+        assert primary.args[0] == ["xsel", "--primary", "--input"]
+
+
+def test_read_xclip_backend_builds_argv() -> None:
+    mgr = ClipboardManager(backend="xclip")
+    with patch("stenographer.output.clipboard.subprocess.run") as run:
+        run.return_value = _completed(stdout=b"clip\n")
+        assert mgr.read() == "clip"
+        assert run.call_args.args[0] == ["xclip", "-selection", "clipboard", "-o"]
+
+
+def test_read_xsel_backend_builds_argv() -> None:
+    mgr = ClipboardManager(backend="xsel")
+    with patch("stenographer.output.clipboard.subprocess.run") as run:
+        run.return_value = _completed(stdout=b"clip")
+        assert mgr.read() == "clip"
+        assert run.call_args.args[0] == ["xsel", "--clipboard", "--output"]
 
 
 # --- Integration tests (live wl-copy / wl-paste) ---
@@ -253,7 +294,7 @@ def test_clipboard_copy_real_wl_copy_round_trip() -> None:
     saved_regular = _save_selection(primary=False)
     saved_primary = _save_selection(primary=True)
     try:
-        mgr = ClipboardManager(available=True)
+        mgr = ClipboardManager(backend="wl-clipboard")
         token = f"stenographer-fthr021-{uuid.uuid4()}"
 
         start = time.monotonic()

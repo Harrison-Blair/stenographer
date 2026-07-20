@@ -22,12 +22,13 @@ def test_cli_has_no_prompt_cue_adapter() -> None:
 def _caps() -> Capabilities:
     return Capabilities(
         has_paste_trigger=False,
-        has_wl_copy=False,
+        has_clipboard=False,
         has_pw_play=False,
         has_paplay=False,
         has_input_group=False,
         has_mic=False,
         has_asr_model=False,
+        session_type="wayland",
     )
 
 
@@ -114,12 +115,13 @@ class _StubCapabilitiesProbe:
     def probe(cfg: object) -> Capabilities:
         return Capabilities(
             has_paste_trigger=False,
-            has_wl_copy=False,
+            has_clipboard=False,
             has_pw_play=False,
             has_paplay=False,
             has_input_group=False,
             has_mic=False,
             has_asr_model=True,
+            session_type="wayland",
         )
 
 

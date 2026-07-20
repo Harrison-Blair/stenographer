@@ -40,9 +40,9 @@ from stenographer.hotkey.binding import HotkeyBinding
 from stenographer.hotkey.listener import HotkeyListener
 from stenographer.hotkey.state_machine import HotkeyStateMachine
 from stenographer.notification import DesktopNotification
-from stenographer.output.clipboard import ClipboardManager
+from stenographer.output.clipboard import ClipboardBackend, ClipboardManager
 from stenographer.output.formatter import HeuristicFormatter
-from stenographer.output.inject import Injector
+from stenographer.output.inject import Injector, InjectorBackend
 from stenographer.session import Session
 from stenographer.status import cmd_status
 from stenographer.update import (
@@ -127,6 +127,46 @@ def _configure_logging() -> None:
             logging.handlers.RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3),
         ],
     )
+
+
+def _select_injector_backend(session_type: str) -> InjectorBackend | None:
+    """Pick the text-injection tool for the current session.
+
+    Prefer the display server's native tool (wtype on Wayland, xdotool on
+    X11) and fall back to whichever is installed. ``None`` means neither is
+    on ``PATH`` and injection is disabled (the clipboard fallback still runs).
+    """
+    wtype = shutil.which("wtype") is not None
+    xdotool = shutil.which("xdotool") is not None
+    order: tuple[InjectorBackend, ...] = (
+        ("xdotool", "wtype") if session_type == "x11" else ("wtype", "xdotool")
+    )
+    for backend in order:
+        if (backend == "wtype" and wtype) or (backend == "xdotool" and xdotool):
+            return backend
+    return None
+
+
+def _select_clipboard_backend(session_type: str) -> ClipboardBackend | None:
+    """Pick the clipboard tool for the current session.
+
+    Prefer wl-clipboard on Wayland and xclip (then xsel) on X11, falling back
+    to whichever is installed. ``None`` disables the clipboard.
+    """
+    present: dict[ClipboardBackend, bool] = {
+        "wl-clipboard": shutil.which("wl-copy") is not None,
+        "xclip": shutil.which("xclip") is not None,
+        "xsel": shutil.which("xsel") is not None,
+    }
+    order: tuple[ClipboardBackend, ...] = (
+        ("xclip", "xsel", "wl-clipboard")
+        if session_type == "x11"
+        else ("wl-clipboard", "xclip", "xsel")
+    )
+    for backend in order:
+        if present[backend]:
+            return backend
+    return None
 
 
 def _build_feedback(cfg: Config, caps: Capabilities) -> Feedback:
@@ -220,11 +260,11 @@ def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
         max_audio_observer_interval_seconds=(1.0 / 60.0 if cfg.visualizer.enabled else None),
     )
     injector = Injector(
-        available=caps.has_paste_trigger,
+        backend=_select_injector_backend(caps.session_type),
         append_trailing_space=cfg.output.append_trailing_space,
         max_chars=cfg.output.max_chars,
     )
-    clipboard = ClipboardManager(available=caps.has_wl_copy)
+    clipboard = ClipboardManager(backend=_select_clipboard_backend(caps.session_type))
     binding = HotkeyBinding.parse(cfg.hotkey.binding)
     cancel_binding = (
         HotkeyBinding.parse(cfg.hotkey.cancel_binding) if cfg.hotkey.cancel_binding else None
@@ -727,9 +767,13 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     print(f"config:         {config_path}")
     print(f"asr.model:      {cfg.asr.model}")
     print(f"hotkey:         {cfg.hotkey.binding}")
-    wtype_status = "yes" if caps.has_paste_trigger else "NO  (cursor injection disabled)"
-    print(f"wtype:          {wtype_status}")
-    print(f"wl-copy:        {'yes' if caps.has_wl_copy else 'NO  (clipboard disabled)'}")
+    print(f"session type:   {caps.session_type}")
+    injector_backend = _select_injector_backend(caps.session_type)
+    injection_status = injector_backend or "NO  (cursor injection disabled)"
+    print(f"injection:      {injection_status}")
+    clipboard_backend = _select_clipboard_backend(caps.session_type)
+    clipboard_status = clipboard_backend or "NO  (clipboard disabled)"
+    print(f"clipboard:      {clipboard_status}")
     has_audio = caps.has_pw_play or caps.has_paplay
     audio_str = "yes" if has_audio else "NO  (audio feedback disabled)"
     print(f"pw-play/paplay: {audio_str}")

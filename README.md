@@ -88,27 +88,41 @@ transcription. Set the cancel binding to `""` to disable it.
 
 ## Requirements
 
-- Linux with a Wayland compositor on which `wtype` can inject keystrokes.
+- Linux with either a Wayland compositor (injection via `wtype`) or an X11
+  session (injection via `xdotool`). The backend is chosen automatically from
+  the session type; run `stenographer doctor` to see which is selected.
 - Membership in the `input` group, or a uaccess rule for the keyboard
-  device, so the daemon can read `/dev/input/event*`.
+  device, so the daemon can read `/dev/input/event*`. (Hotkey capture uses
+  evdev at the kernel level, so it is the same on Wayland and X11.)
 - A working PortAudio input device, normally provided through PipeWire or
   PulseAudio.
 - System packages:
 
   | Capability | Debian / Ubuntu | Fedora | Purpose |
   |---|---|---|---|
-  | `wtype` | `wtype` | `wtype` | Final typing or paste chord |
-  | `wl-copy` | `wl-clipboard` | `wl-clipboard` | Clipboard and default paste transport |
+  | `wtype` (Wayland) | `wtype` | `wtype` | Typing / paste chord on Wayland |
+  | `xdotool` (X11) | `xdotool` | `xdotool` | Typing / paste chord on X11 |
+  | `wl-copy` (Wayland) | `wl-clipboard` | `wl-clipboard` | Clipboard on Wayland |
+  | `xclip` / `xsel` (X11) | `xclip` | `xclip` | Clipboard on X11 |
   | `pw-play` or `paplay` | `pipewire-audio` or `pulseaudio-utils` | `pipewire-utils` or `pulseaudio-utils` | Audio cues |
   | `notify-send` | `libnotify-bin` | `libnotify` | Fallback status notifications |
   | libevdev | `libevdev1` | `libevdev` | Global hotkey |
   | PortAudio | `libportaudio2` | `portaudio` | Microphone capture |
-  | GTK4 layer shell | `libgtk-4-1`, `libgtk4-layer-shell0`, `gir1.2-freedesktop`, `gir1.2-gtk4layershell-1.0` | `gobject-introspection`, `gtk4`, `gtk4-layer-shell` | HUD and transcript preview |
+  | GTK4 layer shell | `libgtk-4-1`, `libgtk4-layer-shell0`, `gir1.2-freedesktop`, `gir1.2-gtk4layershell-1.0` | `gobject-introspection`, `gtk4`, `gtk4-layer-shell` | HUD and transcript preview (Wayland only) |
 
-The audio cues, notifications, and GTK HUD degrade independently when their
-optional runtime is absent. The default `clipboard_paste` output requires both
-`wl-copy` and `wtype`; without `wtype`, the transcript remains recoverable on
-the clipboard but is not pasted.
+Install the pair for your session type: `wtype` + `wl-clipboard` on Wayland, or
+`xdotool` + `xclip` on X11. The audio cues, notifications, and GTK HUD degrade
+independently when their optional runtime is absent; the GTK layer-shell HUD is
+Wayland-only and falls back to `notify-send` on X11. The default
+`clipboard_paste` output requires a clipboard tool plus an injection tool;
+without an injection tool the transcript remains recoverable on the clipboard
+but is not pasted.
+
+> [!NOTE]
+> GNOME's Wayland compositor (Mutter) does not implement the virtual-keyboard
+> protocol `wtype` relies on, so injection does not work under GNOME on
+> Wayland. Use a GNOME X11 session (which uses `xdotool`) or a
+> wlroots-based compositor.
 
 Python 3.14 or newer is required for source, wheel, and editable installs. The
 prebuilt onedir release includes Python, but still needs the system CLIs and

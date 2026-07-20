@@ -97,32 +97,41 @@ info "stenographer installer"
 for tool in tar sha256sum; do
     command -v "$tool" >/dev/null 2>&1 || err "required tool not found: $tool"
 done
-if [[ -z "${WAYLAND_DISPLAY:-}" && "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
-    warn "no Wayland session detected; stenographer only works under Wayland."
+if [[ "${XDG_SESSION_TYPE:-}" == "wayland" || -n "${WAYLAND_DISPLAY:-}" ]]; then
+    :  # Wayland: uses wtype + wl-clipboard
+elif [[ "${XDG_SESSION_TYPE:-}" == "x11" || -n "${DISPLAY:-}" ]]; then
+    warn "X11 session detected; stenographer will use xdotool + xclip for injection/clipboard."
+    warn "(the GTK4 layer-shell overlay is Wayland-only and falls back to notifications on X11.)"
+else
+    warn "no Wayland or X11 session detected; text injection needs one of them."
 fi
 
 # ── step 1: system dependencies ─────────────────────────────────────────
 detect_deps() {  # sets PM_INSTALL and DEPS
+    # wtype + wl-clipboard drive Wayland; xdotool + xclip drive X11. Both are
+    # listed so a single install covers either session type.
     if command -v apt-get >/dev/null 2>&1; then
         PM_INSTALL="sudo apt-get update && sudo apt-get install -y"
-        DEPS="wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 libnotify-bin libgtk-4-1 libgtk4-layer-shell0 gir1.2-freedesktop gir1.2-gtk4layershell-1.0"
+        DEPS="wtype wl-clipboard xdotool xclip pipewire-audio libevdev1 libportaudio2 libnotify-bin libgtk-4-1 libgtk4-layer-shell0 gir1.2-freedesktop gir1.2-gtk4layershell-1.0"
     elif command -v dnf >/dev/null 2>&1; then
         PM_INSTALL="sudo dnf install -y"
-        DEPS="wtype wl-clipboard pipewire-utils libevdev portaudio libnotify gobject-introspection gtk4 gtk4-layer-shell"
+        DEPS="wtype wl-clipboard xdotool xclip pipewire-utils libevdev portaudio libnotify gobject-introspection gtk4 gtk4-layer-shell"
     elif command -v pacman >/dev/null 2>&1; then
         PM_INSTALL="sudo pacman -S --needed"
-        DEPS="wtype wl-clipboard pipewire libevdev portaudio libnotify gobject-introspection-runtime gtk4 gtk4-layer-shell"
+        DEPS="wtype wl-clipboard xdotool xclip pipewire libevdev portaudio libnotify gobject-introspection-runtime gtk4 gtk4-layer-shell"
     else
         PM_INSTALL=""
-        DEPS="wtype wl-clipboard pipewire libevdev libportaudio libnotify GTK4 gtk4-layer-shell"
+        DEPS="wtype wl-clipboard xdotool xclip pipewire libevdev libportaudio libnotify GTK4 gtk4-layer-shell"
     fi
 }
 
 install_deps() {
     detect_deps
     local missing=()
-    command -v wtype       >/dev/null 2>&1 || missing+=("wtype")
-    command -v wl-copy     >/dev/null 2>&1 || missing+=("wl-copy")
+    # Injection: wtype (Wayland) or xdotool (X11); clipboard: wl-copy (Wayland)
+    # or xclip/xsel (X11). Either satisfies the requirement.
+    command -v wtype   >/dev/null 2>&1 || command -v xdotool >/dev/null 2>&1 || missing+=("wtype/xdotool")
+    command -v wl-copy >/dev/null 2>&1 || command -v xclip >/dev/null 2>&1 || command -v xsel >/dev/null 2>&1 || missing+=("wl-copy/xclip")
     command -v pw-play     >/dev/null 2>&1 || command -v paplay >/dev/null 2>&1 || missing+=("pw-play/paplay")
     command -v notify-send >/dev/null 2>&1 || missing+=("notify-send")
     ldconfig -p 2>/dev/null | grep -q libgtk4-layer-shell || missing+=("gtk4-layer-shell")

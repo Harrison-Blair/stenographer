@@ -30,7 +30,7 @@ def _make_session(
     notification: MagicMock | None = None,
 ) -> tuple[Session, dict[str, MagicMock]]:
     components = {
-        "caps": MagicMock(has_paste_trigger=True, has_wl_copy=True),
+        "caps": MagicMock(has_paste_trigger=True, has_clipboard=True),
         "listener": MagicMock(),
         "recorder": MagicMock(is_active=False),
         "worker": MagicMock(),
