@@ -162,7 +162,7 @@ def test_clipboard_copy_failure_never_fires_paste_chord() -> None:
     components["injector"].paste.assert_not_called()
 
 
-def test_output_max_chars_applied_once_before_both_delivery_modes() -> None:
+def test_output_max_chars_applied_once_in_type_mode() -> None:
     type_cfg = dataclasses.replace(
         _cfg(mode="type"),
         output=dataclasses.replace(_cfg(mode="type").output, max_chars=5),
@@ -174,13 +174,22 @@ def test_output_max_chars_applied_once_before_both_delivery_modes() -> None:
     # the only place the truncated tail still exists.
     type_components["clipboard"].copy.assert_called_once_with("abcdefgh", primary=True)
 
+
+def test_output_max_chars_does_not_truncate_in_clipboard_paste_mode() -> None:
+    """The cap bounds per-character wtype synthesis, which pasting does not do.
+
+    In clipboard_paste mode the clipboard *is* the transport, so applying the
+    cap before the copy would drop the tail into a place the user cannot reach
+    -- it would reach neither the cursor nor the clipboard.
+    """
     paste_cfg = dataclasses.replace(
         _cfg(mode="clipboard_paste"),
         output=dataclasses.replace(_cfg(mode="clipboard_paste").output, max_chars=5),
     )
     paste_session, paste_components = _make_session(cfg=paste_cfg)
     assert paste_session._deliver_final("abcdefgh")
-    paste_components["clipboard"].copy.assert_called_once_with("abcde", primary=True)
+    paste_components["clipboard"].copy.assert_called_once_with("abcdefgh", primary=True)
+    paste_components["injector"].paste.assert_called_once_with()
 
 
 def test_cancelled_or_failed_incremental_run_has_no_delivery() -> None:
@@ -348,3 +357,44 @@ def test_stop_closes_components_and_indicator() -> None:
     components["clipboard"].close.assert_called_once()
     notification.hide.assert_called_once()
     notification.flush.assert_called_once()
+
+
+def test_on_model_loading_plays_cue_and_shows_loading_status() -> None:
+    notification = MagicMock()
+    session, components = _make_session(notification=notification)
+
+    session._on_model_loading()
+
+    components["feedback"].play.assert_called_once_with("model_loading")
+    notification.show_model_loading.assert_called_once()
+
+
+def test_on_model_loaded_shows_listening_while_still_recording() -> None:
+    notification = MagicMock()
+    session, components = _make_session(notification=notification)
+    session._recording = True
+
+    session._on_model_loaded()
+
+    components["feedback"].play.assert_called_once_with("model_ready")
+    notification.show_listening.assert_called_once()
+
+
+def test_on_model_loaded_leaves_status_alone_when_not_recording() -> None:
+    """The stop path already set the status; re-showing it would be wrong."""
+    notification = MagicMock()
+    session, components = _make_session(notification=notification)
+
+    session._on_model_loaded()
+
+    components["feedback"].play.assert_called_once_with("model_ready")
+    notification.show_listening.assert_not_called()
+
+
+def test_on_model_unloaded_shows_unloaded_status() -> None:
+    notification = MagicMock()
+    session, _components = _make_session(notification=notification)
+
+    session._on_model_unloaded()
+
+    notification.show_model_unloaded.assert_called_once()

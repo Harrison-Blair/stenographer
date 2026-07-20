@@ -162,7 +162,7 @@ class IncrementalDriver:
         window = samples[start:]
         # No tail-silence guard here: the user ended the utterance, decode all
         # remaining audio with the full configured beam.
-        words, ok = self._decode(window, beam_size=self._cfg.asr.beam_size)
+        words, ok = self._decode(window, beam_size=self._cfg.asr.beam_size, final=True)
         if not ok:
             return None
         if words is None:
@@ -185,16 +185,27 @@ class IncrementalDriver:
         beam = self._cfg.incremental.beam_size
         return self._cfg.asr.beam_size if beam is None else beam
 
-    def _decode(self, window: np.ndarray, *, beam_size: int) -> tuple[list | None, bool]:
+    def _decode(
+        self, window: np.ndarray, *, beam_size: int, final: bool = False
+    ) -> tuple[list | None, bool]:
         """Run one re-decode on the worker; returns ``(words, ok)``.
 
         ``ok`` is False only when the utterance was cancelled. ``words`` is
         None when the decode failed but the utterance continues -- distinct
         from an empty list, which is a successful decode that found no
         speech. Callers must not feed a failed decode into the committer.
+
+        The *final* decode is exempt from the worker's global cancel: shutdown
+        fires it to abort interim re-decodes, and cancelling the final one
+        would discard the whole utterance. ``self._abort`` still applies.
         """
         t0 = time.monotonic()
-        future = self._worker.submit_words(window, beam_size=beam_size, cancel_event=self._abort)
+        future = self._worker.submit_words(
+            window,
+            beam_size=beam_size,
+            cancel_event=self._abort,
+            ignore_global_cancel=final,
+        )
         try:
             words = future.result()
         except CancelledError:

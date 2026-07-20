@@ -666,15 +666,20 @@ class Session:
 
     def _deliver_final(self, text: str) -> bool:
         """Apply the output cap once, then perform one focused-app delivery."""
+        if not text:
+            return False
+        if self._cfg.output.injection_method == "clipboard_paste":
+            # Uncapped on purpose: the cap bounds per-character wtype
+            # synthesis, which pasting does not do. Here the clipboard is the
+            # transport rather than a recovery copy, so capping before the copy
+            # would drop the tail somewhere the user cannot reach it at all.
+            return self._deliver_paste(text)
+
         max_chars = self._cfg.output.max_chars
         injected = text
         if len(text) > max_chars:
             log.warning("session: truncating transcript from %d to %d chars", len(text), max_chars)
             injected = text[:max_chars]
-        if not injected:
-            return False
-        if self._cfg.output.injection_method == "clipboard_paste":
-            return self._deliver_paste(injected)
 
         delivered = False
         if self._caps.has_paste_trigger:

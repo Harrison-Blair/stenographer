@@ -144,3 +144,59 @@ def test_word_job_cancelled_before_pickup_skips_model() -> None:
         assert model.transcribe_words_calls == 0
     finally:
         worker.stop(timeout=5.0)
+
+
+def test_final_word_job_survives_global_cancel() -> None:
+    """Shutdown cancels interim re-decodes but must not discard the utterance.
+
+    ``Session.stop`` hands the finalized samples to the incremental driver and
+    then calls ``Worker.cancel``. Without the exemption the driver's final
+    decode is cancelled before it runs and the whole dictation is lost.
+    """
+    model = _StubModel()
+    worker = Worker(model)
+    worker.cancel()  # the sticky global cancel Session.stop() fires
+    fut = worker.submit_words(np.zeros(16000, dtype=np.float32), ignore_global_cancel=True)
+    worker.start()
+    try:
+        assert [w.word for w in fut.result(timeout=5.0)] == [" hello", " world"]
+        assert model.transcribe_words_calls == 1
+    finally:
+        worker.stop(timeout=5.0)
+
+
+def test_global_cancel_still_aborts_unflagged_word_jobs() -> None:
+    """The exemption is opt-in: interim re-decodes stay cancellable."""
+    model = _StubModel()
+    worker = Worker(model)
+    worker.cancel()
+    fut = worker.submit_words(np.zeros(16000, dtype=np.float32))
+    worker.start()
+    try:
+        with pytest.raises(CancelledError):
+            fut.result(timeout=5.0)
+        assert model.transcribe_words_calls == 0
+    finally:
+        worker.stop(timeout=5.0)
+
+
+def test_final_word_job_still_honors_its_own_cancel_event() -> None:
+    """Exempting the global cancel must not make a job uncancellable.
+
+    A genuine abort (recorder failure) fires the driver's per-job event, and
+    that must still stop the decode.
+    """
+    model = _StubModel()
+    worker = Worker(model)
+    cancel = threading.Event()
+    cancel.set()
+    fut = worker.submit_words(
+        np.zeros(16000, dtype=np.float32), cancel_event=cancel, ignore_global_cancel=True
+    )
+    worker.start()
+    try:
+        with pytest.raises(CancelledError):
+            fut.result(timeout=5.0)
+        assert model.transcribe_words_calls == 0
+    finally:
+        worker.stop(timeout=5.0)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import ctypes
+import functools
 import logging
 import os
 import queue
@@ -38,6 +39,7 @@ class Job:
     cancel_event: threading.Event | None = None
     kind: Literal["segments", "words"] = "segments"
     beam_size: int | None = None
+    ignore_global_cancel: bool = False
 
 
 class Worker:
@@ -78,12 +80,18 @@ class Worker:
         *,
         beam_size: int | None = None,
         cancel_event: threading.Event | None = None,
+        ignore_global_cancel: bool = False,
     ) -> concurrent.futures.Future[list[WordInfo]]:
         """Enqueue a single word-timestamped re-decode of *samples*.
 
         Used by the incremental driver: one job per interim re-decode of
         the growing utterance window.  Honors the same mid-job cancellation
         and lazy model loading as :meth:`submit`.
+
+        *ignore_global_cancel* exempts the job from :meth:`cancel` so a
+        shutdown that aborts in-flight interim re-decodes still lets the
+        utterance's final decode finish. *cancel_event* is unaffected: a
+        genuine abort must still stop the job.
         """
         future: concurrent.futures.Future[list[WordInfo]] = concurrent.futures.Future()
         self._queue.put(
@@ -93,6 +101,7 @@ class Worker:
                 cancel_event=cancel_event,
                 kind="words",
                 beam_size=beam_size,
+                ignore_global_cancel=ignore_global_cancel,
             )
         )
         return future
@@ -166,15 +175,16 @@ class Worker:
                 *,
                 _user_cb: Callable[[SegmentInfo], None] | None = job.on_segment,
                 _job_cancel: threading.Event | None = job.cancel_event,
+                _ignore_global: bool = job.ignore_global_cancel,
             ) -> None:
-                if self._cancel_event.is_set():
+                if self._cancel_event.is_set() and not _ignore_global:
                     raise CancelledError("transcription cancelled")
                 if _job_cancel is not None and _job_cancel.is_set():
                     raise CancelledError("transcription cancelled")
                 if _user_cb is not None:
                     _user_cb(seg)
 
-            if self._cancel_event.is_set() or (
+            if (self._cancel_event.is_set() and not job.ignore_global_cancel) or (
                 job.cancel_event is not None and job.cancel_event.is_set()
             ):
                 log.debug("ASR worker: job cancelled before transcription")
@@ -186,7 +196,11 @@ class Worker:
                     result = self._model.transcribe_words(
                         job.samples,
                         beam_size=job.beam_size,
-                        check_cancel=lambda _cancel=job.cancel_event: self._check_cancel(_cancel),
+                        check_cancel=functools.partial(
+                            self._check_cancel,
+                            job.cancel_event,
+                            ignore_global=job.ignore_global_cancel,
+                        ),
                     )
                 else:
                     result = self._model.transcribe(
@@ -205,9 +219,11 @@ class Worker:
                 continue
             job.future.set_result(result)
 
-    def _check_cancel(self, job_cancel: threading.Event | None) -> None:
+    def _check_cancel(
+        self, job_cancel: threading.Event | None, *, ignore_global: bool = False
+    ) -> None:
         """Raise :class:`CancelledError` if a global or per-job cancel fired."""
-        if self._cancel_event.is_set():
+        if self._cancel_event.is_set() and not ignore_global:
             raise CancelledError("transcription cancelled")
         if job_cancel is not None and job_cancel.is_set():
             raise CancelledError("transcription cancelled")
