@@ -60,6 +60,10 @@ class DesktopNotification:
         """Show a transient startup notification with the configured keybind."""
         self._enqueue(f"Ready \u2013 press {binding} to dictate", 5000)
 
+    def show_update_available(self, version: str) -> None:
+        """Show a transient notification for an available stable release."""
+        self._enqueue(f"Release v{version} available \u2014 run stenographer update", 10000)
+
     def show_listening(self) -> None:
         """Display 'Listening...' as a persistent notification."""
         self._enqueue("Listening\u2026", 0)

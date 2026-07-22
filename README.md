@@ -160,22 +160,26 @@ git clone https://github.com/Harrison-Blair/stenographer.git
 cd stenographer
 python3.14 -m venv .venv
 .venv/bin/pip install -e ".[dev,build]"
-scripts/build.sh
-scripts/install.sh
+scripts/reinstall.sh
 ```
 
-`scripts/install.sh` copies `dist/stenographer/` to
+`scripts/reinstall.sh` always rebuilds the current checkout, verifies that its
+version ends in `-dev`, stops an active local daemon after the build succeeds,
+and invokes `scripts/install.sh` to copy `dist/stenographer/` to
 `~/.local/share/stenographer/`, installs bash completion, writes the systemd
-user unit, and enables and starts it. It only invokes the build itself when
-`dist/stenographer/stenographer` is absent, so run `scripts/build.sh` first
-when reinstalling changed source.
+user unit, and enables and starts the freshly built daemon. Run it again after
+changing or updating the source checkout to reinstall the latest local dev
+version. This locally built onedir installation may also use
+`stenographer update` to switch to the newest stable release; its
+`~/.local/bin/stenographer` symlink remains in place. Running
+`scripts/reinstall.sh` later restores the current local `-dev` build.
 
 Useful local-installer options:
 
 ```sh
-scripts/install.sh --no-enable
-scripts/install.sh --no-start
-scripts/install.sh --install-dir /absolute/path
+scripts/reinstall.sh --no-enable
+scripts/reinstall.sh --no-start
+scripts/reinstall.sh --install-dir /absolute/path
 ```
 
 Both `--no-enable` and `--no-start` install the unit without enabling or
@@ -257,7 +261,8 @@ benchmark matrix may load or download several large models.
 the onedir binary, downloads the matching tarball, verifies its
 SHA-256, and replaces the running install in place. If the daemon
 is running under systemd, it is stopped before the swap and started
-afterwards.
+afterwards. Development builds retain their `-dev` version locally and may
+switch to the newest stable release even when its numeric version is lower.
 
 ```sh
 stenographer update              # check, prompt, install, restart
@@ -271,7 +276,10 @@ stenographer update --repo OWNER/REPO
 `update` only self-updates the onedir binary built by `scripts/build.sh`.
 A wheel, editable, pip, or pipx install is not replaced; upgrade it using the
 same tool and package source that installed it. Configure the target repo / channel in
-`~/.config/stenographer/config.toml` under `[stenographer.update]`.
+`~/.config/stenographer/config.toml` under `[stenographer.update]`. On each
+daemon launch, a non-blocking check notifies when an update is available;
+`update.check_on_startup = false` disables it. Updates are never installed
+automatically.
 
 ## Configure
 
@@ -353,6 +361,7 @@ formatting.capitalize_sentences = true
 formatting.normalize_spacing = true
 
 # Update
+update.check_on_startup = true
 update.repo = "Harrison-Blair/stenographer"
 update.channel = "stable"
 update.base_url = "https://api.github.com"

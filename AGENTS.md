@@ -25,7 +25,7 @@ Key tracked paths:
 - `tests/` — pytest suite mirroring `src/` plus `tests/fixtures/`.
 - `packaging/` — `stenographer.service.in` (systemd user unit template),
   `stenographer.spec` (PyInstaller), PyInstaller hooks, bash completion.
-- `scripts/` — `build.sh`, `install.sh`, `build-and-install.sh`,
+- `scripts/` — `build.sh`, `install.sh`, `reinstall.sh`,
   `install-hooks.sh`, `download_model.py`, `gen_cues.py`.
 - `.github/workflows/release.yml` — release CI (runs on merge to `main`).
 

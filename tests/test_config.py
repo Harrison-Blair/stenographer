@@ -129,12 +129,19 @@ def test_defaults_clipboard() -> None:
 
 def test_defaults_update() -> None:
     assert Config.defaults().update == UpdateConfig(
+        check_on_startup=True,
         repo="Harrison-Blair/stenographer",
         channel="stable",
         base_url="https://api.github.com",
         asset_pattern="stenographer-{version}-linux-x86_64.tar.gz",
         timeout_seconds=60,
     )
+
+
+def test_load_disables_startup_update_check(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nupdate.check_on_startup = false\n")
+    assert Config.load(p).update.check_on_startup is False
 
 
 def test_defaults_is_frozen() -> None:

@@ -127,6 +127,7 @@ class FormattingConfig:
 
 @dataclass(frozen=True)
 class UpdateConfig:
+    check_on_startup: bool
     repo: str
     channel: str
     base_url: str
@@ -205,6 +206,7 @@ class Config:
                 normalize_spacing=True,
             ),
             update=UpdateConfig(
+                check_on_startup=True,
                 repo="Harrison-Blair/stenographer",
                 channel="stable",
                 base_url="https://api.github.com",
@@ -590,6 +592,7 @@ def _build_formatting(table: dict[str, Any], path: pathlib.Path) -> FormattingCo
 
 
 def _build_update(table: dict[str, Any], path: pathlib.Path) -> UpdateConfig:
+    check_on_startup = _expect_bool(table, "check_on_startup", "update.check_on_startup", path)
     repo = _expect_str(table, "repo", "update.repo", path)
     if "/" not in repo:
         raise ConfigError(path, "update.repo", f"must be OWNER/REPO, got {repo!r}")
@@ -618,6 +621,7 @@ def _build_update(table: dict[str, Any], path: pathlib.Path) -> UpdateConfig:
     if not (1 <= timeout_seconds <= 600):
         raise ConfigError(path, "update.timeout_seconds", "must satisfy 1 <= x <= 600")
     return UpdateConfig(
+        check_on_startup=check_on_startup,
         repo=repo,
         channel=channel,
         base_url=base_url.rstrip("/"),
@@ -775,6 +779,7 @@ def _format_default_toml() -> str:
         f"formatting.normalize_spacing = {_toml_bool(fm.normalize_spacing)}",
         "",
         "# Update",
+        f"update.check_on_startup = {_toml_bool(u.check_on_startup)}",
         f"update.repo = {_toml_str(u.repo)}",
         f"update.channel = {_toml_str(u.channel)}",
         f"update.base_url = {_toml_str(u.base_url)}",

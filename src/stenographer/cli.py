@@ -23,6 +23,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 from collections.abc import Sequence
 
 import soundfile
@@ -286,12 +287,40 @@ def cmd_run(cfg: Config) -> int:
     log.info("session: daemon running (pid=%d)", os.getpid())
     if session.notification is not None:
         session.notification.show_startup(cfg.hotkey.binding)
+    _start_update_check(cfg)
     try:
         session.run()
     finally:
         session.stop()
         _release_single_instance_lock()
     return 0
+
+
+def _check_for_update_on_startup(cfg: Config) -> None:
+    """Check once for an update and notify without affecting daemon startup."""
+    try:
+        info = check_for_update(cfg.update)
+    except UpdateError as exc:
+        log.warning("startup update check failed: %s", exc)
+        return
+    if info is None:
+        return
+    notification = DesktopNotification(icon_path=_ICON_ROOT / "stenographer.png")
+    notification.show_update_available(info.latest_version)
+
+
+def _start_update_check(cfg: Config) -> threading.Thread | None:
+    """Launch the configured one-shot startup update check in the background."""
+    if not cfg.update.check_on_startup:
+        return None
+    thread = threading.Thread(
+        target=_check_for_update_on_startup,
+        args=(cfg,),
+        name="startup-update-check",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def _resolve_daemon_exec() -> str:
@@ -654,6 +683,11 @@ def cmd_update(
         if check:
             return 0
 
+        try:
+            install_root = detect_install_root()
+        except UpdateError as exc:
+            fatal(str(exc), code=1)
+
         if not yes:
             print(f"Install v{info.latest_version}? [y/N] ", file=sys.stderr, end="")
             try:
@@ -672,7 +706,6 @@ def cmd_update(
 
         try:
             tarball = download_update(info, update_cfg)
-            install_root = detect_install_root()
             bundle = extract_to_staging(tarball, install_root)
             apply_update(bundle, install_root)
         except UpdateError as exc:

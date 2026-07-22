@@ -224,3 +224,8 @@ __marimo__/
 build/
 dist/
 *.spec.bak
+
+# fledge
+.fledge/locks/
+.fledge/flocks/
+.fledge/catalog.json

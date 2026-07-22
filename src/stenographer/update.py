@@ -128,12 +128,15 @@ def _pick_release(
     *,
     channel: str,
     current: Version,
+    development: bool = False,
 ) -> dict | None:
     """Return the highest-version release matching ``channel``.
 
     ``channel`` is ``"stable"`` (drop ``prerelease``) or ``"latest"``
     (keep all). Returns the raw release dict, or ``None`` if no
-    release is newer than ``current`` (i.e. already up to date).
+    release is newer than ``current`` (i.e. already up to date). Development
+    builds instead select the newest matching release regardless of ordering,
+    allowing a locally built newer dev version to switch to stable.
     """
     candidates: list[tuple[Version, dict]] = []
     for rel in releases:
@@ -143,7 +146,7 @@ def _pick_release(
             v = _parse_tag(rel.get("tag_name", ""))
         except UpdateError:
             continue
-        if v <= current:
+        if not development and v <= current:
             continue
         candidates.append((v, rel))
     if not candidates:
@@ -176,7 +179,8 @@ def check_for_update(
     raw = _http_get_json(url, timeout=cfg.timeout_seconds)
     if not isinstance(raw, list):
         raise UpdateError(f"update: unexpected response shape from {url}: expected a list")
-    chosen = _pick_release(raw, channel=channel, current=current)
+    development = current_str.endswith("-dev")
+    chosen = _pick_release(raw, channel=channel, current=current, development=development)
     if chosen is None:
         return None
     tag = chosen.get("tag_name", "")
@@ -192,7 +196,7 @@ def check_for_update(
         raise UpdateError(f"update: release {tag} is missing the asset {sha_name!r}")
 
     return UpdateInfo(
-        current_version=str(current),
+        current_version=current_str,
         latest_version=raw_version,
         tag_name=tag,
         asset_url=asset["browser_download_url"],
@@ -277,16 +281,18 @@ def download_update(
 def detect_install_root() -> pathlib.Path:
     """Return the onedir bundle directory containing the running binary.
 
-    Detects a PyInstaller ``--onedir`` bundle by the presence of a
-    sibling ``_internal/`` directory. Raises :class:`UpdateError` for
-    a wheel / pipx install: swapping out the directory containing the
-    console script would clobber unrelated files (e.g. ``~/.local/bin``).
+    Detects a frozen PyInstaller ``--onedir`` bundle by resolving the
+    running executable and checking for a sibling ``_internal/``
+    directory. Resolving the executable preserves installations whose
+    launcher is reached through a symlink outside the bundle. Raises
+    :class:`UpdateError` for a wheel / pipx install: swapping out the
+    directory containing the console script would clobber unrelated
+    files (e.g. ``~/.local/bin``).
     """
-    argv0 = pathlib.Path(sys.argv[0])
-    argv0 = (pathlib.Path.cwd() / argv0).resolve() if not argv0.is_absolute() else argv0.resolve()
-    parent = argv0.parent
-    if (parent / "_internal").is_dir():
-        return parent
+    if getattr(sys, "frozen", False):
+        install_root = pathlib.Path(sys.executable).resolve().parent
+        if (install_root / "_internal").is_dir():
+            return install_root
     raise UpdateError(
         "update: self-update is only supported for the onedir binary install; "
         "use pip/pipx to upgrade this installation"
