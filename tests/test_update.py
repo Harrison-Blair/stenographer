@@ -217,10 +217,19 @@ def test_check_for_update_up_to_date_returns_none() -> None:
 def test_check_for_update_dev_build_can_switch_to_stable(current: str) -> None:
     releases = [_release("v0.9.3")]
     with patch("stenographer.update._http_get_json", _fake_http_get_json(releases)):
-        info = check_for_update(_DEFAULT_CFG, current_version=current)
+        info = check_for_update(_DEFAULT_CFG, current_version=current, allow_dev_downgrade=True)
     assert info is not None
     assert info.current_version == current
     assert info.latest_version == "0.9.3"
+
+
+def test_check_for_update_startup_dev_build_ignores_non_newer_release() -> None:
+    # The background startup check does not opt into the escape hatch, so a
+    # locally built dev binary must never be told an older stable release is
+    # an available update.
+    releases = [_release("v0.9.3")]
+    with patch("stenographer.update._http_get_json", _fake_http_get_json(releases)):
+        assert check_for_update(_DEFAULT_CFG, current_version="0.9.4-dev") is None
 
 
 def test_check_for_update_stable_build_never_downgrades() -> None:

@@ -68,6 +68,14 @@ jobs:
           version=${dev_version%-dev}
           sed -i "s/__version__ = \"${dev_version}\"/__version__ = \"${version}\"/" src/stenographer/_version.py
           echo "VERSION=${version}" >> "$GITHUB_ENV"
+      - name: Commit and tag the stable release version
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/stenographer/_version.py
+          git commit -m "release: v${VERSION}"
+          git tag -a "v${VERSION}" -m "stenographer v${VERSION}"
       - name: Check if release already exists
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,6 +111,8 @@ jobs:
               git log --oneline
             fi
           } > release_notes.md
+      - name: Push the release tag
+        run: git push origin "refs/tags/v${VERSION}"
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:

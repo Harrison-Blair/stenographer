@@ -668,7 +668,7 @@ def cmd_update(
             update_cfg = replace(update_cfg, repo=repo)
 
         try:
-            info = check_for_update(update_cfg, prerelease=prerelease)
+            info = check_for_update(update_cfg, prerelease=prerelease, allow_dev_downgrade=True)
         except UpdateError as exc:
             fatal(str(exc), code=1)
 

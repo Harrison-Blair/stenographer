@@ -212,7 +212,7 @@ class Config:
                 normalize_spacing=True,
             ),
             update=UpdateConfig(
-                check_on_startup=True,
+                check_on_startup=False,
                 repo="Harrison-Blair/stenographer",
                 channel="stable",
                 base_url="https://api.github.com",

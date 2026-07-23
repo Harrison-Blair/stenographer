@@ -9,7 +9,7 @@ import pytest
 
 
 def _fake_check_for_update(info: Any) -> Any:
-    def _fn(cfg: Any, *, current_version: str | None = None, prerelease: bool = False) -> Any:
+    def _fn(cfg: Any, **kwargs: Any) -> Any:
         return info
 
     return _fn
@@ -147,14 +147,17 @@ def test_cli_update_repo_override(
 
     seen: dict[str, Any] = {}
 
-    def _capture(cfg: Any, *, current_version: str | None = None, prerelease: bool = False) -> Any:
+    def _capture(cfg: Any, **kwargs: Any) -> Any:
         seen["repo"] = cfg.repo
+        seen["allow_dev_downgrade"] = kwargs.get("allow_dev_downgrade", False)
         return _info()
 
     with patch("stenographer.cli.check_for_update", _capture):
         rc = main()
     assert rc == 0
     assert seen["repo"] == "other/repo"
+    # The explicit `update` command opts into the dev-build escape hatch.
+    assert seen["allow_dev_downgrade"] is True
 
 
 # ---------------------------------------------------------------------------

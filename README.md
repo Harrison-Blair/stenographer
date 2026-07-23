@@ -278,9 +278,10 @@ stenographer update --repo OWNER/REPO
 `update` only self-updates the onedir binary built by `scripts/build.sh`.
 A wheel, editable, pip, or pipx install is not replaced; upgrade it using the
 same tool and package source that installed it. Configure the target repo / channel in
-`~/.config/stenographer/config.toml` under `[stenographer.update]`. On each
-daemon launch, a non-blocking check notifies when an update is available;
-`update.check_on_startup = false` disables it. Updates are never installed
+`~/.config/stenographer/config.toml` under `[stenographer.update]`. The
+startup update check is off by default because it contacts GitHub; set
+`update.check_on_startup = true` to have each daemon launch run a non-blocking
+check that notifies when an update is available. Updates are never installed
 automatically.
 
 ## Configure
@@ -367,7 +368,7 @@ formatting.capitalize_sentences = true
 formatting.normalize_spacing = true
 
 # Update
-update.check_on_startup = true
+update.check_on_startup = false
 update.repo = "Harrison-Blair/stenographer"
 update.channel = "stable"
 update.base_url = "https://api.github.com"

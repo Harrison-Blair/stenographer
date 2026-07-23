@@ -50,6 +50,12 @@ def test_default_hotkey_binding_is_right_alt() -> None:
     assert Config.defaults().hotkey.binding == "KEY_RIGHTALT"
 
 
+def test_default_update_check_on_startup_is_off() -> None:
+    # The daemon is offline/local-only; the startup check contacts GitHub, so
+    # it must be opt-in rather than on by default.
+    assert Config.defaults().update.check_on_startup is False
+
+
 def test_legacy_llm_and_prompt_binding_keys_ignored(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text(
@@ -132,7 +138,7 @@ def test_defaults_clipboard() -> None:
 
 def test_defaults_update() -> None:
     assert Config.defaults().update == UpdateConfig(
-        check_on_startup=True,
+        check_on_startup=False,
         repo="Harrison-Blair/stenographer",
         channel="stable",
         base_url="https://api.github.com",

@@ -35,6 +35,10 @@ log = logging.getLogger(__name__)
 
 _PROCESSOR_DRAIN_TIMEOUT_SECONDS = 60.0
 _FORCED_SHUTDOWN_TIMEOUT_SECONDS = 10.0
+# Slice of the forced-shutdown window reserved for Worker.stop, so a slow
+# processor join cannot starve it to a 0s timeout and force a deferred model
+# close even when the worker would exit moments later.
+_FORCED_WORKER_STOP_RESERVE_SECONDS = 2.0
 
 # A queued batch recording, optionally tagged with which hotkey triggered it
 # (added by FTHR-004; the untagged 4-tuple form defaults to "dictate").
@@ -266,17 +270,35 @@ class Session:
             )
             forced_deadline = time.monotonic() + _FORCED_SHUTDOWN_TIMEOUT_SECONDS
             self._force_shutdown_cancel()
-            self._processor.join(timeout=self._remaining_shutdown_time(forced_deadline))
+            # Reserve a slice of the forced window for Worker.stop below.
+            processor_budget = (
+                self._remaining_shutdown_time(forced_deadline) - _FORCED_WORKER_STOP_RESERVE_SECONDS
+            )
+            self._processor.join(timeout=max(0.0, processor_budget))
         try:
             worker_timeout = (
                 _FORCED_SHUTDOWN_TIMEOUT_SECONDS
                 if forced_deadline is None
-                else self._remaining_shutdown_time(forced_deadline)
+                else max(
+                    _FORCED_WORKER_STOP_RESERVE_SECONDS,
+                    self._remaining_shutdown_time(forced_deadline),
+                )
             )
             self._worker.stop(timeout=worker_timeout)
         except Exception as exc:
             log.error("session: worker.stop failed: %s", exc)
         processor_alive = self._processor is not None and self._processor.is_alive()
+        # Always hide/flush the notification, even on the deferred-teardown
+        # path: a 'Transcribing…' posted with timeout 0 would otherwise outlive
+        # the daemon. This is safe while the processor thread may still be alive
+        # -- unlike the delivery components below, which a wedged processor may
+        # still write to when its inference finally returns.
+        try:
+            if self._notification is not None:
+                self._notification.hide()
+                self._notification.flush(timeout=2.0)
+        except Exception as exc:
+            log.error("session: notification.hide failed: %s", exc)
         if processor_alive:
             # The active abort suppresses delivery when inference eventually
             # returns. Keep its dependencies open until process exit rather
@@ -295,12 +317,6 @@ class Session:
             self._clipboard.close()
         except Exception as exc:
             log.error("session: clipboard.close failed: %s", exc)
-        try:
-            if self._notification is not None:
-                self._notification.hide()
-                self._notification.flush(timeout=2.0)
-        except Exception as exc:
-            log.error("session: notification.hide failed: %s", exc)
 
     @staticmethod
     def _remaining_shutdown_time(deadline: float) -> float:
@@ -309,20 +325,44 @@ class Session:
     def _force_shutdown_cancel(self) -> None:
         """Abort active work and discard queued work after the drain deadline."""
         with self._lock:
-            self._cancel_generation += 1
-            if self._active_abort is not None:
-                self._active_abort.set()
-            if self._live_streamer is not None:
+            self._cancel_pending(abort_queued_live=True)
+
+    def _cancel_pending(self, *, abort_queued_live: bool) -> None:
+        """Shared cancel core for :meth:`cancel_all` and forced shutdown.
+
+        Bumps the cancel generation (so queued items stamped older are dropped
+        by the processor), sets the active and in-flight-live aborts, and drains
+        the utterance queue. Callers must already hold ``_lock``.
+
+        With *abort_queued_live* (forced-shutdown semantics) every queued live
+        driver is aborted so a wedged processor cannot block on one, and a fresh
+        shutdown sentinel is re-queued. Without it (cancel_all semantics) an
+        encountered shutdown sentinel is preserved for the processor and queued
+        drivers are simply dropped -- the generation bump makes the processor
+        skip them, and none is running yet, so none needs waking.
+        """
+        self._cancel_generation += 1
+        if self._active_abort is not None:
+            self._active_abort.set()
+        if self._live_streamer is not None:
+            if abort_queued_live:
                 self._live_streamer.abort.set()
-                self._live_streamer.signal_abort()
-            while True:
-                try:
-                    item = self._utterance_queue.get_nowait()
-                except queue.Empty:
+            self._live_streamer.signal_abort()
+        while True:
+            try:
+                item = self._utterance_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                if not abort_queued_live:
+                    # Shutdown sentinel; keep it for the processor thread.
+                    self._utterance_queue.put(None)
                     break
-                if isinstance(item, _LiveItem):
-                    item.streamer.abort.set()
-                    item.streamer.signal_abort()
+                continue
+            if abort_queued_live and isinstance(item, _LiveItem):
+                item.streamer.abort.set()
+                item.streamer.signal_abort()
+        if abort_queued_live:
             # A processor that raced the drain either observes the generation
             # bump or finishes its active item and consumes this sentinel.
             self._utterance_queue.put(None)
@@ -570,12 +610,11 @@ class Session:
         """
         with self._lock:
             log.info("session: cancel requested")
-            self._cancel_generation += 1
             self._preview_generation += 1
             if self._recording:
                 self._recording = False
                 self._recording_abort.set()
-                # _live_streamer below wakes the driver; the recording
+                # _cancel_pending wakes the live driver; the recording
                 # reference just needs to be dropped so nothing routes a
                 # later stop/discard into this cancelled streamer.
                 self._recording_streamer = None
@@ -583,19 +622,7 @@ class Session:
                     self._recorder.stop()
                 except Exception as exc:
                     log.error("session: recorder.stop during cancel failed: %s", exc)
-            while True:
-                try:
-                    item = self._utterance_queue.get_nowait()
-                except queue.Empty:
-                    break
-                if item is None:
-                    # Shutdown sentinel; keep it for the processor thread.
-                    self._utterance_queue.put(None)
-                    break
-            if self._active_abort is not None:
-                self._active_abort.set()
-            if self._live_streamer is not None:
-                self._live_streamer.signal_abort()
+            self._cancel_pending(abort_queued_live=False)
             if self._notification is not None:
                 # One suppress block per call: a raising clear_preview must not
                 # skip hide(), which would leave 'Listening…' up forever.
@@ -673,9 +700,7 @@ class Session:
             return
         self._utterances_processed += 1
         text = result.text
-        # Full transcripts go to the log file only at DEBUG (privacy).
         log.info("session: transcript received (%d chars)", len(text))
-        log.debug("session: transcript %r", text)
         speech_segments = []
         if result.segments:
             speech_segments = [

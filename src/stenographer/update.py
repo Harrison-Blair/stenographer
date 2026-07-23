@@ -160,13 +160,18 @@ def check_for_update(
     *,
     current_version: str | None = None,
     prerelease: bool = False,
+    allow_dev_downgrade: bool = False,
 ) -> UpdateInfo | None:
     """Return the highest-version release newer than the running binary.
 
     Returns ``None`` when already up to date. ``current_version``
     defaults to the package's ``__version__`` and is overridable for
     testing. ``prerelease`` widens the channel to ``"latest"`` for
-    this invocation.
+    this invocation. ``allow_dev_downgrade`` enables the dev-build
+    escape hatch: a locally built ``X.Y.Z-dev`` binary may switch onto
+    the newest matching release even when it is not strictly newer. It
+    is off by default so the background startup check never reports a
+    non-newer release; only the explicit ``update`` command opts in.
     """
     current_str = current_version if current_version is not None else __version__
     try:
@@ -179,7 +184,7 @@ def check_for_update(
     raw = _http_get_json(url, timeout=cfg.timeout_seconds)
     if not isinstance(raw, list):
         raise UpdateError(f"update: unexpected response shape from {url}: expected a list")
-    development = current_str.endswith("-dev")
+    development = allow_dev_downgrade and current_str.endswith("-dev")
     chosen = _pick_release(raw, channel=channel, current=current, development=development)
     if chosen is None:
         return None

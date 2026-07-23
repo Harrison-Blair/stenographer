@@ -41,11 +41,19 @@ Run the git hooks once after cloning (`./scripts/install-hooks.sh`) so
 
 ## Release / branch model
 
-Develop on `dev`. Merging `dev` → `main` triggers
-`.github/workflows/release.yml`, which lints, tests, builds the binary, and
-**publishes** a `v<version>` GitHub release. The workflow refuses to reuse an
-existing release, so **every merge to `main` must bump `__version__` in
-`src/stenographer/_version.py`.**
+Develop on `dev`. The repo always carries a `X.Y.Z-dev` version in
+`src/stenographer/_version.py` — the `-dev` suffix identifies local/source
+builds and **must never appear in a published release** (neither the binary nor
+the source the release tag points at).
+
+Merging `dev` → `main` triggers `.github/workflows/release.yml`, which lints,
+tests, then: validates that `_version.py` ends in `-dev`, strips the suffix to
+`X.Y.Z`, commits that stable version as a dedicated release commit, tags it
+`vX.Y.Z`, builds the binary from it, and **publishes** the `vX.Y.Z` GitHub
+release from that tag. The stable commit is only ever reachable through the
+tag; `main` itself keeps carrying `-dev`. The workflow refuses to reuse an
+existing release, so **every merge to `main` must bump the base version in
+`src/stenographer/_version.py`** (keeping the `-dev` suffix).
 
 ## Architecture
 
