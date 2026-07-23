@@ -89,22 +89,29 @@ def test_run_alone_still_dispatches_normally() -> None:
 def test_startup_update_check_disabled_does_not_launch(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = Config.defaults()
     cfg = replace(cfg, update=replace(cfg.update, check_on_startup=False))
+    notification = MagicMock()
     monkeypatch.setattr(
         cli,
         "_check_for_update_on_startup",
-        lambda _cfg: (_ for _ in ()).throw(AssertionError("must not run")),
+        lambda _cfg, _notification: (_ for _ in ()).throw(AssertionError("must not run")),
     )
-    assert cli._start_update_check(cfg) is None
+    assert cli._start_update_check(cfg, notification) is None
 
 
 def test_startup_update_check_launches_daemon_thread(monkeypatch: pytest.MonkeyPatch) -> None:
-    called: list[Config] = []
-    monkeypatch.setattr(cli, "_check_for_update_on_startup", called.append)
-    cfg = Config.defaults()
-    thread = cli._start_update_check(cfg)
+    called: list[tuple[Config, object]] = []
+    monkeypatch.setattr(
+        cli,
+        "_check_for_update_on_startup",
+        lambda cfg, notification: called.append((cfg, notification)),
+    )
+    defaults = Config.defaults()
+    cfg = replace(defaults, update=replace(defaults.update, check_on_startup=True))
+    notification = MagicMock()
+    thread = cli._start_update_check(cfg, notification)
     assert thread is not None
     thread.join(timeout=1)
-    assert called == [cfg]
+    assert called == [(cfg, notification)]
     assert thread.daemon is True
     assert thread.name == "startup-update-check"
 
@@ -113,23 +120,19 @@ def test_startup_update_check_notifies_when_available(monkeypatch: pytest.Monkey
     notification = MagicMock()
     info = MagicMock(latest_version="0.9.3")
     monkeypatch.setattr(cli, "check_for_update", lambda _cfg: info)
-    desktop = MagicMock(return_value=notification)
-    monkeypatch.setattr(cli, "DesktopNotification", desktop)
 
-    cli._check_for_update_on_startup(Config.defaults())
+    cli._check_for_update_on_startup(Config.defaults(), notification)
 
-    desktop.assert_called_once_with(icon_path=cli._ICON_ROOT / "stenographer.png")
     notification.show_update_available.assert_called_once_with("0.9.3")
 
 
 def test_startup_update_check_current_does_not_notify(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "check_for_update", lambda _cfg: None)
-    desktop = MagicMock()
-    monkeypatch.setattr(cli, "DesktopNotification", desktop)
+    notification = MagicMock()
 
-    cli._check_for_update_on_startup(Config.defaults())
+    cli._check_for_update_on_startup(Config.defaults(), notification)
 
-    desktop.assert_not_called()
+    notification.show_update_available.assert_not_called()
 
 
 def test_startup_update_check_network_failure_is_nonfatal(
@@ -141,8 +144,9 @@ def test_startup_update_check_network_failure_is_nonfatal(
         raise UpdateError("update: network unavailable")
 
     monkeypatch.setattr(cli, "check_for_update", _fail)
+    notification = MagicMock()
     with caplog.at_level(logging.WARNING):
-        cli._check_for_update_on_startup(Config.defaults())
+        cli._check_for_update_on_startup(Config.defaults(), notification)
     assert "startup update check failed" in caplog.text
     assert "network unavailable" in caplog.text
 
@@ -163,7 +167,11 @@ def test_run_launches_update_check_after_readiness(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(cli, "_build_session", lambda *_args, **_kwargs: session)
     monkeypatch.setattr(cli, "_install_signal_handlers", lambda _session: None)
     monkeypatch.setattr(cli, "_release_single_instance_lock", lambda: None)
-    monkeypatch.setattr(cli, "_start_update_check", lambda _cfg: events.append("check"))
+    monkeypatch.setattr(
+        cli,
+        "_start_update_check",
+        lambda _cfg, _notification: events.append("check"),
+    )
 
     assert cli.cmd_run(Config.defaults()) == 0
     assert events == ["ready", "check", "run"]

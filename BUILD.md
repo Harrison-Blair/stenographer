@@ -58,6 +58,9 @@ dependencies, and the six sound cues under
 
 The total directory is currently ~510 MB on Linux x86_64. The largest
 contributors include the GTK runtime, CTranslate2, and ONNX Runtime.
+The small Silero VAD ONNX asset shipped by faster-whisper is bundled under
+`_internal/faster_whisper/assets/`; the speech-recognition model remains an
+external download.
 
 ## What the binary does NOT bundle
 

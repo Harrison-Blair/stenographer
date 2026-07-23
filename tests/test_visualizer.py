@@ -130,6 +130,29 @@ def test_overlay_preview_and_clear_use_json_lines_protocol() -> None:
     ]
 
 
+def test_overlay_state_supports_a_custom_notification_label() -> None:
+    writes: list[str] = []
+    process = MagicMock()
+    process.poll.return_value = None
+    process.stdin.write.side_effect = writes.append
+    overlay = _started_overlay(process)
+
+    overlay.show_state(
+        "update_available",
+        timeout_ms=10000,
+        label="Release v1.2.3 available",
+    )
+    overlay.close()
+
+    messages = [json.loads(line) for line in writes]
+    assert messages[0] == {
+        "command": "state",
+        "state": "update_available",
+        "timeout_ms": 10000,
+        "label": "Release v1.2.3 available",
+    }
+
+
 def test_overlay_send_never_blocks_on_a_wedged_helper_pipe() -> None:
     release = threading.Event()
     process = MagicMock()
@@ -283,6 +306,26 @@ def test_overlay_startup_failure_replays_current_state_on_desktop(monkeypatch) -
         assert fallback_shown.wait(timeout=5.0)
         desktop.show_listening.assert_called_once()
         assert not indicator._analyzer._active.is_set()
+    finally:
+        indicator.flush()
+
+
+def test_update_notification_prefers_bottom_overlay(monkeypatch) -> None:
+    overlay = MagicMock()
+    overlay.show_state.return_value = True
+    desktop = MagicMock()
+    monkeypatch.setattr(visualizer, "DesktopNotification", lambda **_kwargs: desktop)
+    monkeypatch.setattr(visualizer, "LayerShellOverlay", lambda *_args, **_kwargs: overlay)
+    indicator = visualizer.StatusIndicator(cfg=VisualizerConfig(True, 16, 80.0, 8000.0, 32))
+
+    try:
+        indicator.show_update_available("1.2.3")
+        overlay.show_state.assert_called_once_with(
+            "update_available",
+            timeout_ms=10000,
+            label="Release v1.2.3 available",
+        )
+        desktop.show_update_available.assert_not_called()
     finally:
         indicator.flush()
 

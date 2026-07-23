@@ -287,7 +287,7 @@ def cmd_run(cfg: Config) -> int:
     log.info("session: daemon running (pid=%d)", os.getpid())
     if session.notification is not None:
         session.notification.show_startup(cfg.hotkey.binding)
-    _start_update_check(cfg)
+        _start_update_check(cfg, session.notification)
     try:
         session.run()
     finally:
@@ -296,7 +296,7 @@ def cmd_run(cfg: Config) -> int:
     return 0
 
 
-def _check_for_update_on_startup(cfg: Config) -> None:
+def _check_for_update_on_startup(cfg: Config, notification: StatusIndicator) -> None:
     """Check once for an update and notify without affecting daemon startup."""
     try:
         info = check_for_update(cfg.update)
@@ -305,17 +305,19 @@ def _check_for_update_on_startup(cfg: Config) -> None:
         return
     if info is None:
         return
-    notification = DesktopNotification(icon_path=_ICON_ROOT / "stenographer.png")
     notification.show_update_available(info.latest_version)
 
 
-def _start_update_check(cfg: Config) -> threading.Thread | None:
+def _start_update_check(
+    cfg: Config,
+    notification: StatusIndicator,
+) -> threading.Thread | None:
     """Launch the configured one-shot startup update check in the background."""
     if not cfg.update.check_on_startup:
         return None
     thread = threading.Thread(
         target=_check_for_update_on_startup,
-        args=(cfg,),
+        args=(cfg, notification),
         name="startup-update-check",
         daemon=True,
     )
@@ -774,6 +776,10 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
         print("mic device:     NO  (recording disabled)")
     print(f"asr model:      {'yes' if caps.has_asr_model else 'NO  (transcription disabled)'}")
     print(f"asr.mode:       {cfg.asr.mode}")
+    print(f"audio.min_speech_rms: {cfg.audio.min_speech_rms:g} (0 = disabled)")
+    print(f"asr.vad_filter: {str(cfg.asr.vad_filter).lower()}")
+    print(f"asr.silence_threshold: {cfg.asr.silence_threshold:g}")
+    print(f"asr.max_new_tokens: {cfg.asr.max_new_tokens}")
     print(f"output mode:    {cfg.output.injection_method}")
     print(
         "incremental:    always on "

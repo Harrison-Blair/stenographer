@@ -65,7 +65,9 @@ Word-level decoding runs while recording. The GTK layer-shell HUD displays an
 append-only stable transcript prefix, a fainter revisable tail, and a live
 microphone spectrum. It does not send partial text to the application or
 clipboard: final delivery happens once, after the final decode. When the GTK
-overlay is unavailable, status falls back to `notify-send`; transcript previews
+overlay is healthy, status and update notices stay in the bottom-center HUD
+instead of going through SwayNC or another notification daemon. If the overlay
+is unavailable, those notices fall back to `notify-send`; transcript previews
 are only shown in the GTK HUD.
 
 The generated default configuration uses right-Alt in push-to-talk mode and an
@@ -315,6 +317,8 @@ audio.sample_rate = 16000
 audio.frames_per_buffer = 1024
 audio.input_device = ""
 audio.max_recording_seconds = 600
+# 0 disables the pre-decode energy gate
+audio.min_speech_rms = 0.0005
 
 # ASR
 asr.model = "Systran/faster-whisper-medium.en"
@@ -322,6 +326,8 @@ asr.language = "en"
 asr.beam_size = 5
 asr.compute_type = "int8"
 asr.silence_threshold = 0.6
+asr.vad_filter = true
+asr.max_new_tokens = 128
 asr.mode = "lazy"
 asr.idle_unload_seconds = 300
 # hotwords: proper nouns / jargon to bias recognition toward, e.g. "wtype, Wayland"
@@ -399,9 +405,18 @@ clipboard; paste mode copies and pastes the full transcript without applying
 the cap. The pre-0.9.2 values `"text"` and `"paste"` are accepted with a
 deprecation warning and mapped to their current names.
 
-`asr.silence_threshold` drops segments that faster-whisper classifies as
-probable silence from both batch and incremental decoding. If a final
-incremental decode fails, already committed preview text is still delivered.
+`audio.min_speech_rms` requires two consecutive 50 ms frames above the
+configured RMS before decoding, rejecting dead air and isolated clicks; `0`
+disables this gate. The decoder also trims trailing silence before interim and
+final passes. A silent final tail discards provisional preview text while
+preserving already committed speech.
+
+`asr.vad_filter` enables Silero VAD with conservative speech/padding settings.
+`asr.silence_threshold` is passed to faster-whisper's native no-speech filter
+and remains a post-decode segment gate. A two-second hallucination-silence
+guard is enabled, and `asr.max_new_tokens` bounds generation per chunk. If a
+final incremental decode fails, already committed preview text is still
+delivered.
 Legacy `streaming.*` tuning keys are migrated to `incremental.*` with warnings;
 incremental decoding itself is always enabled.
 
@@ -451,8 +466,9 @@ is foreground; systemd handles daemonization.
 Logs go to stderr and a rotating file at
 `$XDG_STATE_HOME/stenographer/stenographer.log` (default
 `~/.local/state/stenographer/stenographer.log`). Override the level
-with `STENOGRAPHER_LOG_LEVEL=DEBUG|INFO|WARNING|ERROR`. INFO logs transcript
-lengths; full transcript text is only logged at DEBUG.
+with `STENOGRAPHER_LOG_LEVEL=DEBUG|INFO|WARNING|ERROR`. Logs include
+privacy-safe audio/decode metrics and transcript lengths, but never audio or
+transcript text.
 
 ## License
 

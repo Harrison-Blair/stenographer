@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -17,6 +18,14 @@ if TYPE_CHECKING:
     from stenographer.config import AsrConfig
 
 log = logging.getLogger(__name__)
+
+_VAD_PARAMETERS = {
+    "threshold": 0.5,
+    "min_speech_duration_ms": 100,
+    "min_silence_duration_ms": 500,
+    "speech_pad_ms": 250,
+}
+_HALLUCINATION_SILENCE_SECONDS = 2.0
 
 
 def _read_rss_kb() -> int | None:
@@ -71,6 +80,8 @@ class Model:
         self._hotwords = cfg.hotwords
         self._initial_prompt = cfg.initial_prompt
         self._silence_threshold = cfg.silence_threshold
+        self._vad_filter = cfg.vad_filter
+        self._max_new_tokens = cfg.max_new_tokens
         log.info("ASR model loaded: %s", cfg.model)
 
     @property
@@ -92,16 +103,23 @@ class Model:
             return TranscriptionResult(text="", duration_seconds=0.0, segments=[])
         if samples.ndim == 2 and samples.shape[1] == 1:
             samples = samples.squeeze(-1)
+        started = time.monotonic()
         segments_iter, info = self._impl.transcribe(
             samples,
             language=language,
             beam_size=beam_size,
-            vad_filter=False,
+            vad_filter=self._vad_filter,
+            vad_parameters=_VAD_PARAMETERS,
+            no_speech_threshold=self._silence_threshold,
+            hallucination_silence_threshold=_HALLUCINATION_SILENCE_SECONDS,
+            max_new_tokens=self._max_new_tokens,
             condition_on_previous_text=False,
             hotwords=self._hotwords,
             initial_prompt=self._initial_prompt,
+            word_timestamps=True,
         )
         seg_infos: list[SegmentInfo] = []
+        confidences: list[float] = []
         for seg in segments_iter:
             si = SegmentInfo(
                 start=seg.start,
@@ -112,6 +130,19 @@ class Model:
             if on_segment is not None:
                 on_segment(si)
             seg_infos.append(si)
+            confidences.extend(float(word.probability) for word in (seg.words or ()))
+        elapsed = time.monotonic() - started
+        duration_after_vad = float(getattr(info, "duration_after_vad", info.duration))
+        mean_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        log.info(
+            "asr: decode duration=%.3fs vad_duration=%.3fs decode_time=%.3fs "
+            "word_count=%d mean_confidence=%.3f",
+            float(info.duration),
+            duration_after_vad,
+            elapsed,
+            len(confidences),
+            mean_confidence,
+        )
         text = "".join(seg.text for seg in seg_infos).strip()
         return TranscriptionResult(
             text=text,
@@ -142,11 +173,16 @@ class Model:
             return []
         if samples.ndim == 2 and samples.shape[1] == 1:
             samples = samples.squeeze(-1)
-        segments_iter, _info = self._impl.transcribe(
+        started = time.monotonic()
+        segments_iter, info = self._impl.transcribe(
             samples,
             language=self._language,
             beam_size=self._beam_size if beam_size is None else beam_size,
-            vad_filter=False,
+            vad_filter=self._vad_filter,
+            vad_parameters=_VAD_PARAMETERS,
+            no_speech_threshold=self._silence_threshold,
+            hallucination_silence_threshold=_HALLUCINATION_SILENCE_SECONDS,
+            max_new_tokens=self._max_new_tokens,
             condition_on_previous_text=False,
             hotwords=self._hotwords,
             initial_prompt=self._initial_prompt,
@@ -166,6 +202,19 @@ class Model:
                 )
         if dropped:
             log.info("asr: dropped %d probable-silence segment(s) from word decode", dropped)
+        elapsed = time.monotonic() - started
+        duration = samples.shape[0] / 16000
+        duration_after_vad = float(getattr(info, "duration_after_vad", duration))
+        mean_confidence = sum(word.probability for word in words) / len(words) if words else 0.0
+        log.info(
+            "asr: decode duration=%.3fs vad_duration=%.3fs decode_time=%.3fs "
+            "word_count=%d mean_confidence=%.3f",
+            duration,
+            duration_after_vad,
+            elapsed,
+            len(words),
+            mean_confidence,
+        )
         return words
 
     def close(self) -> None:
