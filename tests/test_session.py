@@ -275,6 +275,34 @@ def test_cancel_invalidates_and_clears_preview() -> None:
     notification.hide.assert_called_once()
 
 
+def test_cancel_all_drops_queued_live_without_aborting() -> None:
+    """cancel_all bumps the generation and drops queued live drivers, but --
+    unlike forced shutdown -- does not abort them: none is running yet, so the
+    generation bump alone makes the processor skip them."""
+    session, _components = _make_session()
+    queued = MagicMock()
+    queued.abort = threading.Event()
+    session._utterance_queue.put(_LiveItem(queued, 0, 0))
+
+    session.cancel_all()
+
+    assert session._cancel_generation == 1
+    assert session._utterance_queue.empty()
+    assert not queued.abort.is_set()
+    queued.signal_abort.assert_not_called()
+
+
+def test_cancel_all_preserves_shutdown_sentinel() -> None:
+    """A queued shutdown sentinel is kept for the processor thread."""
+    session, _components = _make_session()
+    session._utterance_queue.put(None)
+
+    session.cancel_all()
+
+    assert session._utterance_queue.get_nowait() is None
+    assert session._utterance_queue.empty()
+
+
 def test_cancel_hides_indicator_even_if_clearing_preview_raises() -> None:
     notification = MagicMock()
     notification.clear_preview.side_effect = RuntimeError("overlay pipe failed")
@@ -384,7 +412,11 @@ def test_stop_forces_active_and_queued_work_after_drain_deadline(monkeypatch) ->
     assert queued.abort.is_set()
     queued.signal_abort.assert_called_once_with()
     assert processor.join.call_count == 2
-    components["worker"].stop.assert_called_once_with(timeout=0.0)
+    # Worker.stop is floored at the reserved slice even when the forced window
+    # is exhausted, so a slow processor join cannot starve it to 0s (Finding B).
+    components["worker"].stop.assert_called_once_with(
+        timeout=session_module._FORCED_WORKER_STOP_RESERVE_SECONDS
+    )
 
 
 def test_stop_leaves_delivery_components_open_if_processor_outlives_abort(
@@ -405,8 +437,10 @@ def test_stop_leaves_delivery_components_open_if_processor_outlives_abort(
     components["feedback"].close.assert_not_called()
     components["injector"].close.assert_not_called()
     components["clipboard"].close.assert_not_called()
-    notification.hide.assert_not_called()
-    notification.flush.assert_not_called()
+    # The notification is still hidden/flushed on the deferred path so a
+    # 'Transcribing…' posted with timeout 0 cannot outlive the daemon (Finding A).
+    notification.hide.assert_called_once()
+    notification.flush.assert_called_once()
 
 
 def test_on_model_loading_plays_cue_and_shows_loading_status() -> None:

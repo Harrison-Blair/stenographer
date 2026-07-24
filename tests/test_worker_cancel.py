@@ -6,13 +6,14 @@ Uses a stub model so no ASR weights are needed.
 
 from __future__ import annotations
 
+import concurrent.futures
 import threading
 
 import numpy as np
 import pytest
 
 from stenographer.asr.model import SegmentInfo, TranscriptionResult, WordInfo
-from stenographer.asr.worker import CancelledError, Worker
+from stenographer.asr.worker import CancelledError, Job, Worker
 
 
 class _StubModel:
@@ -247,3 +248,39 @@ def test_stop_timeout_defers_model_close_until_inference_exits() -> None:
     finally:
         model.release.set()
         worker.stop(timeout=1.0)
+
+
+def test_submit_after_stop_fails_future_instead_of_stranding() -> None:
+    """A job submitted once the worker is stopping must resolve, not hang.
+
+    The worker thread exits on the None sentinel; a job enqueued after it would
+    never be picked up, so its future would never resolve and a caller blocked
+    on ``future.result()`` (the incremental driver waits with no timeout) would
+    block forever. Rejecting the submission fails the future instead.
+    """
+    model = _StubModel()
+    worker = Worker(model)
+    worker.start()
+    worker.stop(timeout=5.0)
+    assert not worker.is_running
+
+    fut = worker.submit_words(np.zeros(16000, dtype=np.float32))
+    with pytest.raises(CancelledError):
+        fut.result(timeout=1.0)
+
+    batch = worker.submit(np.zeros(16000, dtype=np.float32))
+    with pytest.raises(CancelledError):
+        batch.result(timeout=1.0)
+
+
+def test_sentinel_exit_fails_jobs_left_in_queue() -> None:
+    """Backstop: any job still queued when the thread exits is resolved."""
+    model = _StubModel()
+    worker = Worker(model)
+    stranded: concurrent.futures.Future = concurrent.futures.Future()
+    worker._queue.put(Job(samples=np.zeros(16000, dtype=np.float32), future=stranded))
+
+    worker._fail_pending("worker stopped")
+
+    with pytest.raises(CancelledError):
+        stranded.result(timeout=1.0)

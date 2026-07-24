@@ -50,6 +50,12 @@ def test_default_hotkey_binding_is_right_alt() -> None:
     assert Config.defaults().hotkey.binding == "KEY_RIGHTALT"
 
 
+def test_default_update_check_on_startup_is_off() -> None:
+    # The daemon is offline/local-only; the startup check contacts GitHub, so
+    # it must be opt-in rather than on by default.
+    assert Config.defaults().update.check_on_startup is False
+
+
 def test_legacy_llm_and_prompt_binding_keys_ignored(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text(
@@ -80,6 +86,7 @@ def test_defaults_audio() -> None:
         frames_per_buffer=1024,
         input_device=None,
         max_recording_seconds=600,
+        min_speech_rms=0.0005,
     )
 
 
@@ -90,6 +97,8 @@ def test_defaults_asr() -> None:
         beam_size=5,
         compute_type="int8",
         silence_threshold=0.6,
+        vad_filter=True,
+        max_new_tokens=128,
         mode="lazy",
         idle_unload_seconds=300,
         hotwords=None,
@@ -129,12 +138,19 @@ def test_defaults_clipboard() -> None:
 
 def test_defaults_update() -> None:
     assert Config.defaults().update == UpdateConfig(
+        check_on_startup=False,
         repo="Harrison-Blair/stenographer",
         channel="stable",
         base_url="https://api.github.com",
         asset_pattern="stenographer-{version}-linux-x86_64.tar.gz",
         timeout_seconds=60,
     )
+
+
+def test_load_disables_startup_update_check(tmp_path: pathlib.Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer]\nupdate.check_on_startup = false\n")
+    assert Config.load(p).update.check_on_startup is False
 
 
 def test_defaults_is_frozen() -> None:
@@ -161,10 +177,13 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
             hotkey.toggle_threshold_seconds = 1.5
             audio.sample_rate = 48000
             audio.frames_per_buffer = 2048
+            audio.min_speech_rms = 0.001
             asr.model = "Systran/faster-whisper-tiny.en"
             asr.language = "en"
             asr.beam_size = 3
             asr.compute_type = "int8"
+            asr.vad_filter = false
+            asr.max_new_tokens = 64
             feedback.volume = 0.3
             feedback.mute = true
             visualizer.frequency_bands = 20
@@ -180,9 +199,12 @@ def test_load_full_override(tmp_path: pathlib.Path) -> None:
     assert cfg.hotkey.toggle_threshold_seconds == 1.5
     assert cfg.audio.sample_rate == 48000
     assert cfg.audio.frames_per_buffer == 2048
+    assert cfg.audio.min_speech_rms == 0.001
     assert cfg.asr.model == "Systran/faster-whisper-tiny.en"
     assert cfg.asr.beam_size == 3
     assert cfg.asr.compute_type == "int8"
+    assert cfg.asr.vad_filter is False
+    assert cfg.asr.max_new_tokens == 64
     assert cfg.feedback.volume == 0.3
     assert cfg.feedback.mute is True
     assert cfg.visualizer.frequency_bands == 20
@@ -391,6 +413,31 @@ def test_format_default_toml_has_vocabulary_keys() -> None:
     toml = _format_default_toml()
     assert 'asr.hotwords = ""' in toml
     assert 'asr.initial_prompt = ""' in toml
+
+
+def test_format_default_toml_has_silence_hardening_keys() -> None:
+    from stenographer.config import _format_default_toml
+
+    toml = _format_default_toml()
+    assert "audio.min_speech_rms = 0.0005" in toml
+    assert "asr.vad_filter = true" in toml
+    assert "asr.max_new_tokens = 128" in toml
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1.1"])
+def test_validate_min_speech_rms_out_of_range_rejected(tmp_path: pathlib.Path, value: str) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\naudio.min_speech_rms = {value}\n")
+    with pytest.raises(ConfigError, match=r"audio.min_speech_rms"):
+        Config.load(p)
+
+
+@pytest.mark.parametrize("value", ["0", "449"])
+def test_validate_max_new_tokens_out_of_range_rejected(tmp_path: pathlib.Path, value: str) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\nasr.max_new_tokens = {value}\n")
+    with pytest.raises(ConfigError, match=r"asr.max_new_tokens"):
+        Config.load(p)
 
 
 def test_validate_hotkey_threshold_zero_rejected(tmp_path: pathlib.Path) -> None:

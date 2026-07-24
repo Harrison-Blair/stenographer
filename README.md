@@ -65,7 +65,9 @@ Word-level decoding runs while recording. The GTK layer-shell HUD displays an
 append-only stable transcript prefix, a fainter revisable tail, and a live
 microphone spectrum. It does not send partial text to the application or
 clipboard: final delivery happens once, after the final decode. When the GTK
-overlay is unavailable, status falls back to `notify-send`; transcript previews
+overlay is healthy, status and update notices stay in the bottom-center HUD
+instead of going through SwayNC or another notification daemon. If the overlay
+is unavailable, those notices fall back to `notify-send`; transcript previews
 are only shown in the GTK HUD.
 
 The generated default configuration uses right-Alt in push-to-talk mode and an
@@ -160,22 +162,26 @@ git clone https://github.com/Harrison-Blair/stenographer.git
 cd stenographer
 python3.14 -m venv .venv
 .venv/bin/pip install -e ".[dev,build]"
-scripts/build.sh
-scripts/install.sh
+scripts/reinstall.sh
 ```
 
-`scripts/install.sh` copies `dist/stenographer/` to
+`scripts/reinstall.sh` always rebuilds the current checkout, verifies that its
+version ends in `-dev`, stops an active local daemon after the build succeeds,
+and invokes `scripts/install.sh` to copy `dist/stenographer/` to
 `~/.local/share/stenographer/`, installs bash completion, writes the systemd
-user unit, and enables and starts it. It only invokes the build itself when
-`dist/stenographer/stenographer` is absent, so run `scripts/build.sh` first
-when reinstalling changed source.
+user unit, and enables and starts the freshly built daemon. Run it again after
+changing or updating the source checkout to reinstall the latest local dev
+version. This locally built onedir installation may also use
+`stenographer update` to switch to the newest stable release; its
+`~/.local/bin/stenographer` symlink remains in place. Running
+`scripts/reinstall.sh` later restores the current local `-dev` build.
 
 Useful local-installer options:
 
 ```sh
-scripts/install.sh --no-enable
-scripts/install.sh --no-start
-scripts/install.sh --install-dir /absolute/path
+scripts/reinstall.sh --no-enable
+scripts/reinstall.sh --no-start
+scripts/reinstall.sh --install-dir /absolute/path
 ```
 
 Both `--no-enable` and `--no-start` install the unit without enabling or
@@ -257,7 +263,8 @@ benchmark matrix may load or download several large models.
 the onedir binary, downloads the matching tarball, verifies its
 SHA-256, and replaces the running install in place. If the daemon
 is running under systemd, it is stopped before the swap and started
-afterwards.
+afterwards. Development builds retain their `-dev` version locally and may
+switch to the newest stable release even when its numeric version is lower.
 
 ```sh
 stenographer update              # check, prompt, install, restart
@@ -271,7 +278,11 @@ stenographer update --repo OWNER/REPO
 `update` only self-updates the onedir binary built by `scripts/build.sh`.
 A wheel, editable, pip, or pipx install is not replaced; upgrade it using the
 same tool and package source that installed it. Configure the target repo / channel in
-`~/.config/stenographer/config.toml` under `[stenographer.update]`.
+`~/.config/stenographer/config.toml` under `[stenographer.update]`. The
+startup update check is off by default because it contacts GitHub; set
+`update.check_on_startup = true` to have each daemon launch run a non-blocking
+check that notifies when an update is available. Updates are never installed
+automatically.
 
 ## Configure
 
@@ -307,6 +318,8 @@ audio.sample_rate = 16000
 audio.frames_per_buffer = 1024
 audio.input_device = ""
 audio.max_recording_seconds = 600
+# 0 disables the pre-decode energy gate
+audio.min_speech_rms = 0.0005
 
 # ASR
 asr.model = "Systran/faster-whisper-medium.en"
@@ -314,6 +327,8 @@ asr.language = "en"
 asr.beam_size = 5
 asr.compute_type = "int8"
 asr.silence_threshold = 0.6
+asr.vad_filter = true
+asr.max_new_tokens = 128
 asr.mode = "lazy"
 asr.idle_unload_seconds = 300
 # hotwords: proper nouns / jargon to bias recognition toward, e.g. "wtype, Wayland"
@@ -353,6 +368,7 @@ formatting.capitalize_sentences = true
 formatting.normalize_spacing = true
 
 # Update
+update.check_on_startup = false
 update.repo = "Harrison-Blair/stenographer"
 update.channel = "stable"
 update.base_url = "https://api.github.com"
@@ -390,9 +406,18 @@ clipboard; paste mode copies and pastes the full transcript without applying
 the cap. The pre-0.9.2 values `"text"` and `"paste"` are accepted with a
 deprecation warning and mapped to their current names.
 
-`asr.silence_threshold` drops segments that faster-whisper classifies as
-probable silence from both batch and incremental decoding. If a final
-incremental decode fails, already committed preview text is still delivered.
+`audio.min_speech_rms` requires two consecutive 50 ms frames above the
+configured RMS before decoding, rejecting dead air and isolated clicks; `0`
+disables this gate. The decoder also trims trailing silence before interim and
+final passes. A silent final tail discards provisional preview text while
+preserving already committed speech.
+
+`asr.vad_filter` enables Silero VAD with conservative speech/padding settings.
+`asr.silence_threshold` is passed to faster-whisper's native no-speech filter
+and remains a post-decode segment gate. A two-second hallucination-silence
+guard is enabled, and `asr.max_new_tokens` bounds generation per chunk. If a
+final incremental decode fails, already committed preview text is still
+delivered.
 Legacy `streaming.*` tuning keys are migrated to `incremental.*` with warnings;
 incremental decoding itself is always enabled.
 
@@ -442,8 +467,9 @@ is foreground; systemd handles daemonization.
 Logs go to stderr and a rotating file at
 `$XDG_STATE_HOME/stenographer/stenographer.log` (default
 `~/.local/state/stenographer/stenographer.log`). Override the level
-with `STENOGRAPHER_LOG_LEVEL=DEBUG|INFO|WARNING|ERROR`. INFO logs transcript
-lengths; full transcript text is only logged at DEBUG.
+with `STENOGRAPHER_LOG_LEVEL=DEBUG|INFO|WARNING|ERROR`. Logs include
+privacy-safe audio/decode metrics and transcript lengths, but never audio or
+transcript text.
 
 ## License
 

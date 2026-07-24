@@ -9,7 +9,7 @@ import pytest
 
 
 def _fake_check_for_update(info: Any) -> Any:
-    def _fn(cfg: Any, *, current_version: str | None = None, prerelease: bool = False) -> Any:
+    def _fn(cfg: Any, **kwargs: Any) -> Any:
         return info
 
     return _fn
@@ -78,6 +78,7 @@ def test_cli_update_no_yes_decline_exits_zero(
     monkeypatch.setattr("builtins.input", lambda *a, **kw: "n")
     with (
         patch("stenographer.cli.check_for_update", _fake_check_for_update(_info())),
+        patch("stenographer.cli.detect_install_root", return_value=tmp_path / "stenographer"),
         patch("stenographer.cli.download_update") as dl,
         patch("stenographer.cli.extract_to_staging") as ex,
         patch("stenographer.cli.apply_update") as ap,
@@ -146,14 +147,17 @@ def test_cli_update_repo_override(
 
     seen: dict[str, Any] = {}
 
-    def _capture(cfg: Any, *, current_version: str | None = None, prerelease: bool = False) -> Any:
+    def _capture(cfg: Any, **kwargs: Any) -> Any:
         seen["repo"] = cfg.repo
+        seen["allow_dev_downgrade"] = kwargs.get("allow_dev_downgrade", False)
         return _info()
 
     with patch("stenographer.cli.check_for_update", _capture):
         rc = main()
     assert rc == 0
     assert seen["repo"] == "other/repo"
+    # The explicit `update` command opts into the dev-build escape hatch.
+    assert seen["allow_dev_downgrade"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +209,7 @@ def test_cli_update_interactive_prints_changelog_before_prompt(
             "stenographer.cli.check_for_update",
             _fake_check_for_update(_info(release_notes=body)),
         ),
+        patch("stenographer.cli.detect_install_root", return_value=tmp_path / "stenographer"),
         patch("stenographer.cli.download_update") as dl,
         patch("stenographer.cli.extract_to_staging") as ex,
         patch("stenographer.cli.apply_update") as ap,
@@ -289,3 +294,32 @@ def test_cli_update_successful_install_does_not_reprint_changelog(
     assert err.count("release note that should only appear once") == 1
     # Changelog sits before the post-install report.
     assert err.index("Release notes for v0.7.0") < err.index("Updated to v0.7.0.")
+
+
+def test_cli_update_unsupported_install_fails_before_side_effects(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from stenographer.cli import main
+    from stenographer.errors import UpdateError
+
+    monkeypatch.setattr("sys.argv", ["stenographer", "update", "--yes"])
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "missing.toml"))
+    with (
+        patch("stenographer.cli.check_for_update", _fake_check_for_update(_info())),
+        patch(
+            "stenographer.cli.detect_install_root",
+            side_effect=UpdateError(
+                "update: self-update is only supported for the onedir binary install; "
+                "use pip/pipx to upgrade this installation"
+            ),
+        ),
+        patch("stenographer.cli.download_update") as download,
+        patch("stenographer.cli.stop_daemon") as stop,
+        pytest.raises(SystemExit, match="1"),
+    ):
+        main()
+    download.assert_not_called()
+    stop.assert_not_called()
+    assert "use pip/pipx to upgrade" in caplog.text

@@ -63,8 +63,11 @@ fi
 # ────────────────────────────────────────────────────────────────
 echo "==> Installing binary to ${INSTALL_DIR}/ ..."
 mkdir -p "${INSTALL_DIR}"
+echo "    Removing the previous bundle ..."
 rm -rf "${INSTALL_DIR}"/*
+echo "    Copying the new bundle from dist/stenographer/ ..."
 cp -a dist/stenographer/* "${INSTALL_DIR}/"
+echo "    Bundle copy complete."
 
 echo "    Binary: ${BINARY_PATH}"
 

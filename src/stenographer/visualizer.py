@@ -254,7 +254,13 @@ class LayerShellOverlay:
             return False
         return True
 
-    def show_state(self, state: str, *, timeout_ms: int = 0) -> bool:
+    def show_state(
+        self,
+        state: str,
+        *,
+        timeout_ms: int = 0,
+        label: str | None = None,
+    ) -> bool:
         """Queue a state change; ``False`` once the overlay is known dead.
 
         The helper is written to asynchronously, so this reports only that the
@@ -262,14 +268,14 @@ class LayerShellOverlay:
         the unavailable callback replays the caller's current state through its
         fallback.
         """
-        return self._enqueue(
-            {
-                "command": "state",
-                "state": state,
-                "timeout_ms": timeout_ms,
-            },
-            droppable=False,
-        )
+        message: dict[str, Any] = {
+            "command": "state",
+            "state": state,
+            "timeout_ms": timeout_ms,
+        }
+        if label is not None:
+            message["label"] = label
+        return self._enqueue(message, droppable=False)
 
     def show_levels(self, levels: list[float]) -> None:
         self._enqueue({"command": "levels", "levels": levels}, droppable=True)
@@ -600,6 +606,16 @@ class StatusIndicator:
                 self._desktop.show_model_unloaded,
             )
 
+    def show_update_available(self, version: str) -> None:
+        with self._state_lock:
+            self._analyzer.set_active(False)
+            self._show_overlay_or_desktop(
+                "update_available",
+                10000,
+                lambda: self._desktop.show_update_available(version),
+                label=f"Release v{version} available",
+            )
+
     def publish_audio(self, samples: np.ndarray, sample_rate: int) -> None:
         self._analyzer.submit(samples, sample_rate)
 
@@ -643,10 +659,16 @@ class StatusIndicator:
         state: str,
         timeout_ms: int,
         desktop_show: Callable[[], None],
+        *,
+        label: str | None = None,
     ) -> bool:
         self._fallback_show = desktop_show
         self._fallback_replayed = False
-        if self._overlay is not None and self._overlay.show_state(state, timeout_ms=timeout_ms):
+        if self._overlay is not None and self._overlay.show_state(
+            state,
+            timeout_ms=timeout_ms,
+            label=label,
+        ):
             if self._desktop_visible:
                 self._desktop.hide()
                 self._desktop_visible = False
@@ -895,10 +917,11 @@ def run_overlay_process() -> int:
                 self._set_state(
                     str(message.get("state", "hidden")),
                     int(message.get("timeout_ms", 0)),
+                    str(message["label"]) if isinstance(message.get("label"), str) else None,
                 )
             return GLib.SOURCE_REMOVE
 
-        def _set_state(self, state: str, timeout_ms: int) -> None:
+        def _set_state(self, state: str, timeout_ms: int, label: str | None = None) -> None:
             self.hide_generation += 1
             labels = {
                 "ready": "Ready",
@@ -910,7 +933,7 @@ def run_overlay_process() -> int:
             if state == "hidden":
                 self.window.set_visible(False)
                 return
-            self.status.set_label(labels.get(state, state.replace("_", " ").title()))
+            self.status.set_label(label or labels.get(state, state.replace("_", " ").title()))
             if state not in {"listening", "loading"}:
                 self.levels = [0.0] * len(self.levels)
                 self.drawing.queue_draw()

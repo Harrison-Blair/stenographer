@@ -13,7 +13,12 @@ from stenographer.asr.model import WordInfo
 from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.asr.worker import CancelledError
 from stenographer.config import Config
-from stenographer.live import _TAIL_CUSHION_SECONDS, IncrementalDriver, _cut_trailing_silence
+from stenographer.live import (
+    _TAIL_CUSHION_SECONDS,
+    IncrementalDriver,
+    _cut_trailing_silence,
+    _prepare_decode_audio,
+)
 from stenographer.output.formatter import HeuristicFormatter
 
 SR = 16000
@@ -404,6 +409,69 @@ def test_all_silent_interim_window_skips_decode() -> None:
     assert worker.calls == []
 
 
+def test_isolated_click_does_not_pass_two_frame_energy_gate() -> None:
+    click = np.concatenate(
+        [
+            np.full((SR // 20, 1), 0.5, dtype=np.float32),
+            np.zeros((SR, 1), dtype=np.float32),
+        ]
+    )
+    driver, worker = _make_driver([click], [_words((" click", 0.0, 0.05))])
+    assert driver._step()
+    assert worker.calls == []
+
+
+def test_short_silent_clip_skips_decode() -> None:
+    driver, worker = _make_driver(
+        [np.zeros((SR // 20, 1), dtype=np.float32)],
+        [_words((" ghost", 0.0, 0.05))],
+    )
+    assert driver._step()
+    assert worker.calls == []
+
+
+def test_quiet_speech_above_threshold_is_decoded() -> None:
+    quiet = np.full((SR, 1), 0.0006, dtype=np.float32)
+    driver, worker = _make_driver([quiet], [_words((" quiet", 0.0, 0.5))])
+    assert driver._step()
+    assert len(worker.calls) == 1
+
+
+def test_final_decode_uses_tail_trimmed_audio() -> None:
+    speech = np.full((SR, 1), 0.5, dtype=np.float32)
+    silence = np.zeros((SR, 1), dtype=np.float32)
+    samples = np.concatenate([speech, silence])
+    driver, worker = _make_driver([samples], [_words((" hello", 0.0, 0.5))])
+    assert driver._finish(samples) == "Hello "
+    assert SR <= worker.calls[0]["n_samples"] < samples.shape[0]
+
+
+def test_silent_final_discards_provisional_text() -> None:
+    driver, worker = _make_driver(
+        [_speech(1.0)],
+        [_words((" hallucination", 0.0, 0.5))],
+    )
+    assert driver._step()
+    assert driver._transcriber.provisional_words
+    assert driver._finish(np.zeros((SR, 1), dtype=np.float32)) == ""
+    assert len(worker.calls) == 1
+
+
+def test_silent_final_preserves_already_committed_text() -> None:
+    driver, worker = _make_driver(
+        [_speech(1.0), _speech(1.0)],
+        [
+            _words((" preserved", 0.0, 0.5)),
+            _words((" preserved", 0.0, 0.5), (" ghost", 0.5, 0.9)),
+        ],
+    )
+    assert driver._step()
+    assert driver._step()
+    assert driver._transcriber.committed_text == "preserved"
+    assert driver._finish(np.zeros((SR, 1), dtype=np.float32)) == "Preserved "
+    assert len(worker.calls) == 2
+
+
 def test_cut_trailing_silence_trims_quiet_tail_with_cushion() -> None:
     speech = np.full((SR, 1), 0.5, dtype=np.float32)
     silence = np.zeros((SR, 1), dtype=np.float32)
@@ -427,4 +495,5 @@ def test_cut_trailing_silence_keeps_loud_and_short_windows() -> None:
 
 
 def test_cut_trailing_silence_all_silent_returns_empty() -> None:
-    assert _cut_trailing_silence(np.zeros((SR, 1), dtype=np.float32), SR).shape[0] == 0
+    silence = np.zeros((SR, 1), dtype=np.float32)
+    assert _prepare_decode_audio(silence, SR, 0.0005).shape[0] == 0

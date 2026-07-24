@@ -58,6 +58,9 @@ dependencies, and the six sound cues under
 
 The total directory is currently ~510 MB on Linux x86_64. The largest
 contributors include the GTK runtime, CTranslate2, and ONNX Runtime.
+The small Silero VAD ONNX asset shipped by faster-whisper is bundled under
+`_internal/faster_whisper/assets/`; the speech-recognition model remains an
+external download.
 
 ## What the binary does NOT bundle
 
@@ -97,7 +100,9 @@ Develop features on the `dev` branch. Merging `dev` → `main` triggers
 `.github/workflows/release.yml`, which lints, tests, builds the binary, and
 **publishes** a `v<version>` GitHub release. Because the workflow refuses to
 reuse an existing release, **every merge to `main` must bump
-`__version__` in `src/stenographer/_version.py`.**
+`__version__` in `src/stenographer/_version.py`.** Source and local builds use
+the `<version>-dev` form; the release workflow validates and strips that suffix
+in its temporary checkout before building the published binary.
 
 Set up the git hooks once after cloning:
 

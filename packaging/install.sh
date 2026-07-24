@@ -58,9 +58,9 @@ ask_default() {
 
 fetch() {  # fetch URL OUTFILE
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$1" -o "$2"
+        curl --fail --location --show-error --progress-bar --output "$2" "$1"
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$2" "$1"
+        wget --progress=bar:force:noscroll --output-document="$2" "$1"
     else
         err "need curl or wget to download files"
     fi
@@ -187,22 +187,33 @@ install_binary() {
     local tmp; tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' RETURN
 
-    info "Downloading stenographer v${VERSION} ..."
+    info "Downloading stenographer v${VERSION} binary archive ..."
+    printf '    %s\n' "${base}/${tarball}"
     fetch "${base}/${tarball}" "${tmp}/${tarball}"
+    ok "binary archive downloaded"
+
+    info "Downloading SHA-256 checksum ..."
     fetch "${base}/${shafile}" "${tmp}/${shafile}"
+    ok "checksum downloaded"
 
     info "Verifying SHA-256 ..."
     ( cd "$tmp" && sha256sum -c "$shafile" >/dev/null ) \
         || err "SHA-256 verification failed — refusing to install."
     ok "checksum verified"
 
-    info "Installing to ${INSTALL_DIR} ..."
+    info "Extracting release archive ..."
     tar -C "$tmp" -xzf "${tmp}/${tarball}"
     [[ -x "${tmp}/stenographer/stenographer" ]] \
         || err "extracted bundle is missing the launcher."
+    ok "release archive extracted"
+
+    info "Installing files to ${INSTALL_DIR} ..."
     mkdir -p "$INSTALL_DIR"
+    printf '    Removing the previous bundle ...\n'
     rm -rf "${INSTALL_DIR:?}"/*
+    printf '    Copying the new bundle ...\n'
     cp -a "${tmp}/stenographer/." "$INSTALL_DIR/"
+    ok "bundle files installed"
 
     mkdir -p "$BIN_DIR"
     ln -sfn "${INSTALL_DIR}/stenographer" "$SYMLINK"
@@ -329,10 +340,13 @@ setup_service() {
         return
     fi
     if [[ "$MODEL_READY" -eq 1 ]]; then
+        info "Installing, enabling, and starting the systemd user service ..."
         "$STENO" enable
+        ok "systemd user service started"
     else
         # No model yet: install + enable the unit but don't start a daemon
         # that would fail its capability check and get restarted in a loop.
+        info "Installing the systemd user service without starting it ..."
         "$STENO" enable --no-start
         warn "unit enabled but not started (no model yet)."
         warn "after \`stenographer model download\`, run \`stenographer start\`."
@@ -340,11 +354,21 @@ setup_service() {
 }
 
 # ── run ─────────────────────────────────────────────────────────────────
-[[ "$DO_DEPS" -eq 1 ]] && install_deps
+if [[ "$DO_DEPS" -eq 1 ]]; then
+    info "[1/6] Checking system dependencies ..."
+    install_deps
+else
+    info "[1/6] Skipping system dependencies (--no-deps)."
+fi
+info "[2/6] Checking input-device permissions ..."
 setup_input_group
+info "[3/6] Installing the stenographer binary ..."
 install_binary
+info "[4/6] Configuring stenographer ..."
 configure
+info "[5/6] Preparing the speech-recognition model ..."
 download_model
+info "[6/6] Setting up the background service ..."
 setup_service
 
 echo

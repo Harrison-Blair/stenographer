@@ -39,6 +39,8 @@ def _model(segments: list[_FakeSegment], *, silence_threshold: float = 0.6) -> M
     m._hotwords = None
     m._initial_prompt = None
     m._silence_threshold = silence_threshold
+    m._vad_filter = True
+    m._max_new_tokens = 128
     return m
 
 

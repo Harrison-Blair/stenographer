@@ -48,6 +48,29 @@ def test_show_startup_includes_icon_when_available() -> None:
     assert "/tmp/icon.png" in called_args
 
 
+def test_show_update_available_uses_dedicated_ten_second_notification() -> None:
+    status = DesktopNotification()
+    update = DesktopNotification()
+    status._available = True
+    update._available = True
+    with patch("stenographer.notification.subprocess.run", return_value=_completed(b"7\n")) as run:
+        status.show_listening()
+        status.flush()
+        update.show_update_available("0.9.3")
+        update.flush()
+    update_cmd = run.call_args_list[1][0][0]
+    assert update_cmd == [
+        "notify-send",
+        "-a",
+        "Stenographer",
+        "-t",
+        "10000",
+        "-p",
+        "Stenographer",
+        "Release v0.9.3 available \u2014 run stenographer update",
+    ]
+
+
 def test_show_startup_noop_when_unavailable() -> None:
     notif = DesktopNotification()
     notif._available = False

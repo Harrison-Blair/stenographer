@@ -21,6 +21,8 @@ def _cfg(**overrides: object) -> AsrConfig:
         "beam_size": 1,
         "compute_type": "int8",
         "silence_threshold": 0.6,
+        "vad_filter": True,
+        "max_new_tokens": 128,
         "mode": "lazy",
         "idle_unload_seconds": 300,
         "hotwords": None,
@@ -310,7 +312,10 @@ class TestVocabularyBias:
         with patch("stenographer.asr.model.WhisperModel") as whisper_cls:
             m = Model(_cfg(**cfg_overrides))
         fake = whisper_cls.return_value
-        fake.transcribe.return_value = ([], MagicMock(duration=0.0))
+        fake.transcribe.return_value = (
+            [],
+            MagicMock(duration=0.0, duration_after_vad=0.0),
+        )
         return m, fake
 
     def test_transcribe_forwards_hotwords_and_initial_prompt(self) -> None:
@@ -333,6 +338,33 @@ class TestVocabularyBias:
         kwargs = fake.transcribe.call_args.kwargs
         assert kwargs["hotwords"] is None
         assert kwargs["initial_prompt"] is None
+
+    def test_transcribe_forwards_silence_hardening(self) -> None:
+        m, fake = self._model(vad_filter=True, max_new_tokens=128, silence_threshold=0.7)
+        m.transcribe(np.zeros(100, dtype=np.float32), "en", 1)
+        kwargs = fake.transcribe.call_args.kwargs
+        assert kwargs["vad_filter"] is True
+        assert kwargs["vad_parameters"] == {
+            "threshold": 0.5,
+            "min_speech_duration_ms": 100,
+            "min_silence_duration_ms": 500,
+            "speech_pad_ms": 250,
+        }
+        assert kwargs["no_speech_threshold"] == 0.7
+        assert kwargs["hallucination_silence_threshold"] == 2.0
+        assert kwargs["max_new_tokens"] == 128
+        assert kwargs["word_timestamps"] is True
+
+    def test_transcribe_words_forwards_silence_hardening(self) -> None:
+        m, fake = self._model(vad_filter=False, max_new_tokens=64, silence_threshold=0.5)
+        m.transcribe_words(np.zeros(100, dtype=np.float32))
+        kwargs = fake.transcribe.call_args.kwargs
+        assert kwargs["vad_filter"] is False
+        assert kwargs["vad_parameters"]["min_speech_duration_ms"] == 100
+        assert kwargs["no_speech_threshold"] == 0.5
+        assert kwargs["hallucination_silence_threshold"] == 2.0
+        assert kwargs["max_new_tokens"] == 64
+        assert kwargs["word_timestamps"] is True
 
 
 class TestLoadFailure:

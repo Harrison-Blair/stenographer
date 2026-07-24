@@ -61,6 +61,7 @@ class AudioConfig:
     frames_per_buffer: int
     input_device: str | None
     max_recording_seconds: int
+    min_speech_rms: float
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,8 @@ class AsrConfig:
     beam_size: int
     compute_type: str
     silence_threshold: float
+    vad_filter: bool
+    max_new_tokens: int
     mode: str
     idle_unload_seconds: int
     hotwords: str | None
@@ -127,6 +130,7 @@ class FormattingConfig:
 
 @dataclass(frozen=True)
 class UpdateConfig:
+    check_on_startup: bool
     repo: str
     channel: str
     base_url: str
@@ -163,6 +167,7 @@ class Config:
                 frames_per_buffer=1024,
                 input_device=None,
                 max_recording_seconds=600,
+                min_speech_rms=0.0005,
             ),
             asr=AsrConfig(
                 model="Systran/faster-whisper-medium.en",
@@ -170,6 +175,8 @@ class Config:
                 beam_size=5,
                 compute_type="int8",
                 silence_threshold=0.6,
+                vad_filter=True,
+                max_new_tokens=128,
                 mode="lazy",
                 idle_unload_seconds=300,
                 hotwords=None,
@@ -205,6 +212,7 @@ class Config:
                 normalize_spacing=True,
             ),
             update=UpdateConfig(
+                check_on_startup=False,
                 repo="Harrison-Blair/stenographer",
                 channel="stable",
                 base_url="https://api.github.com",
@@ -400,11 +408,15 @@ def _build_audio(table: dict[str, Any], path: pathlib.Path) -> AudioConfig:
     )
     if not (0 <= max_recording_seconds <= 86400):
         raise ConfigError(path, "audio.max_recording_seconds", "must satisfy 0 <= x <= 86400")
+    min_speech_rms = _expect_number(table, "min_speech_rms", "audio.min_speech_rms", path)
+    if not (0.0 <= min_speech_rms <= 1.0):
+        raise ConfigError(path, "audio.min_speech_rms", "must satisfy 0.0 <= x <= 1.0")
     return AudioConfig(
         sample_rate=sample_rate,
         frames_per_buffer=frames_per_buffer,
         input_device=input_device,
         max_recording_seconds=max_recording_seconds,
+        min_speech_rms=min_speech_rms,
     )
 
 
@@ -424,6 +436,10 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
     silence_threshold = _expect_number(table, "silence_threshold", "asr.silence_threshold", path)
     if not (0.0 <= silence_threshold <= 1.0):
         raise ConfigError(path, "asr.silence_threshold", "must satisfy 0.0 <= x <= 1.0")
+    vad_filter = _expect_bool(table, "vad_filter", "asr.vad_filter", path)
+    max_new_tokens = _expect_int(table, "max_new_tokens", "asr.max_new_tokens", path)
+    if not (1 <= max_new_tokens <= 448):
+        raise ConfigError(path, "asr.max_new_tokens", "must satisfy 1 <= x <= 448")
     mode = _expect_str(table, "mode", "asr.mode", path)
     if mode not in ALLOWED_ASR_MODES:
         raise ConfigError(path, "asr.mode", f"must be one of {sorted(ALLOWED_ASR_MODES)}")
@@ -438,6 +454,8 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
         beam_size=beam_size,
         compute_type=compute_type,
         silence_threshold=silence_threshold,
+        vad_filter=vad_filter,
+        max_new_tokens=max_new_tokens,
         mode=mode,
         idle_unload_seconds=idle_unload_seconds,
         hotwords=hotwords,
@@ -590,6 +608,7 @@ def _build_formatting(table: dict[str, Any], path: pathlib.Path) -> FormattingCo
 
 
 def _build_update(table: dict[str, Any], path: pathlib.Path) -> UpdateConfig:
+    check_on_startup = _expect_bool(table, "check_on_startup", "update.check_on_startup", path)
     repo = _expect_str(table, "repo", "update.repo", path)
     if "/" not in repo:
         raise ConfigError(path, "update.repo", f"must be OWNER/REPO, got {repo!r}")
@@ -618,6 +637,7 @@ def _build_update(table: dict[str, Any], path: pathlib.Path) -> UpdateConfig:
     if not (1 <= timeout_seconds <= 600):
         raise ConfigError(path, "update.timeout_seconds", "must satisfy 1 <= x <= 600")
     return UpdateConfig(
+        check_on_startup=check_on_startup,
         repo=repo,
         channel=channel,
         base_url=base_url.rstrip("/"),
@@ -727,6 +747,8 @@ def _format_default_toml() -> str:
         f"audio.frames_per_buffer = {a.frames_per_buffer}",
         f"audio.input_device = {_toml_optional(a.input_device)}",
         f"audio.max_recording_seconds = {a.max_recording_seconds}",
+        "# 0 disables the pre-decode energy gate",
+        f"audio.min_speech_rms = {a.min_speech_rms}",
         "",
         "# ASR",
         f"asr.model = {_toml_str(r.model)}",
@@ -734,6 +756,8 @@ def _format_default_toml() -> str:
         f"asr.beam_size = {r.beam_size}",
         f"asr.compute_type = {_toml_str(r.compute_type)}",
         f"asr.silence_threshold = {r.silence_threshold}",
+        f"asr.vad_filter = {_toml_bool(r.vad_filter)}",
+        f"asr.max_new_tokens = {r.max_new_tokens}",
         f"asr.mode = {_toml_str(r.mode)}",
         f"asr.idle_unload_seconds = {r.idle_unload_seconds}",
         '# hotwords: proper nouns / jargon to bias recognition toward, e.g. "wtype, Wayland"',
@@ -775,6 +799,7 @@ def _format_default_toml() -> str:
         f"formatting.normalize_spacing = {_toml_bool(fm.normalize_spacing)}",
         "",
         "# Update",
+        f"update.check_on_startup = {_toml_bool(u.check_on_startup)}",
         f"update.repo = {_toml_str(u.repo)}",
         f"update.channel = {_toml_str(u.channel)}",
         f"update.base_url = {_toml_str(u.base_url)}",

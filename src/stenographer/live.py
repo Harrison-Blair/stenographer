@@ -14,6 +14,7 @@ import queue
 import threading
 import time
 from collections.abc import Callable
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -44,14 +45,6 @@ _TAIL_CUSHION_SECONDS = 0.25
 # 10th-percentile step RMS, so it auto-scales to the mic's noise floor
 # instead of a fixed absolute threshold.
 _NOISE_FLOOR_MULTIPLIER = 3
-
-# Dead-air detector, NOT the trim gate: a window whose loudest step never
-# clears this is genuinely silent throughout (no speech anywhere in it), so
-# the self-relative trim below -- which cannot tell uniform-loud from
-# uniform-silent -- is skipped in favor of returning empty outright. Set
-# deliberately below quiet-mic speech RMS (~0.001-0.005) and above ambient
-# noise floor (~0.0002) per repo memory `quiet-mic-rms.md`.
-_SILENCE_FLOOR_RMS = 0.0005
 
 _SENTENCE_TERMINALS = ".?!"
 
@@ -161,7 +154,11 @@ class IncrementalDriver:
         """One interim re-decode. Returns False when aborted mid-decode."""
         window = self._recorder.snapshot(self._trim_offset)
         window_seconds = window.shape[0] / self._cfg.audio.sample_rate
-        guarded = _cut_trailing_silence(window, self._cfg.audio.sample_rate)
+        guarded = _prepare_decode_audio(
+            window,
+            self._cfg.audio.sample_rate,
+            self._cfg.audio.min_speech_rms,
+        )
         if guarded.shape[0] == 0:
             return True
         words, ok = self._decode(guarded, beam_size=self._interim_beam_size())
@@ -183,9 +180,19 @@ class IncrementalDriver:
         """Final-decode, flush, and return formatted output without delivery."""
         start = round(self._trim_offset * self._cfg.audio.sample_rate)
         window = samples[start:]
-        # No tail-silence guard here: the user ended the utterance, decode all
-        # remaining audio with the full configured beam.
-        words, ok = self._decode(window, beam_size=self._cfg.asr.beam_size, final=True)
+        guarded = _prepare_decode_audio(
+            window,
+            self._cfg.audio.sample_rate,
+            self._cfg.audio.min_speech_rms,
+        )
+        if guarded.shape[0] == 0:
+            # A silent final tail must not promote the last provisional
+            # hypothesis. Already committed text remains append-only.
+            log.info("incremental: silent final tail; discarding provisional text")
+            self._transcript += self._formatter.finalize()
+            self._publish_preview(final=True)
+            return self._transcript
+        words, ok = self._decode(guarded, beam_size=self._cfg.asr.beam_size, final=True)
         if not ok:
             return None
         if words is None:
@@ -242,11 +249,14 @@ class IncrementalDriver:
         elapsed = time.monotonic() - t0
         window_seconds = window.shape[0] / self._cfg.audio.sample_rate
         if window_seconds > 0:
-            log.debug(
-                "incremental: decoded %.1fs window in %.2fs (rtf=%.2f)",
+            mean_confidence = sum(word.probability for word in words) / len(words) if words else 0.0
+            log.info(
+                "incremental: decoded %.3fs in %.3fs (rtf=%.2f) word_count=%d mean_confidence=%.3f",
                 window_seconds,
                 elapsed,
                 elapsed / window_seconds,
+                len(words),
+                mean_confidence,
             )
         return words, True
 
@@ -306,13 +316,11 @@ LiveStreamer = IncrementalDriver
 def _cut_trailing_silence(window: np.ndarray, rate: int) -> np.ndarray:
     """Drop trailing sub-noise-floor audio before an interim re-decode.
 
-    Whisper hallucinates over trailing silence, and word-level decoding loses
-    the per-segment no_speech_prob gate — this guard is its replacement. The
-    cutoff is relative to the window's own 10th-percentile step RMS (its
+    The cutoff is relative to the window's own 10th-percentile step RMS (its
     observed noise floor), not a fixed absolute threshold, so the guard
-    auto-scales to any mic. A cushion is kept past the last non-silent
-    window; the final decode (which skips this guard) covers whatever the
-    guard shaved off.
+    auto-scales to any mic. A cushion is kept past the last non-silent window.
+    The separate energy gate rejects uniformly silent windows that this
+    self-relative calculation cannot distinguish from uniform speech.
     """
     mono = window[:, 0] if window.ndim == 2 else window
     step = max(1, rate // 20)  # 50 ms windows
@@ -324,10 +332,6 @@ def _cut_trailing_silence(window: np.ndarray, rate: int) -> np.ndarray:
     # excluded from both).
     tail = mono[mono.shape[0] - n_steps * step :]
     step_rms = np.sqrt(np.mean(np.square(tail.reshape(n_steps, step)), axis=1))
-    if np.max(step_rms) < _SILENCE_FLOOR_RMS:
-        # Dead air throughout: even the loudest step never reaches speech
-        # level, so there is nothing to decode.
-        return window[:0]
     floor = np.percentile(step_rms, 10)
     cutoff = floor * _NOISE_FLOOR_MULTIPLIER
     end = mono.shape[0]
@@ -347,3 +351,46 @@ def _cut_trailing_silence(window: np.ndarray, rate: int) -> np.ndarray:
         return window
     end = min(mono.shape[0], end + round(_TAIL_CUSHION_SECONDS * rate))
     return window[:end]
+
+
+def _prepare_decode_audio(window: np.ndarray, rate: int, min_speech_rms: float) -> np.ndarray:
+    """Energy-gate and tail-trim one interim or final decode window."""
+    peak_rms, has_speech = _speech_energy(window, rate, min_speech_rms)
+    input_seconds = window.shape[0] / rate
+    if not has_speech:
+        log.info(
+            "incremental: energy gate rejected audio input_duration=%.3fs "
+            "peak_frame_rms=%.6f threshold=%.6f",
+            input_seconds,
+            peak_rms,
+            min_speech_rms,
+        )
+        return window[:0]
+    trimmed = _cut_trailing_silence(window, rate)
+    kept_seconds = trimmed.shape[0] / rate
+    log.info(
+        "incremental: audio prepared input_duration=%.3fs trimmed_duration=%.3fs "
+        "tail_removed=%.3fs peak_frame_rms=%.6f",
+        input_seconds,
+        kept_seconds,
+        input_seconds - kept_seconds,
+        peak_rms,
+    )
+    return trimmed
+
+
+def _speech_energy(window: np.ndarray, rate: int, threshold: float) -> tuple[float, bool]:
+    """Return peak 50 ms RMS and whether two adjacent frames clear *threshold*."""
+    mono = window[:, 0] if window.ndim == 2 else window
+    if mono.size == 0:
+        return 0.0, False
+    step = max(1, rate // 20)
+    frame_rms = [
+        float(np.sqrt(np.mean(np.square(mono[start : start + step], dtype=np.float64))))
+        for start in range(0, mono.shape[0], step)
+    ]
+    peak = max(frame_rms, default=0.0)
+    if threshold == 0:
+        return peak, True
+    above = [rms >= threshold for rms in frame_rms]
+    return peak, any(left and right for left, right in pairwise(above))

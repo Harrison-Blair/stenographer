@@ -30,6 +30,8 @@ def model() -> Model:
             beam_size=1,
             compute_type="int8",
             silence_threshold=0.6,
+            vad_filter=True,
+            max_new_tokens=128,
             mode="eager",
             idle_unload_seconds=0,
             hotwords=None,
@@ -46,13 +48,13 @@ def test_transcribe_silence(model: Model) -> None:
     assert result.duration_seconds >= 0.0
 
 
-def test_transcribe_sine(model: Model) -> None:
+def test_transcribe_sine_is_rejected_as_non_speech(model: Model) -> None:
     sample_rate = 16000
     t = np.arange(sample_rate, dtype=np.float32) / sample_rate
     samples = np.sin(2 * np.pi * 440.0 * t).astype(np.float32)
     result = model.transcribe(samples, "en", 1)
     assert isinstance(result, TranscriptionResult)
-    assert len(result.text) > 0
+    assert result.text == ""
 
 
 def test_transcribe_empty(model: Model) -> None:

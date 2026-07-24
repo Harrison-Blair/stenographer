@@ -57,10 +57,25 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install -e ".[dev,build]"
-      - name: Set VERSION from the version module
+      - name: Prepare stable release version
         run: |
-          version=$(python -c "import runpy; print(runpy.run_path('src/stenographer/_version.py')['__version__'])")
+          set -euo pipefail
+          dev_version=$(.venv/bin/python -c "import runpy; print(runpy.run_path('src/stenographer/_version.py')['__version__'])")
+          if [[ ! "${dev_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]]; then
+            echo "::error::Expected src/stenographer/_version.py to contain X.Y.Z-dev; got ${dev_version}."
+            exit 1
+          fi
+          version=${dev_version%-dev}
+          sed -i "s/__version__ = \"${dev_version}\"/__version__ = \"${version}\"/" src/stenographer/_version.py
           echo "VERSION=${version}" >> "$GITHUB_ENV"
+      - name: Commit and tag the stable release version
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/stenographer/_version.py
+          git commit -m "release: v${VERSION}"
+          git tag -a "v${VERSION}" -m "stenographer v${VERSION}"
       - name: Check if release already exists
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,6 +88,10 @@ jobs:
           echo "Release v${VERSION} does not exist. Proceeding."
       - name: Build with PyInstaller
         run: scripts/build.sh
+      - name: Verify release binary version
+        run: |
+          reported=$(dist/stenographer/stenographer --version)
+          test "${reported}" = "stenographer ${VERSION}"
       - name: Package tarball + sha256
         run: |
           tar -C dist -czf "stenographer-${VERSION}-linux-x86_64.tar.gz" stenographer/
@@ -92,6 +111,8 @@ jobs:
               git log --oneline
             fi
           } > release_notes.md
+      - name: Push the release tag
+        run: git push origin "refs/tags/v${VERSION}"
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:

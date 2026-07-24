@@ -20,7 +20,7 @@
 import certifi
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 block_cipher = None
 
@@ -38,6 +38,7 @@ a = Analysis(
         (str(ICON_SRC), "stenographer/assets/icons"),
         (str(FONT_SRC), "stenographer/assets/fonts"),
         (certifi.where(), "certifi"),
+        *collect_data_files("faster_whisper", includes=["assets/*.onnx"]),
         *copy_metadata("stenographer"),
     ],
     hiddenimports=[

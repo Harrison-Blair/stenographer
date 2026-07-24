@@ -59,6 +59,7 @@ def _release(
 
 
 _DEFAULT_CFG = UpdateConfig(
+    check_on_startup=True,
     repo="Harrison-Blair/stenographer",
     channel="stable",
     base_url="https://api.github.com",
@@ -166,6 +167,19 @@ def test_pick_release_ten_dot_zero_greater_than_nine() -> None:
     assert chosen["tag_name"] == "v0.10.0"
 
 
+def test_pick_release_development_selects_newest_even_when_older() -> None:
+    from packaging.version import Version
+
+    releases = [_release("v0.9.2"), _release("v0.9.3")]
+    chosen = _pick_release(
+        releases,
+        channel="stable",
+        current=Version("0.9.4-dev"),
+        development=True,
+    )
+    assert chosen["tag_name"] == "v0.9.3"
+
+
 # ---------------------------------------------------------------------------
 # check_for_update (with mocked HTTP)
 # ---------------------------------------------------------------------------
@@ -197,6 +211,31 @@ def test_check_for_update_up_to_date_returns_none() -> None:
     releases = [_release("v0.6.0")]
     with patch("stenographer.update._http_get_json", _fake_http_get_json(releases)):
         assert check_for_update(_DEFAULT_CFG, current_version="0.6.0") is None
+
+
+@pytest.mark.parametrize("current", ["0.9.3-dev", "0.9.4-dev"])
+def test_check_for_update_dev_build_can_switch_to_stable(current: str) -> None:
+    releases = [_release("v0.9.3")]
+    with patch("stenographer.update._http_get_json", _fake_http_get_json(releases)):
+        info = check_for_update(_DEFAULT_CFG, current_version=current, allow_dev_downgrade=True)
+    assert info is not None
+    assert info.current_version == current
+    assert info.latest_version == "0.9.3"
+
+
+def test_check_for_update_startup_dev_build_ignores_non_newer_release() -> None:
+    # The background startup check does not opt into the escape hatch, so a
+    # locally built dev binary must never be told an older stable release is
+    # an available update.
+    releases = [_release("v0.9.3")]
+    with patch("stenographer.update._http_get_json", _fake_http_get_json(releases)):
+        assert check_for_update(_DEFAULT_CFG, current_version="0.9.4-dev") is None
+
+
+def test_check_for_update_stable_build_never_downgrades() -> None:
+    releases = [_release("v0.9.3")]
+    with patch("stenographer.update._http_get_json", _fake_http_get_json(releases)):
+        assert check_for_update(_DEFAULT_CFG, current_version="0.9.4") is None
 
 
 def test_check_for_update_prerelease_flag_widens() -> None:
@@ -476,7 +515,7 @@ def test_apply_update_cross_filesystem_raises(tmp_path: pathlib.Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_detect_install_root_finds_onedir(
+def test_detect_install_root_finds_frozen_onedir_launched_through_path(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -485,22 +524,63 @@ def test_detect_install_root_finds_onedir(
     bundle = tmp_path / "stenographer"
     bundle.mkdir()
     (bundle / "_internal").mkdir()
-    (bundle / "stenographer").write_text("#!/bin/sh\n")
-    fake_argv0 = str(bundle / "stenographer")
-    monkeypatch.setattr(update_mod.sys, "argv", [fake_argv0])
+    launcher = bundle / "stenographer"
+    launcher.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(update_mod.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(update_mod.sys, "executable", str(launcher))
+    monkeypatch.setattr(update_mod.sys, "argv", ["stenographer"])
     assert update_mod.detect_install_root() == bundle
 
 
-def test_detect_install_root_rejects_wheel_install(
+def test_detect_install_root_resolves_launcher_symlink(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stenographer.update as update_mod
+
+    bundle = tmp_path / ".local" / "share" / "stenographer"
+    bundle.mkdir(parents=True)
+    (bundle / "_internal").mkdir()
+    launcher = bundle / "stenographer"
+    launcher.write_text("#!/bin/sh\n")
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir()
+    launcher_symlink = bin_dir / "stenographer"
+    launcher_symlink.symlink_to(launcher)
+
+    monkeypatch.setattr(update_mod.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(update_mod.sys, "executable", str(launcher_symlink))
+    monkeypatch.setattr(update_mod.sys, "argv", ["stenographer"])
+    assert update_mod.detect_install_root() == bundle
+
+
+def test_detect_install_root_rejects_malformed_frozen_layout(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stenographer.update as update_mod
+
+    launcher = tmp_path / "stenographer" / "stenographer"
+    launcher.parent.mkdir()
+    launcher.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(update_mod.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(update_mod.sys, "executable", str(launcher))
+    with pytest.raises(UpdateError, match="onedir binary"):
+        update_mod.detect_install_root()
+
+
+def test_detect_install_root_rejects_non_frozen_install(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import stenographer.update as update_mod
 
-    site_packages = tmp_path / "site-packages"
-    site_packages.mkdir()
-    (site_packages / "stenographer").mkdir()
-    fake_argv0 = str(site_packages / "stenographer" / "__main__.py")
-    monkeypatch.setattr(update_mod.sys, "argv", [fake_argv0])
+    apparent_bundle = tmp_path / "venv" / "bin"
+    apparent_bundle.mkdir(parents=True)
+    (apparent_bundle / "_internal").mkdir()
+    launcher = apparent_bundle / "stenographer"
+    launcher.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(update_mod.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(update_mod.sys, "executable", str(launcher))
     with pytest.raises(UpdateError, match="onedir binary"):
         update_mod.detect_install_root()
 

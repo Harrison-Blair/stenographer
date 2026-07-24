@@ -56,6 +56,11 @@ class Worker:
         self._cancel_event = threading.Event()
         self._close_lock = threading.Lock()
         self._model_closed = False
+        # Serializes enqueue against stop() so no job is ever queued behind the
+        # None sentinel; a job stranded there would never resolve its future and
+        # block a caller waiting on future.result() forever.
+        self._submit_lock = threading.Lock()
+        self._stopping = False
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -71,7 +76,7 @@ class Worker:
         cancel_event: threading.Event | None = None,
     ) -> concurrent.futures.Future[TranscriptionResult]:
         future: concurrent.futures.Future[TranscriptionResult] = concurrent.futures.Future()
-        self._queue.put(
+        self._enqueue(
             Job(samples=samples, future=future, on_segment=on_segment, cancel_event=cancel_event)
         )
         return future
@@ -96,7 +101,7 @@ class Worker:
         genuine abort must still stop the job.
         """
         future: concurrent.futures.Future[list[WordInfo]] = concurrent.futures.Future()
-        self._queue.put(
+        self._enqueue(
             Job(
                 samples=samples,
                 future=future,
@@ -107,6 +112,19 @@ class Worker:
             )
         )
         return future
+
+    def _enqueue(self, job: Job) -> None:
+        """Queue *job*, or fail its future if the worker is already stopping.
+
+        Holding ``_submit_lock`` across the stopping check and the put keeps the
+        enqueue atomic with :meth:`stop`, so a job is never queued after the
+        None sentinel where the exited worker thread could never resolve it.
+        """
+        with self._submit_lock:
+            if self._stopping:
+                job.future.set_exception(CancelledError("worker stopping; job rejected"))
+                return
+            self._queue.put(job)
 
     def request_unload(self, token: int) -> None:
         """Enqueue an idle-unload of the lazy model onto the worker thread.
@@ -127,6 +145,8 @@ class Worker:
         self._cancel_event.set()
 
     def stop(self, timeout: float = 30.0) -> None:
+        with self._submit_lock:
+            self._stopping = True
         self._queue.put(None)
         thread = self._thread
         if thread is None:
@@ -164,6 +184,7 @@ class Worker:
                 job = self._queue.get()
                 if job is None:
                     log.debug("ASR worker thread exiting")
+                    self._fail_pending("worker stopped")
                     return
                 if isinstance(job, tuple) and len(job) == 2 and job[0] is _UNLOAD:
                     _sentinel, token = job
@@ -229,6 +250,21 @@ class Worker:
                 job.future.set_result(result)
         finally:
             self._close_model()
+
+    def _fail_pending(self, reason: str) -> None:
+        """Resolve the futures of any jobs still queued when the thread exits.
+
+        With :meth:`_enqueue` rejecting submissions once stopping, nothing is
+        normally queued behind the sentinel; this is the race-free backstop so
+        no caller blocked on ``future.result()`` is ever stranded.
+        """
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            if isinstance(item, Job) and not item.future.done():
+                item.future.set_exception(CancelledError(reason))
 
     def _close_model(self) -> None:
         """Close the model exactly once, never concurrently with inference."""
