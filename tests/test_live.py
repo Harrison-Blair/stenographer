@@ -17,6 +17,8 @@ from stenographer.live import (
     _TAIL_CUSHION_SECONDS,
     IncrementalDriver,
     _cut_trailing_silence,
+    _drop_low_confidence_tail,
+    _normalize_phrase,
     _prepare_decode_audio,
 )
 from stenographer.output.formatter import HeuristicFormatter
@@ -159,7 +161,7 @@ def test_only_the_final_decode_is_exempt_from_the_global_cancel() -> None:
 def test_stable_preview_is_append_only_while_tail_revises() -> None:
     previews: list[tuple[str, str]] = []
     driver, _worker = _make_driver(
-        [_speech(1.0)] * 4,
+        [_speech(1.0), _speech(1.2), _speech(1.4), _speech(1.6)],
         [
             _words((" one", 0.0, 0.3)),
             _words((" one", 0.0, 0.3), (" too", 0.3, 0.6)),
@@ -252,7 +254,7 @@ def test_final_decode_failure_still_returns_the_committed_transcript() -> None:
     # The audio since the last interim hypothesis is unrecoverable, but the
     # words already agreed on must not be dropped with it.
     driver, _worker = _make_driver(
-        [_speech(1.0)] * 3,
+        [_speech(1.0), _speech(1.2), _speech(1.4)],
         [
             _words((" hello", 0.0, 0.5)),
             _words((" hello", 0.0, 0.5), (" world", 0.5, 1.0)),
@@ -263,7 +265,7 @@ def test_final_decode_failure_still_returns_the_committed_transcript() -> None:
     for _ in range(3):
         assert driver._step()
 
-    assert driver._finish(_speech(1.5)) == "Hello world "
+    assert driver._finish(_speech(1.6)) == "Hello world "
 
 
 def test_final_decode_failure_with_nothing_committed_returns_empty() -> None:
@@ -316,7 +318,7 @@ def test_interim_null_beam_uses_asr_beam() -> None:
 
 def test_trim_at_sentence_terminal_and_rebase_snapshot() -> None:
     driver, _worker = _make_driver(
-        [_speech(2.0), _speech(2.0), _speech(1.0)],
+        [_speech(2.0), _speech(2.2), _speech(1.0)],
         [
             _words((" done.", 0.0, 1.5)),
             _words((" done.", 0.0, 1.5)),
@@ -338,7 +340,7 @@ def test_post_trim_commits_carry_absolute_times() -> None:
     later word is stamped earlier than it really was.
     """
     driver, _worker = _make_driver(
-        [_speech(2.0), _speech(1.0), _speech(1.0)],
+        [_speech(2.0), _speech(1.0), _speech(1.0), _speech(1.2)],
         [
             _words((" first.", 0.0, 1.5)),
             _words((" first.", 0.0, 1.5)),  # commit + trim at 1.5s
@@ -370,7 +372,7 @@ def test_paragraph_pause_straddling_trim_emits_one_break() -> None:
         cfg, formatting=dataclasses.replace(cfg.formatting, paragraph_pause_seconds=2.0)
     )
     driver, _worker = _make_driver(
-        [_speech(1.5), _speech(1.5), _speech(4.0)],
+        [_speech(1.5), _speech(1.7), _speech(4.0), _speech(4.2)],
         [
             _words((" one.", 0.0, 1.0)),
             _words((" one.", 0.0, 1.0)),  # commit + trim at 1.0s
@@ -388,7 +390,7 @@ def test_paragraph_pause_straddling_trim_emits_one_break() -> None:
 
 def test_trim_forced_when_buffer_budget_exceeded() -> None:
     driver, _worker = _make_driver(
-        [_speech(6.0)],
+        [_speech(6.0), _speech(6.2)],
         [
             _words((" rambling", 0.0, 4.0)),
             _words((" rambling", 0.0, 4.0)),
@@ -459,7 +461,7 @@ def test_silent_final_discards_provisional_text() -> None:
 
 def test_silent_final_preserves_already_committed_text() -> None:
     driver, worker = _make_driver(
-        [_speech(1.0), _speech(1.0)],
+        [_speech(1.0), _speech(1.2)],
         [
             _words((" preserved", 0.0, 0.5)),
             _words((" preserved", 0.0, 0.5), (" ghost", 0.5, 0.9)),
@@ -470,6 +472,227 @@ def test_silent_final_preserves_already_committed_text() -> None:
     assert driver._transcriber.committed_text == "preserved"
     assert driver._finish(np.zeros((SR, 1), dtype=np.float32)) == "Preserved "
     assert len(worker.calls) == 2
+
+
+def _pause_windows() -> list[np.ndarray]:
+    """Snapshots of a 1s utterance followed by a growing digital-silence pause.
+
+    The tail cut reduces the second and third windows to the same guarded
+    audio (speech plus the 0.25s cushion), as a real held-key pause does.
+    """
+    speech = _speech(1.0)
+    return [
+        speech,
+        np.concatenate([speech, np.zeros((SR, 1), dtype=np.float32)]),
+        np.concatenate([speech, np.zeros((2 * SR, 1), dtype=np.float32)]),
+    ]
+
+
+def test_identical_pause_window_skips_redecode() -> None:
+    driver, worker = _make_driver(
+        _pause_windows(),
+        [
+            _words((" hi", 0.0, 0.5)),
+            _words((" hi", 0.0, 0.5)),
+            _words((" hi", 0.0, 0.5)),
+        ],
+    )
+    for _ in range(3):
+        assert driver._step()
+    assert len(worker.calls) == 2
+
+
+def test_pause_does_not_commit_provisional_via_identical_redecodes() -> None:
+    """A pause must not commit the provisional tail via trivial agreement.
+
+    Re-decoding byte-identical audio reproduces the same hypothesis, so a
+    hallucination decoded once from a silence-tailed window would reach
+    LocalAgreement and commit into the append-only prefix.
+    """
+    driver, _worker = _make_driver(
+        _pause_windows(),
+        [
+            _words((" hi", 0.0, 0.5)),
+            _words((" hi", 0.0, 0.5), (" ghost", 0.5, 0.9)),
+            _words((" hi", 0.0, 0.5), (" ghost", 0.5, 0.9)),
+        ],
+    )
+    for _ in range(3):
+        assert driver._step()
+    assert driver._transcriber.committed_text == "hi"
+
+
+def test_new_speech_after_pause_resumes_decoding() -> None:
+    windows = _pause_windows()
+    windows.append(np.concatenate([windows[2], _speech(1.0)]))
+    driver, worker = _make_driver(
+        windows,
+        [_words((" hi", 0.0, 0.5))] * 4,
+    )
+    for _ in range(4):
+        assert driver._step()
+    assert len(worker.calls) == 3
+
+
+def test_pause_trims_window_to_last_committed_word() -> None:
+    """A sustained mid-thought pause trims even without a sentence terminal."""
+    windows = [
+        _speech(1.6),
+        _speech(2.0),
+        np.concatenate([_speech(2.0), np.zeros((int(2.5 * SR), 1), dtype=np.float32)]),
+    ]
+    hypothesis = _words((" hello", 0.0, 1.5))
+    driver, _worker = _make_driver(windows, [hypothesis, hypothesis, hypothesis])
+    for _ in range(3):
+        assert driver._step()
+    assert driver._trim_offset == 1.5
+
+
+def test_short_breath_pause_does_not_trim() -> None:
+    """Guard test (passes before and after the pause-trim change): a breath-
+    length pause below the threshold must not become a trim point."""
+    windows = [
+        _speech(1.6),
+        _speech(2.0),
+        np.concatenate([_speech(2.0), np.zeros((SR, 1), dtype=np.float32)]),
+    ]
+    hypothesis = _words((" hello", 0.0, 1.5))
+    driver, _worker = _make_driver(windows, [hypothesis, hypothesis, hypothesis])
+    for _ in range(3):
+        assert driver._step()
+    assert driver._trim_offset == 0.0
+
+
+def _words_p(*tokens: tuple[str, float, float, float]) -> list[WordInfo]:
+    return [
+        WordInfo(start=start, end=end, word=word, probability=prob)
+        for word, start, end, prob in tokens
+    ]
+
+
+def test_low_confidence_flushed_tail_is_dropped_at_finalize() -> None:
+    driver, _worker = _make_driver(
+        [_speech(1.0)],
+        [_words_p((" hello", 0.0, 0.3, 0.9), (" world", 0.3, 0.6, 0.9), (" ghost", 0.6, 0.9, 0.1))],
+    )
+    assert driver._finish(_speech(1.0)) == "Hello world "
+
+
+def test_low_confidence_word_kept_when_followed_by_confident_word() -> None:
+    """Guard test (passes before and after the gate): only the trailing run of
+    low-confidence words is dropped, never one inside confident speech."""
+    driver, _worker = _make_driver(
+        [_speech(1.0)],
+        [_words_p((" hello", 0.0, 0.3, 0.9), (" uh", 0.3, 0.6, 0.1), (" world", 0.6, 0.9, 0.9))],
+    )
+    assert driver._finish(_speech(1.0)) == "Hello uh world "
+
+
+def test_committed_words_are_never_confidence_gated() -> None:
+    driver, _worker = _make_driver(
+        [_speech(1.0), _speech(1.2)],
+        [
+            _words_p((" hi", 0.0, 0.5, 0.2)),
+            _words_p((" hi", 0.0, 0.5, 0.2), (" ghost", 0.5, 0.9, 0.1)),
+            _words_p((" hi", 0.0, 0.5, 0.2), (" gargle", 0.5, 0.9, 0.1)),
+        ],
+    )
+    assert driver._step()
+    assert driver._step()
+    assert driver._transcriber.committed_text == "hi"
+    assert driver._finish(_speech(1.4)) == "Hi "
+
+
+def test_salvage_flush_after_final_failure_is_gated() -> None:
+    driver, _worker = _make_driver(
+        [_speech(1.0), _speech(1.2)],
+        [
+            _words_p((" hi", 0.0, 0.5, 0.9)),
+            _words_p((" hi", 0.0, 0.5, 0.9), (" ghost", 0.5, 0.9, 0.1)),
+            RuntimeError("final decode failed"),
+        ],
+    )
+    assert driver._step()
+    assert driver._step()
+    assert driver._finish(_speech(1.4)) == "Hi "
+
+
+def test_hallucination_phrase_tail_dropped_after_long_pause() -> None:
+    """A confident stock-phrase tail after a long pre-release pause is a
+    Whisper silence hallucination; the probability gate cannot catch it."""
+    driver, _worker = _make_driver(
+        [_speech(1.0)],
+        [
+            _words_p((" hi", 0.0, 0.5, 1.0)),
+            _words_p((" hi", 0.0, 0.5, 1.0), (" thank", 0.5, 0.8, 0.9), (" you.", 0.8, 1.0, 0.9)),
+        ],
+    )
+    assert driver._step()
+    final = np.concatenate([_speech(1.0), np.zeros((int(2.5 * SR), 1), dtype=np.float32)])
+    assert driver._finish(final) == "Hi "
+
+
+def test_hallucination_phrase_kept_without_pause() -> None:
+    """Guard test (passes before and after the gate): a deliberate closing
+    phrase followed by a prompt release has no long tail silence and stays."""
+    driver, _worker = _make_driver(
+        [_speech(1.0)],
+        [
+            _words_p((" hi", 0.0, 0.5, 1.0)),
+            _words_p((" hi", 0.0, 0.5, 1.0), (" thank", 0.5, 0.8, 0.9), (" you.", 0.8, 1.0, 0.9)),
+        ],
+    )
+    assert driver._step()
+    final = np.concatenate([_speech(1.0), np.zeros((SR // 2, 1), dtype=np.float32)])
+    assert driver._finish(final) == "Hi thank you. "
+
+
+def test_drop_low_confidence_tail_pure_cases() -> None:
+    assert _drop_low_confidence_tail([]) == []
+    low = _words_p((" a", 0.0, 0.1, 0.1), (" b", 0.1, 0.2, 0.2))
+    assert _drop_low_confidence_tail(low) == []
+    high = _words_p((" a", 0.0, 0.1, 0.9), (" b", 0.1, 0.2, 0.8))
+    assert _drop_low_confidence_tail(high) == high
+
+
+def test_normalize_phrase_strips_punctuation_and_case() -> None:
+    assert _normalize_phrase("  Thank you.  ") == "thank you"
+    assert _normalize_phrase(" Thanks, for watching!") == "thanks for watching"
+
+
+def test_identical_final_window_skips_final_decode() -> None:
+    driver, worker = _make_driver(
+        _pause_windows(),
+        [
+            _words((" hi", 0.0, 0.5)),
+            _words((" hi", 0.0, 0.5), (" ghost", 0.5, 0.9)),
+        ],
+    )
+    for _ in range(3):
+        assert driver._step()
+    assert len(worker.calls) == 2
+    assert driver._finish(_pause_windows()[2]) == "Hi ghost "
+    assert len(worker.calls) == 2
+
+
+def test_final_decode_not_skipped_when_interim_beam_differs() -> None:
+    """Guard for the skip condition: a reduced interim beam means the final
+    full-beam decode is not redundant and must still run."""
+    cfg = _cfg(beam_size=1)
+    driver, worker = _make_driver(
+        _pause_windows(),
+        [
+            _words((" hi", 0.0, 0.5)),
+            _words((" hi", 0.0, 0.5), (" ghost", 0.5, 0.9)),
+        ],
+        cfg=cfg,
+    )
+    for _ in range(3):
+        assert driver._step()
+    driver._finish(_pause_windows()[2])
+    assert len(worker.calls) == 3
+    assert worker.calls[-1]["beam_size"] == cfg.asr.beam_size
+    assert worker.calls[-1]["ignore_global_cancel"] is True
 
 
 def test_cut_trailing_silence_trims_quiet_tail_with_cushion() -> None:
