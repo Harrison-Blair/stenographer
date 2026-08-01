@@ -16,8 +16,8 @@ import numpy as np
 
 from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.asr.worker import CancelledError
-from stenographer.errors import notify_failure
 from stenographer.live import IncrementalDriver, IncrementalResult, Preview
+from stenographer.output.delivery import TranscriptDelivery
 from stenographer.output.formatter import HeuristicFormatter
 
 if TYPE_CHECKING:
@@ -82,13 +82,19 @@ class Session:
         one_shot: bool = False,
     ) -> None:
         self._cfg = cfg
-        self._caps = capabilities
         self._listener = listener
         self._recorder = recorder
         self._worker = worker
         self._feedback = feedback
         self._injector = injector
         self._clipboard = clipboard
+        self._delivery = TranscriptDelivery(
+            output=cfg.output,
+            clipboard_cfg=cfg.clipboard,
+            capabilities=capabilities,
+            injector=injector,
+            clipboard=clipboard,
+        )
         self._notification = notification
         self._one_shot = one_shot
 
@@ -98,7 +104,6 @@ class Session:
         # Which hotkey owns the active recording (meaningful only while
         # _recording is True).
         self._recording_source: Literal["dictate"] = "dictate"
-        self._utterances_processed = 0
         # Abort event for the recording currently in progress (fresh per
         # recording; shared by that recording's flush segments and tail).
         self._recording_abort = threading.Event()
@@ -115,7 +120,6 @@ class Session:
         self._utterance_queue = queue.Queue()
         self._processor: threading.Thread | None = None
         self._processing_times: collections.deque[float] = collections.deque(maxlen=10)
-        self._sample_rate = cfg.audio.sample_rate
         self._formatter = HeuristicFormatter(
             cfg.formatting, append_trailing_space=cfg.output.append_trailing_space
         )
@@ -448,8 +452,7 @@ class Session:
                     except Exception as stop_exc:
                         log.error("session: recorder.stop after failed start: %s", stop_exc)
                 if self._notification is not None:
-                    with contextlib.suppress(Exception):
-                        self._notification.clear_preview()
+                    self._notify("clear_preview")
 
     def on_recording_stop(
         self, mode: Literal["ptt", "toggle"], source: Literal["dictate"] = "dictate"
@@ -506,8 +509,6 @@ class Session:
         queue_depth = self._utterance_queue.qsize()
         if queue_depth > 1:
             log.info("session: %d utterance(s) queued for transcription", queue_depth)
-        if self._one_shot:
-            pass  # processor thread sets _stop_event after processing
 
     def _run_incremental(self, streamer: IncrementalDriver, preview_generation: int) -> None:
         """Finalize one incremental utterance and deliver its transcript once."""
@@ -518,9 +519,7 @@ class Session:
         except Exception as exc:
             failed = True
             log.error("session: incremental driver failed: %s", exc)
-            if not self._stop_event.is_set():
-                with contextlib.suppress(Exception):
-                    self._feedback.play("error")
+            self._cue("error")
         finally:
             with self._lock:
                 if self._live_streamer is streamer:
@@ -530,21 +529,14 @@ class Session:
             return
         if not text:
             log.info("session: incremental utterance produced no text")
-            if not self._stop_event.is_set():
-                with contextlib.suppress(Exception):
-                    self._feedback.play("error")
+            self._cue("error")
             return
         degraded = isinstance(text, IncrementalResult) and text.degraded
         delivered = self._deliver_final(text)
         if not delivered:
-            if not self._stop_event.is_set():
-                with contextlib.suppress(Exception):
-                    self._feedback.play("error")
+            self._cue("error")
             return
-        self._utterances_processed += 1
-        if not self._stop_event.is_set():
-            with contextlib.suppress(Exception):
-                self._feedback.play("error" if degraded else "transcribe_done")
+        self._cue("error" if degraded else "transcribe_done")
 
     def _publish_preview(self, generation: int, preview: Preview) -> None:
         """Publish only if this recording still owns the HUD preview."""
@@ -560,8 +552,7 @@ class Session:
         with self._lock:
             if generation != self._preview_generation or self._notification is None:
                 return
-            with contextlib.suppress(Exception):
-                self._notification.clear_preview()
+            self._notify("clear_preview")
 
     def _refresh_notification(self) -> None:
         """Show the transcribing indicator if work remains queued, else hide it."""
@@ -571,6 +562,20 @@ class Session:
             self._notification.show_transcribing()
         else:
             self._notification.hide()
+
+    def _cue(self, name: str) -> None:
+        """Play a feedback cue, unless shutting down; failures are swallowed."""
+        if self._stop_event.is_set():
+            return
+        with contextlib.suppress(Exception):
+            self._feedback.play(name)
+
+    def _notify(self, method_name: str, *args) -> None:
+        """Call a status-indicator method, logging (not raising) on failure."""
+        try:
+            getattr(self._notification, method_name)(*args)
+        except Exception as exc:
+            log.error("session: %s failed: %s", method_name, exc)
 
     def on_toggle_off(self, source: Literal["dictate"] = "dictate") -> None:
         self.on_recording_stop("toggle", source=source)
@@ -610,8 +615,7 @@ class Session:
                 log.error("session: recorder.stop during discard failed: %s", exc)
             log.info("session: recording discarded")
             if self._notification is not None:
-                with contextlib.suppress(Exception):
-                    self._notification.clear_preview()
+                self._notify("clear_preview")
             self._refresh_notification()
 
     def cancel_all(self) -> None:
@@ -639,10 +643,8 @@ class Session:
             if self._notification is not None:
                 # One suppress block per call: a raising clear_preview must not
                 # skip hide(), which would leave 'Listening…' up forever.
-                with contextlib.suppress(Exception):
-                    self._notification.clear_preview()
-                with contextlib.suppress(Exception):
-                    self._notification.hide()
+                self._notify("clear_preview")
+                self._notify("hide")
 
     # -- lazy-mode model lifecycle callbacks (called from loader / timer threads) --
 
@@ -652,10 +654,7 @@ class Session:
         except Exception as exc:
             log.error("session: model_loading cue failed: %s", exc)
         if self._notification is not None:
-            try:
-                self._notification.show_model_loading()
-            except Exception as exc:
-                log.error("session: show_model_loading failed: %s", exc)
+            self._notify("show_model_loading")
 
     def _on_model_loaded(self) -> None:
         try:
@@ -667,17 +666,11 @@ class Session:
             # still recording; otherwise the stop path already set the status.
             with self._lock:
                 if self._recording:
-                    try:
-                        self._notification.show_listening()
-                    except Exception as exc:
-                        log.error("session: show_listening failed: %s", exc)
+                    self._notify("show_listening")
 
     def _on_model_unloaded(self) -> None:
         if self._notification is not None:
-            try:
-                self._notification.show_model_unloaded()
-            except Exception as exc:
-                log.error("session: show_model_unloaded failed: %s", exc)
+            self._notify("show_model_unloaded")
 
     def _process(
         self,
@@ -703,15 +696,12 @@ class Session:
             return
         except Exception as exc:
             log.error("session: transcription failed: %s", exc)
-            if not self._stop_event.is_set():
-                with contextlib.suppress(Exception):
-                    self._feedback.play("error")
+            self._cue("error")
             return
         if abort.is_set():
             # Cancelled after transcription completed; drop the output.
             log.info("session: transcription result discarded after cancel")
             return
-        self._utterances_processed += 1
         text = result.text
         log.info("session: transcript received (%d chars)", len(text))
         speech_segments = []
@@ -723,9 +713,7 @@ class Session:
             ]
             if not speech_segments:
                 log.info("session: silence detected, skipping output")
-                if not self._stop_event.is_set():
-                    with contextlib.suppress(Exception):
-                        self._feedback.play("error")
+                self._cue("error")
                 return
             if len(speech_segments) != len(result.segments):
                 # Drop probable-silence segments from final output.
@@ -736,100 +724,17 @@ class Session:
                 )
         if not text or not text.strip():
             log.info("session: empty transcript, skipping output")
-            if not self._stop_event.is_set():
-                with contextlib.suppress(Exception):
-                    self._feedback.play("error")
+            self._cue("error")
             return
         if result.segments:
             text = self._formatter.format_batch(speech_segments)
         if not self._deliver_final(text):
-            if not self._stop_event.is_set():
-                with contextlib.suppress(Exception):
-                    self._feedback.play("error")
+            self._cue("error")
             return
-        if not self._stop_event.is_set():
-            with contextlib.suppress(Exception):
-                self._feedback.play("transcribe_done")
+        self._cue("transcribe_done")
 
     def _deliver_final(self, text: str) -> bool:
-        """Apply the output cap once, then perform one focused-app delivery."""
-        if not text:
-            return False
-        if self._cfg.output.injection_method == "clipboard_paste":
-            # Uncapped on purpose: the cap bounds per-character wtype
-            # synthesis, which pasting does not do. Here the clipboard is the
-            # transport rather than a recovery copy, so capping before the copy
-            # would drop the tail somewhere the user cannot reach it at all.
-            return self._deliver_paste(text)
-
-        max_chars = self._cfg.output.max_chars
-        injected = text
-        if len(text) > max_chars:
-            log.warning("session: truncating transcript from %d to %d chars", len(text), max_chars)
-            injected = text[:max_chars]
-
-        delivered = False
-        if self._caps.has_paste_trigger:
-            try:
-                # Incremental/batch formatters already applied whitespace and
-                # trailing-space policy; raw avoids preparing it a second time.
-                delivered = bool(self._injector.type_text(injected, raw=True))
-            except Exception as exc:
-                log.error("session: injector.type_text raised: %s", exc)
-        if self._cfg.clipboard.enabled and self._caps.has_wl_copy:
-            copied = False
-            try:
-                # The full transcript, not the capped one: the clipboard is the
-                # recovery path for whatever the cap kept from being typed.
-                # primary=True: this copy exists to be pasted by hand, and the
-                # paste chord reads the primary selection in some clients --
-                # populating only the regular clipboard would make Shift+Insert
-                # paste the user's old mouse selection instead.
-                copied = bool(self._clipboard.copy(text, primary=True))
-            except Exception as exc:
-                log.error("session: clipboard.copy raised: %s", exc)
-            # Without a paste trigger the clipboard is the only transport left.
-            # A successful copy still put the transcript within reach, so it is
-            # a delivery -- otherwise every dictation on a machine without
-            # wtype ends on the error cue.
-            delivered = delivered or copied
-        return delivered
-
-    def _deliver_paste(self, text: str) -> bool:
-        """Copy *text*, then fire the paste chord to deliver it at the cursor.
-
-        The chord pastes whatever the clipboard currently holds, so it is
-        fired only after a confirmed copy: on a failed copy it would paste
-        the user's previous clipboard content into their document. Config
-        validation guarantees clipboard.enabled in clipboard_paste mode, so
-        there is no flag to honour here -- the clipboard is the transport.
-
-        Returns True when the text reached the cursor. Callers must not play
-        the success cue on a False: the clipboard is the only transport, so a
-        failed copy means the utterance reached neither the cursor nor the
-        clipboard and the user has nothing to recover.
-        """
-        if not self._caps.has_wl_copy:
-            notify_failure("clipboard_paste mode requires wl-copy; nothing delivered")
-            return False
-        copied = False
-        try:
-            copied = self._clipboard.copy(text, primary=True)
-        except Exception as exc:
-            log.error("session: clipboard.copy raised: %s", exc)
-        if not copied:
-            notify_failure("clipboard copy failed; skipping paste to avoid pasting stale text")
-            return False
-        if not self._caps.has_paste_trigger:
-            # The text is on the clipboard, so it is recoverable by hand, but
-            # nothing reached the cursor -- not a success.
-            log.error("session: no paste trigger available; transcript left on the clipboard")
-            return False
-        try:
-            return bool(self._injector.paste())
-        except Exception as exc:
-            log.error("session: injector.paste raised: %s", exc)
-            return False
+        return self._delivery.deliver_final(text)
 
     def _drain(self, samples: np.ndarray) -> None:
         log.info("session: draining in-flight utterance on shutdown")
