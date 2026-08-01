@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     import pathlib
 
     from stenographer.config import VisualizerConfig
+    from stenographer.live import Preview
 
 logger = logging.getLogger(__name__)
 
@@ -280,12 +281,12 @@ class LayerShellOverlay:
     def show_levels(self, levels: list[float]) -> None:
         self._enqueue({"command": "levels", "levels": levels}, droppable=True)
 
-    def show_preview(self, stable: str, provisional: str) -> None:
+    def show_preview(self, preview: Preview) -> None:
         self._enqueue(
             {
                 "command": "preview",
-                "stable": stable,
-                "provisional": provisional,
+                "stable": preview.stable,
+                "provisional": preview.provisional,
             },
             droppable=False,
         )
@@ -619,10 +620,10 @@ class StatusIndicator:
     def publish_audio(self, samples: np.ndarray, sample_rate: int) -> None:
         self._analyzer.submit(samples, sample_rate)
 
-    def show_preview(self, stable: str, provisional: str) -> None:
+    def show_preview(self, preview: Preview) -> None:
         """Update only the GTK overlay; transcript text is never notified."""
         if self._overlay is not None:
-            self._overlay.show_preview(stable, provisional)
+            self._overlay.show_preview(preview)
 
     def clear_preview(self) -> None:
         if self._overlay is not None:

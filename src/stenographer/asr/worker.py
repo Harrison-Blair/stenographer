@@ -405,61 +405,13 @@ class ProcessWorker:
             assert process is not None
             commands.put(("job", job.sequence, job.samples, job.kind, job.beam_size))
             while True:
-                if self._force_stop.is_set():
-                    self._resolve_exception(job, CancelledError("worker stopped"))
-                    self._terminate_child()
-                    return
-                if self._job_cancelled(job) or (
-                    job.priority == "interim" and self._supersede.is_set()
-                ):
-                    self._resolve_exception(job, CancelledError("transcription cancelled"))
-                    self._terminate_child()
-                    return
-                if job.deadline is not None and time.monotonic() >= job.deadline:
-                    self._resolve_exception(job, ASRTimeoutError("ASR deadline expired"))
-                    self._terminate_child()
-                    return
-                if not process.is_alive():
-                    self._discard_child()
-                    self._resolve_exception(
-                        job, ASRProcessError("ASR child exited during inference")
-                    )
+                if self._abort_active_job(job, process):
                     return
                 try:
                     message = responses.get(timeout=0.02)
                 except queue.Empty:
                     continue
-                name = message[0]
-                if name in {"loaded", "unloaded", "load_error"}:
-                    self._handle_state_message(message)
-                    if name == "load_error":
-                        self._resolve_exception(
-                            job, self._load_error or ASRProcessError("load failed")
-                        )
-                        return
-                    continue
-                if len(message) < 2 or message[1] != job.sequence:
-                    continue
-                if name == "result":
-                    result = message[2]
-                    try:
-                        if job.on_segment is not None and isinstance(result, TranscriptionResult):
-                            for segment in result.segments:
-                                job.on_segment(segment)
-                        if not job.future.done():
-                            job.future.set_result(result)
-                    except Exception as exc:
-                        self._resolve_exception(job, exc)
-                    return
-                if name == "error":
-                    _name, _job_id, error_kind, detail = message
-                    if error_kind == "pathological":
-                        exc: Exception = PathologicalOutputError(detail)
-                    else:
-                        exc = ASRProcessError(detail)
-                    self._resolve_exception(job, exc)
-                    if error_kind != "pathological":
-                        self._terminate_child()
+                if self._dispatch_response(job, message):
                     return
         except Exception as exc:
             log.exception("ASR process coordinator failed")
@@ -469,6 +421,62 @@ class ProcessWorker:
             with self._state_lock:
                 self._active = None
                 self._supersede.clear()
+
+    def _abort_active_job(self, job: _ProcessJob, process: multiprocessing.Process) -> bool:
+        """Apply the per-iteration abort guards; return True when a guard has
+        resolved the job and the poll loop should exit."""
+        if self._force_stop.is_set():
+            self._resolve_exception(job, CancelledError("worker stopped"))
+            self._terminate_child()
+            return True
+        if self._job_cancelled(job) or (job.priority == "interim" and self._supersede.is_set()):
+            self._resolve_exception(job, CancelledError("transcription cancelled"))
+            self._terminate_child()
+            return True
+        if job.deadline is not None and time.monotonic() >= job.deadline:
+            self._resolve_exception(job, ASRTimeoutError("ASR deadline expired"))
+            self._terminate_child()
+            return True
+        if not process.is_alive():
+            self._discard_child()
+            self._resolve_exception(job, ASRProcessError("ASR child exited during inference"))
+            return True
+        return False
+
+    def _dispatch_response(self, job: _ProcessJob, message) -> bool:
+        """Route one child response for the active job; return True when the
+        job is resolved and the poll loop should exit."""
+        name = message[0]
+        if name in {"loaded", "unloaded", "load_error"}:
+            self._handle_state_message(message)
+            if name == "load_error":
+                self._resolve_exception(job, self._load_error or ASRProcessError("load failed"))
+                return True
+            return False
+        if len(message) < 2 or message[1] != job.sequence:
+            return False
+        if name == "result":
+            result = message[2]
+            try:
+                if job.on_segment is not None and isinstance(result, TranscriptionResult):
+                    for segment in result.segments:
+                        job.on_segment(segment)
+                if not job.future.done():
+                    job.future.set_result(result)
+            except Exception as exc:
+                self._resolve_exception(job, exc)
+            return True
+        if name == "error":
+            _name, _job_id, error_kind, detail = message
+            if error_kind == "pathological":
+                exc: Exception = PathologicalOutputError(detail)
+            else:
+                exc = ASRProcessError(detail)
+            self._resolve_exception(job, exc)
+            if error_kind != "pathological":
+                self._terminate_child()
+            return True
+        return False
 
     def _job_cancelled(self, job: _ProcessJob) -> bool:
         return (

@@ -12,7 +12,7 @@ import numpy as np
 import stenographer.session as session_module
 from stenographer.asr.model import SegmentInfo, TranscriptionResult
 from stenographer.config import Config
-from stenographer.live import IncrementalResult
+from stenographer.live import IncrementalResult, Preview
 from stenographer.session import Session, _LiveItem
 
 
@@ -241,10 +241,10 @@ def test_preview_updates_are_generation_guarded() -> None:
     session, _components = _make_session(notification=notification)
     session._preview_generation = 4
 
-    session._publish_preview(3, "old", " tail")
-    session._publish_preview(4, "new", " words")
+    session._publish_preview(3, Preview("old", " tail"))
+    session._publish_preview(4, Preview("new", " words"))
 
-    notification.show_preview.assert_called_once_with("new", " words")
+    notification.show_preview.assert_called_once_with(Preview("new", " words"))
 
 
 def test_old_utterance_cannot_clear_new_recordings_preview() -> None:
@@ -274,7 +274,7 @@ def test_preview_consumer_failure_does_not_block_final_output() -> None:
     notification.show_preview.side_effect = RuntimeError("overlay pipe failed")
     session, components = _make_session(notification=notification)
     session._preview_generation = 1
-    session._publish_preview(1, "Hello", " world")
+    session._publish_preview(1, Preview("Hello", " world"))
 
     assert session._deliver_final("Hello world ")
     components["injector"].type_text.assert_called_once()

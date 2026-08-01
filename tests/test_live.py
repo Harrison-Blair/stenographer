@@ -110,7 +110,7 @@ def _make_driver(
             append_trailing_space=cfg.output.append_trailing_space,
         ),
         abort=threading.Event(),
-        on_preview=(lambda stable, tail: previews.append((stable, tail)))
+        on_preview=(lambda preview: previews.append((preview.stable, preview.provisional)))
         if previews is not None
         else None,
     )

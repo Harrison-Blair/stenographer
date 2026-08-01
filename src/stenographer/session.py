@@ -17,7 +17,7 @@ import numpy as np
 from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.asr.worker import CancelledError
 from stenographer.errors import notify_failure
-from stenographer.live import IncrementalDriver, IncrementalResult
+from stenographer.live import IncrementalDriver, IncrementalResult, Preview
 from stenographer.output.formatter import HeuristicFormatter
 
 if TYPE_CHECKING:
@@ -399,9 +399,7 @@ class Session:
                         append_trailing_space=self._cfg.output.append_trailing_space,
                     ),
                     abort=self._recording_abort,
-                    on_preview=lambda stable, provisional: self._publish_preview(
-                        preview_generation, stable, provisional
-                    ),
+                    on_preview=lambda preview: self._publish_preview(preview_generation, preview),
                 )
                 self._recorder.start(
                     on_partial=streamer.signal_partial,
@@ -534,13 +532,13 @@ class Session:
             with contextlib.suppress(Exception):
                 self._feedback.play("error" if degraded else "transcribe_done")
 
-    def _publish_preview(self, generation: int, stable: str, provisional: str) -> None:
+    def _publish_preview(self, generation: int, preview: Preview) -> None:
         """Publish only if this recording still owns the HUD preview."""
         with self._lock:
             if generation != self._preview_generation or self._notification is None:
                 return
             try:
-                self._notification.show_preview(stable, provisional)
+                self._notification.show_preview(preview)
             except Exception as exc:
                 log.debug("session: preview update failed: %s", exc)
 

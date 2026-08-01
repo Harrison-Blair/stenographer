@@ -14,6 +14,7 @@ import pytest
 
 from stenographer import visualizer
 from stenographer.config import VisualizerConfig
+from stenographer.live import Preview
 from stenographer.visualizer import (
     LayerShellOverlay,
     SpectrumAnalyzer,
@@ -114,7 +115,7 @@ def test_overlay_preview_and_clear_use_json_lines_protocol() -> None:
     process.stdin.write.side_effect = write
     overlay = _started_overlay(process)
 
-    overlay.show_preview("Stable", " tail")
+    overlay.show_preview(Preview("Stable", " tail"))
     assert preview_written.wait(timeout=5.0)
     overlay.clear_preview()
     overlay.close()  # joins the writer thread, so every message has been sent
@@ -164,7 +165,7 @@ def test_overlay_send_never_blocks_on_a_wedged_helper_pipe() -> None:
     def publish() -> None:
         for _ in range(20):
             overlay.show_levels([0.1] * 16)
-            overlay.show_preview("stable", " tail")
+            overlay.show_preview(Preview("stable", " tail"))
         overlay.show_state("listening")
         returned.set()
 
@@ -194,7 +195,7 @@ def test_overlay_coalesces_previews_when_helper_pipe_is_wedged() -> None:
     overlay.show_state("listening")
     assert wedged.wait(timeout=5.0)
     for index in range(100):
-        overlay.show_preview(f"stable transcript {index}", f" tail {index}")
+        overlay.show_preview(Preview(f"stable transcript {index}", f" tail {index}"))
 
     with overlay._condition:
         previews = [
@@ -235,7 +236,7 @@ def test_overlay_drops_level_frames_but_never_state_or_preview() -> None:
     assert wedged.wait(timeout=5.0)
     for _ in range(50):
         overlay.show_levels([0.5] * 16)
-    overlay.show_preview("stable", " tail")
+    overlay.show_preview(Preview("stable", " tail"))
     overlay.show_state("transcribing")
     release.set()
     overlay.close()

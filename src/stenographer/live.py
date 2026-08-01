@@ -14,6 +14,7 @@ import queue
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
@@ -85,6 +86,14 @@ _HALLUCINATION_PHRASES = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class Preview:
+    """The append-only committed prefix plus the revisable provisional tail."""
+
+    stable: str
+    provisional: str
+
+
 class IncrementalResult(str):
     """Final text plus whether ASR recovery degraded this utterance."""
 
@@ -112,7 +121,7 @@ class IncrementalDriver:
         transcriber: StreamingTranscriber,
         formatter: HeuristicFormatter,
         abort: threading.Event,
-        on_preview: Callable[[str, str], None] | None = None,
+        on_preview: Callable[[Preview], None] | None = None,
     ) -> None:
         self._cfg = cfg
         self._recorder = recorder
@@ -426,26 +435,29 @@ class IncrementalDriver:
     def _publish_preview(self, *, final: bool = False) -> None:
         if self._on_preview is None:
             return
-        stable = self._transcript
-        if final:
-            provisional = ""
-        else:
-            formatter = HeuristicFormatter(
-                self._cfg.formatting,
-                append_trailing_space=False,
-            )
-            all_words = self._transcriber.committed_words + self._transcriber.provisional_words
-            complete = formatter.format_batch(all_words)
-            stable_formatter = HeuristicFormatter(
-                self._cfg.formatting,
-                append_trailing_space=False,
-            )
-            stable = stable_formatter.format_batch(self._transcriber.committed_words)
-            provisional = complete[len(stable) :]
+        preview = self._compute_preview(final=final)
         try:
-            self._on_preview(stable, provisional)
+            self._on_preview(preview)
         except Exception as exc:
             log.debug("incremental: preview consumer failed: %s", exc)
+
+    def _compute_preview(self, *, final: bool) -> Preview:
+        """Split the current transcript into its stable prefix and revisable tail."""
+        if final:
+            return Preview(stable=self._transcript, provisional="")
+        formatter = HeuristicFormatter(
+            self._cfg.formatting,
+            append_trailing_space=False,
+        )
+        all_words = self._transcriber.committed_words + self._transcriber.provisional_words
+        complete = formatter.format_batch(all_words)
+        stable_formatter = HeuristicFormatter(
+            self._cfg.formatting,
+            append_trailing_space=False,
+        )
+        stable = stable_formatter.format_batch(self._transcriber.committed_words)
+        provisional = complete[len(stable) :]
+        return Preview(stable=stable, provisional=provisional)
 
     def _maybe_trim(self, window_seconds: float, tail_silence_seconds: float) -> None:
         """Trim the decode window at a safe committed boundary.
