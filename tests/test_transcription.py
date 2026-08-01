@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
-import concurrent.futures
-
 import numpy as np
 import pytest
 from huggingface_hub import try_to_load_from_cache
 
-from stenographer.asr import Model, TranscriptionResult, Worker
+from stenographer.asr import Model, TranscriptionResult
 from stenographer.config import AsrConfig
 
 MODEL = "Systran/faster-whisper-large-v3"
@@ -61,18 +59,3 @@ def test_transcribe_empty(model: Model) -> None:
     samples = np.zeros(0, dtype=np.float32)
     result = model.transcribe(samples, "en", 1)
     assert isinstance(result, TranscriptionResult)
-
-
-def test_worker(model: Model) -> None:
-    worker = Worker(model)
-    worker.start()
-    try:
-        futures = [worker.submit(np.zeros(16000, dtype=np.float32)) for _ in range(3)]
-        _done, not_done = concurrent.futures.wait(futures, timeout=120.0)
-        assert not not_done, f"{len(not_done)} futures did not complete in time"
-        for fut in futures:
-            result = fut.result(timeout=5.0)
-            assert isinstance(result, TranscriptionResult)
-    finally:
-        worker.stop(timeout=30.0)
-    assert worker.is_running is False

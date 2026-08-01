@@ -45,32 +45,10 @@ class Injector:
             text = self._prepare(text)
         if not text:
             return True
-        try:
-            subprocess.run(
-                ["wtype", "--", text],
-                check=True,
-                timeout=5.0,
-                capture_output=True,
-            )
-        except (
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            FileNotFoundError,
-        ) as exc:
-            rc = exc.returncode if isinstance(exc, subprocess.CalledProcessError) else -1
-            stderr = (
-                exc.stderr.decode("utf-8", "replace")
-                if isinstance(exc, subprocess.CalledProcessError) and exc.stderr
-                else ""
-            )
-            logger.error(
-                "output.inject: wtype failed (rc=%s, stderr=%s); falling back to clipboard (%s)",
-                rc,
-                stderr,
-                type(exc).__name__,
-            )
-            return False
-        return True
+        return self._run_wtype(
+            ["wtype", "--", text],
+            "output.inject: wtype failed (rc=%s, stderr=%s); falling back to clipboard (%s)",
+        )
 
     def paste(self) -> bool:
         """Simulate Shift+Insert via ``wtype``. Return ``True`` on success.
@@ -85,9 +63,21 @@ class Injector:
         if not self._available:
             logger.warning("output.inject: wtype not available; cannot paste")
             return False
+        return self._run_wtype(
+            ["wtype", "-M", "shift", "-k", "Insert", "-m", "shift"],
+            "output.inject: wtype paste failed (rc=%s, stderr=%s, exc=%s)",
+        )
+
+    def _run_wtype(self, argv: list[str], error_msg: str) -> bool:
+        """Run ``wtype`` with *argv*; log *error_msg* and return False on failure.
+
+        *error_msg* is a ``logging`` format string with three ``%s`` fields:
+        the return code, decoded stderr, and the exception class name, in that
+        order.
+        """
         try:
             subprocess.run(
-                ["wtype", "-M", "shift", "-k", "Insert", "-m", "shift"],
+                argv,
                 check=True,
                 timeout=5.0,
                 capture_output=True,
@@ -103,12 +93,7 @@ class Injector:
                 if isinstance(exc, subprocess.CalledProcessError) and exc.stderr
                 else ""
             )
-            logger.error(
-                "output.inject: wtype paste failed (rc=%s, stderr=%s, exc=%s)",
-                rc,
-                stderr,
-                type(exc).__name__,
-            )
+            logger.error(error_msg, rc, stderr, type(exc).__name__)
             return False
         return True
 

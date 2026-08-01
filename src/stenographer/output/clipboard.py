@@ -72,28 +72,5 @@ class ClipboardManager:
                 return False
         return True
 
-    def read(self) -> str | None:
-        """Read the current clipboard text via ``wl-paste``. Used by tests."""
-        if not self._available:
-            return None
-        try:
-            proc = subprocess.run(
-                ["wl-paste", "--no-newline"],
-                check=True,
-                capture_output=True,
-                timeout=10.0,
-            )
-        except (
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            FileNotFoundError,
-        ) as exc:
-            logger.debug("output.clipboard: wl-paste failed: %s", exc)
-            return None
-        text = proc.stdout.decode("utf-8")
-        if text.endswith("\n"):
-            text = text[:-1]
-        return text
-
     def close(self) -> None:
         return None

@@ -26,7 +26,7 @@ from stenographer.output.formatter import HeuristicFormatter
 if TYPE_CHECKING:
     from stenographer.asr.model import WordInfo
     from stenographer.asr.streaming import StreamingTranscriber
-    from stenographer.asr.worker import Worker
+    from stenographer.asr.worker import ProcessWorker
     from stenographer.audio.capture import Recorder
     from stenographer.config import Config
 
@@ -108,7 +108,7 @@ class IncrementalDriver:
         *,
         cfg: Config,
         recorder: Recorder,
-        worker: Worker,
+        worker: ProcessWorker,
         transcriber: StreamingTranscriber,
         formatter: HeuristicFormatter,
         abort: threading.Event,

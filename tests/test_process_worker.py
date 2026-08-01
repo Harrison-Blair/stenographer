@@ -143,6 +143,78 @@ def test_model_state_callbacks_cross_process_boundary() -> None:
         worker.stop(timeout=2)
 
 
+def test_job_cancel_event_before_pickup_is_rejected() -> None:
+    worker = _worker()
+    try:
+        cancel = threading.Event()
+        cancel.set()
+        future = worker.submit_words(_samples(2), cancel_event=cancel, priority="final")
+        with pytest.raises(CancelledError):
+            future.result(timeout=2)
+    finally:
+        worker.stop(timeout=2)
+
+
+def test_job_cancel_event_aborts_inflight_and_next_job_runs() -> None:
+    worker = _worker()
+    try:
+        cancel = threading.Event()
+        blocked = worker.submit_words(
+            _samples(1), cancel_event=cancel, deadline=time.monotonic() + 5, priority="final"
+        )
+        time.sleep(0.1)
+        cancel.set()
+        with pytest.raises(CancelledError):
+            blocked.result(timeout=2)
+        recovered = worker.submit_words(_samples(2), priority="final")
+        assert [word.word for word in recovered.result(timeout=3)] == [" ok"]
+    finally:
+        worker.stop(timeout=2)
+
+
+def test_final_job_survives_global_cancel() -> None:
+    worker = _worker()
+    try:
+        worker.cancel()
+        future = worker.submit_words(_samples(2), ignore_global_cancel=True, priority="final")
+        assert [word.word for word in future.result(timeout=3)] == [" ok"]
+    finally:
+        worker.stop(timeout=2)
+
+
+def test_global_cancel_still_aborts_unflagged_jobs() -> None:
+    worker = _worker()
+    try:
+        worker.cancel()
+        future = worker.submit_words(_samples(2), priority="final")
+        with pytest.raises(CancelledError):
+            future.result(timeout=2)
+    finally:
+        worker.stop(timeout=2)
+
+
+def test_ignore_global_cancel_still_honors_cancel_event() -> None:
+    worker = _worker()
+    try:
+        cancel = threading.Event()
+        cancel.set()
+        future = worker.submit_words(
+            _samples(2), cancel_event=cancel, ignore_global_cancel=True, priority="final"
+        )
+        with pytest.raises(CancelledError):
+            future.result(timeout=2)
+    finally:
+        worker.stop(timeout=2)
+
+
+def test_submit_after_stop_is_rejected() -> None:
+    worker = _worker()
+    worker.stop(timeout=2)
+    future = worker.submit_words(_samples(2), priority="final")
+    with pytest.raises(CancelledError):
+        future.result(timeout=2)
+
+
 class _GrowingRecorder:
     def __init__(self, windows: list[np.ndarray]) -> None:
         self._windows = windows

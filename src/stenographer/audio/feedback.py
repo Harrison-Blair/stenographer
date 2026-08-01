@@ -56,7 +56,6 @@ class Feedback:
             return
         path = self._resolve_path(name)
         if path is None:
-            logger.warning("cue %r: no asset found; skipping", name)
             return
         if self._player == "pw-play":
             cmd = ["pw-play", f"--volume={self._volume:.2f}", str(path)]

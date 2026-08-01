@@ -138,44 +138,6 @@ def test_copy_file_not_found_returns_false() -> None:
         assert mgr.copy("hello") is False
 
 
-def test_read_success_strips_trailing_newline() -> None:
-    mgr = ClipboardManager(available=True)
-    with patch("stenographer.output.clipboard.subprocess.run") as run:
-        run.return_value = _completed(stdout=b"clipboard contents\n")
-        assert mgr.read() == "clipboard contents"
-        run.assert_called_once()
-        call = run.call_args
-        assert call.args[0] == ["wl-paste", "--no-newline"]
-        assert call.kwargs["check"] is True
-        assert call.kwargs["capture_output"] is True
-        assert call.kwargs["timeout"] == 10.0
-
-
-def test_read_success_without_trailing_newline() -> None:
-    mgr = ClipboardManager(available=True)
-    with patch("stenographer.output.clipboard.subprocess.run") as run:
-        run.return_value = _completed(stdout=b"clipboard contents")
-        assert mgr.read() == "clipboard contents"
-
-
-def test_read_unavailable_returns_none() -> None:
-    mgr = ClipboardManager(available=False)
-    with patch("stenographer.output.clipboard.subprocess.run") as run:
-        assert mgr.read() is None
-        run.assert_not_called()
-
-
-def test_read_called_process_error_returns_none() -> None:
-    mgr = ClipboardManager(available=True)
-    with patch("stenographer.output.clipboard.subprocess.run") as run:
-        run.side_effect = subprocess.CalledProcessError(
-            returncode=1,
-            cmd=["wl-paste"],
-            stderr=b"oops",
-        )
-        assert mgr.read() is None
-
-
 def test_close_is_noop() -> None:
     mgr = ClipboardManager(available=True)
     assert mgr.close() is None
@@ -274,9 +236,6 @@ def test_clipboard_copy_real_wl_copy_round_trip() -> None:
         assert _read_selection(primary=True) == token, (
             "primary selection not populated -- copy() never reached ['wl-copy', '--primary']"
         )
-        # Also exercise ClipboardManager.read() against the real wl-paste,
-        # preserving the coverage of the superseded test_real_wl_copy_round_trip.
-        assert mgr.read() == token
     finally:
         _restore_selection(saved_regular, primary=False)
         _restore_selection(saved_primary, primary=True)

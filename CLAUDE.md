@@ -85,9 +85,9 @@ The component modules it wires:
 - **`audio/`** — `capture.py` (`Recorder`) captures mic audio via
   `sounddevice`/PortAudio with silence detection; `feedback.py` plays the WAV
   cues in `assets/sounds/` via `pw-play`/`paplay`.
-- **`asr/`** — `model.py` wraps faster-whisper (`Model`, plus `LazyModel` which
-  loads on first use and unloads after idle); `worker.py` runs transcription
-  off the main thread with cancellation support: one batch job per utterance
+- **`asr/`** — `model.py` wraps faster-whisper (`Model`); `worker.py` runs
+  transcription in a spawned child process (`ProcessWorker`) off the main thread
+  with cancellation support and idle model unload: one batch job per utterance
   (`submit`) or one word-timestamped re-decode (`submit_words`);
   `streaming.py` is the **pure** LocalAgreement-N committer — a word joins the
   committed prefix only after N consecutive re-decodes agree on it; that prefix

@@ -333,20 +333,17 @@ _NULL_VALUE_RE = re.compile(r'(?<=\s=\s)null(?=[^\w"]|\Z)', re.MULTILINE)
 def _build_hotkey(
     table: dict[str, Any], path: pathlib.Path, *, cancel_explicit: bool = False
 ) -> HotkeyConfig:
-    binding = _expect_str(table, "binding", "hotkey.binding", path)
+    section = _Section(table, "hotkey", path)
+    binding = section.str("binding")
     if not binding:
         raise ConfigError(path, "hotkey.binding", "must be a non-empty string")
-    threshold = _expect_number(
-        table, "toggle_threshold_seconds", "hotkey.toggle_threshold_seconds", path
-    )
+    threshold = section.number("toggle_threshold_seconds")
     if not (0 < threshold <= 5):
         raise ConfigError(path, "hotkey.toggle_threshold_seconds", "must satisfy 0 < x <= 5")
-    window = _expect_number(
-        table, "double_tap_window_seconds", "hotkey.double_tap_window_seconds", path
-    )
+    window = section.number("double_tap_window_seconds")
     if not (0 < window <= 2):
         raise ConfigError(path, "hotkey.double_tap_window_seconds", "must satisfy 0 < x <= 2")
-    cancel_binding = _expect_str(table, "cancel_binding", "hotkey.cancel_binding", path)
+    cancel_binding = section.str("cancel_binding")
     # Deferred import to avoid a hard evdev dependency at config-module
     # import time (mirrors how the main binding is parsed in cli.py).
     from stenographer.hotkey.binding import HotkeyBinding
@@ -379,8 +376,8 @@ def _build_hotkey(
                 shared,
             )
             cancel_binding = ""
-    device = _expect_optional_path(table, "device", "hotkey.device", path)
-    trigger_mode = _expect_str(table, "trigger_mode", "hotkey.trigger_mode", path)
+    device = section.optional_path("device")
+    trigger_mode = section.str("trigger_mode")
     if trigger_mode not in ALLOWED_TRIGGER_MODES:
         raise ConfigError(
             path, "hotkey.trigger_mode", f"must be one of {sorted(ALLOWED_TRIGGER_MODES)}"
@@ -396,23 +393,22 @@ def _build_hotkey(
 
 
 def _build_audio(table: dict[str, Any], path: pathlib.Path) -> AudioConfig:
-    sample_rate = _expect_int(table, "sample_rate", "audio.sample_rate", path)
+    section = _Section(table, "audio", path)
+    sample_rate = section.int("sample_rate")
     if sample_rate not in ALLOWED_SAMPLE_RATES:
         raise ConfigError(
             path,
             "audio.sample_rate",
             f"must be one of {sorted(ALLOWED_SAMPLE_RATES)}",
         )
-    frames_per_buffer = _expect_int(table, "frames_per_buffer", "audio.frames_per_buffer", path)
+    frames_per_buffer = section.int("frames_per_buffer")
     if not (64 <= frames_per_buffer <= 8192):
         raise ConfigError(path, "audio.frames_per_buffer", "must satisfy 64 <= x <= 8192")
-    input_device = _expect_optional_str(table, "input_device", "audio.input_device", path)
-    max_recording_seconds = _expect_int(
-        table, "max_recording_seconds", "audio.max_recording_seconds", path
-    )
+    input_device = section.optional_str("input_device")
+    max_recording_seconds = section.int("max_recording_seconds")
     if not (0 <= max_recording_seconds <= 86400):
         raise ConfigError(path, "audio.max_recording_seconds", "must satisfy 0 <= x <= 86400")
-    min_speech_rms = _expect_number(table, "min_speech_rms", "audio.min_speech_rms", path)
+    min_speech_rms = section.number("min_speech_rms")
     if not (0.0 <= min_speech_rms <= 1.0):
         raise ConfigError(path, "audio.min_speech_rms", "must satisfy 0.0 <= x <= 1.0")
     return AudioConfig(
@@ -425,33 +421,34 @@ def _build_audio(table: dict[str, Any], path: pathlib.Path) -> AudioConfig:
 
 
 def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
-    model = _expect_str(table, "model", "asr.model", path)
-    language = _expect_str(table, "language", "asr.language", path)
-    beam_size = _expect_int(table, "beam_size", "asr.beam_size", path)
+    section = _Section(table, "asr", path)
+    model = section.str("model")
+    language = section.str("language")
+    beam_size = section.int("beam_size")
     if not (1 <= beam_size <= 10):
         raise ConfigError(path, "asr.beam_size", "must satisfy 1 <= x <= 10")
-    compute_type = _expect_str(table, "compute_type", "asr.compute_type", path)
+    compute_type = section.str("compute_type")
     if compute_type not in ALLOWED_COMPUTE_TYPES:
         raise ConfigError(
             path,
             "asr.compute_type",
             f"must be one of {sorted(ALLOWED_COMPUTE_TYPES)}",
         )
-    silence_threshold = _expect_number(table, "silence_threshold", "asr.silence_threshold", path)
+    silence_threshold = section.number("silence_threshold")
     if not (0.0 <= silence_threshold <= 1.0):
         raise ConfigError(path, "asr.silence_threshold", "must satisfy 0.0 <= x <= 1.0")
-    vad_filter = _expect_bool(table, "vad_filter", "asr.vad_filter", path)
-    max_new_tokens = _expect_int(table, "max_new_tokens", "asr.max_new_tokens", path)
+    vad_filter = section.bool("vad_filter")
+    max_new_tokens = section.int("max_new_tokens")
     if not (1 <= max_new_tokens <= 448):
         raise ConfigError(path, "asr.max_new_tokens", "must satisfy 1 <= x <= 448")
-    mode = _expect_str(table, "mode", "asr.mode", path)
+    mode = section.str("mode")
     if mode not in ALLOWED_ASR_MODES:
         raise ConfigError(path, "asr.mode", f"must be one of {sorted(ALLOWED_ASR_MODES)}")
-    idle_unload_seconds = _expect_int(table, "idle_unload_seconds", "asr.idle_unload_seconds", path)
+    idle_unload_seconds = section.int("idle_unload_seconds")
     if not (0 <= idle_unload_seconds <= 86400):
         raise ConfigError(path, "asr.idle_unload_seconds", "must satisfy 0 <= x <= 86400")
-    hotwords = _expect_optional_str(table, "hotwords", "asr.hotwords", path)
-    initial_prompt = _expect_optional_str(table, "initial_prompt", "asr.initial_prompt", path)
+    hotwords = section.optional_str("hotwords")
+    initial_prompt = section.optional_str("initial_prompt")
     return AsrConfig(
         model=model,
         language=language,
@@ -468,23 +465,25 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
 
 
 def _build_feedback(table: dict[str, Any], path: pathlib.Path) -> FeedbackConfig:
-    volume = _expect_number(table, "volume", "feedback.volume", path)
+    section = _Section(table, "feedback", path)
+    volume = section.number("volume")
     if not (0.0 <= volume <= 1.0):
         raise ConfigError(path, "feedback.volume", "must satisfy 0.0 <= x <= 1.0")
     cues = _build_cues(table.get("cues", {}), path)
-    mute = _expect_bool(table, "mute", "feedback.mute", path)
+    mute = section.bool("mute")
     return FeedbackConfig(volume=volume, cues=cues, mute=mute)
 
 
 def _build_visualizer(table: dict[str, Any], path: pathlib.Path) -> VisualizerConfig:
-    enabled = _expect_bool(table, "enabled", "visualizer.enabled", path)
-    frequency_bands = _expect_int(table, "frequency_bands", "visualizer.frequency_bands", path)
+    section = _Section(table, "visualizer", path)
+    enabled = section.bool("enabled")
+    frequency_bands = section.int("frequency_bands")
     if not (6 <= frequency_bands <= 32):
         raise ConfigError(path, "visualizer.frequency_bands", "must satisfy 6 <= x <= 32")
-    min_frequency = _expect_number(table, "min_frequency", "visualizer.min_frequency", path)
+    min_frequency = section.number("min_frequency")
     if not (20 <= min_frequency <= 2000):
         raise ConfigError(path, "visualizer.min_frequency", "must satisfy 20 <= x <= 2000")
-    max_frequency = _expect_number(table, "max_frequency", "visualizer.max_frequency", path)
+    max_frequency = section.number("max_frequency")
     if not (1000 <= max_frequency <= 24000):
         raise ConfigError(path, "visualizer.max_frequency", "must satisfy 1000 <= x <= 24000")
     if max_frequency <= min_frequency:
@@ -493,7 +492,7 @@ def _build_visualizer(table: dict[str, Any], path: pathlib.Path) -> VisualizerCo
             "visualizer.max_frequency",
             "must be greater than visualizer.min_frequency",
         )
-    margin_bottom = _expect_int(table, "margin_bottom", "visualizer.margin_bottom", path)
+    margin_bottom = section.int("margin_bottom")
     if not (0 <= margin_bottom <= 500):
         raise ConfigError(path, "visualizer.margin_bottom", "must satisfy 0 <= x <= 500")
     return VisualizerConfig(
@@ -533,7 +532,8 @@ def _build_cues(raw: Any, path: pathlib.Path) -> dict[str, str | None]:
 
 
 def _build_output(table: dict[str, Any], path: pathlib.Path) -> OutputConfig:
-    injection_method = _expect_str(table, "injection_method", "output.injection_method", path)
+    section = _Section(table, "output", path)
+    injection_method = section.str("injection_method")
     renamed = _RENAMED_INJECTION_METHODS.get(injection_method)
     if renamed is not None:
         # Both values were renamed in 0.9.2. Rejecting them would hard-fail
@@ -549,10 +549,8 @@ def _build_output(table: dict[str, Any], path: pathlib.Path) -> OutputConfig:
             "output.injection_method",
             f"must be one of {sorted(ALLOWED_INJECTION_METHODS)}",
         )
-    append_trailing_space = _expect_bool(
-        table, "append_trailing_space", "output.append_trailing_space", path
-    )
-    max_chars = _expect_int(table, "max_chars", "output.max_chars", path)
+    append_trailing_space = section.bool("append_trailing_space")
+    max_chars = section.int("max_chars")
     if not (1 <= max_chars <= 100000):
         raise ConfigError(path, "output.max_chars", "must satisfy 1 <= x <= 100000")
     return OutputConfig(
@@ -563,35 +561,28 @@ def _build_output(table: dict[str, Any], path: pathlib.Path) -> OutputConfig:
 
 
 def _build_clipboard(table: dict[str, Any], path: pathlib.Path) -> ClipboardConfig:
-    enabled = _expect_bool(table, "enabled", "clipboard.enabled", path)
+    enabled = _Section(table, "clipboard", path).bool("enabled")
     return ClipboardConfig(enabled=enabled)
 
 
 def _build_incremental(table: dict[str, Any], path: pathlib.Path) -> IncrementalConfig:
-    min_chunk_seconds = _expect_number(
-        table, "min_chunk_seconds", "incremental.min_chunk_seconds", path
-    )
+    section = _Section(table, "incremental", path)
+    min_chunk_seconds = section.number("min_chunk_seconds")
     if not (0.25 <= min_chunk_seconds <= 5):
         raise ConfigError(path, "incremental.min_chunk_seconds", "must satisfy 0.25 <= x <= 5")
-    agreement_n = _expect_int(table, "agreement_n", "incremental.agreement_n", path)
+    agreement_n = section.int("agreement_n")
     if not (2 <= agreement_n <= 4):
         raise ConfigError(path, "incremental.agreement_n", "must satisfy 2 <= x <= 4")
-    beam_size = _expect_optional_int(table, "beam_size", "incremental.beam_size", path)
+    beam_size = section.optional_int("beam_size")
     if beam_size is not None and not (1 <= beam_size <= 10):
         raise ConfigError(path, "incremental.beam_size", "must be null or satisfy 1 <= x <= 10")
-    max_buffer_seconds = _expect_number(
-        table, "max_buffer_seconds", "incremental.max_buffer_seconds", path
-    )
+    max_buffer_seconds = section.number("max_buffer_seconds")
     if not (5 <= max_buffer_seconds <= 120):
         raise ConfigError(path, "incremental.max_buffer_seconds", "must satisfy 5 <= x <= 120")
-    interim_timeout_seconds = _expect_number(
-        table, "interim_timeout_seconds", "incremental.interim_timeout_seconds", path
-    )
+    interim_timeout_seconds = section.number("interim_timeout_seconds")
     if not (1 <= interim_timeout_seconds <= 60):
         raise ConfigError(path, "incremental.interim_timeout_seconds", "must satisfy 1 <= x <= 60")
-    release_timeout_seconds = _expect_number(
-        table, "release_timeout_seconds", "incremental.release_timeout_seconds", path
-    )
+    release_timeout_seconds = section.number("release_timeout_seconds")
     if not (1 <= release_timeout_seconds <= 60):
         raise ConfigError(path, "incremental.release_timeout_seconds", "must satisfy 1 <= x <= 60")
     return IncrementalConfig(
@@ -605,17 +596,12 @@ def _build_incremental(table: dict[str, Any], path: pathlib.Path) -> Incremental
 
 
 def _build_formatting(table: dict[str, Any], path: pathlib.Path) -> FormattingConfig:
-    paragraph_pause_seconds = _expect_number(
-        table, "paragraph_pause_seconds", "formatting.paragraph_pause_seconds", path
-    )
+    section = _Section(table, "formatting", path)
+    paragraph_pause_seconds = section.number("paragraph_pause_seconds")
     if not (0 <= paragraph_pause_seconds <= 10):
         raise ConfigError(path, "formatting.paragraph_pause_seconds", "must satisfy 0 <= x <= 10")
-    capitalize_sentences = _expect_bool(
-        table, "capitalize_sentences", "formatting.capitalize_sentences", path
-    )
-    normalize_spacing = _expect_bool(
-        table, "normalize_spacing", "formatting.normalize_spacing", path
-    )
+    capitalize_sentences = section.bool("capitalize_sentences")
+    normalize_spacing = section.bool("normalize_spacing")
     return FormattingConfig(
         paragraph_pause_seconds=paragraph_pause_seconds,
         capitalize_sentences=capitalize_sentences,
@@ -624,32 +610,33 @@ def _build_formatting(table: dict[str, Any], path: pathlib.Path) -> FormattingCo
 
 
 def _build_update(table: dict[str, Any], path: pathlib.Path) -> UpdateConfig:
-    check_on_startup = _expect_bool(table, "check_on_startup", "update.check_on_startup", path)
-    repo = _expect_str(table, "repo", "update.repo", path)
+    section = _Section(table, "update", path)
+    check_on_startup = section.bool("check_on_startup")
+    repo = section.str("repo")
     if "/" not in repo:
         raise ConfigError(path, "update.repo", f"must be OWNER/REPO, got {repo!r}")
-    channel = _expect_str(table, "channel", "update.channel", path)
+    channel = section.str("channel")
     if channel not in ALLOWED_UPDATE_CHANNELS:
         raise ConfigError(
             path,
             "update.channel",
             f"must be one of {sorted(ALLOWED_UPDATE_CHANNELS)}",
         )
-    base_url = _expect_str(table, "base_url", "update.base_url", path)
+    base_url = section.str("base_url")
     if not base_url.startswith(("http://", "https://")):
         raise ConfigError(
             path,
             "update.base_url",
             f"must be an http(s) URL, got {base_url!r}",
         )
-    asset_pattern = _expect_str(table, "asset_pattern", "update.asset_pattern", path)
+    asset_pattern = section.str("asset_pattern")
     if "{version}" not in asset_pattern:
         raise ConfigError(
             path,
             "update.asset_pattern",
             "must contain the literal '{version}'",
         )
-    timeout_seconds = _expect_int(table, "timeout_seconds", "update.timeout_seconds", path)
+    timeout_seconds = section.int("timeout_seconds")
     if not (1 <= timeout_seconds <= 600):
         raise ConfigError(path, "update.timeout_seconds", "must satisfy 1 <= x <= 600")
     return UpdateConfig(
@@ -662,65 +649,91 @@ def _build_update(table: dict[str, Any], path: pathlib.Path) -> UpdateConfig:
     )
 
 
-def _expect_str(table: dict, key: str, dotted: str, path: pathlib.Path) -> str:
-    value = table.get(key)
-    if not isinstance(value, str):
-        raise ConfigError(path, dotted, f"expected string, got {type(value).__name__}: {value!r}")
-    return value
+@dataclass(frozen=True)
+class _Section:
+    """A config table bundled with its dotted-path prefix and source file.
 
+    Bundles the ``(table, dotted-prefix, path)`` triple every validator
+    needs, so each call passes only the key and the dotted path is derived
+    once here (``prefix.key``) rather than duplicated at every call site.
+    """
 
-def _expect_int(table: dict, key: str, dotted: str, path: pathlib.Path) -> int:
-    value = table.get(key)
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise ConfigError(path, dotted, f"expected int, got {type(value).__name__}: {value!r}")
-    return value
+    table: dict
+    prefix: str
+    path: pathlib.Path
 
+    def _dotted(self, key: str) -> str:
+        return f"{self.prefix}.{key}"
 
-def _expect_number(table: dict, key: str, dotted: str, path: pathlib.Path) -> float:
-    value = table.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigError(path, dotted, f"expected number, got {type(value).__name__}: {value!r}")
-    return float(value)
+    def str(self, key: str) -> str:
+        value = self.table.get(key)
+        if not isinstance(value, str):
+            raise ConfigError(
+                self.path,
+                self._dotted(key),
+                f"expected string, got {type(value).__name__}: {value!r}",
+            )
+        return value
 
+    def int(self, key: str) -> int:
+        value = self.table.get(key)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ConfigError(
+                self.path,
+                self._dotted(key),
+                f"expected int, got {type(value).__name__}: {value!r}",
+            )
+        return value
 
-def _expect_bool(table: dict, key: str, dotted: str, path: pathlib.Path) -> bool:
-    value = table.get(key)
-    if not isinstance(value, bool):
-        raise ConfigError(path, dotted, f"expected bool, got {type(value).__name__}: {value!r}")
-    return value
+    def number(self, key: str) -> float:
+        value = self.table.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ConfigError(
+                self.path,
+                self._dotted(key),
+                f"expected number, got {type(value).__name__}: {value!r}",
+            )
+        return float(value)
 
+    def bool(self, key: str) -> bool:
+        value = self.table.get(key)
+        if not isinstance(value, bool):
+            raise ConfigError(
+                self.path,
+                self._dotted(key),
+                f"expected bool, got {type(value).__name__}: {value!r}",
+            )
+        return value
 
-def _expect_optional_int(table: dict, key: str, dotted: str, path: pathlib.Path) -> int | None:
-    value = table.get(key)
-    if value is None or value == "":  # `key = null` is rewritten to "" at load
-        return None
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise ConfigError(
-            path,
-            dotted,
-            f"expected int or null, got {type(value).__name__}: {value!r}",
-        )
-    return value
+    def optional_int(self, key: str) -> int | None:
+        value = self.table.get(key)
+        if value is None or value == "":  # `key = null` is rewritten to "" at load
+            return None
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ConfigError(
+                self.path,
+                self._dotted(key),
+                f"expected int or null, got {type(value).__name__}: {value!r}",
+            )
+        return value
 
+    def optional_str(self, key: str) -> str | None:
+        value = self.table.get(key)
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str):
+            raise ConfigError(
+                self.path,
+                self._dotted(key),
+                f"expected string or null, got {type(value).__name__}: {value!r}",
+            )
+        return value
 
-def _expect_optional_str(table: dict, key: str, dotted: str, path: pathlib.Path) -> str | None:
-    value = table.get(key)
-    if value is None or value == "":
-        return None
-    if not isinstance(value, str):
-        raise ConfigError(
-            path,
-            dotted,
-            f"expected string or null, got {type(value).__name__}: {value!r}",
-        )
-    return value
-
-
-def _expect_optional_path(table: dict, key: str, dotted: str, path: pathlib.Path) -> str | None:
-    value = _expect_optional_str(table, key, dotted, path)
-    if value is not None and not pathlib.Path(value).exists():
-        raise ConfigError(path, dotted, f"path does not exist: {value}")
-    return value
+    def optional_path(self, key: str) -> str | None:
+        value = self.optional_str(key)
+        if value is not None and not pathlib.Path(value).exists():
+            raise ConfigError(self.path, self._dotted(key), f"path does not exist: {value}")
+        return value
 
 
 def _merge(base: dict, overlay: dict) -> dict:

@@ -21,7 +21,7 @@ from stenographer.live import IncrementalDriver, IncrementalResult
 from stenographer.output.formatter import HeuristicFormatter
 
 if TYPE_CHECKING:
-    from stenographer.asr.worker import Worker
+    from stenographer.asr.worker import ProcessWorker
     from stenographer.audio.capture import Recorder
     from stenographer.audio.feedback import Feedback
     from stenographer.capabilities import Capabilities
@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 
 _PROCESSOR_DRAIN_TIMEOUT_SECONDS = 60.0
 _FORCED_SHUTDOWN_TIMEOUT_SECONDS = 10.0
-# Slice of the forced-shutdown window reserved for Worker.stop, so a slow
+# Slice of the forced-shutdown window reserved for ProcessWorker.stop, so a slow
 # processor join cannot starve it to a 0s timeout and force a deferred model
 # close even when the worker would exit moments later.
 _FORCED_WORKER_STOP_RESERVE_SECONDS = 2.0
@@ -74,7 +74,7 @@ class Session:
         capabilities: Capabilities,
         listener: HotkeyListener | None,
         recorder: Recorder,
-        worker: Worker,
+        worker: ProcessWorker,
         feedback: Feedback,
         injector: Injector,
         clipboard: ClipboardManager,
@@ -270,7 +270,7 @@ class Session:
             )
             forced_deadline = time.monotonic() + _FORCED_SHUTDOWN_TIMEOUT_SECONDS
             self._force_shutdown_cancel()
-            # Reserve a slice of the forced window for Worker.stop below.
+            # Reserve a slice of the forced window for ProcessWorker.stop below.
             processor_budget = (
                 self._remaining_shutdown_time(forced_deadline) - _FORCED_WORKER_STOP_RESERVE_SECONDS
             )
