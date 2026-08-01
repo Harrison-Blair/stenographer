@@ -97,5 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument(
         "--show-text", action="store_true", help="Print each config's full transcript."
     )
+    bench.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Replay configured partial cadence without clipboard injection.",
+    )
 
     return parser

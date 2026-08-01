@@ -138,6 +138,8 @@ class IncrementalDriver:
         # matching window is a pause and is not re-decoded.
         self._last_decode_key: tuple[float, float] | None = None
         self._interim_suppressed = False
+        self._recording_started = time.monotonic()
+        self._first_preview_recorded = False
         self._release_started: float | None = None
         self._release_deadline: float | None = None
         self._last_failure_reason: str | None = None
@@ -145,6 +147,11 @@ class IncrementalDriver:
     @property
     def abort(self) -> threading.Event:
         return self._abort
+
+    @property
+    def release_started(self) -> float | None:
+        """Monotonic release timestamp used by the session timing boundary."""
+        return self._release_started
 
     # -- signals (any thread; only enqueue, never block) ----------------------
 
@@ -158,12 +165,22 @@ class IncrementalDriver:
         self._release_deadline = (
             self._release_started + self._cfg.incremental.release_timeout_seconds
         )
-        # CTranslate2 cannot interrupt generation safely. Superseding at the
-        # release callback (rather than after the driver unblocks) lets the
-        # worker terminate a stuck interim immediately and restart for final.
+        # Invalidate queued partials at release. An active native decode gets
+        # a small grace period: its hypothesis can make an exact-window final
+        # decode unnecessary, while a stuck decode is still restarted well
+        # inside the absolute release deadline.
         supersede = getattr(self._worker, "supersede_interim", None)
         if supersede is not None:
-            supersede()
+            grace = min(
+                0.75,
+                0.25 * self._cfg.incremental.release_timeout_seconds,
+            )
+            try:
+                supersede(grace_seconds=grace)
+            except TypeError:
+                # Compatibility with worker substitutes implementing the
+                # pre-grace protocol.
+                supersede()
         self._signals.put((_FINAL, samples))
 
     def signal_abort(self) -> None:
@@ -435,7 +452,20 @@ class IncrementalDriver:
     def _publish_preview(self, *, final: bool = False) -> None:
         if self._on_preview is None:
             return
+        if not final and self._release_started is not None:
+            log.debug("incremental: suppressing preview completed after release")
+            return
         preview = self._compute_preview(final=final)
+        if (
+            not final
+            and not self._first_preview_recorded
+            and (preview.stable or preview.provisional)
+        ):
+            self._first_preview_recorded = True
+            log.info(
+                "incremental timing: first_preview=%.3fs",
+                time.monotonic() - self._recording_started,
+            )
         try:
             self._on_preview(preview)
         except Exception as exc:

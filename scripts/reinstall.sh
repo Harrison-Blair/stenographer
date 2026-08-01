@@ -36,6 +36,10 @@ if [[ "${version}" != *-dev ]]; then
     exit 1
 fi
 
+echo "==> Running unit tests ..."
+.venv/bin/pytest -m "not integration" -q
+echo
+
 echo "==> Rebuilding stenographer ${version} from the current checkout ..."
 scripts/build.sh
 echo

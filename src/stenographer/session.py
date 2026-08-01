@@ -536,6 +536,13 @@ class Session:
         if not delivered:
             self._cue("error")
             return
+        release_started = getattr(streamer, "release_started", None)
+        if isinstance(release_started, int | float):
+            log.info(
+                "session timing: release_to_delivery=%.3fs degraded=%s",
+                time.monotonic() - release_started,
+                degraded,
+            )
         self._cue("error" if degraded else "transcribe_done")
 
     def _publish_preview(self, generation: int, preview: Preview) -> None:
@@ -734,7 +741,14 @@ class Session:
         self._cue("transcribe_done")
 
     def _deliver_final(self, text: str) -> bool:
-        return self._delivery.deliver_final(text)
+        started = time.monotonic()
+        delivered = self._delivery.deliver_final(text)
+        log.info(
+            "session timing: delivery_completion=%.3fs successful=%s",
+            time.monotonic() - started,
+            delivered,
+        )
+        return delivered
 
     def _drain(self, samples: np.ndarray) -> None:
         log.info("session: draining in-flight utterance on shutdown")

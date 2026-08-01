@@ -69,6 +69,7 @@ class AsrConfig:
     silence_threshold: float
     vad_filter: bool
     max_new_tokens: int
+    cpu_threads: int
     mode: str
     idle_unload_seconds: int
     hotwords: str | None

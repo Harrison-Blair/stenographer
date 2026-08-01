@@ -99,11 +99,24 @@ def test_defaults_asr() -> None:
         silence_threshold=0.6,
         vad_filter=True,
         max_new_tokens=128,
+        cpu_threads=0,
         mode="lazy",
-        idle_unload_seconds=300,
+        idle_unload_seconds=900,
         hotwords=None,
         initial_prompt=None,
     )
+
+
+def test_legacy_asr_config_inherits_cpu_threads_and_keeps_explicit_unload(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[stenographer]\nasr.idle_unload_seconds = 300\n")
+
+    cfg = Config.load(path)
+
+    assert cfg.asr.cpu_threads == 0
+    assert cfg.asr.idle_unload_seconds == 300
 
 
 def test_defaults_feedback() -> None:
@@ -440,6 +453,21 @@ def test_validate_max_new_tokens_out_of_range_rejected(tmp_path: pathlib.Path, v
         Config.load(p)
 
 
+@pytest.mark.parametrize("value", ["-1", "65"])
+def test_validate_cpu_threads_out_of_range_rejected(tmp_path: pathlib.Path, value: str) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\nasr.cpu_threads = {value}\n")
+    with pytest.raises(ConfigError, match=r"asr.cpu_threads"):
+        Config.load(p)
+
+
+@pytest.mark.parametrize("value", ["0", "1", "64"])
+def test_validate_cpu_threads_bounds_accepted(tmp_path: pathlib.Path, value: str) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\nasr.cpu_threads = {value}\n")
+    assert Config.load(p).asr.cpu_threads == int(value)
+
+
 def test_validate_hotkey_threshold_zero_rejected(tmp_path: pathlib.Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text("[stenographer]\nhotkey.toggle_threshold_seconds = 0\n")
@@ -607,7 +635,8 @@ def test_write_default_includes_asr_mode(tmp_path: pathlib.Path) -> None:
     Config.write_default(p)
     text = p.read_text(encoding="utf-8")
     assert 'asr.mode = "lazy"' in text
-    assert "asr.idle_unload_seconds = 300" in text
+    assert "asr.cpu_threads = 0" in text
+    assert "asr.idle_unload_seconds = 900" in text
 
 
 def test_validate_volume_negative_rejected(tmp_path: pathlib.Path) -> None:

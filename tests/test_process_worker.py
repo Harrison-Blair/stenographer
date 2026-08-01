@@ -42,11 +42,13 @@ def _stub_child(cfg, eager, idle_unload_seconds, commands, responses, log_record
         if command[0] == "unload":
             responses.put(("unloaded",))
             continue
-        _name, job_id, samples, _kind, _beam = command
+        _name, job_id, samples, _kind, _beam, _purpose = command
         marker = int(samples.reshape(-1)[0])
         responses.put(("loaded",))
         if marker == 1:
             time.sleep(60)
+        if marker == 5:
+            time.sleep(0.2)
         if marker == 3:
             os._exit(17)
         responses.put(
@@ -100,6 +102,43 @@ def test_release_supersedes_blocked_interim_and_runs_final() -> None:
         with pytest.raises(CancelledError):
             interim.result(timeout=2)
         assert final.result(timeout=3)[0].word == " ok"
+    finally:
+        worker.stop(timeout=2)
+
+
+def test_release_grace_retains_an_interim_that_finishes_promptly() -> None:
+    worker = _worker()
+    try:
+        pid = worker._process.pid
+        interim = worker.submit_words(
+            _samples(5), deadline=time.monotonic() + 2, priority="interim"
+        )
+        time.sleep(0.05)
+        worker.supersede_interim(grace_seconds=0.5)
+
+        assert interim.result(timeout=2)[0].word == " ok"
+        assert worker._process.pid == pid
+    finally:
+        worker.stop(timeout=2)
+
+
+def test_release_grace_forces_restart_after_bound() -> None:
+    worker = _worker()
+    try:
+        pid = worker._process.pid
+        interim = worker.submit_words(
+            _samples(1), deadline=time.monotonic() + 5, priority="interim"
+        )
+        time.sleep(0.05)
+        started = time.monotonic()
+        worker.supersede_interim(grace_seconds=0.1)
+        final = worker.submit_words(_samples(2), deadline=time.monotonic() + 2, priority="final")
+
+        with pytest.raises(CancelledError):
+            interim.result(timeout=2)
+        assert time.monotonic() - started < 0.5
+        assert final.result(timeout=3)[0].word == " ok"
+        assert worker._process.pid != pid
     finally:
         worker.stop(timeout=2)
 

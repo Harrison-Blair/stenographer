@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import threading
+import time
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -148,6 +150,21 @@ def test_recovered_incremental_text_is_delivered_with_error_cue() -> None:
 
     components["injector"].type_text.assert_called_once_with("Recovered ", raw=True)
     components["feedback"].play.assert_called_once_with("error")
+
+
+def test_successful_incremental_delivery_records_release_latency(caplog) -> None:
+    session, _components = _make_session(cfg=_cfg(mode="type", clipboard=True))
+    driver = MagicMock()
+    driver.abort = threading.Event()
+    driver.release_started = time.monotonic() - 0.1
+    driver.run.return_value = "Timed "
+
+    with caplog.at_level(logging.INFO):
+        session._run_incremental(driver, session._preview_generation)
+
+    assert "session timing: delivery_completion=" in caplog.text
+    assert "session timing: release_to_delivery=" in caplog.text
+    assert "Timed" not in caplog.text
 
 
 def test_type_mode_reports_failure_when_nothing_reached_the_user() -> None:

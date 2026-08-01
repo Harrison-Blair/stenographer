@@ -194,6 +194,9 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
     max_new_tokens = section.int("max_new_tokens")
     if not (1 <= max_new_tokens <= 448):
         raise ConfigError(path, "asr.max_new_tokens", "must satisfy 1 <= x <= 448")
+    cpu_threads = section.int("cpu_threads")
+    if not (0 <= cpu_threads <= 64):
+        raise ConfigError(path, "asr.cpu_threads", "must satisfy 0 <= x <= 64")
     mode = section.str("mode")
     if mode not in ALLOWED_ASR_MODES:
         raise ConfigError(path, "asr.mode", f"must be one of {sorted(ALLOWED_ASR_MODES)}")
@@ -210,6 +213,7 @@ def _build_asr(table: dict[str, Any], path: pathlib.Path) -> AsrConfig:
         silence_threshold=silence_threshold,
         vad_filter=vad_filter,
         max_new_tokens=max_new_tokens,
+        cpu_threads=cpu_threads,
         mode=mode,
         idle_unload_seconds=idle_unload_seconds,
         hotwords=hotwords,

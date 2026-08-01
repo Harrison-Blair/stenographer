@@ -30,6 +30,7 @@ def model() -> Model:
             silence_threshold=0.6,
             vad_filter=True,
             max_new_tokens=128,
+            cpu_threads=0,
             mode="eager",
             idle_unload_seconds=0,
             hotwords=None,

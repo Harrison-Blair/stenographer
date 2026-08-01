@@ -552,6 +552,7 @@ def cmd_bench(cfg: Config, args) -> int:
         beams=beams,
         computes=computes,
         show_text=args.show_text,
+        incremental=args.incremental,
     )
 
 
@@ -705,6 +706,8 @@ def cmd_devices() -> int:
 
 
 def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
+    from stenographer.asr.model import resolve_cpu_threads
+
     caps = Capabilities.probe(cfg)
     print("stenographer doctor")
     print("===================")
@@ -729,6 +732,10 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     print(f"asr.vad_filter: {str(cfg.asr.vad_filter).lower()}")
     print(f"asr.silence_threshold: {cfg.asr.silence_threshold:g}")
     print(f"asr.max_new_tokens: {cfg.asr.max_new_tokens}")
+    print(
+        f"asr.cpu_threads: {cfg.asr.cpu_threads} "
+        f"(effective: {resolve_cpu_threads(cfg.asr.cpu_threads)})"
+    )
     print(f"output mode:    {cfg.output.injection_method}")
     print(
         "incremental:    always on "

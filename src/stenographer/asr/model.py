@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import pathlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from faster_whisper import WhisperModel
@@ -25,6 +27,8 @@ _VAD_PARAMETERS = {
 _HALLUCINATION_SILENCE_SECONDS = 2.0
 _WORDS_PER_VAD_SECOND = 8
 _MIN_WORD_LIMIT = 12
+_AUTO_CPU_THREAD_CAP = 8
+_CPU_THREAD_FALLBACK = 4
 
 
 class PathologicalOutputError(RuntimeError):
@@ -56,11 +60,18 @@ class TranscriptionResult:
 
 class Model:
     def __init__(self, cfg: AsrConfig) -> None:
-        log.info("loading ASR model: id=%s compute_type=%s", cfg.model, cfg.compute_type)
+        cpu_threads = resolve_cpu_threads(cfg.cpu_threads)
+        log.info(
+            "loading ASR model: id=%s compute_type=%s cpu_threads=%d",
+            cfg.model,
+            cfg.compute_type,
+            cpu_threads,
+        )
         self._impl = WhisperModel(
             cfg.model,
             device="auto",
             compute_type=cfg.compute_type,
+            cpu_threads=cpu_threads,
             local_files_only=True,
         )
         self._language = cfg.language
@@ -157,6 +168,7 @@ class Model:
         samples: np.ndarray,
         *,
         beam_size: int | None = None,
+        purpose: Literal["interim", "final", "batch"] = "final",
         check_cancel: Callable[[], None] | None = None,
     ) -> list[WordInfo]:
         """Low-level word-timestamped transcription for incremental decoding.
@@ -187,7 +199,11 @@ class Model:
             vad_parameters=_VAD_PARAMETERS,
             no_speech_threshold=self._silence_threshold,
             hallucination_silence_threshold=_HALLUCINATION_SILENCE_SECONDS,
-            max_new_tokens=_token_budget(self._max_new_tokens, audio_seconds),
+            max_new_tokens=_token_budget(
+                self._max_new_tokens,
+                audio_seconds,
+                interim=purpose == "interim",
+            ),
             condition_on_previous_text=False,
             hotwords=self._hotwords,
             initial_prompt=self._initial_prompt,
@@ -234,9 +250,44 @@ class Model:
             del self._impl
 
 
-def _token_budget(configured_max: int, audio_seconds: float) -> int:
+def _token_budget(configured_max: int, audio_seconds: float, *, interim: bool = False) -> int:
     """Bound generated tokens to a small fixed allowance plus audio duration."""
+    if interim:
+        return min(configured_max, 12 + math.ceil(5 * audio_seconds))
     return min(configured_max, 16 + math.ceil(_WORDS_PER_VAD_SECOND * audio_seconds))
+
+
+def resolve_cpu_threads(
+    configured: int,
+    *,
+    affinity: set[int] | None = None,
+    topology_root: pathlib.Path = pathlib.Path("/sys/devices/system/cpu"),
+) -> int:
+    """Resolve ``asr.cpu_threads`` against affinity-visible physical cores.
+
+    Explicit values pass through unchanged. Automatic detection counts unique
+    package/core pairs for CPUs available to this process and caps the result
+    at eight. Containers or systems without readable topology use four.
+    """
+    if configured:
+        return configured
+    if affinity is None:
+        try:
+            affinity = set(os.sched_getaffinity(0))
+        except AttributeError, OSError:
+            return _CPU_THREAD_FALLBACK
+    if not affinity:
+        return _CPU_THREAD_FALLBACK
+    physical: set[tuple[str, str]] = set()
+    try:
+        for cpu in affinity:
+            topology = topology_root / f"cpu{cpu}" / "topology"
+            package = (topology / "physical_package_id").read_text(encoding="ascii").strip()
+            core = (topology / "core_id").read_text(encoding="ascii").strip()
+            physical.add((package, core))
+    except OSError, ValueError:
+        return _CPU_THREAD_FALLBACK
+    return min(_AUTO_CPU_THREAD_CAP, len(physical)) or _CPU_THREAD_FALLBACK
 
 
 def _validate_output(

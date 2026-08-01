@@ -27,6 +27,8 @@ from stenographer.config import AsrConfig
 
 log = logging.getLogger(__name__)
 
+DecodePurpose = Literal["interim", "final", "batch"]
+
 
 class CancelledError(Exception):
     """Raised when a job's cancellation is signalled during an in-flight
@@ -67,8 +69,10 @@ class _ProcessJob:
     )
     kind: Literal["segments", "words"]
     priority: Literal["interim", "final"]
+    purpose: DecodePurpose
     sequence: int
     interim_generation: int
+    submitted_at: float
     deadline: float | None = None
     beam_size: int | None = None
     on_segment: Callable[[SegmentInfo], None] | None = None
@@ -94,7 +98,9 @@ def _inference_process_main(
     def load() -> Model:
         nonlocal model, last_used
         if model is None:
+            started = time.monotonic()
             model = Model(cfg)
+            log.info("asr timing: model_load=%.3fs", time.monotonic() - started)
             responses.put(("loaded",))
         last_used = time.monotonic()
         return model
@@ -137,11 +143,15 @@ def _inference_process_main(
                 continue
             if name != "job":
                 continue
-            _name, job_id, samples, kind, beam_size = command
+            _name, job_id, samples, kind, beam_size, purpose = command
             try:
                 impl = load()
                 if kind == "words":
-                    result = impl.transcribe_words(samples, beam_size=beam_size)
+                    result = impl.transcribe_words(
+                        samples,
+                        beam_size=beam_size,
+                        purpose=purpose,
+                    )
                 else:
                     result = impl.transcribe(
                         samples,
@@ -194,6 +204,7 @@ class ProcessWorker:
         self._active: _ProcessJob | None = None
         self._interim_generation = 0
         self._supersede = threading.Event()
+        self._supersede_deadline: float | None = None
         self._global_cancel = threading.Event()
         self._force_stop = threading.Event()
         self._stopping = False
@@ -236,6 +247,7 @@ class ProcessWorker:
             future,
             kind="segments",
             priority=priority,
+            purpose="batch",
             deadline=deadline,
             on_segment=on_segment,
             cancel_event=cancel_event,
@@ -258,6 +270,7 @@ class ProcessWorker:
             future,
             kind="words",
             priority=priority,
+            purpose=priority,
             deadline=deadline,
             beam_size=beam_size,
             cancel_event=cancel_event,
@@ -272,6 +285,7 @@ class ProcessWorker:
         *,
         kind: Literal["segments", "words"],
         priority: Literal["interim", "final"],
+        purpose: DecodePurpose,
         deadline: float | None,
         beam_size: int | None = None,
         on_segment: Callable[[SegmentInfo], None] | None = None,
@@ -288,8 +302,10 @@ class ProcessWorker:
                 future=future,
                 kind=kind,
                 priority=priority,
+                purpose=purpose,
                 sequence=self._sequence,
                 interim_generation=self._interim_generation,
+                submitted_at=time.monotonic(),
                 deadline=deadline,
                 beam_size=beam_size,
                 on_segment=on_segment,
@@ -299,12 +315,13 @@ class ProcessWorker:
             rank = 0 if priority == "final" else 1
             self._jobs.put((rank, job.sequence, job))
 
-    def supersede_interim(self) -> None:
-        """Cancel queued interim jobs and tear down an active native decode."""
+    def supersede_interim(self, grace_seconds: float = 0.0) -> None:
+        """Invalidate queued interims and give the active one bounded grace."""
         with self._state_lock:
             self._interim_generation += 1
             if self._active is not None and self._active.priority == "interim":
                 self._supersede.set()
+                self._supersede_deadline = time.monotonic() + max(0.0, grace_seconds)
 
     def cancel(self) -> None:
         self._global_cancel.set()
@@ -351,6 +368,16 @@ class ProcessWorker:
         with self._state_lock:
             return self._loaded
 
+    def wait_model_loaded(self, timeout: float | None = None) -> None:
+        """Wait for a requested model load and surface child load failures."""
+        if not self._ready.wait(timeout=timeout):
+            raise ASRTimeoutError("ASR model load timed out")
+        with self._state_lock:
+            if self._load_error is not None:
+                raise self._load_error
+            if not self._loaded:
+                raise ASRProcessError("ASR model did not become ready")
+
     def request_unload(self) -> None:
         with self._state_lock:
             if self._process is not None and self._process.is_alive():
@@ -393,9 +420,15 @@ class ProcessWorker:
             self._fail_process_jobs(CancelledError("worker stopped"))
 
     def _run_process_job(self, job: _ProcessJob) -> None:
+        log.info(
+            "asr timing: worker_queue_wait=%.3fs purpose=%s",
+            time.monotonic() - job.submitted_at,
+            job.purpose,
+        )
         with self._state_lock:
             self._active = job
             self._supersede.clear()
+            self._supersede_deadline = None
         try:
             with self._state_lock:
                 self._ensure_child()
@@ -403,8 +436,19 @@ class ProcessWorker:
                 commands = self._commands
                 responses = self._responses
             assert process is not None
-            commands.put(("job", job.sequence, job.samples, job.kind, job.beam_size))
+            commands.put(("job", job.sequence, job.samples, job.kind, job.beam_size, job.purpose))
             while True:
+                # At the grace boundary, retain a result the child has already
+                # completed instead of killing it just before reading the
+                # response queue.
+                if job.priority == "interim" and self._supersede.is_set():
+                    try:
+                        completed = responses.get_nowait()
+                    except queue.Empty:
+                        pass
+                    else:
+                        if self._dispatch_response(job, completed):
+                            return
                 if self._abort_active_job(job, process):
                     return
                 try:
@@ -421,6 +465,7 @@ class ProcessWorker:
             with self._state_lock:
                 self._active = None
                 self._supersede.clear()
+                self._supersede_deadline = None
 
     def _abort_active_job(self, job: _ProcessJob, process: multiprocessing.Process) -> bool:
         """Apply the per-iteration abort guards; return True when a guard has
@@ -429,7 +474,12 @@ class ProcessWorker:
             self._resolve_exception(job, CancelledError("worker stopped"))
             self._terminate_child()
             return True
-        if self._job_cancelled(job) or (job.priority == "interim" and self._supersede.is_set()):
+        supersede_due = (
+            job.priority == "interim"
+            and self._supersede.is_set()
+            and (self._supersede_deadline is None or time.monotonic() >= self._supersede_deadline)
+        )
+        if self._job_cancelled(job) or supersede_due:
             self._resolve_exception(job, CancelledError("transcription cancelled"))
             self._terminate_child()
             return True
@@ -457,6 +507,11 @@ class ProcessWorker:
             return False
         if name == "result":
             result = message[2]
+            log.info(
+                "asr timing: result_ready=%.3fs purpose=%s",
+                time.monotonic() - job.submitted_at,
+                job.purpose,
+            )
             try:
                 if job.on_segment is not None and isinstance(result, TranscriptionResult):
                     for segment in result.segments:

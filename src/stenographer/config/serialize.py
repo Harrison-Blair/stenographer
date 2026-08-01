@@ -53,6 +53,8 @@ def _format_default_toml() -> str:
         f"asr.silence_threshold = {r.silence_threshold}",
         f"asr.vad_filter = {_toml_bool(r.vad_filter)}",
         f"asr.max_new_tokens = {r.max_new_tokens}",
+        "# 0 detects affinity-available physical cores (maximum 8)",
+        f"asr.cpu_threads = {r.cpu_threads}",
         f"asr.mode = {_toml_str(r.mode)}",
         f"asr.idle_unload_seconds = {r.idle_unload_seconds}",
         '# hotwords: proper nouns / jargon to bias recognition toward, e.g. "wtype, Wayland"',

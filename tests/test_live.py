@@ -251,6 +251,44 @@ def test_final_is_processed_when_shutdown_cancels_in_flight_interim() -> None:
     assert worker.calls == 2
 
 
+def test_interim_finishing_in_release_grace_is_retained_but_not_published() -> None:
+    previews: list[tuple[str, str]] = []
+
+    class _GraceWorker:
+        def __init__(self) -> None:
+            self.future: concurrent.futures.Future = concurrent.futures.Future()
+            self.submitted = threading.Event()
+            self.calls = 0
+            self.grace_seconds: float | None = None
+
+        def submit_words(self, _samples, **_kwargs):
+            self.calls += 1
+            self.submitted.set()
+            return self.future
+
+        def supersede_interim(self, grace_seconds: float = 0.0) -> None:
+            self.grace_seconds = grace_seconds
+
+    driver, _worker = _make_driver([_speech(1.0)], [[]], previews=previews)
+    worker = _GraceWorker()
+    driver._worker = worker  # type: ignore[assignment]
+    driver.signal_partial()
+    results: list[str | None] = []
+    thread = threading.Thread(target=lambda: results.append(driver.run()))
+    thread.start()
+    assert worker.submitted.wait(timeout=1.0)
+
+    driver.signal_final(_speech(1.0))
+    worker.future.set_result(_words((" retained", 0.0, 0.5)))
+
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert results == ["Retained "]
+    assert previews == [("Retained ", "")]
+    assert worker.calls == 1  # exact-window final decode was skipped
+    assert worker.grace_seconds == 0.75
+
+
 def test_abort_returns_none_and_never_finalizes() -> None:
     previews: list[tuple[str, str]] = []
     driver, _worker = _make_driver(

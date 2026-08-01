@@ -17,9 +17,13 @@ from stenographer.config import VisualizerConfig
 from stenographer.live import Preview
 from stenographer.visualizer import indicator, overlay_client, spectrum
 from stenographer.visualizer.overlay_app import (
+    _PREVIEW_HEIGHT_PX,
+    _PREVIEW_ROWS,
+    _PREVIEW_WIDTH_CHARS,
     _prepare_spectrum_context,
     _preview_markup,
     _register_application_font,
+    _trim_preview,
 )
 from stenographer.visualizer.overlay_client import LayerShellOverlay
 from stenographer.visualizer.spectrum import SpectrumAnalyzer, analyze_frequency_bands
@@ -86,8 +90,36 @@ def test_preview_markup_escapes_transcript_and_fades_tail() -> None:
     markup = _preview_markup("<stable & safe>", ' "tail" & <revisable>')
     assert "&lt;stable &amp; safe&gt;" in markup
     assert '"tail" &amp; &lt;revisable&gt;' in markup
-    assert 'alpha="52%"' in markup
-    assert 'alpha="28%"' in markup
+    assert 'alpha="92%"' in markup
+    assert 'alpha="58%"' in markup
+    assert 'style="italic"' in markup
+
+
+def test_preview_keeps_recent_text_at_word_boundary_and_preserves_styles() -> None:
+    stable = "old words " + "stable " * 16
+    provisional = "provisional ending"
+
+    recent_stable, recent_provisional = _trim_preview(stable, provisional)
+    markup = _preview_markup(stable, provisional)
+
+    assert recent_stable.startswith("…")
+    assert recent_provisional == provisional
+    assert "old words" not in recent_stable
+    assert len(recent_stable + recent_provisional) <= 97
+    assert "provisional ending" in markup
+
+
+def test_preview_trim_escapes_ellipsis_in_provisional_only() -> None:
+    stable, provisional = _trim_preview("", "prefix " * 20 + "<new tail>")
+    assert stable == ""
+    assert provisional.startswith("…")
+    assert "&lt;new tail&gt;" in _preview_markup("", "prefix " * 20 + "<new tail>")
+
+
+def test_preview_geometry_reserves_two_fixed_rows_at_existing_width() -> None:
+    assert _PREVIEW_WIDTH_CHARS == 42
+    assert _PREVIEW_ROWS == 2
+    assert _PREVIEW_HEIGHT_PX > 0
 
 
 def _started_overlay(process: MagicMock) -> LayerShellOverlay:

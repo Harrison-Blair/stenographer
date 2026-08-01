@@ -15,6 +15,11 @@ import numpy as np
 from stenographer._version import __version__
 from stenographer.visualizer.protocol import _HUD_STATE_LABELS
 
+_PREVIEW_WIDTH_CHARS = 42
+_PREVIEW_ROWS = 2
+_PREVIEW_RECENT_CHARS = 96
+_PREVIEW_HEIGHT_PX = 34
+
 _OVERLAY_CSS = """
 window {
   background-color: transparent;
@@ -46,13 +51,34 @@ window {
 
 
 def _preview_markup(stable: str, provisional: str) -> str:
-    """Return escaped Pango markup with a fainter revisable tail."""
+    """Return recent, escaped Pango markup with a fainter revisable tail."""
+    stable, provisional = _trim_preview(stable, provisional)
     stable_escaped = html.escape(stable, quote=False)
     provisional_escaped = html.escape(provisional, quote=False)
     return (
-        f'<span foreground="#f2f2f2" alpha="52%">{stable_escaped}</span>'
-        f'<span foreground="#f2f2f2" alpha="28%">{provisional_escaped}</span>'
+        f'<span foreground="#f7f7f7" alpha="92%">{stable_escaped}</span>'
+        f'<span foreground="#f2f2f2" alpha="58%" style="italic">'
+        f"{provisional_escaped}</span>"
     )
+
+
+def _trim_preview(
+    stable: str,
+    provisional: str,
+    limit: int = _PREVIEW_RECENT_CHARS,
+) -> tuple[str, str]:
+    """Keep the newest preview text and preserve its stable/tail boundary."""
+    combined = stable + provisional
+    if len(combined) <= limit:
+        return stable, provisional
+    target = len(combined) - limit
+    boundary = next(
+        (index + 1 for index in range(target, len(combined)) if combined[index].isspace()),
+        target,
+    )
+    if boundary < len(stable):
+        return "…" + stable[boundary:], provisional
+    return "", "…" + provisional[max(0, boundary - len(stable)) :]
 
 
 def _prepare_spectrum_context(
@@ -185,10 +211,14 @@ def run_overlay_process() -> int:
 
             self.preview = Gtk.Label()
             self.preview.set_xalign(0.0)
-            self.preview.set_width_chars(42)
-            self.preview.set_max_width_chars(42)
-            self.preview.set_ellipsize(Pango.EllipsizeMode.START)
-            self.preview.set_single_line_mode(True)
+            self.preview.set_width_chars(_PREVIEW_WIDTH_CHARS)
+            self.preview.set_max_width_chars(_PREVIEW_WIDTH_CHARS)
+            self.preview.set_lines(_PREVIEW_ROWS)
+            self.preview.set_wrap(True)
+            self.preview.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            self.preview.set_ellipsize(Pango.EllipsizeMode.END)
+            self.preview.set_single_line_mode(False)
+            self.preview.set_height_request(_PREVIEW_HEIGHT_PX)
             self.preview.set_hexpand(True)
             self.preview.add_css_class("stenographer-preview")
             content.append(self.preview)
