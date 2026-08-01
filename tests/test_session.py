@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import threading
+import time
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -12,6 +14,7 @@ import numpy as np
 import stenographer.session as session_module
 from stenographer.asr.model import SegmentInfo, TranscriptionResult
 from stenographer.config import Config
+from stenographer.live import IncrementalResult, Preview
 from stenographer.session import Session, _LiveItem
 
 
@@ -135,6 +138,35 @@ def test_type_mode_without_wtype_plays_success_cue_not_error() -> None:
     components["feedback"].play.assert_called_once_with("transcribe_done")
 
 
+def test_recovered_incremental_text_is_delivered_with_error_cue() -> None:
+    session, components = _make_session(cfg=_cfg(mode="type", clipboard=True))
+    driver = MagicMock()
+    driver.abort = threading.Event()
+    driver.run.return_value = IncrementalResult(
+        "Recovered ", degraded=True, recovery_reason="timeout"
+    )
+
+    session._run_incremental(driver, session._preview_generation)
+
+    components["injector"].type_text.assert_called_once_with("Recovered ", raw=True)
+    components["feedback"].play.assert_called_once_with("error")
+
+
+def test_successful_incremental_delivery_records_release_latency(caplog) -> None:
+    session, _components = _make_session(cfg=_cfg(mode="type", clipboard=True))
+    driver = MagicMock()
+    driver.abort = threading.Event()
+    driver.release_started = time.monotonic() - 0.1
+    driver.run.return_value = "Timed "
+
+    with caplog.at_level(logging.INFO):
+        session._run_incremental(driver, session._preview_generation)
+
+    assert "session timing: delivery_completion=" in caplog.text
+    assert "session timing: release_to_delivery=" in caplog.text
+    assert "Timed" not in caplog.text
+
+
 def test_type_mode_reports_failure_when_nothing_reached_the_user() -> None:
     session, components = _make_session(cfg=_cfg(mode="type", clipboard=True))
     components["caps"].has_paste_trigger = False
@@ -226,10 +258,10 @@ def test_preview_updates_are_generation_guarded() -> None:
     session, _components = _make_session(notification=notification)
     session._preview_generation = 4
 
-    session._publish_preview(3, "old", " tail")
-    session._publish_preview(4, "new", " words")
+    session._publish_preview(3, Preview("old", " tail"))
+    session._publish_preview(4, Preview("new", " words"))
 
-    notification.show_preview.assert_called_once_with("new", " words")
+    notification.show_preview.assert_called_once_with(Preview("new", " words"))
 
 
 def test_old_utterance_cannot_clear_new_recordings_preview() -> None:
@@ -259,7 +291,7 @@ def test_preview_consumer_failure_does_not_block_final_output() -> None:
     notification.show_preview.side_effect = RuntimeError("overlay pipe failed")
     session, components = _make_session(notification=notification)
     session._preview_generation = 1
-    session._publish_preview(1, "Hello", " world")
+    session._publish_preview(1, Preview("Hello", " world"))
 
     assert session._deliver_final("Hello world ")
     components["injector"].type_text.assert_called_once()
@@ -412,7 +444,7 @@ def test_stop_forces_active_and_queued_work_after_drain_deadline(monkeypatch) ->
     assert queued.abort.is_set()
     queued.signal_abort.assert_called_once_with()
     assert processor.join.call_count == 2
-    # Worker.stop is floored at the reserved slice even when the forced window
+    # ProcessWorker.stop is floored at the reserved slice even when the forced window
     # is exhausted, so a slow processor join cannot starve it to 0s (Finding B).
     components["worker"].stop.assert_called_once_with(
         timeout=session_module._FORCED_WORKER_STOP_RESERVE_SECONDS

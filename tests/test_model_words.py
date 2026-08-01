@@ -4,8 +4,15 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from stenographer.asr.model import Model
+from stenographer.asr.model import (
+    Model,
+    PathologicalOutputError,
+    _token_budget,
+    resolve_cpu_threads,
+)
+from stenographer.config import Config
 
 
 class _FakeWord:
@@ -75,3 +82,68 @@ def test_only_the_silent_segment_is_dropped() -> None:
 def test_silence_threshold_boundary_is_inclusive() -> None:
     model = _model([_FakeSegment(0.6, " maybe")], silence_threshold=0.6)
     assert model.transcribe_words(_samples()) == []
+
+
+def test_invalid_word_timestamp_is_rejected_without_logging_text(caplog) -> None:
+    segment = _FakeSegment(0.1, " private-dictation")
+    segment.words[0].start = float("nan")
+    model = _model([segment])
+
+    with pytest.raises(PathologicalOutputError, match="timestamp"):
+        model.transcribe_words(_samples())
+    assert "private-dictation" not in caplog.text
+
+
+def test_implausible_word_density_is_rejected() -> None:
+    segment = _FakeSegment(0.1, *(f" word{i}" for i in range(13)))
+    for index, word in enumerate(segment.words):
+        word.start = index / 20
+        word.end = (index + 1) / 20
+    model = _model([segment])
+
+    with pytest.raises(PathologicalOutputError, match="density"):
+        model.transcribe_words(_samples())
+
+
+def test_interim_token_budget_is_smaller_than_final_budget() -> None:
+    assert _token_budget(128, 2.0, interim=True) == 22
+    assert _token_budget(128, 2.0) == 32
+    assert _token_budget(20, 30.0, interim=True) == 20
+
+
+def test_cpu_thread_resolution_counts_affinity_visible_physical_cores(tmp_path) -> None:
+    for cpu, package, core in [(0, 0, 0), (1, 0, 0), (2, 0, 1), (3, 1, 0)]:
+        topology = tmp_path / f"cpu{cpu}" / "topology"
+        topology.mkdir(parents=True)
+        (topology / "physical_package_id").write_text(str(package))
+        (topology / "core_id").write_text(str(core))
+
+    assert resolve_cpu_threads(0, affinity={0, 1, 2, 3}, topology_root=tmp_path) == 3
+
+
+def test_cpu_thread_resolution_caps_auto_and_falls_back(tmp_path) -> None:
+    for cpu in range(10):
+        topology = tmp_path / f"cpu{cpu}" / "topology"
+        topology.mkdir(parents=True)
+        (topology / "physical_package_id").write_text("0")
+        (topology / "core_id").write_text(str(cpu))
+
+    assert resolve_cpu_threads(0, affinity=set(range(10)), topology_root=tmp_path) == 8
+    assert resolve_cpu_threads(0, affinity={99}, topology_root=tmp_path) == 4
+    assert resolve_cpu_threads(12, affinity=set(), topology_root=tmp_path) == 12
+
+
+def test_model_passes_resolved_cpu_threads_to_backend(monkeypatch) -> None:
+    received: dict[str, object] = {}
+
+    class FakeWhisperModel:
+        def __init__(self, _model: str, **kwargs) -> None:
+            received.update(kwargs)
+
+    monkeypatch.setattr("stenographer.asr.model.WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr("stenographer.asr.model.resolve_cpu_threads", lambda _value: 6)
+
+    model = Model(Config.defaults().asr)
+
+    assert received["cpu_threads"] == 6
+    model.close()

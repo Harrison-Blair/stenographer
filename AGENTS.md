@@ -20,8 +20,9 @@ Key tracked paths:
   config (with an `integration` marker, opt-in via
   `STENOGRAPHER_INTEGRATION=1`).
 - `src/stenographer/` — the package (cli, `_parser`, session,
-  capabilities, config, errors, notification, update, bench, and the
-  visualizer, `hotkey/`, `audio/`, `asr/`, `output/` subpackages + `assets/`).
+  capabilities, errors, notification, update, bench, and the `config/`,
+  `visualizer/`, `hotkey/`, `audio/`, `asr/`, `output/` subpackages +
+  `assets/`).
 - `tests/` — pytest suite mirroring `src/` plus `tests/fixtures/`.
 - `packaging/` — `stenographer.service.in` (systemd user unit template),
   `stenographer.spec` (PyInstaller), PyInstaller hooks, bash completion.
@@ -106,8 +107,9 @@ is the orchestrator that wires the components together — start there when
 tracing behaviour.
 
 **New feature or new component.** Add the module under the matching
-subpackage (`hotkey/`, `audio/`, `asr/`, `output/`, or top-level for
-cross-cutting concerns), give it a docstring describing its contract,
+subpackage (`hotkey/`, `audio/`, `asr/`, `output/`, `config/`,
+`visualizer/`, or top-level for cross-cutting concerns), give it a
+docstring describing its contract,
 mirror it with a `tests/test_*.py`, and wire it into `Session` /
 `cli.py`. Every new source file carries the SPDX header.
 
@@ -152,14 +154,18 @@ When in doubt, read the code in this order:
 3. The component module for the area being changed:
    `hotkey/` (binding, listener, state machine), `audio/` (capture,
    feedback), `asr/` (model, worker), `output/` (inject,
-   clipboard).
-4. `config.py` — config schema (including `[stenographer.update]`).
+   clipboard, delivery).
+4. `config/` — config schema (including `[stenographer.update]`):
+   dataclasses in `schema.py`, per-section validators in `builders.py`,
+   `Config` + load entry points in `__init__.py`.
 5. `errors.py` — degradation policy and exit codes.
 6. `capabilities.py` — the `doctor` probe.
 7. `update.py` — the `update` subcommand (GitHub Releases transport,
    onedir self-replace, daemon stop / start).
 8. `README.md` / `BUILD.md` — install, run, and packaging behaviour.
-9. `visualizer.py` — GTK4 layer-shell status HUD and frequency-band analysis.
+9. `visualizer/` — GTK4 layer-shell status HUD and frequency-band analysis
+   (`indicator.py` facade, `overlay_client.py` daemon side, `overlay_app.py`
+   GTK helper process, `spectrum.py` FFT, `protocol.py` shared labels).
 
 ## When this file goes stale
 

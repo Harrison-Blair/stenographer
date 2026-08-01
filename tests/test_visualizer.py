@@ -14,14 +14,19 @@ import pytest
 
 from stenographer import visualizer
 from stenographer.config import VisualizerConfig
-from stenographer.visualizer import (
-    LayerShellOverlay,
-    SpectrumAnalyzer,
+from stenographer.live import Preview
+from stenographer.visualizer import indicator, overlay_client, spectrum
+from stenographer.visualizer.overlay_app import (
+    _PREVIEW_HEIGHT_PX,
+    _PREVIEW_ROWS,
+    _PREVIEW_WIDTH_CHARS,
     _prepare_spectrum_context,
     _preview_markup,
     _register_application_font,
-    analyze_frequency_bands,
+    _trim_preview,
 )
+from stenographer.visualizer.overlay_client import LayerShellOverlay
+from stenographer.visualizer.spectrum import SpectrumAnalyzer, analyze_frequency_bands
 
 
 def test_analyze_frequency_bands_silence_is_empty() -> None:
@@ -85,8 +90,36 @@ def test_preview_markup_escapes_transcript_and_fades_tail() -> None:
     markup = _preview_markup("<stable & safe>", ' "tail" & <revisable>')
     assert "&lt;stable &amp; safe&gt;" in markup
     assert '"tail" &amp; &lt;revisable&gt;' in markup
-    assert 'alpha="52%"' in markup
-    assert 'alpha="28%"' in markup
+    assert 'alpha="92%"' in markup
+    assert 'alpha="58%"' in markup
+    assert 'style="italic"' in markup
+
+
+def test_preview_keeps_recent_text_at_word_boundary_and_preserves_styles() -> None:
+    stable = "old words " + "stable " * 16
+    provisional = "provisional ending"
+
+    recent_stable, recent_provisional = _trim_preview(stable, provisional)
+    markup = _preview_markup(stable, provisional)
+
+    assert recent_stable.startswith("…")
+    assert recent_provisional == provisional
+    assert "old words" not in recent_stable
+    assert len(recent_stable + recent_provisional) <= 97
+    assert "provisional ending" in markup
+
+
+def test_preview_trim_escapes_ellipsis_in_provisional_only() -> None:
+    stable, provisional = _trim_preview("", "prefix " * 20 + "<new tail>")
+    assert stable == ""
+    assert provisional.startswith("…")
+    assert "&lt;new tail&gt;" in _preview_markup("", "prefix " * 20 + "<new tail>")
+
+
+def test_preview_geometry_reserves_two_fixed_rows_at_existing_width() -> None:
+    assert _PREVIEW_WIDTH_CHARS == 42
+    assert _PREVIEW_ROWS == 2
+    assert _PREVIEW_HEIGHT_PX > 0
 
 
 def _started_overlay(process: MagicMock) -> LayerShellOverlay:
@@ -114,7 +147,7 @@ def test_overlay_preview_and_clear_use_json_lines_protocol() -> None:
     process.stdin.write.side_effect = write
     overlay = _started_overlay(process)
 
-    overlay.show_preview("Stable", " tail")
+    overlay.show_preview(Preview("Stable", " tail"))
     assert preview_written.wait(timeout=5.0)
     overlay.clear_preview()
     overlay.close()  # joins the writer thread, so every message has been sent
@@ -164,7 +197,7 @@ def test_overlay_send_never_blocks_on_a_wedged_helper_pipe() -> None:
     def publish() -> None:
         for _ in range(20):
             overlay.show_levels([0.1] * 16)
-            overlay.show_preview("stable", " tail")
+            overlay.show_preview(Preview("stable", " tail"))
         overlay.show_state("listening")
         returned.set()
 
@@ -194,7 +227,7 @@ def test_overlay_coalesces_previews_when_helper_pipe_is_wedged() -> None:
     overlay.show_state("listening")
     assert wedged.wait(timeout=5.0)
     for index in range(100):
-        overlay.show_preview(f"stable transcript {index}", f" tail {index}")
+        overlay.show_preview(Preview(f"stable transcript {index}", f" tail {index}"))
 
     with overlay._condition:
         previews = [
@@ -235,7 +268,7 @@ def test_overlay_drops_level_frames_but_never_state_or_preview() -> None:
     assert wedged.wait(timeout=5.0)
     for _ in range(50):
         overlay.show_levels([0.5] * 16)
-    overlay.show_preview("stable", " tail")
+    overlay.show_preview(Preview("stable", " tail"))
     overlay.show_state("transcribing")
     release.set()
     overlay.close()
@@ -281,9 +314,9 @@ def test_overlay_degrades_when_helper_dies_after_ready(monkeypatch) -> None:
             pass
 
     monkeypatch.setattr(LayerShellOverlay, "probe", staticmethod(lambda: True))
-    monkeypatch.setattr(visualizer.ctypes.util, "find_library", lambda _name: None)
-    monkeypatch.setattr(visualizer.subprocess, "Popen", lambda *_a, **_kw: FakeProcess())
-    monkeypatch.setattr(visualizer.select, "select", lambda *_args: ([object()], [], []))
+    monkeypatch.setattr(overlay_client.ctypes.util, "find_library", lambda _name: None)
+    monkeypatch.setattr(overlay_client.subprocess, "Popen", lambda *_a, **_kw: FakeProcess())
+    monkeypatch.setattr(overlay_client.select, "select", lambda *_args: ([object()], [], []))
 
     overlay = LayerShellOverlay(VisualizerConfig(True, 16, 80.0, 8000.0, 32))
     overlay.show_state("listening")
@@ -297,29 +330,29 @@ def test_overlay_startup_failure_replays_current_state_on_desktop(monkeypatch) -
     desktop = MagicMock()
     fallback_shown = threading.Event()
     desktop.show_listening.side_effect = fallback_shown.set
-    monkeypatch.setattr(visualizer, "DesktopNotification", lambda **_kwargs: desktop)
+    monkeypatch.setattr(indicator, "DesktopNotification", lambda **_kwargs: desktop)
     monkeypatch.setattr(LayerShellOverlay, "probe", staticmethod(lambda: False))
-    indicator = visualizer.StatusIndicator(cfg=VisualizerConfig(True, 16, 80.0, 8000.0, 32))
+    status_indicator = visualizer.StatusIndicator(cfg=VisualizerConfig(True, 16, 80.0, 8000.0, 32))
 
     try:
-        indicator.show_listening()
+        status_indicator.show_listening()
         assert fallback_shown.wait(timeout=5.0)
         desktop.show_listening.assert_called_once()
-        assert not indicator._analyzer._active.is_set()
+        assert not status_indicator._analyzer._active.is_set()
     finally:
-        indicator.flush()
+        status_indicator.flush()
 
 
 def test_update_notification_prefers_bottom_overlay(monkeypatch) -> None:
     overlay = MagicMock()
     overlay.show_state.return_value = True
     desktop = MagicMock()
-    monkeypatch.setattr(visualizer, "DesktopNotification", lambda **_kwargs: desktop)
-    monkeypatch.setattr(visualizer, "LayerShellOverlay", lambda *_args, **_kwargs: overlay)
-    indicator = visualizer.StatusIndicator(cfg=VisualizerConfig(True, 16, 80.0, 8000.0, 32))
+    monkeypatch.setattr(indicator, "DesktopNotification", lambda **_kwargs: desktop)
+    monkeypatch.setattr(indicator, "LayerShellOverlay", lambda *_args, **_kwargs: overlay)
+    status_indicator = visualizer.StatusIndicator(cfg=VisualizerConfig(True, 16, 80.0, 8000.0, 32))
 
     try:
-        indicator.show_update_available("1.2.3")
+        status_indicator.show_update_available("1.2.3")
         overlay.show_state.assert_called_once_with(
             "update_available",
             timeout_ms=10000,
@@ -327,7 +360,7 @@ def test_update_notification_prefers_bottom_overlay(monkeypatch) -> None:
         )
         desktop.show_update_available.assert_not_called()
     finally:
-        indicator.flush()
+        status_indicator.flush()
 
 
 def test_analyzer_close_stop_survives_a_racing_submit(monkeypatch) -> None:
@@ -339,7 +372,7 @@ def test_analyzer_close_stop_survives_a_racing_submit(monkeypatch) -> None:
         arm = False
 
         def put_nowait(self, item):
-            if item is visualizer._STOP:
+            if item is spectrum._STOP:
                 stop_queued.set()
             try:
                 return super().put_nowait(item)
@@ -352,7 +385,7 @@ def test_analyzer_close_stop_survives_a_racing_submit(monkeypatch) -> None:
                     resume.wait(5.0)
                 raise
 
-    monkeypatch.setattr(visualizer.queue, "Queue", SteppedQueue)
+    monkeypatch.setattr(spectrum.queue, "Queue", SteppedQueue)
     analyzer = SpectrumAnalyzer(
         band_count=4,
         min_frequency=80.0,
@@ -369,7 +402,7 @@ def test_analyzer_close_stop_survives_a_racing_submit(monkeypatch) -> None:
         busy_release.wait(5.0)
         return np.zeros(4, dtype=np.float32)
 
-    monkeypatch.setattr(visualizer, "analyze_frequency_bands", slow_analyze)
+    monkeypatch.setattr(spectrum, "analyze_frequency_bands", slow_analyze)
 
     block = np.ones(1024, dtype=np.float32)
     analyzer.set_active(True)
@@ -411,7 +444,7 @@ def test_analyzer_stops_publishing_when_deactivated_mid_analysis(monkeypatch) ->
         analyzed.set()
         return np.ones(4, dtype=np.float32)
 
-    monkeypatch.setattr(visualizer, "analyze_frequency_bands", fake_analyze)
+    monkeypatch.setattr(spectrum, "analyze_frequency_bands", fake_analyze)
     analyzer = SpectrumAnalyzer(
         band_count=4,
         min_frequency=80.0,
@@ -516,12 +549,12 @@ def test_frozen_overlay_falls_back_to_system_layer_shell(
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
     monkeypatch.setattr(LayerShellOverlay, "probe", staticmethod(lambda: True))
     monkeypatch.setattr(
-        visualizer.ctypes.util,
+        overlay_client.ctypes.util,
         "find_library",
         lambda name: "libgtk4-layer-shell.so.0" if name == "gtk4-layer-shell" else None,
     )
-    monkeypatch.setattr(visualizer.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(visualizer.select, "select", lambda *_args: ([object()], [], []))
+    monkeypatch.setattr(overlay_client.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(overlay_client.select, "select", lambda *_args: ([object()], [], []))
 
     overlay = LayerShellOverlay(
         VisualizerConfig(

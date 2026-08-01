@@ -94,16 +94,29 @@ def test_defaults_asr() -> None:
     assert Config.defaults().asr == AsrConfig(
         model="Systran/faster-whisper-medium.en",
         language="en",
-        beam_size=5,
+        beam_size=1,
         compute_type="int8",
         silence_threshold=0.6,
         vad_filter=True,
         max_new_tokens=128,
+        cpu_threads=0,
         mode="lazy",
-        idle_unload_seconds=300,
+        idle_unload_seconds=900,
         hotwords=None,
         initial_prompt=None,
     )
+
+
+def test_legacy_asr_config_inherits_cpu_threads_and_keeps_explicit_unload(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[stenographer]\nasr.idle_unload_seconds = 300\n")
+
+    cfg = Config.load(path)
+
+    assert cfg.asr.cpu_threads == 0
+    assert cfg.asr.idle_unload_seconds == 300
 
 
 def test_defaults_feedback() -> None:
@@ -283,7 +296,7 @@ def test_load_partial_override_merges_over_defaults(tmp_path: pathlib.Path) -> N
     assert cfg.audio.sample_rate == 48000
     assert cfg.audio.frames_per_buffer == 1024
     assert cfg.audio.input_device is None
-    assert cfg.asr.beam_size == 5
+    assert cfg.asr.beam_size == 1
     assert cfg.feedback.volume == 0.6
     assert cfg.output.injection_method == "clipboard_paste"
     assert cfg.output.max_chars == 4096
@@ -438,6 +451,21 @@ def test_validate_max_new_tokens_out_of_range_rejected(tmp_path: pathlib.Path, v
     p.write_text(f"[stenographer]\nasr.max_new_tokens = {value}\n")
     with pytest.raises(ConfigError, match=r"asr.max_new_tokens"):
         Config.load(p)
+
+
+@pytest.mark.parametrize("value", ["-1", "65"])
+def test_validate_cpu_threads_out_of_range_rejected(tmp_path: pathlib.Path, value: str) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\nasr.cpu_threads = {value}\n")
+    with pytest.raises(ConfigError, match=r"asr.cpu_threads"):
+        Config.load(p)
+
+
+@pytest.mark.parametrize("value", ["0", "1", "64"])
+def test_validate_cpu_threads_bounds_accepted(tmp_path: pathlib.Path, value: str) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer]\nasr.cpu_threads = {value}\n")
+    assert Config.load(p).asr.cpu_threads == int(value)
 
 
 def test_validate_hotkey_threshold_zero_rejected(tmp_path: pathlib.Path) -> None:
@@ -607,7 +635,8 @@ def test_write_default_includes_asr_mode(tmp_path: pathlib.Path) -> None:
     Config.write_default(p)
     text = p.read_text(encoding="utf-8")
     assert 'asr.mode = "lazy"' in text
-    assert "asr.idle_unload_seconds = 300" in text
+    assert "asr.cpu_threads = 0" in text
+    assert "asr.idle_unload_seconds = 900" in text
 
 
 def test_validate_volume_negative_rejected(tmp_path: pathlib.Path) -> None:
@@ -825,6 +854,15 @@ def test_incremental_defaults() -> None:
     assert cfg.formatting.normalize_spacing is True
 
 
+def test_old_config_inherits_latency_defaults(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[stenographer]\nincremental.agreement_n = 3\n")
+
+    incremental = Config.load(path).incremental
+    assert incremental.interim_timeout_seconds == 5.0
+    assert incremental.release_timeout_seconds == 8.0
+
+
 def test_default_paragraph_pause_seconds_is_zero() -> None:
     assert Config.defaults().formatting.paragraph_pause_seconds == 0.0
 
@@ -893,6 +931,10 @@ def test_new_incremental_keys_win_over_legacy_streaming(tmp_path: pathlib.Path) 
         ("incremental.beam_size", "11"),
         ("incremental.max_buffer_seconds", "4"),
         ("incremental.max_buffer_seconds", "121"),
+        ("incremental.interim_timeout_seconds", "0.9"),
+        ("incremental.interim_timeout_seconds", "61"),
+        ("incremental.release_timeout_seconds", "0.9"),
+        ("incremental.release_timeout_seconds", "61"),
         ("formatting.paragraph_pause_seconds", "-1"),
         ("formatting.paragraph_pause_seconds", "11"),
     ],
@@ -922,6 +964,8 @@ def test_write_default_is_valid_toml(tmp_path: pathlib.Path) -> None:
     assert "[stenographer.feedback.cues]" in text
     assert "hotkey.binding" in text
     assert "asr.compute_type" in text
+    assert "incremental.interim_timeout_seconds = 5.0" in text
+    assert "incremental.release_timeout_seconds = 8.0" in text
 
 
 # --- resolve_config_path() ---

@@ -11,13 +11,18 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+import threading
 import time
 from dataclasses import dataclass
 
 import numpy as np
 
 from stenographer.asr.model import Model
+from stenographer.asr.streaming import StreamingTranscriber
+from stenographer.asr.worker import ProcessWorker
 from stenographer.config import Config
+from stenographer.live import IncrementalDriver, IncrementalResult, Preview
+from stenographer.output.formatter import HeuristicFormatter
 
 _GOLD_MODEL = "Systran/faster-whisper-large-v3"
 _GOLD_BEAM = 5
@@ -183,6 +188,16 @@ class BatchRow:
     text: str
 
 
+@dataclass
+class IncrementalRow:
+    name: str
+    first_preview_s: float | None
+    release_ready_s: float
+    timed_out: bool
+    degraded: bool
+    text: str
+
+
 def _short_model(model: str) -> str:
     return model.rsplit("/", 1)[-1].replace("faster-", "").replace("whisper-", "")
 
@@ -331,6 +346,135 @@ def print_batch(rows: list[BatchRow]) -> None:
         )
 
 
+# -- configured incremental replay -----------------------------------------
+
+
+class _ReplayRecorder:
+    """Expose progressively larger snapshots from one prerecorded clip."""
+
+    def __init__(self, samples: np.ndarray, sample_rate: int) -> None:
+        self.samples = samples
+        self.sample_rate = sample_rate
+        self.end_samples = 0
+
+    def advance(self, seconds: float) -> None:
+        self.end_samples = min(self.samples.shape[0], round(seconds * self.sample_rate))
+
+    def snapshot(self, start_seconds: float = 0.0) -> np.ndarray:
+        start = round(start_seconds * self.sample_rate)
+        return self.samples[start : self.end_samples]
+
+
+def _p90(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return float(np.percentile(np.asarray(values, dtype=np.float64), 90))
+
+
+def run_incremental(cfg: Config, clips: list[Clip]) -> tuple[float, list[IncrementalRow]]:
+    """Replay configured partial positions through the daemon's ASR worker.
+
+    The cadence uses a virtual clock, so long recordings do not need to play
+    in real time. Decode time is accumulated at each configured partial
+    position. No delivery component is constructed, so clipboard and cursor
+    state are never touched.
+    """
+    worker = ProcessWorker(cfg.asr, sample_rate=cfg.audio.sample_rate)
+    worker.start()
+    load_started = time.monotonic()
+    worker.ensure_model_loaded()
+    try:
+        worker.wait_model_loaded(timeout=300.0)
+        cold_load_s = time.monotonic() - load_started
+        rows: list[IncrementalRow] = []
+        for clip in clips:
+            recorder = _ReplayRecorder(clip.samples, cfg.audio.sample_rate)
+            virtual_now = 0.0
+            timing: dict[str, float | None] = {
+                "step_started": time.monotonic(),
+                "step_virtual_start": 0.0,
+                "first_preview": None,
+            }
+
+            def preview_ready(preview: Preview, timing=timing) -> None:
+                if timing["first_preview"] is None and (preview.stable or preview.provisional):
+                    started = timing["step_started"]
+                    virtual_start = timing["step_virtual_start"]
+                    assert started is not None and virtual_start is not None
+                    timing["first_preview"] = virtual_start + (time.monotonic() - started)
+
+            driver = IncrementalDriver(
+                cfg=cfg,
+                recorder=recorder,  # type: ignore[arg-type]
+                worker=worker,
+                transcriber=StreamingTranscriber(agreement_n=cfg.incremental.agreement_n),
+                formatter=HeuristicFormatter(
+                    cfg.formatting,
+                    append_trailing_space=cfg.output.append_trailing_space,
+                ),
+                abort=threading.Event(),
+                on_preview=preview_ready,
+            )
+            cadence = cfg.incremental.min_chunk_seconds
+            position = cadence
+            while position < clip.duration:
+                recorder.advance(position)
+                timing["step_virtual_start"] = max(position, virtual_now)
+                timing["step_started"] = time.monotonic()
+                if not driver._step():
+                    break
+                step_started = timing["step_started"]
+                step_virtual_start = timing["step_virtual_start"]
+                assert step_started is not None and step_virtual_start is not None
+                virtual_now = step_virtual_start + (time.monotonic() - step_started)
+                position += cadence
+
+            released = time.monotonic()
+            driver.signal_final(clip.samples)
+            result = driver.run()
+            release_ready_s = time.monotonic() - released
+            timed_out = (
+                isinstance(result, IncrementalResult) and result.recovery_reason == "timeout"
+            ) or (result is None and driver._last_failure_reason == "timeout")
+            rows.append(
+                IncrementalRow(
+                    name=clip.name,
+                    first_preview_s=timing["first_preview"],
+                    release_ready_s=release_ready_s,
+                    timed_out=timed_out,
+                    degraded=isinstance(result, IncrementalResult) and result.degraded,
+                    text=str(result or ""),
+                )
+            )
+        return cold_load_s, rows
+    finally:
+        worker.stop(timeout=30.0)
+
+
+def print_incremental(cold_load_s: float, rows: list[IncrementalRow]) -> None:
+    print("\nINCREMENTAL:")
+    print(f" cold-load: {cold_load_s:.3f}s")
+    print(
+        f" {'clip':<28} {'first-preview':>14} {'release-ready':>14} {'timeout':>8} {'degraded':>10}"
+    )
+    for row in rows:
+        first = "-" if row.first_preview_s is None else f"{row.first_preview_s:.3f}s"
+        print(
+            f" {row.name:<28.28} {first:>14} {row.release_ready_s:>13.3f}s "
+            f"{str(row.timed_out).lower():>8} {str(row.degraded).lower():>10}"
+        )
+    first_p90 = _p90([row.first_preview_s for row in rows if row.first_preview_s is not None])
+    ready_p90 = _p90([row.release_ready_s for row in rows])
+    first_summary = "-" if first_p90 is None else f"{first_p90:.3f}s"
+    ready_summary = "-" if ready_p90 is None else f"{ready_p90:.3f}s"
+    print(
+        " summary: "
+        f"first-preview-p90={first_summary}, release-ready-p90={ready_summary}, "
+        f"timeouts={sum(row.timed_out for row in rows)}/{len(rows)}, "
+        f"degraded={sum(row.degraded for row in rows)}/{len(rows)}"
+    )
+
+
 # -- entry point ------------------------------------------------------------
 
 
@@ -344,6 +488,7 @@ def run(
     beams: list[int],
     computes: list[str],
     show_text: bool = False,
+    incremental: bool = False,
 ) -> int:
     if record_seconds is not None:
         clips = [record_clip(cfg, record_seconds, save)]
@@ -354,6 +499,15 @@ def run(
         return 2
     total = sum(c.duration for c in clips)
     print(f"bench: {len(clips)} clip(s), {total:.1f}s total audio")
+
+    if incremental:
+        cold_load_s, incremental_rows = run_incremental(cfg, clips)
+        print_incremental(cold_load_s, incremental_rows)
+        if show_text:
+            print("\nTRANSCRIPTS:")
+            for row in incremental_rows:
+                print(f"\n [{row.name}]\n   {row.text or '<empty>'}")
+        return 0
 
     rows, _gold_text = run_batch(cfg, clips, models, beams, computes)
     print_batch(rows)

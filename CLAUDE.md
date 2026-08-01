@@ -85,19 +85,22 @@ The component modules it wires:
 - **`audio/`** — `capture.py` (`Recorder`) captures mic audio via
   `sounddevice`/PortAudio with silence detection; `feedback.py` plays the WAV
   cues in `assets/sounds/` via `pw-play`/`paplay`.
-- **`asr/`** — `model.py` wraps faster-whisper (`Model`, plus `LazyModel` which
-  loads on first use and unloads after idle); `worker.py` runs transcription
-  off the main thread with cancellation support: one batch job per utterance
+- **`asr/`** — `model.py` wraps faster-whisper (`Model`); `worker.py` runs
+  transcription in a spawned child process (`ProcessWorker`) off the main thread
+  with cancellation support and idle model unload: one batch job per utterance
   (`submit`) or one word-timestamped re-decode (`submit_words`);
   `streaming.py` is the **pure** LocalAgreement-N committer — a word joins the
   committed prefix only after N consecutive re-decodes agree on it; that prefix
   is append-only, while the latest uncommitted hypothesis is exposed as a
   revisable provisional tail.
 - **`output/`** — `inject.py` (`Injector`, types via `wtype`),
-  `clipboard.py` (`ClipboardManager`, via `wl-copy`), and `formatter.py`
+  `clipboard.py` (`ClipboardManager`, via `wl-copy`), `formatter.py`
   (`HeuristicFormatter`: spacing / capitalisation / pause-based paragraph
-  breaks; append-only, so it is safe in the incremental path). The clipboard
-  is populated independently, so it's the fallback when injection fails.
+  breaks; append-only, so it is safe in the incremental path), and
+  `delivery.py` (`TranscriptDelivery`: the final-transcript delivery policy —
+  injection, `max_chars` cap, recovery copy, paste chord — extracted from
+  `Session`, which delegates to it). The clipboard is populated
+  independently, so it's the fallback when injection fails.
 - **`live.py`** — `IncrementalDriver`, the incremental decoding driver
   (`[incremental]` config; always on for daemon recordings, not gated by a
   config flag or by `output.injection_method`): recorder partials → coalesce →
@@ -108,12 +111,19 @@ The component modules it wires:
   a preview (stable prefix + revisable provisional tail) rendered only in the
   overlay. `LiveStreamer` remains as a compatibility alias for the old name;
   new code uses `IncrementalDriver`.
-- **`visualizer.py`** — `StatusIndicator`, the status HUD (`[visualizer]`
-  config), wired by `cli.py` and driven by `Session` state transitions.
-  `LayerShellOverlay` spawns a GTK4 layer-shell helper subprocess
+- **`visualizer/`** — the status HUD (`[visualizer]` config), wired by
+  `cli.py` and driven by `Session` state transitions. `indicator.py`
+  (`StatusIndicator`) is the daemon-side facade; `overlay_client.py`
+  (`LayerShellOverlay`) spawns a GTK4 layer-shell helper subprocess
   (`stenographer _visualizer`) and talks to it over JSON-lines on stdin;
-  `SpectrumAnalyzer` does FFT band analysis on a dedicated thread fed by a
-  one-slot queue, so the PortAudio callback only ever copies a block.
+  `overlay_app.py` (`run_overlay_process`) is the helper-process side (its
+  GTK imports stay function-local, and `__main__.py` carries the
+  `python -m stenographer.visualizer --child` dev entry); `spectrum.py`
+  (`SpectrumAnalyzer`) does FFT band analysis on a dedicated thread fed by a
+  one-slot queue, so the PortAudio callback only ever copies a block;
+  `protocol.py` holds the bits both sides share (`_HUD_STATE_LABELS`, the
+  single source of truth for HUD state labels). The package `__init__`
+  re-exports only `StatusIndicator` and `run_overlay_process`.
   `StatusIndicator` prefers the overlay and **transparently falls back** to
   `notification.py` when GTK, layer shell, or Wayland is unavailable — so
   nothing in the daemon may assume the overlay exists. Preview text goes to
@@ -121,7 +131,13 @@ The component modules it wires:
 
 **Cross-cutting:**
 
-- **`config.py`** — TOML config schema and loading (`Config` dataclass).
+- **`config/`** — TOML config schema and loading, split by lifecycle:
+  `schema.py` (the frozen section dataclasses, `ALLOWED_*` constants,
+  `ConfigError`), `sections.py` (`_Section` typed accessors + `_merge`),
+  `builders.py` (the per-section `_build_*` validators + migrations),
+  `serialize.py` (the default-TOML writer), with the `Config` dataclass and
+  load entry points in `__init__.py`, which re-exports the public surface —
+  consumers keep importing `from stenographer.config`.
   `_validate_cross_section` enforces one invariant *at load time*, raising
   `ConfigError` rather than coercing: `output.injection_method =
   "clipboard_paste"` requires `clipboard.enabled`, because the clipboard is

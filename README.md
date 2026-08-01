@@ -62,9 +62,10 @@ path copies the text to both Wayland selections and sends one `Shift+Insert`
 chord with `wtype`.
 
 Word-level decoding runs while recording. The GTK layer-shell HUD displays an
-append-only stable transcript prefix, a fainter revisable tail, and a live
-microphone spectrum. It does not send partial text to the application or
-clipboard: final delivery happens once, after the final decode. When the GTK
+append-only stable transcript prefix and a fainter italic revisable tail in a
+fixed two-line preview, plus a live microphone spectrum. It does not send
+partial text to the application or clipboard: final delivery happens once,
+after the final decode. When the GTK
 overlay is healthy, status and update notices stay in the bottom-center HUD
 instead of going through SwayNC or another notification daemon. If the overlay
 is unavailable, those notices fall back to `notify-send`; transcript previews
@@ -235,6 +236,7 @@ stenographer transcribe FILE --raw # batch: print the raw, unformatted transcrip
 stenographer devices             # list audio input devices
 stenographer model download      # fetch the ASR model
 stenographer bench FILE_OR_DIR   # benchmark a model/beam/compute matrix
+stenographer bench FILE_OR_DIR --incremental  # replay configured partial cadence
 stenographer bench --record 10 --save sample.wav
 stenographer update              # update a prebuilt onedir installation
 stenographer doctor              # print capabilities + resolved config
@@ -324,13 +326,15 @@ audio.min_speech_rms = 0.0005
 # ASR
 asr.model = "Systran/faster-whisper-medium.en"
 asr.language = "en"
-asr.beam_size = 5
+asr.beam_size = 1
 asr.compute_type = "int8"
 asr.silence_threshold = 0.6
 asr.vad_filter = true
 asr.max_new_tokens = 128
+# 0 detects affinity-available physical cores (maximum 8)
+asr.cpu_threads = 0
 asr.mode = "lazy"
-asr.idle_unload_seconds = 300
+asr.idle_unload_seconds = 900
 # hotwords: proper nouns / jargon to bias recognition toward, e.g. "wtype, Wayland"
 asr.hotwords = ""
 # initial_prompt: free-text context prepended to decoding (style/domain hints)
@@ -361,6 +365,8 @@ incremental.min_chunk_seconds = 1.0
 incremental.agreement_n = 2
 incremental.beam_size = null
 incremental.max_buffer_seconds = 20.0
+incremental.interim_timeout_seconds = 5.0
+incremental.release_timeout_seconds = 8.0
 
 # Formatting heuristics (applies to all output modes)
 formatting.paragraph_pause_seconds = 0.0
@@ -396,7 +402,9 @@ although standard TOML represents these defaults as empty strings.
 `asr.mode = "lazy"` loads the model on first use and unloads it after
 `asr.idle_unload_seconds`; `0` disables idle unloading. Set the mode to
 `"eager"` to load at daemon startup. `incremental.beam_size = null` inherits
-`asr.beam_size`.
+`asr.beam_size`. `asr.cpu_threads = 0` counts physical cores visible through
+the process CPU affinity and uses at most eight (falling back to four if CPU
+topology is unavailable); explicit values from 1 through 64 override detection.
 
 `output.injection_method` must be `"type"` or `"clipboard_paste"`. Paste mode
 requires `clipboard.enabled = true`; type mode can leave a convenience copy on
@@ -415,9 +423,20 @@ preserving already committed speech.
 `asr.vad_filter` enables Silero VAD with conservative speech/padding settings.
 `asr.silence_threshold` is passed to faster-whisper's native no-speech filter
 and remains a post-decode segment gate. A two-second hallucination-silence
-guard is enabled, and `asr.max_new_tokens` bounds generation per chunk. If a
-final incremental decode fails, already committed preview text is still
-delivered.
+guard is enabled. Decoding uses one deterministic greedy pass, blocks repeated
+3-grams, and dynamically reduces `asr.max_new_tokens` for short audio, with a
+smaller allowance for interim previews than final and batch decoding. Model
+files are opened from the local cache only during transcription.
+
+Native inference runs in a restartable child process. Interim decodes are
+abandoned after `incremental.interim_timeout_seconds`; after key release, a
+final transcript or the latest confidence-gated preview is ready within
+`incremental.release_timeout_seconds`. Recovered text uses the error cue to
+signal that the result may be incomplete. Clipboard and cursor-injection tools
+keep their own independent timeouts.
+At release, queued previews are invalidated immediately. An active preview gets
+up to 750 ms (and no more than one quarter of the release timeout) to finish;
+its hypothesis may be reused for finalization but is not published after release.
 Legacy `streaming.*` tuning keys are migrated to `incremental.*` with warnings;
 incremental decoding itself is always enabled.
 

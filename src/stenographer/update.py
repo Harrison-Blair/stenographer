@@ -28,6 +28,7 @@ from packaging.version import InvalidVersion, Version
 
 from stenographer import __version__
 from stenographer.errors import UpdateError
+from stenographer.systemd import UNIT_NAME, systemctl_argv
 
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
@@ -380,17 +381,14 @@ def stop_daemon() -> bool:
         return False
     try:
         result = subprocess.run(
-            ["systemctl", "--user", "is-active", "--quiet", "stenographer.service"],
+            systemctl_argv("is-active", "--quiet", UNIT_NAME),
             check=False,
         )
     except OSError:
         return False
     if result.returncode != 0:
         return False
-    subprocess.run(
-        ["systemctl", "--user", "stop", "stenographer.service"],
-        check=False,
-    )
+    subprocess.run(systemctl_argv("stop", UNIT_NAME), check=False)
     return True
 
 
@@ -404,12 +402,7 @@ def start_daemon() -> bool:
         return False
     try:
         result = subprocess.run(
-            [
-                "systemctl",
-                "--user",
-                "cat",
-                "stenographer.service",
-            ],
+            systemctl_argv("cat", UNIT_NAME),
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -418,10 +411,7 @@ def start_daemon() -> bool:
         return False
     if result.returncode != 0:
         return False
-    start = subprocess.run(
-        ["systemctl", "--user", "start", "stenographer.service"],
-        check=False,
-    )
+    start = subprocess.run(systemctl_argv("start", UNIT_NAME), check=False)
     return start.returncode == 0
 
 

@@ -16,7 +16,8 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-_UNIT_NAME = "stenographer.service"
+from stenographer.systemd import UNIT_NAME
+
 _SYSTEMD_PROPERTIES = (
     "LoadState",
     "FragmentPath",
@@ -103,7 +104,7 @@ def collect_systemd_status() -> SystemdStatus:
     property_arg = "--property=" + ",".join(_SYSTEMD_PROPERTIES)
     try:
         show_result = subprocess.run(
-            ["systemctl", "--user", "show", _UNIT_NAME, "--no-pager", property_arg],
+            ["systemctl", "--user", "show", UNIT_NAME, "--no-pager", property_arg],
             check=False,
             capture_output=True,
             text=True,
@@ -128,7 +129,7 @@ def collect_systemd_status() -> SystemdStatus:
                 "systemctl",
                 "--user",
                 "status",
-                _UNIT_NAME,
+                UNIT_NAME,
                 "--no-pager",
                 "--full",
                 "--lines=10",

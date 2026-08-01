@@ -61,6 +61,21 @@ def test_dictate_listener_uses_unmapped_feedback(monkeypatch: pytest.MonkeyPatch
         session.stop()
 
 
+def test_doctor_reports_incremental_latency_policy(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: pathlib.Path
+) -> None:
+    monkeypatch.setattr(cli.Capabilities, "probe", lambda _cfg: _caps())
+    monkeypatch.setattr(cli.DesktopNotification, "probe", lambda: False)
+    monkeypatch.setattr(cli.StatusIndicator, "overlay_probe", lambda: False)
+
+    cli.cmd_doctor(Config.defaults(), tmp_path / "config.toml")
+
+    output = capsys.readouterr().out
+    assert "interim-timeout=5s" in output
+    assert "release-timeout=8s" in output
+    assert "asr.cpu_threads: 0 (effective:" in output
+
+
 def test_run_stop_names_stop_replacement(capsys: pytest.CaptureFixture[str]) -> None:
     rc = cli.main(["run", "stop"])
 
@@ -84,6 +99,13 @@ def test_run_alone_still_dispatches_normally() -> None:
 
     args = build_parser().parse_args(["run"])
     assert args.subcommand == "run"
+
+
+def test_bench_parser_accepts_incremental_replay() -> None:
+    from stenographer._parser import build_parser
+
+    args = build_parser().parse_args(["bench", "clips", "--incremental"])
+    assert args.incremental is True
 
 
 def test_startup_update_check_disabled_does_not_launch(monkeypatch: pytest.MonkeyPatch) -> None:
