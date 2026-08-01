@@ -427,7 +427,7 @@ def test_stop_forces_active_and_queued_work_after_drain_deadline(monkeypatch) ->
     assert queued.abort.is_set()
     queued.signal_abort.assert_called_once_with()
     assert processor.join.call_count == 2
-    # Worker.stop is floored at the reserved slice even when the forced window
+    # ProcessWorker.stop is floored at the reserved slice even when the forced window
     # is exhausted, so a slow processor join cannot starve it to 0s (Finding B).
     components["worker"].stop.assert_called_once_with(
         timeout=session_module._FORCED_WORKER_STOP_RESERVE_SECONDS

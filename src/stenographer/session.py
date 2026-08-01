@@ -233,6 +233,21 @@ class Session:
         if not self._stop_event.is_set():
             log.info("session: stop requested")
         self._stop_event.set()
+        self._stop_capture()
+        self._stop_listener()
+        self._drain_processor()
+        processor_alive = self._processor is not None and self._processor.is_alive()
+        self._flush_notification()
+        if processor_alive:
+            # The active abort suppresses delivery when inference eventually
+            # returns. Keep its dependencies open until process exit rather
+            # than racing a processor that has not reached that check yet.
+            log.error("session: processor still alive; deferring delivery-component teardown")
+            return
+        self._close_components()
+
+    def _stop_capture(self) -> None:
+        """Stop an in-progress recording and route its samples on the way down."""
         if self._recorder.is_active:
             streamer = self._recording_streamer
             self._recording_streamer = None
@@ -253,11 +268,16 @@ class Session:
                     streamer.signal_final(samples)
                 else:
                     self._drain(samples)
+
+    def _stop_listener(self) -> None:
         try:
             if self._listener is not None:
                 self._listener.stop(timeout=2.0)
         except Exception as exc:
             log.error("session: listener.stop failed: %s", exc)
+
+    def _drain_processor(self) -> None:
+        """Drain the processor thread, escalating to a forced deadline, then stop the worker."""
         self._worker.cancel()
         self._utterance_queue.put(None)
         if self._processor is not None and self._processor.is_alive():
@@ -287,7 +307,8 @@ class Session:
             self._worker.stop(timeout=worker_timeout)
         except Exception as exc:
             log.error("session: worker.stop failed: %s", exc)
-        processor_alive = self._processor is not None and self._processor.is_alive()
+
+    def _flush_notification(self) -> None:
         # Always hide/flush the notification, even on the deferred-teardown
         # path: a 'Transcribing…' posted with timeout 0 would otherwise outlive
         # the daemon. This is safe while the processor thread may still be alive
@@ -299,24 +320,17 @@ class Session:
                 self._notification.flush(timeout=2.0)
         except Exception as exc:
             log.error("session: notification.hide failed: %s", exc)
-        if processor_alive:
-            # The active abort suppresses delivery when inference eventually
-            # returns. Keep its dependencies open until process exit rather
-            # than racing a processor that has not reached that check yet.
-            log.error("session: processor still alive; deferring delivery-component teardown")
-            return
-        try:
-            self._feedback.close()
-        except Exception as exc:
-            log.error("session: feedback.close failed: %s", exc)
-        try:
-            self._injector.close()
-        except Exception as exc:
-            log.error("session: injector.close failed: %s", exc)
-        try:
-            self._clipboard.close()
-        except Exception as exc:
-            log.error("session: clipboard.close failed: %s", exc)
+
+    def _close_components(self) -> None:
+        for name, component in (
+            ("feedback", self._feedback),
+            ("injector", self._injector),
+            ("clipboard", self._clipboard),
+        ):
+            try:
+                component.close()
+            except Exception as exc:
+                log.error("session: %s.close failed: %s", name, exc)
 
     @staticmethod
     def _remaining_shutdown_time(deadline: float) -> float:

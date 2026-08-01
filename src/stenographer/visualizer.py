@@ -44,6 +44,18 @@ logger = logging.getLogger(__name__)
 _STOP = object()
 _READY_TIMEOUT_SECONDS = 3.0
 
+# Single source of truth for the HUD status labels the overlay child renders per
+# state slug. Slugs are produced by StatusIndicator.show_* and cross the JSON IPC
+# boundary; unknown slugs fall back to a title-cased rendering.
+_HUD_STATE_LABELS = {
+    "ready": "Ready",
+    "listening": "Listening",
+    "loading": "Loading model · Listening",
+    "transcribing": "Transcribing",
+    "unloaded": "Speech model unloaded",
+    "update_available": "Update Available",
+}
+
 
 def analyze_frequency_bands(
     samples: np.ndarray,
@@ -451,44 +463,73 @@ class LayerShellOverlay:
         if self._process is not None and self._process.poll() is None:
             return True
         if not self.probe():
-            self._degrade()
+            self._fail_over(None)
             return False
 
-        if getattr(sys, "frozen", False):
-            command = [sys.executable, "_visualizer"]
-        else:
-            command = [sys.executable, "-m", "stenographer.visualizer", "--child"]
+        command = self._build_command()
         try:
-            environment = os.environ.copy()
-            if self._font_path is not None:
-                environment["STENOGRAPHER_FONT_PATH"] = str(self._font_path)
-            if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
-                bundled = os.path.join(sys._MEIPASS, "libgtk4-layer-shell.so.0")
-                layer_shell = (
-                    bundled
-                    if os.path.exists(bundled)
-                    else ctypes.util.find_library("gtk4-layer-shell")
-                )
-            else:
-                layer_shell = ctypes.util.find_library("gtk4-layer-shell")
-            if layer_shell:
-                preload = environment.get("LD_PRELOAD", "")
-                libraries = [item for item in preload.split(":") if item]
-                if layer_shell not in libraries:
-                    environment["LD_PRELOAD"] = ":".join([layer_shell, *libraries])
             process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 text=True,
                 bufsize=1,
-                env=environment,
+                env=self._build_environment(),
             )
         except OSError as exc:
             logger.warning("visualizer: cannot start overlay; using notifications: %s", exc)
-            self._degrade()
+            self._fail_over(None)
             return False
 
+        if not self._await_ready(process):
+            self._fail_over(process)
+            return False
+        if not self._send_configure(process):
+            self._fail_over(process)
+            return False
+
+        with self._condition:
+            self._process = process
+            self._started = True
+        logger.info("visualizer: GTK4 layer-shell overlay ready")
+        return True
+
+    def _fail_over(self, process: subprocess.Popen[str] | None) -> None:
+        """Terminate any live helper, then degrade to notifications.
+
+        The single exit path for every startup failure, so a new branch cannot
+        forget to reap the subprocess before degrading.
+        """
+        if process is not None:
+            _terminate(process)
+        self._degrade()
+
+    @staticmethod
+    def _build_command() -> list[str]:
+        if getattr(sys, "frozen", False):
+            return [sys.executable, "_visualizer"]
+        return [sys.executable, "-m", "stenographer.visualizer", "--child"]
+
+    def _build_environment(self) -> dict[str, str]:
+        environment = os.environ.copy()
+        if self._font_path is not None:
+            environment["STENOGRAPHER_FONT_PATH"] = str(self._font_path)
+        if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+            bundled = os.path.join(sys._MEIPASS, "libgtk4-layer-shell.so.0")
+            layer_shell = (
+                bundled if os.path.exists(bundled) else ctypes.util.find_library("gtk4-layer-shell")
+            )
+        else:
+            layer_shell = ctypes.util.find_library("gtk4-layer-shell")
+        if layer_shell:
+            preload = environment.get("LD_PRELOAD", "")
+            libraries = [item for item in preload.split(":") if item]
+            if layer_shell not in libraries:
+                environment["LD_PRELOAD"] = ":".join([layer_shell, *libraries])
+        return environment
+
+    @staticmethod
+    def _await_ready(process: subprocess.Popen[str]) -> bool:
         assert process.stdout is not None
         readable, _, _ = select.select([process.stdout], [], [], _READY_TIMEOUT_SECONDS)
         response = process.stdout.readline().strip() if readable else ""
@@ -497,10 +538,10 @@ class LayerShellOverlay:
                 "visualizer: GTK layer-shell unavailable; using notifications%s",
                 f" ({response})" if response else "",
             )
-            _terminate(process)
-            self._degrade()
             return False
+        return True
 
+    def _send_configure(self, process: subprocess.Popen[str]) -> bool:
         setup = {
             "command": "configure",
             "margin_bottom": self._cfg.margin_bottom,
@@ -515,14 +556,7 @@ class LayerShellOverlay:
             # A helper that prints READY and then dies must degrade like any
             # other pipe failure instead of raising out of the writer thread.
             logger.warning("visualizer: overlay died during setup; using notifications: %s", exc)
-            _terminate(process)
-            self._degrade()
             return False
-
-        with self._condition:
-            self._process = process
-            self._started = True
-        logger.info("visualizer: GTK4 layer-shell overlay ready")
         return True
 
 
@@ -783,6 +817,14 @@ def run_overlay_process() -> int:
             self.hide_generation = 0
 
         def _activate(self, app: Any) -> None:
+            if not self._install_styles(app):
+                return
+            if not self._configure_layer_shell(app):
+                return
+            self._build_widgets()
+            self._start_ipc_thread()
+
+        def _install_styles(self, app: Any) -> bool:
             font_path = os.environ.get("STENOGRAPHER_FONT_PATH")
             if font_path:
                 font_map = PangoCairo.FontMap.get_default()
@@ -796,13 +838,15 @@ def run_overlay_process() -> int:
             if display is None:
                 print("ERROR: no Wayland display", flush=True)
                 app.quit()
-                return
+                return False
             Gtk.StyleContext.add_provider_for_display(
                 display,
                 provider,
                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
             )
+            return True
 
+        def _configure_layer_shell(self, app: Any) -> bool:
             self.window = Gtk.ApplicationWindow(application=app)
             self.window.set_decorated(False)
             self.window.set_resizable(False)
@@ -810,7 +854,7 @@ def run_overlay_process() -> int:
             if not Gtk4LayerShell.is_layer_window(self.window):
                 print("ERROR: could not initialize a layer-shell surface", flush=True)
                 app.quit()
-                return
+                return False
             Gtk4LayerShell.set_namespace(self.window, "stenographer-spectrum")
             Gtk4LayerShell.set_layer(self.window, Gtk4LayerShell.Layer.OVERLAY)
             Gtk4LayerShell.set_keyboard_mode(
@@ -823,7 +867,9 @@ def run_overlay_process() -> int:
                 Gtk4LayerShell.Edge.BOTTOM,
                 True,
             )
+            return True
 
+        def _build_widgets(self) -> None:
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
             box.add_css_class("stenographer-hud")
             self.icon = Gtk.Image()
@@ -870,6 +916,7 @@ def run_overlay_process() -> int:
                 surface.set_input_region(cairo.Region())
             self.window.set_visible(False)
 
+        def _start_ipc_thread(self) -> None:
             threading.Thread(target=self._read_commands, name="overlay-ipc", daemon=True).start()
             print("READY", flush=True)
 
@@ -924,17 +971,12 @@ def run_overlay_process() -> int:
 
         def _set_state(self, state: str, timeout_ms: int, label: str | None = None) -> None:
             self.hide_generation += 1
-            labels = {
-                "ready": "Ready",
-                "listening": "Listening",
-                "loading": "Loading model · Listening",
-                "transcribing": "Transcribing",
-                "unloaded": "Speech model unloaded",
-            }
             if state == "hidden":
                 self.window.set_visible(False)
                 return
-            self.status.set_label(label or labels.get(state, state.replace("_", " ").title()))
+            self.status.set_label(
+                label or _HUD_STATE_LABELS.get(state, state.replace("_", " ").title())
+            )
             if state not in {"listening", "loading"}:
                 self.levels = [0.0] * len(self.levels)
                 self.drawing.queue_draw()
