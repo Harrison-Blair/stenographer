@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 import time
@@ -26,6 +27,12 @@ _VAD_PARAMETERS = {
     "speech_pad_ms": 250,
 }
 _HALLUCINATION_SILENCE_SECONDS = 2.0
+_WORDS_PER_VAD_SECOND = 8
+_MIN_WORD_LIMIT = 12
+
+
+class PathologicalOutputError(RuntimeError):
+    """The decoder returned structurally invalid or implausibly dense output."""
 
 
 def _read_rss_kb() -> int | None:
@@ -74,6 +81,7 @@ class Model:
             cfg.model,
             device="auto",
             compute_type=cfg.compute_type,
+            local_files_only=True,
         )
         self._language = cfg.language
         self._beam_size = cfg.beam_size
@@ -104,21 +112,25 @@ class Model:
         if samples.ndim == 2 and samples.shape[1] == 1:
             samples = samples.squeeze(-1)
         started = time.monotonic()
+        audio_seconds = samples.shape[0] / 16000
         segments_iter, info = self._impl.transcribe(
             samples,
             language=language,
             beam_size=beam_size,
+            temperature=0.0,
+            no_repeat_ngram_size=3,
             vad_filter=self._vad_filter,
             vad_parameters=_VAD_PARAMETERS,
             no_speech_threshold=self._silence_threshold,
             hallucination_silence_threshold=_HALLUCINATION_SILENCE_SECONDS,
-            max_new_tokens=self._max_new_tokens,
+            max_new_tokens=_token_budget(self._max_new_tokens, audio_seconds),
             condition_on_previous_text=False,
             hotwords=self._hotwords,
             initial_prompt=self._initial_prompt,
             word_timestamps=True,
         )
         seg_infos: list[SegmentInfo] = []
+        word_timestamps: list[tuple[float, float]] = []
         confidences: list[float] = []
         for seg in segments_iter:
             si = SegmentInfo(
@@ -130,14 +142,24 @@ class Model:
             if on_segment is not None:
                 on_segment(si)
             seg_infos.append(si)
-            confidences.extend(float(word.probability) for word in (seg.words or ()))
+            for word in seg.words or ():
+                confidences.append(float(word.probability))
+                word_timestamps.append((float(word.start), float(word.end)))
         elapsed = time.monotonic() - started
-        duration_after_vad = float(getattr(info, "duration_after_vad", info.duration))
+        duration = float(getattr(info, "duration", audio_seconds))
+        duration_after_vad = float(getattr(info, "duration_after_vad", duration))
+        _validate_output(
+            segment_timestamps=[(segment.start, segment.end) for segment in seg_infos],
+            word_timestamps=word_timestamps,
+            word_count=len(confidences),
+            audio_seconds=audio_seconds,
+            vad_seconds=duration_after_vad,
+        )
         mean_confidence = sum(confidences) / len(confidences) if confidences else 0.0
         log.info(
             "asr: decode duration=%.3fs vad_duration=%.3fs decode_time=%.3fs "
             "word_count=%d mean_confidence=%.3f",
-            float(info.duration),
+            duration,
             duration_after_vad,
             elapsed,
             len(confidences),
@@ -146,7 +168,7 @@ class Model:
         text = "".join(seg.text for seg in seg_infos).strip()
         return TranscriptionResult(
             text=text,
-            duration_seconds=info.duration,
+            duration_seconds=duration,
             segments=seg_infos,
         )
 
@@ -174,15 +196,18 @@ class Model:
         if samples.ndim == 2 and samples.shape[1] == 1:
             samples = samples.squeeze(-1)
         started = time.monotonic()
+        audio_seconds = samples.shape[0] / 16000
         segments_iter, info = self._impl.transcribe(
             samples,
             language=self._language,
             beam_size=self._beam_size if beam_size is None else beam_size,
+            temperature=0.0,
+            no_repeat_ngram_size=3,
             vad_filter=self._vad_filter,
             vad_parameters=_VAD_PARAMETERS,
             no_speech_threshold=self._silence_threshold,
             hallucination_silence_threshold=_HALLUCINATION_SILENCE_SECONDS,
-            max_new_tokens=self._max_new_tokens,
+            max_new_tokens=_token_budget(self._max_new_tokens, audio_seconds),
             condition_on_previous_text=False,
             hotwords=self._hotwords,
             initial_prompt=self._initial_prompt,
@@ -203,8 +228,15 @@ class Model:
         if dropped:
             log.info("asr: dropped %d probable-silence segment(s) from word decode", dropped)
         elapsed = time.monotonic() - started
-        duration = samples.shape[0] / 16000
+        duration = audio_seconds
         duration_after_vad = float(getattr(info, "duration_after_vad", duration))
+        _validate_output(
+            segment_timestamps=[],
+            word_timestamps=[(word.start, word.end) for word in words],
+            word_count=len(words),
+            audio_seconds=duration,
+            vad_seconds=duration_after_vad,
+        )
         mean_confidence = sum(word.probability for word in words) / len(words) if words else 0.0
         log.info(
             "asr: decode duration=%.3fs vad_duration=%.3fs decode_time=%.3fs "
@@ -220,6 +252,43 @@ class Model:
     def close(self) -> None:
         if hasattr(self, "_impl"):
             del self._impl
+
+
+def _token_budget(configured_max: int, audio_seconds: float) -> int:
+    """Bound generated tokens to a small fixed allowance plus audio duration."""
+    return min(configured_max, 16 + math.ceil(_WORDS_PER_VAD_SECOND * audio_seconds))
+
+
+def _validate_output(
+    *,
+    segment_timestamps: list[tuple[float, float]],
+    word_timestamps: list[tuple[float, float]],
+    word_count: int,
+    audio_seconds: float,
+    vad_seconds: float,
+) -> None:
+    """Reject invalid timestamps and decoder-runaway word density.
+
+    Transcript content is deliberately absent from both the exception and log
+    messages so pathological output never leaks dictated text into logs.
+    """
+    if not math.isfinite(vad_seconds) or vad_seconds < 0:
+        raise PathologicalOutputError("invalid VAD duration")
+    tolerance = 1.0
+    for start, end in (*segment_timestamps, *word_timestamps):
+        if (
+            not math.isfinite(start)
+            or not math.isfinite(end)
+            or start < 0
+            or end < start
+            or end > audio_seconds + tolerance
+        ):
+            raise PathologicalOutputError("invalid decoder timestamp")
+    word_limit = max(_MIN_WORD_LIMIT, math.ceil(_WORDS_PER_VAD_SECOND * vad_seconds))
+    if word_count > word_limit:
+        raise PathologicalOutputError(
+            f"decoder word density exceeded limit ({word_count} > {word_limit})"
+        )
 
 
 class LazyModel:

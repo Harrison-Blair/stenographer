@@ -119,6 +119,8 @@ class IncrementalConfig:
     agreement_n: int
     beam_size: int | None
     max_buffer_seconds: float
+    interim_timeout_seconds: float = 5.0
+    release_timeout_seconds: float = 8.0
 
 
 @dataclass(frozen=True)
@@ -172,7 +174,7 @@ class Config:
             asr=AsrConfig(
                 model="Systran/faster-whisper-medium.en",
                 language="en",
-                beam_size=5,
+                beam_size=1,
                 compute_type="int8",
                 silence_threshold=0.6,
                 vad_filter=True,
@@ -205,6 +207,8 @@ class Config:
                 agreement_n=2,
                 beam_size=None,
                 max_buffer_seconds=20.0,
+                interim_timeout_seconds=5.0,
+                release_timeout_seconds=8.0,
             ),
             formatting=FormattingConfig(
                 paragraph_pause_seconds=0.0,
@@ -580,11 +584,23 @@ def _build_incremental(table: dict[str, Any], path: pathlib.Path) -> Incremental
     )
     if not (5 <= max_buffer_seconds <= 120):
         raise ConfigError(path, "incremental.max_buffer_seconds", "must satisfy 5 <= x <= 120")
+    interim_timeout_seconds = _expect_number(
+        table, "interim_timeout_seconds", "incremental.interim_timeout_seconds", path
+    )
+    if not (1 <= interim_timeout_seconds <= 60):
+        raise ConfigError(path, "incremental.interim_timeout_seconds", "must satisfy 1 <= x <= 60")
+    release_timeout_seconds = _expect_number(
+        table, "release_timeout_seconds", "incremental.release_timeout_seconds", path
+    )
+    if not (1 <= release_timeout_seconds <= 60):
+        raise ConfigError(path, "incremental.release_timeout_seconds", "must satisfy 1 <= x <= 60")
     return IncrementalConfig(
         min_chunk_seconds=min_chunk_seconds,
         agreement_n=agreement_n,
         beam_size=beam_size,
         max_buffer_seconds=max_buffer_seconds,
+        interim_timeout_seconds=interim_timeout_seconds,
+        release_timeout_seconds=release_timeout_seconds,
     )
 
 
@@ -792,6 +808,8 @@ def _format_default_toml() -> str:
         if i.beam_size is None
         else f"incremental.beam_size = {i.beam_size}",
         f"incremental.max_buffer_seconds = {i.max_buffer_seconds}",
+        f"incremental.interim_timeout_seconds = {i.interim_timeout_seconds}",
+        f"incremental.release_timeout_seconds = {i.release_timeout_seconds}",
         "",
         "# Formatting heuristics (applies to all output modes)",
         f"formatting.paragraph_pause_seconds = {fm.paragraph_pause_seconds}",

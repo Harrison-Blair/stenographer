@@ -324,7 +324,7 @@ audio.min_speech_rms = 0.0005
 # ASR
 asr.model = "Systran/faster-whisper-medium.en"
 asr.language = "en"
-asr.beam_size = 5
+asr.beam_size = 1
 asr.compute_type = "int8"
 asr.silence_threshold = 0.6
 asr.vad_filter = true
@@ -361,6 +361,8 @@ incremental.min_chunk_seconds = 1.0
 incremental.agreement_n = 2
 incremental.beam_size = null
 incremental.max_buffer_seconds = 20.0
+incremental.interim_timeout_seconds = 5.0
+incremental.release_timeout_seconds = 8.0
 
 # Formatting heuristics (applies to all output modes)
 formatting.paragraph_pause_seconds = 0.0
@@ -415,9 +417,16 @@ preserving already committed speech.
 `asr.vad_filter` enables Silero VAD with conservative speech/padding settings.
 `asr.silence_threshold` is passed to faster-whisper's native no-speech filter
 and remains a post-decode segment gate. A two-second hallucination-silence
-guard is enabled, and `asr.max_new_tokens` bounds generation per chunk. If a
-final incremental decode fails, already committed preview text is still
-delivered.
+guard is enabled. Decoding uses one deterministic greedy pass, blocks repeated
+3-grams, and dynamically reduces `asr.max_new_tokens` for short audio. Model
+files are opened from the local cache only during transcription.
+
+Native inference runs in a restartable child process. Interim decodes are
+abandoned after `incremental.interim_timeout_seconds`; after key release, a
+final transcript or the latest confidence-gated preview is ready within
+`incremental.release_timeout_seconds`. Recovered text uses the error cue to
+signal that the result may be incomplete. Clipboard and cursor-injection tools
+keep their own independent timeouts.
 Legacy `streaming.*` tuning keys are migrated to `incremental.*` with warnings;
 incremental decoding itself is always enabled.
 

@@ -17,7 +17,7 @@ import numpy as np
 from stenographer.asr.streaming import StreamingTranscriber
 from stenographer.asr.worker import CancelledError
 from stenographer.errors import notify_failure
-from stenographer.live import IncrementalDriver
+from stenographer.live import IncrementalDriver, IncrementalResult
 from stenographer.output.formatter import HeuristicFormatter
 
 if TYPE_CHECKING:
@@ -522,6 +522,7 @@ class Session:
                 with contextlib.suppress(Exception):
                     self._feedback.play("error")
             return
+        degraded = isinstance(text, IncrementalResult) and text.degraded
         delivered = self._deliver_final(text)
         if not delivered:
             if not self._stop_event.is_set():
@@ -531,7 +532,7 @@ class Session:
         self._utterances_processed += 1
         if not self._stop_event.is_set():
             with contextlib.suppress(Exception):
-                self._feedback.play("transcribe_done")
+                self._feedback.play("error" if degraded else "transcribe_done")
 
     def _publish_preview(self, generation: int, stable: str, provisional: str) -> None:
         """Publish only if this recording still owns the HUD preview."""

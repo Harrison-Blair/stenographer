@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from stenographer.asr.worker import CancelledError
+from stenographer.asr.model import PathologicalOutputError
+from stenographer.asr.worker import ASRProcessError, ASRTimeoutError, CancelledError
 from stenographer.output.formatter import HeuristicFormatter
 
 if TYPE_CHECKING:
@@ -84,6 +85,21 @@ _HALLUCINATION_PHRASES = frozenset(
 )
 
 
+class IncrementalResult(str):
+    """Final text plus whether ASR recovery degraded this utterance."""
+
+    degraded: bool
+    recovery_reason: str | None
+
+    def __new__(
+        cls, text: str, *, degraded: bool = False, recovery_reason: str | None = None
+    ) -> IncrementalResult:
+        instance = super().__new__(cls, text)
+        instance.degraded = degraded
+        instance.recovery_reason = recovery_reason
+        return instance
+
+
 class IncrementalDriver:
     """Drive partial decodes and return one fully formatted final transcript."""
 
@@ -112,6 +128,10 @@ class IncrementalDriver:
         # (trim offset, guarded seconds) of the last successful decode; a
         # matching window is a pause and is not re-decoded.
         self._last_decode_key: tuple[float, float] | None = None
+        self._interim_suppressed = False
+        self._release_started: float | None = None
+        self._release_deadline: float | None = None
+        self._last_failure_reason: str | None = None
 
     @property
     def abort(self) -> threading.Event:
@@ -125,6 +145,16 @@ class IncrementalDriver:
 
     def signal_final(self, samples: np.ndarray) -> None:
         """Recording stopped; *samples* is the full finalized utterance."""
+        self._release_started = time.monotonic()
+        self._release_deadline = (
+            self._release_started + self._cfg.incremental.release_timeout_seconds
+        )
+        # CTranslate2 cannot interrupt generation safely. Superseding at the
+        # release callback (rather than after the driver unblocks) lets the
+        # worker terminate a stuck interim immediately and restart for final.
+        supersede = getattr(self._worker, "supersede_interim", None)
+        if supersede is not None:
+            supersede()
         self._signals.put((_FINAL, samples))
 
     def signal_abort(self) -> None:
@@ -190,6 +220,8 @@ class IncrementalDriver:
 
     def _step(self) -> bool:
         """One interim re-decode. Returns False when aborted mid-decode."""
+        if self._interim_suppressed:
+            return True
         window = self._recorder.snapshot(self._trim_offset)
         window_seconds = window.shape[0] / self._cfg.audio.sample_rate
         guarded = _prepare_decode_audio(
@@ -229,7 +261,7 @@ class IncrementalDriver:
         self._maybe_trim(window_seconds, tail_silence)
         return True
 
-    def _finish(self, samples: np.ndarray) -> str | None:
+    def _finish(self, samples: np.ndarray) -> IncrementalResult | None:
         """Final-decode, flush, and return formatted output without delivery."""
         start = round(self._trim_offset * self._cfg.audio.sample_rate)
         window = samples[start:]
@@ -245,9 +277,11 @@ class IncrementalDriver:
             log.info("incremental: silent final tail; discarding provisional text")
             self._transcript += self._formatter.finalize()
             self._publish_preview(final=True)
-            return self._transcript
+            return self._result(self._transcript)
         guarded_seconds = guarded.shape[0] / self._cfg.audio.sample_rate
         tail_silence = window_seconds - guarded_seconds
+        degraded = False
+        recovery_reason: str | None = None
         if (
             self._matches_last_decode(guarded_seconds)
             and self._interim_beam_size() == self._cfg.asr.beam_size
@@ -267,14 +301,23 @@ class IncrementalDriver:
                 # dictation: the audio since that hypothesis is lost either
                 # way, but everything already committed must still reach the
                 # user.
-                log.warning("incremental: final decode failed; flushing committed transcript")
+                reason = self._last_failure_reason or "process-failure"
+                degraded = True
+                recovery_reason = reason
+                log.warning(
+                    "incremental: final decode failed; recovering preview reason=%s", reason
+                )
                 delta = _gate_flushed_tail(self._transcriber.flush(), tail_silence)
             else:
                 delta = self._transcriber.insert(words)
                 delta.extend(_gate_flushed_tail(self._transcriber.flush(), tail_silence))
         self._transcript += self._formatter.feed(delta) + self._formatter.finalize()
         self._publish_preview(final=True)
-        return self._transcript
+        return self._result(
+            self._transcript,
+            degraded=degraded,
+            recovery_reason=recovery_reason,
+        )
 
     # -- internal --------------------------------------------------------------
 
@@ -305,21 +348,45 @@ class IncrementalDriver:
         would discard the whole utterance. ``self._abort`` still applies.
         """
         t0 = time.monotonic()
+        deadline = (
+            self._release_deadline
+            if final
+            else time.monotonic() + (self._cfg.incremental.interim_timeout_seconds)
+        )
         future = self._worker.submit_words(
             window,
             beam_size=beam_size,
             cancel_event=self._abort,
             ignore_global_cancel=final,
+            deadline=deadline,
+            priority="final" if final else "interim",
         )
         try:
             words = future.result()
         except CancelledError:
             log.info("incremental: re-decode cancelled")
             return None, False
+        except ASRTimeoutError:
+            self._last_failure_reason = "timeout"
+            if not final:
+                self._interim_suppressed = True
+                log.warning("incremental: interim decode timed out; suppressing further previews")
+            else:
+                log.warning("incremental: final decode timed out")
+            return None, True
+        except PathologicalOutputError:
+            self._last_failure_reason = "pathological-output"
+            log.warning("incremental: decoder output rejected as pathological")
+            return None, True
+        except ASRProcessError:
+            self._last_failure_reason = "process-failure"
+            log.warning("incremental: ASR child failed")
+            return None, True
         except Exception as exc:
             # One failed re-decode is not fatal; the next partial (or the
             # final flush) re-decodes the same audio.
-            log.error("incremental: re-decode failed: %s", exc)
+            self._last_failure_reason = "process-failure"
+            log.error("incremental: re-decode failed: %s", type(exc).__name__)
             return None, True
         elapsed = time.monotonic() - t0
         window_seconds = window.shape[0] / self._cfg.audio.sample_rate
@@ -334,6 +401,27 @@ class IncrementalDriver:
                 mean_confidence,
             )
         return words, True
+
+    def _result(
+        self,
+        text: str,
+        *,
+        degraded: bool = False,
+        recovery_reason: str | None = None,
+    ) -> IncrementalResult:
+        if self._release_started is not None:
+            latency = time.monotonic() - self._release_started
+            log.info(
+                "incremental: release result ready latency=%.3fs degraded=%s reason=%s",
+                latency,
+                degraded,
+                recovery_reason or "none",
+            )
+        return IncrementalResult(
+            text,
+            degraded=degraded,
+            recovery_reason=recovery_reason,
+        )
 
     def _publish_preview(self, *, final: bool = False) -> None:
         if self._on_preview is None:

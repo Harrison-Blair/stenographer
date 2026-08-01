@@ -12,6 +12,7 @@ import numpy as np
 import stenographer.session as session_module
 from stenographer.asr.model import SegmentInfo, TranscriptionResult
 from stenographer.config import Config
+from stenographer.live import IncrementalResult
 from stenographer.session import Session, _LiveItem
 
 
@@ -133,6 +134,20 @@ def test_type_mode_without_wtype_plays_success_cue_not_error() -> None:
     session._run_incremental(driver, session._preview_generation)
 
     components["feedback"].play.assert_called_once_with("transcribe_done")
+
+
+def test_recovered_incremental_text_is_delivered_with_error_cue() -> None:
+    session, components = _make_session(cfg=_cfg(mode="type", clipboard=True))
+    driver = MagicMock()
+    driver.abort = threading.Event()
+    driver.run.return_value = IncrementalResult(
+        "Recovered ", degraded=True, recovery_reason="timeout"
+    )
+
+    session._run_incremental(driver, session._preview_generation)
+
+    components["injector"].type_text.assert_called_once_with("Recovered ", raw=True)
+    components["feedback"].play.assert_called_once_with("error")
 
 
 def test_type_mode_reports_failure_when_nothing_reached_the_user() -> None:

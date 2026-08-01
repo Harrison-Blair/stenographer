@@ -11,7 +11,7 @@ import numpy as np
 
 from stenographer.asr.model import WordInfo
 from stenographer.asr.streaming import StreamingTranscriber
-from stenographer.asr.worker import CancelledError
+from stenographer.asr.worker import ASRTimeoutError, CancelledError
 from stenographer.config import Config
 from stenographer.live import (
     _TAIL_CUSHION_SECONDS,
@@ -57,9 +57,20 @@ class _FakeWorker:
     def __init__(self, hypotheses: list[list[WordInfo] | Exception]) -> None:
         self.hypotheses = hypotheses
         self.calls: list[dict[str, object]] = []
+        self.supersede_calls = 0
+
+    def supersede_interim(self) -> None:
+        self.supersede_calls += 1
 
     def submit_words(
-        self, samples, *, beam_size=None, cancel_event=None, ignore_global_cancel=False
+        self,
+        samples,
+        *,
+        beam_size=None,
+        cancel_event=None,
+        ignore_global_cancel=False,
+        deadline=None,
+        priority="interim",
     ):
         self.calls.append(
             {
@@ -67,6 +78,8 @@ class _FakeWorker:
                 "beam_size": beam_size,
                 "cancel_event": cancel_event,
                 "ignore_global_cancel": ignore_global_cancel,
+                "deadline": deadline,
+                "priority": priority,
             }
         )
         future: concurrent.futures.Future = concurrent.futures.Future()
@@ -189,6 +202,7 @@ def test_prequeued_partials_coalesce_into_final_decode() -> None:
     driver.signal_final(_speech(3.0))
     assert driver.run() == "Hi "
     assert len(worker.calls) == 1
+    assert worker.supersede_calls == 1
 
 
 def test_final_is_processed_when_shutdown_cancels_in_flight_interim() -> None:
@@ -201,7 +215,14 @@ def test_final_is_processed_when_shutdown_cancels_in_flight_interim() -> None:
             self.calls = 0
 
         def submit_words(
-            self, samples, *, beam_size=None, cancel_event=None, ignore_global_cancel=False
+            self,
+            samples,
+            *,
+            beam_size=None,
+            cancel_event=None,
+            ignore_global_cancel=False,
+            deadline=None,
+            priority="interim",
         ):
             self.calls += 1
             if self.calls == 1:
@@ -265,7 +286,10 @@ def test_final_decode_failure_still_returns_the_committed_transcript() -> None:
     for _ in range(3):
         assert driver._step()
 
-    assert driver._finish(_speech(1.6)) == "Hello world "
+    result = driver._finish(_speech(1.6))
+    assert result == "Hello world "
+    assert result is not None and result.degraded
+    assert result.recovery_reason == "process-failure"
 
 
 def test_final_decode_failure_with_nothing_committed_returns_empty() -> None:
@@ -292,8 +316,45 @@ def test_interim_failure_is_retried_by_later_partial() -> None:
     assert driver._finish(_speech(2.0)) == "Ok "
 
 
+def test_interim_timeout_suppresses_restarts_until_final() -> None:
+    driver, worker = _make_driver(
+        [_speech(1.0), _speech(2.0)],
+        [ASRTimeoutError("slow"), _words((" final", 0.0, 0.5))],
+    )
+
+    assert driver._step()
+    assert driver._step()
+    assert len(worker.calls) == 1
+    assert driver._finish(_speech(2.0)) == "Final "
+    assert worker.calls[-1]["priority"] == "final"
+
+
+def test_final_failure_salvages_committed_and_confident_preview() -> None:
+    driver, _worker = _make_driver(
+        [_speech(1.0), _speech(1.2), _speech(1.4)],
+        [
+            _words((" hello", 0.0, 0.5)),
+            _words((" hello", 0.0, 0.5), (" world", 0.5, 1.0)),
+            _words(
+                (" hello", 0.0, 0.5),
+                (" world", 0.5, 1.0),
+                (" preview", 1.0, 1.3),
+            ),
+            ASRTimeoutError("runaway"),
+        ],
+    )
+    for _ in range(3):
+        assert driver._step()
+
+    result = driver._finish(_speech(1.6))
+    assert result == "Hello world preview "
+    assert result is not None and result.degraded
+    assert result.recovery_reason == "timeout"
+
+
 def test_interim_beam_override_and_final_full_beam() -> None:
     cfg = _cfg(beam_size=1)
+    cfg = dataclasses.replace(cfg, asr=dataclasses.replace(cfg.asr, beam_size=3))
     driver, worker = _make_driver(
         [_speech(1.0)],
         [_words((" a", 0.0, 0.3))],
@@ -679,6 +740,7 @@ def test_final_decode_not_skipped_when_interim_beam_differs() -> None:
     """Guard for the skip condition: a reduced interim beam means the final
     full-beam decode is not redundant and must still run."""
     cfg = _cfg(beam_size=1)
+    cfg = dataclasses.replace(cfg, asr=dataclasses.replace(cfg.asr, beam_size=3))
     driver, worker = _make_driver(
         _pause_windows(),
         [

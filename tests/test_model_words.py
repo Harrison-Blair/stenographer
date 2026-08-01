@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from stenographer.asr.model import Model
+from stenographer.asr.model import Model, PathologicalOutputError
 
 
 class _FakeWord:
@@ -75,3 +76,24 @@ def test_only_the_silent_segment_is_dropped() -> None:
 def test_silence_threshold_boundary_is_inclusive() -> None:
     model = _model([_FakeSegment(0.6, " maybe")], silence_threshold=0.6)
     assert model.transcribe_words(_samples()) == []
+
+
+def test_invalid_word_timestamp_is_rejected_without_logging_text(caplog) -> None:
+    segment = _FakeSegment(0.1, " private-dictation")
+    segment.words[0].start = float("nan")
+    model = _model([segment])
+
+    with pytest.raises(PathologicalOutputError, match="timestamp"):
+        model.transcribe_words(_samples())
+    assert "private-dictation" not in caplog.text
+
+
+def test_implausible_word_density_is_rejected() -> None:
+    segment = _FakeSegment(0.1, *(f" word{i}" for i in range(13)))
+    for index, word in enumerate(segment.words):
+        word.start = index / 20
+        word.end = (index + 1) / 20
+    model = _model([segment])
+
+    with pytest.raises(PathologicalOutputError, match="density"):
+        model.transcribe_words(_samples())

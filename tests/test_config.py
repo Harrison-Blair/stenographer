@@ -94,7 +94,7 @@ def test_defaults_asr() -> None:
     assert Config.defaults().asr == AsrConfig(
         model="Systran/faster-whisper-medium.en",
         language="en",
-        beam_size=5,
+        beam_size=1,
         compute_type="int8",
         silence_threshold=0.6,
         vad_filter=True,
@@ -283,7 +283,7 @@ def test_load_partial_override_merges_over_defaults(tmp_path: pathlib.Path) -> N
     assert cfg.audio.sample_rate == 48000
     assert cfg.audio.frames_per_buffer == 1024
     assert cfg.audio.input_device is None
-    assert cfg.asr.beam_size == 5
+    assert cfg.asr.beam_size == 1
     assert cfg.feedback.volume == 0.6
     assert cfg.output.injection_method == "clipboard_paste"
     assert cfg.output.max_chars == 4096
@@ -825,6 +825,15 @@ def test_incremental_defaults() -> None:
     assert cfg.formatting.normalize_spacing is True
 
 
+def test_old_config_inherits_latency_defaults(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[stenographer]\nincremental.agreement_n = 3\n")
+
+    incremental = Config.load(path).incremental
+    assert incremental.interim_timeout_seconds == 5.0
+    assert incremental.release_timeout_seconds == 8.0
+
+
 def test_default_paragraph_pause_seconds_is_zero() -> None:
     assert Config.defaults().formatting.paragraph_pause_seconds == 0.0
 
@@ -893,6 +902,10 @@ def test_new_incremental_keys_win_over_legacy_streaming(tmp_path: pathlib.Path) 
         ("incremental.beam_size", "11"),
         ("incremental.max_buffer_seconds", "4"),
         ("incremental.max_buffer_seconds", "121"),
+        ("incremental.interim_timeout_seconds", "0.9"),
+        ("incremental.interim_timeout_seconds", "61"),
+        ("incremental.release_timeout_seconds", "0.9"),
+        ("incremental.release_timeout_seconds", "61"),
         ("formatting.paragraph_pause_seconds", "-1"),
         ("formatting.paragraph_pause_seconds", "11"),
     ],
@@ -922,6 +935,8 @@ def test_write_default_is_valid_toml(tmp_path: pathlib.Path) -> None:
     assert "[stenographer.feedback.cues]" in text
     assert "hotkey.binding" in text
     assert "asr.compute_type" in text
+    assert "incremental.interim_timeout_seconds = 5.0" in text
+    assert "incremental.release_timeout_seconds = 8.0" in text
 
 
 # --- resolve_config_path() ---

@@ -30,8 +30,8 @@ import soundfile
 
 from stenographer import __version__
 from stenographer._parser import build_parser
-from stenographer.asr.model import LazyModel, Model
-from stenographer.asr.worker import Worker
+from stenographer.asr.model import Model
+from stenographer.asr.worker import ProcessWorker
 from stenographer.audio.capture import Recorder
 from stenographer.audio.feedback import CueName, Feedback
 from stenographer.capabilities import Capabilities
@@ -185,18 +185,8 @@ def _release_single_instance_lock() -> None:
 
 
 def _build_session(cfg: Config, caps: Capabilities, one_shot: bool) -> Session:
-    if one_shot or cfg.asr.mode == "eager":
-        log.info("loading ASR model: %s", cfg.asr.model)
-        model: Model | LazyModel = Model(cfg.asr)
-    else:
-        model = LazyModel(
-            cfg.asr,
-            idle_unload_seconds=cfg.asr.idle_unload_seconds or None,
-        )
-    worker = Worker(model, sample_rate=cfg.audio.sample_rate)
+    worker = ProcessWorker(cfg.asr, sample_rate=cfg.audio.sample_rate, eager=one_shot or None)
     worker.start()
-    if isinstance(model, LazyModel):
-        model.attach_worker(worker)
     feedback = _build_feedback(cfg, caps)
     notification = StatusIndicator(
         cfg=cfg.visualizer,
@@ -783,7 +773,9 @@ def cmd_doctor(cfg: Config, config_path: pathlib.Path) -> int:
     print(f"output mode:    {cfg.output.injection_method}")
     print(
         "incremental:    always on "
-        f"(chunk={cfg.incremental.min_chunk_seconds:g}s, agreement={cfg.incremental.agreement_n})"
+        f"(chunk={cfg.incremental.min_chunk_seconds:g}s, agreement={cfg.incremental.agreement_n}, "
+        f"interim-timeout={cfg.incremental.interim_timeout_seconds:g}s, "
+        f"release-timeout={cfg.incremental.release_timeout_seconds:g}s)"
     )
     print(f"asr.idle_unload_seconds: {cfg.asr.idle_unload_seconds} (0 = disabled)")
     has_notify = DesktopNotification.probe()

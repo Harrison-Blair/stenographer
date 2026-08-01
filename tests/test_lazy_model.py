@@ -318,6 +318,13 @@ class TestVocabularyBias:
         )
         return m, fake
 
+    def test_model_loading_is_local_only(self) -> None:
+        from stenographer.asr.model import Model
+
+        with patch("stenographer.asr.model.WhisperModel") as whisper_cls:
+            Model(_cfg())
+        assert whisper_cls.call_args.kwargs["local_files_only"] is True
+
     def test_transcribe_forwards_hotwords_and_initial_prompt(self) -> None:
         m, fake = self._model(hotwords="wtype, Wayland", initial_prompt="Arch Linux notes.")
         m.transcribe(np.zeros(100, dtype=np.float32), "en", 1)
@@ -352,7 +359,9 @@ class TestVocabularyBias:
         }
         assert kwargs["no_speech_threshold"] == 0.7
         assert kwargs["hallucination_silence_threshold"] == 2.0
-        assert kwargs["max_new_tokens"] == 128
+        assert kwargs["max_new_tokens"] == 17
+        assert kwargs["temperature"] == 0.0
+        assert kwargs["no_repeat_ngram_size"] == 3
         assert kwargs["word_timestamps"] is True
 
     def test_transcribe_words_forwards_silence_hardening(self) -> None:
@@ -363,7 +372,9 @@ class TestVocabularyBias:
         assert kwargs["vad_parameters"]["min_speech_duration_ms"] == 100
         assert kwargs["no_speech_threshold"] == 0.5
         assert kwargs["hallucination_silence_threshold"] == 2.0
-        assert kwargs["max_new_tokens"] == 64
+        assert kwargs["max_new_tokens"] == 17
+        assert kwargs["temperature"] == 0.0
+        assert kwargs["no_repeat_ngram_size"] == 3
         assert kwargs["word_timestamps"] is True
 
 
