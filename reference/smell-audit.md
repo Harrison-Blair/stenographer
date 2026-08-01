@@ -22,6 +22,25 @@ findings are lower-cost structural taxes (scattered systemctl unit literals, two
 four oversized methods) and local cleanups (duplicate subprocess handling, dead
 clipboard/feedback code).
 
+## Resolution (2026-08-01)
+
+Refactored by phased subagent teams (1 implementer + 2 adversarial reviewers per team,
+all Opus 4.8, `.claude/workflows/refactor-team.js`), baselined at checkpoint `f84617f`:
+
+- **Phase 1 (`07ce20d`)**: #1 (Worker/LazyModel deleted, hints retyped, 6 cancellation
+  tests ported to ProcessWorker), #2 + #12 partial (`systemd.py` owns unit name/argv/
+  rendering; cmd_* bodies partly remain in cli.py because out-of-boundary tests patch
+  `cli.*` attributes), #3 (`_Section` parameter object), #9, #10, #11.
+- **Phase 2 (`a63bd8e`)**: #4 (`Preview` dataclass; IPC wire format unchanged),
+  #15 (`_compute_preview` helper), #8 (`_abort_active_job` / `_dispatch_response`).
+- **Phase 3 (`0444744`)**: #5 (`Session.stop` decomposed), #6/#7 (overlay methods
+  split, centralized degrade-and-cleanup), #14 (`_HUD_STATE_LABELS` single source of
+  truth; missing `update_available` entry added with unchanged rendering).
+- **#13**: deliberately skipped (verifier: cost of the intentional explicit-validation style).
+
+Every phase gated on the full unit suite (537 passed) + ruff before commit. Not yet
+validated: `STENOGRAPHER_INTEGRATION=1` suite and a real dictation session.
+
 ## Top findings (ranked by cost)
 
 | # | Verdict | Location | Smell |
