@@ -40,6 +40,10 @@ _FORCED_SHUTDOWN_TIMEOUT_SECONDS = 10.0
 # close even when the worker would exit moments later.
 _FORCED_WORKER_STOP_RESERVE_SECONDS = 2.0
 
+# How long delivery waits for the hotkey binding to be physically released
+# before injecting anyway (the clipboard already holds the transcript).
+_HOTKEY_RELEASE_TIMEOUT_SECONDS = 1.5
+
 # A queued batch recording, optionally tagged with which hotkey triggered it
 # (added by FTHR-004; the untagged 4-tuple form defaults to "dictate").
 _BatchItem = tuple[np.ndarray, Literal["ptt", "toggle"], threading.Event, int]
@@ -94,6 +98,7 @@ class Session:
             capabilities=capabilities,
             injector=injector,
             clipboard=clipboard,
+            wait_hotkey_released=self._wait_hotkey_released,
         )
         self._notification = notification
         self._one_shot = one_shot
@@ -162,6 +167,14 @@ class Session:
     def start_listener(self) -> None:
         if self._listener is not None:
             self._listener.start()
+
+    def _wait_hotkey_released(self) -> bool:
+        # Reads self._listener at call time: the listener is attached after
+        # construction (attach_listener), and one-shot mode has none.
+        listener = self._listener
+        if listener is None:
+            return True
+        return listener.wait_binding_released(timeout=_HOTKEY_RELEASE_TIMEOUT_SECONDS)
 
     def start(self) -> None:
         """Launch the processor thread that dequeues and processes utterances."""

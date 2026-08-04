@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -405,19 +406,29 @@ class _FakeDevice:
         events: list[_FakeEvent],
         raise_after: bool = True,
         path: str = "/dev/input/event0",
+        hold_open: bool = False,
     ) -> None:
         self._events = list(events)
         self._raise_after = raise_after
         self.closed = False
         self.path = path
+        self._hold_open = hold_open
+        self._closed_event = threading.Event()
+        self.name = f"fake device {path}"
 
     def read_loop(self):
         yield from self._events
+        if self._hold_open:
+            # Keep the reader alive (a real device blocks in read) until
+            # the device is closed, so hotplug tests can run alongside it.
+            self._closed_event.wait()
+            raise OSError("device closed")
         if self._raise_after:
             raise OSError("simulated end of device events")
 
     def close(self) -> None:
         self.closed = True
+        self._closed_event.set()
 
 
 def _wait_for(predicate, timeout: float = 2.0, step: float = 0.01) -> None:
@@ -686,3 +697,157 @@ def test_listener_reentrant_lock_callback() -> None:
 def test_auto_detect_path_returns_none_when_no_input() -> None:
     with patch("pathlib.Path.glob", return_value=[]):
         assert auto_detect_path() is None
+
+
+# --- Hotplug rescan & binding-release guard ---
+
+
+def _make_plain_listener(
+    binding_str: str = "KEY_LEFTCTRL+KEY_A",
+    *,
+    device_path: str | None = None,
+) -> tuple[HotkeyListener, _ListenerCallbacks]:
+    cb = _ListenerCallbacks()
+    listener = HotkeyListener(
+        binding=HotkeyBinding.parse(binding_str),
+        device_path=device_path,
+        state_machine=HotkeyStateMachine(threshold_seconds=0.5),
+        on_start=cb.on_start,
+        on_stop=cb.on_stop,
+        on_toggle_off=cb.on_toggle_off,
+        feedback=cb.feedback,
+        on_discard=cb.on_discard,
+        on_cancel=cb.on_cancel,
+    )
+    return listener, cb
+
+
+@contextlib.contextmanager
+def _autodetect_listener(devices: dict[str, _FakeDevice]):
+    """Run a listener in auto-detect mode over a mutable path->device map.
+
+    Tests may add entries to ``devices`` while the listener runs to
+    simulate a keyboard being hotplugged.
+    """
+    listener, cb = _make_plain_listener()
+    with (
+        patch(
+            "stenographer.hotkey.listener.evdev.InputDevice",
+            side_effect=lambda p: devices[p],
+        ),
+        patch(
+            "stenographer.hotkey.listener.auto_detect_paths",
+            side_effect=lambda: sorted(devices),
+        ),
+        patch(
+            "stenographer.hotkey.listener._glob_event_nodes",
+            side_effect=lambda: sorted(devices),
+            create=True,
+        ),
+        patch("stenographer.hotkey.listener._is_main_keyboard", side_effect=lambda d: True),
+        patch("stenographer.hotkey.listener._RESCAN_INTERVAL_SECONDS", 0.05, create=True),
+    ):
+        listener.start()
+        try:
+            yield listener, cb
+        finally:
+            listener.stop(timeout=2.0)
+
+
+def test_hotplug_new_device_gets_reader_and_fires_chord() -> None:
+    devices = {"/dev/input/event0": _FakeDevice([], path="/dev/input/event0", hold_open=True)}
+    with _autodetect_listener(devices) as (listener, cb):
+        _wait_for(lambda: listener.is_running)
+        chord = [
+            _FakeEvent(evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTCTRL, 1, 0.0),
+            _FakeEvent(evdev.ecodes.EV_KEY, evdev.ecodes.KEY_A, 1, 0.1),
+            _FakeEvent(evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTCTRL, 0, 0.7),
+            _FakeEvent(evdev.ecodes.EV_KEY, evdev.ecodes.KEY_A, 0, 0.8),
+        ]
+        devices["/dev/input/event1"] = _FakeDevice(chord, path="/dev/input/event1", hold_open=True)
+        _wait_for(lambda: cb.on_stop.call_count >= 1, timeout=3.0)
+    assert cb.on_start.call_count == 1
+    cb.on_stop.assert_called_once_with("ptt")
+
+
+def test_hotplug_release_on_new_device_completes_press_from_old() -> None:
+    press = [
+        _FakeEvent(evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTCTRL, 1, 0.0),
+        _FakeEvent(evdev.ecodes.EV_KEY, evdev.ecodes.KEY_A, 1, 0.1),
+    ]
+    devices = {"/dev/input/event0": _FakeDevice(press, path="/dev/input/event0", hold_open=True)}
+    with _autodetect_listener(devices) as (_listener, cb):
+        _wait_for(lambda: cb.on_start.call_count >= 1)
+        release = [
+            _FakeEvent(evdev.ecodes.EV_KEY, evdev.ecodes.KEY_LEFTCTRL, 0, 0.7),
+            _FakeEvent(evdev.ecodes.EV_KEY, evdev.ecodes.KEY_A, 0, 0.8),
+        ]
+        devices["/dev/input/event1"] = _FakeDevice(
+            release, path="/dev/input/event1", hold_open=True
+        )
+        _wait_for(lambda: cb.on_stop.call_count >= 1, timeout=3.0)
+    assert cb.on_start.call_count == 1
+    cb.on_stop.assert_called_once_with("ptt")
+    # The rescan that added event1 must not have discarded the recording
+    # that was in progress on event0.
+    cb.on_discard.assert_not_called()
+
+
+def test_rescan_skipped_when_device_path_pinned() -> None:
+    # Regression guard for the rescan feature (not fail-first: pre-rescan
+    # code also never scans while a reader is alive).
+    device = _FakeDevice([], hold_open=True)
+    scan = MagicMock(return_value=[])
+    with (
+        patch("stenographer.hotkey.listener.evdev.InputDevice", return_value=device) as input_mock,
+        patch("stenographer.hotkey.listener.auto_detect_paths", scan),
+        patch("stenographer.hotkey.listener._glob_event_nodes", scan, create=True),
+        patch("stenographer.hotkey.listener._RESCAN_INTERVAL_SECONDS", 0.05, create=True),
+    ):
+        listener, _cb = _make_plain_listener(device_path="/dev/input/event0")
+        listener.start()
+        time.sleep(0.7)  # several supervise ticks and rescan intervals
+        listener.stop(timeout=2.0)
+    scan.assert_not_called()
+    assert input_mock.call_count == 1
+
+
+def test_wait_binding_released_immediate_when_not_held() -> None:
+    listener, _cb = _make_plain_listener("KEY_RIGHTCTRL")
+    start = time.monotonic()
+    assert listener.wait_binding_released(timeout=1.0) is True
+    assert time.monotonic() - start < 0.5
+
+
+def test_wait_binding_released_blocks_until_release_and_times_out() -> None:
+    listener, _cb = _make_plain_listener("KEY_LEFTCTRL+KEY_A")
+    # One held chord key alone (intersection, not subset) must still block:
+    # a lone held RCtrl is exactly what corrupts the paste chord.
+    code = evdev.ecodes.KEY_LEFTCTRL
+    with listener._held_lock:
+        listener._held.add(code)
+    start = time.monotonic()
+    assert listener.wait_binding_released(timeout=0.2) is False
+    assert time.monotonic() - start >= 0.2
+
+    def _release() -> None:
+        time.sleep(0.1)
+        with listener._held_lock:
+            listener._held.discard(code)
+
+    threading.Thread(target=_release, daemon=True).start()
+    start = time.monotonic()
+    assert listener.wait_binding_released(timeout=2.0) is True
+    assert time.monotonic() - start < 1.0
+
+
+def test_wait_binding_released_returns_true_when_stopped() -> None:
+    # A drained utterance may deliver after Session stops the listener;
+    # the frozen held set must not stall delivery for the full timeout.
+    listener, _cb = _make_plain_listener("KEY_RIGHTCTRL")
+    with listener._held_lock:
+        listener._held.add(evdev.ecodes.KEY_RIGHTCTRL)
+    listener.stop(timeout=0.1)
+    start = time.monotonic()
+    assert listener.wait_binding_released(timeout=1.0) is True
+    assert time.monotonic() - start < 0.5

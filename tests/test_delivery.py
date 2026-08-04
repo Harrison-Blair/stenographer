@@ -17,6 +17,7 @@ def _make_delivery(
     max_chars: int | None = None,
     has_paste_trigger: bool = True,
     has_wl_copy: bool = True,
+    wait_hotkey_released=None,
 ) -> tuple[TranscriptDelivery, dict[str, MagicMock]]:
     cfg = Config.defaults()
     output = dataclasses.replace(cfg.output, injection_method=mode)
@@ -31,12 +32,16 @@ def _make_delivery(
     components["injector"].type_text.return_value = True
     components["injector"].paste.return_value = True
     components["clipboard"].copy.return_value = True
+    extra = {}
+    if wait_hotkey_released is not None:
+        extra["wait_hotkey_released"] = wait_hotkey_released
     delivery = TranscriptDelivery(
         output=output,
         clipboard_cfg=clipboard_cfg,
         capabilities=components["caps"],
         injector=components["injector"],
         clipboard=components["clipboard"],
+        **extra,
     )
     return delivery, components
 
@@ -133,3 +138,53 @@ def test_paste_mode_paste_raise_returns_false() -> None:
     delivery, components = _make_delivery(mode="clipboard_paste")
     components["injector"].paste.side_effect = RuntimeError("paste blew up")
     assert delivery.deliver_final("Hello ") is False
+
+
+# --- Hotkey release guard (modifier bindings must not merge into the chord) ---
+
+
+def test_paste_mode_waits_for_hotkey_release_between_copy_and_paste() -> None:
+    calls: list[str] = []
+    delivery, components = _make_delivery(
+        mode="clipboard_paste",
+        wait_hotkey_released=lambda: calls.append("guard") or True,
+    )
+    components["clipboard"].copy.side_effect = lambda *a, **k: calls.append("copy") or True
+    components["injector"].paste.side_effect = lambda *a, **k: calls.append("paste") or True
+
+    assert delivery.deliver_final("Hello ")
+
+    # Copy first so the clipboard holds the transcript during the wait.
+    assert calls == ["copy", "guard", "paste"]
+
+
+def test_paste_proceeds_after_guard_timeout() -> None:
+    delivery, components = _make_delivery(
+        mode="clipboard_paste", wait_hotkey_released=lambda: False
+    )
+    assert delivery.deliver_final("Hello ") is True
+    components["injector"].paste.assert_called_once_with()
+
+
+def test_type_mode_waits_before_typing() -> None:
+    calls: list[str] = []
+    delivery, components = _make_delivery(
+        mode="type", wait_hotkey_released=lambda: calls.append("guard") or True
+    )
+    components["injector"].type_text.side_effect = lambda *a, **k: calls.append("type") or True
+
+    assert delivery.deliver_final("Hello ")
+
+    assert calls == ["guard", "type"]
+
+
+def test_guard_not_called_when_copy_fails_in_paste_mode(monkeypatch) -> None:
+    guard = MagicMock(return_value=True)
+    delivery, components = _make_delivery(mode="clipboard_paste", wait_hotkey_released=guard)
+    components["clipboard"].copy.return_value = False
+    monkeypatch.setattr("stenographer.output.delivery.notify_failure", MagicMock())
+
+    assert delivery.deliver_final("Hello ") is False
+
+    guard.assert_not_called()
+    components["injector"].paste.assert_not_called()

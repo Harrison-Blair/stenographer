@@ -514,3 +514,17 @@ def test_on_model_unloaded_shows_unloaded_status() -> None:
     session._on_model_unloaded()
 
     notification.show_model_unloaded.assert_called_once()
+
+
+def test_session_wires_release_guard_into_delivery() -> None:
+    session, components = _make_session()
+    guard = session._delivery._wait_hotkey_released
+    assert guard is not None
+
+    components["listener"].wait_binding_released.return_value = True
+    assert guard() is True
+    components["listener"].wait_binding_released.assert_called_once_with(timeout=1.5)
+
+    # One-shot mode has no listener; the guard must be a no-op, not a crash.
+    session._listener = None
+    assert guard() is True

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 _RETRY_INTERVAL_SECONDS = 2.0
 _RETRY_TIMEOUT_SECONDS = 30.0
+_RESCAN_INTERVAL_SECONDS = 2.0
 _KEY_A = evdev.ecodes.KEY_A
 _KEY_Z = evdev.ecodes.KEY_Z
 _MIN_LETTER_KEYS = 10  # a real keyboard has 26 (A-Z); mice have 0-2
@@ -60,6 +61,11 @@ def _is_main_keyboard(device: evdev.InputDevice) -> bool:
     keys = caps.get(evdev.ecodes.EV_KEY, ())
     letter_count = sum(1 for k in keys if _KEY_A <= k <= _KEY_Z)
     return letter_count >= _MIN_LETTER_KEYS
+
+
+def _glob_event_nodes() -> list[str]:
+    """Return all ``/dev/input/event*`` paths (patchable test seam)."""
+    return [str(p) for p in sorted(Path("/dev/input").glob("event*"))]
 
 
 def auto_detect_paths() -> list[str]:
@@ -152,6 +158,11 @@ class HotkeyListener:
         self._supervisor: threading.Thread | None = None
         self._readers: list[threading.Thread] = []
         self._devices: list[evdev.InputDevice] = []
+        # Nodes the hotplug rescan already probed and classified as
+        # non-keyboards, so steady state is one glob per interval with no
+        # device opens. Pruned when a node vanishes, so a reused path is
+        # re-probed on reappearance.
+        self._checked_nonkeyboard_nodes: set[str] = set()
 
     def start(self) -> None:
         if self._supervisor is not None:
@@ -163,10 +174,14 @@ class HotkeyListener:
     def stop(self, timeout: float = 2.0) -> None:
         self._stop_event.set()
         self._cancel_pending_timer()
-        for device in self._devices:
+        # Snapshots: the supervisor thread appends hotplugged devices and
+        # readers concurrently. A reader spawned in the sliver between the
+        # stop-event set and these joins may be missed here; it is a daemon
+        # thread whose device gets closed, so it dies on the next read.
+        for device in list(self._devices):
             with contextlib.suppress(OSError):
                 device.close()
-        for t in self._readers:
+        for t in list(self._readers):
             t.join(timeout=timeout)
         if self._supervisor is not None:
             self._supervisor.join(timeout=timeout)
@@ -176,6 +191,32 @@ class HotkeyListener:
     @property
     def is_running(self) -> bool:
         return self._supervisor is not None and self._supervisor.is_alive()
+
+    def wait_binding_released(self, timeout: float = 1.5, poll_interval: float = 0.01) -> bool:
+        """Block until no key of the hotkey binding is physically held.
+
+        Returns True once released, or immediately when the listener is
+        stopped (a release could never be observed then); False on
+        timeout. Deadlock-free by construction: it only polls
+        ``self._held`` under ``self._held_lock``, which reader threads
+        update BEFORE they contend for the dispatch lock — it never
+        touches the dispatch lock itself.
+        """
+        codes = set(self._binding.to_evdev_codes())
+        deadline = time.monotonic() + timeout
+        while True:
+            if self._stop_event.is_set():
+                return True
+            with self._held_lock:
+                # Intersection, not subset: with a modifier binding, ANY
+                # binding key still down merges into the seat state and
+                # corrupts an injected chord.
+                held = bool(codes & self._held)
+            if not held:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            self._stop_event.wait(poll_interval)
 
     def _resolve_paths(self) -> list[str]:
         if self._device_path:
@@ -208,6 +249,7 @@ class HotkeyListener:
                     getattr(device, "name", "?"),
                 )
             deadline = None
+            self._checked_nonkeyboard_nodes.clear()
             self._cancel_pending_timer()
             # A recording waiting on the double-tap window would be orphaned
             # by the reset below (the generation bump makes its timer a
@@ -231,36 +273,77 @@ class HotkeyListener:
     def _spawn_readers(self) -> None:
         self._readers = []
         for device in self._devices:
-            t = threading.Thread(
-                target=self._reader_loop,
-                args=(device,),
-                name=f"hotkey-reader:{device.path}",
-                daemon=True,
-            )
-            t.start()
-            self._readers.append(t)
+            self._spawn_reader(device)
+
+    def _spawn_reader(self, device: evdev.InputDevice) -> None:
+        t = threading.Thread(
+            target=self._reader_loop,
+            args=(device,),
+            name=f"hotkey-reader:{device.path}",
+            daemon=True,
+        )
+        t.start()
+        self._readers.append(t)
 
     def _supervise_readers(self) -> None:
         """Wait until all readers are dead or stop is requested.
 
-        When a reader dies, its device is closed; the other readers
-        are not touched, so a single flaky device does not kill the
-        whole hotkey pipeline.
+        When a reader dies, its device is closed and dropped; the other
+        readers are not touched, so a single flaky device does not kill
+        the whole hotkey pipeline. In auto-detect mode, a periodic
+        rescan additionally opens keyboard nodes that appear while at
+        least one reader is still alive (wired<->wireless switches,
+        replugs) — the all-readers-dead case keeps going through
+        ``_reacquire`` unchanged.
         """
+        next_rescan = time.monotonic() + _RESCAN_INTERVAL_SECONDS
         while not self._stop_event.is_set():
             self._stop_event.wait(0.5)
             for t in list(self._readers):
                 if not t.is_alive():
-                    # Find and close the dead reader's device.
+                    # Find, close, and drop the dead reader's device, so a
+                    # node re-created at the same path reads as new to the
+                    # rescan diff.
                     name = t.name
                     for device in self._devices:
                         if device.path and name.endswith(device.path):
                             with contextlib.suppress(OSError):
                                 device.close()
+                            self._devices.remove(device)
                             break
                     self._readers.remove(t)
             if not self._readers:
                 return
+            if self._device_path is None and time.monotonic() >= next_rescan:
+                self._rescan_devices()
+                next_rescan = time.monotonic() + _RESCAN_INTERVAL_SECONDS
+
+    def _rescan_devices(self) -> None:
+        """Open and start listening on keyboard nodes that appeared since start.
+
+        Purely additive: no state-machine reset, no discard — an
+        in-progress dictation on an existing device must not be
+        disturbed, and the shared held-set already unions late-added
+        HIDs correctly.
+        """
+        known = {device.path for device in self._devices}
+        current = set(_glob_event_nodes())
+        for path in sorted(current - known - self._checked_nonkeyboard_nodes):
+            try:
+                device = evdev.InputDevice(path)
+            except OSError:
+                continue
+            if not _is_main_keyboard(device):
+                device.close()
+                self._checked_nonkeyboard_nodes.add(path)
+                continue
+            if self._stop_event.is_set():
+                device.close()
+                return
+            logger.info("hotkey: hotplug — now listening on %s (%s)", path, device.name)
+            self._devices.append(device)
+            self._spawn_reader(device)
+        self._checked_nonkeyboard_nodes &= current
 
     def _join_readers(self) -> None:
         for t in list(self._readers):

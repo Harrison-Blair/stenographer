@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 from stenographer.errors import notify_failure
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from stenographer.capabilities import Capabilities
     from stenographer.config import ClipboardConfig, OutputConfig
     from stenographer.output.clipboard import ClipboardManager
@@ -28,12 +30,30 @@ class TranscriptDelivery:
         capabilities: Capabilities,
         injector: Injector,
         clipboard: ClipboardManager,
+        wait_hotkey_released: Callable[[], bool] | None = None,
     ) -> None:
         self._output = output
         self._clipboard_cfg = clipboard_cfg
         self._caps = capabilities
         self._injector = injector
         self._clipboard = clipboard
+        self._wait_hotkey_released = wait_hotkey_released
+
+    def _await_hotkey_release(self) -> None:
+        """Wait for the hotkey binding to be physically released.
+
+        A modifier binding (e.g. RCtrl) still held when we inject merges
+        into the seat state: the paste chord becomes Ctrl+Shift+Insert and
+        typed text fires Ctrl+<letter> shortcuts. On timeout we proceed
+        anyway — the clipboard already holds the transcript as recovery.
+        """
+        if self._wait_hotkey_released is None:
+            return
+        if not self._wait_hotkey_released():
+            log.warning(
+                "delivery: hotkey still held after wait; proceeding "
+                "(clipboard already holds the transcript)"
+            )
 
     def deliver_final(self, text: str) -> bool:
         """Apply the output cap once, then perform one focused-app delivery."""
@@ -54,6 +74,7 @@ class TranscriptDelivery:
 
         delivered = False
         if self._caps.has_paste_trigger:
+            self._await_hotkey_release()
             try:
                 # Incremental/batch formatters already applied whitespace and
                 # trailing-space policy; raw avoids preparing it a second time.
@@ -109,6 +130,7 @@ class TranscriptDelivery:
             # nothing reached the cursor -- not a success.
             log.error("delivery: no paste trigger available; transcript left on the clipboard")
             return False
+        self._await_hotkey_release()
         try:
             return bool(self._injector.paste())
         except Exception as exc:
