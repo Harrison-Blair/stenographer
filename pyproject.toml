@@ -19,6 +19,7 @@ dependencies = [
     "huggingface_hub>=0.23",
     "argcomplete>=3.5",
     "PyGObject>=3.50",
+    "pillow>=11.0",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +53,7 @@ include = [
     "src/stenographer/assets/icons/*.png",
     "src/stenographer/assets/fonts/*.ttf",
     "src/stenographer/assets/fonts/*-OFL.txt",
+    "src/stenographer/assets/fonts/*-LICENSE.txt",
 ]
 
 [tool.ruff]

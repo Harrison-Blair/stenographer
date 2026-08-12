@@ -15,10 +15,16 @@ import numpy as np
 from stenographer._version import __version__
 from stenographer.visualizer.protocol import _HUD_STATE_LABELS
 
-_PREVIEW_WIDTH_CHARS = 42
-_PREVIEW_ROWS = 2
-_PREVIEW_RECENT_CHARS = 96
-_PREVIEW_HEIGHT_PX = 34
+# _trim_preview and the preview geometry constants now live in render.py; they
+# are re-exported here as a shim so the GTK helper (and its tests) keep working
+# until the helper is rewritten on top of HudRenderer.
+from stenographer.visualizer.render import (  # noqa: F401
+    _PREVIEW_HEIGHT_PX,
+    _PREVIEW_RECENT_CHARS,
+    _PREVIEW_ROWS,
+    _PREVIEW_WIDTH_CHARS,
+    _trim_preview,
+)
 
 _OVERLAY_CSS = """
 window {
@@ -60,25 +66,6 @@ def _preview_markup(stable: str, provisional: str) -> str:
         f'<span foreground="#f2f2f2" alpha="58%" style="italic">'
         f"{provisional_escaped}</span>"
     )
-
-
-def _trim_preview(
-    stable: str,
-    provisional: str,
-    limit: int = _PREVIEW_RECENT_CHARS,
-) -> tuple[str, str]:
-    """Keep the newest preview text and preserve its stable/tail boundary."""
-    combined = stable + provisional
-    if len(combined) <= limit:
-        return stable, provisional
-    target = len(combined) - limit
-    boundary = next(
-        (index + 1 for index in range(target, len(combined)) if combined[index].isspace()),
-        target,
-    )
-    if boundary < len(stable):
-        return "…" + stable[boundary:], provisional
-    return "", "…" + provisional[max(0, boundary - len(stable)) :]
 
 
 def _prepare_spectrum_context(
