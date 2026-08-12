@@ -109,6 +109,11 @@ def test_release_supersedes_blocked_interim_and_runs_final() -> None:
 def test_release_grace_retains_an_interim_that_finishes_promptly() -> None:
     worker = _worker()
     try:
+        # Wait for the spawned child to boot before submitting: the grace
+        # clock is wall-time, so a cold child (spawn + imports) would eat the
+        # whole grace window before the job even starts.
+        worker.ensure_model_loaded()
+        worker.wait_model_loaded(timeout=10)
         pid = worker._process.pid
         interim = worker.submit_words(
             _samples(5), deadline=time.monotonic() + 2, priority="interim"
