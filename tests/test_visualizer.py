@@ -23,6 +23,7 @@ from stenographer.visualizer.overlay_app import (
     _prepare_spectrum_context,
     _preview_markup,
     _register_application_font,
+    _reserve_preview_height,
     _trim_preview,
 )
 from stenographer.visualizer.overlay_client import LayerShellOverlay
@@ -120,6 +121,14 @@ def test_preview_geometry_reserves_two_fixed_rows_at_existing_width() -> None:
     assert _PREVIEW_WIDTH_CHARS == 42
     assert _PREVIEW_ROWS == 2
     assert _PREVIEW_HEIGHT_PX > 0
+
+
+def test_preview_height_uses_supported_gtk_size_request() -> None:
+    label = MagicMock()
+
+    _reserve_preview_height(label, _PREVIEW_HEIGHT_PX)
+
+    label.set_size_request.assert_called_once_with(-1, _PREVIEW_HEIGHT_PX)
 
 
 def _started_overlay(process: MagicMock) -> LayerShellOverlay:

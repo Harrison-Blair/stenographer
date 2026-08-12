@@ -104,6 +104,11 @@ def _register_application_font(font_map: Any, path: str, family: str) -> bool:
         return False
 
 
+def _reserve_preview_height(label: Any, height: int) -> None:
+    """Reserve preview height without overriding the label's natural width."""
+    label.set_size_request(-1, height)
+
+
 def run_overlay_process() -> int:
     """Run the stdin-driven GTK helper. Used only by the private child mode."""
     try:
@@ -218,7 +223,7 @@ def run_overlay_process() -> int:
             self.preview.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
             self.preview.set_ellipsize(Pango.EllipsizeMode.END)
             self.preview.set_single_line_mode(False)
-            self.preview.set_height_request(_PREVIEW_HEIGHT_PX)
+            _reserve_preview_height(self.preview, _PREVIEW_HEIGHT_PX)
             self.preview.set_hexpand(True)
             self.preview.add_css_class("stenographer-preview")
             content.append(self.preview)
