@@ -50,6 +50,7 @@ path = "src/stenographer/_version.py"
 packages = ["src/stenographer", "src/stenographer_v2"]
 include = [
     "src/stenographer/assets/sounds/*.wav",
+    "src/stenographer_v2/assets/sounds/*.wav",
     "src/stenographer/assets/sounds/*.ogg",
     "src/stenographer/assets/icons/*.png",
     "src/stenographer/assets/fonts/*.ttf",
