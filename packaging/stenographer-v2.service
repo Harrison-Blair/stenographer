@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# systemd USER unit for the reauthored daemon.
+#   install:  cp packaging/stenographer-v2.service ~/.config/systemd/user/
+#   enable:   systemctl --user enable --now stenographer-v2.service
+#   logs:     journalctl --user -u stenographer-v2 -f
+#
+# ExecStart points at the venv console script. Set it to the absolute path of
+# the `stenographer-v2` entry point in your virtualenv; the %h-relative default
+# below assumes it was symlinked into ~/.local/bin.
+
+[Unit]
+Description=Stenographer push-to-talk dictation daemon
+After=graphical-session.target pipewire.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/stenographer-v2 run
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

@@ -49,11 +49,31 @@ def test_plain_subcommands_parse(command):
     assert args.command == command
 
 
-@pytest.mark.parametrize("command", ["run", "doctor", "devices"])
+@pytest.mark.parametrize("command", ["doctor", "devices"])
 def test_plain_subcommands_are_stubs(command, capsys):
-    # run/doctor/devices are still M0 stubs in M1.
+    # doctor/devices are still stubs until M6; run now dispatches to the daemon.
     assert main([command]) == 1
     assert "not implemented" in capsys.readouterr().err
+
+
+def test_run_dispatches_config_to_daemon(monkeypatch):
+    # `run` loads config and hands it to daemon.run, returning its exit code.
+    # daemon.run is stubbed here to verify wiring only (not to assert a mocked
+    # subprocess call): the real daemon is exercised by manual dictation.
+    import stenographer_v2.config as config
+    import stenographer_v2.daemon as daemon
+
+    sentinel = object()
+    monkeypatch.setattr(config, "load_or_default", lambda: sentinel)
+    seen = {}
+
+    def fake_run(cfg):
+        seen["cfg"] = cfg
+        return 3
+
+    monkeypatch.setattr(daemon, "run", fake_run)
+    assert main(["run"]) == 3
+    assert seen["cfg"] is sentinel
 
 
 def test_transcribe_dispatches_to_handler(monkeypatch):

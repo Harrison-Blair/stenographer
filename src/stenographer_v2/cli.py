@@ -106,6 +106,19 @@ def _cmd_model_download(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_run(args: argparse.Namespace) -> int:
+    from stenographer_v2 import config
+
+    try:
+        cfg = config.load_or_default()
+    except config.ConfigError as exc:
+        return _fatal(str(exc))
+
+    from stenographer_v2 import daemon
+
+    return daemon.run(cfg)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse ``argv`` and dispatch to a subcommand handler."""
     parser = build_parser()
@@ -115,6 +128,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_transcribe(args)
     if args.command == "model":
         return _cmd_model_download(args)
+    if args.command == "run":
+        return _cmd_run(args)
     return _stub(args.command)
 
 
