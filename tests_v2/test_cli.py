@@ -8,6 +8,7 @@ import sys
 
 import pytest
 import stenographer_v2
+import stenographer_v2.cli as cli
 from stenographer_v2.cli import build_parser, main
 
 
@@ -46,6 +47,41 @@ def test_model_download_subcommand():
 def test_plain_subcommands_parse(command):
     args = build_parser().parse_args([command])
     assert args.command == command
+
+
+@pytest.mark.parametrize("command", ["run", "doctor", "devices"])
+def test_plain_subcommands_are_stubs(command, capsys):
+    # run/doctor/devices are still M0 stubs in M1.
+    assert main([command]) == 1
+    assert "not implemented" in capsys.readouterr().err
+
+
+def test_transcribe_dispatches_to_handler(monkeypatch):
+    # transcribe is no longer a stub: main routes it to the real handler,
+    # passing the parsed args through. (No config/ASR import is exercised
+    # because the handler itself is replaced.)
+    seen = {}
+
+    def fake(args):
+        seen["file"] = args.file
+        seen["raw"] = args.raw
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_transcribe", fake)
+    assert main(["transcribe", "clip.wav", "--raw"]) == 0
+    assert seen == {"file": "clip.wav", "raw": True}
+
+
+def test_model_download_dispatches_to_handler(monkeypatch):
+    hits = []
+
+    def fake(args):
+        hits.append(args.model_command)
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_model_download", fake)
+    assert main(["model", "download"]) == 0
+    assert hits == ["download"]
 
 
 def test_unknown_subcommand_errors():
