@@ -1,7 +1,7 @@
 [project]
 name = "stenographer"
 dynamic = ["version"]
-description = "Local, offline, Wayland push-to-talk / toggle dictation."
+description = "Local, offline, Wayland push-to-talk dictation."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
 requires-python = ">=3.12"
@@ -14,27 +14,17 @@ dependencies = [
     "faster-whisper>=1.0.0",
     "evdev>=1.4",
     "soundfile>=0.12",
-    "packaging>=24.0",
-    "certifi>=2024.0",
     "huggingface_hub>=0.23",
-    "argcomplete>=3.5",
-    "PyGObject>=3.50",
-    "pillow>=11.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "ruff>=0.5",
     "pytest>=8",
-    "pytest-asyncio>=0.23",
-]
-build = [
-    "pyinstaller>=6.10",
 ]
 
 [project.scripts]
 stenographer = "stenographer.cli:main"
-stenographer-v2 = "stenographer_v2.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Harrison-Blair/stenographer"
@@ -47,27 +37,21 @@ build-backend = "hatchling.build"
 path = "src/stenographer/_version.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/stenographer", "src/stenographer_v2"]
+packages = ["src/stenographer"]
 include = [
     "src/stenographer/assets/sounds/*.wav",
-    "src/stenographer_v2/assets/sounds/*.wav",
-    "src/stenographer/assets/sounds/*.ogg",
-    "src/stenographer/assets/icons/*.png",
-    "src/stenographer/assets/fonts/*.ttf",
-    "src/stenographer/assets/fonts/*-OFL.txt",
-    "src/stenographer/assets/fonts/*-LICENSE.txt",
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
-testpaths = ["tests", "tests_v2"]
+testpaths = ["tests"]
 markers = [
     "integration: opt-in tests that touch the user's environment (clipboard, real audio). Set STENOGRAPHER_INTEGRATION=1 to run.",
 ]
