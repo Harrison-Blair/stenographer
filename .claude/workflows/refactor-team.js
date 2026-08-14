@@ -28,7 +28,7 @@ const CONVENTIONS =
   "## Repo conventions (binding)\n" +
   "- All Python tooling through the repo venv: `.venv/bin/pytest`, `.venv/bin/ruff`. NEVER the system python/pytest/ruff.\n" +
   "- Unit tests: `.venv/bin/pytest -m \"not integration\" <paths>`. Integration-marked tests are skipped without STENOGRAPHER_INTEGRATION=1 — do not set it.\n" +
-  "- ruff: line length 100, target py314, rules E,F,I,B,UP,N,SIM,RUF. Run `.venv/bin/ruff check <touched files>` and `.venv/bin/ruff format <touched files>` before finishing.\n" +
+  "- ruff: line length 100, target py312, rules E,F,I,B,UP,N,SIM,RUF. Run `.venv/bin/ruff check <touched files>` and `.venv/bin/ruff format <touched files>` before finishing.\n" +
   "- Every source file keeps its `SPDX-License-Identifier: GPL-3.0-or-later` header; a NEW source file must carry one.\n" +
   "- Surgical changes: every changed line must trace to this team's findings. Do not improve adjacent code, comments, or formatting. Match existing style.\n" +
   "- Simplicity first: no abstractions for single-use code, no speculative flexibility, no error handling for impossible scenarios.\n" +
@@ -68,10 +68,10 @@ const IMPLEMENT_PROMPT = t =>
   "## Refactor implementer — team " + t.name + " (" + PHASE + ")\n\n" +
   CONVENTIONS + "\n" + filesBlock(t) + "\n" +
   "## Your findings\n" +
-  "Read reference/smell-audit.md and locate these findings — they are your entire scope:\n" + t.findings + "\n\n" +
+  "These smell-audit findings are your entire scope:\n" + t.findings + "\n\n" +
   "## Method\n" +
-  "1. Read each finding's entry in reference/code-smells.md (its Signs and Fix gist).\n" +
-  "2. Read the numbered **Mechanics** for the named technique(s) in reference/refactoring-techniques.md: " + t.techniques + ". Follow the Mechanics order — they exist to keep each step safe; run the scoped tests between risky steps.\n" +
+  "1. Read each finding's entry in docs/code-smells.md (its Signs and Fix gist).\n" +
+  "2. Read the numbered **Mechanics** for the named technique(s) in docs/refactoring-techniques.md: " + t.techniques + ". Follow the Mechanics order — they exist to keep each step safe; run the scoped tests between risky steps.\n" +
   "3. Apply the refactor within the file boundary only.\n" +
   (t.brief ? "\n## Team-specific brief\n" + t.brief + "\n" : "") +
   "\n## Test discipline\n" +
@@ -90,7 +90,7 @@ const R1_PROMPT = (t, implReport) =>
   "- Inspect the scoped diff: `git diff -- " + t.files.join(" ") + "` and `git status --short -- " + t.files.join(" ") + "` (for added/deleted files, also `git diff --stat`).\n" +
   "- For every removed or moved block, name the invariant it enforced and find where the new code re-establishes it. Missing re-establishment with a realistic trigger = major issue.\n" +
   "- Re-run the scoped unit tests yourself; do not trust the report.\n" +
-  "- Check the Mechanics of " + t.techniques + " in reference/refactoring-techniques.md were honored where it affects safety.\n\n" +
+  "- Check the Mechanics of " + t.techniques + " in docs/refactoring-techniques.md were honored where it affects safety.\n\n" +
   "Verdict `revise` only for major issues (a real behavior change, lost guard, broken test, or unsafe deviation) — quote the code/diff for every claim. Minor nits go in issues with severity minor but do not force revise. If you cannot demonstrate a problem, approve.\n\nStructured output only."
 
 const R2_PROMPT = (t, implReport) =>
@@ -103,7 +103,7 @@ const R2_PROMPT = (t, implReport) =>
   "- **Test validity**: the report must contain break-then-red-then-green evidence for every new/ported test; tests that merely mirror the implementation, or deleted tests whose coverage was not replaced or consciously retired, are issues.\n\n" +
   "## Findings being fixed\n" + t.findings + "\n\n" +
   "## Implementer's report\n" + implReport + "\n\n" +
-  "Inspect `git diff -- " + t.files.join(" ") + "` and `git status --short -- " + t.files.join(" ") + "`. Cross-check against reference/smell-audit.md and the Mechanics of " + t.techniques + ".\n\n" +
+  "Inspect `git diff -- " + t.files.join(" ") + "` and `git status --short -- " + t.files.join(" ") + "`. Cross-check against the findings below and the Mechanics of " + t.techniques + ".\n\n" +
   "Verdict `revise` only for major issues, each with quoted evidence; minor nits stay minor and do not force revise. If the work is clean, approve.\n\nStructured output only."
 
 const FIX_PROMPT = (t, issues) =>
@@ -111,7 +111,7 @@ const FIX_PROMPT = (t, issues) =>
   CONVENTIONS + "\n" + filesBlock(t) + "\n" +
   "Adversarial review of the current `git diff -- " + t.files.join(" ") + "` found issues that must be fixed (or, if a claim is factually wrong, rebutted with quoted evidence in your report — do not silently ignore any):\n\n" +
   issues.map((x, i) => "[" + i + "] (" + x.severity + ") " + x.file + (x.line ? ":" + x.line : "") + " — " + x.description).join("\n") + "\n\n" +
-  "Original findings for context (reference/smell-audit.md):\n" + t.findings + "\n\n" +
+  "Original findings for context:\n" + t.findings + "\n\n" +
   "Address every major issue. Re-run the scoped tests and ruff afterwards. Structured output only."
 
 const summarizeImpl = r =>

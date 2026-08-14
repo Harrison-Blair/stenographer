@@ -1,8 +1,8 @@
 export const meta = {
   name: "code-smell-audit",
-  description: "Whole-repo code-smell audit against reference/code-smells.md — one finder per smell category, an independent verifier for every distinct (file, line) location across the pooled candidates, then a ranked, capped findings report.",
-  whenToUse: "Audit src/stenographer/ and tests/ for the smells catalogued in reference/code-smells.md. Args: an optional free-form target narrowing the scope (e.g. \"only audit src/stenographer/live.py\", \"focus on Dispensables\"); omit for the full default scope.",
-  phases: [{"title":"Scope","detail":"Confirm the smells reference exists, inventory the source files, and collect conventions from CLAUDE.md"},{"title":"Find","detail":"One finder per smell category from reference/code-smells.md, pooled before verify"},{"title":"Verify","detail":"One independent verifier per distinct (file, line) location — CONFIRMED / PLAUSIBLE / REFUTED per candidate, honoring each smell's Ignore-when clause"},{"title":"Synthesize","detail":"Merge duplicates, rank, cap the report"}],
+  description: "Whole-repo code-smell audit against docs/code-smells.md — one finder per smell category, an independent verifier for every distinct (file, line) location across the pooled candidates, then a ranked, capped findings report.",
+  whenToUse: "Audit src/stenographer/ and tests/ for the smells catalogued in docs/code-smells.md. Args: an optional free-form target narrowing the scope (e.g. \"only audit src/stenographer/daemon.py\", \"focus on Dispensables\"); omit for the full default scope.",
+  phases: [{"title":"Scope","detail":"Confirm the smells reference exists, inventory the source files, and collect conventions from CLAUDE.md"},{"title":"Find","detail":"One finder per smell category from docs/code-smells.md, pooled before verify"},{"title":"Verify","detail":"One independent verifier per distinct (file, line) location — CONFIRMED / PLAUSIBLE / REFUTED per candidate, honoring each smell's Ignore-when clause"},{"title":"Synthesize","detail":"Merge duplicates, rank, cap the report"}],
 }
 
 // code-smell-audit: Scope → Find (barrier) → group-by-location → Verify → Synthesize.
@@ -12,7 +12,7 @@ export const meta = {
 // inlined here), no Sweep phase (the category finders already partition the
 // full catalog), and every agent pinned to Opus 4.8 per user requirement.
 const MODEL = "claude-opus-4-8"
-const SMELLS_DOC = "reference/code-smells.md"
+const SMELLS_DOC = "docs/code-smells.md"
 const PER_CATEGORY = 8
 const MAX_FINDINGS = 20
 
