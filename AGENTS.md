@@ -17,16 +17,18 @@ record: its §2 decisions are settled, §4 is the behavioral knowledge inventory
 that binds every change, §6 is the testing policy, §7 lists deliberately cut
 features. Do not reintroduce cut features (HUD/visualizer, live preview,
 toggle/hybrid modes, self-update, PyInstaller packaging, wtype) without that
-document being revised first.
+document being revised first. The sole visual exception is the fixed,
+metadata-only lifecycle pill documented in decisions §2.15/§4.17; it must
+never grow transcript preview, audio/FFT handling, controls, animation, or GTK.
 
 ## Layout
 
-- `src/stenographer/` — 12 flat modules: `cli`, `config`, `daemon`, `hotkey`,
+- `src/stenographer/` — flat modules including `cli`, `config`, `daemon`, `hotkey`,
   `audio`, `worker`, `model`, `format`, `deliver`, `feedback`, `doctor`,
   `notify`, plus `assets/sounds/` (5 WAV cues).
 - `tests/` — unit tests (pure logic) plus `test_*_smoke.py` integration tests.
 - `packaging/stenographer.service` — the systemd user unit.
-- `scripts/install-hooks.sh` — enables `.githooks/` (ruff format on commit).
+- `scripts/build.sh` / `scripts/install.sh` — local bundle and per-user install.
 - `docs/` — `reauthor.md` (design record), `code-smells.md` and
   `refactoring-techniques.md` (review/refactor references).
 
@@ -49,13 +51,18 @@ document being revised first.
    hotkey release; the daemon never touches the network (`local_files_only`);
    the PortAudio callback only copies blocks; logs never contain transcript
    text or audio.
-6. **No distribution machinery.** There is no installer, self-updater, release
-   workflow, or binary build. Do not add packaging files without being asked.
-7. **Branch model.** Develop on `dev`. Merging to `main` requires the smoke
+6. **Narrow distribution boundary.** The local PyInstaller onedir build and
+   single-machine per-user installer are allowed. Self-update, release
+   workflows, multi-distro installers, and completions remain cut.
+7. **Overlay isolation.** The optional helper may receive only fixed lifecycle
+   metadata over the versioned protocol. It is click-through and must degrade to
+   disabled without affecting daemon success. Never put display/process I/O
+   under daemon locks or send transcript, audio, device/model names, config
+   values, or detailed errors across its IPC.
+8. **Branch model.** Develop on `dev`. Merging to `main` requires the smoke
    suite and real dictation to pass on a real machine first.
-8. **Commits** are conventional (`feat:`, `fix:`, `chore:`) with no
-   attribution trailers. Run `./scripts/install-hooks.sh` once so ruff format
-   runs on staged Python.
+9. **Commits** are conventional (`feat:`, `fix:`, `chore:`) with no
+   attribution trailers. Run the quick verification loop before committing.
 
 ## Quick verification loop
 

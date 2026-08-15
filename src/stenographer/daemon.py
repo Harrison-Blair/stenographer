@@ -27,6 +27,7 @@ from stenographer.deliver import Deliverer, UinputKeyboard, copy_both_selections
 from stenographer.feedback import Feedback
 from stenographer.format import format_transcript
 from stenographer.notify import Notifier
+from stenographer.status import LifecycleEvent, NullStatusSink, OverlayState, StatusSink
 from stenographer.worker import Worker, WorkerError
 
 if TYPE_CHECKING:
@@ -38,6 +39,35 @@ log = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 16000
 _PIPELINE_JOIN_SECONDS = 30.0
+
+
+def _play_cue(feedback: Feedback, name: str) -> None:
+    """Launch a cue without allowing player failure to break daemon state."""
+    try:
+        feedback.play(name)
+    except Exception as exc:
+        log.warning("feedback: cue_failed cue=%s error_type=%s", name, type(exc).__name__)
+
+
+def _publish_status(status: StatusSink, state: OverlayState) -> None:
+    """Enqueue fixed lifecycle metadata without allowing overlay failure through."""
+    try:
+        status.publish(state)
+    except Exception as exc:
+        log.warning(
+            "overlay: publish_failed state=%s error_type=%s", state.value, type(exc).__name__
+        )
+
+
+def _publish_lifecycle(status: StatusSink, event: LifecycleEvent) -> None:
+    try:
+        status.lifecycle(event)
+    except Exception as exc:
+        log.warning(
+            "overlay: lifecycle_failed event=%s error_type=%s",
+            event.value,
+            type(exc).__name__,
+        )
 
 
 class Outcome(Enum):
@@ -114,12 +144,14 @@ class Daemon:
         notifier: Notifier,
         worker: Worker,
         recorder: Recorder,
+        status: StatusSink | None = None,
     ) -> None:
         self._cfg = cfg
         self._feedback = feedback
         self._notifier = notifier
         self._worker = worker
         self._recorder = recorder
+        self._status = status if status is not None else NullStatusSink()
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._recording = False
@@ -129,17 +161,39 @@ class Daemon:
         self._deliverer: Deliverer | None = None
 
     @classmethod
-    def build(cls, cfg: Config) -> Daemon:
+    def build(cls, cfg: Config, *, status: StatusSink | None = None) -> Daemon:
         from stenographer.hotkey import HotkeyListener, parse_binding
 
         feedback = Feedback(cfg=cfg.feedback)
         notifier = Notifier()
-        worker = Worker(cfg.asr, on_model_loading=lambda: feedback.play("model_loading"))
+        status = status if status is not None else NullStatusSink()
+
+        def on_model_loading() -> None:
+            _publish_status(status, OverlayState.MODEL_LOADING)
+            _play_cue(feedback, "model_loading")
+
+        def on_model_ready() -> None:
+            _publish_lifecycle(status, LifecycleEvent.MODEL_READY)
+
+        def on_transcribing() -> None:
+            _publish_status(status, OverlayState.TRANSCRIBING)
+
+        worker = Worker(
+            cfg.asr,
+            on_model_loading=on_model_loading,
+            on_model_ready=on_model_ready,
+            on_transcribing=on_transcribing,
+        )
         recorder = Recorder(
             device=cfg.audio.input_device, max_seconds=cfg.audio.max_recording_seconds
         )
         daemon = cls(
-            cfg=cfg, feedback=feedback, notifier=notifier, worker=worker, recorder=recorder
+            cfg=cfg,
+            feedback=feedback,
+            notifier=notifier,
+            worker=worker,
+            recorder=recorder,
+            status=status,
         )
         listener = HotkeyListener(
             chord=parse_binding(cfg.hotkey.binding),
@@ -162,25 +216,36 @@ class Daemon:
             if not can_start(self._recording, self._busy, self._stop_event.is_set()):
                 log.debug("hotkey: key-down ignored (recording/busy/stopping)")
                 return
-            self._feedback.play("record_start")
             try:
                 self._recorder.start()
             except Exception as exc:
-                log.error("recorder: start failed: %s", exc)
-                self._feedback.play("error")
+                log.error("recorder: failed phase=start error_type=%s", type(exc).__name__)
+                self._recorder.close()
+                _publish_status(self._status, OverlayState.ERROR)
+                _play_cue(self._feedback, "error")
                 self._notifier.error("could not start recording")
                 self._recording = False
                 return
             self._recording = True
+            _publish_status(self._status, OverlayState.RECORDING)
+            _play_cue(self._feedback, "record_start")
 
     def on_key_up(self) -> None:
         with self._lock:
             if not self._recording:
                 return
             self._recording = False
-            self._feedback.play("record_stop")
-            samples = self._recorder.stop()
+            try:
+                samples = self._recorder.stop()
+            except Exception as exc:
+                log.error("recorder: failed phase=stop error_type=%s", type(exc).__name__)
+                self._recorder.close()
+                _publish_status(self._status, OverlayState.ERROR)
+                _play_cue(self._feedback, "error")
+                self._notifier.error("recording failed; audio was discarded")
+                return
             self._busy = True
+            _play_cue(self._feedback, "record_stop")
             thread = threading.Thread(
                 target=self._run_pipeline,
                 args=(samples,),
@@ -195,17 +260,30 @@ class Daemon:
             gate_passed = speech_gate_passes(samples, _SAMPLE_RATE, self._cfg.audio.min_speech_rms)
             if not gate_passed:
                 log.info("pipeline: outcome=SILENT (gate)")
+                _publish_status(self._status, OverlayState.HIDDEN)
                 return
             try:
                 result = self._worker.transcribe(samples)
             except WorkerError as exc:
-                log.warning("pipeline: transcription failed: %s", exc)
-                self._feedback.play("error")
+                log.warning("pipeline: transcription_failed error_type=%s", type(exc).__name__)
+                _publish_status(self._status, OverlayState.ERROR)
+                _play_cue(self._feedback, "error")
                 self._notifier.error("transcription failed")
                 return
             transcript_nonempty = bool(result.text.strip())
             text = format_transcript(result.text)
-            deliver_result = self._deliverer.deliver(text) if transcript_nonempty else None
+            if not transcript_nonempty:
+                _publish_status(self._status, OverlayState.HIDDEN)
+            else:
+                _publish_status(self._status, OverlayState.DELIVERING)
+            try:
+                deliver_result = self._deliverer.deliver(text) if transcript_nonempty else None
+            except Exception as exc:
+                log.warning("pipeline: delivery_failed error_type=%s", type(exc).__name__)
+                _publish_status(self._status, OverlayState.ERROR)
+                _play_cue(self._feedback, "error")
+                self._notifier.error("delivery failed")
+                return
             outcome, message = classify_pipeline(
                 gate_passed=True,
                 transcript_nonempty=transcript_nonempty,
@@ -213,9 +291,11 @@ class Daemon:
             )
             log.info("pipeline: outcome=%s chars=%d", outcome.name, len(text))
             if outcome is Outcome.DELIVERED:
-                self._feedback.play("delivered")
+                _publish_status(self._status, OverlayState.HIDDEN)
+                _play_cue(self._feedback, "delivered")
             elif outcome is Outcome.ERROR:
-                self._feedback.play("error")
+                _publish_status(self._status, OverlayState.ERROR)
+                _play_cue(self._feedback, "error")
                 self._notifier.error(message or "delivery failed")
         finally:
             with self._lock:
@@ -250,10 +330,9 @@ class Daemon:
         with contextlib.suppress(Exception):
             self._feedback.close()
         with self._lock:
-            if self._recording and self._recorder.is_active:
-                with contextlib.suppress(Exception):
-                    self._recorder.stop()
+            self._recorder.close()
             self._recording = False
+        _publish_status(self._status, OverlayState.HIDDEN)
 
 
 def run(cfg: Config) -> int:
@@ -268,14 +347,27 @@ def run(cfg: Config) -> int:
         )
         return 78
 
+    status: StatusSink = NullStatusSink()
+    if cfg.feedback.overlay:
+        try:
+            from stenographer.overlay import OverlaySupervisor
+
+            status = OverlaySupervisor()
+        except Exception as exc:
+            log.warning("overlay: unavailable error_type=%s", type(exc).__name__)
+
     try:
-        daemon = Daemon.build(cfg)
+        daemon = Daemon.build(cfg, status=status)
     except BindingError as exc:
+        with contextlib.suppress(Exception):
+            status.close()
         print(f"stenographer: {exc}", file=sys.stderr)
         return 78
 
     fd = acquire_single_instance_lock()
     if fd < 0:
+        with contextlib.suppress(Exception):
+            status.close()
         print("stenographer: another instance is already running.", file=sys.stderr)
         return 1
 
@@ -287,11 +379,20 @@ def run(cfg: Config) -> int:
         signal.signal(sig, _handler)
 
     try:
+        try:
+            daemon._recorder.prepare()
+        except Exception as exc:
+            log.warning(
+                "recorder: startup_prepare_failed error_type=%s recovery=next_keypress",
+                type(exc).__name__,
+            )
         daemon.run()
     except KeyboardInterrupt:
         pass
     finally:
         daemon.stop()
+        with contextlib.suppress(Exception):
+            status.close()
         os.close(fd)
         release_single_instance_lock()
     return 0

@@ -18,7 +18,7 @@ def test_config_error_message():
 
 def test_defaults_match_spec():
     d = Config.defaults()
-    assert d.hotkey.binding == "KEY_RIGHTALT"
+    assert d.hotkey.binding == "KEY_RIGHTCTRL"
     assert d.hotkey.device is None
     assert d.audio.input_device is None
     assert d.audio.min_speech_rms == 0.0005
@@ -34,6 +34,7 @@ def test_defaults_match_spec():
     assert d.asr.cpu_threads == 0
     assert d.feedback.volume == 0.6
     assert d.feedback.mute is False
+    assert d.feedback.overlay is True
 
 
 def test_write_default_round_trips(tmp_path):
@@ -58,6 +59,15 @@ def test_partial_override_leaves_other_keys(tmp_path):
     assert cfg.asr.model == Config.defaults().asr.model
     assert cfg.hotkey == Config.defaults().hotkey
     assert cfg.feedback == Config.defaults().feedback
+
+
+def test_overlay_can_be_disabled_without_restating_feedback_defaults(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer.feedback]\noverlay = false\n")
+    cfg = Config.load(p)
+    assert cfg.feedback.overlay is False
+    assert cfg.feedback.volume == Config.defaults().feedback.volume
+    assert cfg.feedback.mute == Config.defaults().feedback.mute
 
 
 def test_empty_string_is_unset(tmp_path):
@@ -90,6 +100,7 @@ def test_unknown_keys_ignored(tmp_path):
         ("[stenographer.asr]\ncpu_threads = 100\n", "asr.cpu_threads"),
         ("[stenographer.feedback]\nvolume = -1\n", "feedback.volume"),
         ('[stenographer.feedback]\nmute = "no"\n', "feedback.mute"),
+        ('[stenographer.feedback]\noverlay = "yes"\n', "feedback.overlay"),
         ('[stenographer.hotkey]\nbinding = ""\n', "hotkey.binding"),
         ("[stenographer.audio]\nmax_recording_seconds = 0\n", "audio.max_recording_seconds"),
     ],

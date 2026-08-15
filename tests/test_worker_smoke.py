@@ -17,6 +17,7 @@ loads the model, or touches the network.
 from __future__ import annotations
 
 import dataclasses
+import io
 import os
 import pathlib
 import time
@@ -43,6 +44,7 @@ if try_to_load_from_cache(_MODEL_ID, "config.json") is None:
 import soundfile  # noqa: E402
 
 from stenographer.config import Config  # noqa: E402
+from stenographer.logging_setup import setup_logging, shutdown_logging  # noqa: E402
 from stenographer.worker import Worker  # noqa: E402
 
 
@@ -137,3 +139,25 @@ def test_restart_after_forced_child_death():
         assert result.text.strip() != ""
     finally:
         worker.shutdown()
+
+
+def test_spawned_worker_forwards_private_safe_decode_metrics(tmp_path):
+    samples = _read(_CLIP)
+    cfg = Config.defaults()
+    stderr = io.StringIO()
+    shutdown_logging()
+    setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=stderr)
+
+    worker = Worker(cfg.asr)
+    try:
+        result = worker.transcribe(samples)
+    finally:
+        worker.shutdown()
+        shutdown_logging()
+
+    records = stderr.getvalue()
+    assert "asr: model loaded elapsed_ms=" in records
+    assert "asr: decode complete elapsed_ms=" in records
+    assert f"transcript_chars={len(result.text)}" in records
+    assert result.text.strip()
+    assert result.text.strip() not in records

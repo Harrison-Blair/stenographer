@@ -13,15 +13,24 @@ import pytest
 from stenographer.model import PathologicalOutputError, TranscriptionResult
 from stenographer.worker import (
     WorkerError,
+    WorkerEvent,
+    WorkerLifecycle,
     WorkerPathologicalError,
+    WorkerProtocolError,
     classify_error,
     interpret_response,
+    lifecycle_transition,
+    should_teardown_for_response_error,
 )
 
 
 def test_interpret_response_returns_ok_result():
     result = TranscriptionResult(text="hi", duration_seconds=1.0, segments=[])
     assert interpret_response(("ok", result)) is result
+
+
+def test_interpret_response_returns_metadata_only_model_ready_event():
+    assert interpret_response(("model_ready",)) is WorkerEvent.MODEL_READY
 
 
 def test_interpret_response_pathological_raises():
@@ -45,13 +54,49 @@ def test_interpret_response_malformed_raises_worker_error():
     for message in (
         ("bogus",),
         ("ok",),
+        ("ok", secret),
         ("ok", secret, "extra"),
         ("error", "mystery", secret),
+        ("error", "inference", object()),
+        ("model_ready", secret),
     ):
-        with pytest.raises(WorkerError) as exc:
+        with pytest.raises(WorkerProtocolError) as exc:
             interpret_response(message)
         assert secret not in str(exc.value)
         assert "shape" in str(exc.value)
+
+
+def test_legitimate_worker_errors_do_not_become_protocol_errors():
+    for message in (
+        ("error", "inference", "RuntimeError: boom"),
+        ("error", "pathological", "decoder density exceeded"),
+    ):
+        with pytest.raises(WorkerError) as exc:
+            interpret_response(message)
+        assert not isinstance(exc.value, WorkerProtocolError)
+        assert should_teardown_for_response_error(exc.value) is False
+
+
+def test_malformed_worker_errors_require_teardown():
+    with pytest.raises(WorkerProtocolError) as exc:
+        interpret_response(("bogus", "secret"))
+    assert should_teardown_for_response_error(exc.value) is True
+
+
+def test_cold_and_warm_lifecycle_ordering():
+    cold_start = lifecycle_transition(model_loaded=False)
+    cold_ready = lifecycle_transition(model_loaded=False, event=WorkerEvent.MODEL_READY)
+    assert cold_start + cold_ready == (
+        WorkerLifecycle.MODEL_LOADING,
+        WorkerLifecycle.MODEL_READY,
+        WorkerLifecycle.TRANSCRIBING,
+    )
+    assert lifecycle_transition(model_loaded=True) == (WorkerLifecycle.TRANSCRIBING,)
+
+
+def test_duplicate_model_ready_is_a_protocol_error():
+    with pytest.raises(WorkerProtocolError):
+        lifecycle_transition(model_loaded=True, event=WorkerEvent.MODEL_READY)
 
 
 def test_classify_error_pathological():

@@ -10,19 +10,19 @@ import pytest
 
 import stenographer
 import stenographer.cli as cli
-from stenographer.cli import build_parser, main
+from stenographer.cli import build_parser, dispatch
 
 
 def test_version_flag_prints_version(capsys):
     with pytest.raises(SystemExit) as exc:
-        main(["--version"])
+        dispatch(["--version"])
     assert exc.value.code == 0
     assert capsys.readouterr().out.strip() == stenographer.__version__
 
 
 def test_help_exits_zero():
     with pytest.raises(SystemExit) as exc:
-        main(["--help"])
+        dispatch(["--help"])
     assert exc.value.code == 0
 
 
@@ -56,7 +56,7 @@ def test_plain_subcommands_parse(command):
 def test_doctor_and_devices_dispatch_to_handlers(command, handler, monkeypatch):
     hits = []
     monkeypatch.setattr(cli, handler, lambda args: hits.append(command) or 0)
-    assert main([command]) == 0
+    assert dispatch([command]) == 0
     assert hits == [command]
 
 
@@ -92,12 +92,12 @@ def test_run_dispatches_config_to_daemon(monkeypatch):
         return 3
 
     monkeypatch.setattr(daemon, "run", fake_run)
-    assert main(["run"]) == 3
+    assert dispatch(["run"]) == 3
     assert seen["cfg"] is sentinel
 
 
 def test_transcribe_dispatches_to_handler(monkeypatch):
-    # transcribe is no longer a stub: main routes it to the real handler,
+    # transcribe is no longer a stub: dispatch routes it to the real handler,
     # passing the parsed args through. (No config/ASR import is exercised
     # because the handler itself is replaced.)
     seen = {}
@@ -108,7 +108,7 @@ def test_transcribe_dispatches_to_handler(monkeypatch):
         return 0
 
     monkeypatch.setattr(cli, "_cmd_transcribe", fake)
-    assert main(["transcribe", "clip.wav", "--raw"]) == 0
+    assert dispatch(["transcribe", "clip.wav", "--raw"]) == 0
     assert seen == {"file": "clip.wav", "raw": True}
 
 
@@ -120,7 +120,7 @@ def test_model_download_dispatches_to_handler(monkeypatch):
         return 0
 
     monkeypatch.setattr(cli, "_cmd_model_download", fake)
-    assert main(["model", "download"]) == 0
+    assert dispatch(["model", "download"]) == 0
     assert hits == ["download"]
 
 
@@ -128,6 +128,13 @@ def test_unknown_subcommand_errors():
     with pytest.raises(SystemExit) as exc:
         build_parser().parse_args(["bogus"])
     assert exc.value.code == 2
+
+
+def test_private_overlay_entry_is_absent_from_public_help(capsys):
+    with pytest.raises(SystemExit) as exc:
+        dispatch(["--help"])
+    assert exc.value.code == 0
+    assert "_overlay" not in capsys.readouterr().out
 
 
 def test_cli_module_has_no_heavy_imports():

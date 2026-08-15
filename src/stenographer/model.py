@@ -11,11 +11,14 @@ from __future__ import annotations
 import logging
 import math
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     import numpy as np
 
     from stenographer.config import AsrConfig
@@ -70,6 +73,7 @@ class Model:
         from faster_whisper import WhisperModel
 
         cpu_threads = resolve_cpu_threads(cfg.cpu_threads)
+        started = time.monotonic()
         self._impl = WhisperModel(
             cfg.model,
             device="auto",
@@ -78,10 +82,20 @@ class Model:
             local_files_only=True,
         )
         self._cfg = cfg
-        log.info("ASR model loaded: id=%s cpu_threads=%d", cfg.model, cpu_threads)
+        log.info(
+            "asr: model loaded elapsed_ms=%d cpu_threads=%d",
+            round((time.monotonic() - started) * 1000),
+            cpu_threads,
+        )
 
     def transcribe(self, samples: np.ndarray) -> TranscriptionResult:
+        started = time.monotonic()
         if samples.size == 0:
+            log.info(
+                "asr: decode complete elapsed_ms=%d audio_frames=0 vad_frames=0 "
+                "segments=0 words=0 transcript_chars=0",
+                round((time.monotonic() - started) * 1000),
+            )
             return TranscriptionResult(text="", duration_seconds=0.0, segments=[])
         if samples.ndim == 2:
             samples = samples.mean(axis=1) if samples.shape[1] > 1 else samples.squeeze(-1)
@@ -124,11 +138,14 @@ class Model:
             vad_seconds=vad_seconds,
         )
         log.info(
-            "asr: audio=%.3fs vad=%.3fs segments=%d words=%d",
-            audio_seconds,
-            vad_seconds,
+            "asr: decode complete elapsed_ms=%d audio_frames=%d vad_frames=%d "
+            "segments=%d words=%d transcript_chars=%d",
+            round((time.monotonic() - started) * 1000),
+            samples.shape[0],
+            round(vad_seconds * _SAMPLE_RATE),
             len(result.segments),
             sum(len(s.words) for s in result.segments),
+            len(result.text),
         )
         return result
 
@@ -221,11 +238,25 @@ def _assemble(
     return TranscriptionResult(text=text, duration_seconds=audio_seconds, segments=kept)
 
 
-def is_model_cached(model_id: str) -> bool:
-    """True if the model's ``config.json`` is in the local HF cache (no network)."""
-    from huggingface_hub import try_to_load_from_cache
+def hf_hub_cache_dir(env: Mapping[str, str], home: Path) -> Path:
+    """Pure: the HF hub cache root, mirroring huggingface_hub's resolution order."""
+    if hub_cache := env.get("HF_HUB_CACHE"):
+        return Path(hub_cache)
+    if hf_home := env.get("HF_HOME"):
+        return Path(hf_home) / "hub"
+    if xdg_cache := env.get("XDG_CACHE_HOME"):
+        return Path(xdg_cache) / "huggingface" / "hub"
+    return home / ".cache" / "huggingface" / "hub"
 
-    return isinstance(try_to_load_from_cache(repo_id=model_id, filename="config.json"), str)
+
+def is_model_cached(model_id: str) -> bool:
+    """True if the model's ``config.json`` is in the local HF cache (no network).
+
+    A direct filesystem check of huggingface_hub's documented cache layout —
+    importing huggingface_hub just to ask costs ~200 ms of CLI startup.
+    """
+    repo = hf_hub_cache_dir(os.environ, Path.home()) / f"models--{model_id.replace('/', '--')}"
+    return any(repo.glob("snapshots/*/config.json"))
 
 
 def download_model(model_id: str) -> None:

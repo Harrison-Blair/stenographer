@@ -2,9 +2,10 @@
 """Integration smoke suite for the cue player (spec §6.3, M4 Verify).
 
 Really plays each of the five bundled cues through the detected audio player
-(pw-play/paplay) — no mocks. The operator should hear five distinct cues, in
-order: record_start, record_stop, delivered, error, model_loading. A short
-sleep separates them so each is audible; play() must never raise.
+(canberra-gtk-play/pw-play/paplay) — no mocks. The operator should hear five
+distinct cues, in order: record_start, record_stop, delivered, error,
+model_loading. A short sleep separates them so each is audible; play() must
+never raise.
 
 Self-skips unless STENOGRAPHER_INTEGRATION=1 and an audio player is on PATH, so
 the default unit run never spawns a player or makes sound.
@@ -26,7 +27,10 @@ from stenographer.config import FeedbackConfig  # noqa: E402
 from stenographer.feedback import CUES, Feedback, detect_player  # noqa: E402
 
 if detect_player() is None:
-    pytest.skip("no audio player (pw-play/paplay) on PATH", allow_module_level=True)
+    pytest.skip(
+        "no audio player (canberra-gtk-play/pw-play/paplay) on PATH",
+        allow_module_level=True,
+    )
 
 
 def test_play_each_cue_audibly():

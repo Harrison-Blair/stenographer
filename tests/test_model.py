@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import pathlib
 
 import pytest
 
@@ -14,8 +15,29 @@ from stenographer.model import (
     _assemble,
     _token_budget,
     _validate_output,
+    hf_hub_cache_dir,
     resolve_cpu_threads,
 )
+
+
+def test_hf_hub_cache_dir_default_under_home():
+    home = pathlib.Path("/home/x")
+    assert hf_hub_cache_dir({}, home) == home / ".cache/huggingface/hub"
+
+
+def test_hf_hub_cache_dir_xdg_cache_home():
+    got = hf_hub_cache_dir({"XDG_CACHE_HOME": "/xdg"}, pathlib.Path("/home/x"))
+    assert got == pathlib.Path("/xdg/huggingface/hub")
+
+
+def test_hf_hub_cache_dir_hf_home_beats_xdg():
+    env = {"XDG_CACHE_HOME": "/xdg", "HF_HOME": "/hf"}
+    assert hf_hub_cache_dir(env, pathlib.Path("/home/x")) == pathlib.Path("/hf/hub")
+
+
+def test_hf_hub_cache_dir_hf_hub_cache_beats_all():
+    env = {"XDG_CACHE_HOME": "/xdg", "HF_HOME": "/hf", "HF_HUB_CACHE": "/hub-cache"}
+    assert hf_hub_cache_dir(env, pathlib.Path("/home/x")) == pathlib.Path("/hub-cache")
 
 
 def _make_topology(root, cpu_to_core, package="0"):

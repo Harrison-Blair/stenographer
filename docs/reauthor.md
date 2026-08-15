@@ -51,19 +51,17 @@ design was built on compositor-specific protocols; the new one must not be.
    against this document. Old code is a behavioral reference only and is deleted
    at the end (after real-dictation validation). Git history and memory notes are
    part of the reference material — no fresh repo.
-4. **Personal-first, distribute-later.** Eventual distribution is a goal;
-   distribution *machinery* is not a v1 deliverable. Cut now: self-update,
-   release-channel logic, `-dev` version-stripping workflow, multi-distro
-   `install.sh`, config-migration shims, argcomplete fast paths, PyInstaller
-   packaging. v1 runs from the venv with a systemd user unit pointing at it.
-   The only concession to future distribution is cheap: a clean config schema
-   with good validation errors, and a codebase small enough that adding an
-   updater later is trivial.
+4. **Personal-first, distribute-later.** Eventual distribution is a goal. The
+   owner restored a local PyInstaller onedir build and single-machine per-user
+   installer in 2026-08 as development-machine conveniences. They are not a
+   release channel: self-update, version-stripping workflows, multi-distro or
+   curl-pipe-bash installers, config migrations, and completions remain cut.
 5. **Target: any Wayland session, GNOME included.** Not two specific machines —
    portable across Wayland compositors (wlroots-family and GNOME/Mutter alike).
-   **Nothing may depend on layer-shell, virtual-keyboard, or any
-   compositor-specific protocol.** That dependency is the trap the old design
-   fell into.
+   Dictation and delivery never depend on a display-overlay protocol. A small,
+   best-effort lifecycle surface may prefer layer-shell, fall back to XWayland,
+   and disable itself when neither works; failure of that optional surface must
+   never affect recording, transcription, or delivery.
 6. **Injection mechanism: `uinput`** (kernel virtual input device via
    python-evdev's `UInput`). Display-server-independent — works on GNOME,
    Hyprland, X11, everywhere. One injection path, zero fallback axes. The old
@@ -76,9 +74,10 @@ design was built on compositor-specific protocols; the new one must not be.
    typing and `max_chars` are cut. The clipboard is always written and doubles as
    the recovery path when focus is wrong.
 8. **Cut from v1** (see §3 for the full table): incremental decoding / live
-   preview, the entire visualizer/HUD, `toggle` and `hybrid` trigger modes
-   (**PTT only**), the cancel binding, `dictate`, `bench`, the five systemd
-   wrapper subcommands, per-cue sound overrides.
+   preview, audio visualization and the old GTK HUD, `toggle` and `hybrid`
+   trigger modes (**PTT only**), the cancel binding, `dictate`, `bench`, the five
+   systemd wrapper subcommands, per-cue sound overrides. The sole visual
+   exception is the fixed, noninteractive lifecycle pill from decision 15.
 9. **CLI surface: five subcommands** — `run`, `model download`, `doctor`,
    `devices`, `transcribe FILE`.
 10. **ASR worker: child process kept, radically simplified.** One job at a time,
@@ -88,7 +87,7 @@ design was built on compositor-specific protocols; the new one must not be.
     the ability to abandon a stuck decode by killing the child. Results remain
     **word-timestamp-capable** so a streaming layer can be added on top later
     without rearchitecting.
-11. **Config: 4 sections, ~16 keys** (schema in §5). Hard validation with
+11. **Config: 4 sections, ~17 keys** (schema in §5). Hard validation with
     key-scoped errors; **no migrations** (sole config holder). Formatting is
     fixed behavior with zero knobs.
 12. **Testing policy** as codified in §6 — unit tests for pure logic only; a real
@@ -98,6 +97,15 @@ design was built on compositor-specific protocols; the new one must not be.
     3.14-only dependency to avoid. "Universally friendly" is a stated goal.
 14. **The name stays `stenographer`.** License stays GPL-3.0-or-later; every
     source file keeps the SPDX header.
+15. **Minimal lifecycle overlay.** A default-on, click-through 220×64 status
+    pill may display only `recording`, `model_loading`, `transcribing`,
+    `delivering`, or `error`; `hidden` removes it. It has no transcript preview,
+    audio/FFT data, animation, controls, or GTK dependency. A separately
+    supervised helper receives versioned, bounded, latest-state-coalescing NDJSON
+    containing only generation/state metadata and fixed lifecycle diagnostics.
+    Native layer-shell is preferred and XWayland is a best-effort fallback.
+    Helper/backend failure degrades to sound and notifications and cannot fail or
+    block the daemon. Lock screens and protected shell surfaces are out of scope.
 
 ---
 
@@ -114,7 +122,8 @@ Every feature of the current tool, so nothing disappears silently.
 | Audio capture (PortAudio), RMS gate, resample fallback | **Keep** | See §4.2, §4.10. |
 | Silence/hallucination guard stack | **Keep** | VAD, no-speech gate, RMS gate, silence trimming, anti-hallucination decode settings — as fixed behavior. See §4.5–4.7. |
 | Incremental decoding / live preview (`live.py`, `streaming.py`, interim jobs) | Cut → later | ~1,500–2,000 lines existed to show words mid-utterance. Flagship add-later; v1 keeps the worker word-timestamp-capable. |
-| Visualizer / HUD (GTK helper, JSON-lines IPC, FFT spectrum) | **Cut entirely** | Cannot exist on GNOME anyway. Feedback = sound cues + notify-send. |
+| Lifecycle overlay | **Keep (fixed, optional)** | Metadata-only click-through pill; native layer-shell with XWayland fallback. No transcript, audio, FFT, controls, or animation. Failure never affects dictation. |
+| Visualizer / old HUD (GTK helper, transcript preview, FFT spectrum) | **Cut entirely** | The lifecycle overlay is not a door to preview or visualization. Feedback continues through sound cues and detailed error notifications. |
 | Sound cues (11) | **Keep, trimmed to 5** | `record_start`, `record_stop`, `delivered`, `error`, `model_loading`. Bundled WAVs; global `volume`/`mute` only, no per-cue overrides. |
 | Desktop notifications (`notify-send`) | **Keep** | Errors only. No-op when absent. |
 | `type` injection via wtype | **Cut** | Replaced by decision 6/7. wtype dependency is gone entirely. |
@@ -132,7 +141,7 @@ Every feature of the current tool, so nothing disappears silently.
 | `update` (self-update) + `[update]` config | **Cut** | Distribution machinery. `git pull && reinstall`. |
 | Config migrations (`text`/`paste`, `[streaming]`) | **Cut** | No migrations, ever, until there are external users. |
 | argcomplete fast path + bash completion | **Cut** | |
-| PyInstaller onedir build, `install.sh` | **Cut** | venv + systemd unit. |
+| PyInstaller onedir build, `install.sh` | **Keep (local only)** | Development-machine build and single-user install; no release workflow, updater, or multi-distro installer. |
 | Idle model unload | **Keep** | Via killing the worker child. |
 | Eager/lazy model load knob | **Cut (always lazy)** | `model_loading` cue covers the first-use delay. |
 | Single-instance flock | **Keep** | `$XDG_RUNTIME_DIR/stenographer.lock`, PID written into it. |
@@ -197,9 +206,17 @@ is a constraint on the new implementation.
     reach the network. `model download` uses `snapshot_download` with an
     allow-list (`*.json`, `model.bin`, `tokenizer.json`, `vocabulary.*`,
     `preprocessor_config.json`).
-12. **Logging privacy.** Log metrics and transcript *lengths*; never audio, never
-    transcript text. Rotating file at `$XDG_STATE_HOME/stenographer/` plus
-    stderr; level via `STENOGRAPHER_LOG_LEVEL`.
+12. **Logging privacy and ownership.** Log numeric/structural metrics and
+    transcript *lengths*; never audio, samples, transcript text, or result
+    representations. Every command configures stderr plus a 5 MiB rotating file
+    (three backups) at `$XDG_STATE_HOME/stenographer/stenographer.log`, falling
+    back below `~/.local/state`. `STENOGRAPHER_LOG_LEVEL` is case-insensitive and
+    defaults (including invalid values) to `INFO`. Setup owns and marks only its
+    own handlers, preserving host handlers, and a file failure warns once before
+    continuing stderr-only. Worker-child records cross a multiprocessing queue
+    to the parent's handlers; the child never opens or rotates the file, and the
+    queue/listener lifetime matches the child across idle unload, crash, respawn,
+    and shutdown.
 13. **Permissions.** evdev listening requires `input` group membership; uinput
     injection requires write access to `/dev/uinput` (udev rule or `uinput`
     group). `doctor` must probe both and say exactly what to fix.
@@ -214,6 +231,16 @@ is a constraint on the new implementation.
     paste mode was dead for a year, because unit tests mocked `subprocess.run`
     and integration tests only ran by hand. Green ≠ working when every boundary
     is mocked.
+17. **Overlay isolation and privacy.** Lifecycle state is published only after
+    the corresponding operation becomes true: recording after capture starts,
+    model loading only for a cold worker, transcription after a metadata-only
+    model-ready event, and delivery only for non-empty formatted output. Silence,
+    empty output, and confirmed paste hide immediately; operational errors show a
+    fixed `error` state for 2.5 seconds while detailed notifications remain
+    unchanged. IPC never contains transcript text, formatted text, audio,
+    samples, detailed errors, model names, device names, or user configuration.
+    Publishing is nonblocking and never performs display or process I/O while
+    the daemon state lock is held.
 
 ---
 
@@ -239,14 +266,17 @@ src/stenographer/
   audio.py      ~150   Recorder: PortAudio stream, block-copy callback, RMS gate,
                        sample-rate fallback + resample, max-seconds cap
   worker.py     ~150   ASR child process: spawn, one request/response at a time,
-                       restart-if-dead, kill-on-idle
+                       restart-if-dead, kill-on-idle; queue logs to parent
+  status.py            lifecycle states, strict versioned protocol, pure coalescing policy
+  overlay.py           isolated helper supervision and display-backend selection
+  logging_setup.py     stderr + rotating state file, level resolver, worker log queue
   model.py      ~120   faster-whisper wrapper: decode settings from §4.5, word timestamps,
                        output validation, cpu_threads resolution
   format.py      ~60   fixed formatter: spacing ownership, sentence caps, "i"→"I",
                        trailing space; batch variant for transcribe
   deliver.py     ~80   wl-copy both selections → confirm → uinput Shift+Insert,
                        release-guard first
-  feedback.py    ~60   5 cues via pw-play/paplay, volume/mute, no-op degrade
+  feedback.py    ~60   5 cues via canberra/pw-play/paplay, volume/mute, no-op degrade
   doctor.py      ~80   capability probe + resolved-config dump; exit 78 contract
   notify.py      ~40   notify-send errors, no-op degrade
   assets/sounds/       5 WAVs (reuse current assets: ptt_on→record_start, ptt_off→record_stop,
@@ -259,7 +289,7 @@ Flat package — no subpackages until a directory earns it.
 
 ```toml
 [stenographer.hotkey]
-binding = "KEY_RIGHTALT"     # evdev key/chord that triggers dictation
+binding = "KEY_RIGHTCTRL"    # evdev key/chord that triggers dictation
 device = ""                  # explicit /dev/input/event* path; "" = auto-detect
 
 [stenographer.audio]
@@ -281,6 +311,7 @@ cpu_threads = 0              # 0 = auto (§4.10)
 [stenographer.feedback]
 volume = 0.6
 mute = false
+overlay = true                 # best-effort lifecycle pill; dictation is independent
 ```
 
 Everything else that was configurable is now fixed behavior or gone.
@@ -294,22 +325,43 @@ Everything else that was configurable is now fixed behavior or gone.
   respawns it (cue: `model_loading`).
 - Child death mid-request → error cue + notify, respawn on next use. Never takes
   the daemon down.
+- On a cold request, parent observers receive `model_loading` before the job and
+  a metadata-only `model_ready` event after the child confirms the model is
+  loaded, before `transcribing`. Warm requests publish `transcribing` directly.
+- Model-load and decode records travel over a per-child logging queue to the
+  parent's handlers. Idle unload, crash recovery, respawn, and shutdown stop the
+  listener and close its queue; no child process owns a file handler.
 - The word-timestamp requirement is the single constraint that keeps the
   streaming/preview door open (§7) without paying for it now.
 
 ### Daemon utterance lifecycle
 
 ```
-key down  → record_start cue → Recorder starts
-key up    → record_stop cue → Recorder stops → RMS gate
-            └─ gate fails → done (silently)
-          → worker.transcribe(audio)
-            └─ empty/all-gated → done (silently)
-          → format → wl-copy (both selections) → confirm
-            └─ copy failed → error cue + notify; NO chord (§4.3)
+after lock → Recorder prepares a stopped stream → hotkey listener starts
+key down  → Recorder starts → overlay `recording` → record_start cue
+key up    → Recorder stops + secures samples → record_stop cue → RMS gate
+            └─ gate fails → overlay `hidden` (silently)
+          → cold worker: `model_loading` → `model_ready` metadata event
+          → overlay `transcribing` → worker result
+            └─ empty/all-gated → overlay `hidden` (silently)
+          → format non-empty result → overlay `delivering`
+          → wl-copy (both selections) → confirm
+            └─ copy failed → overlay `error` (2.5 s), error cue + notify;
+              NO chord (§4.3)
           → wait for binding release (§4.2) → uinput Shift+Insert
-          → delivered cue
+          → overlay `hidden` → delivered cue
 ```
+
+The Recorder has three states: unprepared, prepared/stopped, and capturing.
+Preparation negotiates channels and sample-rate fallbacks without starting
+callbacks or retaining samples. A normal stop keeps the selected microphone and
+stopped stream for the next press. If startup preparation fails, the daemon logs
+one warning and retries on the next press. If a retained stream has gone stale,
+activation closes it and performs exactly one renegotiate-and-start retry; a
+first on-demand preparation gets only its normal attempt. Any uncertain stop or
+mid-capture failure invalidates the stream and discards all buffered audio, so a
+later press prepares fresh and no partial transcript can be pasted. Cue failures
+cannot delay these capture boundaries or orphan a recording.
 
 One utterance at a time; a key-down during transcription of the previous utterance
 is ignored (v1 keeps no utterance queue).
@@ -331,6 +383,8 @@ Motivated by §4.16. These are rules, not suggestions:
    *really* play a cue, *really* load the model on a tiny bundled WAV and check
    the transcript. Marked `integration`, run with one command
    (`STENOGRAPHER_INTEGRATION=1 pytest`), on the real machine.
+   It also exercises real rotating/fallback logging and verifies that a spawned
+   worker forwards decode metrics without exposing the fixture transcript.
 4. **The smoke suite is a merge gate.** No dev → main merge without a green smoke
    run on a real box — the existing habit, now written down.
 5. **Mock-only testability is a design smell.** If a component can only be tested
@@ -350,10 +404,10 @@ open. When one is added, it must still pass the §1 razor at that time.
 | Feature | Door kept open by |
 |---|---|
 | **Live preview / incremental decoding** (flagship) | Worker returns word timestamps; formatter is append-only by construction; a streaming driver layers *above* the worker exactly as `IncrementalDriver` did. Old references: LocalAgreement-N committer (`asr/streaming.py`), coalescing + single-final-decode design. |
-| **Visualizer/HUD** | Daemon state transitions flow through one place (`daemon.py`); a status sink can subscribe there. If revived, software-render + per-compositor window backend (the superseded GUI plan's Pillow research applies) — never a compositor-specific protocol as a hard dependency. |
+| **Transcript preview / audio visualizer** | Remains cut. The lifecycle overlay transports fixed metadata states only; adding text, audio, FFT data, or interim decoding requires revising this record. |
 | **Toggle mode** | The PTT listener maps key events → start/stop through one small function; a second mode is a new mapping, not a new architecture. Skip hybrid unless truly missed. |
 | **`bench`** | Standalone script in `scripts/`, driving the public `model.py` API. Does not re-enter the package. |
-| **Distribution layer** (installer, self-update, packaging, completions) | Blocked on external users existing. Clean config validation and a small codebase are the only v1 prerequisites, and both are core goals anyway. |
+| **Distribution layer** (installer, self-update, completions) | Blocked on external users existing. Clean config validation and a small codebase are the only v1 prerequisites, and both are core goals anyway. *Partially reintroduced 2026-08: the local PyInstaller onedir build (spec + hooks under `packaging/`, `scripts/build.sh`, BUILD.md) and a single-machine per-user installer (`scripts/install.sh`: bundle → `~/.local/share/stenographer`, symlink → `~/.local/bin`, systemd user unit from `packaging/stenographer.service`) — no CI release, no multi-distro/curl-pipe-bash installer, no completions, no self-update. Passed the §1 razor as a dev-machine convenience; the rest of this row stays gated.* |
 | **`dictate` one-shot** | Trivial recomposition of daemon pieces if ever wanted. |
 
 ---
@@ -389,3 +443,20 @@ reference.
   scratch works.*
 
 Real-dictation validation (M5) precedes any dev → main merge, per §6.4.
+
+### Cold-start and logging acceptance
+
+Before a dev → main merge, perform the following on the real target machine in
+addition to the GNOME/wlroots checks above:
+
+1. On three consecutive cold service starts, dictate “Opening words must remain
+   in this transcription” immediately on the start cue. Each result must retain
+   at least “Opening words must remain.”
+2. Repeat once with cues muted and once after a forced short ASR idle unload.
+3. Disconnect/reconnect the microphone or restart PipeWire, then confirm the
+   next press recovers and a failed capture never pastes partial text.
+4. Inspect the journal, `stenographer.log`, and rotated backups. Confirm startup,
+   capture, recovery, ASR/VAD, and transcript-length metrics are present, and
+   that neither the dictated canary phrase nor any transcript/audio content is.
+5. Run the complete opt-in integration suite and the existing GNOME/wlroots
+   real-dictation acceptance.

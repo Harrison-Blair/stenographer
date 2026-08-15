@@ -15,12 +15,18 @@ dependencies = [
     "evdev>=1.4",
     "soundfile>=0.12",
     "huggingface_hub>=0.23",
+    "pillow>=11.0",
+    "pywayland==0.4.18",
+    "python-xlib==0.33",
 ]
 
 [project.optional-dependencies]
 dev = [
     "ruff>=0.5",
     "pytest>=8",
+]
+build = [
+    "pyinstaller>=6.10",
 ]
 
 [project.scripts]
@@ -39,7 +45,11 @@ path = "src/stenographer/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/stenographer"]
 include = [
+    "src/stenographer/assets/fonts/*.ttf",
+    "src/stenographer/assets/fonts/*.txt",
+    "src/stenographer/assets/icons/*.png",
     "src/stenographer/assets/sounds/*.wav",
+    "src/stenographer/protocols/**/*.py",
 ]
 
 [tool.ruff]

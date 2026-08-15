@@ -14,8 +14,11 @@ This is the reauthored codebase (2026-08): a clean-room rewrite of the original
 ~9k-line tool down to ~2k lines. `docs/reauthor.md` is the design record — its
 §2 decisions are settled, its §4 behavioral knowledge inventory binds every
 change, and its §6 testing policy is codified below. Do not reintroduce cut
-features (visualizer/HUD, incremental preview, toggle/hybrid modes, self-update,
-PyInstaller packaging) without revisiting that document's §7 add-later ledger.
+features (transcript preview/audio visualization, toggle/hybrid modes,
+self-update, release distribution) without revisiting that document's §7
+add-later ledger. The fixed metadata-only lifecycle pill and local PyInstaller
+onedir build are the documented exceptions, not general permission to restore
+the old GUI or distribution surface.
 
 ## Commands
 
@@ -35,9 +38,6 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 `integration`-marked tests touch the real clipboard / audio / uinput / model and
 are skipped unless `STENOGRAPHER_INTEGRATION=1` is set.
-
-Run the git hooks once after cloning (`./scripts/install-hooks.sh`) so
-`ruff format` runs on staged Python at commit time.
 
 ## Testing policy (binding — docs/reauthor.md §6)
 
@@ -62,15 +62,29 @@ Flat package `src/stenographer/` (src-layout); `tests/` mirrors it.
   sounddevice, evdev) stay inside subcommand handlers, never at module scope.
 - **`daemon.py`** — the orchestrator: hotkey → record → transcribe → deliver;
   single-instance flock on `$XDG_RUNTIME_DIR/stenographer.lock`; signal
-  handling. One utterance at a time.
+  handling. It prepares audio after taking the lock and before starting the
+  listener. Capture starts before the `record_start` cue; capture stops and
+  secures samples before the `record_stop` cue. One utterance at a time.
 - **`hotkey.py`** — evdev PTT listener: chord parse, main-keyboard
   auto-detection, rescan on read error. Requires `input` group.
-- **`audio.py`** — PortAudio recorder: block-copy callback (no analysis in the
+- **`audio.py`** — PortAudio recorder: pre-negotiates and retains a stopped
+  stream for reuse across captures; block-copy callback (no analysis in the
   callback), RMS speech gate (two consecutive 50 ms frames — see the quiet-mic
-  note in docs/reauthor.md §4.1), sample-rate fallback + resample.
+  note in docs/reauthor.md §4.1), sample-rate fallback + resample. A stale
+  retained stream gets one close/renegotiate/start recovery attempt.
 - **`worker.py`** — ASR child process: one job at a time, killed after
   `asr.idle_unload_seconds`, respawned on demand, crash-isolated from the
-  daemon. Results carry word timestamps (keeps the streaming door open).
+  daemon. Child logs cross a multiprocessing queue to parent-owned handlers;
+  the child never opens the rotating file. Results carry word timestamps
+  (keeps the streaming door open).
+- **`status.py`** — fixed lifecycle states plus the strict versioned NDJSON
+  contract and pure generation/coalescing policy. No transcript/audio payloads.
+- **Overlay helper/backends** — optional isolated visual feedback: layer-shell
+  preferred, XWayland fallback, click-through, and failure-disabled. No display
+  or helper-process I/O may run under the daemon state lock.
+- **`logging_setup.py`** — idempotent stderr + rotating state-file setup for
+  every command; 5 MiB with three backups, `STENOGRAPHER_LOG_LEVEL`, and
+  privacy-safe worker forwarding.
 - **`model.py`** — faster-whisper wrapper: fixed anti-hallucination decode
   stack, output validation (`PathologicalOutputError`), `local_files_only` —
   the daemon never touches the network.
@@ -78,12 +92,14 @@ Flat package `src/stenographer/` (src-layout); `tests/` mirrors it.
   physical hotkey release (a held modifier would corrupt the chord), then
   uinput Shift+Insert. A failed copy must never fire the chord.
 - **`format.py`** — fixed zero-knob formatter (spacing, sentence caps, "i"→"I").
-- **`feedback.py`** — five WAV cues via `pw-play`/`paplay`; degrades to no-op.
+- **`feedback.py`** — five WAV cues via `canberra-gtk-play`, with `pw-play`/`paplay`
+  fallbacks; degrades to no-op.
 - **`doctor.py`** — capability probe; exit 78 when a required capability is
   missing. `notify.py` — `notify-send` errors, no-op if absent.
 - **`config.py`** — TOML config, 4 sections (`hotkey`, `audio`, `asr`,
   `feedback`), frozen dataclasses, key-scoped `ConfigError` → exit 78, missing
   file written with annotated defaults. No migrations.
+  `feedback.overlay` defaults true and controls only the optional visual surface.
 
 The ASR model (~1.5 GB) is **never** bundled — `stenographer model download`
 fetches it once. `asr.hotwords` require a full (non-distil) model.
@@ -96,3 +112,5 @@ fetches it once. `asr.hotwords` require a full (non-distil) model.
 - `pyproject.toml` (hatchling) is the single source of truth for metadata/deps.
 - Develop on `dev`; merge to `main` only after the integration smoke suite and
   real dictation pass on a real machine.
+- Logs may contain numeric/structural metrics and transcript lengths, never
+  transcript text, audio, samples, or result representations.

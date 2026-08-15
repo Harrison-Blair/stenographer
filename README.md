@@ -66,8 +66,14 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/stenographer run              # foreground daemon
 ```
 
-Hold the hotkey (default: right-Alt), speak, release. The transcript is pasted
+Hold the hotkey (default: right-Ctrl), speak, release. The transcript is pasted
 at your cursor and left on the clipboard.
+
+By default a small, click-through pill shows only the fixed lifecycle states
+Recording, Loading model, Transcribing, Delivering, and Error. It receives no
+transcript, audio, model/device names, configuration values, or detailed error
+text. Set `feedback.overlay = false` to disable just this visual surface; sound
+cues, notifications, and dictation continue unchanged.
 
 ## Requirements
 
@@ -78,15 +84,32 @@ at your cursor and left on the clipboard.
   `uinput` group).
 - `wl-clipboard` (for `wl-copy`).
 - A PortAudio input device (PipeWire or PulseAudio provide this).
-- Optional: `pw-play` or `paplay` for the sound cues, `notify-send` for error
-  notifications — both degrade to no-ops when absent.
+- Optional: `canberra-gtk-play` (preferred), `pw-play`, or `paplay` for the sound
+  cues, and `notify-send` for error notifications — both degrade to no-ops when
+  absent.
+- Optional visual feedback uses native Wayland layer-shell when the compositor
+  provides it, otherwise a compatible XWayland server. If neither backend is
+  usable, only the pill is disabled.
 
-`stenographer doctor` probes all of the above and prints an exact fix for
-anything missing (exit code 78 when a required capability is absent).
+`stenographer doctor` probes all of the above and prints exactly one overlay
+status (`disabled`, `layer-shell`, `XWayland fallback`, or an actionable
+unavailable reason). Overlay availability is informational and never changes
+the command's exit status; a missing required dictation capability still gives
+exit code 78.
 
 Python 3.12 or newer.
 
 ## Running as a service
+
+```sh
+scripts/install.sh
+```
+
+builds the standalone bundle (see [BUILD.md](BUILD.md)), copies it to
+`~/.local/share/stenographer/`, symlinks `~/.local/bin/stenographer`, installs
+`packaging/stenographer.service` as a systemd user unit, and enables + starts
+it (`--no-enable` / `--no-start` to opt out, `--install-dir DIR` to relocate).
+Equivalent manual steps:
 
 ```sh
 cp packaging/stenographer.service ~/.config/systemd/user/
@@ -94,8 +117,21 @@ systemctl --user enable --now stenographer.service
 journalctl --user -u stenographer -f
 ```
 
-The unit's `ExecStart` assumes the `stenographer` entry point is reachable at
-`~/.local/bin/stenographer` — symlink it from your venv or edit the path.
+The unit's `ExecStart` points at `~/.local/share/stenographer/stenographer`;
+edit the path if you run from a venv instead.
+
+## Logging
+
+Every command logs to stderr and to
+`$XDG_STATE_HOME/stenographer/stenographer.log` (or
+`~/.local/state/stenographer/stenographer.log` when `XDG_STATE_HOME` is unset).
+The file rotates at 5 MiB and keeps three backups. Set
+`STENOGRAPHER_LOG_LEVEL=debug` (level names are case-insensitive) for additional
+diagnostics; the default and the fallback for an invalid value are `INFO`.
+
+Logs contain timings, counts, negotiated audio settings, and transcript lengths,
+never dictated text or audio. If the state directory cannot be created, the
+command continues with stderr logging and reports the problem there.
 
 ## Configuration
 
@@ -104,13 +140,27 @@ first run. Four sections:
 
 | Section | Keys |
 |---|---|
-| `hotkey` | `binding` (evdev key/chord, default `KEY_RIGHTALT`), `device` |
+| `hotkey` | `binding` (evdev key/chord, default `KEY_RIGHTCTRL`), `device` |
 | `audio` | `input_device`, `min_speech_rms`, `max_recording_seconds` |
 | `asr` | `model`, `compute_type`, `beam_size`, `hotwords`, `initial_prompt`, `vad_filter`, `silence_threshold`, `idle_unload_seconds`, `cpu_threads` |
-| `feedback` | `volume`, `mute` |
+| `feedback` | `volume`, `mute`, `overlay` (default `true`) |
 
 Note: `hotwords` require a full (non-distil) model — the default
 `Systran/faster-whisper-medium.en` supports them.
+
+### Overlay scope and limitations
+
+The native layer-shell backend uses the overlay layer and has strong stacking
+for normal, tiled, maximized, and fullscreen application windows. Its output is
+chosen by the compositor at the start of each utterance. The XWayland fallback
+chooses the connected RandR monitor under the pointer, falls back to the primary
+monitor, and keeps that placement until the pill hides. Focused-monitor choice
+and stacking over exclusive fullscreen windows are best-effort under XWayland.
+Neither backend appears over lock screens or other protected shell surfaces.
+
+The pill is status only: it has no transcript preview, live audio/FFT handling,
+controls, animation, or success state, and it never takes keyboard or pointer
+input.
 
 ## CLI
 

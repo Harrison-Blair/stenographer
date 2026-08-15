@@ -57,6 +57,7 @@ class AsrConfig:
 class FeedbackConfig:
     volume: float
     mute: bool
+    overlay: bool = True
 
 
 @dataclass(frozen=True)
@@ -147,7 +148,7 @@ def _build_asr(table: dict, path: pathlib.Path) -> AsrConfig:
 
 def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
     r = _Reader(table, path, "feedback")
-    return FeedbackConfig(r.ranged_number("volume", 0.0, 1.0), r.bool("mute"))
+    return FeedbackConfig(r.ranged_number("volume", 0.0, 1.0), r.bool("mute"), r.bool("overlay"))
 
 
 def _merge(base: dict, overlay: dict) -> dict:
@@ -164,7 +165,7 @@ _DEFAULT_TOML = """\
 # stenographer configuration.
 
 [stenographer.hotkey]
-binding = "KEY_RIGHTALT"
+binding = "KEY_RIGHTCTRL"
 device = ""                    # explicit /dev/input/event* path; "" = auto-detect
 
 [stenographer.audio]
@@ -186,6 +187,7 @@ cpu_threads = 0                # 0 = auto (physical cores, capped at 8)
 [stenographer.feedback]
 volume = 0.6
 mute = false
+overlay = true                 # best-effort lifecycle pill; dictation is independent
 """
 
 
@@ -199,7 +201,7 @@ class Config:
     @classmethod
     def defaults(cls) -> Config:
         return cls(
-            hotkey=HotkeyConfig(binding="KEY_RIGHTALT", device=None),
+            hotkey=HotkeyConfig(binding="KEY_RIGHTCTRL", device=None),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
             asr=AsrConfig(
                 model="Systran/faster-whisper-medium.en",
@@ -212,7 +214,7 @@ class Config:
                 idle_unload_seconds=900,
                 cpu_threads=0,
             ),
-            feedback=FeedbackConfig(volume=0.6, mute=False),
+            feedback=FeedbackConfig(volume=0.6, mute=False, overlay=True),
         )
 
     @classmethod

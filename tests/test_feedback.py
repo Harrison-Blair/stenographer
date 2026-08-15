@@ -11,6 +11,17 @@ from stenographer.feedback import CUES, build_play_command, resolve_cue_path
 _BUNDLED = pathlib.Path(__file__).parent.parent / "src" / "stenographer" / "assets" / "sounds"
 
 
+def test_canberra_volume_converts_linear_gain_to_decibels():
+    cmd = build_play_command("canberra-gtk-play", pathlib.Path("/tmp/x.wav"), 0.6)
+    assert cmd == [
+        "canberra-gtk-play",
+        "--file=/tmp/x.wav",
+        "--description=Stenographer cue",
+        "--cache-control=volatile",
+        "--volume=-4.44",
+    ]
+
+
 def test_pw_play_volume_two_decimals():
     cmd = build_play_command("pw-play", pathlib.Path("/tmp/x.wav"), 0.6)
     assert cmd == ["pw-play", "--volume=0.60", "/tmp/x.wav"]

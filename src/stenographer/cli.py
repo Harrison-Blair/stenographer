@@ -4,14 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import logging
+import multiprocessing
 import pathlib
 import sys
 from collections.abc import Sequence
 
 from stenographer._version import __version__
-
-log = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,7 +72,11 @@ def _cmd_transcribe(args: argparse.Namespace) -> int:
 
     samples, sample_rate = soundfile.read(str(path), dtype="float32", always_2d=True)
     if sample_rate != 16000:
-        log.warning("transcribe: file sample rate is %d, not 16000 (pass-through)", sample_rate)
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "transcribe: file sample rate is %d, not 16000 (pass-through)", sample_rate
+        )
 
     m = model.Model(cfg.asr)
     try:
@@ -156,8 +158,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return doctor.run(cfg, config.resolve_config_path())
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Parse ``argv`` and dispatch to a subcommand handler."""
+def dispatch(argv: Sequence[str] | None = None) -> int:
+    """Parse ``argv`` and dispatch; startup boundaries belong in :func:`main`."""
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -170,6 +172,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "doctor":
         return _cmd_doctor(args)
     return _cmd_devices(args)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Configure the process, then parse and dispatch a command."""
+    # Must run before argument parsing: in a frozen (PyInstaller) binary the
+    # spawn-context worker child re-execs this entry point, and freeze_support
+    # is what diverts it into the multiprocessing bootstrap instead.
+    multiprocessing.freeze_support()
+    from stenographer.logging_setup import setup_logging
+
+    setup_logging()
+    arguments = tuple(sys.argv[1:] if argv is None else argv)
+    # Private helper re-exec path: it intentionally bypasses argparse so it is
+    # absent from the public command list and every help surface.
+    from stenographer.overlay import private_entry_requested
+
+    if private_entry_requested(arguments):
+        from stenographer.overlay import run_overlay_helper
+
+        return run_overlay_helper()
+    return dispatch(arguments)
 
 
 if __name__ == "__main__":

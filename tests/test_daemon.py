@@ -86,13 +86,15 @@ def test_build_wires_collaborators_lazily():
 
     daemon = Daemon.build(Config.defaults())
     try:
-        # Built but nothing opened: no stream, no model child, no uinput device.
+        # Built but nothing opened: startup preparation happens only after the
+        # single-instance lock is acquired in run().
         assert daemon._recording is False
         assert daemon._busy is False
         assert daemon._listener is not None
         assert daemon._deliverer is not None
         assert daemon._worker.is_alive() is False
         assert daemon._recorder.is_active is False
+        assert daemon._recorder.is_prepared is False
     finally:
         # stop() before run() must be a safe no-op.
         daemon.stop()
