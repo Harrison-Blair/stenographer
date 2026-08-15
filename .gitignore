@@ -226,3 +226,6 @@ dist/
 .fledge/locks/
 .fledge/flocks/
 .fledge/catalog.json
+
+# Committed PyInstaller spec (the *.spec rule above is for generated specs)
+!packaging/*.spec

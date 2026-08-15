@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# systemd USER unit for the reauthored daemon.
-#   install:  cp packaging/stenographer.service ~/.config/systemd/user/
+# systemd USER unit for the stenographer daemon.
+#   install:  scripts/install.sh  (or: cp packaging/stenographer.service ~/.config/systemd/user/)
 #   enable:   systemctl --user enable --now stenographer.service
 #   logs:     journalctl --user -u stenographer -f
 #
-# ExecStart points at the venv console script. Set it to the absolute path of
-# the `stenographer` entry point in your virtualenv; the %h-relative default
-# below assumes it was symlinked into ~/.local/bin.
+# ExecStart points at the installed onedir bundle (see scripts/install.sh).
+# Exit code 78 means a missing capability or bad config (see `stenographer
+# doctor`); restarting will not fix it, so it is excluded from Restart=.
 
 [Unit]
 Description=Stenographer push-to-talk dictation daemon
@@ -16,9 +16,10 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/stenographer run
+ExecStart=%h/.local/share/stenographer/stenographer run
 Restart=on-failure
 RestartSec=2
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=graphical-session.target
