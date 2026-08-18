@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: lint
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Ruff
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install ruff
+      - name: Ruff check
+        run: .venv/bin/ruff check .
+      - name: Ruff format check
+        run: .venv/bin/ruff format --check .
