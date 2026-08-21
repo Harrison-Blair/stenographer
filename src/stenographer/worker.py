@@ -4,11 +4,12 @@
 Radically simplified per decision §2.10: no job queue, no supersession, no
 interim jobs. The parent is a blocking, synchronous handle that serialises
 requests through a single lock; the child owns a lazily-built ``model.Model``
-and decodes one utterance at a time. Child death never takes the daemon down —
-it surfaces as a typed ``WorkerError`` and respawns on the next request.
+and accepts a load-only warm-up before decoding one utterance at a time. Child
+death never takes the daemon down — it surfaces as a typed ``WorkerError`` and
+respawns on the next request.
 
-The whole unit-testable surface is the two pure helpers (``classify_error``,
-``interpret_response``); real process lifecycle is covered by the smoke suite.
+The unit-testable surface is the pure policy helpers below; real process
+lifecycle is covered by the smoke suite.
 """
 
 from __future__ import annotations
@@ -59,30 +60,42 @@ class WorkerEvent(Enum):
 
 
 class WorkerLifecycle(Enum):
-    """Fixed observer signals emitted around a worker request."""
+    """Fixed observer signals emitted around model load and transcription."""
 
     MODEL_LOADING = auto()
     MODEL_READY = auto()
+    MODEL_LOADING_FINISHED = auto()
     TRANSCRIBING = auto()
 
 
 def lifecycle_transition(
     *, model_loaded: bool, event: WorkerEvent | None = None
 ) -> tuple[WorkerLifecycle, ...]:
-    """Return the observer signals for a request boundary. PURE.
+    """Return the observer signals for a model-load boundary. PURE.
 
-    A warm request starts transcribing immediately. A cold request first
-    announces loading; the child's metadata-only ready event then announces
-    ready followed by transcribing. A ready event after the model is already
-    marked loaded is a protocol violation rather than a second lifecycle.
+    A cold load first announces loading; the child's metadata-only ready event
+    then announces readiness. The caller emits ``MODEL_LOADING_FINISHED`` after
+    either readiness or failure. Warm-up and transcription share this transition,
+    while ``TRANSCRIBING`` remains a separate signal emitted only immediately
+    before a decode. A ready event after the model is already marked loaded is
+    a protocol violation rather than a second lifecycle.
     """
     if event is None:
-        if model_loaded:
-            return (WorkerLifecycle.TRANSCRIBING,)
-        return (WorkerLifecycle.MODEL_LOADING,)
+        return () if model_loaded else (WorkerLifecycle.MODEL_LOADING,)
     if event is WorkerEvent.MODEL_READY and not model_loaded:
-        return (WorkerLifecycle.MODEL_READY, WorkerLifecycle.TRANSCRIBING)
+        return (WorkerLifecycle.MODEL_READY,)
     raise WorkerProtocolError("unexpected model-ready worker event")
+
+
+def should_arm_idle_timer(
+    *,
+    idle_seconds: float,
+    hold_active: bool,
+    shutdown_requested: bool,
+    process_alive: bool,
+) -> bool:
+    """Whether an idle-eviction timer may be armed right now. PURE."""
+    return idle_seconds > 0 and not hold_active and not shutdown_requested and process_alive
 
 
 def should_teardown_for_response_error(exc: WorkerError) -> bool:
@@ -122,9 +135,9 @@ def _describe_shape(message: object) -> str:
 
 
 def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) -> None:
-    """Spawn entry (module-level, picklable). Decode one job at a time, staying
-    healthy for the next request after a caught decode error. The model is built
-    lazily on the first job so the child inherits local-cache-only load (§4.11)."""
+    """Spawn entry (module-level, picklable). Load and decode one request at a
+    time, staying healthy after a caught error. The model is built lazily on the
+    first load request so the child inherits local-cache-only load (§4.11)."""
     from stenographer.logging_setup import configure_worker_logging
 
     configure_worker_logging(log_q, log_level)
@@ -133,13 +146,26 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
         message = request_q.get()
         if message[0] == "stop":
             return
-        samples = message[1]
-        phase = "model_load" if model is None else "decode"
+        if message[0] == "load":
+            try:
+                if model is None:
+                    model = Model(cfg)
+            except Exception as exc:
+                log.error(
+                    "asr: job failed phase=model_load error_type=%s",
+                    type(exc).__name__,
+                )
+                kind, detail = classify_error(exc)
+                response_q.put(("error", kind, detail))
+                continue
+            response_q.put(("model_ready",))
+            continue
+
+        phase = "decode"
         try:
             if model is None:
-                model = Model(cfg)
-                response_q.put(("model_ready",))
-                phase = "decode"
+                raise RuntimeError("decode requested before model load")
+            samples = message[1]
             result = model.transcribe(samples)
         except Exception as exc:
             # Report and stay alive; native segfaults are handled by the parent
@@ -153,7 +179,7 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
 
 class Worker:
     """Blocking parent-side handle. One outstanding request at a time, enforced
-    structurally by holding ``_lock`` across the whole ``transcribe`` call."""
+    structurally by holding ``_lock`` across warm-up and transcription."""
 
     def __init__(
         self,
@@ -161,11 +187,13 @@ class Worker:
         *,
         on_model_loading: Callable[[], None] | None = None,
         on_model_ready: Callable[[], None] | None = None,
+        on_model_loading_finished: Callable[[], None] | None = None,
         on_transcribing: Callable[[], None] | None = None,
     ) -> None:
         self._cfg = cfg
         self._on_model_loading = on_model_loading
         self._on_model_ready = on_model_ready
+        self._on_model_loading_finished = on_model_loading_finished
         self._on_transcribing = on_transcribing
         self._idle_seconds = cfg.idle_unload_seconds
         self._lock = threading.RLock()
@@ -176,52 +204,143 @@ class Worker:
         self._log_q = None
         self._log_listener: logging.handlers.QueueListener | None = None
         self._idle_timer: threading.Timer | None = None
-        self._model_loaded = False
+        self._model_ready = threading.Event()
+        self._model_hold = threading.Event()
+        self._shutdown_requested = threading.Event()
+
+    def hold_model(self) -> None:
+        """Defer idle eviction until the current recording pipeline finishes."""
+        self._model_hold.set()
+
+    def release_model(self) -> None:
+        """Release a recording hold and arm eviction when the worker is idle.
+
+        This must never block on ``_lock``: callers hold the daemon lock, and
+        the lock owner's lifecycle callbacks take that same daemon lock — a
+        blocking acquire here would be an AB-BA deadlock. The lock owner is
+        also not guaranteed to observe the cleared hold (it may already have
+        evaluated its arming gate), so a failed acquire hands the arming to a
+        short-lived helper thread that blocks safely, holding no daemon lock.
+        """
+        self._model_hold.clear()
+        if not self._lock.acquire(blocking=False):
+            threading.Thread(
+                target=self._arm_idle_timer_deferred,
+                name="stenographer-idle-arm",
+                daemon=True,
+            ).start()
+            return
+        try:
+            self._restart_idle_timer()
+        finally:
+            self._lock.release()
+
+    def _arm_idle_timer_deferred(self) -> None:
+        # Runs on its own thread with no daemon lock held, so blocking is safe.
+        # Redundant spawns are harmless: _restart_idle_timer cancels any
+        # existing timer under the lock, and its gates keep the result correct.
+        with self._lock:
+            self._restart_idle_timer()
+
+    def warmup(self) -> None:
+        """Load the model without decoding audio.
+
+        This is blocking by design; the daemon invokes it on its warm-up thread.
+        A simultaneous ``transcribe`` waits on the same lock and reuses the
+        loaded model, so a short recording cannot race a second model load.
+        """
+        with self._lock:
+            self._begin_request()
+            try:
+                self._ensure_model_loaded()
+            except WorkerError as exc:
+                self._finish_response_error(exc)
+                raise
+            self._restart_idle_timer()
 
     def transcribe(self, samples: np.ndarray) -> TranscriptionResult:
         with self._lock:
-            self._cancel_timer()
-            if self._process is None or not self._process.is_alive():
-                self._spawn()
-            cold = not self._model_loaded
-            self._emit_lifecycle(lifecycle_transition(model_loaded=self._model_loaded))
+            self._begin_request()
+            try:
+                self._ensure_model_loaded()
+            except WorkerError as exc:
+                self._finish_response_error(exc)
+                raise
+            self._abort_if_shutdown_requested("transcribe")
+            self._emit_lifecycle((WorkerLifecycle.TRANSCRIBING,))
             self._request_q.put(("job", samples))
-            while True:
-                if not self._process.is_alive():
-                    log.error(
-                        "worker: child exited phase=transcribe exit_code=%s",
-                        self._process.exitcode,
-                    )
-                    self._teardown()
-                    raise WorkerError("ASR child exited during transcription")
-                try:
-                    message = self._response_q.get(timeout=_POLL_SECONDS)
-                except queue.Empty:
-                    continue
-                try:
-                    interpreted = interpret_response(message)
-                    if interpreted is WorkerEvent.MODEL_READY:
-                        lifecycle = lifecycle_transition(
-                            model_loaded=self._model_loaded, event=interpreted
-                        )
-                        self._model_loaded = True
-                        self._emit_lifecycle(lifecycle)
-                        continue
-                    if cold and not self._model_loaded:
-                        raise WorkerProtocolError("worker result arrived before model-ready event")
-                except WorkerError as exc:
-                    if should_teardown_for_response_error(exc):
-                        self._teardown()
-                    else:
-                        self._restart_idle_timer()
-                    raise
-                self._restart_idle_timer()
-                return interpreted
+            try:
+                interpreted = self._wait_for_response("transcribe")
+                if isinstance(interpreted, WorkerEvent):
+                    raise WorkerProtocolError("unexpected model-ready event during transcription")
+            except WorkerError as exc:
+                self._finish_response_error(exc)
+                raise
+            self._restart_idle_timer()
+            return interpreted
+
+    def _begin_request(self) -> None:
+        if self._shutdown_requested.is_set():
+            raise WorkerError("ASR worker is shut down")
+        self._cancel_timer()
+        if self._process is None or not self._process.is_alive():
+            self._spawn()
+        self._abort_if_shutdown_requested("request")
+
+    def _ensure_model_loaded(self) -> None:
+        if self._model_ready.is_set():
+            return
+        self._emit_lifecycle(lifecycle_transition(model_loaded=False))
+        try:
+            self._request_q.put(("load",))
+            interpreted = self._wait_for_response("model_load")
+            if interpreted is not WorkerEvent.MODEL_READY:
+                raise WorkerProtocolError("worker result arrived before model-ready event")
+            lifecycle = lifecycle_transition(model_loaded=False, event=interpreted)
+            self._model_ready.set()
+            self._emit_lifecycle(lifecycle)
+        finally:
+            # The optional observer is the source of display-only activity
+            # metadata.  It must clear the border after both ready and error.
+            self._emit_lifecycle((WorkerLifecycle.MODEL_LOADING_FINISHED,))
+
+    def _wait_for_response(self, phase: str) -> TranscriptionResult | WorkerEvent:
+        while True:
+            self._abort_if_shutdown_requested(phase)
+            if not self._process.is_alive():
+                log.error(
+                    "worker: child exited phase=%s exit_code=%s",
+                    phase,
+                    self._process.exitcode,
+                )
+                self._teardown()
+                raise WorkerError(f"ASR child exited during {phase}")
+            try:
+                message = self._response_q.get(timeout=_POLL_SECONDS)
+            except queue.Empty:
+                continue
+            self._abort_if_shutdown_requested(phase)
+            return interpret_response(message)
+
+    def _finish_response_error(self, exc: WorkerError) -> None:
+        if should_teardown_for_response_error(exc):
+            self._teardown()
+        else:
+            self._restart_idle_timer()
+
+    def _abort_if_shutdown_requested(self, phase: str) -> None:
+        """Abandon an in-flight request once lock-independent shutdown is set."""
+        if not self._shutdown_requested.is_set():
+            return
+        log.info("worker: cancelling phase=%s reason=shutdown", phase)
+        self._teardown()
+        raise WorkerError(f"ASR worker shut down during {phase}")
 
     def _emit_lifecycle(self, events: tuple[WorkerLifecycle, ...]) -> None:
         callbacks = {
             WorkerLifecycle.MODEL_LOADING: self._on_model_loading,
             WorkerLifecycle.MODEL_READY: self._on_model_ready,
+            WorkerLifecycle.MODEL_LOADING_FINISHED: self._on_model_loading_finished,
             WorkerLifecycle.TRANSCRIBING: self._on_transcribing,
         }
         for event in events:
@@ -245,8 +364,17 @@ class Worker:
         proc = self._process
         return proc is not None and proc.is_alive()
 
+    @property
+    def is_model_ready(self) -> bool:
+        """Return whether the current live child has confirmed model readiness."""
+        proc = self._process
+        return self._model_ready.is_set() and proc is not None and proc.is_alive()
+
     def shutdown(self) -> None:
         """Idempotent, never raises. Ask the child to stop, then escalate."""
+        # This must happen before taking ``_lock``: transcribe holds that lock
+        # while polling, so the event is its lock-independent cancellation path.
+        self._shutdown_requested.set()
         with self._lock:
             self._cancel_timer()
             proc, request_q = self._process, self._request_q
@@ -297,14 +425,25 @@ class Worker:
         except Exception as exc:
             log.error("worker: spawn failed error_type=%s", type(exc).__name__)
             self._teardown()
-            raise
-        self._model_loaded = False
+            raise WorkerError("could not start ASR child") from exc
         log.info("worker: spawned pid=%d", self._process.pid)
 
     def _idle_kill(self) -> None:
         # Acquires the same lock ``transcribe`` holds, so it can never fire
         # during an in-flight decode.
         with self._lock:
+            self._idle_timer = None
+            if self._model_hold.is_set():
+                log.debug("worker: unload deferred reason=recording")
+                # Retry directly rather than via _restart_idle_timer: its hold
+                # gate would make this a silent no-op, leaving the child
+                # resident forever if no release ever arms a timer. The retry
+                # deliberately bypasses the gate so a deferred unload
+                # self-heals; a later successful arm cancels it anyway.
+                self._idle_timer = threading.Timer(self._idle_seconds, self._idle_kill)
+                self._idle_timer.daemon = True
+                self._idle_timer.start()
+                return
             log.info("worker: unload phase=idle")
             self._teardown()
 
@@ -319,7 +458,7 @@ class Worker:
                     proc.kill()
                     proc.join(timeout=_JOIN_SECONDS)
         self._process = None
-        self._model_loaded = False
+        self._model_ready.clear()
         for q in (self._request_q, self._response_q):
             if q is not None:
                 with contextlib.suppress(Exception):
@@ -339,7 +478,12 @@ class Worker:
 
     def _restart_idle_timer(self) -> None:
         self._cancel_timer()
-        if self._idle_seconds > 0:
+        if should_arm_idle_timer(
+            idle_seconds=self._idle_seconds,
+            hold_active=self._model_hold.is_set(),
+            shutdown_requested=self._shutdown_requested.is_set(),
+            process_alive=self._process is not None and self._process.is_alive(),
+        ):
             self._idle_timer = threading.Timer(self._idle_seconds, self._idle_kill)
             self._idle_timer.daemon = True
             self._idle_timer.start()

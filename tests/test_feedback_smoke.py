@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Integration smoke suite for the cue player (spec §6.3, M4 Verify).
 
-Really plays each of the five bundled cues through the detected audio player
-(canberra-gtk-play/pw-play/paplay) — no mocks. The operator should hear five
-distinct cues, in order: record_start, record_stop, delivered, error,
-model_loading. A short sleep separates them so each is audible; play() must
+Really plays each of the four bundled cues through the detected audio player
+(canberra-gtk-play/pw-play/paplay) — no mocks. The operator should hear four
+distinct cues, in order: record_start, record_stop, delivered, error. A short
+sleep separates them so each is audible; play() must
 never raise.
 
 Self-skips unless STENOGRAPHER_INTEGRATION=1 and an audio player is on PATH, so
@@ -36,7 +36,7 @@ if detect_player() is None:
 def test_play_each_cue_audibly():
     fb = Feedback(cfg=FeedbackConfig(volume=0.6, mute=False))
     try:
-        for name in ("record_start", "record_stop", "delivered", "error", "model_loading"):
+        for name in ("record_start", "record_stop", "delivered", "error"):
             assert name in CUES
             fb.play(name)  # must not raise
             time.sleep(1.0)

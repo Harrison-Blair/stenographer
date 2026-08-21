@@ -4,8 +4,8 @@
 # needed), copy it to ~/.local/share/stenographer/, symlink the launcher
 # into ~/.local/bin/, and install + enable the systemd user unit.
 #
-# Default output is a progress bar; tool output lands in dist/install.log.
-# --verbose streams everything instead.
+# Default output is a progress bar with a live tail of the last log lines;
+# tool output lands in dist/install.log. --verbose streams everything instead.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -71,11 +71,19 @@ step() {
 }
 
 # run_logged CMD... — run a command, hiding its output in $LOG unless verbose.
+# Quiet mode backgrounds the command and redraws while it waits so the log
+# tail beneath the bar stays live; wait recovers the real exit status.
 run_logged() {
     if [[ "${VERBOSE}" -eq 1 ]]; then
         "$@"
     else
-        "$@" &>> "${LOG}"
+        "$@" &>> "${LOG}" &
+        local pid=$!
+        while kill -0 "${pid}" 2>/dev/null; do
+            progress_tick
+            sleep 0.2
+        done
+        wait "${pid}"
     fi
 }
 
@@ -94,7 +102,10 @@ fi
 
 mkdir -p dist
 : > "${LOG}"
-[[ "${VERBOSE}" -eq 1 ]] || progress_start "installing"
+if [[ "${VERBOSE}" -ne 1 ]]; then
+    progress_start "installing"
+    progress_tail "${LOG}"
+fi
 
 # ────────────────────────────────────────────────────────────────
 # Step 2 — Stop a running service before replacing its files
@@ -115,7 +126,7 @@ fi
 step 35 "copying bundle"
 mkdir -p "${INSTALL_DIR}"
 rm -rf "${INSTALL_DIR:?}"/*
-cp -a dist/stenographer/. "${INSTALL_DIR}/"
+run_logged cp -a dist/stenographer/. "${INSTALL_DIR}/"
 
 step 50 "linking launcher"
 mkdir -p "${BIN_DIR}"

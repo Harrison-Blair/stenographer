@@ -1,37 +1,43 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Privacy-safe lifecycle metadata shared by the daemon and overlay helper.
+"""Privacy-safe lifecycle and display data shared with the overlay helper.
 
 The display helper is optional and isolated from dictation.  This module keeps
 its contract deliberately small: fixed enums, strict versioned NDJSON, and pure
-generation/coalescing policy.  No protocol variant has a free-form payload.
+generation/coalescing policy.  The only model-load metadata is a boolean whose
+pulse timing stays helper-local.  No protocol variant has a free-form payload
+or contains raw microphone samples.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 4
 MAX_MESSAGE_BYTES = 512
 MAX_GENERATION = (1 << 63) - 1
 ERROR_DISPLAY_SECONDS = 2.5
+SPECTRUM_BANDS = 18
 
 
 class OverlayState(StrEnum):
     HIDDEN = "hidden"
     RECORDING = "recording"
-    MODEL_LOADING = "model_loading"
     TRANSCRIBING = "transcribing"
     DELIVERING = "delivering"
     ERROR = "error"
 
 
-class LifecycleEvent(StrEnum):
-    """Metadata-only events which are not display states or labels."""
+def should_publish_state(current: OverlayState, candidate: OverlayState) -> bool:
+    """Return whether a daemon state update needs a new helper generation. PURE.
 
-    MODEL_READY = "model_ready"
+    Stable operational states are coalesced, but each error represents a new
+    failure and therefore needs its own display deadline.
+    """
+    return candidate is OverlayState.ERROR or candidate is not current
 
 
 class Command(StrEnum):
@@ -67,9 +73,15 @@ class StateMessage:
 
 
 @dataclass(frozen=True, slots=True)
-class LifecycleMessage:
+class SpectrumMessage:
     generation: int
-    event: LifecycleEvent
+    sequence: int
+    levels: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LoadingActivityMessage:
+    active: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +100,12 @@ class UnavailableMessage:
 
 
 ProtocolMessage = (
-    StateMessage | LifecycleMessage | CommandMessage | ReadyMessage | UnavailableMessage
+    StateMessage
+    | SpectrumMessage
+    | LoadingActivityMessage
+    | CommandMessage
+    | ReadyMessage
+    | UnavailableMessage
 )
 
 
@@ -98,6 +115,17 @@ class ProtocolError(ValueError):
 
 def _valid_generation(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_GENERATION
+
+
+def _valid_levels(value: object) -> bool:
+    return (
+        isinstance(value, tuple | list)
+        and len(value) == SPECTRUM_BANDS
+        and all(
+            isinstance(level, int) and not isinstance(level, bool) and 0 <= level <= 255
+            for level in value
+        )
+    )
 
 
 def _expect_fields(obj: dict, fields: frozenset[str]) -> None:
@@ -136,16 +164,27 @@ def encode_message(message: ProtocolMessage) -> str:
             "generation": message.generation,
             "state": message.state.value,
         }
-    elif isinstance(message, LifecycleMessage):
+    elif isinstance(message, SpectrumMessage):
         if not _valid_generation(message.generation):
             raise ProtocolError("protocol generation is out of range")
-        if not isinstance(message.event, LifecycleEvent):
-            raise ProtocolError("protocol lifecycle event has wrong type")
+        if not _valid_generation(message.sequence):
+            raise ProtocolError("protocol sequence is out of range")
+        if not isinstance(message.levels, tuple) or not _valid_levels(message.levels):
+            raise ProtocolError("protocol spectrum levels are invalid")
         payload = {
             "v": PROTOCOL_VERSION,
-            "type": "lifecycle",
+            "type": "spectrum",
             "generation": message.generation,
-            "event": message.event.value,
+            "sequence": message.sequence,
+            "levels": list(message.levels),
+        }
+    elif isinstance(message, LoadingActivityMessage):
+        if not isinstance(message.active, bool):
+            raise ProtocolError("protocol loading activity has wrong type")
+        payload = {
+            "v": PROTOCOL_VERSION,
+            "type": "loading_activity",
+            "active": message.active,
         }
     elif isinstance(message, CommandMessage):
         if not isinstance(message.command, Command):
@@ -199,13 +238,20 @@ def decode_message(record: str | bytes) -> ProtocolMessage:
         if not _valid_generation(obj["generation"]):
             raise ProtocolError("protocol generation is out of range")
         return StateMessage(obj["generation"], _enum_value(OverlayState, obj["state"], "state"))
-    if message_type == "lifecycle":
-        _expect_fields(obj, frozenset({"v", "type", "generation", "event"}))
+    if message_type == "spectrum":
+        _expect_fields(obj, frozenset({"v", "type", "generation", "sequence", "levels"}))
         if not _valid_generation(obj["generation"]):
             raise ProtocolError("protocol generation is out of range")
-        return LifecycleMessage(
-            obj["generation"], _enum_value(LifecycleEvent, obj["event"], "event")
-        )
+        if not _valid_generation(obj["sequence"]):
+            raise ProtocolError("protocol sequence is out of range")
+        if not _valid_levels(obj["levels"]):
+            raise ProtocolError("protocol spectrum levels are invalid")
+        return SpectrumMessage(obj["generation"], obj["sequence"], tuple(obj["levels"]))
+    if message_type == "loading_activity":
+        _expect_fields(obj, frozenset({"v", "type", "active"}))
+        if not isinstance(obj["active"], bool):
+            raise ProtocolError("protocol loading activity has wrong type")
+        return LoadingActivityMessage(obj["active"])
     if message_type == "command":
         _expect_fields(obj, frozenset({"v", "type", "command"}))
         return CommandMessage(_enum_value(Command, obj["command"], "command"))
@@ -218,26 +264,107 @@ def decode_message(record: str | bytes) -> ProtocolMessage:
     raise ProtocolError("protocol record has unknown message type")
 
 
+class LineReader:
+    """Bounded incremental NDJSON framing shared by pipe and display loops."""
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+
+    def feed(self, chunk: bytes) -> list[bytes]:
+        if not chunk:
+            return []
+        self._buffer.extend(chunk)
+        records = []
+        while (newline := self._buffer.find(b"\n")) >= 0:
+            record = bytes(self._buffer[: newline + 1])
+            del self._buffer[: newline + 1]
+            if len(record) > MAX_MESSAGE_BYTES:
+                raise ProtocolError("protocol record is too large")
+            records.append(record)
+        if len(self._buffer) >= MAX_MESSAGE_BYTES:
+            raise ProtocolError("protocol record is too large")
+        return records
+
+    def finish(self) -> None:
+        if self._buffer:
+            raise ProtocolError("protocol stream ended mid-record")
+
+
 @dataclass(slots=True)
-class GenerationGate:
-    """Accept strictly increasing generations. Deterministic and I/O-free."""
+class DisplayMessageGate:
+    """Reject stale generated records without coupling loading to recording. PURE."""
 
     current: int = -1
+    recording_generation: int | None = None
+    sequence: int = -1
+    loading_active: bool = False
 
-    def accept(self, candidate: int) -> bool:
-        if not _valid_generation(candidate):
+    def accept(
+        self,
+        message: StateMessage | SpectrumMessage | LoadingActivityMessage,
+    ) -> bool:
+        if isinstance(message, LoadingActivityMessage):
+            self.loading_active = message.active
+            return True
+        if isinstance(message, SpectrumMessage):
+            if message.generation != self.recording_generation or message.sequence <= self.sequence:
+                return False
+            self.sequence = message.sequence
+            return True
+        if not isinstance(message, StateMessage):
+            raise TypeError("display gate accepts only generated display messages")
+        if not _valid_generation(message.generation):
             raise ValueError("generation must be a non-negative signed 64-bit integer")
-        if candidate <= self.current:
+        if message.generation <= self.current:
             return False
-        self.current = candidate
+        self.current = message.generation
+        self.recording_generation = (
+            message.generation if message.state is OverlayState.RECORDING else None
+        )
+        self.sequence = -1
         return True
 
 
-def coalesce_latest_state(pending: StateMessage | None, candidate: StateMessage) -> StateMessage:
-    """Keep only the newest pending state for a bounded writer slot."""
-    if pending is None or candidate.generation > pending.generation:
-        return candidate
-    return pending
+def coalesce_spectrum_messages(
+    messages: Iterable[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage],
+) -> tuple[
+    StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage,
+    ...,
+]:
+    """Replace adjacent spectrum frames while retaining every ordering barrier."""
+    pending: list[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage] = []
+    for message in messages:
+        if (
+            isinstance(message, SpectrumMessage)
+            and pending
+            and isinstance(pending[-1], SpectrumMessage)
+        ):
+            pending[-1] = message
+        else:
+            pending.append(message)
+    return tuple(pending)
+
+
+def drain_display_stream(
+    chunk: bytes,
+    reader: LineReader,
+    gate: DisplayMessageGate,
+) -> tuple[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage, ...]:
+    """Frame, decode, gate, and coalesce one chunk of the parent display stream.
+
+    Only display and command records are valid from the parent; any other
+    protocol message raises ``ProtocolError`` without reflecting its content.
+    """
+    accepted: list[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage] = []
+    for record in reader.feed(chunk):
+        message = decode_message(record)
+        if isinstance(message, StateMessage | SpectrumMessage | LoadingActivityMessage):
+            if not gate.accept(message):
+                continue
+        elif not isinstance(message, CommandMessage):
+            raise ProtocolError("unexpected parent protocol message")
+        accepted.append(message)
+    return coalesce_spectrum_messages(accepted)
 
 
 def error_timeout_applies(expected_generation: int, current: StateMessage) -> bool:
@@ -255,7 +382,9 @@ class StatusSink(Protocol):
 
     def publish(self, state: OverlayState) -> None: ...
 
-    def lifecycle(self, event: LifecycleEvent) -> None: ...
+    def loading_activity(self, active: bool) -> None: ...
+
+    def audio_block(self, samples: object, sample_rate: int, stream_epoch: int) -> None: ...
 
     def close(self) -> None: ...
 
@@ -266,7 +395,10 @@ class NullStatusSink:
     def publish(self, state: OverlayState) -> None:
         pass
 
-    def lifecycle(self, event: LifecycleEvent) -> None:
+    def loading_activity(self, active: bool) -> None:
+        pass
+
+    def audio_block(self, samples: object, sample_rate: int, stream_epoch: int) -> None:
         pass
 
     def close(self) -> None:

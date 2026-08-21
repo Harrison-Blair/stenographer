@@ -37,13 +37,15 @@ content. To change the project description, edit above this line.
 
 Press a hotkey, speak, and the text appears at your cursor.
 
-`stenographer` is a push-to-talk dictation daemon for any Wayland session. It
-listens to Linux evdev keyboard events, records from the configured microphone
-while the hotkey is held, transcribes locally with
+`stenographer` is a push-to-talk / toggle dictation daemon for any Wayland
+session. It listens to Linux evdev keyboard events, records from the configured
+microphone while the hotkey is held (or, with `hotkey.mode = "toggle"`, between
+one press and the next), transcribes locally with
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper), and delivers the
-utterance to the focused application: the transcript is copied to both Wayland
-selections with `wl-copy`, then pasted with a single Shift+Insert chord sent
-through a kernel `uinput` virtual keyboard. Because injection is
+utterance to the focused application: the transcript is copied to both
+selections (via `wl-copy`, or via `xclip` under XWayland on compositors without
+a data-control protocol, such as GNOME 46 and older), then pasted with a single
+Shift+Insert chord sent through a kernel `uinput` virtual keyboard. Because injection is
 display-server-independent, it works identically on wlroots compositors
 (Hyprland, sway, …) and on GNOME/Mutter.
 
@@ -67,13 +69,23 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 ```
 
 Hold the hotkey (default: right-Ctrl), speak, release. The transcript is pasted
-at your cursor and left on the clipboard.
+at your cursor and left on the clipboard. Prefer press-to-start,
+press-again-to-stop? Set `hotkey.mode = "toggle"` — in that mode a forgotten
+recording ends automatically at `audio.max_recording_seconds` as if you had
+pressed again.
 
-By default a small, click-through pill shows only the fixed lifecycle states
-Recording, Loading model, Transcribing, Delivering, and Error. It receives no
-transcript, audio, model/device names, configuration values, or detailed error
-text. Set `feedback.overlay = false` to disable just this visual surface; sound
-cues, notifications, and dictation continue unchanged.
+On a cold start, model loading begins as soon as recording starts and overlaps
+your speech; only unfinished loading time remains after recording ends. By
+default a small, click-through pill shows an 18-band live spectrum while
+recording. A short cold recording changes directly to the same-width Transcribing
+pill while the model finishes loading. While the load is active, a subtle amber
+border breathes around whichever pill is visible; there is no loading label or
+loading dot. Transcribing, Delivering, and Error are fixed states. Raw microphone
+samples stay in the daemon; the isolated display helper receives only 18 quantized
+levels and an active/inactive loading boolean, never pulse timing, transcript text,
+model/device names, configuration values, or detailed errors. Set
+`feedback.overlay = false` to disable the whole visual surface and its analysis;
+sound cues, notifications, and dictation continue unchanged.
 
 ## Requirements
 
@@ -82,7 +94,9 @@ cues, notifications, and dictation continue unchanged.
   (`sudo usermod -aG input $USER`, then re-login).
 - Write access to `/dev/uinput` for the paste chord (a udev rule or the
   `uinput` group).
-- `wl-clipboard` (for `wl-copy`).
+- `wl-clipboard` (for `wl-copy`) on compositors with a data-control protocol
+  (wlroots, GNOME 47+); `xclip` on compositors without one (GNOME 46 and
+  older) — `stenographer doctor` reports which backend was detected.
 - A PortAudio input device (PipeWire or PulseAudio provide this).
 - Optional: `canberra-gtk-play` (preferred), `pw-play`, or `paplay` for the sound
   cues, and `notify-send` for error notifications — both degrade to no-ops when
@@ -140,10 +154,10 @@ first run. Four sections:
 
 | Section | Keys |
 |---|---|
-| `hotkey` | `binding` (evdev key/chord, default `KEY_RIGHTCTRL`), `device` |
+| `hotkey` | `binding` (evdev key/chord, default `KEY_RIGHTCTRL`), `device`, `mode` (`hold` \| `toggle`, default `hold`) |
 | `audio` | `input_device`, `min_speech_rms`, `max_recording_seconds` |
 | `asr` | `model`, `compute_type`, `beam_size`, `hotwords`, `initial_prompt`, `vad_filter`, `silence_threshold`, `idle_unload_seconds`, `cpu_threads` |
-| `feedback` | `volume`, `mute`, `overlay` (default `true`) |
+| `feedback` | `volume`, `mute`, `overlay` (default `true`), `spectrum_floor_dbfs` (default `-45.0`) |
 
 Note: `hotwords` require a full (non-distil) model — the default
 `Systran/faster-whisper-medium.en` supports them.
@@ -158,9 +172,17 @@ monitor, and keeps that placement until the pill hides. Focused-monitor choice
 and stacking over exclusive fullscreen windows are best-effort under XWayland.
 Neither backend appears over lock screens or other protected shell surfaces.
 
-The pill is status only: it has no transcript preview, live audio/FFT handling,
-controls, animation, or success state, and it never takes keyboard or pointer
-input.
+The recording pill contains exactly 18 solid spectrum bars that animate only
+while recording. Each band maps continuously from `feedback.spectrum_floor_dbfs`
+(default `-45.0`, valid from `-96` through `-13`) to the fixed `-12` dBFS ceiling.
+Input at or below the floor stays on the 4 px baseline tick; input at or above the
+ceiling reaches full height. A less-negative floor suppresses more input. This
+display-only mapping never filters recorded audio or changes transcription. The
+only other animation is a 2-second amber border pulse while the model is actively
+loading; it applies to any visible pill and is timed entirely inside the helper.
+The overlay has no transcript preview, raw-audio IPC, controls, GTK dependency, or
+success state, and it never takes keyboard or pointer input. Every visible pill is
+280×64; all labels, dots, geometry, and post-recording pill interiors remain fixed.
 
 ## CLI
 

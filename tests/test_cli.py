@@ -26,6 +26,14 @@ def test_help_exits_zero():
     assert exc.value.code == 0
 
 
+def test_no_command_prints_help(capsys):
+    assert dispatch([]) == 0
+    out = capsys.readouterr().out
+    assert "usage: stenographer" in out
+    for command in ("run", "transcribe", "model", "doctor", "devices"):
+        assert command in out
+
+
 def test_transcribe_parses_file_and_raw():
     parser = build_parser()
 

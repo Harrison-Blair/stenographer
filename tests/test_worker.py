@@ -20,6 +20,7 @@ from stenographer.worker import (
     classify_error,
     interpret_response,
     lifecycle_transition,
+    should_arm_idle_timer,
     should_teardown_for_response_error,
 )
 
@@ -89,14 +90,45 @@ def test_cold_and_warm_lifecycle_ordering():
     assert cold_start + cold_ready == (
         WorkerLifecycle.MODEL_LOADING,
         WorkerLifecycle.MODEL_READY,
-        WorkerLifecycle.TRANSCRIBING,
     )
-    assert lifecycle_transition(model_loaded=True) == (WorkerLifecycle.TRANSCRIBING,)
+    assert lifecycle_transition(model_loaded=True) == ()
 
 
 def test_duplicate_model_ready_is_a_protocol_error():
     with pytest.raises(WorkerProtocolError):
         lifecycle_transition(model_loaded=True, event=WorkerEvent.MODEL_READY)
+
+
+def test_should_arm_idle_timer_when_idle_and_unheld():
+    assert (
+        should_arm_idle_timer(
+            idle_seconds=60.0,
+            hold_active=False,
+            shutdown_requested=False,
+            process_alive=True,
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"idle_seconds": 0.0},
+        {"hold_active": True},
+        {"shutdown_requested": True},
+        {"process_alive": False},
+    ],
+)
+def test_should_arm_idle_timer_each_gate_blocks(override):
+    kwargs = {
+        "idle_seconds": 60.0,
+        "hold_active": False,
+        "shutdown_requested": False,
+        "process_alive": True,
+    }
+    kwargs.update(override)
+    assert should_arm_idle_timer(**kwargs) is False
 
 
 def test_classify_error_pathological():

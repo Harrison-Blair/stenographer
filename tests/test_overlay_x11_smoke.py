@@ -21,9 +21,12 @@ from Xlib.ext import shape  # noqa: E402
 
 from stenographer.overlay_x11 import X11OverlayBackend, X11Unavailable  # noqa: E402
 from stenographer.status import (  # noqa: E402
+    SPECTRUM_BANDS,
     Command,
     CommandMessage,
+    LoadingActivityMessage,
     OverlayState,
+    SpectrumMessage,
     StateMessage,
     encode_message,
 )
@@ -46,6 +49,17 @@ def _wait_for_backend_window_id(backend: X11OverlayBackend, timeout: float = 3.0
     pytest.fail("XWayland backend did not create its overlay window")
 
 
+def _wait_for_backend_state(
+    backend: X11OverlayBackend, state: OverlayState, timeout: float = 3.0
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if backend._state is state:
+            return
+        time.sleep(0.02)
+    pytest.fail(f"XWayland backend did not enter {state.value}")
+
+
 def _wait_for_window(display, expected_id: int, *, present: bool, timeout: float = 3.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -55,6 +69,23 @@ def _wait_for_window(display, expected_id: int, *, present: bool, timeout: float
             return window
         time.sleep(0.02)
     pytest.fail(f"XWayland overlay window did not become {'visible' if present else 'hidden'}")
+
+
+def _window_pixels(window) -> bytes:
+    geometry = window.get_geometry()
+    image = window.get_image(0, 0, geometry.width, geometry.height, X.ZPixmap, 0xFFFFFFFF)
+    return bytes(image.data)
+
+
+def _wait_for_repaint(display, window, previous: bytes, timeout: float = 3.0) -> bytes:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        display.sync()
+        current = _window_pixels(window)
+        if current != previous:
+            return current
+        time.sleep(0.02)
+    pytest.fail("XWayland spectrum did not repaint the existing overlay window")
 
 
 def test_real_xwayland_window_is_click_through_and_updates_in_place():
@@ -144,15 +175,48 @@ def test_real_xwayland_window_is_click_through_and_updates_in_place():
         assert placement is not None
         monitor = placement.monitor
         geometry = window.get_geometry()
+        recording_geometry = (geometry.x, geometry.y, geometry.width, geometry.height)
         assert abs((geometry.x + geometry.width // 2) - (monitor.x + monitor.width // 2)) <= 1
         assert monitor.y <= geometry.y
         assert geometry.y + geometry.height <= monitor.y + monitor.height
+
+        baseline_pixels = _window_pixels(window)
+
+        os.write(
+            write_fd,
+            encode_message(SpectrumMessage(0, 0, (255,) * SPECTRUM_BANDS)).encode("ascii"),
+        )
+        assert _wait_for_window(observer, window_id, present=True).id == window_id
+        spectrum_pixels = _wait_for_repaint(observer, window, baseline_pixels)
+
+        os.write(
+            write_fd,
+            encode_message(LoadingActivityMessage(True)).encode("ascii"),
+        )
+        loading_pixels = _wait_for_repaint(observer, window, spectrum_pixels)
+        assert _wait_for_window(observer, window_id, present=True).id == window_id
+        breathing_pixels = _wait_for_repaint(observer, window, loading_pixels)
 
         os.write(
             write_fd,
             encode_message(StateMessage(1, OverlayState.TRANSCRIBING)).encode("ascii"),
         )
-        assert _wait_for_window(observer, window_id, present=True).id == window_id
+        _wait_for_backend_state(result, OverlayState.TRANSCRIBING)
+        transcribing_window = _wait_for_window(observer, window_id, present=True)
+        transcribing_pixels = _wait_for_repaint(observer, transcribing_window, breathing_pixels)
+        transcribing_geometry = transcribing_window.get_geometry()
+        assert (
+            transcribing_geometry.x,
+            transcribing_geometry.y,
+            transcribing_geometry.width,
+            transcribing_geometry.height,
+        ) == recording_geometry
+
+        os.write(
+            write_fd,
+            encode_message(LoadingActivityMessage(False)).encode("ascii"),
+        )
+        assert _wait_for_repaint(observer, transcribing_window, transcribing_pixels)
 
         os.write(
             write_fd,

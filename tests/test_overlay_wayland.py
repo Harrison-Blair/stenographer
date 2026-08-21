@@ -53,7 +53,7 @@ def test_fractional_scale_plan_uses_viewporter_in_logical_pixels():
     assert choose_scale_plan(integer_scale=2, preferred_scale_120=180) == ScalePlan(
         render_scale=1.5,
         buffer_scale=1,
-        viewport_destination=(244, 88),
+        viewport_destination=(304, 88),
     )
 
 

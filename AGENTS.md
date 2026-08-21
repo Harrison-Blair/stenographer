@@ -15,17 +15,19 @@ The codebase is the 2026-08 clean-room reauthor (~2k lines, flat package
 `src/stenographer/`, tests in `tests/`). `docs/reauthor.md` is the design
 record: its §2 decisions are settled, §4 is the behavioral knowledge inventory
 that binds every change, §6 is the testing policy, §7 lists deliberately cut
-features. Do not reintroduce cut features (HUD/visualizer, live preview,
+features. Do not reintroduce cut features (old HUD, transcript preview,
 toggle/hybrid modes, self-update, PyInstaller packaging, wtype) without that
-document being revised first. The sole visual exception is the fixed,
-metadata-only lifecycle pill documented in decisions §2.15/§4.17; it must
-never grow transcript preview, audio/FFT handling, controls, animation, or GTK.
+document being revised first. The sole visual exception is the isolated
+lifecycle pill documented in decisions §2.15/§4.17. Its only animations are
+exactly 18 locally analyzed spectrum bars while recording and a 2-second amber
+breathing border while the model is actively loading; state interiors stay
+fixed. It must never grow transcript preview, controls, GTK, or raw-audio IPC.
 
 ## Layout
 
 - `src/stenographer/` — flat modules including `cli`, `config`, `daemon`, `hotkey`,
   `audio`, `worker`, `model`, `format`, `deliver`, `feedback`, `doctor`,
-  `notify`, plus `assets/sounds/` (5 WAV cues).
+  `notify`, plus `assets/sounds/` (4 WAV cues).
 - `tests/` — unit tests (pure logic) plus `test_*_smoke.py` integration tests.
 - `packaging/stenographer.service` — the systemd user unit.
 - `scripts/build.sh` / `scripts/install.sh` — local bundle and per-user install.
@@ -55,10 +57,12 @@ never grow transcript preview, audio/FFT handling, controls, animation, or GTK.
    single-machine per-user installer are allowed. Self-update, release
    workflows, multi-distro installers, and completions remain cut.
 7. **Overlay isolation.** The optional helper may receive only fixed lifecycle
-   metadata over the versioned protocol. It is click-through and must degrade to
-   disabled without affecting daemon success. Never put display/process I/O
-   under daemon locks or send transcript, audio, device/model names, config
-   values, or detailed errors across its IPC.
+   metadata, a model-loading active/inactive boolean, and 18 quantized spectrum
+   levels over the versioned protocol. Pulse timing is helper-local. Raw microphone
+   samples stay in the daemon-side supervisor; the helper remains click-through
+   and must degrade to disabled without affecting daemon success. Never put
+   analysis/display/process I/O under daemon locks or send transcript, raw audio,
+   device/model names, config values, or detailed errors across IPC.
 8. **Branch model.** Develop on `dev`. Merging to `main` requires the smoke
    suite and real dictation to pass on a real machine first.
 9. **Commits** are conventional (`feat:`, `fix:`, `chore:`) with no

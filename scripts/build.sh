@@ -3,7 +3,8 @@
 # Local PyInstaller onedir build. See BUILD.md.
 #
 # Default output is a progress bar (milestones parsed from the PyInstaller
-# log); the full log lands in dist/build.log. --verbose streams it instead.
+# log) with a live tail of the last log lines; the full log lands in
+# dist/build.log. --verbose streams it instead.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=scripts/progress.sh
@@ -25,6 +26,7 @@ else
     : > "${LOG}"
 
     progress_start "building"
+    progress_tail "${LOG}"
     .venv/bin/pyinstaller --noconfirm --clean packaging/stenographer.spec &> "${LOG}" &
     build_pid=$!
 

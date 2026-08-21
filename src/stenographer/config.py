@@ -16,6 +16,8 @@ ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
     {"int8", "int8_float16", "float16", "float32", "default"}
 )
 
+ALLOWED_HOTKEY_MODES: frozenset[str] = frozenset({"hold", "toggle"})
+
 
 class ConfigError(Exception):
     """A validation error tied to a specific dotted config key."""
@@ -31,6 +33,7 @@ class ConfigError(Exception):
 class HotkeyConfig:
     binding: str
     device: str | None
+    mode: str = "hold"
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,7 @@ class FeedbackConfig:
     volume: float
     mute: bool
     overlay: bool = True
+    spectrum_floor_dbfs: float = -45.0
 
 
 @dataclass(frozen=True)
@@ -119,7 +123,7 @@ def _build_hotkey(table: dict, path: pathlib.Path) -> HotkeyConfig:
     binding = r.str("binding")
     if not binding:
         raise ConfigError(path, "hotkey.binding", "must be non-empty")
-    return HotkeyConfig(binding, r.optional_str("device"))
+    return HotkeyConfig(binding, r.optional_str("device"), r.choice("mode", ALLOWED_HOTKEY_MODES))
 
 
 def _build_audio(table: dict, path: pathlib.Path) -> AudioConfig:
@@ -148,7 +152,12 @@ def _build_asr(table: dict, path: pathlib.Path) -> AsrConfig:
 
 def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
     r = _Reader(table, path, "feedback")
-    return FeedbackConfig(r.ranged_number("volume", 0.0, 1.0), r.bool("mute"), r.bool("overlay"))
+    return FeedbackConfig(
+        volume=r.ranged_number("volume", 0.0, 1.0),
+        mute=r.bool("mute"),
+        overlay=r.bool("overlay"),
+        spectrum_floor_dbfs=r.ranged_number("spectrum_floor_dbfs", -96.0, -13.0),
+    )
 
 
 def _merge(base: dict, overlay: dict) -> dict:
@@ -167,6 +176,7 @@ _DEFAULT_TOML = """\
 [stenographer.hotkey]
 binding = "KEY_RIGHTCTRL"
 device = ""                    # explicit /dev/input/event* path; "" = auto-detect
+mode = "hold"                  # hold = push-to-talk; toggle = press to start, press again to stop
 
 [stenographer.audio]
 input_device = ""              # PortAudio device name/index; "" = system default
@@ -188,6 +198,7 @@ cpu_threads = 0                # 0 = auto (physical cores, capped at 8)
 volume = 0.6
 mute = false
 overlay = true                 # best-effort lifecycle pill; dictation is independent
+spectrum_floor_dbfs = -45.0    # less-negative values suppress more spectrum input
 """
 
 
@@ -201,7 +212,7 @@ class Config:
     @classmethod
     def defaults(cls) -> Config:
         return cls(
-            hotkey=HotkeyConfig(binding="KEY_RIGHTCTRL", device=None),
+            hotkey=HotkeyConfig(binding="KEY_RIGHTCTRL", device=None, mode="hold"),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
             asr=AsrConfig(
                 model="Systran/faster-whisper-medium.en",
@@ -214,7 +225,12 @@ class Config:
                 idle_unload_seconds=900,
                 cpu_threads=0,
             ),
-            feedback=FeedbackConfig(volume=0.6, mute=False, overlay=True),
+            feedback=FeedbackConfig(
+                volume=0.6,
+                mute=False,
+                overlay=True,
+                spectrum_floor_dbfs=-45.0,
+            ),
         )
 
     @classmethod

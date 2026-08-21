@@ -20,7 +20,8 @@ def _caps(**overrides) -> doctor.Capabilities:
         "input_group": True,
         "has_mic": True,
         "model_cached": True,
-        "wl_copy": True,
+        "clipboard": True,
+        "clipboard_backend": "wl-copy",
         "audio_player": "pw-play",
         "service_enabled": "enabled",
         "service_active": "active",
@@ -54,11 +55,24 @@ def test_render_all_present():
 
 
 def test_render_missing_capability_carries_fix_hint():
-    caps = _caps(model_cached=False, wl_copy=False)
+    caps = _caps(model_cached=False, clipboard=False)
     report = doctor.render(caps, Config.defaults(), pathlib.Path("/tmp/config.toml"))
     assert "ASR model cached: MISSING — run: stenographer model download" in report
-    assert "wl-copy: MISSING — install wl-clipboard" in report
-    assert "missing required capabilities: model_cached, wl_copy" in report
+    assert "clipboard (wl-copy): MISSING — install wl-clipboard" in report
+    assert "missing required capabilities: model_cached, clipboard" in report
+
+
+def test_render_clipboard_line_names_the_detected_backend():
+    report = doctor.render(_caps(clipboard_backend="x11"), Config.defaults(), pathlib.Path("/x"))
+    assert "clipboard (x11): ok" in report
+
+    report = doctor.render(
+        _caps(clipboard=False, clipboard_backend="x11"), Config.defaults(), pathlib.Path("/x")
+    )
+    assert (
+        "clipboard (x11): MISSING — install xclip "
+        "(the compositor lacks a data-control protocol; GNOME 46 and older)"
+    ) in report
 
 
 def test_render_absent_audio_player_is_informational():

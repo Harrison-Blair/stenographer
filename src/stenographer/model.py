@@ -17,8 +17,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     import numpy as np
 
     from stenographer.config import AsrConfig
@@ -238,25 +236,16 @@ def _assemble(
     return TranscriptionResult(text=text, duration_seconds=audio_seconds, segments=kept)
 
 
-def hf_hub_cache_dir(env: Mapping[str, str], home: Path) -> Path:
-    """Pure: the HF hub cache root, mirroring huggingface_hub's resolution order."""
-    if hub_cache := env.get("HF_HUB_CACHE"):
-        return Path(hub_cache)
-    if hf_home := env.get("HF_HOME"):
-        return Path(hf_home) / "hub"
-    if xdg_cache := env.get("XDG_CACHE_HOME"):
-        return Path(xdg_cache) / "huggingface" / "hub"
-    return home / ".cache" / "huggingface" / "hub"
-
-
 def is_model_cached(model_id: str) -> bool:
     """True if the model's ``config.json`` is in the local HF cache (no network).
 
-    A direct filesystem check of huggingface_hub's documented cache layout —
-    importing huggingface_hub just to ask costs ~200 ms of CLI startup.
+    Delegate cache layout and environment resolution to huggingface_hub so this
+    stays aligned with model loading and ``snapshot_download`` (§4.11).
     """
-    repo = hf_hub_cache_dir(os.environ, Path.home()) / f"models--{model_id.replace('/', '--')}"
-    return any(repo.glob("snapshots/*/config.json"))
+    from huggingface_hub import try_to_load_from_cache
+
+    cached = try_to_load_from_cache(model_id, "config.json")
+    return isinstance(cached, str)
 
 
 def download_model(model_id: str) -> None:

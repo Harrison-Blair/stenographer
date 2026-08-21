@@ -13,6 +13,8 @@ import logging
 import shutil
 import subprocess
 
+from stenographer.childenv import child_env
+
 log = logging.getLogger(__name__)
 
 
@@ -44,6 +46,7 @@ class Notifier:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                env=child_env(),
             )
         except OSError as exc:
             log.debug("notify: send failed: %s", exc)

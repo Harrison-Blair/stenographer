@@ -8,6 +8,7 @@ import errno
 import mmap
 import os
 import selectors
+import time
 from dataclasses import dataclass
 from typing import BinaryIO
 
@@ -15,11 +16,11 @@ from pywayland import ffi
 from pywayland.client import Display
 from pywayland.protocol.wayland import WlCompositor, WlOutput, WlShm
 
-from stenographer.overlay import _LineReader
 from stenographer.overlay_render import (
     CANVAS_HEIGHT,
     CANVAS_WIDTH,
     EDGE_OFFSET,
+    LoadingPulse,
     premultiplied_argb32,
     render_overlay,
 )
@@ -30,16 +31,19 @@ from stenographer.protocols.wlr_layer_shell_unstable_v1 import (
     ZwlrLayerSurfaceV1,
 )
 from stenographer.status import (
+    SPECTRUM_BANDS,
     Backend,
     Command,
     CommandMessage,
-    GenerationGate,
-    LifecycleMessage,
+    DisplayMessageGate,
+    LineReader,
+    LoadingActivityMessage,
     OverlayState,
     ProtocolError,
+    SpectrumMessage,
     StateMessage,
     UnavailableReason,
-    decode_message,
+    drain_display_stream,
 )
 
 REQUIRED_GLOBALS = ("wl_compositor", "wl_shm", "zwlr_layer_shell_v1")
@@ -180,6 +184,8 @@ class LayerShellBackend:
         self._configured = False
         self._preferred_scale_120: int | None = None
         self._state = OverlayState.HIDDEN
+        self._levels = (0,) * SPECTRUM_BANDS
+        self._pulse = LoadingPulse()
         self._buffers: dict[int, _ShmBuffer] = {}
         self._render_pending = False
 
@@ -333,7 +339,11 @@ class LayerShellBackend:
 
     def _create_surface(self, state: OverlayState) -> None:
         assert self._compositor is not None and self._layer_shell is not None
-        logical_frame = render_overlay(state)
+        logical_frame = render_overlay(
+            state,
+            levels=self._levels if state is OverlayState.RECORDING else None,
+            loading_elapsed=self._pulse.elapsed(time.monotonic()),
+        )
         margin_bottom = layer_margin_bottom(
             canvas_height=logical_frame.height,
             pill_bottom=logical_frame.pill_bounds[3],
@@ -383,7 +393,12 @@ class LayerShellBackend:
             integer_scale=self._integer_scale(),
             preferred_scale_120=(self._preferred_scale_120 if self._viewport is not None else None),
         )
-        frame = render_overlay(self._state, scale=plan.render_scale)
+        frame = render_overlay(
+            self._state,
+            scale=plan.render_scale,
+            levels=self._levels if self._state is OverlayState.RECORDING else None,
+            loading_elapsed=self._pulse.elapsed(time.monotonic()),
+        )
         buffer = self._create_buffer(
             premultiplied_argb32(frame.image),
             width=frame.width,
@@ -464,16 +479,40 @@ class LayerShellBackend:
                 with contextlib.suppress(Exception):
                     proxy.destroy()
 
-    def _apply(self, message: StateMessage | LifecycleMessage | CommandMessage) -> bool:
+    def _animate_loading(self, now: float) -> None:
+        if not self._pulse.frame_due(now, self._state is not OverlayState.HIDDEN):
+            return
+        self._pulse.advance(now)
+        self._present_if_configured()
+
+    def _apply(
+        self,
+        message: (StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage),
+    ) -> bool:
         if isinstance(message, CommandMessage):
             if message.command is not Command.SHUTDOWN:
                 raise ProtocolError("unsupported helper command")
             return False
-        if isinstance(message, LifecycleMessage):
+        if isinstance(message, LoadingActivityMessage):
+            now = time.monotonic()
+            if not self._pulse.set_active(message.active, now):
+                return True
+            if message.active and self._state is not OverlayState.HIDDEN:
+                self._pulse.arm(now)
+            if self._state is not OverlayState.HIDDEN:
+                self._present_if_configured()
+            return True
+        if isinstance(message, SpectrumMessage):
+            self._levels = message.levels
+            if self._state is OverlayState.RECORDING:
+                self._present_if_configured()
             return True
         state = message.state
         self._state = state
+        if state is OverlayState.RECORDING:
+            self._levels = (0,) * SPECTRUM_BANDS
         if state is OverlayState.HIDDEN:
+            self._pulse.disarm_frames()
             self._destroy_surface()
         elif self._surface is None:
             # NULL output deliberately lets the compositor pick the recently
@@ -481,11 +520,13 @@ class LayerShellBackend:
             self._create_surface(state)
         else:
             self._present_if_configured()
+        if self._pulse.active and state is not OverlayState.HIDDEN:
+            self._pulse.arm(time.monotonic())
         return True
 
     def run(self, input_stream: BinaryIO) -> None:
-        reader = _LineReader()
-        gate = GenerationGate()
+        reader = LineReader()
+        gate = DisplayMessageGate()
         input_fd = input_stream.fileno()
         display_fd = self._display.get_fd()
         selector = selectors.DefaultSelector()
@@ -500,19 +541,18 @@ class LayerShellBackend:
                     selectors.EVENT_READ | (selectors.EVENT_WRITE if want_write else 0),
                     "display",
                 )
-                for key, mask in selector.select():
+                now = time.monotonic()
+                events = selector.select(
+                    self._pulse.timeout(now, self._state is not OverlayState.HIDDEN)
+                )
+                self._animate_loading(time.monotonic())
+                for key, mask in events:
                     if key.data == "input":
                         chunk = os.read(input_fd, 4096)
                         if not chunk:
                             reader.finish()
                             return
-                        for record in reader.feed(chunk):
-                            message = decode_message(record)
-                            if isinstance(message, StateMessage | LifecycleMessage):
-                                if not gate.accept(message.generation):
-                                    continue
-                            elif not isinstance(message, CommandMessage):
-                                raise ProtocolError("unexpected parent protocol message")
+                        for message in drain_display_stream(chunk, reader, gate):
                             if not self._apply(message):
                                 return
                     elif mask & selectors.EVENT_READ:

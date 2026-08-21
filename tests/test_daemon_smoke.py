@@ -22,9 +22,28 @@ speech, and a focused window. It cannot be asserted programmatically.
        preparation/activation/capture/recovery timing records. The dictated
        canary phrase above must not appear anywhere in those logs.
     7. Confirm the record_start and record_stop cues, paste at the cursor,
-       delivered cue, and matching clipboard (`wl-paste`) on both Hyprland
-       (wlroots) and GNOME Wayland (Mutter).
-    8. Run the complete opt-in integration suite. All of these checks are the
+       delivered cue, and matching clipboard (`wl-paste`; `xclip -o` where the
+       daemon logged clipboard_backend=x11) on both Hyprland (wlroots) and
+       GNOME Wayland (Mutter).
+    8. On a cold press, confirm the 4 px amber border starts breathing around
+       the recording pill while all 18 spectrum bars continue. With only steady
+       room or fan noise at or below the configured floor, confirm the bars remain
+       at their baselines immediately; quiet speech above the floor must still
+       animate them. Release quickly and confirm the same-width
+       Transcribing pill appears directly with the border still breathing, then
+       loses the border at ready or failure. No Loading model label or amber
+       loading dot may appear. If ready arrives during a longer recording, the
+       border must disappear there instead. A warm recording has no border;
+       repeat after idle unload and confirm it returns. Model loading itself must
+       make no sound. Disable or kill the overlay and confirm recording,
+       transcription, and delivery still succeed.
+    9. Set hotkey.mode = "toggle". Press KEY_RIGHTCTRL once, confirm the pill
+       animates and the mic records with the key released, speak, press again,
+       and confirm the paste. Then set a short audio.max_recording_seconds
+       (e.g. 5), start a recording and keep talking past the cap: the stop cue
+       must fire at the cap and the transcript up to it must be delivered. A
+       press during transcription must do nothing.
+    10. Run the complete opt-in integration suite. All of these checks are the
        real-machine merge gate; the sandbox-safe unit suite is not a substitute.
 
 The automated tests below use the real default PortAudio input and actual lock
@@ -48,7 +67,6 @@ from stenographer.audio import Recorder  # noqa: E402
 from stenographer.daemon import (  # noqa: E402
     LOCK_PATH,
     acquire_single_instance_lock,
-    release_single_instance_lock,
 )
 
 
@@ -112,10 +130,18 @@ def test_real_lock_path_mutual_exclusion():
     fd = acquire_single_instance_lock()
     if fd < 0:
         pytest.skip(f"another instance already holds {LOCK_PATH}")
+    inode = LOCK_PATH.stat().st_ino
     try:
         # A real, non-mocked second acquire against the daemon's actual runtime
         # lock path fails while the first fd holds it.
         assert acquire_single_instance_lock() == -1
     finally:
         os.close(fd)
-        release_single_instance_lock()
+
+    next_fd = acquire_single_instance_lock()
+    assert next_fd >= 0
+    try:
+        assert LOCK_PATH.stat().st_ino == inode
+        assert acquire_single_instance_lock() == -1
+    finally:
+        os.close(next_fd)

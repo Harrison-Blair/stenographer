@@ -25,6 +25,7 @@ from stenographer.config import Config  # noqa: E402
 def test_probe_returns_real_capabilities():
     caps = doctor.probe(Config.defaults())
     assert isinstance(caps, doctor.Capabilities)
+    assert caps.clipboard_backend in ("wl-copy", "x11")
     assert caps.audio_player in ("canberra-gtk-play", "pw-play", "paplay", None)
     assert caps.service_enabled is None or isinstance(caps.service_enabled, str)
     assert caps.service_active is None or isinstance(caps.service_active, str)

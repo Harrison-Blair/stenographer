@@ -3,16 +3,15 @@
 
 Two real, non-mocked checks (spec §6.3, M1 Verify clause):
 
-  * equivalence  — the new package (model.Model + format.format_transcript)
-    produces the same text as the old package (stenographer.asr.Model +
-    HeuristicFormatter) on the same bundled 16 kHz WAV.
+  * equivalence  — the public ``transcribe`` command produces the same text as
+    the surviving model.Model + format.format_transcript API on the same
+    machine-supplied 16 kHz WAV.
   * hotwords     — a proper noun set in asr.hotwords is honored in the decode.
 
-Both really load the medium.en model and decode a bundled clip; nothing is
+Both really load the medium.en model and decode a machine-supplied clip; nothing is
 mocked. The whole module self-skips unless STENOGRAPHER_INTEGRATION=1, the
 model is cached locally, and the fixture WAV is present — so the default unit
-run never touches the network or the ASR stack, and this file stays
-collectable while the sibling M1 modules are still being written.
+run never touches the network or the ASR stack.
 """
 
 from __future__ import annotations
@@ -49,41 +48,28 @@ def _read(path: pathlib.Path):
     return soundfile.read(str(path), dtype="float32", always_2d=True)[0]
 
 
-def test_new_transcribe_matches_old_tool():
-    from stenographer import config as v2config
-    from stenographer import format as v2format
-    from stenographer import model as v2model
+def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
+    from stenographer import config, model
+    from stenographer.cli import main
+    from stenographer.format import format_transcript
 
     samples = _read(_CLIP)
+    config_path = tmp_path / "config.toml"
+    config.Config.write_default(config_path)
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
+    cfg = config.Config.load(config_path)
+    assert cfg.asr.model == _MODEL_ID  # hotwords require the full model (§4.4)
 
-    v2cfg = v2config.Config.defaults()
-    assert v2cfg.asr.model == _MODEL_ID  # hotwords require the full model (§4.4)
-    m = v2model.Model(v2cfg.asr)
+    m = model.Model(cfg.asr)
     try:
-        new_text = v2format.format_transcript(m.transcribe(samples).text)
+        expected = format_transcript(m.transcribe(samples).text)
     finally:
         m.close()
 
-    from stenographer.asr.model import Model as OldModel
-    from stenographer.output.formatter import HeuristicFormatter
-
-    from stenographer.config import Config as OldConfig
-
-    old_cfg = OldConfig.defaults()
-    old_model = OldModel(old_cfg.asr)
-    try:
-        old_result = old_model.transcribe(samples, old_cfg.asr.language, old_cfg.asr.beam_size)
-    finally:
-        old_model.close()
-    old_text = HeuristicFormatter(
-        old_cfg.formatting, append_trailing_space=old_cfg.output.append_trailing_space
-    ).format_batch(old_result.segments)
-
-    # Compare modulo trailing whitespace: the two formatters differ only in the
-    # trailing-space knob (old default on, new default off); the words, spacing
-    # and capitalisation must be identical.
-    assert new_text.strip() == old_text.strip()
-    assert new_text.strip() != ""
+    assert main(["transcribe", str(_CLIP)]) == 0
+    actual = capsys.readouterr().out
+    assert actual.strip() == expected.strip()
+    assert actual.strip() != ""
 
 
 def test_hotword_is_honored():
@@ -91,13 +77,12 @@ def test_hotword_is_honored():
     if clip is _CLIP:
         pytest.skip(f"hotword fixture absent: {_HOTWORD_CLIP}")
 
-    from stenographer import config as v2config
-    from stenographer import model as v2model
+    from stenographer import config, model
 
     samples = _read(clip)
-    base = v2config.Config.defaults()
+    base = config.Config.defaults()
     cfg = dataclasses.replace(base, asr=dataclasses.replace(base.asr, hotwords=_HOTWORD_NOUN))
-    m = v2model.Model(cfg.asr)
+    m = model.Model(cfg.asr)
     try:
         text = m.transcribe(samples).text
     finally:

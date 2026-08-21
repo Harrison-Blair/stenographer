@@ -2,26 +2,41 @@
 """Pure-logic and OS-level tests for daemon.py.
 
 Covered here: the pipeline outcome policy (``classify_pipeline``), the
-one-at-a-time admission rule (``can_start``), single-instance-lock mutual
+one-at-a-time admission rule (``can_start``), the toggle-mode press mapping
+(``toggle_action``, seen to fail against a stub returning "start"
+unconditionally), the stale-timer guard (``max_duration_applies``, seen to
+fail against a stub that ignores the generation), the overlay publish policy as
+bound by ``_publish_state`` (``should_publish_state``, seen to fail against a
+dedup-only stub), the lock-failure classifier (``is_lock_contention``, seen to
+fail against an all-contention stub), single-instance-lock mutual
 exclusion via a REAL flock on a tmp path, and that ``Daemon.build`` wires all
 collaborators lazily (no uinput device, stream, or model opened) with a safe
-pre-start ``stop``. Nothing mocks subprocess/UInput/wl-copy/Worker (§6.2); the
-real utterance path is the M5 manual dictation acceptance procedure.
+pre-start ``stop``, per ``hotkey.mode``. Nothing mocks
+subprocess/UInput/wl-copy/Worker (§6.2); the real utterance path is the M5
+manual dictation acceptance procedure.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import errno
 import os
 
 import pytest
 
 from stenographer.daemon import (
     Outcome,
+    SingleInstanceLockError,
     acquire_single_instance_lock,
     can_start,
     classify_pipeline,
-    release_single_instance_lock,
+    is_lock_contention,
+    max_duration_applies,
+    should_publish_state,
+    toggle_action,
 )
+from stenographer.deliver import ClipboardBackend
+from stenographer.status import OverlayState
 
 
 def test_gate_failure_is_silent():
@@ -63,18 +78,85 @@ def test_can_start_only_when_fully_idle():
     assert can_start(recording=False, busy=False, stopping=True) is False
 
 
+def test_toggle_action_maps_press_edges():
+    # Idle press starts; a press while recording always stops, even during
+    # shutdown, so a live capture is never stranded. A press during
+    # transcription (busy) neither starts nor queues (§5, one at a time).
+    assert toggle_action(recording=False, busy=False, stopping=False) == "start"
+    assert toggle_action(recording=True, busy=False, stopping=False) == "stop"
+    assert toggle_action(recording=False, busy=True, stopping=False) is None
+    assert toggle_action(recording=False, busy=False, stopping=True) is None
+    assert toggle_action(recording=True, busy=False, stopping=True) == "stop"
+
+
+def test_max_duration_applies_guards_stale_generation():
+    # A fired timer can be blocked on the state lock while a manual stop and an
+    # immediate restart advance the generation; the stale timer must not stop
+    # the newer recording, and a matching timer applies only while live.
+    assert max_duration_applies(3, 3, recording=True) is True
+    assert max_duration_applies(2, 3, recording=True) is False
+    assert max_duration_applies(3, 3, recording=False) is False
+
+
+def test_publish_policy_always_represents_error():
+    # The helper auto-hides ERROR after a fixed timeout without notifying the
+    # daemon, so the producer cache can be stale: a repeated ERROR (e.g. mic
+    # failing twice in a row) must re-present rather than dedup away. Tested
+    # against the name daemon.py binds in _publish_state. Seen to fail against
+    # a dedup-only stub shadowing the helper.
+    assert should_publish_state(OverlayState.ERROR, OverlayState.ERROR) is True
+
+
+def test_publish_policy_dedups_stable_states():
+    # Every non-ERROR state coalesces when repeated; any actual change passes.
+    for state in OverlayState:
+        if state is OverlayState.ERROR:
+            continue
+        assert should_publish_state(state, state) is False
+    assert should_publish_state(OverlayState.HIDDEN, OverlayState.RECORDING) is True
+    assert should_publish_state(OverlayState.RECORDING, OverlayState.TRANSCRIBING) is True
+    assert should_publish_state(OverlayState.ERROR, OverlayState.HIDDEN) is True
+
+
+def test_is_lock_contention_classifies_errnos():
+    # Only a held flock is contention (EAGAIN/EWOULDBLOCK — the same value on
+    # Linux, both spelled out per the flock(2) contract); disk-full or I/O
+    # failure on the lock file must surface as an error, never as "another
+    # instance is already running". Seen to fail against an always-True stub
+    # (today's policy of swallowing every OSError as contention).
+    assert is_lock_contention(OSError(errno.EAGAIN, "held")) is True
+    assert is_lock_contention(OSError(errno.EWOULDBLOCK, "held")) is True
+    assert is_lock_contention(OSError(errno.ENOSPC, "disk full")) is False
+    assert is_lock_contention(OSError(errno.EIO, "io error")) is False
+    assert is_lock_contention(OSError(errno.EACCES, "denied")) is False
+    # The non-contention escape hatch is still an OSError for callers that
+    # only catch broadly.
+    assert issubclass(SingleInstanceLockError, OSError)
+
+
 def test_single_instance_lock_is_mutually_exclusive(tmp_path):
     lock = tmp_path / "stenographer.lock"
     fd = acquire_single_instance_lock(lock)
     assert fd >= 0
+    inode = lock.stat().st_ino
     # The PID is recorded in the lock file.
     assert lock.read_text().strip() == str(os.getpid())
     # A second acquire against the SAME path is a distinct open file description,
     # so its non-blocking flock contends even in-process and returns -1.
     assert acquire_single_instance_lock(lock) == -1
     os.close(fd)
-    release_single_instance_lock(lock)
-    assert not lock.exists()
+
+    # Release keeps the inode at the stable path; the next owner rewrites the
+    # PID in place, and a third contender still conflicts on the same inode.
+    assert lock.exists()
+    next_fd = acquire_single_instance_lock(lock)
+    assert next_fd >= 0
+    try:
+        assert lock.stat().st_ino == inode
+        assert lock.read_text().strip() == str(os.getpid())
+        assert acquire_single_instance_lock(lock) == -1
+    finally:
+        os.close(next_fd)
 
 
 def test_build_wires_collaborators_lazily():
@@ -84,7 +166,7 @@ def test_build_wires_collaborators_lazily():
     from stenographer.config import Config
     from stenographer.daemon import Daemon
 
-    daemon = Daemon.build(Config.defaults())
+    daemon = Daemon.build(Config.defaults(), clipboard_backend=ClipboardBackend.WL_COPY)
     try:
         # Built but nothing opened: startup preparation happens only after the
         # single-instance lock is acquired in run().
@@ -98,3 +180,32 @@ def test_build_wires_collaborators_lazily():
     finally:
         # stop() before run() must be a safe no-op.
         daemon.stop()
+
+
+def test_build_wires_toggle_mode_press_only():
+    # Seen to FAIL against a build that ignores hotkey.mode and wires toggle
+    # like hold. Same real-build style as the lazy-wiring test above: nothing
+    # is opened, no mocks.
+    pytest.importorskip("stenographer.hotkey")
+    from stenographer.config import Config
+    from stenographer.daemon import Daemon
+
+    hold = Daemon.build(Config.defaults(), clipboard_backend=ClipboardBackend.WL_COPY)
+    try:
+        assert hold._listener._on_start == hold.on_key_down
+        assert hold._listener._on_stop == hold.on_key_up
+    finally:
+        hold.stop()
+
+    defaults = Config.defaults()
+    toggle_cfg = dataclasses.replace(
+        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="toggle")
+    )
+    toggle = Daemon.build(toggle_cfg, clipboard_backend=ClipboardBackend.WL_COPY)
+    try:
+        # Only presses drive the session; the falling edge must be inert.
+        assert toggle._listener._on_start == toggle.on_toggle_press
+        assert toggle._listener._on_stop != toggle.on_key_up
+        assert toggle._listener._on_stop != toggle.on_key_down
+    finally:
+        toggle.stop()

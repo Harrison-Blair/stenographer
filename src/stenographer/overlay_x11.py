@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""XWayland fallback for the isolated metadata-only lifecycle overlay.
+"""XWayland fallback for the isolated lifecycle/spectrum overlay.
 
-The backend deliberately uses only fixed lifecycle states.  X server queries,
-window management, and image uploads remain in the helper process; the pure
-helpers at the top of this module make placement policy independently testable.
+The backend accepts fixed lifecycle states, a loading-activity boolean, and 18
+quantized recording levels. Pulse timing, X server queries, window management,
+and image uploads remain in the helper process; the pure helpers at the top make
+placement policy independently testable.
 """
 
 from __future__ import annotations
@@ -23,9 +24,9 @@ from Xlib import display as xdisplay
 from Xlib.ext import randr, shape
 from Xlib.protocol import rq
 
-from stenographer.overlay import _LineReader
 from stenographer.overlay_render import (
     EDGE_OFFSET,
+    LoadingPulse,
     OverlayFrame,
     overlay_position,
     premultiplied_argb32,
@@ -33,16 +34,19 @@ from stenographer.overlay_render import (
 )
 from stenographer.status import (
     ERROR_DISPLAY_SECONDS,
+    SPECTRUM_BANDS,
     Backend,
     Command,
     CommandMessage,
-    GenerationGate,
-    LifecycleMessage,
+    DisplayMessageGate,
+    LineReader,
+    LoadingActivityMessage,
     OverlayState,
     ProtocolError,
+    SpectrumMessage,
     StateMessage,
     UnavailableReason,
-    decode_message,
+    drain_display_stream,
 )
 
 _ARGB_DEPTH = 32
@@ -376,6 +380,8 @@ class X11OverlayBackend:
         self._window_epoch = 0
         self._stacking_reassert: StackingReassertPlan | None = None
         self._state = OverlayState.HIDDEN
+        self._levels = (0,) * SPECTRUM_BANDS
+        self._pulse = LoadingPulse()
         self._error_deadline: float | None = None
         self._error_generation: int | None = None
         self._closed = False
@@ -516,7 +522,12 @@ class X11OverlayBackend:
             monitor = monitor or self._choose_monitor()
             self._placement = freeze_placement(None, monitor, self._scale_for(monitor))
         placement = self._placement
-        frame = render_overlay(state, scale=placement.scale)
+        frame = render_overlay(
+            state,
+            scale=placement.scale,
+            levels=self._levels if state is OverlayState.RECORDING else None,
+            loading_elapsed=self._pulse.elapsed(time.monotonic()),
+        )
         x, y = x11_position(placement.monitor, frame)
 
         created = self._window is None
@@ -554,6 +565,8 @@ class X11OverlayBackend:
             self._stacking_reassert = start_stacking_reassert(
                 epoch=self._window_epoch, now=time.monotonic()
             )
+        if self._pulse.active and self._pulse.next_frame_at is None:
+            self._pulse.arm(time.monotonic())
         self._display.flush()
 
     def _upload(self, frame: OverlayFrame) -> None:
@@ -599,19 +612,37 @@ class X11OverlayBackend:
             with contextlib.suppress(Exception):
                 colormap.free()
         self._placement = None
+        self._pulse.disarm_frames()
         if self._display is not None:
             with contextlib.suppress(Exception):
                 self._display.flush()
 
-    def _apply(self, message: StateMessage | LifecycleMessage | CommandMessage) -> bool:
+    def _apply(
+        self,
+        message: (StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage),
+    ) -> bool:
         if isinstance(message, CommandMessage):
             if message.command is not Command.SHUTDOWN:
                 raise ProtocolError("unsupported helper command")
             return False
-        if isinstance(message, LifecycleMessage):
+        if isinstance(message, LoadingActivityMessage):
+            now = time.monotonic()
+            if not self._pulse.set_active(message.active, now):
+                return True
+            if message.active and self._state is not OverlayState.HIDDEN:
+                self._pulse.arm(now)
+            if self._state is not OverlayState.HIDDEN and self._window is not None:
+                self._show(self._state)
+            return True
+        if isinstance(message, SpectrumMessage):
+            self._levels = message.levels
+            if self._state is OverlayState.RECORDING and self._window is not None:
+                self._show(OverlayState.RECORDING)
             return True
 
         self._state = message.state
+        if message.state is OverlayState.RECORDING:
+            self._levels = (0,) * SPECTRUM_BANDS
         if message.state is OverlayState.ERROR:
             self._error_generation = message.generation
             self._error_deadline = time.monotonic() + ERROR_DISPLAY_SECONDS
@@ -622,9 +653,11 @@ class X11OverlayBackend:
             self._destroy_window()
         else:
             self._show(message.state)
+            if self._pulse.active:
+                self._pulse.arm(time.monotonic())
         return True
 
-    def _expire_error(self, gate: GenerationGate) -> None:
+    def _expire_error(self, gate: DisplayMessageGate) -> None:
         if self._error_deadline is None or time.monotonic() < self._error_deadline:
             return
         if gate.current == self._error_generation and self._state is OverlayState.ERROR:
@@ -633,7 +666,7 @@ class X11OverlayBackend:
         self._error_deadline = None
         self._error_generation = None
 
-    def _event_timeout(self, gate: GenerationGate) -> float | None:
+    def _event_timeout(self, gate: DisplayMessageGate) -> float | None:
         now = time.monotonic()
         timeouts = []
         if self._error_deadline is not None and gate.current == self._error_generation:
@@ -645,7 +678,18 @@ class X11OverlayBackend:
         )
         if reassert_timeout is not None:
             timeouts.append(reassert_timeout)
+        loading_timeout = self._pulse.timeout(now, self._state is not OverlayState.HIDDEN)
+        if loading_timeout is not None:
+            timeouts.append(loading_timeout)
         return min(timeouts) if timeouts else None
+
+    def _expire_loading_animation(self) -> None:
+        now = time.monotonic()
+        if not self._pulse.frame_due(now, self._state is not OverlayState.HIDDEN):
+            return
+        self._pulse.advance(now)
+        if self._window is not None:
+            self._show(self._state)
 
     def _expire_stacking_reassert(self) -> None:
         due, self._stacking_reassert = consume_stacking_reassert(
@@ -683,8 +727,8 @@ class X11OverlayBackend:
 
     def run(self, input_stream: BinaryIO) -> None:
         assert self._display is not None
-        reader = _LineReader()
-        gate = GenerationGate()
+        reader = LineReader()
+        gate = DisplayMessageGate()
         selector = selectors.DefaultSelector()
         selector.register(input_stream.fileno(), selectors.EVENT_READ, "input")
         selector.register(self._display.fileno(), selectors.EVENT_READ, "display")
@@ -693,6 +737,7 @@ class X11OverlayBackend:
                 events = selector.select(self._event_timeout(gate))
                 self._expire_error(gate)
                 self._expire_stacking_reassert()
+                self._expire_loading_animation()
                 for key, _mask in events:
                     if key.data == "display":
                         self._handle_x_events()
@@ -701,13 +746,7 @@ class X11OverlayBackend:
                     if not chunk:
                         reader.finish()
                         return
-                    for record in reader.feed(chunk):
-                        message = decode_message(record)
-                        if isinstance(message, StateMessage | LifecycleMessage):
-                            if not gate.accept(message.generation):
-                                continue
-                        elif not isinstance(message, CommandMessage):
-                            raise ProtocolError("unexpected parent protocol message")
+                    for message in drain_display_stream(chunk, reader, gate):
                         if not self._apply(message):
                             return
         finally:

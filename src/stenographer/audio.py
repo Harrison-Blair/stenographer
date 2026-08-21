@@ -9,9 +9,11 @@ fallback (§4.9) polyphase-resample the capture to the fixed ASR rate.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import time
+from collections.abc import Callable
 from enum import Enum, auto
 from typing import Any
 
@@ -106,11 +108,19 @@ class Recorder:
     capture. Audio is returned as a 1-D float32 array at the ASR rate.
     """
 
-    def __init__(self, *, device: str | int | None, max_seconds: int) -> None:
+    def __init__(
+        self,
+        *,
+        device: str | int | None,
+        max_seconds: int,
+        on_block: Callable[[np.ndarray, int, int], None] | None = None,
+    ) -> None:
         self._configured_device: str | int | None = None if device == "" else device
         self._selected_device: str | int | None = self._configured_device
         self._max_seconds = max_seconds
+        self._on_block = on_block
         self._stream: Any = None
+        self._stream_epoch = 0
         self._device_rate = _SAMPLE_RATE
         self._channels = 1
         self._blocks: list[np.ndarray] = []
@@ -177,6 +187,7 @@ class Recorder:
                     rejected = exc
                 else:
                     self._stream = stream
+                    self._stream_epoch += 1
                     self._device_rate = rate
                     self._channels = channels
                     self._max_frames = self._max_seconds * rate
@@ -252,6 +263,11 @@ class Recorder:
             return
         block = indata[:, 0].copy() if indata.ndim == 2 else indata.copy()
         self._blocks.append(block)
+        if self._on_block is not None:
+            # The block is already the callback's required mono copy.  The
+            # optional sink may only replace a latest-only in-memory slot.
+            with contextlib.suppress(Exception):
+                self._on_block(block, self._device_rate, self._stream_epoch)
         self._frames += block.shape[0]
         if self._max_frames and self._frames >= self._max_frames:
             self._capped = True

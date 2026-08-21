@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Deterministic Pillow renderer for the metadata-only lifecycle overlay.
+"""Deterministic Pillow renderer for the isolated lifecycle overlay.
 
 The renderer has no display, process, or audio dependencies.  It produces a
 straight-alpha RGBA frame for either display backend and can pack that frame
@@ -19,11 +19,19 @@ from typing import Literal
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from stenographer.status import OverlayState
+from stenographer.status import SPECTRUM_BANDS, OverlayState
 
-PILL_WIDTH = 220
+PILL_WIDTH = 280
 PILL_HEIGHT = 64
 EDGE_OFFSET = 32
+LOADING_BORDER_COLOR = (0xF5, 0x9E, 0x0B)
+LOADING_BORDER_WIDTH = 4
+LOADING_BORDER_INSET = 1
+LOADING_PULSE_SECONDS = 2.0
+LOADING_OPACITY_MIN = 0.25
+LOADING_OPACITY_MAX = 0.85
+LOADING_ANIMATION_FPS = 60
+LOADING_FRAME_INTERVAL = 1.0 / LOADING_ANIMATION_FPS
 
 _CANVAS_MARGIN_LEFT = 12
 _CANVAS_MARGIN_TOP = 8
@@ -42,8 +50,14 @@ _DOT_DIAMETER = 8
 _DOT_RIGHT_INSET = 18
 _LABEL_FONT_SIZE = 22
 _LABEL_WEIGHT = 600
+_SPECTRUM_LEFT = 72
+_SPECTRUM_BAR_WIDTH = 5
+_SPECTRUM_BAR_GAP = 4
+_SPECTRUM_MIN_HEIGHT = 4
+_SPECTRUM_MAX_HEIGHT = 44
 
 _SUPERSAMPLE = 4
+_DYNAMIC_SUPERSAMPLE = 2
 _PILL_COLOR = (0x18, 0x18, 0x1B)
 # Pillow's RGBA LANCZOS path filters premultiplied channels; the blue channel
 # needs one high-resolution quantum so an interior output pixel lands on the
@@ -60,8 +74,6 @@ _FONT_PATH = _ASSETS / "fonts" / "Caveat-wght.ttf"
 
 STATE_LABELS: Mapping[OverlayState, str] = MappingProxyType(
     {
-        OverlayState.RECORDING: "Recording",
-        OverlayState.MODEL_LOADING: "Loading model",
         OverlayState.TRANSCRIBING: "Transcribing",
         OverlayState.DELIVERING: "Delivering",
         OverlayState.ERROR: "Error",
@@ -71,7 +83,6 @@ STATE_LABELS: Mapping[OverlayState, str] = MappingProxyType(
 STATE_DOT_COLORS: Mapping[OverlayState, tuple[int, int, int, int]] = MappingProxyType(
     {
         OverlayState.RECORDING: (0xEF, 0x44, 0x44, 0xFF),
-        OverlayState.MODEL_LOADING: (0xF5, 0x9E, 0x0B, 0xFF),
         OverlayState.TRANSCRIBING: (0x3B, 0x82, 0xF6, 0xFF),
         OverlayState.DELIVERING: (0x8B, 0x5C, 0xF6, 0xFF),
         OverlayState.ERROR: (0xEF, 0x44, 0x44, 0xFF),
@@ -119,7 +130,13 @@ def _icon() -> Image.Image:
         return _crop_transparent(source)
 
 
+@lru_cache(maxsize=8)
 def _font(size: int) -> ImageFont.FreeTypeFont:
+    """Parse the variable label font once per size.
+
+    The returned instance is shared across renders: callers must treat it as
+    immutable and never re-set variation axes on it.
+    """
     font = ImageFont.truetype(_FONT_PATH, size=size)
     font.set_variation_by_axes([_LABEL_WEIGHT])
     return font
@@ -130,7 +147,130 @@ def _exclusive_box(bounds: tuple[int, int, int, int]) -> tuple[int, int, int, in
     return left, top, right - 1, bottom - 1
 
 
-def _render_high_resolution(
+def _validated_levels(levels: object | None) -> tuple[int, ...]:
+    if levels is None:
+        return (0,) * SPECTRUM_BANDS
+    if not isinstance(levels, tuple | list) or len(levels) != SPECTRUM_BANDS:
+        raise ValueError(f"recording spectrum requires {SPECTRUM_BANDS} levels")
+    if any(
+        not isinstance(level, int) or isinstance(level, bool) or not 0 <= level <= 255
+        for level in levels
+    ):
+        raise ValueError("recording spectrum levels must be integers from 0 to 255")
+    return tuple(levels)
+
+
+def loading_border_opacity(elapsed_seconds: object) -> float:
+    """Return the 60 fps, two-second sinusoidal loading-border opacity."""
+    if isinstance(elapsed_seconds, bool) or not isinstance(elapsed_seconds, int | float):
+        raise TypeError("loading elapsed time must be a number")
+    elapsed = float(elapsed_seconds)
+    if not math.isfinite(elapsed) or elapsed < 0:
+        raise ValueError("loading elapsed time must be finite and non-negative")
+    frame_elapsed = math.floor(elapsed * LOADING_ANIMATION_FPS) / LOADING_ANIMATION_FPS
+    phase = (frame_elapsed % LOADING_PULSE_SECONDS) / LOADING_PULSE_SECONDS
+    midpoint = (LOADING_OPACITY_MIN + LOADING_OPACITY_MAX) / 2.0
+    amplitude = (LOADING_OPACITY_MAX - LOADING_OPACITY_MIN) / 2.0
+    opacity = midpoint - amplitude * math.cos(math.tau * phase)
+    return min(LOADING_OPACITY_MAX, max(LOADING_OPACITY_MIN, opacity))
+
+
+@dataclass(slots=True)
+class LoadingPulse:
+    """Pure loading-pulse edge, elapsed, and frame-deadline math. PURE.
+
+    The class never reads a clock.  Backends stay the owners of deadline
+    lifecycle policy: when to arm the frame cadence, and when destroying or
+    recreating a surface clears (or deliberately preserves) the deadline.
+    """
+
+    active: bool = False
+    started_at: float | None = None
+    next_frame_at: float | None = None
+
+    def set_active(self, active: bool, now: float) -> bool:
+        """Apply one activity edge; return False for a duplicate edge."""
+        if active == self.active:
+            return False
+        self.active = active
+        self.started_at = now if active else None
+        self.next_frame_at = None
+        return True
+
+    def elapsed(self, now: float) -> float | None:
+        """Return the animation-driving elapsed time, or None while inactive."""
+        if not self.active or self.started_at is None:
+            return None
+        return max(0.0, now - self.started_at)
+
+    def timeout(self, now: float, visible: bool) -> float | None:
+        """Return the wait until the next armed frame, or None when idle."""
+        if not self.active or not visible or self.next_frame_at is None:
+            return None
+        return max(0.0, self.next_frame_at - now)
+
+    def frame_due(self, now: float, visible: bool) -> bool:
+        """Return whether an armed frame deadline has been reached."""
+        timeout = self.timeout(now, visible)
+        return timeout is not None and timeout <= 0.0
+
+    def advance(self, now: float) -> None:
+        """Re-arm one fixed frame interval after a due frame was drawn."""
+        self.next_frame_at = now + LOADING_FRAME_INTERVAL
+
+    def arm(self, now: float) -> None:
+        """Start (or restart) the frame cadence from ``now``."""
+        self.advance(now)
+
+    def disarm_frames(self) -> None:
+        """Clear the frame deadline without touching activity or start time."""
+        self.next_frame_at = None
+
+
+def spectrum_bar_bounds(
+    levels: object | None,
+    *,
+    pill_bounds: tuple[int, int, int, int] = (
+        _CANVAS_MARGIN_LEFT,
+        _CANVAS_MARGIN_TOP,
+        _CANVAS_MARGIN_LEFT + PILL_WIDTH,
+        _CANVAS_MARGIN_TOP + PILL_HEIGHT,
+    ),
+    scale: float = 1.0,
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Return deterministic exclusive pixel bounds for exactly 18 bars."""
+    values = _validated_levels(levels)
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError("scale must be finite and positive")
+    center_y = (pill_bounds[1] + pill_bounds[3]) // 2
+    left = pill_bounds[0] + _scaled(_SPECTRUM_LEFT, scale)
+    width = max(1, _scaled(_SPECTRUM_BAR_WIDTH, scale))
+    step = width + _scaled(_SPECTRUM_BAR_GAP, scale)
+    bounds = []
+    for index, level in enumerate(values):
+        logical_height = _SPECTRUM_MIN_HEIGHT + (
+            (_SPECTRUM_MAX_HEIGHT - _SPECTRUM_MIN_HEIGHT) * level / 255.0
+        )
+        height = max(1, _scaled(round(logical_height), scale))
+        top = center_y - height // 2
+        x = left + index * step
+        bounds.append((x, top, x + width, top + height))
+    return tuple(bounds)
+
+
+def _frame_geometry(scale: float) -> tuple[tuple[int, int], tuple[int, int, int, int]]:
+    target_size = (_scaled(CANVAS_WIDTH, scale), _scaled(CANVAS_HEIGHT, scale))
+    pill_left = (CANVAS_WIDTH - PILL_WIDTH) // 2
+    pill_bounds = (
+        _scaled(pill_left, scale),
+        _scaled(_CANVAS_MARGIN_TOP, scale),
+        _scaled(pill_left + PILL_WIDTH, scale),
+        _scaled(_CANVAS_MARGIN_TOP + PILL_HEIGHT, scale),
+    )
+    return target_size, pill_bounds
+
+
+def _render_static_high_resolution(
     state: OverlayState,
     target_size: tuple[int, int],
     pill_bounds: tuple[int, int, int, int],
@@ -177,16 +317,17 @@ def _render_high_resolution(
     icon_y = pill_top + (pill_bottom - pill_top - icon.height) // 2
     high.alpha_composite(icon, (icon_x, icon_y))
 
-    label_x = icon_slot_left + icon_slot_width + _scaled(_LABEL_GAP, scale) * factor
     label_center_y = (pill_top + pill_bottom) // 2
-    label_font = _font(max(1, round(_LABEL_FONT_SIZE * scale * factor)))
-    draw.text(
-        (label_x, label_center_y),
-        STATE_LABELS[state],
-        font=label_font,
-        fill=_TEXT_FILL,
-        anchor="lm",
-    )
+    if state is not OverlayState.RECORDING:
+        label_x = icon_slot_left + icon_slot_width + _scaled(_LABEL_GAP, scale) * factor
+        label_font = _font(max(1, round(_LABEL_FONT_SIZE * scale * factor)))
+        draw.text(
+            (label_x, label_center_y),
+            STATE_LABELS[state],
+            font=label_font,
+            fill=_TEXT_FILL,
+            anchor="lm",
+        )
 
     dot_center_x = pill_right - _scaled(_DOT_RIGHT_INSET, scale) * factor
     dot_center_y = label_center_y
@@ -204,21 +345,71 @@ def _render_high_resolution(
     return high.resize(target_size, Image.Resampling.LANCZOS)
 
 
-@lru_cache(maxsize=20)
-def _cached_render(
-    state: OverlayState, scale: float
+@lru_cache(maxsize=24)
+def _cached_static_render(
+    state: OverlayState,
+    scale: float,
 ) -> tuple[Image.Image, tuple[int, int, int, int]]:
-    target_size = (_scaled(CANVAS_WIDTH, scale), _scaled(CANVAS_HEIGHT, scale))
-    pill_bounds = (
-        _scaled(_CANVAS_MARGIN_LEFT, scale),
-        _scaled(_CANVAS_MARGIN_TOP, scale),
-        _scaled(_CANVAS_MARGIN_LEFT + PILL_WIDTH, scale),
-        _scaled(_CANVAS_MARGIN_TOP + PILL_HEIGHT, scale),
-    )
-    return _render_high_resolution(state, target_size, pill_bounds, scale), pill_bounds
+    """Cache the fully static frame (shadow, pill, icon, label, dot) per state.
+
+    Callers must NEVER draw on the returned image — it is the shared cached
+    instance.  Copy it before compositing anything dynamic on top.
+    """
+    target_size, pill_bounds = _frame_geometry(scale)
+    image = _render_static_high_resolution(state, target_size, pill_bounds, scale)
+    return image, pill_bounds
 
 
-def render_overlay(state: OverlayState, *, scale: float = 1.0) -> OverlayFrame:
+def _render_dynamic_layer(
+    levels: tuple[int, ...],
+    pill_bounds: tuple[int, int, int, int],
+    scale: float,
+    loading_alpha: int | None,
+) -> Image.Image:
+    factor = _DYNAMIC_SUPERSAMPLE
+    pill_size = (pill_bounds[2] - pill_bounds[0], pill_bounds[3] - pill_bounds[1])
+    high_size = tuple(value * factor for value in pill_size)
+    high_pill = (0, 0, *high_size)
+    high = Image.new("RGBA", high_size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(high)
+
+    if loading_alpha is not None:
+        inset = _scaled(LOADING_BORDER_INSET, scale) * factor
+        border_bounds = (
+            high_pill[0] + inset,
+            high_pill[1] + inset,
+            high_pill[2] - inset,
+            high_pill[3] - inset,
+        )
+        draw.rounded_rectangle(
+            _exclusive_box(border_bounds),
+            radius=max(1, (_scaled(_CORNER_RADIUS, scale) * factor) - inset),
+            outline=(*LOADING_BORDER_COLOR, loading_alpha),
+            width=max(1, _scaled(LOADING_BORDER_WIDTH, scale) * factor),
+        )
+
+    if levels:
+        for bounds in spectrum_bar_bounds(
+            levels,
+            pill_bounds=high_pill,
+            scale=scale * factor,
+        ):
+            draw.rounded_rectangle(
+                _exclusive_box(bounds),
+                radius=max(1, (bounds[2] - bounds[0]) // 2),
+                fill=_TEXT_FILL,
+            )
+
+    return high.resize(pill_size, Image.Resampling.LANCZOS)
+
+
+def render_overlay(
+    state: OverlayState,
+    *,
+    scale: float = 1.0,
+    levels: object | None = None,
+    loading_elapsed: object | None = None,
+) -> OverlayFrame:
     """Render a visible lifecycle state into a scale-aware RGBA canvas.
 
     ``hidden`` has no surface and is therefore deliberately not renderable.
@@ -234,8 +425,25 @@ def render_overlay(state: OverlayState, *, scale: float = 1.0) -> OverlayFrame:
     scale = float(scale)
     if not math.isfinite(scale) or scale <= 0:
         raise ValueError("scale must be finite and positive")
-    image, pill_bounds = _cached_render(state, scale)
-    return OverlayFrame(image.copy(), scale, pill_bounds)
+    if state is not OverlayState.RECORDING and levels is not None:
+        raise ValueError("spectrum levels apply only to the recording state")
+    normalized_levels = _validated_levels(levels) if state is OverlayState.RECORDING else ()
+    loading_alpha = (
+        None if loading_elapsed is None else round(loading_border_opacity(loading_elapsed) * 255)
+    )
+    static, pill_bounds = _cached_static_render(state, scale)
+    if normalized_levels or loading_alpha is not None:
+        dynamic = _render_dynamic_layer(
+            normalized_levels,
+            pill_bounds,
+            scale,
+            loading_alpha,
+        )
+        image = static.copy()
+        image.alpha_composite(dynamic, (pill_bounds[0], pill_bounds[1]))
+    else:
+        image = static.copy()
+    return OverlayFrame(image, scale, pill_bounds)
 
 
 def premultiplied_argb32(
@@ -251,24 +459,11 @@ def premultiplied_argb32(
     """
     if byteorder not in {"little", "big"}:
         raise ValueError("byteorder must be little or big")
-    source = image.convert("RGBA").tobytes()
-    packed = bytearray(len(source))
-    for offset in range(0, len(source), 4):
-        red, green, blue, alpha = source[offset : offset + 4]
-        premultiplied = (
-            (red * alpha + 127) // 255,
-            (green * alpha + 127) // 255,
-            (blue * alpha + 127) // 255,
-        )
-        if byteorder == "little":
-            packed[offset : offset + 4] = bytes(
-                (premultiplied[2], premultiplied[1], premultiplied[0], alpha)
-            )
-        else:
-            packed[offset : offset + 4] = bytes(
-                (alpha, premultiplied[0], premultiplied[1], premultiplied[2])
-            )
-    return bytes(packed)
+    premultiplied = image.convert("RGBa")
+    if byteorder == "little":
+        return premultiplied.tobytes("raw", "BGRa")
+    red, green, blue, alpha = premultiplied.split()
+    return Image.merge("RGBA", (alpha, red, green, blue)).tobytes()
 
 
 def overlay_position(

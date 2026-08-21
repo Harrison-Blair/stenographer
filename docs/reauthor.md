@@ -1,9 +1,10 @@
 # Stenographer Reauthor — Reference Document
 
-Status: **settled**. The decisions in §2 were made with the repo owner on 2026-08-12 —
-do not relitigate them during implementation. Everything else in this document is
-reference material extracted from the current codebase so it survives that code's
-deletion.
+Status: **settled**. The decisions in §2 were made with the repo owner on 2026-08-12,
+and the spectrum monitor details in §2.15/§4.17 were revised on 2026-08-19 and
+2026-08-20 — do not relitigate them during implementation. Everything else in this
+document is reference material extracted from the current codebase so it survives
+that code's deletion.
 
 ---
 
@@ -68,26 +69,47 @@ design was built on compositor-specific protocols; the new one must not be.
    plan's "no ydotool/uinput" decision is explicitly overturned: the permission
    story (`input` group / udev rule) is the same one the evdev hotkey listener
    already requires.
-7. **Delivery: single paste-chord path.** Copy the transcript to **both** Wayland
-   selections (clipboard + primary) via `wl-copy`, then send **Shift+Insert** via
+7. **Delivery: single paste-chord path.** Copy the transcript to **both**
+   selections (clipboard + primary), then send **Shift+Insert** via
    uinput — the most broadly honored paste chord across toolkits. Per-character
    typing and `max_chars` are cut. The clipboard is always written and doubles as
    the recovery path when focus is wrong.
+   *Amended 2026-08:* the clipboard write has two backends, selected **once at
+   daemon startup** by compositor capability — this is still one path per
+   session, not a per-utterance fallback. Compositors offering a data-control
+   protocol (`ext-data-control-v1` / `zwlr-data-control`: wlroots, GNOME ≥ 47)
+   get `wl-copy`. Without data-control (GNOME ≤ 46), `wl-copy` must map an
+   invisible focus-grabbing popup for a selection serial, and focus-stealing
+   prevention blocks that popup when the requester is a background daemon —
+   `wl-copy` hangs until timeout and delivery always fails. There the daemon
+   uses `xclip` under XWayland instead: X11 selection ownership needs no focus,
+   and Mutter bridges X11 CLIPBOARD/PRIMARY to the Wayland selections. The
+   xclip write is confirmed by a byte-exact read-back (`xclip -o`) before the
+   chord may fire, preserving §4.3 copy-confirmed-before-paste.
 8. **Cut from v1** (see §3 for the full table): incremental decoding / live
-   preview, audio visualization and the old GTK HUD, `toggle` and `hybrid`
-   trigger modes (**PTT only**), the cancel binding, `dictate`, `bench`, the five
+   preview and the old GTK HUD, the `hybrid`
+   trigger mode (hold PTT is the default), the cancel binding, `dictate`, `bench`, the five
    systemd wrapper subcommands, per-cue sound overrides. The sole visual
-   exception is the fixed, noninteractive lifecycle pill from decision 15.
+   exception is the isolated, noninteractive lifecycle pill from decision 15.
+   *Amended 2026-08-19:* `toggle` returned through the §7 ledger as
+   `hotkey.mode = "toggle"` — one pure press-edge mapping in the daemon
+   (`toggle_action`) plus a generation-guarded `audio.max_recording_seconds`
+   stop that ends a forgotten recording through the normal stop path; `hybrid`
+   stays cut.
 9. **CLI surface: five subcommands** — `run`, `model download`, `doctor`,
    `devices`, `transcribe FILE`.
-10. **ASR worker: child process kept, radically simplified.** One job at a time,
-    audio in → transcript out, restarted if dead, killed on idle timeout. No job
-    queue, no interim jobs, no supersession. Rationale: guaranteed memory release
-    on idle unload (~1.5 GB), crash isolation from native-library segfaults, and
-    the ability to abandon a stuck decode by killing the child. Results remain
+10. **ASR worker: child process kept, radically simplified.** One request at a
+    time: either load-only or audio in → transcript out. An accepted recording
+    start sends the load-only request on a background thread so cold model load
+    overlaps capture; decode waits for that same request if recording ends first.
+    The worker is restarted if dead and killed on idle timeout, with eviction
+    held from recording start through pipeline completion. No job queue, no
+    interim jobs, no supersession. Rationale: guaranteed memory release on idle
+    unload (~1.5 GB), crash isolation from native-library segfaults, and the
+    ability to abandon a stuck decode by killing the child. Results remain
     **word-timestamp-capable** so a streaming layer can be added on top later
     without rearchitecting.
-11. **Config: 4 sections, ~17 keys** (schema in §5). Hard validation with
+11. **Config: 4 sections, ~19 keys** (schema in §5). Hard validation with
     key-scoped errors; **no migrations** (sole config holder). Formatting is
     fixed behavior with zero knobs.
 12. **Testing policy** as codified in §6 — unit tests for pure logic only; a real
@@ -97,15 +119,33 @@ design was built on compositor-specific protocols; the new one must not be.
     3.14-only dependency to avoid. "Universally friendly" is a stated goal.
 14. **The name stays `stenographer`.** License stays GPL-3.0-or-later; every
     source file keeps the SPDX header.
-15. **Minimal lifecycle overlay.** A default-on, click-through 220×64 status
-    pill may display only `recording`, `model_loading`, `transcribing`,
-    `delivering`, or `error`; `hidden` removes it. It has no transcript preview,
-    audio/FFT data, animation, controls, or GTK dependency. A separately
-    supervised helper receives versioned, bounded, latest-state-coalescing NDJSON
-    containing only generation/state metadata and fixed lifecycle diagnostics.
-    Native layer-shell is preferred and XWayland is a best-effort fallback.
-    Helper/backend failure degrades to sound and notifications and cannot fail or
-    block the daemon. Lock screens and protected shell surfaces are out of scope.
+15. **Isolated lifecycle overlay with a narrow recording spectrum.** A default-on,
+    click-through pill may display only `recording`, `transcribing`, `delivering`,
+    or `error`; `hidden` removes it. Every visible state uses one 280×64 pill.
+    Recording is spectrum-first, with the feather, exactly 18 solid white bars,
+    and a red dot. The 5 px bars have 4 px gaps and range from a 4 px baseline to 44 px.
+    The bars animate only while the daemon is recording — the physical key-hold in
+    hold mode; in toggle mode, from the start press until the stop press or the
+    max-duration stop. The other states retain their fixed interiors. While
+    the model is actively loading, whichever pill is visible has a 4 logical px
+    inset `#F59E0B` border whose opacity follows a 25%–85% sinusoid over two seconds,
+    capped at 60 fps. The border has no glow, scaling, or movement; its timing is
+    entirely helper-local. The daemon-side supervisor analyzes all microphone
+    input with a rolling 32 ms Hann window at 60 fps, zero-padded to at least 4096
+    FFT points, and sends only 18 quantized levels plus a model-loading boolean
+    through strict protocol v4. Each band maps continuously from the configured
+    `feedback.spectrum_floor_dbfs` (default −45.0, valid −96 through −13 dBFS) to a
+    fixed −12 dBFS ceiling using 0.7 gamma and 2.5/22.5 ms attack/release. Input at
+    or below the floor maps to protocol level zero and input at or above the ceiling
+    maps to 255; less-negative floor values suppress more input. There is no rolling
+    calibration, learned per-band history, bootstrap delay, or display gate. Samples
+    and smoothing reset when recording starts. Raw samples and the internal stream
+    epoch never cross into the helper. There is no speech classification, voice gate,
+    transcript preview, controls, GTK dependency, or configurable visualizer
+    surface. Native layer-shell is preferred and XWayland is a best-effort fallback.
+    Helper/backend failure stops visualization work, degrades to sound and
+    notifications, and cannot fail or block dictation. Lock
+    screens and protected shell surfaces are out of scope.
 
 ---
 
@@ -115,16 +155,16 @@ Every feature of the current tool, so nothing disappears silently.
 
 | Current feature | Disposition | Notes |
 |---|---|---|
-| PTT trigger mode | **Keep** | The only mode. Key down = record, key up = stop. |
-| `toggle` / `hybrid` modes | Cut → later | Hybrid was the state-machine complexity driver (`PENDING_TAP`, double-tap windows, generation-guarded timers). |
+| PTT (hold) trigger mode | **Keep (default)** | `hotkey.mode = "hold"`: key down = record, key up = stop. |
+| `toggle` / `hybrid` modes | Toggle **added back 2026-08-19**; hybrid stays cut | Toggle is `hotkey.mode = "toggle"`: press to start, press again — or the `audio.max_recording_seconds` timer — to stop. Hybrid was the state-machine complexity driver (`PENDING_TAP`, double-tap windows) and remains cut. |
 | Cancel binding (Esc discard) | **Cut** | Owner decision; release the key and don't paste — or just delete the pasted text. |
 | evdev hotkey capture, auto-detect, hotplug rescan | **Keep (simplified)** | Multi-device auto-detect and rescan-on-error keep real value; see §4.9. |
 | Audio capture (PortAudio), RMS gate, resample fallback | **Keep** | See §4.2, §4.10. |
 | Silence/hallucination guard stack | **Keep** | VAD, no-speech gate, RMS gate, silence trimming, anti-hallucination decode settings — as fixed behavior. See §4.5–4.7. |
 | Incremental decoding / live preview (`live.py`, `streaming.py`, interim jobs) | Cut → later | ~1,500–2,000 lines existed to show words mid-utterance. Flagship add-later; v1 keeps the worker word-timestamp-capable. |
-| Lifecycle overlay | **Keep (fixed, optional)** | Metadata-only click-through pill; native layer-shell with XWayland fallback. No transcript, audio, FFT, controls, or animation. Failure never affects dictation. |
-| Visualizer / old HUD (GTK helper, transcript preview, FFT spectrum) | **Cut entirely** | The lifecycle overlay is not a door to preview or visualization. Feedback continues through sound cues and detailed error notifications. |
-| Sound cues (11) | **Keep, trimmed to 5** | `record_start`, `record_stop`, `delivered`, `error`, `model_loading`. Bundled WAVs; global `volume`/`mute` only, no per-cue overrides. |
+| Lifecycle overlay | **Keep (isolated, optional)** | Click-through pill; native layer-shell with XWayland fallback. Exactly 18 spectrum bars animate only while recording; a helper-local amber border breathes only while the model loads. State interiors remain fixed. Failure never affects dictation. |
+| Old HUD (GTK helper, transcript preview, controls, general visualizer) | **Cut entirely** | The narrow recording spectrum and loading border are not a door to transcript preview, raw-audio IPC, controls, GTK, or additional animated states. |
+| Sound cues (11) | **Keep, trimmed to 4** | `record_start`, `record_stop`, `delivered`, `error`. Bundled WAVs; global `volume`/`mute` only, no per-cue overrides. Model-loading activity is visual only. |
 | Desktop notifications (`notify-send`) | **Keep** | Errors only. No-op when absent. |
 | `type` injection via wtype | **Cut** | Replaced by decision 6/7. wtype dependency is gone entirely. |
 | `clipboard_paste` via wtype chord | **Replaced** | Same shape, chord now via uinput. |
@@ -143,7 +183,7 @@ Every feature of the current tool, so nothing disappears silently.
 | argcomplete fast path + bash completion | **Cut** | |
 | PyInstaller onedir build, `install.sh` | **Keep (local only)** | Development-machine build and single-user install; no release workflow, updater, or multi-distro installer. |
 | Idle model unload | **Keep** | Via killing the worker child. |
-| Eager/lazy model load knob | **Cut (always lazy)** | `model_loading` cue covers the first-use delay. |
+| Eager/lazy model load knob | **Cut (always press-lazy)** | A cold model starts loading on the first accepted recording start, not daemon startup; its border follows the load from Recording onto Transcribing when the post-recording wait remains. |
 | Single-instance flock | **Keep** | `$XDG_RUNTIME_DIR/stenographer.lock`, PID written into it. |
 | Rotating log file, privacy-safe logging | **Keep** | See §4.12. |
 | Error taxonomy + exit 78 convention | **Keep (smaller)** | One `StenographerError` base, `ConfigError`, a `fatal()` helper; exit 78 (`EX_CONFIG`) for config/capability failure. |
@@ -189,10 +229,11 @@ is a constraint on the new implementation.
    lands in a focused window.
 7. **Empty result is success-shaped, not error-shaped.** Recording with no speech
    (all gates fired) should end quietly — no paste, no error cue spam.
-8. **PortAudio callback discipline.** The audio callback must only copy the block
-   and return. No FFT, no analysis, no allocation-heavy work, no locks shared
-   with slow consumers. The old code's one-slot-queue + worker-thread pattern
-   exists because violating this causes overflows/dropouts.
+8. **PortAudio callback discipline.** The audio callback must only copy the mono
+   block, publish that existing copy through a bounded latest-only handoff, and
+   return. No FFT, smoothing, rendering, IPC, allocation-heavy work beyond the
+   required copy, or locks shared with slow consumers. The supervisor-thread
+   analyzer exists because violating this causes overflows/dropouts.
 9. **Sample-rate fallback.** Not every device opens at 16 kHz. The current
    Recorder falls back through supported rates and polyphase-resamples to the
    ASR rate. Keep this — it is the difference between "works on my mic" and
@@ -224,23 +265,45 @@ is a constraint on the new implementation.
     annotated defaults, then load. Defaults recursively merged under user values.
     Every validation failure is a key-scoped `ConfigError` → exit 78. (The old
     `null`→`""` regex rewrite is dropped; `""` is simply the documented "unset".)
-15. **First-use latency is a feature decision.** Lazy load means the first
-    utterance after start/idle-unload waits for model load (seconds). The
-    `model_loading` cue is what makes that acceptable — don't drop it.
+15. **First-use latency is a feature decision.** Press-lazy load means the first
+    accepted recording after daemon start/idle-unload begins loading the model
+    immediately while audio is captured. Only the portion still unfinished at
+    recording end delays transcription. Model loading is intentionally silent so
+    no loading cue can contaminate captured audio; the optional pill border shows
+    activity from load start through ready or failure.
 16. **The testing lesson (why §6 exists).** 489 unit tests stayed green while
     paste mode was dead for a year, because unit tests mocked `subprocess.run`
     and integration tests only ran by hand. Green ≠ working when every boundary
     is mocked.
 17. **Overlay isolation and privacy.** Lifecycle state is published only after
     the corresponding operation becomes true: recording after capture starts,
-    model loading only for a cold worker, transcription after a metadata-only
-    model-ready event, and delivery only for non-empty formatted output. Silence,
+    transcription after the speech gate passes (early only when a cold load is
+    unfinished, otherwise immediately before decode), and delivery only for
+    non-empty formatted output. A cold load may run during recording, but
+    `recording` remains the authoritative display state so a loading-activity edge
+    cannot invalidate spectrum frames. The amber border surrounds the recording
+    pill during a cold warm-up. If loading remains unfinished when recording ends
+    and the speech gate passes, the same-width `transcribing` state appears and the
+    same border carries across. The border is removed immediately after ready or
+    load failure. There is no loading display state, loading label/dot, or overlay
+    model-ready lifecycle record. Silence,
     empty output, and confirmed paste hide immediately; operational errors show a
     fixed `error` state for 2.5 seconds while detailed notifications remain
-    unchanged. IPC never contains transcript text, formatted text, audio,
-    samples, detailed errors, model names, device names, or user configuration.
-    Publishing is nonblocking and never performs display or process I/O while
-    the daemon state lock is held.
+    unchanged. When recording ends (key-up in hold mode; the stop press or
+    max-duration timer in toggle mode), analysis deactivates and `hidden` is
+    queued before sample finalization, so recording frames cannot survive into
+    transcription.
+    Variable IPC is limited to exactly 18 integer spectrum levels in `[0,255]`,
+    tied to the current recording generation and ordered by sequence, plus a strict
+    active/inactive model-loading boolean. Loading activity neither advances nor
+    resets recording generations, and pulse phase/timing never crosses IPC.
+    IPC never contains transcript text, formatted text, raw audio/samples, the
+    recorder stream epoch, detailed errors, model names, device names, or user
+    configuration. Spectrum input is not speech-gated or classified. The fixed
+    floor affects only display levels; the microphone signal remains untouched, and
+    energy above the floor may affect the overlay without affecting capture,
+    transcription, or delivery.
+    Analysis, rendering, and IPC stay off the PortAudio callback and daemon lock.
 
 ---
 
@@ -262,13 +325,15 @@ src/stenographer/
   config.py     ~150   TOML load, frozen dataclasses, key-scoped validation, default writer
   daemon.py     ~200   orchestrator: hotkey → record → transcribe → deliver; single-instance
                        lock; signal handling; the only module holding cross-component state
-  hotkey.py     ~150   evdev PTT listener: chord parse, keyboard auto-detect, rescan on error
-  audio.py      ~150   Recorder: PortAudio stream, block-copy callback, RMS gate,
-                       sample-rate fallback + resample, max-seconds cap
+  hotkey.py     ~150   evdev hotkey listener: chord parse/edges, keyboard auto-detect, rescan
+                       on error; the daemon maps edges to actions per hotkey.mode
+  audio.py      ~150   Recorder: PortAudio stream, block-copy/latest-only handoff,
+                       RMS gate, sample-rate fallback + resample, max-seconds cap
   worker.py     ~150   ASR child process: spawn, one request/response at a time,
                        restart-if-dead, kill-on-idle; queue logs to parent
-  status.py            lifecycle states, strict versioned protocol, pure coalescing policy
-  overlay.py           isolated helper supervision and display-backend selection
+  spectrum.py          pure fixed-range FFT, band mapping, smoothing, quantization
+  status.py            lifecycle states, strict protocol v4, pure coalescing/generation policy
+  overlay.py           isolated helper supervision, analyzer ownership, backend selection
   logging_setup.py     stderr + rotating state file, level resolver, worker log queue
   model.py      ~120   faster-whisper wrapper: decode settings from §4.5, word timestamps,
                        output validation, cpu_threads resolution
@@ -276,11 +341,10 @@ src/stenographer/
                        trailing space; batch variant for transcribe
   deliver.py     ~80   wl-copy both selections → confirm → uinput Shift+Insert,
                        release-guard first
-  feedback.py    ~60   5 cues via canberra/pw-play/paplay, volume/mute, no-op degrade
+  feedback.py    ~60   4 cues via canberra/pw-play/paplay, volume/mute, no-op degrade
   doctor.py      ~80   capability probe + resolved-config dump; exit 78 contract
   notify.py      ~40   notify-send errors, no-op degrade
-  assets/sounds/       5 WAVs (reuse current assets: ptt_on→record_start, ptt_off→record_stop,
-                       transcribe_done→delivered, error, model_loading)
+  assets/sounds/       4 WAVs (record_start, record_stop, delivered, error)
 ```
 
 Flat package — no subpackages until a directory earns it.
@@ -291,6 +355,7 @@ Flat package — no subpackages until a directory earns it.
 [stenographer.hotkey]
 binding = "KEY_RIGHTCTRL"    # evdev key/chord that triggers dictation
 device = ""                  # explicit /dev/input/event* path; "" = auto-detect
+mode = "hold"                # hold = push-to-talk; toggle = press to start, press again to stop
 
 [stenographer.audio]
 input_device = ""            # PortAudio device name/index; "" = system default
@@ -312,6 +377,7 @@ cpu_threads = 0              # 0 = auto (§4.10)
 volume = 0.6
 mute = false
 overlay = true                 # best-effort lifecycle pill; dictation is independent
+spectrum_floor_dbfs = -45.0    # less-negative values suppress more spectrum input
 ```
 
 Everything else that was configurable is now fixed behavior or gone.
@@ -319,15 +385,20 @@ Everything else that was configurable is now fixed behavior or gone.
 ### Worker contract
 
 - Child process (spawn), one outstanding request at a time.
-- Request: audio (float32 mono @ 16 kHz) + decode params. Response: formatted-input
-  segments **with word timestamps**, or a typed error.
-- Parent kills the child after `idle_unload_seconds` of no requests; next request
-  respawns it (cue: `model_loading`).
+- Load-only request: no audio; response is the metadata-only `model_ready` event
+  or a typed error. Decode request: float32 mono audio at 16 kHz; response is
+  formatted-input segments **with word timestamps**, or a typed error.
+- Parent kills the child after `idle_unload_seconds` of no requests; the next
+  request respawns it. Idle eviction is held while a recording and
+  its pipeline own the model, even when the timeout is shorter than the capture.
 - Child death mid-request → error cue + notify, respawn on next use. Never takes
   the daemon down.
-- On a cold request, parent observers receive `model_loading` before the job and
-  a metadata-only `model_ready` event after the child confirms the model is
-  loaded, before `transcribing`. Warm requests publish `transcribing` directly.
+- On an accepted recording start, a background thread sends the cold load-only
+  request. Parent observers receive loading start, then `model_ready` after the
+  child confirms the model, then loading finish. A failed load also reports finish
+  after its error response. A decode serializes behind an unfinished load and
+  publishes `transcribing` immediately before sending audio. Warm starts perform
+  no worker request until decode.
 - Model-load and decode records travel over a per-child logging queue to the
   parent's handlers. Idle unload, crash recovery, respawn, and shutdown stop the
   listener and close its queue; no child process owns a file handler.
@@ -338,11 +409,17 @@ Everything else that was configurable is now fixed behavior or gone.
 
 ```
 after lock → Recorder prepares a stopped stream → hotkey listener starts
-key down  → Recorder starts → overlay `recording` → record_start cue
-key up    → Recorder stops + secures samples → record_stop cue → RMS gate
-            └─ gate fails → overlay `hidden` (silently)
-          → cold worker: `model_loading` → `model_ready` metadata event
-          → overlay `transcribing` → worker result
+start (key down; toggle: first press)
+          → Recorder starts → hold idle eviction → overlay `recording` baseline + spectrum
+          → record_start cue → cold worker load-only request in background
+            └─ while loading: amber border on whichever pill is visible
+stop (key up; toggle: second press or the max_recording_seconds timer)
+          → overlay `hidden` → Recorder stops + secures samples → record_stop cue → RMS gate
+            └─ gate fails → remain `hidden` (silently)
+          → overlay `transcribing`
+            ├─ if cold load is unfinished: show while waiting
+            └─ otherwise: show immediately before decode
+          → worker result
             └─ empty/all-gated → overlay `hidden` (silently)
           → format non-empty result → overlay `delivering`
           → wl-copy (both selections) → confirm
@@ -350,6 +427,7 @@ key up    → Recorder stops + secures samples → record_stop cue → RMS gate
               NO chord (§4.3)
           → wait for binding release (§4.2) → uinput Shift+Insert
           → overlay `hidden` → delivered cue
+all outcomes → release idle-eviction hold
 ```
 
 The Recorder has three states: unprepared, prepared/stopped, and capturing.
@@ -363,8 +441,9 @@ mid-capture failure invalidates the stream and discards all buffered audio, so a
 later press prepares fresh and no partial transcript can be pasted. Cue failures
 cannot delay these capture boundaries or orphan a recording.
 
-One utterance at a time; a key-down during transcription of the previous utterance
-is ignored (v1 keeps no utterance queue).
+One utterance at a time; a start press during transcription of the previous
+utterance is ignored (toggle mode neither starts nor queues; v1 keeps no
+utterance queue).
 
 ---
 
@@ -373,8 +452,8 @@ is ignored (v1 keeps no utterance queue).
 Motivated by §4.16. These are rules, not suggestions:
 
 1. **Unit tests cover pure logic only** — formatter, config validation, RMS gate
-   math, worker-protocol encode/decode, hotkey chord parsing. Fast, no mocks of
-   external processes.
+   and spectrum math, protocol encode/decode and ordering, renderer geometry,
+   hotkey chord parsing. Fast, no mocks of external processes.
 2. **No mocked-subprocess theater.** A test that mocks `subprocess.run` /
    `UInput` / `wl-copy` and asserts "we would have called it" is worse than no
    test: it costs maintenance and manufactures false confidence. Delete on sight.
@@ -404,8 +483,8 @@ open. When one is added, it must still pass the §1 razor at that time.
 | Feature | Door kept open by |
 |---|---|
 | **Live preview / incremental decoding** (flagship) | Worker returns word timestamps; formatter is append-only by construction; a streaming driver layers *above* the worker exactly as `IncrementalDriver` did. Old references: LocalAgreement-N committer (`asr/streaming.py`), coalescing + single-final-decode design. |
-| **Transcript preview / audio visualizer** | Remains cut. The lifecycle overlay transports fixed metadata states only; adding text, audio, FFT data, or interim decoding requires revising this record. |
-| **Toggle mode** | The PTT listener maps key events → start/stop through one small function; a second mode is a new mapping, not a new architecture. Skip hybrid unless truly missed. |
+| **Transcript preview / general audio visualizer** | Remains cut. The approved exceptions are exactly 18 locally analyzed bars while recording and the helper-local model-loading border. Adding text, raw-audio IPC, controls, more animated states, or interim decoding requires revising this record. |
+| **Toggle mode** | *Done 2026-08-19.* Landed exactly through the door kept open: the listener still maps key events through `edge()`; toggle is one pure daemon-side mapping (`toggle_action`) plus a generation-guarded max-duration timer that ends a forgotten recording through the normal stop path. Hybrid remains skipped. |
 | **`bench`** | Standalone script in `scripts/`, driving the public `model.py` API. Does not re-enter the package. |
 | **Distribution layer** (installer, self-update, completions) | Blocked on external users existing. Clean config validation and a small codebase are the only v1 prerequisites, and both are core goals anyway. *Partially reintroduced 2026-08: the local PyInstaller onedir build (spec + hooks under `packaging/`, `scripts/build.sh`, BUILD.md) and a single-machine per-user installer (`scripts/install.sh`: bundle → `~/.local/share/stenographer`, symlink → `~/.local/bin`, systemd user unit from `packaging/stenographer.service`) — no CI release, no multi-distro/curl-pipe-bash installer, no completions, no self-update. Passed the §1 razor as a dev-machine convenience; the rest of this row stays gated.* |
 | **`dictate` one-shot** | Trivial recomposition of daemon pieces if ever wanted. |
@@ -443,6 +522,29 @@ reference.
   scratch works.*
 
 Real-dictation validation (M5) precedes any dev → main merge, per §6.4.
+
+The overlay acceptance on both Hyprland/wlroots and GNOME/Mutter verifies that
+the baseline recording pill maps immediately after recording starts (successful
+key-down, or the toggle start press). Steady fan and room noise at or below the
+configured floor stay on the 4 px baselines immediately, including on a newly
+opened stream, while quiet speech above the floor promptly affects the expected
+parts of its 18-band spectrum. The pill disappears when recording ends (physical
+key-up, the toggle stop press, or the max-duration stop). With
+`hotkey.mode = "toggle"`, the spectrum animates with no key held, and a short
+`max_recording_seconds` ends the session with the stop cue and a delivered
+transcript. On a cold press, the 4 px amber border begins breathing immediately
+while spectrum frames continue. A short recording carries the same border onto
+the same-width Transcribing pill without an intermediate loading state; it
+disappears if the model becomes ready while recording or after a load failure.
+No Loading model label or amber loading dot appears. Warm recordings show no
+border, and it returns after idle unload. All visible pills remain 280×64, with
+fixed labels, dots, geometry, and interiors; visible-state transitions and border
+repaints must not replace the layer surface/XWayland window or move or resize its
+304×88 transparent canvas. Disabling, killing, or losing the overlay never changes
+recording, transcription, or delivery success. The real XWayland smoke additionally
+checks the in-place Recording-to-Transcribing transition, spectrum and border
+repaint, and the empty input region. These checks require the opt-in integration
+suite and real hardware.
 
 ### Cold-start and logging acceptance
 

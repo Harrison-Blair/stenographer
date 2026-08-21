@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=__version__)
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=False)
 
     subparsers.add_parser("run", help="Run the dictation daemon.")
 
@@ -163,6 +163,9 @@ def dispatch(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.command is None:
+        parser.print_help()
+        return 0
     if args.command == "transcribe":
         return _cmd_transcribe(args)
     if args.command == "model":

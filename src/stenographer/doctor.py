@@ -45,14 +45,21 @@ class Capabilities:
     input_group: bool
     has_mic: bool
     model_cached: bool
-    wl_copy: bool
+    clipboard: bool
+    clipboard_backend: str
     audio_player: str | None
     service_enabled: str | None
     service_active: str | None
     overlay: OverlayCapability = dataclasses.field(default_factory=OverlayCapability.disabled)
 
 
-REQUIRED: tuple[str, ...] = ("uinput_writable", "input_group", "has_mic", "model_cached", "wl_copy")
+REQUIRED: tuple[str, ...] = (
+    "uinput_writable",
+    "input_group",
+    "has_mic",
+    "model_cached",
+    "clipboard",
+)
 
 _FIX_HINTS = {
     "uinput_writable": (
@@ -61,7 +68,11 @@ _FIX_HINTS = {
     "input_group": "sudo usermod -aG input $USER, then re-login",
     "has_mic": "no audio input device found; check the microphone / PortAudio",
     "model_cached": "run: stenographer model download",
-    "wl_copy": "install wl-clipboard",
+}
+
+_CLIPBOARD_FIX_HINTS = {
+    "wl-copy": "install wl-clipboard",
+    "x11": "install xclip (the compositor lacks a data-control protocol; GNOME 46 and older)",
 }
 
 _LABELS = {
@@ -69,7 +80,7 @@ _LABELS = {
     "input_group": "input group membership",
     "has_mic": "microphone",
     "model_cached": "ASR model cached",
-    "wl_copy": "wl-copy",
+    "clipboard": "clipboard",
 }
 
 _OVERLAY_FIX_HINTS = {
@@ -161,17 +172,28 @@ def probe_overlay(enabled: bool) -> OverlayCapability:
     return OverlayCapability.unavailable(reason)
 
 
+def _probe_clipboard() -> tuple[bool, str]:
+    """(needed binary present, detected backend name) for the delivery copy path."""
+    from stenographer.deliver import ClipboardBackend, detect_clipboard_backend
+
+    backend = detect_clipboard_backend()
+    binary = "xclip" if backend is ClipboardBackend.X11 else "wl-copy"
+    return shutil.which(binary) is not None, backend.value
+
+
 def probe(cfg: Config) -> Capabilities:
     """Read-only environment probe: no writes, no network, no device opens."""
     from stenographer import feedback, model
 
     service_enabled, service_active = _service_status()
+    clipboard_ok, clipboard_backend = _probe_clipboard()
     return Capabilities(
         uinput_writable=os.access("/dev/uinput", os.W_OK),
         input_group=_in_input_group(),
         has_mic=_has_mic(),
         model_cached=model.is_model_cached(cfg.asr.model),
-        wl_copy=shutil.which("wl-copy") is not None,
+        clipboard=clipboard_ok,
+        clipboard_backend=clipboard_backend,
         audio_player=feedback.detect_player(),
         service_enabled=service_enabled,
         service_active=service_active,
@@ -218,9 +240,17 @@ def render(caps: Capabilities, cfg: Config, config_path: pathlib.Path) -> str:
     ]
     for name in REQUIRED:
         ok = bool(getattr(caps, name))
-        line = f"  {_LABELS[name]}: {'ok' if ok else 'MISSING'}"
+        label = _LABELS[name]
+        if name == "clipboard":
+            label = f"clipboard ({caps.clipboard_backend})"
+        line = f"  {label}: {'ok' if ok else 'MISSING'}"
         if not ok:
-            line += f" — {_FIX_HINTS[name]}"
+            hint = (
+                _CLIPBOARD_FIX_HINTS.get(caps.clipboard_backend, _CLIPBOARD_FIX_HINTS["wl-copy"])
+                if name == "clipboard"
+                else _FIX_HINTS[name]
+            )
+            line += f" — {hint}"
         lines.append(line)
     player = caps.audio_player or "none (sound cues disabled)"
     lines.append(f"  audio player: {player}")

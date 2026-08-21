@@ -20,6 +20,7 @@ def test_defaults_match_spec():
     d = Config.defaults()
     assert d.hotkey.binding == "KEY_RIGHTCTRL"
     assert d.hotkey.device is None
+    assert d.hotkey.mode == "hold"
     assert d.audio.input_device is None
     assert d.audio.min_speech_rms == 0.0005
     assert d.audio.max_recording_seconds == 600
@@ -35,6 +36,7 @@ def test_defaults_match_spec():
     assert d.feedback.volume == 0.6
     assert d.feedback.mute is False
     assert d.feedback.overlay is True
+    assert d.feedback.spectrum_floor_dbfs == -45.0
 
 
 def test_write_default_round_trips(tmp_path):
@@ -68,6 +70,25 @@ def test_overlay_can_be_disabled_without_restating_feedback_defaults(tmp_path):
     assert cfg.feedback.overlay is False
     assert cfg.feedback.volume == Config.defaults().feedback.volume
     assert cfg.feedback.mute == Config.defaults().feedback.mute
+    assert cfg.feedback.spectrum_floor_dbfs == Config.defaults().feedback.spectrum_floor_dbfs
+
+
+@pytest.mark.parametrize("floor", [-96, -45.5, -13])
+def test_spectrum_floor_override_accepts_documented_range(tmp_path, floor):
+    p = tmp_path / "config.toml"
+    p.write_text(f"[stenographer.feedback]\nspectrum_floor_dbfs = {floor}\n")
+
+    assert Config.load(p).feedback.spectrum_floor_dbfs == float(floor)
+
+
+def test_toggle_mode_without_restating_hotkey_defaults(tmp_path):
+    # Seen to FAIL against the pre-change loader (AttributeError: no mode field).
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer.hotkey]\nmode = "toggle"\n')
+    cfg = Config.load(p)
+    assert cfg.hotkey.mode == "toggle"
+    assert cfg.hotkey.binding == Config.defaults().hotkey.binding
+    assert cfg.hotkey.device == Config.defaults().hotkey.device
 
 
 def test_empty_string_is_unset(tmp_path):
@@ -101,7 +122,11 @@ def test_unknown_keys_ignored(tmp_path):
         ("[stenographer.feedback]\nvolume = -1\n", "feedback.volume"),
         ('[stenographer.feedback]\nmute = "no"\n', "feedback.mute"),
         ('[stenographer.feedback]\noverlay = "yes"\n', "feedback.overlay"),
+        ("[stenographer.feedback]\nspectrum_floor_dbfs = -97\n", "feedback.spectrum_floor_dbfs"),
+        ("[stenographer.feedback]\nspectrum_floor_dbfs = -12\n", "feedback.spectrum_floor_dbfs"),
+        ('[stenographer.feedback]\nspectrum_floor_dbfs = "-45"\n', "feedback.spectrum_floor_dbfs"),
         ('[stenographer.hotkey]\nbinding = ""\n', "hotkey.binding"),
+        ('[stenographer.hotkey]\nmode = "hybrid"\n', "hotkey.mode"),
         ("[stenographer.audio]\nmax_recording_seconds = 0\n", "audio.max_recording_seconds"),
     ],
 )

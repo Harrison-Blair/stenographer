@@ -8,8 +8,8 @@ not exercise the decoder.
 
 Drop the files in this directory:
 
-- `speech_16k.wav` — a short spoken clip (a sentence or two). Drives the
-  new-vs-old equivalence test. Required for either smoke test to run.
+- `speech_16k.wav` — a short spoken clip (a sentence or two). Drives the public
+  CLI-vs-surviving-API equivalence test. Required for either smoke test to run.
 - `hotword_16k.wav` *(optional)* — a clip that names the proper noun
   `Anthropic`. Drives the hotwords test. If absent, the hotwords test skips.
 
@@ -23,7 +23,7 @@ arecord -f S16_LE -r 16000 -c 1 -d 3 speech_16k.wav
 With the clips present, the model cached, and `STENOGRAPHER_INTEGRATION=1`, run:
 
 ```sh
-STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest tests_v2/test_transcribe_smoke.py
+STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest tests/test_transcribe_smoke.py
 ```
 
 Without the env var, the fixtures, or the cached model, the whole module

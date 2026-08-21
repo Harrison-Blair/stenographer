@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Cue player: five bundled WAV cues via canberra/pw-play/paplay, volume/mute."""
+"""Cue player: four bundled WAV cues via canberra/pw-play/paplay, volume/mute."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
+from stenographer.childenv import child_env
+
 if TYPE_CHECKING:
     from stenographer.config import FeedbackConfig
 
 logger = logging.getLogger(__name__)
 
-CUES: frozenset[str] = frozenset(
-    {"record_start", "record_stop", "delivered", "error", "model_loading"}
-)
+CUES: frozenset[str] = frozenset({"record_start", "record_stop", "delivered", "error"})
 
 
 def build_play_command(player: str, path: pathlib.Path, volume: float) -> list[str]:
@@ -81,6 +81,7 @@ class Feedback:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=child_env(),
         )
 
     def close(self) -> None:
