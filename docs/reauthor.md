@@ -1,10 +1,10 @@
 # Stenographer Reauthor — Reference Document
 
 Status: **settled**. The decisions in §2 were made with the repo owner on 2026-08-12,
-and the spectrum monitor details in §2.15/§4.17 were revised on 2026-08-19 and
-2026-08-20 — do not relitigate them during implementation. Everything else in this
-document is reference material extracted from the current codebase so it survives
-that code's deletion.
+the spectrum monitor details in §2.15/§4.17 were revised on 2026-08-19 and
+2026-08-20, and interactive setup was authorized in §2.16 on 2026-08-20 — do not
+relitigate them during implementation. Everything else in this document is reference
+material extracted from the current codebase so it survives that code's deletion.
 
 ---
 
@@ -96,8 +96,10 @@ design was built on compositor-specific protocols; the new one must not be.
    (`toggle_action`) plus a generation-guarded `audio.max_recording_seconds`
    stop that ends a forgotten recording through the normal stop path; `hybrid`
    stays cut.
-9. **CLI surface: five subcommands** — `run`, `model download`, `doctor`,
-   `devices`, `transcribe FILE`.
+9. **CLI surface: six subcommands** — `run`, `model download`, `doctor`,
+   `devices`, `transcribe FILE`, and `setup`. Setup is interactive configuration
+   and first-use guidance, not a replacement for the direct commands or a new
+   systemd wrapper surface.
 10. **ASR worker: child process kept, radically simplified.** One request at a
     time: either load-only or audio in → transcript out. An accepted recording
     start sends the load-only request on a background thread so cold model load
@@ -109,9 +111,10 @@ design was built on compositor-specific protocols; the new one must not be.
     ability to abandon a stuck decode by killing the child. Results remain
     **word-timestamp-capable** so a streaming layer can be added on top later
     without rearchitecting.
-11. **Config: 4 sections, ~19 keys** (schema in §5). Hard validation with
+11. **Config: 4 sections, exactly 19 keys** (schema in §5). Hard validation with
     key-scoped errors; **no migrations** (sole config holder). Formatting is
-    fixed behavior with zero knobs.
+    fixed behavior with zero knobs. Interactive setup reviews and materializes
+    those same keys; it introduces no fifth section or hidden configuration.
 12. **Testing policy** as codified in §6 — unit tests for pure logic only; a real
     non-mocked smoke suite is a first-class deliverable and a merge gate.
 13. **Python floor drops to 3.12** (Ubuntu 24.04's system Python). Nothing needs
@@ -146,6 +149,47 @@ design was built on compositor-specific protocols; the new one must not be.
     Helper/backend failure stops visualization work, degrades to sound and
     notifications, and cannot fail or block dictation. Lock
     screens and protected shell surfaces are out of scope.
+16. **Interactive, preservation-first setup with one-shot display calibration.**
+    `stenographer setup` is a sectioned terminal wizard for the existing Hotkey,
+    Audio, ASR, and Feedback schema. It is TTY-only; noninteractive invocation exits
+    2. A valid existing document is edited in place semantically: all 19 known keys
+    are materialized while unknown keys, comments, inline comments, ordering, and
+    unrelated layout survive. Enter retains the current value; optional strings have
+    an explicit clear action. Detected audio and hotkey devices are offered without
+    removing automatic-device or manual-entry choices. Trigger mode offers only
+    `hold` and `toggle`; hybrid remains cut. Invalid existing configuration exits 78
+    unchanged. The final review can save, cancel, or return to any section. Normal
+    cancellation exits 0 without changes; Ctrl-C or EOF exits 130.
+
+    Before writing, setup re-reads the source and refuses a concurrent edit, validates
+    the rendered TOML through the production `Config` schema, and proves that it
+    reloads to the reviewed values. Unchanged bytes are not rewritten. An existing
+    file receives a byte-exact, never-overwritten UTC timestamp backup; replacement
+    is same-directory and atomic, preserves the target mode, and follows a symlink
+    target rather than replacing the symlink.
+
+    `feedback.spectrum_floor_dbfs` may be kept, entered manually, or calibrated once.
+    Setup must say prominently that this value controls only the 18 display bars: it
+    never changes capture, `audio.min_speech_rms`, the speech gate, or transcription.
+    Automatic calibration prepares the selected microphone, gives a silent three-second
+    countdown, captures five seconds through the normal `Recorder`, then stops capture
+    before doing any analysis. It discards the first 0.5 seconds, uses non-overlapping
+    32 ms windows, takes each spectrum band's 95th-percentile noise level, selects the
+    loudest band, adds 3 dB, and rounds upward. Quiet valid results clamp to −96 dBFS;
+    values above −13 dBFS are rejected instead of accepted as a bad ambient baseline.
+    Short, digitally silent, and strongly nonstationary captures are also rejected.
+    Success or failure offers accept/retry/manual/keep as applicable. Every path closes
+    the recorder and clears captured samples. Calibration performs no ASR, persistence,
+    IPC, callback analysis, audio logging, rolling learning, or speech-gate calibration.
+
+    After a successful save, setup may offer the explicit ~1.5 GB network download only
+    when the selected model is absent, then runs the normal doctor probe and reports all
+    capabilities. Missing required capabilities skip restart and exit 78. When bytes
+    changed at the standard config path and the standard systemd user service is already
+    active, setup offers a restart, defaulting to yes. It never installs, enables, or
+    starts an inactive service and instead prints the relevant command; it never restarts
+    for a custom `STENOGRAPHER_CONFIG` path. Write, download, probe, or restart failures
+    exit 1, and a saved configuration is never rolled back after a follow-up failure.
 
 ---
 
@@ -175,6 +219,7 @@ Every feature of the current tool, so nothing disappears silently.
 | `model download` | **Keep** | Models are never bundled. |
 | `doctor` | **Keep (small)** | Probe: uinput access, input group, mic, model cache, `wl-copy`, audio player. Exit 78 on missing required capability. |
 | `devices` | **Keep** | ~20 lines serving `audio.input_device`. |
+| `setup` | **Keep (interactive)** | Reviews all 19 current keys, optionally performs one-shot display-floor calibration, then guides model download, doctor, and an eligible active-service restart. No new config or systemd management surface. |
 | `dictate` (one-shot) | **Cut** | Niche. |
 | `bench` (WER matrix, incremental replay) | Cut → later | Real value when choosing models; can return as a standalone `scripts/` script. |
 | `enable`/`disable`/`start`/`stop`/`status` | **Cut** | Ship the unit file; document three `systemctl --user` one-liners in the README. |
@@ -321,8 +366,11 @@ not to grow the budget.
 src/stenographer/
   __init__.py          version re-export
   _version.py          single version string (no -dev gymnastics in v1)
-  cli.py        ~150   argparse + dispatch: run / transcribe / model download / doctor / devices
+  cli.py        ~150   lazy dispatch: run / transcribe / model download / doctor / devices / setup
   config.py     ~150   TOML load, frozen dataclasses, key-scoped validation, default writer
+  setup.py             interactive sections, review, and post-save guidance
+  setup_config.py      preservation-first TOML transformation, validation, atomic persistence
+  calibration.py       pure one-shot spectrum-floor estimator + Recorder boundary
   daemon.py     ~200   orchestrator: hotkey → record → transcribe → deliver; single-instance
                        lock; signal handling; the only module holding cross-component state
   hotkey.py     ~150   evdev hotkey listener: chord parse/edges, keyboard auto-detect, rescan
@@ -381,6 +429,10 @@ spectrum_floor_dbfs = -45.0    # less-negative values suppress more spectrum inp
 ```
 
 Everything else that was configurable is now fixed behavior or gone.
+
+`stenographer setup` materializes exactly this schema; calibration only chooses a
+value for the existing `feedback.spectrum_floor_dbfs` key. It does not add a
+speech threshold, a learned floor, or any other persisted state.
 
 ### Worker contract
 
@@ -452,8 +504,9 @@ utterance queue).
 Motivated by §4.16. These are rules, not suggestions:
 
 1. **Unit tests cover pure logic only** — formatter, config validation, RMS gate
-   and spectrum math, protocol encode/decode and ordering, renderer geometry,
-   hotkey chord parsing. Fast, no mocks of external processes.
+   and spectrum/calibration math, protocol encode/decode and ordering, renderer
+   geometry, hotkey chord parsing, setup prompt/decision parsing, and TOML
+   transformation. Fast, no mocks of external processes.
 2. **No mocked-subprocess theater.** A test that mocks `subprocess.run` /
    `UInput` / `wl-copy` and asserts "we would have called it" is worse than no
    test: it costs maintenance and manufactures false confidence. Delete on sight.
@@ -464,6 +517,9 @@ Motivated by §4.16. These are rules, not suggestions:
    (`STENOGRAPHER_INTEGRATION=1 pytest`), on the real machine.
    It also exercises real rotating/fallback logging and verifies that a spawned
    worker forwards decode metrics without exposing the fixture transcript.
+   Setup smoke coverage uses a real filesystem, microphone, and systemd user
+   service where applicable; it never mocks PortAudio, model download,
+   `subprocess`, or systemd to manufacture success.
 4. **The smoke suite is a merge gate.** No dev → main merge without a green smoke
    run on a real box — the existing habit, now written down.
 5. **Mock-only testability is a design smell.** If a component can only be tested
@@ -520,8 +576,17 @@ reference.
   package, old tests, `update.py`-era workflows, GUI-reauthor workflow files;
   reconcile `CLAUDE.md`. *Verify: full smoke suite green; fresh-venv install from
   scratch works.*
+- **M7 — Interactive setup.** Add preservation-first editing of the existing
+  schema, one-shot display-floor calibration, and guided model/doctor/service
+  follow-up. *Verify: pure decision/statistics/TOML tests; opt-in real filesystem,
+  microphone, model, doctor, and service smoke; standalone bundle builds.*
 
 Real-dictation validation (M5) precedes any dev → main merge, per §6.4.
+
+Setup calibration additionally requires a manual real-room check: steady room
+noise should remain at the overlay baseline while quiet speech still animates and
+transcribes. Real hold and toggle dictation must both be rechecked afterward; the
+calibrated display floor must not alter either path.
 
 The overlay acceptance on both Hyprland/wlroots and GNOME/Mutter verifies that
 the baseline recording pill maps immediately after recording starts (successful

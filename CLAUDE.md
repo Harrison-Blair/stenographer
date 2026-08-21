@@ -36,7 +36,8 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 - **Test (unit):** `.venv/bin/pytest -m "not integration"`
 - **Test (all, incl. env-touching):** `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest`
 - **Single test:** `.venv/bin/pytest tests/test_daemon.py::test_name`
-- **CLI smoke:** `.venv/bin/stenographer --help` / `--version`
+- **CLI smoke:** `.venv/bin/stenographer --help` / `--version` /
+  `.venv/bin/stenographer setup --help`
 
 `integration`-marked tests touch the real clipboard / audio / uinput / model and
 are skipped unless `STENOGRAPHER_INTEGRATION=1` is set.
@@ -59,9 +60,23 @@ are skipped unless `STENOGRAPHER_INTEGRATION=1` is set.
 
 Flat package `src/stenographer/` (src-layout); `tests/` mirrors it.
 
-- **`cli.py`** — argparse surface + dispatch: `run`, `transcribe`,
-  `model download`, `doctor`, `devices`. Heavy imports (faster-whisper,
+- **`cli.py`** — argparse surface + lazy dispatch: `run`, `transcribe`,
+  `model download`, `doctor`, `devices`, `setup`. Heavy imports (faster-whisper,
   sounddevice, evdev) stay inside subcommand handlers, never at module scope.
+- **`setup.py`** — TTY-only, sectioned review of all 19 existing config keys,
+  final save/cancel/re-edit decision, and post-save model/doctor/service guidance.
+  It offers only `hold` and `toggle`; it never installs, enables, or starts an
+  inactive service. A changed standard config may restart an already-active
+  standard user service, but a custom `STENOGRAPHER_CONFIG` path never does.
+- **`setup_config.py`** — tomlkit-backed preservation of comments, ordering,
+  unknown content, and symlinks while materializing the complete schema. It
+  validates through production `Config`, detects concurrent edits, creates an
+  exact timestamped backup, and atomically preserves the target mode. Unchanged
+  bytes are not written.
+- **`calibration.py`** — one-shot, post-capture estimator for the existing
+  `feedback.spectrum_floor_dbfs`. It uses the selected `Recorder`, never analyzes
+  in the callback, and never affects capture, `min_speech_rms`, speech gating,
+  ASR, persistence beyond that fixed key, or overlay IPC.
 - **`daemon.py`** — the orchestrator: hotkey → record → transcribe → deliver;
   single-instance flock on `$XDG_RUNTIME_DIR/stenographer.lock`; signal
   handling. It prepares audio after taking the lock and before starting the
@@ -110,12 +125,24 @@ Flat package `src/stenographer/` (src-layout); `tests/` mirrors it.
   fallbacks; degrades to no-op.
 - **`doctor.py`** — capability probe; exit 78 when a required capability is
   missing. `notify.py` — `notify-send` errors, no-op if absent.
-- **`config.py`** — TOML config, 4 sections (`hotkey`, `audio`, `asr`,
-  `feedback`), frozen dataclasses, key-scoped `ConfigError` → exit 78, missing
-  file written with annotated defaults. No migrations.
+- **`config.py`** — TOML config, exactly 19 keys in 4 sections (`hotkey`,
+  `audio`, `asr`, `feedback`), frozen dataclasses, key-scoped `ConfigError` →
+  exit 78, missing file written with annotated defaults, and an in-memory load
+  path used to validate setup output. No migrations or extra setup-only keys.
   `hotkey.mode` (`hold` | `toggle`) defaults to `hold`. `feedback.overlay`
   defaults true and controls only the optional visual surface;
   `feedback.spectrum_floor_dbfs` defaults to −45.0 dBFS.
+
+`stenographer setup` requires a TTY: non-TTY exits 2, normal cancellation exits
+0, and Ctrl-C/EOF exits 130. Invalid existing configuration and missing required
+doctor capabilities exit 78; write, download, probe, and restart failures exit 1.
+After saving, failures are reported without rolling configuration back. Automatic
+floor calibration is a static five-second room-noise measurement after a silent
+three-second countdown: discard 0.5 seconds, measure non-overlapping 32 ms windows,
+take each band's 95th percentile, use the loudest +3 dB rounded upward, clamp quiet
+valid results to −96 dBFS, and reject results above −13 dBFS plus short, digitally
+silent, or strongly nonstationary captures. It is not rolling calibration or
+speech-gate calibration.
 
 The ASR model (~1.5 GB) is **never** bundled — `stenographer model download`
 fetches it once. `asr.hotwords` require a full (non-distil) model.

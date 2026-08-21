@@ -45,6 +45,17 @@ def test_write_default_round_trips(tmp_path):
     assert Config.load(p) == Config.defaults()
 
 
+def test_loads_validates_without_a_file():
+    assert Config.loads("[stenographer.asr]\nbeam_size = 4\n").asr.beam_size == 4
+
+
+def test_loads_uses_supplied_path_in_errors():
+    path = pathlib.Path("reviewed-config.toml")
+    with pytest.raises(ConfigError) as exc:
+        Config.loads("[stenographer.asr]\nbeam_size = 0\n", path)
+    assert exc.value.path == path
+
+
 def test_load_or_default_writes_missing_file(tmp_path, monkeypatch):
     p = tmp_path / "nested" / "config.toml"
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(p))

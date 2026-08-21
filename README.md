@@ -63,10 +63,13 @@ the original ~9k-line tool down to ~2k lines. The design record lives in
 git clone https://github.com/Harrison-Blair/stenographer
 cd stenographer
 python3 -m venv .venv && .venv/bin/pip install -e .
-.venv/bin/stenographer model download   # ~1.5 GB, once
-.venv/bin/stenographer doctor           # checks permissions, mic, model
+.venv/bin/stenographer setup            # configure, optionally download, check capabilities
 .venv/bin/stenographer run              # foreground daemon
 ```
+
+`setup` reviews the complete configuration, offers the explicit ~1.5 GB model
+download when needed, and runs the normal capability probe. You can instead run
+`stenographer model download` and `stenographer doctor` directly.
 
 Hold the hotkey (default: right-Ctrl), speak, release. The transcript is pasted
 at your cursor and left on the clipboard. Prefer press-to-start,
@@ -150,7 +153,7 @@ command continues with stderr logging and reports the problem there.
 ## Configuration
 
 `~/.config/stenographer/config.toml` is created with annotated defaults on
-first run. Four sections:
+first run. Its four sections contain 19 supported keys:
 
 | Section | Keys |
 |---|---|
@@ -161,6 +164,44 @@ first run. Four sections:
 
 Note: `hotwords` require a full (non-distil) model — the default
 `Systran/faster-whisper-medium.en` supports them.
+
+### Interactive setup
+
+Run `stenographer setup` in a terminal to review Hotkey, Audio, ASR, and
+Feedback one section at a time. It supports only the documented `hold` and
+`toggle` trigger modes. Detected microphone and hotkey devices are offered while
+keeping automatic-device and manual-entry choices available. Enter retains the
+displayed value; optional strings have an explicit clear choice. The final
+review can save, cancel without making changes, or return to any section.
+
+Setup materializes all 19 supported keys but preserves hand-written comments,
+inline comments, ordering, unknown keys, and unrelated layout. Before writing,
+it refuses to overwrite a file changed while the wizard was open and validates
+the result with the same schema used by every other command. An existing file
+gets an exact timestamped `.bak-…Z` copy; the replacement is atomic, retains the
+file mode, and updates a symlink target without replacing the symlink. If the
+rendered bytes are unchanged, neither the config nor a backup is written.
+
+For `feedback.spectrum_floor_dbfs`, choose Keep, Manual, or Automatic.
+Automatic calibration asks for a quiet room, counts down for three seconds,
+then records five seconds from the selected microphone. This is a one-time,
+fixed baseline for the 18 visual bars only. It never changes captured audio,
+`audio.min_speech_rms`, speech detection, or transcription, and it does not
+learn or adjust while the daemon runs. Unusable captures can be retried or
+replaced with a manual value without changing the current setting.
+
+After saving, setup offers the network model download only if the selected
+model is absent and then reports every result from `stenographer doctor`. It
+does not restart when a required capability is missing. If configuration bytes
+changed and the standard systemd user service is already active, it offers to
+restart it (default: yes). It never installs, enables, or starts an inactive
+service, and it never restarts a service when `STENOGRAPHER_CONFIG` selects a
+custom path; in those cases it prints the command to run yourself.
+
+Setup requires an interactive terminal. A normal Cancel exits 0, Ctrl-C or EOF
+exits 130, non-TTY use exits 2, invalid configuration or missing required
+capabilities exits 78, and write/download/probe/restart failures exit 1. Once a
+configuration is saved, a later setup failure does not roll it back.
 
 ### Overlay scope and limitations
 
@@ -193,6 +234,7 @@ success state, and it never takes keyboard or pointer input. Every visible pill 
 | `stenographer model download` | fetch the ASR model into the local cache |
 | `stenographer doctor` | capability probe with fix hints |
 | `stenographer devices` | list audio input devices |
+| `stenographer setup` | interactively review config and guide first-use checks |
 
 ## Development
 

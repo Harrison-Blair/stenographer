@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("doctor", help="Probe required capabilities.")
     subparsers.add_parser("devices", help="List audio input devices.")
+    subparsers.add_parser("setup", help="Interactively review configuration and capabilities.")
 
     return parser
 
@@ -158,6 +159,12 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return doctor.run(cfg, config.resolve_config_path())
 
 
+def _cmd_setup(args: argparse.Namespace) -> int:
+    from stenographer import setup
+
+    return setup.run()
+
+
 def dispatch(argv: Sequence[str] | None = None) -> int:
     """Parse ``argv`` and dispatch; startup boundaries belong in :func:`main`."""
     parser = build_parser()
@@ -174,7 +181,9 @@ def dispatch(argv: Sequence[str] | None = None) -> int:
         return _cmd_run(args)
     if args.command == "doctor":
         return _cmd_doctor(args)
-    return _cmd_devices(args)
+    if args.command == "devices":
+        return _cmd_devices(args)
+    return _cmd_setup(args)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

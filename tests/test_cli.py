@@ -30,7 +30,7 @@ def test_no_command_prints_help(capsys):
     assert dispatch([]) == 0
     out = capsys.readouterr().out
     assert "usage: stenographer" in out
-    for command in ("run", "transcribe", "model", "doctor", "devices"):
+    for command in ("run", "transcribe", "model", "doctor", "devices", "setup"):
         assert command in out
 
 
@@ -52,7 +52,7 @@ def test_model_download_subcommand():
     assert args.model_command == "download"
 
 
-@pytest.mark.parametrize("command", ["run", "doctor", "devices"])
+@pytest.mark.parametrize("command", ["run", "doctor", "devices", "setup"])
 def test_plain_subcommands_parse(command):
     args = build_parser().parse_args([command])
     assert args.command == command
@@ -66,6 +66,13 @@ def test_doctor_and_devices_dispatch_to_handlers(command, handler, monkeypatch):
     monkeypatch.setattr(cli, handler, lambda args: hits.append(command) or 0)
     assert dispatch([command]) == 0
     assert hits == [command]
+
+
+def test_setup_dispatches_to_handler(monkeypatch):
+    hits = []
+    monkeypatch.setattr(cli, "_cmd_setup", lambda args: hits.append(args.command) or 0)
+    assert dispatch(["setup"]) == 0
+    assert hits == ["setup"]
 
 
 def test_format_input_devices_marks_default_and_skips_outputs():

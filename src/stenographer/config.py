@@ -239,6 +239,13 @@ class Config:
             content = path.read_text(encoding="utf-8")
         except OSError as e:
             raise ConfigError(path, "<file>", f"cannot read: {e}") from e
+
+        return cls.loads(content, path)
+
+    @classmethod
+    def loads(cls, content: str, path: pathlib.Path = pathlib.Path("<memory>")) -> Config:
+        """Load and validate TOML already held in memory."""
+
         try:
             raw = tomllib.loads(content)
         except tomllib.TOMLDecodeError as e:
@@ -264,7 +271,9 @@ class Config:
         path.write_text(_DEFAULT_TOML, encoding="utf-8")
 
 
-def resolve_config_path() -> pathlib.Path:
+def resolve_config_path(*, create_parent: bool = True) -> pathlib.Path:
+    """Return the configured path, optionally creating its parent directory."""
+
     env_path = os.environ.get("STENOGRAPHER_CONFIG")
     if env_path:
         path = pathlib.Path(env_path)
@@ -272,7 +281,8 @@ def resolve_config_path() -> pathlib.Path:
         xdg = os.environ.get("XDG_CONFIG_HOME")
         base = pathlib.Path(xdg) if xdg else pathlib.Path.home() / ".config"
         path = base / "stenographer" / "config.toml"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if create_parent:
+        path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
