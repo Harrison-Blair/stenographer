@@ -114,11 +114,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     setup_logging()
     arguments = tuple(sys.argv[1:] if argv is None else argv)
     # Private helper re-exec path: it intentionally bypasses argparse so it is
-    # absent from the public command list and every help surface.
-    from stenographer.overlay import private_entry_requested
+    # absent from the public command list and every help surface. The check
+    # comes from the stdlib-only entry module; the helper itself is imported
+    # only on the positive branch because it needs the runtime dependencies.
+    from stenographer.overlay.entry import private_entry_requested
 
     if private_entry_requested(arguments):
-        from stenographer.overlay import run_overlay_helper
+        from stenographer.overlay.supervisor import run_overlay_helper
 
         return run_overlay_helper()
     return dispatch(arguments)

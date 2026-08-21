@@ -17,10 +17,10 @@ import sys
 import threading
 import time
 from collections import deque
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import BinaryIO
 
+from stenographer.overlay.entry import OVERLAY_ENTRY_ARG
 from stenographer.overlay.spectrum import (
     DEFAULT_SPECTRUM_FLOOR_DBFS,
     SPECTRUM_FPS,
@@ -58,8 +58,8 @@ _SPECTRUM_INTERVAL = 1.0 / SPECTRUM_FPS
 def helper_command(executable: str, *, frozen: bool) -> tuple[str, ...]:
     """Return the private helper re-exec command without inspecting process state."""
     if frozen:
-        return executable, "_overlay"
-    return executable, "-m", "stenographer.cli", "_overlay"
+        return executable, OVERLAY_ENTRY_ARG
+    return executable, "-m", "stenographer.cli", OVERLAY_ENTRY_ARG
 
 
 def helper_ready_timed_out(
@@ -608,8 +608,3 @@ def run_overlay_helper(
         with contextlib.suppress(Exception):
             backend.close()
     return 0
-
-
-def private_entry_requested(argv: Sequence[str]) -> bool:
-    """Recognize the exact non-argparse helper entry path."""
-    return tuple(argv) == ("_overlay",)
