@@ -25,10 +25,13 @@ fixed. It must never grow transcript preview, controls, GTK, or raw-audio IPC.
 
 ## Layout
 
-- `src/stenographer/` — flat modules including `cli`, `config`, `daemon`, `hotkey`,
-  `audio`, `worker`, `model`, `format`, `deliver`, `feedback`, `doctor`,
-  `notify`, plus `assets/sounds/` (4 WAV cues).
-- `tests/` — unit tests (pure logic) plus `test_*_smoke.py` integration tests.
+- `src/stenographer/` — core modules at the root (`daemon`, `hotkey`, `audio`,
+  `config`, `status`) plus subpackages: `cli/` (surface, `commands/`, setup and
+  doctor engines), `transcribe/` (`worker`, `model`, `format`), `overlay/`
+  (supervisor, backends, `protocols/`), `delivery/` (`deliver`, `feedback`,
+  `notify`), `utils/`, and `assets/` (WAV cues, icon, font).
+- `tests/` — mirrors the subpackage grouping; unit tests (pure logic) plus
+  `test_*_smoke.py` integration tests.
 - `packaging/stenographer.service` — the systemd user unit.
 - `scripts/build.sh` / `scripts/install.sh` — local bundle and per-user install.
 - `docs/` — `reauthor.md` (design record), `code-smells.md` and

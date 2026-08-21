@@ -35,7 +35,7 @@ from stenographer.daemon import (
     should_publish_state,
     toggle_action,
 )
-from stenographer.deliver import ClipboardBackend
+from stenographer.delivery.deliver import ClipboardBackend
 from stenographer.status import OverlayState
 
 

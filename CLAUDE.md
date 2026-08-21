@@ -58,22 +58,30 @@ are skipped unless `STENOGRAPHER_INTEGRATION=1` is set.
 
 ## Architecture
 
-Flat package `src/stenographer/` (src-layout); `tests/` mirrors it.
+Package `src/stenographer/` (src-layout), grouped into subpackages; `tests/`
+mirrors the grouping. Core modules stay at the package root: `daemon.py`,
+`hotkey.py`, `audio.py`, `config.py`, `status.py`, plus the `assets/` data dir.
+Subpackages: `cli/` (surface + subcommand engines), `transcribe/` (ASR),
+`overlay/` (visual feedback + vendored `protocols/`), `delivery/` (output
+surfaces), `utils/` (`childenv.py`, `logging_setup.py`).
 
-- **`cli.py`** — argparse surface + lazy dispatch: `run`, `transcribe`,
-  `model download`, `doctor`, `devices`, `setup`. Heavy imports (faster-whisper,
-  sounddevice, evdev) stay inside subcommand handlers, never at module scope.
-- **`setup.py`** — TTY-only, sectioned review of all 19 existing config keys,
+- **`cli/`** — argparse surface + lazy dispatch in `cli/__init__.py` (console
+  script `stenographer.cli:main`); `cli/__main__.py` keeps the helper re-exec
+  `python -m stenographer.cli` working; thin per-subcommand handlers in
+  `cli/commands/`: `run`, `transcribe`, `model download`, `doctor`, `devices`,
+  `setup`. Heavy imports (faster-whisper, sounddevice, evdev) stay inside
+  subcommand handlers, never at module scope.
+- **`cli/setup.py`** — TTY-only, sectioned review of all 19 existing config keys,
   final save/cancel/re-edit decision, and post-save model/doctor/service guidance.
   It offers only `hold` and `toggle`; it never installs, enables, or starts an
   inactive service. A changed standard config may restart an already-active
   standard user service, but a custom `STENOGRAPHER_CONFIG` path never does.
-- **`setup_config.py`** — tomlkit-backed preservation of comments, ordering,
+- **`cli/setup_config.py`** — tomlkit-backed preservation of comments, ordering,
   unknown content, and symlinks while materializing the complete schema. It
   validates through production `Config`, detects concurrent edits, creates an
   exact timestamped backup, and atomically preserves the target mode. Unchanged
   bytes are not written.
-- **`calibration.py`** — one-shot, post-capture estimator for the existing
+- **`cli/calibration.py`** — one-shot, post-capture estimator for the existing
   `feedback.spectrum_floor_dbfs`. It uses the selected `Recorder`, never analyzes
   in the callback, and never affects capture, `min_speech_rms`, speech gating,
   ASR, persistence beyond that fixed key, or overlay IPC.
@@ -94,7 +102,7 @@ Flat package `src/stenographer/` (src-layout); `tests/` mirrors it.
   speech gate (two consecutive 50 ms frames — see the quiet-mic note in
   docs/reauthor.md §4.1), sample-rate fallback + resample. A stale retained
   stream gets one close/renegotiate/start recovery attempt.
-- **`worker.py`** — ASR child process: one job at a time, killed after
+- **`transcribe/worker.py`** — ASR child process: one job at a time, killed after
   `asr.idle_unload_seconds`, respawned on demand, crash-isolated from the
   daemon. It supports a load-only request on recording start; decode serializes
   behind an unfinished warm-up, and idle eviction is held through the recording
@@ -105,26 +113,29 @@ Flat package `src/stenographer/` (src-layout); `tests/` mirrors it.
   contract and pure generation/coalescing policy. Its variable records are 18
   quantized levels for the current recording generation and a model-loading
   boolean; pulse timing stays helper-local, with no transcript or raw-audio payloads.
-- **`spectrum.py`** — pure daemon-side 32 ms Hann/zero-padded FFT band analysis at
+- **`overlay/spectrum.py`** — pure daemon-side 32 ms Hann/zero-padded FFT band analysis at
   60 fps, fixed configurable-floor-to-−12 dBFS mapping, 2.5/22.5 ms smoothing,
   and 18-level quantization. It never affects the speech gate or recorded audio.
-- **Overlay helper/backends** — optional isolated visual feedback: layer-shell
-  preferred, XWayland fallback, click-through, and failure-disabled. No display
+- **`overlay/`** — optional isolated visual feedback: `supervisor.py` (helper
+  spawn/mailbox/backend selection), `render.py`, `wayland.py` (layer-shell,
+  preferred), `x11.py` (XWayland fallback), vendored `protocols/`; click-through
+  and failure-disabled. No display
   or helper-process I/O may run under the daemon state lock.
-- **`logging_setup.py`** — idempotent stderr + rotating state-file setup for
+- **`utils/logging_setup.py`** — idempotent stderr + rotating state-file setup for
   every command; 5 MiB with three backups, `STENOGRAPHER_LOG_LEVEL`, and
   privacy-safe worker forwarding.
-- **`model.py`** — faster-whisper wrapper: fixed anti-hallucination decode
+- **`transcribe/model.py`** — faster-whisper wrapper: fixed anti-hallucination decode
   stack, output validation (`PathologicalOutputError`), `local_files_only` —
   the daemon never touches the network.
-- **`deliver.py`** — copy to BOTH selections, confirm the copy, wait for
+- **`delivery/deliver.py`** — copy to BOTH selections, confirm the copy, wait for
   physical hotkey release (a held modifier would corrupt the chord), then
   uinput Shift+Insert. A failed copy must never fire the chord.
-- **`format.py`** — fixed zero-knob formatter (spacing, sentence caps, "i"→"I").
-- **`feedback.py`** — four WAV cues via `canberra-gtk-play`, with `pw-play`/`paplay`
-  fallbacks; degrades to no-op.
-- **`doctor.py`** — capability probe; exit 78 when a required capability is
-  missing. `notify.py` — `notify-send` errors, no-op if absent.
+- **`transcribe/format.py`** — fixed zero-knob formatter (spacing, sentence
+  caps, "i"→"I").
+- **`delivery/feedback.py`** — four WAV cues via `canberra-gtk-play`, with
+  `pw-play`/`paplay` fallbacks; degrades to no-op.
+- **`cli/doctor.py`** — capability probe; exit 78 when a required capability is
+  missing. `delivery/notify.py` — `notify-send` errors, no-op if absent.
 - **`config.py`** — TOML config, exactly 19 keys in 4 sections (`hotkey`,
   `audio`, `asr`, `feedback`), frozen dataclasses, key-scoped `ConfigError` →
   exit 78, missing file written with annotated defaults, and an in-memory load

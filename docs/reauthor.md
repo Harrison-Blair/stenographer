@@ -627,3 +627,27 @@ addition to the GNOME/wlroots checks above:
    that neither the dictated canary phrase nor any transcript/audio content is.
 5. Run the complete opt-in integration suite and the existing GNOME/wlroots
    real-dictation acceptance.
+
+## Amendment: package layout reorganization (2026-08-20)
+
+The flat module layout was regrouped into subpackages. Pure moves plus
+mechanical import/path fixes — no behavior change. The spawn string
+`-m stenographer.cli _overlay` (now served by `cli/__main__.py`), the console
+script `stenographer.cli:main`, and the frozen-build asset layout are all
+preserved; `delivery/feedback.py` and `overlay/render.py` now anchor assets on
+`importlib.resources.files("stenographer")` instead of their own `__file__`.
+
+| Old | New |
+|---|---|
+| `cli.py` | `cli/__init__.py` + `cli/__main__.py` + `cli/commands/{run,transcribe,model,doctor,devices,setup}.py` |
+| `doctor.py`, `setup.py`, `setup_config.py`, `calibration.py` | `cli/` (same basenames) |
+| `worker.py`, `model.py`, `format.py` | `transcribe/` (same basenames) |
+| `overlay.py` | `overlay/supervisor.py` |
+| `overlay_render.py`, `overlay_wayland.py`, `overlay_x11.py` | `overlay/render.py`, `overlay/wayland.py`, `overlay/x11.py` |
+| `spectrum.py`, `protocols/` | `overlay/spectrum.py`, `overlay/protocols/` |
+| `deliver.py`, `feedback.py`, `notify.py` | `delivery/` (same basenames) |
+| `childenv.py`, `logging_setup.py` | `utils/` (same basenames) |
+
+Unmoved at the package root: `__init__.py`, `_version.py`, `daemon.py`,
+`hotkey.py`, `audio.py`, `config.py`, `status.py`, `assets/`. `tests/` mirrors
+the grouping with unchanged test basenames.

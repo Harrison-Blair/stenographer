@@ -30,18 +30,18 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Literal
 
 from stenographer.audio import Recorder, speech_gate_passes
-from stenographer.deliver import (
+from stenographer.delivery.deliver import (
     ClipboardBackend,
     Deliverer,
     UinputKeyboard,
     copy_for_backend,
     detect_clipboard_backend,
 )
-from stenographer.feedback import Feedback
-from stenographer.format import format_transcript
-from stenographer.notify import Notifier
+from stenographer.delivery.feedback import Feedback
+from stenographer.delivery.notify import Notifier
 from stenographer.status import NullStatusSink, OverlayState, StatusSink, should_publish_state
-from stenographer.worker import Worker, WorkerError
+from stenographer.transcribe.format import format_transcript
+from stenographer.transcribe.worker import Worker, WorkerError
 
 if TYPE_CHECKING:
     import numpy as np
@@ -524,8 +524,8 @@ class Daemon:
 
 def run(cfg: Config) -> int:
     """Build and run the daemon. Returns the process exit code."""
-    from stenographer import model
     from stenographer.hotkey import BindingError
+    from stenographer.transcribe import model
 
     if not model.is_model_cached(cfg.asr.model):
         print(
