@@ -69,22 +69,31 @@ surfaces), `utils/` (`childenv.py`, `logging_setup.py`).
   script `stenographer.cli:main`); `cli/__main__.py` keeps the helper re-exec
   `python -m stenographer.cli` working; thin per-subcommand handlers in
   `cli/commands/`: `run`, `transcribe`, `model download`, `doctor`, `devices`,
-  `setup`. Heavy imports (faster-whisper, sounddevice, evdev) stay inside
-  subcommand handlers, never at module scope.
-- **`cli/setup.py`** — TTY-only, sectioned review of all 19 existing config keys,
-  final save/cancel/re-edit decision, and post-save model/doctor/service guidance.
-  It offers only `hold` and `toggle`; it never installs, enables, or starts an
+  `setup`, `completion {bash,zsh,fish}`. Heavy imports (faster-whisper,
+  sounddevice, evdev) stay inside subcommand handlers, never at module scope.
+  Completion emits packaged static definitions and performs no device, model,
+  configuration, audio, or network discovery.
+- **`cli/setup.py`** — TTY-only setup engines. Plain `setup` keeps the sectioned
+  review of all 19 existing config keys; `setup --quick` edits only hotkey,
+  microphone, cues, overlay, and display-spectrum calibration while retaining
+  every omitted value. Both save through the same preservation layer and offer
+  only `hold` and `toggle`. Follow-up never installs, enables, or starts an
   inactive service. A changed standard config may restart an already-active
   standard user service, but a custom `STENOGRAPHER_CONFIG` path never does.
+- **`cli/binding_capture.py`** — immutable pure key-event reducer plus the quick
+  setup's non-grabbing evdev capture boundary. It unions held state across
+  auto-detected keyboards, retains press order, ignores repeats, restores TTY
+  state, and emits a validated canonical binding after all keys are released.
 - **`cli/setup_config.py`** — tomlkit-backed preservation of comments, ordering,
   unknown content, and symlinks while materializing the complete schema. It
   validates through production `Config`, detects concurrent edits, creates an
   exact timestamped backup, and atomically preserves the target mode. Unchanged
   bytes are not written.
-- **`cli/calibration.py`** — one-shot, post-capture estimator for the existing
-  `feedback.spectrum_floor_dbfs`. It uses the selected `Recorder`, never analyzes
-  in the callback, and never affects capture, `min_speech_rms`, speech gating,
-  ASR, persistence beyond that fixed key, or overlay IPC.
+- **`cli/calibration.py`** — one-shot, post-capture 18-band estimator for the
+  existing `feedback.spectrum_floor_dbfs`, followed by display-only voice
+  validation. It uses the selected `Recorder`, never analyzes in the callback,
+  and never affects capture, `min_speech_rms`, speech gating, ASR, persistence
+  beyond that fixed key, or overlay IPC.
 - **`daemon.py`** — the orchestrator: hotkey → record → transcribe → deliver;
   single-instance flock on `$XDG_RUNTIME_DIR/stenographer.lock`; signal
   handling. It prepares audio after taking the lock and before starting the
@@ -114,8 +123,9 @@ surfaces), `utils/` (`childenv.py`, `logging_setup.py`).
   quantized levels for the current recording generation and a model-loading
   boolean; pulse timing stays helper-local, with no transcript or raw-audio payloads.
 - **`overlay/spectrum.py`** — pure daemon-side 32 ms Hann/zero-padded FFT band analysis at
-  60 fps, fixed configurable-floor-to-−12 dBFS mapping, 2.5/22.5 ms smoothing,
-  and 18-level quantization. It never affects the speech gate or recorded audio.
+  60 fps, fixed scalar-or-18-band floors with a 30 dB range capped at −12 dBFS,
+  2.5/22.5 ms smoothing, and 18-level quantization. It never adapts during
+  recording or affects the speech gate or recorded audio.
 - **`overlay/`** — optional isolated visual feedback: `supervisor.py` (helper
   spawn/mailbox/backend selection), `render.py`, `wayland.py` (layer-shell,
   preferred), `x11.py` (XWayland fallback), vendored `protocols/`; click-through
@@ -142,18 +152,22 @@ surfaces), `utils/` (`childenv.py`, `logging_setup.py`).
   path used to validate setup output. No migrations or extra setup-only keys.
   `hotkey.mode` (`hold` | `toggle`) defaults to `hold`. `feedback.overlay`
   defaults true and controls only the optional visual surface;
-  `feedback.spectrum_floor_dbfs` defaults to −45.0 dBFS.
+  `feedback.spectrum_floor_dbfs` defaults to a scalar −45.0 dBFS and also accepts
+  the fixed 18-band profile written by setup calibration.
 
-`stenographer setup` requires a TTY: non-TTY exits 2, normal cancellation exits
-0, and Ctrl-C/EOF exits 130. Invalid existing configuration and missing required
-doctor capabilities exit 78; write, download, probe, and restart failures exit 1.
-After saving, failures are reported without rolling configuration back. Automatic
+`stenographer setup` and `setup --quick` require a TTY: non-TTY exits 2, normal
+cancellation exits 0, and Ctrl-C/EOF exits 130. Invalid existing configuration and
+missing required doctor capabilities exit 78; write, download, probe, and restart
+failures exit 1. After saving, failures are reported without rolling configuration
+back. Quick setup defaults an absent-model download prompt to yes; full setup keeps
+its no default. Automatic
 floor calibration is a static five-second room-noise measurement after a silent
 three-second countdown: discard 0.5 seconds, measure non-overlapping 32 ms windows,
-take each band's 95th percentile, use the loudest +3 dB rounded upward, clamp quiet
-valid results to −96 dBFS, and reject results above −13 dBFS plus short, digitally
-silent, or strongly nonstationary captures. It is not rolling calibration or
-speech-gate calibration.
+take each band's 95th percentile plus 3 dB rounded upward, clamp quiet band results
+to −96 dBFS, and reject results above −13 dBFS plus short, digitally silent, or
+strongly nonstationary captures. A separate three-second normal-voice capture
+verifies visible contrast but never changes the profile. It is not runtime
+calibration or speech-gate calibration.
 
 The ASR model (~1.5 GB) is **never** bundled — `stenographer model download`
 fetches it once. `asr.hotwords` require a full (non-distil) model.

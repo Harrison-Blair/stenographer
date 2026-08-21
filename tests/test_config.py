@@ -92,6 +92,18 @@ def test_spectrum_floor_override_accepts_documented_range(tmp_path, floor):
     assert Config.load(p).feedback.spectrum_floor_dbfs == float(floor)
 
 
+def test_spectrum_floor_accepts_exactly_eighteen_calibrated_bands(tmp_path):
+    p = tmp_path / "config.toml"
+    floors = [float(-80 + index) for index in range(18)]
+    p.write_text(
+        "[stenographer.feedback]\nspectrum_floor_dbfs = ["
+        + ", ".join(str(value) for value in floors)
+        + "]\n"
+    )
+
+    assert Config.load(p).feedback.spectrum_floor_dbfs == tuple(floors)
+
+
 def test_toggle_mode_without_restating_hotkey_defaults(tmp_path):
     # Seen to FAIL against the pre-change loader (AttributeError: no mode field).
     p = tmp_path / "config.toml"
@@ -136,6 +148,16 @@ def test_unknown_keys_ignored(tmp_path):
         ("[stenographer.feedback]\nspectrum_floor_dbfs = -97\n", "feedback.spectrum_floor_dbfs"),
         ("[stenographer.feedback]\nspectrum_floor_dbfs = -12\n", "feedback.spectrum_floor_dbfs"),
         ('[stenographer.feedback]\nspectrum_floor_dbfs = "-45"\n', "feedback.spectrum_floor_dbfs"),
+        (
+            "[stenographer.feedback]\nspectrum_floor_dbfs = [-60, -50]\n",
+            "feedback.spectrum_floor_dbfs",
+        ),
+        (
+            "[stenographer.feedback]\nspectrum_floor_dbfs = ["
+            + ", ".join(["-60"] * 17 + ["true"])
+            + "]\n",
+            "feedback.spectrum_floor_dbfs",
+        ),
         ('[stenographer.hotkey]\nbinding = ""\n', "hotkey.binding"),
         ('[stenographer.hotkey]\nmode = "hybrid"\n', "hotkey.mode"),
         ("[stenographer.audio]\nmax_recording_seconds = 0\n", "audio.max_recording_seconds"),

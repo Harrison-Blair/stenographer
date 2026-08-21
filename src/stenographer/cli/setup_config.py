@@ -110,7 +110,9 @@ class ConfigDocument:
                 section = tomlkit.table()
                 root[section_name] = section
             for key, value in values[section_name].items():
-                rendered_value = "" if value is None else value
+                rendered_value = (
+                    "" if value is None else list(value) if isinstance(value, tuple) else value
+                )
                 if key not in section or section[key] != rendered_value:
                     section[key] = rendered_value
 

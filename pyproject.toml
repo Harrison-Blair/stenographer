@@ -50,6 +50,7 @@ include = [
     "src/stenographer/assets/fonts/*.txt",
     "src/stenographer/assets/icons/*.png",
     "src/stenographer/assets/sounds/*.wav",
+    "src/stenographer/assets/completions/*",
     "src/stenographer/overlay/protocols/**/*.py",
 ]
 

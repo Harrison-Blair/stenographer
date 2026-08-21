@@ -11,7 +11,10 @@ import pytest
 from stenographer.cli.calibration import (
     CalibrationError,
     estimate_spectrum_floor,
+    estimate_spectrum_profile,
+    validate_voice_visibility,
 )
+from stenographer.status import SPECTRUM_BANDS
 
 _RATE = 16000
 _SECONDS = 5.0
@@ -27,6 +30,16 @@ def test_estimator_adds_three_db_and_rounds_upward() -> None:
     audio = _tone(10.0 ** (-50.2 / 20.0))
 
     assert estimate_spectrum_floor(audio, _RATE) == -47.0
+
+
+def test_profile_estimator_returns_independent_fixed_band_floors() -> None:
+    audio = _tone(10.0 ** (-50.2 / 20.0), frequency=1000.0)
+
+    profile = estimate_spectrum_profile(audio, _RATE)
+
+    assert len(profile) == SPECTRUM_BANDS
+    assert max(profile) == -47.0
+    assert min(profile) == -96.0
 
 
 def test_estimator_discards_the_first_half_second() -> None:
@@ -95,3 +108,19 @@ def test_estimator_rejects_nonfinite_samples() -> None:
 
     with pytest.raises(CalibrationError, match="non-finite"):
         estimate_spectrum_floor(audio, _RATE)
+
+
+def test_voice_validation_accepts_visible_speech_without_changing_profile() -> None:
+    profile = tuple([-70.0] * SPECTRUM_BANDS)
+    voice = _tone(0.01, seconds=3.0)
+
+    assert validate_voice_visibility(voice, _RATE, profile) is None
+    assert profile == tuple([-70.0] * SPECTRUM_BANDS)
+
+
+def test_voice_validation_rejects_signal_at_the_noise_profile() -> None:
+    profile = tuple([-40.0] * SPECTRUM_BANDS)
+    voice = _tone(0.001, seconds=3.0)
+
+    with pytest.raises(CalibrationError, match="not clearly above room noise"):
+        validate_voice_visibility(voice, _RATE, profile)

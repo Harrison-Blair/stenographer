@@ -8,12 +8,14 @@ import io
 import pytest
 
 from stenographer.cli import setup
+from stenographer.cli.binding_capture import CaptureState, KeyEvent, reduce_capture
 from stenographer.cli.setup import (
     followup_exit_code,
     parse_bool,
     parse_choice,
     parse_number,
     parse_optional_string,
+    parse_quick_review_action,
     parse_review_action,
     restart_eligible,
 )
@@ -73,6 +75,18 @@ def test_review_rejects_unknown_action():
 
 
 @pytest.mark.parametrize(
+    ("answer", "expected"), [("", "save"), ("S", "save"), ("cancel", "cancel")]
+)
+def test_quick_review_actions(answer, expected):
+    assert parse_quick_review_action(answer) == expected
+
+
+def test_quick_review_rejects_reedit_actions():
+    with pytest.raises(ValueError, match="Save or Cancel"):
+        parse_quick_review_action("audio")
+
+
+@pytest.mark.parametrize(
     ("changed", "custom", "missing", "active", "expected"),
     [
         (True, False, False, "active", True),
@@ -107,3 +121,77 @@ def test_setup_requires_an_interactive_terminal():
     stderr = io.StringIO()
     assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=stderr) == 2
     assert "requires an interactive terminal" in stderr.getvalue()
+
+
+def _capture(*events: KeyEvent | None) -> CaptureState:
+    state = CaptureState()
+    for event in events:
+        state = reduce_capture(state, event)
+    return state
+
+
+def test_binding_capture_completes_a_single_key_after_release():
+    pressed = _capture(KeyEvent("kbd", 97, 1))
+    assert pressed.codes == (97,)
+    assert pressed.complete is False
+
+    released = reduce_capture(pressed, KeyEvent("kbd", 97, 0))
+    assert released.complete is True
+    assert released.held == frozenset()
+
+
+def test_binding_capture_keeps_press_order_and_ignores_repeats():
+    state = _capture(
+        KeyEvent("kbd", 29, 1),
+        KeyEvent("kbd", 29, 2),
+        KeyEvent("kbd", 30, 1),
+    )
+
+    assert state.codes == (29, 30)
+    assert state.held == frozenset({("kbd", 29), ("kbd", 30)})
+
+
+def test_binding_capture_completes_after_reverse_release_order():
+    state = _capture(
+        KeyEvent("kbd", 29, 1),
+        KeyEvent("kbd", 30, 1),
+        KeyEvent("kbd", 30, 0),
+    )
+    assert state.complete is False
+
+    state = reduce_capture(state, KeyEvent("kbd", 29, 0))
+    assert state.complete is True
+
+
+def test_binding_capture_unions_held_keys_across_devices():
+    state = _capture(
+        KeyEvent("left", 29, 1),
+        KeyEvent("right", 30, 1),
+        KeyEvent("left", 29, 0),
+    )
+    assert state.codes == (29, 30)
+    assert state.complete is False
+
+    state = reduce_capture(state, KeyEvent("right", 30, 0))
+    assert state.complete is True
+
+
+def test_binding_capture_waits_for_same_code_held_on_another_device():
+    state = _capture(
+        KeyEvent("left", 97, 1),
+        KeyEvent("right", 97, 1),
+        KeyEvent("left", 97, 0),
+    )
+    assert state.codes == (97,)
+    assert state.complete is False
+
+    state = reduce_capture(state, KeyEvent("right", 97, 0))
+    assert state.complete is True
+
+
+def test_binding_capture_timeout_is_terminal():
+    state = _capture(KeyEvent("kbd", 29, 1), None)
+    assert state.timed_out is True
+    assert state.complete is False
+
+    assert reduce_capture(state, KeyEvent("kbd", 29, 0)) == state

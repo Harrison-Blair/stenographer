@@ -31,7 +31,7 @@ def test_no_command_prints_help(capsys):
     assert dispatch([]) == 0
     out = capsys.readouterr().out
     assert "usage: stenographer" in out
-    for command in ("run", "transcribe", "model", "doctor", "devices", "setup"):
+    for command in ("run", "transcribe", "model", "doctor", "devices", "setup", "completion"):
         assert command in out
 
 
@@ -51,6 +51,13 @@ def test_model_download_subcommand():
     args = build_parser().parse_args(["model", "download"])
     assert args.command == "model"
     assert args.model_command == "download"
+
+
+def test_setup_quick_flag_defaults_false_and_parses_true():
+    parser = build_parser()
+
+    assert parser.parse_args(["setup"]).quick is False
+    assert parser.parse_args(["setup", "--quick"]).quick is True
 
 
 @pytest.mark.parametrize("command", ["run", "doctor", "devices", "setup"])
@@ -75,6 +82,15 @@ def test_setup_dispatches_to_handler(monkeypatch):
     monkeypatch.setattr(setup_command, "cmd_setup", lambda args: hits.append(args.command) or 0)
     assert dispatch(["setup"]) == 0
     assert hits == ["setup"]
+
+
+def test_quick_setup_dispatches_flag_to_handler(monkeypatch):
+    from stenographer.cli.commands import setup as setup_command
+
+    seen = []
+    monkeypatch.setattr(setup_command, "cmd_setup", lambda args: seen.append(args.quick) or 0)
+    assert dispatch(["setup", "--quick"]) == 0
+    assert seen == [True]
 
 
 def test_format_input_devices_marks_default_and_skips_outputs():

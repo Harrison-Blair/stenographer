@@ -12,6 +12,7 @@ from stenographer.overlay.spectrum import (
     ATTACK_SECONDS,
     DEFAULT_SPECTRUM_FLOOR_DBFS,
     DISPLAY_GAMMA,
+    DISPLAY_RANGE_DBFS,
     FFT_MIN_SIZE,
     RELEASE_SECONDS,
     SPECTRUM_CEILING_DBFS,
@@ -71,13 +72,15 @@ def test_band_range_clamps_to_device_nyquist_and_eight_kilohertz() -> None:
 
 def test_fixed_mapping_is_exact_at_floor_and_ceiling() -> None:
     floor = DEFAULT_SPECTRUM_FLOOR_DBFS
-    midpoint = (floor + SPECTRUM_CEILING_DBFS) / 2.0
-    dbfs = np.array([floor - 20.0, floor, midpoint, SPECTRUM_CEILING_DBFS, 0.0, *([floor] * 13)])
+    ceiling = min(SPECTRUM_CEILING_DBFS, floor + DISPLAY_RANGE_DBFS)
+    midpoint = (floor + ceiling) / 2.0
+    dbfs = np.array([floor - 20.0, floor, midpoint, ceiling, 0.0, *([floor] * 13)])
 
     levels = display_levels(dbfs, floor)
 
     assert floor == -45.0
     assert SPECTRUM_CEILING_DBFS == -12.0
+    assert DISPLAY_RANGE_DBFS == 30.0
     assert levels[0] == levels[1] == 0.0
     assert levels[2] == 0.5**DISPLAY_GAMMA
     assert levels[3] == levels[4] == 1.0
@@ -119,6 +122,27 @@ def test_less_negative_floor_suppresses_more_input() -> None:
 
     assert max(display_levels(signal, -45.0)) > 0
     assert np.array_equal(display_levels(signal, -40.0), np.zeros(SPECTRUM_BANDS))
+
+
+def test_per_band_floors_isolate_loud_background_from_quiet_voice_bands() -> None:
+    dbfs = np.full(SPECTRUM_BANDS, -58.0)
+    floors = np.full(SPECTRUM_BANDS, -65.0)
+    floors[0] = -35.0
+    dbfs[0] = -36.0
+
+    levels = display_levels(dbfs, floors)
+
+    assert levels[0] == 0.0
+    assert np.all(levels[1:] > 0.0)
+
+
+def test_per_band_mapping_uses_a_fixed_thirty_db_visual_range() -> None:
+    floors = np.linspace(-90.0, -45.0, SPECTRUM_BANDS)
+    dbfs = floors + 15.0
+
+    levels = display_levels(dbfs, floors)
+
+    assert np.allclose(levels, 0.5**DISPLAY_GAMMA)
 
 
 def test_display_response_is_monotonic_with_input_loudness() -> None:
@@ -196,6 +220,19 @@ def test_configured_floor_controls_analyzer_mapping() -> None:
 
     assert max(sensitive) > 0
     assert max(suppressed) == 0
+
+
+def test_sustained_signal_never_becomes_the_display_baseline() -> None:
+    floors = tuple([-70.0] * SPECTRUM_BANDS)
+    analyzer = SpectrumAnalyzer(floors)
+    signal = _tone(1000.0, 0.002)
+
+    first = analyzer.update(signal, _RATE, stream_epoch=1)
+    for _ in range(SPECTRUM_FPS * 120):
+        last = analyzer.update(signal, _RATE, stream_epoch=1)
+
+    assert max(first) > 0
+    assert last == first
 
 
 def test_reused_analyzer_matches_fresh_analyzer_after_reconfiguration() -> None:

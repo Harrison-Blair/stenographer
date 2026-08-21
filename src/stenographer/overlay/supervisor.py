@@ -337,7 +337,7 @@ class _ProcessOutcome:
 class OverlaySupervisor:
     """Nonblocking daemon-side sink backed by one isolated helper process."""
 
-    def __init__(self, spectrum_floor_dbfs: float = DEFAULT_SPECTRUM_FLOOR_DBFS) -> None:
+    def __init__(self, spectrum_floor_dbfs: object = DEFAULT_SPECTRUM_FLOOR_DBFS) -> None:
         self._mailbox = OutboundMailbox()
         self._analyzer = SpectrumAnalyzer(spectrum_floor_dbfs)
         self._analyzer_generation: int | None = None

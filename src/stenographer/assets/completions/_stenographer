@@ -1,0 +1,76 @@
+#compdef stenographer
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+_stenographer_impl() {
+    local command index has_file
+
+    if ((CURRENT == 2)); then
+        _values 'command or option' \
+            'run[run the dictation daemon]' \
+            'transcribe[transcribe an audio file]' \
+            'model[manage the ASR model]' \
+            'doctor[probe required capabilities]' \
+            'devices[list audio input devices]' \
+            'setup[interactively configure stenographer]' \
+            'completion[emit a native shell completion definition]' \
+            '-h[show help]' '--help[show help]' '--version[show version]'
+        return
+    fi
+
+    command="${words[2]-}"
+    case "${command}" in
+        run|doctor|devices)
+            _values 'option' '-h[show help]' '--help[show help]'
+            ;;
+        setup)
+            _values 'option' '-h[show help]' '--help[show help]' \
+                '--quick[configure essentials only]'
+            ;;
+        model)
+            if ((CURRENT == 3)); then
+                _values 'command or option' 'download[download the ASR model]' \
+                    '-h[show help]' '--help[show help]'
+            elif [[ "${words[3]-}" == download ]]; then
+                _values 'option' '-h[show help]' '--help[show help]'
+            fi
+            ;;
+        completion)
+            if ((CURRENT == 3)); then
+                _values 'shell or option' 'bash[Bash completion]' 'zsh[Zsh completion]' \
+                    'fish[Fish completion]' '-h[show help]' '--help[show help]'
+            else
+                _values 'option' '-h[show help]' '--help[show help]'
+            fi
+            ;;
+        transcribe)
+            if [[ "${PREFIX}" == -* ]]; then
+                _values 'option' '-h[show help]' '--help[show help]' \
+                    '--raw[emit the unformatted transcript]'
+                return
+            fi
+            has_file=0
+            for ((index = 3; index < CURRENT; index++)); do
+                if [[ "${words[index]}" != -* ]]; then
+                    has_file=1
+                    break
+                fi
+            done
+            if ((has_file)); then
+                _values 'option' '-h[show help]' '--help[show help]' \
+                    '--raw[emit the unformatted transcript]'
+            else
+                _files
+            fi
+            ;;
+    esac
+}
+
+# The file works both as an autoloaded site-function and when sourced directly.
+_stenographer() {
+    _stenographer_impl "$@"
+}
+if [[ "${ZSH_EVAL_CONTEXT}" == *:file ]]; then
+    (( $+functions[compdef] )) && compdef _stenographer stenographer
+else
+    _stenographer_impl "$@"
+fi

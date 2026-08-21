@@ -2,8 +2,9 @@
 """One-shot calibration for the display-only microphone spectrum floor.
 
 Calibration is deliberately separate from capture gating and transcription. It
-records one fixed sample, analyzes it only after PortAudio has stopped, and
-returns a value for the existing ``feedback.spectrum_floor_dbfs`` setting.
+records fixed silence and voice samples, analyzes each only after PortAudio has
+stopped, and returns a scalar-compatible 18-band profile for the existing
+``feedback.spectrum_floor_dbfs`` setting.
 """
 
 from __future__ import annotations
@@ -20,7 +21,9 @@ from stenographer.overlay.spectrum import (
     MIN_SPECTRUM_FLOOR_DBFS,
     WINDOW_SECONDS,
     _band_dbfs,
+    display_levels,
 )
+from stenographer.status import SPECTRUM_BANDS
 
 COUNTDOWN_SECONDS = 3
 CAPTURE_SECONDS = 5
@@ -29,6 +32,10 @@ DISCARD_SECONDS = 0.5
 MIN_CAPTURE_SECONDS = 4.5
 CALIBRATION_HEADROOM_DB = 3.0
 NONSTATIONARY_SPREAD_DB = 12.0
+VOICE_CAPTURE_SECONDS = 3
+MIN_VOICE_CAPTURE_SECONDS = 2.5
+MIN_VOICE_CONTRAST_DB = 6.0
+MIN_VISIBLE_LEVEL = 0.25
 
 
 class CalibrationError(ValueError):
@@ -40,13 +47,13 @@ def _validate_sample_rate(sample_rate: int) -> None:
         raise ValueError("calibration sample rate must be a positive integer")
 
 
-def estimate_spectrum_floor(samples: object, sample_rate: int) -> float:
-    """Estimate a fixed display floor from a nominal five-second quiet capture.
+def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float, ...]:
+    """Estimate 18 fixed display floors from a nominal five-second quiet capture.
 
     The first half-second is discarded. Remaining complete, non-overlapping
-    32 ms windows use the same 18-band measurement as the live overlay. The
-    loudest band's 95th percentile receives 3 dB of headroom and is rounded
-    upward to a whole dB.
+    32 ms windows use the same 18-band measurement as the live overlay. Each
+    band's 95th percentile receives 3 dB of headroom and is rounded
+    upward to a whole dB. No live recording can modify the returned profile.
     """
     _validate_sample_rate(sample_rate)
     try:
@@ -88,10 +95,83 @@ def estimate_spectrum_floor(samples: object, sample_rate: int) -> float:
     if not math.isfinite(loudest):
         raise CalibrationError("calibration capture is digital silence")
 
-    candidate = loudest + CALIBRATION_HEADROOM_DB
-    if candidate > MAX_SPECTRUM_FLOOR_DBFS:
+    candidates = band_percentiles + CALIBRATION_HEADROOM_DB
+    if float(np.max(candidates)) > MAX_SPECTRUM_FLOOR_DBFS:
         raise CalibrationError("calibration capture is too loud")
-    return float(max(MIN_SPECTRUM_FLOOR_DBFS, math.ceil(candidate)))
+    return tuple(
+        float(max(MIN_SPECTRUM_FLOOR_DBFS, math.ceil(candidate)))
+        if math.isfinite(float(candidate))
+        else MIN_SPECTRUM_FLOOR_DBFS
+        for candidate in candidates
+    )
+
+
+def estimate_spectrum_floor(samples: object, sample_rate: int) -> float:
+    """Return the legacy scalar floor represented by a calibrated profile."""
+    return max(estimate_spectrum_profile(samples, sample_rate))
+
+
+def validate_voice_visibility(
+    samples: object,
+    sample_rate: int,
+    profile: object,
+) -> None:
+    """Reject a voice sample that the fixed profile would not visibly render."""
+    _validate_sample_rate(sample_rate)
+    try:
+        audio = np.asarray(samples, dtype=np.float64).reshape(-1)
+        floors = np.asarray(profile, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise CalibrationError("voice validation samples are invalid") from exc
+    if audio.size < math.ceil(sample_rate * MIN_VOICE_CAPTURE_SECONDS):
+        raise CalibrationError("voice validation capture is too short")
+    if not np.all(np.isfinite(audio)):
+        raise CalibrationError("voice validation capture contains non-finite samples")
+    if floors.size != SPECTRUM_BANDS:
+        raise CalibrationError("voice validation profile must contain 18 bands")
+
+    window_size = max(2, round(sample_rate * WINDOW_SECONDS))
+    window_count = audio.size // window_size
+    windows = audio[: window_count * window_size].reshape(window_count, window_size)
+    band_windows = np.stack([_band_dbfs(window, sample_rate) for window in windows])
+    mapped = np.stack([display_levels(frame, floors) for frame in band_windows])
+    visible = float(np.percentile(np.max(mapped, axis=1), 90))
+    contrast = float(np.max(np.percentile(band_windows, 90, axis=0) - floors))
+    if visible < MIN_VISIBLE_LEVEL or contrast < MIN_VOICE_CONTRAST_DB:
+        raise CalibrationError("voice sample is not clearly above room noise")
+
+
+def calibrate_spectrum_profile(
+    device: str | int | None,
+    *,
+    on_countdown: Callable[[int], None],
+    on_voice_prompt: Callable[[], None],
+) -> tuple[float, ...]:
+    """Capture known silence plus normal voice and return one fixed profile."""
+    recorder = Recorder(device=device, max_seconds=CAPTURE_SECONDS)
+    quiet = np.empty(0, dtype=np.float32)
+    voice = np.empty(0, dtype=np.float32)
+    try:
+        recorder.prepare()
+        for remaining in range(COUNTDOWN_SECONDS, 0, -1):
+            on_countdown(remaining)
+            time.sleep(1.0)
+        on_countdown(0)
+        recorder.start()
+        time.sleep(float(CAPTURE_SECONDS))
+        quiet = recorder.stop()
+        profile = estimate_spectrum_profile(quiet, 16000)
+
+        on_voice_prompt()
+        recorder.start()
+        time.sleep(float(VOICE_CAPTURE_SECONDS))
+        voice = recorder.stop()
+        validate_voice_visibility(voice, 16000, profile)
+        return profile
+    finally:
+        recorder.close()
+        quiet.fill(0.0)
+        voice.fill(0.0)
 
 
 def calibrate_spectrum_floor(

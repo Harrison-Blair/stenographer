@@ -2,10 +2,11 @@
 
 # Building a standalone bundle
 
-A local PyInstaller onedir build for machines without a Python setup.
-Scope is deliberately narrow: no release CI, multi-distro installer, or
-self-update (see `docs/reauthor.md` §7). The included installer targets one
-machine and one user only.
+A local PyInstaller onedir build for machines without a Python setup, plus a
+limited draft-release channel for Linux x86_64 and AArch64. Scope remains
+deliberately narrow: no multi-distro installer or self-update (see
+`docs/reauthor.md` §7). The included installer targets one machine and one user
+only.
 
 ## Quick start
 
@@ -16,6 +17,29 @@ scripts/build.sh
 dist/stenographer/stenographer --version
 ```
 
+## Draft releases
+
+A push to `main`, or a manual workflow dispatch targeting `main`, creates or
+refreshes an unpublished GitHub draft for the checked-in `X.Y.Z` version. It
+does so only after lint, non-integration tests, and both native standalone
+builds pass. The draft contains:
+
+- `stenographer-X.Y.Z-linux-x86_64.tar.gz`
+- `stenographer-X.Y.Z-linux-aarch64.tar.gz`
+- `stenographer-X.Y.Z-py3-none-any.whl`
+- `stenographer-X.Y.Z.tar.gz`
+- `SHA256SUMS`
+
+Each standalone archive contains the complete onedir bundle and `LICENSE`.
+The workflow checks every SHA-256 entry and records signed provenance for all
+five files. It never publishes a release: publishing the reviewed draft
+manually creates the stable `vX.Y.Z` release.
+
+The native ARM runner validates packaging, executable architecture, `--version`,
+and `--help`; it cannot validate Wayland, microphone, or uinput behavior. Before
+publishing the first AArch64 release, run `doctor` and real dictation on an
+AArch64 Wayland machine.
+
 PyWayland 0.4.18 normally installs from a wheel. If no wheel exists for the
 host Python/architecture, installing the source package also needs a C compiler,
 Python development headers, Wayland client/server development headers, and
@@ -23,9 +47,13 @@ libffi development headers (for example `build-essential`, `python3-dev`,
 `libwayland-dev`, and `libffi-dev` on Debian-family systems). These are build
 requirements only; the onedir bundle contains the completed CFFI extension.
 
-`scripts/build.sh` and `scripts/install.sh` show a progress bar and write full
-tool output to `dist/build.log` / `dist/install.log` (dumped on failure).
-Pass `--verbose` to stream the raw output instead.
+`scripts/build.sh` and `scripts/install.sh` show elapsed time and the current
+phase in animated progress bars, with the last three log lines beneath them.
+The build also shows measured hook and hidden-import counts. Both deliberately
+omit an overall percentage and ETA because their underlying tools expose no
+reliable total work estimate. Full tool output goes to `dist/build.log` /
+`dist/install.log` (dumped on failure); pass `--verbose` to stream the raw
+output instead.
 
 To force a fresh build and immediately install it, run:
 
@@ -43,7 +71,8 @@ An onedir bundle at `dist/stenographer/` — the `stenographer` binary plus an
 anywhere and symlink the binary onto your `PATH`. Do not extract single files
 out of it.
 
-The bundle includes the lifecycle icon, Caveat font and OFL license, generated
+The bundle includes the lifecycle icon, Caveat font and OFL license, native
+Bash/Zsh/Fish completion definitions, generated
 layer-shell/fractional-scale/viewporter Python bindings, Pillow, python-xlib,
 and the completed PyWayland CFFI extension with its collected shared-library
 requirements. Protocol bindings are generated in the source tree before

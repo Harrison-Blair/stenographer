@@ -119,3 +119,19 @@ def test_render_round_trips_nondefault_production_config():
     rendered = ConfigDocument.loads(PRESERVATION_FIXTURE).render(reviewed)
 
     assert Config.loads(rendered) == reviewed
+
+
+def test_render_round_trips_calibrated_spectrum_profile_as_toml_array():
+    source = ConfigDocument.loads("")
+    profile = tuple(float(-80 + index) for index in range(18))
+    reviewed = replace(
+        source.config,
+        feedback=replace(source.config.feedback, spectrum_floor_dbfs=profile),
+    )
+
+    rendered = source.render(reviewed)
+
+    assert tomlkit.parse(rendered)["stenographer"]["feedback"]["spectrum_floor_dbfs"] == list(
+        profile
+    )
+    assert Config.loads(rendered) == reviewed

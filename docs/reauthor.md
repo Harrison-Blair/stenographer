@@ -52,11 +52,17 @@ design was built on compositor-specific protocols; the new one must not be.
    against this document. Old code is a behavioral reference only and is deleted
    at the end (after real-dictation validation). Git history and memory notes are
    part of the reference material — no fresh repo.
-4. **Personal-first, distribute-later.** Eventual distribution is a goal. The
-   owner restored a local PyInstaller onedir build and single-machine per-user
-   installer in 2026-08 as development-machine conveniences. They are not a
-   release channel: self-update, version-stripping workflows, multi-distro or
-   curl-pipe-bash installers, config migrations, and completions remain cut.
+4. **Personal-first, narrow draft releases.** The local PyInstaller onedir build
+   and single-machine per-user installer remain development-machine conveniences.
+   A deliberately limited release workflow may create or refresh an unpublished
+   draft from `main` only after lint, unit tests, and native x86_64/AArch64 builds
+   pass. Its surface is two Linux bundles, one wheel, one source distribution,
+   checksums, and signed provenance; publishing remains a manual review action.
+   Self-update, version-stripping workflows, multi-distro or curl-pipe-bash
+   installers and config migrations remain cut. *Amended 2026-08-20:* static,
+   dependency-free Bash, Zsh, and Fish completions are the sole completion
+   surface; they perform no device/model/configuration discovery and the
+   installer only caches definitions under XDG data directories.
 5. **Target: any Wayland session, GNOME included.** Not two specific machines —
    portable across Wayland compositors (wlroots-family and GNOME/Mutter alike).
    Dictation and delivery never depend on a display-overlay protocol. A small,
@@ -96,10 +102,11 @@ design was built on compositor-specific protocols; the new one must not be.
    (`toggle_action`) plus a generation-guarded `audio.max_recording_seconds`
    stop that ends a forgotten recording through the normal stop path; `hybrid`
    stays cut.
-9. **CLI surface: six subcommands** — `run`, `model download`, `doctor`,
-   `devices`, `transcribe FILE`, and `setup`. Setup is interactive configuration
-   and first-use guidance, not a replacement for the direct commands or a new
-   systemd wrapper surface.
+9. **CLI surface: seven subcommands** — `run`, `model download`, `doctor`,
+   `devices`, `transcribe FILE`, `setup`, and `completion {bash,zsh,fish}`.
+   Setup is interactive configuration and first-use guidance, not a replacement
+   for the direct commands or a new systemd wrapper surface. Completion emits
+   only packaged static definitions.
 10. **ASR worker: child process kept, radically simplified.** One request at a
     time: either load-only or audio in → transcript out. An accepted recording
     start sends the load-only request on a background thread so cold model load
@@ -136,13 +143,15 @@ design was built on compositor-specific protocols; the new one must not be.
     entirely helper-local. The daemon-side supervisor analyzes all microphone
     input with a rolling 32 ms Hann window at 60 fps, zero-padded to at least 4096
     FFT points, and sends only 18 quantized levels plus a model-loading boolean
-    through strict protocol v4. Each band maps continuously from the configured
-    `feedback.spectrum_floor_dbfs` (default −45.0, valid −96 through −13 dBFS) to a
-    fixed −12 dBFS ceiling using 0.7 gamma and 2.5/22.5 ms attack/release. Input at
-    or below the floor maps to protocol level zero and input at or above the ceiling
-    maps to 255; less-negative floor values suppress more input. There is no rolling
-    calibration, learned per-band history, bootstrap delay, or display gate. Samples
-    and smoothing reset when recording starts. Raw samples and the internal stream
+    through strict protocol v4. `feedback.spectrum_floor_dbfs` accepts either one
+    manual floor shared by all bands (default −45.0) or exactly 18 fixed floors from
+    one-shot calibration; every value is valid from −96 through −13 dBFS. Each band
+    maps continuously through a fixed 30 dB visual range capped at −12 dBFS, using
+    0.7 gamma and 2.5/22.5 ms attack/release. Input at or below its floor maps to
+    protocol level zero and input at or above its ceiling maps to 255. There is no
+    runtime adaptation, rolling calibration, bootstrap delay, or display gate;
+    sustained speech can never become a learned baseline. Samples and smoothing
+    reset when recording starts. Raw samples and the internal stream
     epoch never cross into the helper. There is no speech classification, voice gate,
     transcript preview, controls, GTK dependency, or configurable visualizer
     surface. Native layer-shell is preferred and XWayland is a best-effort fallback.
@@ -161,6 +170,22 @@ design was built on compositor-specific protocols; the new one must not be.
     unchanged. The final review can save, cancel, or return to any section. Normal
     cancellation exits 0 without changes; Ctrl-C or EOF exits 130.
 
+    `stenographer setup --quick` is the focused, rerunnable path; plain setup above
+    remains unchanged. Quick setup edits only hotkey device/binding/mode, audio input,
+    cue volume/mute, overlay enabled, and (only when the overlay is enabled) the same
+    display-spectrum profile. It retains `audio.min_speech_rms`, the recording limit,
+    every ASR value, and all other omitted values. A new config defaults to live
+    binding capture; an existing config defaults to keeping its binding. The user may
+    instead keep or type a validated binding.
+
+    Live capture observes the selected device or every auto-detected main keyboard
+    without grabbing them. A pure reducer unions held keys across devices, ignores
+    repeats, retains canonical evdev names in press order, and completes one key or a
+    simultaneously held chord only after all captured keys are released. The terminal
+    temporarily suppresses echo/canonical buffering while preserving Ctrl-C behavior;
+    terminal attributes and devices are restored on every exit. Capture times out after
+    15 seconds. Failure or rejection offers retry, validated typed input, or retention.
+
     Before writing, setup re-reads the source and refuses a concurrent edit, validates
     the rendered TOML through the production `Config` schema, and proves that it
     reloads to the reviewed values. Unchanged bytes are not rewritten. An existing
@@ -174,13 +199,15 @@ design was built on compositor-specific protocols; the new one must not be.
     Automatic calibration prepares the selected microphone, gives a silent three-second
     countdown, captures five seconds through the normal `Recorder`, then stops capture
     before doing any analysis. It discards the first 0.5 seconds, uses non-overlapping
-    32 ms windows, takes each spectrum band's 95th-percentile noise level, selects the
-    loudest band, adds 3 dB, and rounds upward. Quiet valid results clamp to −96 dBFS;
-    values above −13 dBFS are rejected instead of accepted as a bad ambient baseline.
-    Short, digitally silent, and strongly nonstationary captures are also rejected.
+    32 ms windows, and gives each band's 95th-percentile noise level 3 dB of headroom,
+    rounded upward. Quiet band results clamp to −96 dBFS; any value above −13 dBFS is
+    rejected instead of accepted as a bad ambient baseline. Short, digitally silent,
+    and strongly nonstationary captures are also rejected. A separate three-second
+    normal-voice capture then verifies visible contrast without changing the profile.
     Success or failure offers accept/retry/manual/keep as applicable. Every path closes
-    the recorder and clears captured samples. Calibration performs no ASR, persistence,
-    IPC, callback analysis, audio logging, rolling learning, or speech-gate calibration.
+    the recorder and clears both captures. Calibration performs no ASR, extra
+    persistence, IPC, callback analysis, audio logging, runtime learning, or
+    speech-gate calibration.
 
     After a successful save, setup may offer the explicit ~1.5 GB network download only
     when the selected model is absent, then runs the normal doctor probe and reports all
@@ -190,6 +217,10 @@ design was built on compositor-specific protocols; the new one must not be.
     starts an inactive service and instead prints the relevant command; it never restarts
     for a custom `STENOGRAPHER_CONFIG` path. Write, download, probe, or restart failures
     exit 1, and a saved configuration is never rolled back after a follow-up failure.
+    Quick setup alone defaults the explicit download prompt to yes. On success it prints
+    the configured hold/toggle real-dictation tryout and
+    `journalctl --user -u stenographer -f`, adjusted for an inactive, uninstalled, or
+    custom-config service. Its follow-up never installs, enables, or starts a service.
 
 ---
 
@@ -219,14 +250,14 @@ Every feature of the current tool, so nothing disappears silently.
 | `model download` | **Keep** | Models are never bundled. |
 | `doctor` | **Keep (small)** | Probe: uinput access, input group, mic, model cache, `wl-copy`, audio player. Exit 78 on missing required capability. |
 | `devices` | **Keep** | ~20 lines serving `audio.input_device`. |
-| `setup` | **Keep (interactive)** | Reviews all 19 current keys, optionally performs one-shot display-floor calibration, then guides model download, doctor, and an eligible active-service restart. No new config or systemd management surface. |
+| `setup [--quick]` | **Keep (interactive)** | Plain setup reviews all 19 keys. Quick setup edits only hotkey, microphone, and feedback essentials with live binding capture. Both use the same display-only calibration, persistence, doctor, and eligible active-service restart policy. |
 | `dictate` (one-shot) | **Cut** | Niche. |
 | `bench` (WER matrix, incremental replay) | Cut → later | Real value when choosing models; can return as a standalone `scripts/` script. |
 | `enable`/`disable`/`start`/`stop`/`status` | **Cut** | Ship the unit file; document three `systemctl --user` one-liners in the README. |
 | `update` (self-update) + `[update]` config | **Cut** | Distribution machinery. `git pull && reinstall`. |
 | Config migrations (`text`/`paste`, `[streaming]`) | **Cut** | No migrations, ever, until there are external users. |
-| argcomplete fast path + bash completion | **Cut** | |
-| PyInstaller onedir build, `install.sh` | **Keep (local only)** | Development-machine build and single-user install; no release workflow, updater, or multi-distro installer. |
+| Native shell completion | **Added 2026-08-20** | Static Bash, Zsh, and Fish definitions only; no `argcomplete`, runtime discovery, private helper entries, or shell-configuration edits. |
+| PyInstaller onedir build, `install.sh` | **Keep (local + narrow draft channel)** | Development-machine build and single-user install, plus native x86_64/AArch64 draft artifacts from `main`; no updater or multi-distro installer. |
 | Idle model unload | **Keep** | Via killing the worker child. |
 | Eager/lazy model load knob | **Cut (always press-lazy)** | A cold model starts loading on the first accepted recording start, not daemon startup; its border follows the load from Recording onto Transcribing when the post-recording wait remains. |
 | Single-instance flock | **Keep** | `$XDG_RUNTIME_DIR/stenographer.lock`, PID written into it. |
@@ -366,9 +397,11 @@ not to grow the budget.
 src/stenographer/
   __init__.py          version re-export
   _version.py          single version string (no -dev gymnastics in v1)
-  cli.py        ~150   lazy dispatch: run / transcribe / model download / doctor / devices / setup
+  cli.py        ~150   lazy dispatch: run / transcribe / model download / doctor / devices / setup / completion
+  completion.py        packaged static Bash/Zsh/Fish definition loader
   config.py     ~150   TOML load, frozen dataclasses, key-scoped validation, default writer
-  setup.py             interactive sections, review, and post-save guidance
+  setup.py             full/quick interactive review and post-save guidance
+  binding_capture.py   pure capture reducer + non-grabbing evdev/TTY boundary
   setup_config.py      preservation-first TOML transformation, validation, atomic persistence
   calibration.py       pure one-shot spectrum-floor estimator + Recorder boundary
   daemon.py     ~200   orchestrator: hotkey → record → transcribe → deliver; single-instance
@@ -425,14 +458,14 @@ cpu_threads = 0              # 0 = auto (§4.10)
 volume = 0.6
 mute = false
 overlay = true                 # best-effort lifecycle pill; dictation is independent
-spectrum_floor_dbfs = -45.0    # less-negative values suppress more spectrum input
+spectrum_floor_dbfs = -45.0    # scalar manual floor; setup may write 18 fixed bands
 ```
 
 Everything else that was configurable is now fixed behavior or gone.
 
-`stenographer setup` materializes exactly this schema; calibration only chooses a
-value for the existing `feedback.spectrum_floor_dbfs` key. It does not add a
-speech threshold, a learned floor, or any other persisted state.
+`stenographer setup` materializes exactly this schema; calibration only chooses an
+18-value fixed profile for the existing `feedback.spectrum_floor_dbfs` key. It does
+not add a speech threshold, runtime learning, or any other persisted state.
 
 ### Worker contract
 
@@ -505,7 +538,8 @@ Motivated by §4.16. These are rules, not suggestions:
 
 1. **Unit tests cover pure logic only** — formatter, config validation, RMS gate
    and spectrum/calibration math, protocol encode/decode and ordering, renderer
-   geometry, hotkey chord parsing, setup prompt/decision parsing, and TOML
+   geometry, hotkey chord parsing, setup prompt/decision and binding-capture
+   state parsing, and TOML
    transformation. Fast, no mocks of external processes.
 2. **No mocked-subprocess theater.** A test that mocks `subprocess.run` /
    `UInput` / `wl-copy` and asserts "we would have called it" is worse than no
@@ -517,9 +551,10 @@ Motivated by §4.16. These are rules, not suggestions:
    (`STENOGRAPHER_INTEGRATION=1 pytest`), on the real machine.
    It also exercises real rotating/fallback logging and verifies that a spawned
    worker forwards decode metrics without exposing the fixture transcript.
-   Setup smoke coverage uses a real filesystem, microphone, and systemd user
-   service where applicable; it never mocks PortAudio, model download,
-   `subprocess`, or systemd to manufacture success.
+   Setup smoke coverage uses a PTY with genuine evdev `UInput` loopback for live
+   capture plus a real filesystem, microphone, model cache, doctor probe, and
+   systemd user service where applicable; it never mocks PortAudio, model download,
+   `subprocess`, evdev, or systemd to manufacture success.
 4. **The smoke suite is a merge gate.** No dev → main merge without a green smoke
    run on a real box — the existing habit, now written down.
 5. **Mock-only testability is a design smell.** If a component can only be tested
@@ -542,7 +577,7 @@ open. When one is added, it must still pass the §1 razor at that time.
 | **Transcript preview / general audio visualizer** | Remains cut. The approved exceptions are exactly 18 locally analyzed bars while recording and the helper-local model-loading border. Adding text, raw-audio IPC, controls, more animated states, or interim decoding requires revising this record. |
 | **Toggle mode** | *Done 2026-08-19.* Landed exactly through the door kept open: the listener still maps key events through `edge()`; toggle is one pure daemon-side mapping (`toggle_action`) plus a generation-guarded max-duration timer that ends a forgotten recording through the normal stop path. Hybrid remains skipped. |
 | **`bench`** | Standalone script in `scripts/`, driving the public `model.py` API. Does not re-enter the package. |
-| **Distribution layer** (installer, self-update, completions) | Blocked on external users existing. Clean config validation and a small codebase are the only v1 prerequisites, and both are core goals anyway. *Partially reintroduced 2026-08: the local PyInstaller onedir build (spec + hooks under `packaging/`, `scripts/build.sh`, BUILD.md) and a single-machine per-user installer (`scripts/install.sh`: bundle → `~/.local/share/stenographer`, symlink → `~/.local/bin`, systemd user unit from `packaging/stenographer.service`) — no CI release, no multi-distro/curl-pipe-bash installer, no completions, no self-update. Passed the §1 razor as a dev-machine convenience; the rest of this row stays gated.* |
+| **Distribution layer** (installer, self-update, completions) | Blocked on external users existing. Clean config validation and a small codebase are the only v1 prerequisites, and both are core goals anyway. *Partially reintroduced 2026-08: the local PyInstaller onedir build and single-machine per-user installer, a `main`-only draft-release workflow for native Linux x86_64/AArch64 bundles plus Python distributions, and static Bash/Zsh/Fish completions cached by the installer under XDG data directories. Publishing remains manual. There is still no multi-distro/curl-pipe-bash installer, self-update, dynamic completion, or shell-configuration editing; the rest of this row stays gated.* |
 | **`dictate` one-shot** | Trivial recomposition of daemon pieces if ever wanted. |
 
 ---
@@ -576,10 +611,11 @@ reference.
   package, old tests, `update.py`-era workflows, GUI-reauthor workflow files;
   reconcile `CLAUDE.md`. *Verify: full smoke suite green; fresh-venv install from
   scratch works.*
-- **M7 — Interactive setup.** Add preservation-first editing of the existing
-  schema, one-shot display-floor calibration, and guided model/doctor/service
-  follow-up. *Verify: pure decision/statistics/TOML tests; opt-in real filesystem,
-  microphone, model, doctor, and service smoke; standalone bundle builds.*
+- **M7 — Interactive setup.** Add preservation-first full and focused quick editing
+  of the existing schema, live binding capture, one-shot display-floor calibration,
+  and guided model/doctor/service follow-up. *Verify: pure capture/decision/statistics/
+  TOML tests; opt-in real PTY/UInput, filesystem, microphone, model, doctor, and
+  service smoke; standalone bundle builds.*
 
 Real-dictation validation (M5) precedes any dev → main merge, per §6.4.
 
@@ -593,7 +629,9 @@ the baseline recording pill maps immediately after recording starts (successful
 key-down, or the toggle start press). Steady fan and room noise at or below the
 configured floor stay on the 4 px baselines immediately, including on a newly
 opened stream, while quiet speech above the floor promptly affects the expected
-parts of its 18-band spectrum. The pill disappears when recording ends (physical
+parts of its 18-band spectrum. Sustained speech remains at the same visible level
+for the entire utterance and is never absorbed into the calibrated profile. The
+pill disappears when recording ends (physical
 key-up, the toggle stop press, or the max-duration stop). With
 `hotkey.mode = "toggle"`, the spectrum animates with no key held, and a short
 `max_recording_seconds` ends the session with the stop cue and a delivered

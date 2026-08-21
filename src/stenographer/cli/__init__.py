@@ -10,6 +10,8 @@ from collections.abc import Sequence
 
 from stenographer._version import __version__
 
+SUPPORTED_SHELLS = ("bash", "zsh", "fish")
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser.
@@ -38,7 +40,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("doctor", help="Probe required capabilities.")
     subparsers.add_parser("devices", help="List audio input devices.")
-    subparsers.add_parser("setup", help="Interactively review configuration and capabilities.")
+    setup = subparsers.add_parser(
+        "setup", help="Interactively review configuration and capabilities."
+    )
+    setup.add_argument(
+        "--quick",
+        action="store_true",
+        help="Configure the hotkey, microphone, and feedback essentials only.",
+    )
+    completion = subparsers.add_parser(
+        "completion", help="Emit a native shell completion definition."
+    )
+    completion.add_argument("shell", choices=SUPPORTED_SHELLS)
 
     return parser
 
@@ -81,6 +94,10 @@ def dispatch(argv: Sequence[str] | None = None) -> int:
         from stenographer.cli.commands.devices import cmd_devices
 
         return cmd_devices(args)
+    if args.command == "completion":
+        from stenographer.cli.commands.completion import cmd_completion
+
+        return cmd_completion(args)
     from stenographer.cli.commands.setup import cmd_setup
 
     return cmd_setup(args)

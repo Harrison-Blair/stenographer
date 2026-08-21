@@ -1,0 +1,386 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: draft release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: draft-release-main
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: release preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.guard.outputs.version }}
+      tag: ${{ steps.guard.outputs.tag }}
+    steps:
+      - name: Require main branch
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "error: draft releases must target main, not ${GITHUB_REF}" >&2
+            exit 1
+          fi
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Query every GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "${RUNNER_TEMP}/releases.json"
+      - name: Check release versions
+        id: guard
+        run: |
+          python -m venv .venv
+          .venv/bin/python scripts/release_guard.py \
+            "${RUNNER_TEMP}/releases.json" src/stenographer/_version.py \
+            --github-output "${GITHUB_OUTPUT}"
+      - name: Reject a conflicting Git tag
+        env:
+          TAG: ${{ steps.guard.outputs.tag }}
+          VERSION: ${{ steps.guard.outputs.version }}
+        run: |
+          if git show-ref --verify --quiet "refs/tags/${TAG}" || \
+             git show-ref --verify --quiet "refs/tags/${VERSION}"; then
+            echo "error: a Git tag already exists for ${TAG}" >&2
+            exit 1
+          fi
+
+  lint:
+    name: release lint
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install Ruff
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install ruff
+      - name: Check source
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+  test:
+    name: release unit tests
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install system test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libffi-dev libportaudio2 libwayland-dev pkg-config
+      - name: Install development dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e ".[dev]"
+      - name: Run unit tests and CLI check
+        run: |
+          .venv/bin/pytest -m "not integration"
+          .venv/bin/stenographer --help
+
+  python-distributions:
+    name: build wheel and source distribution
+    needs: [preflight, lint, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Build wheel and source distribution
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install "build>=1.2"
+          .venv/bin/python -m build
+      - name: Verify distribution names and wheel contents
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          test -f "dist/stenographer-${VERSION}-py3-none-any.whl"
+          test -f "dist/stenographer-${VERSION}.tar.gz"
+          .venv/bin/python -m zipfile --list \
+            "dist/stenographer-${VERSION}-py3-none-any.whl" \
+            > "${RUNNER_TEMP}/wheel-files.txt"
+          for completion in stenographer.bash _stenographer stenographer.fish; do
+            grep -F "stenographer/assets/completions/${completion}" \
+              "${RUNNER_TEMP}/wheel-files.txt"
+          done
+          tar -tzf "dist/stenographer-${VERSION}.tar.gz" \
+            > "${RUNNER_TEMP}/sdist-files.txt"
+          grep -Fx "stenographer-${VERSION}/LICENSE" "${RUNNER_TEMP}/sdist-files.txt"
+          for completion in stenographer.bash _stenographer stenographer.fish; do
+            grep -Fx \
+              "stenographer-${VERSION}/src/stenographer/assets/completions/${completion}" \
+              "${RUNNER_TEMP}/sdist-files.txt"
+          done
+          cd dist
+          sha256sum \
+            "stenographer-${VERSION}-py3-none-any.whl" \
+            "stenographer-${VERSION}.tar.gz" \
+            > release-python.SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-python-distributions
+          path: |
+            dist/stenographer-${{ needs.preflight.outputs.version }}-py3-none-any.whl
+            dist/stenographer-${{ needs.preflight.outputs.version }}.tar.gz
+            dist/release-python.SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  standalone:
+    name: build standalone (${{ matrix.archive_arch }})
+    needs: [preflight, lint, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            machine: x86_64
+            file_pattern: x86-64|x86_64
+            archive_arch: x86_64
+          - runner: ubuntu-24.04-arm
+            machine: aarch64
+            file_pattern: ARM aarch64|aarch64
+            archive_arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Verify native architecture
+        env:
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+        run: test "$(uname -m)" = "${EXPECTED_MACHINE}"
+      - name: Install system and PyWayland source-build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential file libffi-dev libportaudio2 libwayland-dev \
+            pkg-config python3-dev
+      - name: Install build dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e ".[build]"
+      - name: Build and inspect native standalone bundle
+        env:
+          FILE_PATTERN: ${{ matrix.file_pattern }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          scripts/build.sh --verbose
+          file dist/stenographer/stenographer | tee "${RUNNER_TEMP}/stenographer-file.txt"
+          grep -Eq "${FILE_PATTERN}" "${RUNNER_TEMP}/stenographer-file.txt"
+          test "$(dist/stenographer/stenographer --version)" = "${VERSION}"
+          dist/stenographer/stenographer --help
+      - name: Package standalone directory
+        env:
+          ARCHIVE_ARCH: ${{ matrix.archive_arch }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          cp LICENSE dist/stenographer/LICENSE
+          mkdir -p release
+          tar -czf "release/stenographer-${VERSION}-linux-${ARCHIVE_ARCH}.tar.gz" \
+            -C dist stenographer
+          tar -tzf "release/stenographer-${VERSION}-linux-${ARCHIVE_ARCH}.tar.gz" \
+            > "${RUNNER_TEMP}/standalone-files.txt"
+          grep -Fx 'stenographer/LICENSE' "${RUNNER_TEMP}/standalone-files.txt"
+          cd release
+          sha256sum "stenographer-${VERSION}-linux-${ARCHIVE_ARCH}.tar.gz" \
+            > "release-${ARCHIVE_ARCH}.SHA256SUMS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-standalone-${{ matrix.archive_arch }}
+          path: |
+            release/stenographer-${{ needs.preflight.outputs.version }}-linux-${{ matrix.archive_arch }}.tar.gz
+            release/release-${{ matrix.archive_arch }}.SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: create or refresh draft release
+    needs: [preflight, lint, test, python-distributions, standalone]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Verify transferred artifacts and checksums
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          cd release
+          artifacts=(
+            "stenographer-${VERSION}-linux-x86_64.tar.gz"
+            "stenographer-${VERSION}-linux-aarch64.tar.gz"
+            "stenographer-${VERSION}-py3-none-any.whl"
+            "stenographer-${VERSION}.tar.gz"
+          )
+          for artifact in "${artifacts[@]}"; do
+            test -s "${artifact}"
+          done
+          sha256sum --check release-python.SHA256SUMS
+          sha256sum --check release-x86_64.SHA256SUMS
+          sha256sum --check release-aarch64.SHA256SUMS
+          rm release-python.SHA256SUMS \
+            release-x86_64.SHA256SUMS release-aarch64.SHA256SUMS
+          sha256sum "${artifacts[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Recheck release guard before attesting
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          git fetch --force --tags origin
+          if git show-ref --verify --quiet "refs/tags/${TAG}" || \
+             git show-ref --verify --quiet "refs/tags/${VERSION}"; then
+            echo "error: a Git tag appeared for ${TAG}" >&2
+            exit 1
+          fi
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "${RUNNER_TEMP}/releases-recheck.json"
+          python -m venv .venv
+          .venv/bin/python scripts/release_guard.py \
+            "${RUNNER_TEMP}/releases-recheck.json" src/stenographer/_version.py \
+            --github-output "${GITHUB_OUTPUT}"
+      - name: Attest all release artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release/*
+      - name: Final guard, generate notes, and create or refresh draft
+        env:
+          EXPECTED_TAG: ${{ needs.preflight.outputs.tag }}
+          EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --force --tags origin
+          if git show-ref --verify --quiet "refs/tags/${EXPECTED_TAG}" || \
+             git show-ref --verify --quiet "refs/tags/${EXPECTED_VERSION}"; then
+            echo "error: a Git tag appeared for ${EXPECTED_TAG}" >&2
+            exit 1
+          fi
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "${RUNNER_TEMP}/releases-final.json"
+          .venv/bin/python scripts/release_guard.py \
+            "${RUNNER_TEMP}/releases-final.json" src/stenographer/_version.py \
+            --github-output "${RUNNER_TEMP}/guard.env"
+          source "${RUNNER_TEMP}/guard.env"
+          if [[ "${tag}" != "${EXPECTED_TAG}" || "${version}" != "${EXPECTED_VERSION}" ]]; then
+            echo "error: checked-in version changed during the release run" >&2
+            exit 1
+          fi
+          TAG="${tag}"
+          VERSION="${version}"
+          DRAFT_ID="${draft_id}"
+
+          notes_args=(
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -X POST
+            -f "tag_name=${TAG}"
+            -f "target_commitish=${GITHUB_SHA}"
+          )
+          if [[ -n "${previous_tag}" ]]; then
+            notes_args+=(-f "previous_tag_name=${previous_tag}")
+          fi
+          gh api "${notes_args[@]}" > "${RUNNER_TEMP}/generated-notes.json"
+          jq -er .name "${RUNNER_TEMP}/generated-notes.json" > "${RUNNER_TEMP}/release-name.txt"
+          jq -er .body "${RUNNER_TEMP}/generated-notes.json" > "${RUNNER_TEMP}/release-body.md"
+
+          request=(
+            -f "tag_name=${TAG}"
+            -f "target_commitish=${GITHUB_SHA}"
+            -F "name=@${RUNNER_TEMP}/release-name.txt"
+            -F "body=@${RUNNER_TEMP}/release-body.md"
+            -F draft=true
+            -F prerelease=false
+          )
+          if [[ -n "${DRAFT_ID}" ]]; then
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_ID}" \
+              > "${RUNNER_TEMP}/draft-before-refresh.json"
+            jq -e --arg tag "${TAG}" \
+              '.draft == true and .tag_name == $tag' \
+              "${RUNNER_TEMP}/draft-before-refresh.json" > /dev/null
+            release_id=$(gh api -X PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_ID}" \
+              "${request[@]}" --jq .id)
+          else
+            release_id=$(gh api -X POST \
+              "repos/${GITHUB_REPOSITORY}/releases" \
+              "${request[@]}" --jq .id)
+          fi
+
+          assets=(
+            "stenographer-${VERSION}-linux-x86_64.tar.gz"
+            "stenographer-${VERSION}-linux-aarch64.tar.gz"
+            "stenographer-${VERSION}-py3-none-any.whl"
+            "stenographer-${VERSION}.tar.gz"
+            SHA256SUMS
+          )
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
+            > "${RUNNER_TEMP}/release-assets.json"
+          for asset in "${assets[@]}"; do
+            jq -r --arg name "${asset}" \
+              '.[][] | select(.name == $name) | .id' \
+              "${RUNNER_TEMP}/release-assets.json" \
+              | while IFS= read -r asset_id; do
+                  gh api -X DELETE \
+                    "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+                done
+          done
+          asset_paths=()
+          for asset in "${assets[@]}"; do
+            asset_paths+=("release/${asset}")
+          done
+          gh release upload "${TAG}" "${asset_paths[@]}"

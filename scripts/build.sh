@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Local PyInstaller onedir build. See BUILD.md.
 #
-# Default output is a progress bar (milestones parsed from the PyInstaller
-# log) with a live tail of the last log lines; the full log lands in
+# Default output is an indeterminate progress bar driven by the PyInstaller
+# log, with a live tail of the last log lines; the full log lands in
 # dist/build.log. --verbose streams it instead.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -25,27 +25,77 @@ else
     LOG="dist/build.log"
     : > "${LOG}"
 
-    progress_start "building"
+    progress_indeterminate_start "building" "preparing build"
     progress_tail "${LOG}"
     .venv/bin/pyinstaller --noconfirm --clean packaging/stenographer.spec &> "${LOG}" &
     build_pid=$!
 
-    # Map the newest recognizable log phase to a checkpoint; redraw every
-    # second so elapsed time keeps ticking through quiet stretches.
+    build_phase="preparing build"
+    hook_count=0
+    hidden_import_count=0
+    last_log_line=0
+
+    build_counter() {
+        local counter=""
+        if ((hook_count > 0)); then
+            counter="${hook_count} hooks"
+        fi
+        if ((hidden_import_count > 0)); then
+            [[ -n "${counter}" ]] && counter+=", "
+            counter+="${hidden_import_count} hidden"
+        fi
+        printf '%s' "${counter}"
+    }
+
+    # Consume each new log line once. This preserves even very short phase
+    # transitions and counts only work PyInstaller has explicitly reported.
+    read_build_activity() {
+        local current_log_line line
+        current_log_line=$(wc -l < "${LOG}")
+        ((current_log_line > last_log_line)) || return 0
+
+        while IFS= read -r line; do
+            case "${line}" in
+                *"Processing "*" hook "*) ((hook_count += 1)) ;;
+                *"Analyzing hidden import "*) ((hidden_import_count += 1)) ;;
+            esac
+            case "${line}" in
+                *"Running Analysis "*)
+                    build_phase="dependency analysis"
+                    progress_activity "${build_phase}" "$(build_counter)"
+                    ;;
+                *"Processing module hooks (post-graph stage)"*)
+                    build_phase="post-graph hooks"
+                    progress_activity "${build_phase}" "$(build_counter)"
+                    ;;
+                *"Building PYZ (ZlibArchive)"*)
+                    build_phase="creating PYZ"
+                    progress_activity "${build_phase}" "$(build_counter)"
+                    ;;
+                *"Building PKG (CArchive)"*)
+                    build_phase="packaging"
+                    progress_activity "${build_phase}" "$(build_counter)"
+                    ;;
+                *"Building EXE from "*)
+                    build_phase="assembling executable"
+                    progress_activity "${build_phase}" "$(build_counter)"
+                    ;;
+                *"Building COLLECT "*)
+                    build_phase="collecting bundle"
+                    progress_activity "${build_phase}" "$(build_counter)"
+                    ;;
+            esac
+        done < <(sed -n "$((last_log_line + 1)),${current_log_line}p" "${LOG}")
+        last_log_line=${current_log_line}
+        progress_activity "${build_phase}" "$(build_counter)"
+    }
+
     while kill -0 "${build_pid}" 2>/dev/null; do
-        phase=$(grep -oE 'Running Analysis|Processing module hooks|Building PYZ|Building PKG|Building EXE|Building COLLECT' \
-            "${LOG}" 2>/dev/null | tail -n1 || true)
-        case "${phase}" in
-            "Running Analysis")          progress_update 10 "analyzing imports" ;;
-            "Processing module hooks")   progress_update 25 "module hooks" ;;
-            "Building PYZ")         progress_update 60 "building PYZ" ;;
-            "Building PKG")         progress_update 70 "building PKG" ;;
-            "Building EXE")         progress_update 85 "building EXE" ;;
-            "Building COLLECT")     progress_update 95 "collecting bundle" ;;
-            *)                      progress_tick ;;
-        esac
-        sleep 1
+        read_build_activity
+        progress_tick
+        sleep 0.15
     done
+    read_build_activity
 
     if ! wait "${build_pid}"; then
         progress_fail
@@ -60,3 +110,10 @@ fi
 
 echo "built: dist/stenographer/stenographer"
 dist/stenographer/stenographer --version
+for completion_shell in bash zsh fish; do
+    completion_output=$(dist/stenographer/stenographer completion "${completion_shell}")
+    if [[ -z "${completion_output}" ]]; then
+        echo "error: frozen ${completion_shell} completion is empty" >&2
+        exit 1
+    fi
+done

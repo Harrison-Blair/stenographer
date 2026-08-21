@@ -9,4 +9,4 @@ import argparse
 def cmd_setup(args: argparse.Namespace) -> int:
     from stenographer.cli import setup
 
-    return setup.run()
+    return setup.run(quick=args.quick)

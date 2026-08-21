@@ -29,7 +29,7 @@ fixed. It must never grow transcript preview, controls, GTK, or raw-audio IPC.
   `config`, `status`) plus subpackages: `cli/` (surface, `commands/`, setup and
   doctor engines), `transcribe/` (`worker`, `model`, `format`), `overlay/`
   (supervisor, backends, `protocols/`), `delivery/` (`deliver`, `feedback`,
-  `notify`), `utils/`, and `assets/` (WAV cues, icon, font).
+  `notify`), `utils/`, and `assets/` (WAV cues, icon, font, native completions).
 - `tests/` — mirrors the subpackage grouping; unit tests (pure logic) plus
   `test_*_smoke.py` integration tests.
 - `packaging/stenographer.service` — the systemd user unit.
@@ -56,9 +56,11 @@ fixed. It must never grow transcript preview, controls, GTK, or raw-audio IPC.
    hotkey release; the daemon never touches the network (`local_files_only`);
    the PortAudio callback only copies blocks; logs never contain transcript
    text or audio.
-6. **Narrow distribution boundary.** The local PyInstaller onedir build and
-   single-machine per-user installer are allowed. Self-update, release
-   workflows, multi-distro installers, and completions remain cut.
+6. **Narrow distribution boundary.** The local PyInstaller onedir build,
+   single-machine per-user installer, and `main`-only x86_64/AArch64 draft
+   release workflow are allowed. Self-update, automatic publishing,
+   and multi-distro installers remain cut. Static Bash, Zsh, and Fish
+   completions are allowed; keep them dependency-free and discovery-free.
 7. **Overlay isolation.** The optional helper may receive only fixed lifecycle
    metadata, a model-loading active/inactive boolean, and 18 quantized spectrum
    levels over the versioned protocol. Pulse timing is helper-local. Raw microphone

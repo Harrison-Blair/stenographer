@@ -4,8 +4,9 @@
 # needed), copy it to ~/.local/share/stenographer/, symlink the launcher
 # into ~/.local/bin/, and install + enable the systemd user unit.
 #
-# Default output is a progress bar with a live tail of the last log lines;
-# tool output lands in dist/install.log. --verbose streams everything instead.
+# Default output is an indeterminate progress bar with a live tail of the last
+# log lines; tool output lands in dist/install.log. --verbose streams everything
+# instead.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -16,6 +17,10 @@ BIN_DIR="${HOME}/.local/bin"
 INSTALL_DIR="${HOME}/.local/share/stenographer"
 SERVICE_SRC="packaging/stenographer.service"
 SERVICE_DST="${HOME}/.config/systemd/user/stenographer.service"
+DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+BASH_COMPLETION_DST="${DATA_HOME}/bash-completion/completions/stenographer"
+ZSH_COMPLETION_DST="${DATA_HOME}/zsh/site-functions/_stenographer"
+FISH_COMPLETION_DST="${DATA_HOME}/fish/vendor_completions.d/stenographer.fish"
 DO_ENABLE=1
 DO_START=1
 VERBOSE=0
@@ -28,8 +33,9 @@ Install stenographer from the local build tree:
   1. Build the onedir bundle (if not already built)
   2. Copy dist/stenographer/ to INSTALL_DIR (default ~/.local/share/stenographer/)
   3. Symlink the launcher into ~/.local/bin/stenographer
-  4. Install the systemd user unit
-  5. Enable and start the service (unless told not to)
+  4. Cache Bash, Zsh, and Fish completion definitions under XDG_DATA_HOME
+  5. Install the systemd user unit
+  6. Enable and start the service (unless told not to)
 
 Options:
   --no-enable    Install the unit but do not enable or start it
@@ -61,12 +67,12 @@ SYMLINK_PATH="${BIN_DIR}/stenographer"
 LOG="dist/install.log"
 NOTES=()
 
-# step PCT "label" — advance the bar (or print a banner in verbose mode).
+# step "label" — update the current phase (or print a banner in verbose mode).
 step() {
     if [[ "${VERBOSE}" -eq 1 ]]; then
-        echo "==> $2 ..."
+        echo "==> $1 ..."
     else
-        progress_update "$1" "$2"
+        progress_activity "$1" ""
     fi
 }
 
@@ -81,10 +87,22 @@ run_logged() {
         local pid=$!
         while kill -0 "${pid}" 2>/dev/null; do
             progress_tick
-            sleep 0.2
+            sleep 0.15
         done
         wait "${pid}"
     fi
+}
+
+install_completion() {
+    local shell=$1 destination=$2 temporary
+    temporary="${destination}.tmp.$$"
+    mkdir -p "$(dirname "${destination}")"
+    if ! "${BINARY_PATH}" completion "${shell}" > "${temporary}"; then
+        rm -f "${temporary}"
+        return 1
+    fi
+    chmod 0644 "${temporary}"
+    mv "${temporary}" "${destination}"
 }
 
 # ────────────────────────────────────────────────────────────────
@@ -103,7 +121,7 @@ fi
 mkdir -p dist
 : > "${LOG}"
 if [[ "${VERBOSE}" -ne 1 ]]; then
-    progress_start "installing"
+    progress_indeterminate_start "installing" "preparing install"
     progress_tail "${LOG}"
 fi
 
@@ -115,7 +133,7 @@ fi
 # must be stopped before the copy.
 WAS_ACTIVE=0
 if systemctl --user is-active --quiet stenographer.service 2>/dev/null; then
-    step 15 "stopping service"
+    step "stopping service"
     run_logged systemctl --user stop stenographer.service
     WAS_ACTIVE=1
 fi
@@ -123,12 +141,12 @@ fi
 # ────────────────────────────────────────────────────────────────
 # Step 3 — Install the bundle
 # ────────────────────────────────────────────────────────────────
-step 35 "copying bundle"
+step "copying bundle"
 mkdir -p "${INSTALL_DIR}"
 rm -rf "${INSTALL_DIR:?}"/*
 run_logged cp -a dist/stenographer/. "${INSTALL_DIR}/"
 
-step 50 "linking launcher"
+step "linking launcher"
 mkdir -p "${BIN_DIR}"
 if [[ -e "${SYMLINK_PATH}" && ! -L "${SYMLINK_PATH}" ]]; then
     NOTES+=("WARNING: ${SYMLINK_PATH} exists and is not a symlink — leaving it alone.")
@@ -137,9 +155,17 @@ else
 fi
 
 # ────────────────────────────────────────────────────────────────
-# Step 4 — Install the systemd user unit
+# Step 4 — Cache native shell completions
 # ────────────────────────────────────────────────────────────────
-step 65 "installing unit"
+step "installing shell completions"
+run_logged install_completion bash "${BASH_COMPLETION_DST}"
+run_logged install_completion zsh "${ZSH_COMPLETION_DST}"
+run_logged install_completion fish "${FISH_COMPLETION_DST}"
+
+# ────────────────────────────────────────────────────────────────
+# Step 5 — Install the systemd user unit
+# ────────────────────────────────────────────────────────────────
+step "installing unit"
 
 # The checked-in unit assumes the default install dir. For a custom
 # --install-dir, rewrite ExecStart: %h-relative when under HOME (systemd
@@ -163,20 +189,20 @@ else
 fi
 
 # ────────────────────────────────────────────────────────────────
-# Step 5 — Reload, enable, start
+# Step 6 — Reload, enable, start
 # ────────────────────────────────────────────────────────────────
-step 75 "reloading systemd"
+step "reloading systemd"
 run_logged systemctl --user daemon-reload
 
 if [[ "${DO_ENABLE}" -eq 1 ]]; then
-    step 85 "enabling service"
+    step "enabling service"
     run_logged systemctl --user enable stenographer.service
 else
     NOTES+=("Not enabled (--no-enable). Run manually: systemctl --user enable --now stenographer.service")
 fi
 
 if [[ "${DO_START}" -eq 1 ]]; then
-    step 95 "starting service"
+    step "starting service"
     if ! run_logged systemctl --user start stenographer.service; then
         if [[ "${VERBOSE}" -eq 1 ]]; then
             echo
@@ -218,3 +244,7 @@ echo "  bundle:   ${INSTALL_DIR}/"
 echo "  launcher: ${SYMLINK_PATH}"
 echo "  unit:     ${SERVICE_DST}"
 echo "  status:   systemctl --user status stenographer.service"
+echo
+echo "Zsh completion setup (one time): add these lines to ~/.zshrc, then open a new shell:"
+echo "  fpath=(\"${DATA_HOME}/zsh/site-functions\" \$fpath)"
+echo "  autoload -Uz compinit && compinit"

@@ -26,20 +26,35 @@ MIN_SPECTRUM_FLOOR_DBFS = -96.0
 MAX_SPECTRUM_FLOOR_DBFS = -13.0
 DEFAULT_SPECTRUM_FLOOR_DBFS = -45.0
 SPECTRUM_CEILING_DBFS = -12.0
+DISPLAY_RANGE_DBFS = 30.0
 DISPLAY_GAMMA = 0.7
 ATTACK_SECONDS = 0.0025
 RELEASE_SECONDS = 0.0225
 
 
-def _validated_floor_dbfs(floor_dbfs: object) -> float:
-    if isinstance(floor_dbfs, bool) or not isinstance(floor_dbfs, int | float):
-        raise TypeError("spectrum floor must be a number")
-    floor = float(floor_dbfs)
-    if not math.isfinite(floor) or not MIN_SPECTRUM_FLOOR_DBFS <= floor <= MAX_SPECTRUM_FLOOR_DBFS:
+def _validated_floor_dbfs(floor_dbfs: object) -> float | np.ndarray:
+    if isinstance(floor_dbfs, int | float) and not isinstance(floor_dbfs, bool):
+        floor = float(floor_dbfs)
+        if math.isfinite(floor) and MIN_SPECTRUM_FLOOR_DBFS <= floor <= MAX_SPECTRUM_FLOOR_DBFS:
+            return floor
         raise ValueError(
             f"spectrum floor must be in [{MIN_SPECTRUM_FLOOR_DBFS}, {MAX_SPECTRUM_FLOOR_DBFS}] dBFS"
         )
-    return floor
+    try:
+        floors = np.asarray(floor_dbfs, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("spectrum floor must be a number or 18-band sequence") from exc
+    if floors.size != SPECTRUM_BANDS:
+        raise ValueError(f"spectrum floor profile requires {SPECTRUM_BANDS} bands")
+    if (
+        not np.all(np.isfinite(floors))
+        or np.any(floors < MIN_SPECTRUM_FLOOR_DBFS)
+        or np.any(floors > MAX_SPECTRUM_FLOOR_DBFS)
+    ):
+        raise ValueError(
+            f"spectrum floor must be in [{MIN_SPECTRUM_FLOOR_DBFS}, {MAX_SPECTRUM_FLOOR_DBFS}] dBFS"
+        )
+    return floors
 
 
 def _validate_sample_rate(sample_rate: int) -> None:
@@ -126,8 +141,8 @@ def _band_dbfs(samples: object, sample_rate: int) -> np.ndarray:
     return dbfs
 
 
-def display_levels(dbfs: object, floor_dbfs: float = DEFAULT_SPECTRUM_FLOOR_DBFS) -> np.ndarray:
-    """Map fixed floor..-12 dBFS band peaks to normalized display levels."""
+def display_levels(dbfs: object, floor_dbfs: object = DEFAULT_SPECTRUM_FLOOR_DBFS) -> np.ndarray:
+    """Map fixed scalar or per-band floors through a stable 30 dB display range."""
     floor = _validated_floor_dbfs(floor_dbfs)
     values = np.asarray(dbfs, dtype=np.float64).reshape(-1)
     if values.size != SPECTRUM_BANDS:
@@ -138,18 +153,15 @@ def display_levels(dbfs: object, floor_dbfs: float = DEFAULT_SPECTRUM_FLOOR_DBFS
         posinf=SPECTRUM_CEILING_DBFS,
         neginf=floor,
     )
-    normalized = np.clip(
-        (values - floor) / (SPECTRUM_CEILING_DBFS - floor),
-        0.0,
-        1.0,
-    )
+    ceiling = np.minimum(SPECTRUM_CEILING_DBFS, floor + DISPLAY_RANGE_DBFS)
+    normalized = np.clip((values - floor) / (ceiling - floor), 0.0, 1.0)
     return np.power(normalized, DISPLAY_GAMMA)
 
 
 def analyze_spectrum(
     samples: object,
     sample_rate: int,
-    floor_dbfs: float = DEFAULT_SPECTRUM_FLOOR_DBFS,
+    floor_dbfs: object = DEFAULT_SPECTRUM_FLOOR_DBFS,
 ) -> np.ndarray:
     """Map a mono window to 18 display levels using a fixed dBFS range."""
     return display_levels(_band_dbfs(samples, sample_rate), floor_dbfs)
@@ -192,15 +204,20 @@ def quantize_spectrum(levels: object) -> tuple[int, ...]:
 class SpectrumAnalyzer:
     """Fixed-range monitor with per-recording sample and motion state."""
 
-    def __init__(self, floor_dbfs: float = DEFAULT_SPECTRUM_FLOOR_DBFS) -> None:
-        self._floor_dbfs = _validated_floor_dbfs(floor_dbfs)
+    def __init__(self, floor_dbfs: object = DEFAULT_SPECTRUM_FLOOR_DBFS) -> None:
+        validated = _validated_floor_dbfs(floor_dbfs)
+        self._floor_dbfs = (
+            tuple(float(value) for value in validated)
+            if isinstance(validated, np.ndarray)
+            else validated
+        )
         self._stream_epoch: int | None = None
         self._sample_rate = 0
         self._window = np.empty(0, dtype=np.float32)
         self._smoothed = np.zeros(SPECTRUM_BANDS, dtype=np.float64)
 
     @property
-    def floor_dbfs(self) -> float:
+    def floor_dbfs(self) -> float | tuple[float, ...]:
         """Return the fixed display floor configured for this analyzer."""
         return self._floor_dbfs
 

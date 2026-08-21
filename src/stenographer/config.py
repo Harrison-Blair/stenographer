@@ -12,11 +12,17 @@ import pathlib
 import tomllib
 from dataclasses import asdict, dataclass
 
+from stenographer.status import SPECTRUM_BANDS
+
 ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
     {"int8", "int8_float16", "float16", "float32", "default"}
 )
 
 ALLOWED_HOTKEY_MODES: frozenset[str] = frozenset({"hold", "toggle"})
+MIN_SPECTRUM_FLOOR_DBFS = -96.0
+MAX_SPECTRUM_FLOOR_DBFS = -13.0
+
+SpectrumFloor = float | tuple[float, ...]
 
 
 class ConfigError(Exception):
@@ -61,7 +67,7 @@ class FeedbackConfig:
     volume: float
     mute: bool
     overlay: bool = True
-    spectrum_floor_dbfs: float = -45.0
+    spectrum_floor_dbfs: SpectrumFloor = -45.0
 
 
 @dataclass(frozen=True)
@@ -117,6 +123,32 @@ class _Reader:
             raise self._err(key, f"must be one of {sorted(allowed)}, got {value!r}")
         return value
 
+    def spectrum_floor(self, key: str) -> SpectrumFloor:
+        value = self.table.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            floor = float(value)
+            if MIN_SPECTRUM_FLOOR_DBFS <= floor <= MAX_SPECTRUM_FLOOR_DBFS:
+                return floor
+            raise self._err(
+                key,
+                f"must be in [{MIN_SPECTRUM_FLOOR_DBFS}, {MAX_SPECTRUM_FLOOR_DBFS}], got {value}",
+            )
+        if not isinstance(value, list) or len(value) != SPECTRUM_BANDS:
+            raise self._err(key, f"expected a number or exactly {SPECTRUM_BANDS} numbers")
+        floors: list[float] = []
+        for item in value:
+            if isinstance(item, bool) or not isinstance(item, int | float):
+                raise self._err(key, f"expected a number or exactly {SPECTRUM_BANDS} numbers")
+            floor = float(item)
+            if not MIN_SPECTRUM_FLOOR_DBFS <= floor <= MAX_SPECTRUM_FLOOR_DBFS:
+                raise self._err(
+                    key,
+                    f"each band must be in "
+                    f"[{MIN_SPECTRUM_FLOOR_DBFS}, {MAX_SPECTRUM_FLOOR_DBFS}], got {item}",
+                )
+            floors.append(floor)
+        return tuple(floors)
+
 
 def _build_hotkey(table: dict, path: pathlib.Path) -> HotkeyConfig:
     r = _Reader(table, path, "hotkey")
@@ -156,7 +188,7 @@ def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
         volume=r.ranged_number("volume", 0.0, 1.0),
         mute=r.bool("mute"),
         overlay=r.bool("overlay"),
-        spectrum_floor_dbfs=r.ranged_number("spectrum_floor_dbfs", -96.0, -13.0),
+        spectrum_floor_dbfs=r.spectrum_floor("spectrum_floor_dbfs"),
     )
 
 
@@ -198,7 +230,7 @@ cpu_threads = 0                # 0 = auto (physical cores, capped at 8)
 volume = 0.6
 mute = false
 overlay = true                 # best-effort lifecycle pill; dictation is independent
-spectrum_floor_dbfs = -45.0    # less-negative values suppress more spectrum input
+spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
 """
 
 
