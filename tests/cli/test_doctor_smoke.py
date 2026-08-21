@@ -3,7 +3,7 @@
 
 Runs the actual capability probe against this machine and asserts the CLI
 exit code agrees with the probe's own decision — 0 when everything required
-is present, 78 otherwise (spec §8 M6 Verify; exit-78 contract).
+is present, 78 otherwise (spec §8; exit-78 contract).
 """
 
 from __future__ import annotations

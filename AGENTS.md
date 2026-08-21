@@ -11,9 +11,9 @@ transcript is copied to both Wayland selections and pasted at the cursor via a
 `uinput` Shift+Insert chord. Offline, English-only, Python ≥ 3.12,
 GPL-3.0-or-later.
 
-The codebase is the 2026-08 clean-room reauthor (~2k lines, flat package
-`src/stenographer/`, tests in `tests/`). `docs/reauthor.md` is the design
-record: its §2 decisions are settled, §4 is the behavioral knowledge inventory
+The codebase is ~2k lines, with a flat package in `src/stenographer/` and tests
+in `tests/`. `docs/reauthor.md` is the binding design record: its §2 decisions
+are settled, §4 is the behavioral knowledge inventory
 that binds every change, §6 is the testing policy, §7 lists deliberately cut
 features. Do not reintroduce cut features (old HUD, transcript preview,
 toggle/hybrid modes, self-update, PyInstaller packaging, wtype) without that

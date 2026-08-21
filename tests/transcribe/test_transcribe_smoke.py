@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke suite for the reauthored batch transcribe path.
+"""Integration smoke suite for the batch transcribe path.
 
-Four real, non-mocked checks (spec §6.3, M1 Verify clause):
+Four real, non-mocked checks (spec §6.3):
 
   * equivalence  — the public ``transcribe`` command produces the same text as
     the surviving model.Model + format.format_transcript API on the same

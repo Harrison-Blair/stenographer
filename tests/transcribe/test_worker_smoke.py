@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke suite for the reauthored ASR worker (spec §6.3, M3 Verify).
+"""Integration smoke suite for the ASR worker (spec §6.3).
 
 Real, non-mocked process lifecycle: a genuinely spawned child loads the model
 through a load-only warm-up and decodes a bundled 16 kHz WAV. Covers warm-up

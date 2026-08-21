@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke + manual acceptance procedure for the daemon (M5 Verify).
+"""Integration smoke + manual acceptance procedure for the daemon.
 
-The M5 Verify clause — "real dictation end-to-end on both compositor families" —
-is the acceptance test and is inherently MANUAL: it needs a microphone, real
-speech, and a focused window. It cannot be asserted programmatically.
+Real dictation end-to-end on both compositor families is the acceptance test
+and is inherently MANUAL: it needs a microphone, real speech, and a focused
+window. It cannot be asserted programmatically.
 
     MANUAL ACCEPTANCE PROCEDURE
     1. Ensure the model is cached (`stenographer model download`) and you are

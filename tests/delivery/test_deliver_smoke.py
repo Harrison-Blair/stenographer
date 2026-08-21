@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke suite for delivery (spec §6.3, M4 Verify).
+"""Integration smoke suite for delivery (spec §6.3).
 
 Real, non-mocked boundaries: genuine backend detection against the session
 compositor, a real copy → read-back round trip on BOTH selections through the
@@ -11,8 +11,8 @@ On a data-control compositor (wlroots, GNOME >= 47) this exercises the wl-copy
 path; on GNOME <= 46 it exercises the xclip/XWayland path — the same choice the
 daemon makes at startup.
 
-Manual per-compositor step (the paste half of the M4 Verify clause, which cannot
-be asserted programmatically without a focused window under test):
+Manual per-compositor paste step, which cannot be asserted programmatically
+without a focused window under test:
 
     Run this with a terminal focused, once on a Hyprland session and once on a
     GNOME Wayland session. After the chord fires, confirm the unique string was

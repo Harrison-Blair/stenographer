@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure-logic tests for the reauthored config loader."""
+"""Pure-logic tests for the config loader."""
 
 from __future__ import annotations
 

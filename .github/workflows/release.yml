@@ -28,11 +28,11 @@ jobs:
             echo "error: draft releases must target main, not ${GITHUB_REF}" >&2
             exit 1
           fi
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Query every GitHub release
@@ -66,10 +66,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install Ruff
@@ -87,10 +87,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install system test dependencies
@@ -113,10 +113,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Build wheel and source distribution
@@ -150,7 +150,7 @@ jobs:
             "stenographer-${VERSION}-py3-none-any.whl" \
             "stenographer-${VERSION}.tar.gz" \
             > release-python.SHA256SUMS
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-python-distributions
           path: |
@@ -178,10 +178,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Verify native architecture
@@ -223,7 +223,7 @@ jobs:
           cd release
           sha256sum "stenographer-${VERSION}-linux-${ARCHIVE_ARCH}.tar.gz" \
             > "release-${ARCHIVE_ARCH}.SHA256SUMS"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-standalone-${{ matrix.archive_arch }}
           path: |
@@ -242,14 +242,14 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: release
@@ -295,7 +295,7 @@ jobs:
             "${RUNNER_TEMP}/releases-recheck.json" src/stenographer/_version.py \
             --github-output "${GITHUB_OUTPUT}"
       - name: Attest all release artifacts
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        uses: actions/attest@v4
         with:
           subject-path: release/*
       - name: Final guard, generate notes, and create or refresh draft

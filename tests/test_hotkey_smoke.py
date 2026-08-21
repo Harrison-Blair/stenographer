@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke suite for the PTT hotkey listener (spec §6.3, M5 Verify).
+"""Integration smoke suite for the PTT hotkey listener (spec §6.3).
 
 Real, non-mocked input path: a genuine evdev.UInput keyboard advertising
 KEY_A..KEY_Z plus the binding key, a HotkeyListener pointed at that device's

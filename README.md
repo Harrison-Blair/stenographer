@@ -53,8 +53,7 @@ Everything is offline and English-only. Nothing is sent anywhere; the daemon
 never touches the network (the model is fetched once, explicitly, with
 `stenographer model download`).
 
-This is the reauthored v2 of the project — a deliberate clean-room rewrite of
-the original ~9k-line tool down to ~2k lines. The design record lives in
+The architecture and binding behavioral decisions are recorded in
 [docs/reauthor.md](docs/reauthor.md).
 
 ## Quick start

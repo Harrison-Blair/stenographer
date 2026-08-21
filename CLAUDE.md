@@ -11,11 +11,10 @@ chord — display-server-independent, so it works on wlroots compositors and
 GNOME alike. Hold is the default; `hotkey.mode = "toggle"` presses once to
 start and again to stop. Offline, English-only, GPL-3.0-or-later, Python ≥ 3.12.
 
-This is the reauthored codebase (2026-08): a clean-room rewrite of the original
-~9k-line tool down to ~2k lines. `docs/reauthor.md` is the design record — its
-§2 decisions are settled, its §4 behavioral knowledge inventory binds every
-change, and its §6 testing policy is codified below. Do not reintroduce cut
-features (transcript preview/the old HUD, the hybrid trigger mode, self-update,
+`docs/reauthor.md` is the design record — its §2 decisions are settled, its §4
+behavioral knowledge inventory binds every change, and its §6 testing policy is
+codified below. Do not reintroduce cut features (transcript preview/the old HUD,
+the hybrid trigger mode, self-update,
 release distribution) without revisiting that document's §7 add-later ledger.
 The isolated lifecycle pill—with exactly 18 live spectrum bars while recording
 and a helper-local amber border pulse only while the model loads—and local

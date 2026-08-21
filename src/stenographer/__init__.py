@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""stenographer (reauthor): local, offline, Wayland push-to-talk dictation."""
+"""stenographer: local, offline, Wayland push-to-talk dictation."""
 
 from __future__ import annotations
 

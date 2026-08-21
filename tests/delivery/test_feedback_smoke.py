@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke suite for the cue player (spec §6.3, M4 Verify).
+"""Integration smoke suite for the cue player (spec §6.3).
 
 Really plays each of the four bundled cues through the detected audio player
 (canberra-gtk-play/pw-play/paplay) — no mocks. The operator should hear four

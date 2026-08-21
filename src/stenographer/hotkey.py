@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Mode-agnostic evdev hotkey listener plus its pure helpers (spec §4.9).
 
-A clean-room simplification of the old listener: no state machine, no hybrid
-mode, no cancel binding, no double-tap timer, no feedback wiring (the daemon
-plays cues in its on_start/on_stop callbacks). The listener only reports chord
-edges — rising edge to on_start, falling edge to on_stop; the daemon maps them
-to session actions per ``hotkey.mode`` (hold or toggle). It also exposes
-wait_binding_released as the deliverer's modifier release-guard (§4.2).
+The listener owns no state machine, hybrid mode, cancel binding, double-tap
+timer, or feedback wiring (the daemon plays cues in its on_start/on_stop
+callbacks). It reports chord edges — rising edge to on_start, falling edge to
+on_stop; the daemon maps them to session actions per ``hotkey.mode`` (hold or
+toggle). It also exposes wait_binding_released as the deliverer's modifier
+release-guard (§4.2).
 
 The pure helpers (parse_binding, is_main_keyboard, chord_active, edge) are the
 unit targets; the real read loop is exercised by the uinput loopback smoke (§6).

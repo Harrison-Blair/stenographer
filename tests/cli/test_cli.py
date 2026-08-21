@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure-logic tests for the reauthored CLI parser (M0 scaffold)."""
+"""Pure-logic tests for the CLI parser."""
 
 from __future__ import annotations
 
