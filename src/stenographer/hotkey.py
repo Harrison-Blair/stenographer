@@ -138,7 +138,9 @@ class HotkeyListener:
         self._on_stop = on_stop
         self._lock = lock
         self._held: set[int] = set()
+        self._held_by_device: dict[int, set[int]] = {}
         self._held_lock = threading.Lock()
+        self._transition_lock = threading.Lock()
         self._active = False
         self._stop_event = threading.Event()
         self._supervisor: threading.Thread | None = None
@@ -153,8 +155,14 @@ class HotkeyListener:
         self._supervisor.start()
 
     def stop(self, timeout: float = 2.0) -> None:
-        self._stop_event.set()
-        for device in list(self._devices):
+        with self._transition_lock:
+            self._stop_event.set()
+        with self._held_lock:
+            devices = list(self._devices)
+            self._devices.clear()
+            self._held_by_device.clear()
+            self._held.clear()
+        for device in devices:
             with contextlib.suppress(OSError):
                 device.close()
         for t in list(self._readers):
@@ -163,6 +171,8 @@ class HotkeyListener:
             self._supervisor.join(timeout=timeout)
         self._readers = []
         self._supervisor = None
+        with self._lock:
+            self._active = False
 
     @property
     def is_running(self) -> bool:
@@ -191,17 +201,19 @@ class HotkeyListener:
     def _run(self) -> None:
         paths = self._resolve_paths()
         while not self._stop_event.is_set():
-            self._devices = []
+            devices: list[evdev.InputDevice] = []
             for path in paths:
                 with contextlib.suppress(OSError):
-                    self._devices.append(evdev.InputDevice(path))
-            if self._devices:
-                for device in self._devices:
+                    devices.append(evdev.InputDevice(path))
+            if devices:
+                for device in devices:
                     logger.info("hotkey: listening on %s (%s)", device.path, device.name)
                 with self._held_lock:
                     self._held.clear()
+                    self._held_by_device = {id(device): set() for device in devices}
+                    self._devices = devices
                 self._active = False
-                self._readers = [self._spawn_reader(d) for d in self._devices]
+                self._readers = [self._spawn_reader(d) for d in devices]
                 self._supervise()
                 for t in list(self._readers):
                     t.join(timeout=0.5)
@@ -248,7 +260,8 @@ class HotkeyListener:
                 next_rescan = time.monotonic() + _RESCAN_INTERVAL_SECONDS
 
     def _rescan(self) -> None:
-        known = {device.path for device in self._devices}
+        with self._held_lock:
+            known = {device.path for device in self._devices}
         for path in auto_detect_paths():
             if self._stop_event.is_set() or path in known:
                 continue
@@ -257,7 +270,12 @@ class HotkeyListener:
             except OSError:
                 continue
             logger.info("hotkey: hotplug — now listening on %s (%s)", path, device.name)
-            self._devices.append(device)
+            with self._held_lock:
+                if self._stop_event.is_set():
+                    device.close()
+                    return
+                self._devices.append(device)
+                self._held_by_device[id(device)] = set()
             self._readers.append(self._spawn_reader(device))
 
     def _spawn_reader(self, device: evdev.InputDevice) -> threading.Thread:
@@ -271,11 +289,11 @@ class HotkeyListener:
         return t
 
     def _reader_loop(self, device: evdev.InputDevice) -> None:
-        """Feed one device's key events into the shared held-set and dispatch chord
-        edges. device_held tracks keys held on THIS HID so a missed release (a
-        second keydown with no keyup) is synthesized; _held is the union of HIDs.
+        """Feed one device's key events into the shared held state and dispatch chord
+        edges. A missed release (a second keydown with no keyup) is synthesized;
+        _held is derived from the per-device sets so device loss can remove only
+        that HID's contribution.
         """
-        device_held: set[int] = set()
         try:
             for event in device.read_loop():
                 if self._stop_event.is_set():
@@ -283,26 +301,58 @@ class HotkeyListener:
                 if event.type != evdev.ecodes.EV_KEY:
                     continue
                 code, value = event.code, event.value
-                after_release = stuck = False
-                with self._held_lock:
-                    if value == 1:
-                        if code in device_held:
-                            stuck = True
-                            self._held.discard(code)
-                            after_release = chord_active(self._held, self._chord)
-                        device_held.add(code)
-                        self._held.add(code)
-                    elif value == 0:
-                        device_held.discard(code)
-                        self._held.discard(code)
-                    else:
-                        continue  # autorepeat (value 2) and any other value
-                    is_active = chord_active(self._held, self._chord)
-                if stuck:
-                    self._update(after_release)
-                self._update(is_active)
+                with self._transition_lock:
+                    after_release = stuck = False
+                    with self._held_lock:
+                        device_held = self._held_by_device.get(id(device))
+                        if device_held is None:
+                            return
+                        if value == 1:
+                            if code in device_held:
+                                stuck = True
+                                device_held.remove(code)
+                                self._rebuild_held()
+                                after_release = chord_active(self._held, self._chord)
+                            device_held.add(code)
+                        elif value == 0:
+                            if code in device_held:
+                                device_held.remove(code)
+                            else:
+                                # Some multi-interface keyboards route a key-up
+                                # through a different HID from its key-down.
+                                for held in self._held_by_device.values():
+                                    held.discard(code)
+                        else:
+                            continue  # autorepeat (value 2) and any other value
+                        self._rebuild_held()
+                        is_active = chord_active(self._held, self._chord)
+                    if stuck:
+                        self._update(after_release)
+                    self._update(is_active)
         except OSError as exc:
-            logger.warning("hotkey: device %s lost: %s", device.path, exc)
+            if not self._stop_event.is_set():
+                logger.warning("hotkey: device %s lost: %s", device.path, exc)
+        finally:
+            self._device_lost(device)
+
+    def _rebuild_held(self) -> None:
+        """Rebuild the shared union. Caller holds _held_lock."""
+        self._held.clear()
+        for device_held in self._held_by_device.values():
+            self._held.update(device_held)
+
+    def _device_lost(self, device: evdev.InputDevice) -> None:
+        """Drop one HID's state and report any resulting falling edge."""
+        with self._transition_lock:
+            with self._held_lock:
+                self._held_by_device.pop(id(device), None)
+                self._devices = [opened for opened in self._devices if opened is not device]
+                self._rebuild_held()
+                is_active = chord_active(self._held, self._chord)
+            with contextlib.suppress(OSError):
+                device.close()
+            if not self._stop_event.is_set():
+                self._update(is_active)
 
     def _update(self, is_active: bool) -> None:
         """Dispatch a chord edge under the shared lock. The was-active read and the
@@ -312,6 +362,8 @@ class HotkeyListener:
         if is_active == self._active:
             return  # racy fast path; re-checked under the dispatch lock
         with self._lock:
+            if self._stop_event.is_set():
+                return
             transition = edge(self._active, is_active)
             if transition is None:
                 return

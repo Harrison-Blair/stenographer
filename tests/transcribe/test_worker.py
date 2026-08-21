@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure-logic tests for worker.py: classify_error + interpret_response only.
+"""Pure-logic tests for the worker protocol, lifecycle, and timeout policies.
 
 No process spawn, no Model, no network. The real lifecycle (spawn, decode
 through the child, idle-kill, restart-if-dead) is covered by the integration
@@ -12,14 +12,18 @@ import pytest
 
 from stenographer.transcribe.model import PathologicalOutputError, TranscriptionResult
 from stenographer.transcribe.worker import (
+    _MODEL_LOAD_TIMEOUT_SECONDS,
     WorkerError,
     WorkerEvent,
     WorkerLifecycle,
     WorkerPathologicalError,
     WorkerProtocolError,
+    _WorkerTimeoutError,
     classify_error,
+    decode_timeout_seconds,
     interpret_response,
     lifecycle_transition,
+    response_poll_timeout,
     should_arm_idle_timer,
     should_teardown_for_response_error,
 )
@@ -82,6 +86,32 @@ def test_malformed_worker_errors_require_teardown():
     with pytest.raises(WorkerProtocolError) as exc:
         interpret_response(("bogus", "secret"))
     assert should_teardown_for_response_error(exc.value) is True
+
+
+def test_timeout_errors_require_teardown():
+    assert should_teardown_for_response_error(_WorkerTimeoutError("timed out")) is True
+
+
+def test_model_load_timeout_is_two_minutes():
+    assert _MODEL_LOAD_TIMEOUT_SECONDS == 120.0
+
+
+def test_decode_timeout_has_sixty_second_floor():
+    assert decode_timeout_seconds(0) == 60.0
+    assert decode_timeout_seconds(16_000 * 10) == 60.0
+    assert decode_timeout_seconds(16_000 * 15) == 60.0
+
+
+def test_decode_timeout_is_four_times_actual_audio_duration():
+    assert decode_timeout_seconds(16_000 * 20) == 80.0
+    assert decode_timeout_seconds(16_000 * 125) == 500.0
+
+
+def test_response_poll_timeout_clamps_to_remaining_deadline():
+    assert response_poll_timeout(now=100.0, deadline=200.0) == 0.1
+    assert response_poll_timeout(now=100.0, deadline=100.03) == pytest.approx(0.03)
+    assert response_poll_timeout(now=100.0, deadline=100.0) == 0.0
+    assert response_poll_timeout(now=100.0, deadline=99.0) == 0.0
 
 
 def test_cold_and_warm_lifecycle_ordering():

@@ -115,7 +115,10 @@ class Recorder:
         max_seconds: int,
         on_block: Callable[[np.ndarray, int, int], None] | None = None,
     ) -> None:
-        self._configured_device: str | int | None = None if device == "" else device
+        normalized_device: str | int | None = None if device == "" else device
+        if isinstance(normalized_device, str) and normalized_device.isdecimal():
+            normalized_device = int(normalized_device)
+        self._configured_device = normalized_device
         self._selected_device: str | int | None = self._configured_device
         self._max_seconds = max_seconds
         self._on_block = on_block
@@ -283,18 +286,18 @@ class Recorder:
             self._discard_samples()
             return np.empty(0, dtype=np.float32)
         stream = self._stream
+        phase = "stop"
         try:
             if stream is None or not stream.active:
                 raise RuntimeError("input stream stopped during capture")
             stream.stop(ignore_errors=False)
+            phase = "finalize"
             # PortAudio has now quiesced the callback, so these values and the
             # block list form one stable snapshot of the completed capture.
             capture_started_at = self._capture_started_at
             input_frames = self._frames
             overflow = self._overflow
             capped = self._capped
-            if overflow:
-                raise RuntimeError("input overflow during capture")
             self._state = RecorderState.PREPARED
             audio = np.concatenate(self._blocks) if self._blocks else np.empty(0, dtype=np.float32)
             if self._device_rate != _SAMPLE_RATE:
@@ -304,7 +307,6 @@ class Recorder:
             failed_frames = self._frames
             failed_overflow = self._overflow
             failed_capped = self._capped
-            phase = "callback" if failed_overflow else "stop"
             logger.warning(
                 "recorder: capture_failed phase=%s error_type=%s input_frames=%d "
                 "overflow=%d capped=%d",
@@ -334,6 +336,13 @@ class Recorder:
                 "recorder: capture_capped max_seconds=%d frames=%d",
                 self._max_seconds,
                 input_frames,
+            )
+        if overflow:
+            logger.warning(
+                "recorder: input_overflow input_frames=%d output_frames=%d capped=%d",
+                input_frames,
+                audio.size,
+                int(capped),
             )
         return audio
 

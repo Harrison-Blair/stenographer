@@ -1,17 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Integration smoke suite for the reauthored batch transcribe path.
 
-Two real, non-mocked checks (spec §6.3, M1 Verify clause):
+Four real, non-mocked checks (spec §6.3, M1 Verify clause):
 
   * equivalence  — the public ``transcribe`` command produces the same text as
     the surviving model.Model + format.format_transcript API on the same
     machine-supplied 16 kHz WAV.
+  * conversion   — a 48 kHz stereo rendering produces the same transcript as
+    the source mono 16 kHz recording.
+  * read errors  — corrupt files and directories fail concisely before model
+    construction.
   * hotwords     — a proper noun set in asr.hotwords is honored in the decode.
 
-Both really load the medium.en model and decode a machine-supplied clip; nothing is
-mocked. The whole module self-skips unless STENOGRAPHER_INTEGRATION=1, the
-model is cached locally, and the fixture WAV is present — so the default unit
-run never touches the network or the ASR stack.
+The model-based checks really load the medium.en model and decode a
+machine-supplied clip; nothing is mocked. The whole module self-skips unless
+STENOGRAPHER_INTEGRATION=1, the model is cached locally, and the fixture WAV is
+present — so the default unit run never touches the network or the ASR stack.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import dataclasses
 import os
 import pathlib
 
+import numpy as np
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -71,6 +76,53 @@ def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
     actual = capsys.readouterr().out
     assert actual.strip() == expected.strip()
     assert actual.strip() != ""
+
+
+def test_cli_transcribe_48k_stereo_matches_16k_mono(tmp_path, monkeypatch, capsys):
+    from stenographer import config
+    from stenographer.cli import main
+
+    config_path = tmp_path / "config.toml"
+    config.Config.write_default(config_path)
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
+
+    assert main(["transcribe", str(_CLIP)]) == 0
+    expected = capsys.readouterr().out
+
+    mono = _read(_CLIP).mean(axis=1, dtype=np.float32)
+    source_positions = np.arange(mono.size)
+    target_positions = np.arange(mono.size * 3) / 3
+    upsampled = np.interp(target_positions, source_positions, mono).astype(np.float32)
+    stereo = np.column_stack((upsampled, upsampled))
+    stereo_path = tmp_path / "speech_48k_stereo.wav"
+    soundfile.write(str(stereo_path), stereo, 48000)
+
+    assert main(["transcribe", str(stereo_path)]) == 0
+    actual = capsys.readouterr().out
+    assert actual.strip() == expected.strip()
+    assert actual.strip() != ""
+
+
+@pytest.mark.parametrize("input_kind", ["corrupt", "directory"])
+def test_cli_transcribe_read_failure_is_concise(input_kind, tmp_path, monkeypatch, capsys):
+    from stenographer import config
+    from stenographer.cli import main
+
+    config_path = tmp_path / "config.toml"
+    config.Config.write_default(config_path)
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
+
+    input_path = tmp_path / input_kind
+    if input_kind == "directory":
+        input_path.mkdir()
+    else:
+        input_path.write_bytes(b"not an audio file")
+
+    assert main(["transcribe", str(input_path)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(f"stenographer: cannot read {input_path}:")
+    assert captured.err.count("\n") == 1
 
 
 def test_hotword_is_honored():

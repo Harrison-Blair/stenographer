@@ -74,3 +74,59 @@ def test_uinput_loopback_drives_start_then_stop():
 
     assert starts == [1], "rising edge must fire on_start exactly once"
     assert stops == [1], "falling edge must fire on_stop exactly once"
+
+
+def test_destroying_held_uinput_drives_one_stop_and_releases_guard():
+    """A disappearing HID must contribute a final falling edge.
+
+    Regression guard: there is deliberately no key-up. Closing the real uinput
+    device destroys its read-back node while the binding remains held.
+    """
+    ui = _open_uinput()
+    node = ui.device.path
+    try:
+        probe = evdev.InputDevice(node)
+        probe.close()
+    except OSError as exc:
+        ui.close()
+        pytest.skip(f"uinput node {node} not readable: {exc}")
+
+    starts: list[int] = []
+    stops: list[int] = []
+    started = threading.Event()
+    stopped = threading.Event()
+
+    def on_start() -> None:
+        starts.append(1)
+        started.set()
+
+    def on_stop() -> None:
+        stops.append(1)
+        stopped.set()
+
+    listener = HotkeyListener(
+        chord=parse_binding("KEY_RIGHTALT"),
+        device_path=node,
+        on_start=on_start,
+        on_stop=on_stop,
+        lock=threading.RLock(),
+    )
+    listener.start()
+    try:
+        time.sleep(0.5)  # let the reader attach to the node
+        ui.write(evdev.ecodes.EV_KEY, _BINDING, 1)
+        ui.syn()
+        assert started.wait(1.0), "held binding did not drive its rising edge"
+
+        ui.close()
+        assert stopped.wait(1.0), "device loss did not promptly drive its falling edge"
+        guard_started = time.monotonic()
+        assert listener.wait_binding_released(timeout=0.25)
+        assert time.monotonic() - guard_started < 0.25
+        time.sleep(0.2)
+    finally:
+        listener.stop()
+        ui.close()
+
+    assert starts == [1], "held binding must fire on_start exactly once"
+    assert stops == [1], "device loss must fire on_stop exactly once"

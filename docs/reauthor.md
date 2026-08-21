@@ -117,7 +117,10 @@ design was built on compositor-specific protocols; the new one must not be.
     unload (~1.5 GB), crash isolation from native-library segfaults, and the
     ability to abandon a stuck decode by killing the child. Results remain
     **word-timestamp-capable** so a streaming layer can be added on top later
-    without rearchitecting.
+    without rearchitecting. Model loading has a fixed 120-second deadline; decode
+    has a fixed deadline of the greater of 60 seconds or four times the actual
+    16 kHz audio duration. A timeout poisons that child's protocol, so the parent
+    terminates and reaps it and the next request starts a fresh child.
 11. **Config: 4 sections, exactly 19 keys** (schema in §5). Hard validation with
     key-scoped errors; **no migrations** (sole config holder). Formatting is
     fixed behavior with zero knobs. Interactive setup reviews and materializes
@@ -284,6 +287,10 @@ is a constraint on the new implementation.
    modifier mutates Shift+Insert into something else. On release-wait timeout,
    proceed anyway: the clipboard already holds the transcript, so the user can
    paste manually.
+   Held keys are tracked per input device. If a reader reaches EOF or its device
+   disappears, only that device's contribution is removed; any resulting chord
+   falling edge is dispatched after device/held-state locks are released so the
+   release guard completes without disturbing keys still held on another HID.
 3. **Copy-confirmed-before-paste.** Fire the paste chord only after the clipboard
    write has been confirmed. A failed copy followed by a chord pastes *stale*
    clipboard content into the focused app — worse than doing nothing.
@@ -311,9 +318,11 @@ is a constraint on the new implementation.
    required copy, or locks shared with slow consumers. The supervisor-thread
    analyzer exists because violating this causes overflows/dropouts.
 9. **Sample-rate fallback.** Not every device opens at 16 kHz. The current
-   Recorder falls back through supported rates and polyphase-resamples to the
-   ASR rate. Keep this — it is the difference between "works on my mic" and
-   "works".
+    Recorder falls back through supported rates and polyphase-resamples to the
+    ASR rate. Exact non-negative decimal device strings are PortAudio indices and
+    are normalized to integers; all other non-empty strings remain device-name
+    queries. Keep this — it is the difference between "works on my mic" and
+    "works".
 10. **cpu_threads auto-detect.** `0` means: affinity-visible *physical* cores,
     capped at 8. CTranslate2 scales badly past that; hyperthread counting makes
     it slower.
@@ -325,18 +334,24 @@ is a constraint on the new implementation.
     `preprocessor_config.json`).
 12. **Logging privacy and ownership.** Log numeric/structural metrics and
     transcript *lengths*; never audio, samples, transcript text, or result
-    representations. Every command configures stderr plus a 5 MiB rotating file
-    (three backups) at `$XDG_STATE_HOME/stenographer/stenographer.log`, falling
-    back below `~/.local/state`. `STENOGRAPHER_LOG_LEVEL` is case-insensitive and
-    defaults (including invalid values) to `INFO`. Setup owns and marks only its
-    own handlers, preserving host handlers, and a file failure warns once before
-    continuing stderr-only. Worker-child records cross a multiprocessing queue
-    to the parent's handlers; the child never opens or rotates the file, and the
+    representations. Every public command and the daemon parent configures stderr
+    plus a 5 MiB rotating file (three backups) at
+    `$XDG_STATE_HOME/stenographer/stenographer.log`, falling back below
+    `~/.local/state`. The private overlay helper branches immediately after
+    `multiprocessing.freeze_support()` and never imports, opens, or rotates that
+    log. `STENOGRAPHER_LOG_LEVEL` is case-insensitive and defaults (including
+    invalid values) to `INFO`. Setup owns and marks only its own handlers,
+    preserving host handlers, and a file failure warns once before continuing
+    stderr-only. Worker-child records cross a multiprocessing queue to the
+    parent's handlers; the child never opens or rotates the file, and the
     queue/listener lifetime matches the child across idle unload, crash, respawn,
     and shutdown.
 13. **Permissions.** evdev listening requires `input` group membership; uinput
     injection requires write access to `/dev/uinput` (udev rule or `uinput`
-    group). `doctor` must probe both and say exactly what to fix.
+    group). `doctor` must probe both and say exactly what to fix. Daemon startup
+    uses the complete current `doctor.REQUIRED` set as a preflight gate before
+    overlay construction, lock acquisition, recorder preparation, or the running
+    log, and reuses the clipboard backend selected by that same probe.
 14. **Config ergonomics kept from the old loader.** Missing config file → write
     annotated defaults, then load. Defaults recursively merged under user values.
     Every validation failure is a key-scoped `ConfigError` → exit 78. (The old
@@ -487,6 +502,10 @@ not add a speech threshold, runtime learning, or any other persisted state.
 - Model-load and decode records travel over a per-child logging queue to the
   parent's handlers. Idle unload, crash recovery, respawn, and shutdown stop the
   listener and close its queue; no child process owns a file handler.
+- Model load has a 120-second wall-clock deadline. Decode has a wall-clock deadline
+  of `max(60 seconds, 4 × audio duration at 16 kHz)`. A timeout terminates and
+  reaps the child, discards its queues and readiness, and forces a fresh spawn on
+  the next request.
 - The word-timestamp requirement is the single constraint that keeps the
   streaming/preview door open (§7) without paying for it now.
 
@@ -506,7 +525,7 @@ stop (key up; toggle: second press or the max_recording_seconds timer)
             └─ otherwise: show immediately before decode
           → worker result
             └─ empty/all-gated → overlay `hidden` (silently)
-          → format non-empty result → overlay `delivering`
+          → format non-empty result with one trailing space → overlay `delivering`
           → wl-copy (both selections) → confirm
             └─ copy failed → overlay `error` (2.5 s), error cue + notify;
               NO chord (§4.3)
@@ -523,8 +542,15 @@ one warning and retries on the next press. If a retained stream has gone stale,
 activation closes it and performs exactly one renegotiate-and-start retry; a
 first on-demand preparation gets only its normal attempt. Any uncertain stop or
 mid-capture failure invalidates the stream and discards all buffered audio, so a
-later press prepares fresh and no partial transcript can be pasted. Cue failures
-cannot delay these capture boundaries or orphan a recording.
+later press prepares fresh and no partial transcript can be pasted. An input
+overflow is different: after a confirmed stop, the recorder logs a structural
+warning and preserves the audio that was buffered successfully plus the prepared
+stream for reuse. Cue failures cannot delay these capture boundaries or orphan a
+recording.
+
+The fixed formatter adds one trailing space only on this interactive daemon
+delivery path. `stenographer transcribe` keeps its existing no-trailing-space
+stdout contract.
 
 One utterance at a time; a start press during transcription of the previous
 utterance is ignored (toggle mode neither starts nor queues; v1 keeps no

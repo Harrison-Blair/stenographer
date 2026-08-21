@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure-logic tests for the capture module: the RMS gate and the resampler.
+"""Pure-logic tests for capture configuration, the RMS gate, and resampling.
 
-``Recorder`` itself touches PortAudio and is covered by the integration smoke
-suite, never by mocking (§6).
+Constructing a ``Recorder`` is pure. Its stream lifecycle touches PortAudio and
+is covered by the integration smoke suite, never by mocking (§6).
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from stenographer.audio import _resample_poly, speech_gate_passes
+from stenographer.audio import Recorder, _resample_poly, speech_gate_passes
 
 _RATE = 16000
 _FRAME = int(_RATE * 0.050)  # 800 samples per 50 ms gate frame
@@ -19,6 +19,31 @@ _FRAME = int(_RATE * 0.050)  # 800 samples per 50 ms gate frame
 def _signal(frame_amplitudes: list[float]) -> np.ndarray:
     """Build audio whose i-th 50 ms frame is a constant at the given amplitude."""
     return np.concatenate([np.full(_FRAME, amp, dtype=np.float32) for amp in frame_amplitudes])
+
+
+@pytest.mark.parametrize(
+    ("configured", "normalized"),
+    [
+        (None, None),
+        ("", None),
+        (0, 0),
+        (7, 7),
+        ("0", 0),
+        ("17", 17),
+        ("0017", 17),
+        ("USB microphone", "USB microphone"),
+        ("-1", "-1"),
+        ("+1", "+1"),
+        (" 1", " 1"),
+        ("1 ", "1 "),
+        ("1.0", "1.0"),
+    ],
+)
+def test_recorder_normalizes_only_exact_nonnegative_decimal_device_strings(configured, normalized):
+    recorder = Recorder(device=configured, max_seconds=2)
+
+    assert recorder._configured_device == normalized
+    assert recorder._selected_device == normalized
 
 
 def test_gate_disabled_passes_silence():

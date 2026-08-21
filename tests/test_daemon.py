@@ -24,6 +24,7 @@ import os
 
 import pytest
 
+from stenographer.cli import doctor
 from stenographer.daemon import (
     Outcome,
     SingleInstanceLockError,
@@ -33,10 +34,28 @@ from stenographer.daemon import (
     is_lock_contention,
     max_duration_applies,
     should_publish_state,
+    startup_clipboard_backend,
     toggle_action,
 )
 from stenographer.delivery.deliver import ClipboardBackend
 from stenographer.status import OverlayState
+
+
+def _startup_caps(**overrides) -> doctor.Capabilities:
+    fields = {
+        "uinput_writable": True,
+        "input_group": True,
+        "has_mic": True,
+        "model_cached": True,
+        "clipboard": True,
+        "clipboard_backend": "wl-copy",
+        "audio_player": "pw-play",
+        "service_enabled": "enabled",
+        "service_active": "active",
+        "overlay": doctor.OverlayCapability.disabled(),
+    }
+    fields.update(overrides)
+    return doctor.Capabilities(**fields)
 
 
 def test_gate_failure_is_silent():
@@ -132,6 +151,24 @@ def test_is_lock_contention_classifies_errnos():
     # The non-contention escape hatch is still an OSError for callers that
     # only catch broadly.
     assert issubclass(SingleInstanceLockError, OSError)
+
+
+def test_startup_gate_tracks_every_current_doctor_requirement():
+    assert startup_clipboard_backend(_startup_caps()) is ClipboardBackend.WL_COPY
+    for name in doctor.REQUIRED:
+        caps = dataclasses.replace(_startup_caps(), **{name: False})
+        assert startup_clipboard_backend(caps) is None, name
+
+
+def test_startup_gate_ignores_optional_capabilities_and_reuses_backend():
+    caps = _startup_caps(
+        clipboard_backend="x11",
+        audio_player=None,
+        service_enabled=None,
+        service_active=None,
+        overlay=doctor.OverlayCapability.disabled(),
+    )
+    assert startup_clipboard_backend(caps) is ClipboardBackend.X11
 
 
 def test_single_instance_lock_is_mutually_exclusive(tmp_path):

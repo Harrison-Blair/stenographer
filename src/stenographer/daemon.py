@@ -35,7 +35,6 @@ from stenographer.delivery.deliver import (
     Deliverer,
     UinputKeyboard,
     copy_for_backend,
-    detect_clipboard_backend,
 )
 from stenographer.delivery.feedback import Feedback
 from stenographer.delivery.notify import Notifier
@@ -46,6 +45,7 @@ from stenographer.transcribe.worker import Worker, WorkerError
 if TYPE_CHECKING:
     import numpy as np
 
+    from stenographer.cli.doctor import Capabilities
     from stenographer.config import Config
 
 log = logging.getLogger(__name__)
@@ -163,6 +163,15 @@ def is_lock_contention(exc: OSError) -> bool:
     instance is running; anything else is lock-file I/O gone wrong.
     """
     return exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK)
+
+
+def startup_clipboard_backend(caps: Capabilities) -> ClipboardBackend | None:
+    """Gate daemon startup on doctor requirements and reuse its backend. PURE."""
+    from stenographer.cli import doctor
+
+    if doctor.missing_required(caps):
+        return None
+    return ClipboardBackend(caps.clipboard_backend)
 
 
 def acquire_single_instance_lock(path: pathlib.Path = LOCK_PATH) -> int:
@@ -453,7 +462,7 @@ class Daemon:
                 self._publish_state(OverlayState.HIDDEN)
                 return
             transcript_nonempty = bool(result.text.strip())
-            text = format_transcript(result.text)
+            text = format_transcript(result.text, trailing_space=True)
             if not transcript_nonempty:
                 self._publish_state(OverlayState.HIDDEN)
             else:
@@ -524,12 +533,14 @@ class Daemon:
 
 def run(cfg: Config) -> int:
     """Build and run the daemon. Returns the process exit code."""
+    from stenographer.cli import doctor
     from stenographer.hotkey import BindingError
-    from stenographer.transcribe import model
 
-    if not model.is_model_cached(cfg.asr.model):
+    caps = doctor.probe(cfg)
+    clipboard_backend = startup_clipboard_backend(caps)
+    if clipboard_backend is None:
         print(
-            "stenographer: ASR model not found; run `stenographer model download`",
+            "stenographer: required capabilities unavailable; run `stenographer doctor`",
             file=sys.stderr,
         )
         return 78
@@ -543,7 +554,6 @@ def run(cfg: Config) -> int:
         except Exception as exc:
             log.warning("overlay: unavailable error_type=%s", type(exc).__name__)
 
-    clipboard_backend = detect_clipboard_backend()
     log.info("deliver: clipboard_backend=%s", clipboard_backend.value)
     try:
         daemon = Daemon.build(cfg, clipboard_backend=clipboard_backend, status=status)

@@ -109,9 +109,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     # spawn-context worker child re-execs this entry point, and freeze_support
     # is what diverts it into the multiprocessing bootstrap instead.
     multiprocessing.freeze_support()
-    from stenographer.utils.logging_setup import setup_logging
-
-    setup_logging()
     arguments = tuple(sys.argv[1:] if argv is None else argv)
     # Private helper re-exec path: it intentionally bypasses argparse so it is
     # absent from the public command list and every help surface. The check
@@ -123,4 +120,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         from stenographer.overlay.supervisor import run_overlay_helper
 
         return run_overlay_helper()
+
+    from stenographer.utils.logging_setup import setup_logging
+
+    setup_logging()
     return dispatch(arguments)

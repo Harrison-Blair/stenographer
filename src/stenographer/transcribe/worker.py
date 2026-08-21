@@ -20,6 +20,7 @@ import logging.handlers
 import multiprocessing
 import queue
 import threading
+import time
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,10 @@ log = logging.getLogger(__name__)
 
 _POLL_SECONDS = 0.1
 _JOIN_SECONDS = 2.0
+_MODEL_LOAD_TIMEOUT_SECONDS = 120.0
+_DECODE_MIN_TIMEOUT_SECONDS = 60.0
+_DECODE_REALTIME_MULTIPLIER = 4.0
+_SAMPLE_RATE = 16_000
 
 
 class WorkerError(RuntimeError):
@@ -51,6 +56,10 @@ class WorkerPathologicalError(WorkerError):
 
 class WorkerProtocolError(WorkerError):
     """The child sent a malformed or out-of-order protocol response."""
+
+
+class _WorkerTimeoutError(WorkerError):
+    """An internal phase deadline expired while the child remained alive."""
 
 
 class WorkerEvent(Enum):
@@ -99,8 +108,26 @@ def should_arm_idle_timer(
 
 
 def should_teardown_for_response_error(exc: WorkerError) -> bool:
-    """Malformed protocol poisons the channel; inference errors do not. PURE."""
-    return isinstance(exc, WorkerProtocolError)
+    """Malformed or timed-out protocol poisons the channel. PURE."""
+    return isinstance(exc, (WorkerProtocolError, _WorkerTimeoutError))
+
+
+def decode_timeout_seconds(
+    sample_frames: int,
+    *,
+    sample_rate: int = _SAMPLE_RATE,
+    minimum_seconds: float = _DECODE_MIN_TIMEOUT_SECONDS,
+    realtime_multiplier: float = _DECODE_REALTIME_MULTIPLIER,
+) -> float:
+    """Return the fixed decode deadline budget for 16 kHz audio. PURE."""
+    return max(minimum_seconds, realtime_multiplier * sample_frames / sample_rate)
+
+
+def response_poll_timeout(
+    *, now: float, deadline: float, poll_seconds: float = _POLL_SECONDS
+) -> float:
+    """Clamp one queue poll to the remaining phase deadline. PURE."""
+    return max(0.0, min(poll_seconds, deadline - now))
 
 
 def classify_error(exc: Exception) -> tuple[str, str]:
@@ -270,7 +297,14 @@ class Worker:
             self._emit_lifecycle((WorkerLifecycle.TRANSCRIBING,))
             self._request_q.put(("job", samples))
             try:
-                interpreted = self._wait_for_response("transcribe")
+                timeout_seconds = decode_timeout_seconds(
+                    samples.shape[0],
+                    minimum_seconds=_DECODE_MIN_TIMEOUT_SECONDS,
+                    realtime_multiplier=_DECODE_REALTIME_MULTIPLIER,
+                )
+                interpreted = self._wait_for_response(
+                    "transcribe", deadline=time.monotonic() + timeout_seconds
+                )
                 if isinstance(interpreted, WorkerEvent):
                     raise WorkerProtocolError("unexpected model-ready event during transcription")
             except WorkerError as exc:
@@ -293,7 +327,9 @@ class Worker:
         self._emit_lifecycle(lifecycle_transition(model_loaded=False))
         try:
             self._request_q.put(("load",))
-            interpreted = self._wait_for_response("model_load")
+            interpreted = self._wait_for_response(
+                "model_load", deadline=time.monotonic() + _MODEL_LOAD_TIMEOUT_SECONDS
+            )
             if interpreted is not WorkerEvent.MODEL_READY:
                 raise WorkerProtocolError("worker result arrived before model-ready event")
             lifecycle = lifecycle_transition(model_loaded=False, event=interpreted)
@@ -304,7 +340,9 @@ class Worker:
             # metadata.  It must clear the border after both ready and error.
             self._emit_lifecycle((WorkerLifecycle.MODEL_LOADING_FINISHED,))
 
-    def _wait_for_response(self, phase: str) -> TranscriptionResult | WorkerEvent:
+    def _wait_for_response(
+        self, phase: str, *, deadline: float
+    ) -> TranscriptionResult | WorkerEvent:
         while True:
             self._abort_if_shutdown_requested(phase)
             if not self._process.is_alive():
@@ -315,8 +353,14 @@ class Worker:
                 )
                 self._teardown()
                 raise WorkerError(f"ASR child exited during {phase}")
+            poll_timeout = response_poll_timeout(
+                now=time.monotonic(), deadline=deadline, poll_seconds=_POLL_SECONDS
+            )
+            if poll_timeout == 0:
+                log.error("worker: request timed out phase=%s", phase)
+                raise _WorkerTimeoutError(f"ASR worker timed out during {phase}")
             try:
-                message = self._response_q.get(timeout=_POLL_SECONDS)
+                message = self._response_q.get(timeout=poll_timeout)
             except queue.Empty:
                 continue
             self._abort_if_shutdown_requested(phase)

@@ -9,6 +9,8 @@ import sys
 
 from stenographer.cli import _fatal
 
+_SAMPLE_RATE = 16000
+
 
 def cmd_transcribe(args: argparse.Namespace) -> int:
     from stenographer import config
@@ -31,13 +33,16 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
 
     import soundfile
 
-    samples, sample_rate = soundfile.read(str(path), dtype="float32", always_2d=True)
-    if sample_rate != 16000:
-        import logging
+    try:
+        samples, sample_rate = soundfile.read(str(path), dtype="float32", always_2d=True)
+    except Exception as exc:
+        print(f"stenographer: cannot read {path}: {exc}", file=sys.stderr)
+        return 2
 
-        logging.getLogger(__name__).warning(
-            "transcribe: file sample rate is %d, not 16000 (pass-through)", sample_rate
-        )
+    from stenographer.audio import _resample_poly
+
+    samples = samples.mean(axis=1, dtype="float32")
+    samples = _resample_poly(samples, sample_rate, _SAMPLE_RATE)
 
     m = model.Model(cfg.asr)
     try:

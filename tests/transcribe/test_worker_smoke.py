@@ -48,6 +48,7 @@ if try_to_load_from_cache(_MODEL_ID, "config.json") is None:
 import soundfile  # noqa: E402
 
 from stenographer.config import Config  # noqa: E402
+from stenographer.transcribe import worker as worker_module  # noqa: E402
 from stenographer.transcribe.worker import Worker, WorkerError  # noqa: E402
 from stenographer.utils.logging_setup import setup_logging, shutdown_logging  # noqa: E402
 
@@ -181,6 +182,43 @@ def test_restart_after_forced_child_death():
         # side never went down.
         result = worker.transcribe(samples)
         assert worker.is_alive()
+        assert result.text.strip() != ""
+    finally:
+        worker.shutdown()
+
+
+def test_decode_timeout_reaps_suspended_child_then_respawns(monkeypatch):
+    samples = _read(_CLIP)
+    worker = Worker(Config.defaults().asr)
+    try:
+        worker.warmup()
+        proc = worker._process
+        assert proc is not None and proc.is_alive()
+        os.kill(proc.pid, signal.SIGSTOP)
+
+        # Exercise the production deadline/teardown path against a real child
+        # without waiting for the fixed 60-second floor or two-second join.
+        with monkeypatch.context() as shortened:
+            shortened.setattr(worker_module, "_POLL_SECONDS", 0.01)
+            shortened.setattr(worker_module, "_JOIN_SECONDS", 0.25)
+            shortened.setattr(worker_module, "_DECODE_MIN_TIMEOUT_SECONDS", 0.25)
+            shortened.setattr(worker_module, "_DECODE_REALTIME_MULTIPLIER", 0.0)
+            with pytest.raises(WorkerError, match="timed out during transcribe"):
+                worker.transcribe(samples)
+
+        assert not worker.is_alive()
+        assert worker._process is None
+        assert worker._request_q is None
+        assert worker._response_q is None
+        assert worker._log_q is None
+        assert worker._log_listener is None
+        assert not worker.is_model_ready
+
+        # A timeout poisons only that child's protocol. The next request uses a
+        # fresh process under the production deadline and decodes normally.
+        result = worker.transcribe(samples)
+        assert worker.is_alive()
+        assert worker._process is not proc
         assert result.text.strip() != ""
     finally:
         worker.shutdown()

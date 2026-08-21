@@ -63,6 +63,8 @@ pytestmark = pytest.mark.integration
 if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
     pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
 
+import sounddevice  # noqa: E402
+
 from stenographer.audio import Recorder  # noqa: E402
 from stenographer.daemon import (  # noqa: E402
     LOCK_PATH,
@@ -113,6 +115,36 @@ def test_two_real_capture_cycles_reuse_one_stream():
             # tight enough that unresampled 8/22.05/44.1/48 kHz capture fails.
             tolerance = max(2048, round(expected_frames * 0.20))
             assert abs(samples.size - expected_frames) <= tolerance
+    finally:
+        recorder.close()
+
+
+def test_input_overflow_preserves_real_stream_and_buffered_audio(caplog):
+    recorder = _recorder()
+    try:
+        recorder.prepare()
+        stream = recorder._stream
+        recorder.start()
+        time.sleep(0.2)
+
+        # Reliably provoking a host overflow is machine- and scheduler-dependent.
+        # Feed PortAudio's real status type through the callback while a real input
+        # stream is active, then exercise the real stop/retain boundary.
+        status = sounddevice.CallbackFlags()
+        status.input_overflow = True
+        recorder._on_audio(
+            np.zeros((64, recorder._channels), dtype=np.float32),
+            64,
+            None,
+            status,
+        )
+        samples = recorder.stop()
+
+        assert samples.size > 0
+        assert recorder._stream is stream
+        assert recorder.is_prepared is True
+        assert "recorder: input_overflow" in caplog.text
+        assert "recorder: capture_failed" not in caplog.text
     finally:
         recorder.close()
 
