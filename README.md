@@ -115,9 +115,18 @@ Add `--help` to any command for its full usage.
 
 ## How it works and privacy
 
-The flow is hotkey → microphone → local English transcription → both clipboard
-selections → a `uinput` Shift+Insert paste. The paste chord fires only after a
-confirmed clipboard copy and physical hotkey release.
+The flow is hotkey → microphone → local English transcription → clipboard →
+paste chord at the cursor. The paste chord fires only after a confirmed
+clipboard copy and physical hotkey release.
+
+The core pipeline is platform-neutral and reaches every host-specific surface
+through one boundary, `stenographer.platform`: the hotkey listener, clipboard
+writer, paste injector, sound-cue player, notifier, single-instance lock, user
+directories, and capability probes. The Linux backend (`platform/linux/`) is
+evdev for the hotkey, a `uinput` Shift+Insert chord for the paste, `wl-copy` or
+`xclip` for both clipboard selections, `canberra`/`pw-play`/`paplay` for cues,
+`notify-send`, an `flock` under `$XDG_RUNTIME_DIR`, and XDG paths. Hotkey
+bindings use evdev `KEY_*` names on every platform.
 
 The model download is explicit; daemon operation is offline. Logs may contain
 timings and counts, but never transcript text or audio. See
@@ -143,6 +152,12 @@ Required capabilities are a cached model, a working PortAudio input, readable
 evdev keyboard devices, writable `/dev/uinput`, and the clipboard command chosen
 for the current compositor. Stenographer is Wayland-focused and English-only.
 
+Only the Linux backend exists today. The core installs and imports on other
+platforms (the Linux-only dependencies carry `sys_platform` markers), but
+`stenographer doctor` reports every required capability as missing there and
+`stenographer run` refuses to start; a Windows backend would implement the same
+`platform` protocols without changing the core or the config schema.
+
 The optional, click-through lifecycle pill is failure-safe: if neither its
 native layer-shell backend nor its XWayland fallback works, dictation continues
 without it. It shows exactly 18 spectrum bars while recording and an amber
@@ -160,7 +175,10 @@ See [BUILD.md](BUILD.md) for standalone builds. From the repository venv, run:
 ```
 
 The integration suite and real dictation are the release gate and must run in a
-real graphical session, not CI or a sandbox.
+real graphical session, not CI or a sandbox. `tests/platform/test_core_isolation.py`
+guards the boundary: it imports the whole core with evdev, fcntl, termios, and the
+Wayland/X11 libraries blocked, so a Linux-only import leaking into the core fails
+on any machine. CI also runs the unit suite on Windows as a portability check.
 
 ## License
 
