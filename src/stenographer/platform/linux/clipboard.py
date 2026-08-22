@@ -45,15 +45,16 @@ class ClipboardBackend(enum.Enum):
     X11 = "x11"
 
 
-def pick_backend(globals_seen: set[str], *, have_display: bool) -> ClipboardBackend:
+def pick_backend(globals_seen: set[str] | None, *, have_display: bool) -> ClipboardBackend:
     """Choose the clipboard backend from the compositor's registry globals. PURE.
 
     Data-control present → wl-copy works from a background process. Absent
     (GNOME <= 46) → the xclip/XWayland bridge, provided an X display exists;
-    with neither, keep wl-copy (status quo, and its failure is already the
-    safe no-chord path).
+    an unavailable registry probe follows the same fallback policy. With no X
+    display alternative, keep wl-copy (status quo, and its failure is already
+    the safe no-chord path).
     """
-    if globals_seen & _DATA_CONTROL_GLOBALS:
+    if globals_seen is not None and globals_seen & _DATA_CONTROL_GLOBALS:
         return ClipboardBackend.WL_COPY
     return ClipboardBackend.X11 if have_display else ClipboardBackend.WL_COPY
 
@@ -80,15 +81,18 @@ def _wayland_global_interfaces() -> set[str]:
 
 def detect_clipboard_backend() -> ClipboardBackend:
     """Probe the compositor once (daemon startup, never under the state lock)."""
+    have_display = bool(os.environ.get("DISPLAY"))
     try:
         globals_seen = _wayland_global_interfaces()
     except Exception as exc:
+        backend = pick_backend(None, have_display=have_display)
         log.warning(
-            "deliver: wayland registry probe failed error_type=%s; using wl-copy",
+            "deliver: wayland registry probe failed error_type=%s; using %s",
             type(exc).__name__,
+            backend.value,
         )
-        return ClipboardBackend.WL_COPY
-    return pick_backend(globals_seen, have_display=bool(os.environ.get("DISPLAY")))
+        return backend
+    return pick_backend(globals_seen, have_display=have_display)
 
 
 def copy_both_selections(text: str) -> bool:

@@ -32,6 +32,14 @@ def test_pick_backend_x11_when_no_data_control_and_display_present():
     assert pick_backend(globals_seen, have_display=True) is ClipboardBackend.X11
 
 
+def test_pick_backend_x11_when_wayland_probe_fails_and_display_present():
+    assert pick_backend(None, have_display=True) is ClipboardBackend.X11
+
+
+def test_pick_backend_keeps_wl_copy_when_wayland_probe_fails_without_alternative():
+    assert pick_backend(None, have_display=False) is ClipboardBackend.WL_COPY
+
+
 def test_pick_backend_keeps_wl_copy_without_any_alternative():
     # No data-control AND no X display: stay on wl-copy (status quo; its
     # failure is already the safe no-chord path).
