@@ -4,6 +4,15 @@ name: draft release
 on:
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+      - "packaging/**"
+      - "scripts/build.sh"
+      - "scripts/progress.sh"
+      - "scripts/release_guard.py"
+      - "LICENSE"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
