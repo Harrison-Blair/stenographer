@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure-logic tests for childenv._scrub: the PyInstaller LD_LIBRARY_PATH undo."""
+"""Pure-logic tests for process._scrub: the PyInstaller LD_LIBRARY_PATH undo."""
 
 from __future__ import annotations
 
-from stenographer.utils.childenv import _scrub
+from stenographer.platform.linux.process import _scrub
 
 
 def test_not_frozen_env_passes_through_unchanged():

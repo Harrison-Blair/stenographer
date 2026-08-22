@@ -10,9 +10,6 @@ from __future__ import annotations
 
 import io
 import os
-import pty
-import select
-import termios
 import threading
 import time
 
@@ -23,12 +20,17 @@ pytestmark = pytest.mark.integration
 if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
     pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
 
+import pty  # noqa: E402
+import select  # noqa: E402
+import termios  # noqa: E402
+
 import evdev  # noqa: E402
 
 from stenographer.cli import doctor, setup  # noqa: E402
 from stenographer.cli.binding_capture import capture_binding  # noqa: E402
 from stenographer.cli.calibration import calibrate_spectrum_profile  # noqa: E402
 from stenographer.config import Config  # noqa: E402
+from stenographer.platform.linux.probe import service_status  # noqa: E402
 from stenographer.status import SPECTRUM_BANDS  # noqa: E402
 from stenographer.transcribe import model  # noqa: E402
 
@@ -143,9 +145,9 @@ def test_real_quick_setup_persists_and_runs_guided_checks(tmp_path, monkeypatch)
 
     drain = threading.Thread(target=drain_output)
     drain.start()
-    # auto device; keep binding; hold; default mic/volume/mute/overlay;
+    # auto device; keep binding; hold; default mic/volume/mute/overlay/sound pack;
     # automatic spectrum; accept; save
-    os.write(input_master, b"\nkeep\n\n\n\n\n\n\n\n\n")
+    os.write(input_master, b"\nkeep\n\n\n\n\n\n\n\n\n\n")
     try:
         exit_code = setup.run(quick=True, stdin=stdin, stdout=stdout, stderr=stdout)
         expected = 78 if doctor.missing_required(doctor.probe(Config.load(config_path))) else 0
@@ -172,7 +174,7 @@ def test_real_quick_setup_persists_and_runs_guided_checks(tmp_path, monkeypatch)
 
 
 def test_restart_policy_uses_real_user_service_status():
-    _, active = doctor._service_status()
+    _, active = service_status()
 
     assert setup.restart_eligible(
         config_changed=True,

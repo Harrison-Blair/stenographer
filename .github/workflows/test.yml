@@ -35,3 +35,23 @@ jobs:
         run: .venv/bin/pytest -m "not integration"
       - name: Check CLI help
         run: .venv/bin/stenographer --help
+
+  unit-windows:
+    # Portability proof only: the core and every pure suite must install,
+    # import, and pass on Windows (tests/platform/linux is not collected there).
+    # No Windows backend exists yet; `doctor` exits 78 and `run` is refused.
+    name: unit (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install development dependencies
+        run: |
+          python -m venv .venv
+          .venv\Scripts\pip install -e ".[dev]"
+      - name: Run unit tests
+        run: .venv\Scripts\pytest -m "not integration"
+      - name: Check CLI help
+        run: .venv\Scripts\stenographer --help

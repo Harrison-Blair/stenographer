@@ -7,11 +7,12 @@ one-at-a-time admission rule (``can_start``), the toggle-mode press mapping
 unconditionally), the stale-timer guard (``max_duration_applies``, seen to
 fail against a stub that ignores the generation), the overlay publish policy as
 bound by ``_publish_state`` (``should_publish_state``, seen to fail against a
-dedup-only stub), the lock-failure classifier (``is_lock_contention``, seen to
-fail against an all-contention stub), single-instance-lock mutual
-exclusion via a REAL flock on a tmp path, and that ``Daemon.build`` wires all
-collaborators lazily (no uinput device, stream, or model opened) with a safe
-pre-start ``stop``, per ``hotkey.mode``. Nothing mocks
+dedup-only stub), the mode-to-edge mapping (``edge_handlers``), and that
+``Daemon.build`` wires all collaborators lazily (no uinput device, stream, or
+model opened) with a safe pre-start ``stop``, per ``hotkey.mode``. The two
+full-build tests need a host that actually provides a hotkey listener and key
+injector, so they skip on a provider that raises ``UnsupportedPlatformError``
+(the mapping itself is covered purely, and runs everywhere). Nothing mocks
 subprocess/UInput/wl-copy/Worker (§6.2); the real utterance path is the M5
 manual dictation acceptance procedure.
 """
@@ -19,25 +20,21 @@ manual dictation acceptance procedure.
 from __future__ import annotations
 
 import dataclasses
-import errno
-import os
 
 import pytest
 
 from stenographer.cli import doctor
 from stenographer.daemon import (
     Outcome,
-    SingleInstanceLockError,
-    acquire_single_instance_lock,
     can_start,
     classify_pipeline,
-    is_lock_contention,
+    edge_handlers,
     max_duration_applies,
     should_publish_state,
     startup_clipboard_backend,
     toggle_action,
 )
-from stenographer.delivery.deliver import ClipboardBackend
+from stenographer.platform.base import UnsupportedPlatformError
 from stenographer.status import OverlayState
 
 
@@ -137,24 +134,8 @@ def test_publish_policy_dedups_stable_states():
     assert should_publish_state(OverlayState.ERROR, OverlayState.HIDDEN) is True
 
 
-def test_is_lock_contention_classifies_errnos():
-    # Only a held flock is contention (EAGAIN/EWOULDBLOCK — the same value on
-    # Linux, both spelled out per the flock(2) contract); disk-full or I/O
-    # failure on the lock file must surface as an error, never as "another
-    # instance is already running". Seen to fail against an always-True stub
-    # (today's policy of swallowing every OSError as contention).
-    assert is_lock_contention(OSError(errno.EAGAIN, "held")) is True
-    assert is_lock_contention(OSError(errno.EWOULDBLOCK, "held")) is True
-    assert is_lock_contention(OSError(errno.ENOSPC, "disk full")) is False
-    assert is_lock_contention(OSError(errno.EIO, "io error")) is False
-    assert is_lock_contention(OSError(errno.EACCES, "denied")) is False
-    # The non-contention escape hatch is still an OSError for callers that
-    # only catch broadly.
-    assert issubclass(SingleInstanceLockError, OSError)
-
-
 def test_startup_gate_tracks_every_current_doctor_requirement():
-    assert startup_clipboard_backend(_startup_caps()) is ClipboardBackend.WL_COPY
+    assert startup_clipboard_backend(_startup_caps()) == "wl-copy"
     for name in doctor.REQUIRED:
         caps = dataclasses.replace(_startup_caps(), **{name: False})
         assert startup_clipboard_backend(caps) is None, name
@@ -168,32 +149,45 @@ def test_startup_gate_ignores_optional_capabilities_and_reuses_backend():
         service_active=None,
         overlay=doctor.OverlayCapability.disabled(),
     )
-    assert startup_clipboard_backend(caps) is ClipboardBackend.X11
+    assert startup_clipboard_backend(caps) == "x11"
 
 
-def test_single_instance_lock_is_mutually_exclusive(tmp_path):
-    lock = tmp_path / "stenographer.lock"
-    fd = acquire_single_instance_lock(lock)
-    assert fd >= 0
-    inode = lock.stat().st_ino
-    # The PID is recorded in the lock file.
-    assert lock.read_text().strip() == str(os.getpid())
-    # A second acquire against the SAME path is a distinct open file description,
-    # so its non-blocking flock contends even in-process and returns -1.
-    assert acquire_single_instance_lock(lock) == -1
-    os.close(fd)
+def _build_or_skip(cfg):
+    """Build for real, or skip where the host provides no hotkey/paste backend.
 
-    # Release keeps the inode at the stable path; the next owner rewrites the
-    # PID in place, and a third contender still conflicts on the same inode.
-    assert lock.exists()
-    next_fd = acquire_single_instance_lock(lock)
-    assert next_fd >= 0
+    Expressed as a capability rather than an OS name so a provider that grows
+    a real backend starts running these checks without touching the test.
+    """
+    from stenographer.daemon import Daemon
+
     try:
-        assert lock.stat().st_ino == inode
-        assert lock.read_text().strip() == str(os.getpid())
-        assert acquire_single_instance_lock(lock) == -1
-    finally:
-        os.close(next_fd)
+        return Daemon.build(cfg, clipboard_backend="wl-copy")
+    except UnsupportedPlatformError as exc:
+        pytest.skip(f"no hotkey/injection backend on this host: {exc}")
+
+
+class _EdgeSpy:
+    """Stands in for a Daemon: edge_handlers only reads bound methods."""
+
+    def on_key_down(self) -> None: ...
+
+    def on_key_up(self) -> None: ...
+
+    def on_toggle_press(self) -> None: ...
+
+
+def test_edge_handlers_map_mode_to_rising_and_falling_callbacks():
+    # Seen to FAIL against a mapping that ignores the mode and returns the hold
+    # pair for both. Pure: no platform, no listener, no device.
+    daemon = _EdgeSpy()
+
+    assert edge_handlers(daemon, "hold") == (daemon.on_key_down, daemon.on_key_up)
+
+    on_start, on_stop = edge_handlers(daemon, "toggle")
+    assert on_start == daemon.on_toggle_press
+    # Only presses drive the session: the falling edge must be inert.
+    assert on_stop not in (daemon.on_key_up, daemon.on_key_down)
+    assert on_stop() is None
 
 
 def test_build_wires_collaborators_lazily():
@@ -201,9 +195,8 @@ def test_build_wires_collaborators_lazily():
     # contract; skip this wiring check until it lands, then run it for real.
     pytest.importorskip("stenographer.hotkey")
     from stenographer.config import Config
-    from stenographer.daemon import Daemon
 
-    daemon = Daemon.build(Config.defaults(), clipboard_backend=ClipboardBackend.WL_COPY)
+    daemon = _build_or_skip(Config.defaults())
     try:
         # Built but nothing opened: startup preparation happens only after the
         # single-instance lock is acquired in run().
@@ -225,9 +218,8 @@ def test_build_wires_toggle_mode_press_only():
     # is opened, no mocks.
     pytest.importorskip("stenographer.hotkey")
     from stenographer.config import Config
-    from stenographer.daemon import Daemon
 
-    hold = Daemon.build(Config.defaults(), clipboard_backend=ClipboardBackend.WL_COPY)
+    hold = _build_or_skip(Config.defaults())
     try:
         assert hold._listener._on_start == hold.on_key_down
         assert hold._listener._on_stop == hold.on_key_up
@@ -238,7 +230,7 @@ def test_build_wires_toggle_mode_press_only():
     toggle_cfg = dataclasses.replace(
         defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="toggle")
     )
-    toggle = Daemon.build(toggle_cfg, clipboard_backend=ClipboardBackend.WL_COPY)
+    toggle = _build_or_skip(toggle_cfg)
     try:
         # Only presses drive the session; the falling edge must be inert.
         assert toggle._listener._on_start == toggle.on_toggle_press

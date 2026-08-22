@@ -11,8 +11,11 @@ from stenographer.config import Config, ConfigError, load_or_default
 
 
 def test_config_error_message():
-    err = ConfigError(pathlib.Path("/x"), "asr.beam_size", "bad")
-    assert str(err) == "/x: asr.beam_size: bad"
+    # Interpolate the path rather than a POSIX literal: the rendered separator
+    # is the host's, so "/x" would not match the WindowsPath spelling.
+    path = pathlib.Path("/x")
+    err = ConfigError(path, "asr.beam_size", "bad")
+    assert str(err) == f"{path}: asr.beam_size: bad"
     assert err.key == "asr.beam_size"
 
 
@@ -37,6 +40,7 @@ def test_defaults_match_spec():
     assert d.feedback.mute is False
     assert d.feedback.overlay is True
     assert d.feedback.spectrum_floor_dbfs == -45.0
+    assert d.feedback.sound_pack == "minimal-ui"
 
 
 def test_write_default_round_trips(tmp_path):
@@ -82,6 +86,27 @@ def test_overlay_can_be_disabled_without_restating_feedback_defaults(tmp_path):
     assert cfg.feedback.volume == Config.defaults().feedback.volume
     assert cfg.feedback.mute == Config.defaults().feedback.mute
     assert cfg.feedback.spectrum_floor_dbfs == Config.defaults().feedback.spectrum_floor_dbfs
+    assert cfg.feedback.sound_pack == "minimal-ui"
+
+
+def test_old_config_inherits_default_sound_pack_without_migration(tmp_path):
+    p = tmp_path / "config.toml"
+    original = "[stenographer.feedback]\nvolume = 0.25\n"
+    p.write_text(original)
+
+    assert Config.load(p).feedback.sound_pack == "minimal-ui"
+    assert p.read_text() == original
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["legacy", "warm-desk", "a", "a" * 64, "0-quiet"],
+)
+def test_sound_pack_accepts_slug_syntax_without_requiring_availability(tmp_path, name):
+    p = tmp_path / "config.toml"
+    p.write_text(f'[stenographer.feedback]\nsound_pack = "{name}"\n')
+
+    assert Config.load(p).feedback.sound_pack == name
 
 
 @pytest.mark.parametrize("floor", [-96, -45.5, -13])
@@ -145,6 +170,13 @@ def test_unknown_keys_ignored(tmp_path):
         ("[stenographer.feedback]\nvolume = -1\n", "feedback.volume"),
         ('[stenographer.feedback]\nmute = "no"\n', "feedback.mute"),
         ('[stenographer.feedback]\noverlay = "yes"\n', "feedback.overlay"),
+        ('[stenographer.feedback]\nsound_pack = "Minimal UI"\n', "feedback.sound_pack"),
+        ('[stenographer.feedback]\nsound_pack = "-minimal"\n', "feedback.sound_pack"),
+        ('[stenographer.feedback]\nsound_pack = "a_thing"\n', "feedback.sound_pack"),
+        (
+            f'[stenographer.feedback]\nsound_pack = "{"a" * 65}"\n',
+            "feedback.sound_pack",
+        ),
         ("[stenographer.feedback]\nspectrum_floor_dbfs = -97\n", "feedback.spectrum_floor_dbfs"),
         ("[stenographer.feedback]\nspectrum_floor_dbfs = -12\n", "feedback.spectrum_floor_dbfs"),
         ('[stenographer.feedback]\nspectrum_floor_dbfs = "-45"\n', "feedback.spectrum_floor_dbfs"),

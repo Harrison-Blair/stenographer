@@ -13,6 +13,11 @@ from stenographer.cli import doctor
 from stenographer.config import Config
 from stenographer.status import Backend, UnavailableReason
 
+# One config path for every render case. Asserted through ``str()`` because
+# ``render`` interpolates the path: the rendered separator is the host's, so a
+# POSIX literal would not match on Windows.
+_CONFIG_PATH = pathlib.Path("/tmp/config.toml")
+
 
 def _caps(**overrides) -> doctor.Capabilities:
     fields = {
@@ -45,10 +50,10 @@ def test_audio_player_is_not_required():
 
 
 def test_render_all_present():
-    report = doctor.render(_caps(), Config.defaults(), pathlib.Path("/tmp/config.toml"))
+    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH)
     assert "all required capabilities present" in report
     assert "MISSING" not in report
-    assert "/tmp/config.toml" in report
+    assert str(_CONFIG_PATH) in report
     assert "audio player: pw-play" in report
     assert report.count("  overlay: ") == 1
     assert "  overlay: layer-shell" in report
@@ -56,18 +61,18 @@ def test_render_all_present():
 
 def test_render_missing_capability_carries_fix_hint():
     caps = _caps(model_cached=False, clipboard=False)
-    report = doctor.render(caps, Config.defaults(), pathlib.Path("/tmp/config.toml"))
+    report = doctor.render(caps, Config.defaults(), _CONFIG_PATH)
     assert "ASR model cached: MISSING — run: stenographer model download" in report
     assert "clipboard (wl-copy): MISSING — install wl-clipboard" in report
     assert "missing required capabilities: model_cached, clipboard" in report
 
 
 def test_render_clipboard_line_names_the_detected_backend():
-    report = doctor.render(_caps(clipboard_backend="x11"), Config.defaults(), pathlib.Path("/x"))
+    report = doctor.render(_caps(clipboard_backend="x11"), Config.defaults(), _CONFIG_PATH)
     assert "clipboard (x11): ok" in report
 
     report = doctor.render(
-        _caps(clipboard=False, clipboard_backend="x11"), Config.defaults(), pathlib.Path("/x")
+        _caps(clipboard=False, clipboard_backend="x11"), Config.defaults(), _CONFIG_PATH
     )
     assert (
         "clipboard (x11): MISSING — install xclip "
@@ -76,7 +81,7 @@ def test_render_clipboard_line_names_the_detected_backend():
 
 
 def test_render_absent_audio_player_is_informational():
-    report = doctor.render(_caps(audio_player=None), Config.defaults(), pathlib.Path("/x"))
+    report = doctor.render(_caps(audio_player=None), Config.defaults(), _CONFIG_PATH)
     assert "audio player: none (sound cues disabled)" in report
     assert "all required capabilities present" in report
 
@@ -105,13 +110,13 @@ def test_format_service_status_unreachable_manager():
 
 
 def test_render_carries_service_status_line():
-    report = doctor.render(_caps(), Config.defaults(), pathlib.Path("/x"))
+    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH)
     assert "systemd unit: enabled, active" in report
 
     report = doctor.render(
         _caps(service_enabled=None, service_active="inactive"),
         Config.defaults(),
-        pathlib.Path("/x"),
+        _CONFIG_PATH,
     )
     assert "systemd unit: not installed — run scripts/install.sh" in report
     assert "all required capabilities present" in report
@@ -129,7 +134,7 @@ def test_overlay_report_variants_are_informational_only():
     )
     for overlay, expected in variants:
         caps = _caps(overlay=overlay)
-        report = doctor.render(caps, Config.defaults(), pathlib.Path("/x"))
+        report = doctor.render(caps, Config.defaults(), _CONFIG_PATH)
         assert report.count("  overlay: ") == 1
         assert f"  overlay: {expected}" in report
         assert doctor.missing_required(caps) == []

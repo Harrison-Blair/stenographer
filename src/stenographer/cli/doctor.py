@@ -1,20 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Capability probe behind the `doctor` subcommand.
 
-The environment probing lives in :func:`probe`; the exit-78 decision
-(:func:`missing_required`) and the report rendering (:func:`render`) are pure
-so they are unit-testable without mocking the environment (spec §6.5).
+The environment probing lives in :func:`probe` (host half from the current
+platform's ``probe_host``/``overlay_backends``, plus the microphone and model
+cache); the exit-78 decision (:func:`missing_required`) and the report rendering
+(:func:`render`) are pure so they are unit-testable without mocking the
+environment (spec §6.5). ``REQUIRED`` names are semantic — injector available,
+listener permitted, clipboard available — and stay the daemon's startup gate.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import os
 import pathlib
-import shutil
-import subprocess
 
 from stenographer.config import Config
+from stenographer.platform import current_platform
 from stenographer.status import Backend, UnavailableReason
 
 
@@ -95,18 +96,6 @@ _OVERLAY_FIX_HINTS = {
 }
 
 
-def _in_input_group() -> bool:
-    if os.geteuid() == 0:
-        return True
-    import grp
-
-    try:
-        input_gid = grp.getgrnam("input").gr_gid
-    except KeyError:
-        return False
-    return input_gid in os.getgroups()
-
-
 def _has_mic() -> bool:
     import sounddevice
 
@@ -117,87 +106,34 @@ def _has_mic() -> bool:
     return any(d.get("max_input_channels", 0) > 0 for d in devices)
 
 
-def _service_status() -> tuple[str | None, str | None]:
-    """(`is-enabled`, `is-active`) of the systemd user unit; None per failed query.
-
-    `is-enabled` prints nothing for an uninstalled unit while `is-active` still
-    says "inactive"; an unreachable user manager yields (None, None).
-    """
-    if shutil.which("systemctl") is None:
-        return (None, None)
-
-    def query(verb: str) -> str | None:
-        try:
-            proc = subprocess.run(
-                ["systemctl", "--user", verb, "stenographer.service"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        return proc.stdout.strip() or None
-
-    return (query("is-enabled"), query("is-active"))
-
-
 def probe_overlay(enabled: bool) -> OverlayCapability:
     """Probe optional backends in runtime preference order without creating a surface."""
     if not enabled:
         return OverlayCapability.disabled()
 
-    try:
-        from stenographer.overlay.wayland import LayerShellBackend, WaylandUnavailableError
-
-        try:
-            backend = LayerShellBackend()
-        except WaylandUnavailableError:
-            pass
-        else:
-            backend.close()
-            return OverlayCapability.available(Backend.LAYER_SHELL)
-    except Exception:
-        # Generated bindings or PyWayland may be unavailable in a partial
-        # source environment.  XWayland remains a valid independent fallback.
-        pass
-
-    try:
-        from stenographer.overlay.x11 import probe_x11
-
-        reason = probe_x11()
-    except Exception:
-        reason = UnavailableReason.BACKENDS_UNAVAILABLE
-    if reason is None:
-        return OverlayCapability.available(Backend.XWAYLAND)
-    return OverlayCapability.unavailable(reason)
-
-
-def _probe_clipboard() -> tuple[bool, str]:
-    """(needed binary present, detected backend name) for the delivery copy path."""
-    from stenographer.delivery.deliver import ClipboardBackend, detect_clipboard_backend
-
-    backend = detect_clipboard_backend()
-    binary = "xclip" if backend is ClipboardBackend.X11 else "wl-copy"
-    return shutil.which(binary) is not None, backend.value
+    reason: UnavailableReason | None = None
+    for spec in current_platform().overlay_backends():
+        reason = spec.probe()
+        if reason is None:
+            return OverlayCapability.available(spec.backend)
+    return OverlayCapability.unavailable(reason or UnavailableReason.BACKENDS_UNAVAILABLE)
 
 
 def probe(cfg: Config) -> Capabilities:
     """Read-only environment probe: no writes, no network, no device opens."""
-    from stenographer.delivery import feedback
     from stenographer.transcribe import model
 
-    service_enabled, service_active = _service_status()
-    clipboard_ok, clipboard_backend = _probe_clipboard()
+    host = current_platform().probe_host()
     return Capabilities(
-        uinput_writable=os.access("/dev/uinput", os.W_OK),
-        input_group=_in_input_group(),
+        uinput_writable=host.key_injector_ok,
+        input_group=host.hotkey_access_ok,
         has_mic=_has_mic(),
         model_cached=model.is_model_cached(cfg.asr.model),
-        clipboard=clipboard_ok,
-        clipboard_backend=clipboard_backend,
-        audio_player=feedback.detect_player(),
-        service_enabled=service_enabled,
-        service_active=service_active,
+        clipboard=host.clipboard_ok,
+        clipboard_backend=host.clipboard_backend,
+        audio_player=host.cue_player,
+        service_enabled=host.service_enabled,
+        service_active=host.service_active,
         overlay=probe_overlay(cfg.feedback.overlay),
     )
 

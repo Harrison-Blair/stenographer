@@ -236,11 +236,12 @@ def _atomic_replace(target: pathlib.Path, content: bytes, mode: int | None) -> N
             temporary.chmod(mode)
         os.replace(temporary, target)
         temporary = None
-        directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        if hasattr(os, "O_DIRECTORY"):
+            directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     except OSError as e:
         raise ConfigPersistenceError(f"cannot replace {target}: {e}") from e
     finally:

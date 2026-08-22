@@ -72,13 +72,28 @@ anywhere and symlink the binary onto your `PATH`. Do not extract single files
 out of it.
 
 The bundle includes the lifecycle icon, Caveat font and OFL license, native
-Bash/Zsh/Fish completion definitions, generated
+Bash/Zsh/Fish completion definitions, all 16 WAVs from the four nested bundled
+sound packs (`legacy`, `warm-desk`, `soft-electronic`, `minimal-ui`), generated
 layer-shell/fractional-scale/viewporter Python bindings, Pillow, python-xlib,
 and the completed PyWayland CFFI extension with its collected shared-library
 requirements. Protocol bindings are generated in the source tree before
 building; neither installed source packages nor frozen helpers run a protocol
 scanner. The private helper re-exec entry remains intentionally absent from
 public `--help` output.
+
+`scripts/build.sh` rejects a source or frozen tree unless it contains exactly
+those four pack directories and exactly the four lifecycle cues in each. The
+draft-release workflow applies the same fail-closed guard to the wheel, source
+distribution, frozen bundle, and final standalone archives. The three new packs
+are original deterministic procedural renders from the checked-in
+`scripts/cue_audition.py`; verify their packaged bytes with:
+
+```sh
+.venv/bin/python scripts/cue_audition.py --verify-packaged
+```
+
+See [docs/cue-audition.md](docs/cue-audition.md) for generation provenance and
+the required listening checks.
 
 ## Deliberately not bundled
 

@@ -18,6 +18,8 @@ if [ ! -x .venv/bin/pyinstaller ]; then
     exit 1
 fi
 
+.venv/bin/python scripts/sound_asset_guard.py src/stenographer/assets/sounds
+
 if [[ "${VERBOSE}" -eq 1 ]]; then
     .venv/bin/pyinstaller --noconfirm --clean packaging/stenographer.spec
 else
@@ -109,6 +111,8 @@ else
 fi
 
 echo "built: dist/stenographer/stenographer"
+.venv/bin/python scripts/sound_asset_guard.py \
+    dist/stenographer/_internal/stenographer/assets/sounds
 dist/stenographer/stenographer --version
 for completion_shell in bash zsh fish; do
     completion_output=$(dist/stenographer/stenographer completion "${completion_shell}")

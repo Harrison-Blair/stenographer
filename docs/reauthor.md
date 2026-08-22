@@ -2,7 +2,8 @@
 
 Status: **settled**. The decisions in §2 were made with the repo owner on 2026-08-12,
 the spectrum monitor details in §2.15/§4.17 were revised on 2026-08-19 and
-2026-08-20, and interactive setup was authorized in §2.16 on 2026-08-20 — do not
+2026-08-20, interactive setup was authorized in §2.16 on 2026-08-20, and sound
+packs were authorized in §2.17/§4.18 on 2026-08-22 — do not
 relitigate them during implementation. Everything else in this document is reference
 material extracted from the current codebase so it survives that code's deletion.
 
@@ -102,8 +103,9 @@ design was built on compositor-specific protocols; the new one must not be.
    (`toggle_action`) plus a generation-guarded `audio.max_recording_seconds`
    stop that ends a forgotten recording through the normal stop path; `hybrid`
    stays cut.
-9. **CLI surface: seven subcommands** — `run`, `model download`, `doctor`,
-   `devices`, `transcribe FILE`, `setup`, and `completion {bash,zsh,fish}`.
+9. **CLI surface: eight subcommands** — `run`, `model download`, `doctor`,
+   `devices`, `transcribe FILE`, `setup`, `sounds`, and
+   `completion {bash,zsh,fish}`.
    Setup is interactive configuration and first-use guidance, not a replacement
    for the direct commands or a new systemd wrapper surface. Completion emits
    only packaged static definitions.
@@ -121,7 +123,7 @@ design was built on compositor-specific protocols; the new one must not be.
     has a fixed deadline of the greater of 60 seconds or four times the actual
     16 kHz audio duration. A timeout poisons that child's protocol, so the parent
     terminates and reaps it and the next request starts a fresh child.
-11. **Config: 4 sections, exactly 19 keys** (schema in §5). Hard validation with
+11. **Config: 4 sections, exactly 20 keys** (schema in §5). Hard validation with
     key-scoped errors; **no migrations** (sole config holder). Formatting is
     fixed behavior with zero knobs. Interactive setup reviews and materializes
     those same keys; it introduces no fifth section or hidden configuration.
@@ -164,7 +166,7 @@ design was built on compositor-specific protocols; the new one must not be.
 16. **Interactive, preservation-first setup with one-shot display calibration.**
     `stenographer setup` is a sectioned terminal wizard for the existing Hotkey,
     Audio, ASR, and Feedback schema. It is TTY-only; noninteractive invocation exits
-    2. A valid existing document is edited in place semantically: all 19 known keys
+    2. A valid existing document is edited in place semantically: all 20 known keys
     are materialized while unknown keys, comments, inline comments, ordering, and
     unrelated layout survive. Enter retains the current value; optional strings have
     an explicit clear action. Detected audio and hotkey devices are offered without
@@ -175,7 +177,7 @@ design was built on compositor-specific protocols; the new one must not be.
 
     `stenographer setup --quick` is the focused, rerunnable path; plain setup above
     remains unchanged. Quick setup edits only hotkey device/binding/mode, audio input,
-    cue volume/mute, overlay enabled, and (only when the overlay is enabled) the same
+    whole sound pack, cue volume/mute, overlay enabled, and (only when the overlay is enabled) the same
     display-spectrum profile. It retains `audio.min_speech_rms`, the recording limit,
     every ASR value, and all other omitted values. A new config defaults to live
     binding capture; an existing config defaults to keeping its binding. The user may
@@ -224,6 +226,50 @@ design was built on compositor-specific protocols; the new one must not be.
     the configured hold/toggle real-dictation tryout and
     `journalctl --user -u stenographer -f`, adjusted for an inactive, uninstalled, or
     custom-config service. Its follow-up never installs, enables, or starts a service.
+17. **Four global whole sound packs, local custom discovery, and one selector.**
+    Bundled order is `legacy` (the original four WAVs byte-for-byte), `warm-desk`,
+    `soft-electronic`, then `minimal-ui`; `minimal-ui` is the default and fallback.
+    The three generated packs are byte-identical to fresh renders from the checked-in
+    deterministic generator. Assets are nested at
+    `assets/sounds/<pack>/<cue>.wav`, included recursively in wheels, source
+    distributions, frozen bundles, and standalone archives, and checked at each
+    boundary as exactly four packs × exactly `record_start`, `record_stop`,
+    `delivered`, and `error`. Per-cue overrides remain cut: `feedback.sound_pack`
+    is the twentieth and only new key, selects a complete pack globally, and is
+    syntax-validated as `[a-z0-9][a-z0-9-]{0,63}`. Existing configs inherit
+    `minimal-ui` through default merging with no migration.
+
+    Custom packs are discovered only below
+    `<active-config-directory>/sounds/<pack>/`. Bundled names are reserved and win
+    collisions. A custom pack is available only when all four named cues are
+    readable, nonempty, uncompressed PCM WAVs shorter than 300 ms, with 1–2
+    channels, 8–192 kHz sample rate, and 8/16/24/32-bit samples; unrelated extra
+    files are ignored, escaping symlinks are rejected, and incomplete/invalid packs
+    are rejected atomically. Config validation intentionally checks slug syntax
+    only. At daemon startup the selected complete pack resolves once. A missing or
+    invalid custom selection warns once and falls back to bundled `minimal-ui`
+    without rewriting config; if fallback assets are unavailable, cues disable
+    without affecting dictation. Custom edits take effect after restart. No sound
+    path downloads or reaches the network.
+
+    `stenographer sounds` is a TTY menu: `1`–`4` and later custom numbers select
+    silently, `P<number>` previews, and `Q` cancels. `sounds PACK` selects directly,
+    `sounds --list` lists bundled then valid custom packs and marks the current/effective
+    pack, and `sounds --preview PACK` previews without saving. A failed menu preview
+    or a pack that vanished is reported and the menu re-prompts. No-argument non-TTY
+    use exits 2. Invalid/unavailable names exit 2; invalid existing config exits 78;
+    persistence, restart, or explicit-preview failure exits 1; cancellation exits 0;
+    interruption exits 130. Preview always plays the four cues in lifecycle order
+    with silent pauses and uses configured volume; mute or zero volume is auditioned
+    at 0.6 without changing settings. Both setup variants expose discovered choices
+    and select silently; previews belong only to `sounds`. Selection uses the
+    preservation-first layer. A changed standard config may offer a default-yes
+    restart only for an already-active standard service; direct `sounds PACK` on
+    a TTY may be offered the same default-yes restart as the menu. A custom config
+    never restarts, and an inactive service is never started. Noninteractive direct
+    selection saves and prints restart guidance without prompting; unknown service
+    status prints manual restart guidance. Static shell completions list only
+    bundled names and perform no discovery.
 
 ---
 
@@ -242,7 +288,7 @@ Every feature of the current tool, so nothing disappears silently.
 | Incremental decoding / live preview (`live.py`, `streaming.py`, interim jobs) | Cut → later | ~1,500–2,000 lines existed to show words mid-utterance. Flagship add-later; v1 keeps the worker word-timestamp-capable. |
 | Lifecycle overlay | **Keep (isolated, optional)** | Click-through pill; native layer-shell with XWayland fallback. Exactly 18 spectrum bars animate only while recording; a helper-local amber border breathes only while the model loads. State interiors remain fixed. Failure never affects dictation. |
 | Old HUD (GTK helper, transcript preview, controls, general visualizer) | **Cut entirely** | The narrow recording spectrum and loading border are not a door to transcript preview, raw-audio IPC, controls, GTK, or additional animated states. |
-| Sound cues (11) | **Keep, trimmed to 4** | `record_start`, `record_stop`, `delivered`, `error`. Bundled WAVs; global `volume`/`mute` only, no per-cue overrides. Model-loading activity is visual only. |
+| Sound cues (11) | **Keep, trimmed to 4 cues × 4 packs** | `record_start`, `record_stop`, `delivered`, `error`. Four nested bundled packs plus validated local custom packs; global whole-pack/volume/mute only, no per-cue overrides. Model-loading activity is visual only. |
 | Desktop notifications (`notify-send`) | **Keep** | Errors only. No-op when absent. |
 | `type` injection via wtype | **Cut** | Replaced by decision 6/7. wtype dependency is gone entirely. |
 | `clipboard_paste` via wtype chord | **Replaced** | Same shape, chord now via uinput. |
@@ -253,7 +299,8 @@ Every feature of the current tool, so nothing disappears silently.
 | `model download` | **Keep** | Models are never bundled. |
 | `doctor` | **Keep (small)** | Probe: uinput access, input group, mic, model cache, `wl-copy`, audio player. Exit 78 on missing required capability. |
 | `devices` | **Keep** | ~20 lines serving `audio.input_device`. |
-| `setup [--quick]` | **Keep (interactive)** | Plain setup reviews all 19 keys. Quick setup edits only hotkey, microphone, and feedback essentials with live binding capture. Both use the same display-only calibration, persistence, doctor, and eligible active-service restart policy. |
+| `setup [--quick]` | **Keep (interactive)** | Plain setup reviews all 20 keys. Quick setup edits only hotkey, microphone, and feedback essentials, including whole-pack selection, with live binding capture. Both use the same display-only calibration, persistence, doctor, and eligible active-service restart policy. |
+| `sounds [PACK]` | **Keep** | Eighth public command: list, preview, or globally select one complete bundled/custom pack; no downloads or per-cue configuration. |
 | `dictate` (one-shot) | **Cut** | Niche. |
 | `bench` (WER matrix, incremental replay) | Cut → later | Real value when choosing models; can return as a standalone `scripts/` script. |
 | `enable`/`disable`/`start`/`stop`/`status` | **Cut** | Ship the unit file; document three `systemctl --user` one-liners in the README. |
@@ -395,6 +442,17 @@ is a constraint on the new implementation.
     energy above the floor may affect the overlay without affecting capture,
     transcription, or delivery.
     Analysis, rendering, and IPC stay off the PortAudio callback and daemon lock.
+18. **Sound packs resolve atomically at process boundaries.** Discovery never
+    makes a partial custom pack visible: name, containment, all four file names,
+    WAV structure, duration, channels, rate, width, readability, and nonempty
+    payload succeed as one decision. Bundled assets have precedence. The daemon
+    resolves once at startup so edits cannot mix cue generations within one
+    process; the explicit selector/preview resolves for that command. A selected
+    custom pack disappearing or becoming invalid is one privacy-safe warning plus
+    a complete `minimal-ui` fallback, never four independent fallbacks and never a
+    config rewrite. Preview is the only deliberate audible action in the selector;
+    setup and selection remain silent. Player/process behavior is smoke-tested at
+    the real boundary, not mocked in unit tests.
 
 ---
 
@@ -412,7 +470,7 @@ not to grow the budget.
 src/stenographer/
   __init__.py          version re-export
   _version.py          single version string (no -dev gymnastics in v1)
-  cli.py        ~150   lazy dispatch: run / transcribe / model download / doctor / devices / setup / completion
+  cli.py        ~150   lazy dispatch: run / transcribe / model download / doctor / devices / setup / sounds / completion
   completion.py        packaged static Bash/Zsh/Fish definition loader
   config.py     ~150   TOML load, frozen dataclasses, key-scoped validation, default writer
   setup.py             full/quick interactive review and post-save guidance
@@ -437,10 +495,11 @@ src/stenographer/
                        trailing space; batch variant for transcribe
   deliver.py     ~80   wl-copy both selections → confirm → uinput Shift+Insert,
                        release-guard first
-  feedback.py    ~60   4 cues via canberra/pw-play/paplay, volume/mute, no-op degrade
+  feedback.py    ~60   whole-pack resolution + 4 cues via canberra/pw-play/paplay,
+                       volume/mute, minimal-ui/no-op fallback
   doctor.py      ~80   capability probe + resolved-config dump; exit 78 contract
   notify.py      ~40   notify-send errors, no-op degrade
-  assets/sounds/       4 WAVs (record_start, record_stop, delivered, error)
+  assets/sounds/       4 nested packs × 4 WAVs (record_start, record_stop, delivered, error)
 ```
 
 Flat package — no subpackages until a directory earns it.
@@ -472,13 +531,14 @@ cpu_threads = 0              # 0 = auto (§4.10)
 [stenographer.feedback]
 volume = 0.6
 mute = false
+sound_pack = "minimal-ui"      # one complete bundled or valid local custom pack
 overlay = true                 # best-effort lifecycle pill; dictation is independent
 spectrum_floor_dbfs = -45.0    # scalar manual floor; setup may write 18 fixed bands
 ```
 
 Everything else that was configurable is now fixed behavior or gone.
 
-`stenographer setup` materializes exactly this schema; calibration only chooses an
+`stenographer setup` materializes exactly this 20-key schema; calibration only chooses an
 18-value fixed profile for the existing `feedback.spectrum_floor_dbfs` key. It does
 not add a speech threshold, runtime learning, or any other persisted state.
 
@@ -565,14 +625,16 @@ Motivated by §4.16. These are rules, not suggestions:
 1. **Unit tests cover pure logic only** — formatter, config validation, RMS gate
    and spectrum/calibration math, protocol encode/decode and ordering, renderer
    geometry, hotkey chord parsing, setup prompt/decision and binding-capture
-   state parsing, and TOML
+   state parsing, sound-pack slug/discovery/containment/WAV validation and menu
+   parsing, deterministic generated-cue identity, and TOML
    transformation. Fast, no mocks of external processes.
 2. **No mocked-subprocess theater.** A test that mocks `subprocess.run` /
    `UInput` / `wl-copy` and asserts "we would have called it" is worse than no
    test: it costs maintenance and manufactures false confidence. Delete on sight.
 3. **The smoke suite is a first-class deliverable.** A small set of tests that
    *really* create a uinput device, *really* write and read back the clipboard,
-   *really* play a cue, *really* load the model on a tiny bundled WAV and check
+   *really* play every bundled pack and one filesystem custom pack, *really* load
+   the model on a tiny bundled WAV and check
    the transcript. Marked `integration`, run with one command
    (`STENOGRAPHER_INTEGRATION=1 pytest`), on the real machine.
    It also exercises real rotating/fallback logging and verifies that a spawned
@@ -605,6 +667,7 @@ open. When one is added, it must still pass the §1 razor at that time.
 | **`bench`** | Standalone script in `scripts/`, driving the public `model.py` API. Does not re-enter the package. |
 | **Distribution layer** (installer, self-update, completions) | Blocked on external users existing. Clean config validation and a small codebase are the only v1 prerequisites, and both are core goals anyway. *Partially reintroduced 2026-08: the local PyInstaller onedir build and single-machine per-user installer, a `main`-only draft-release workflow for native Linux x86_64/AArch64 bundles plus Python distributions, and static Bash/Zsh/Fish completions cached by the installer under XDG data directories. Publishing remains manual. There is still no multi-distro/curl-pipe-bash installer, self-update, dynamic completion, or shell-configuration editing; the rest of this row stays gated.* |
 | **`dictate` one-shot** | Trivial recomposition of daemon pieces if ever wanted. |
+| **Windows backend** | *Seam extracted 2026-08-21 (see the amendment below).* `stenographer.platform` holds the host boundary; the core never imports a Linux module and `tests/platform/test_core_isolation.py` proves it; `Daemon.build(platform=)` is the one wiring point; `doctor.REQUIRED` names are semantic (injector available / listener permitted / clipboard available) so the startup gate needs no renaming; `hotkey.binding` keeps evdev `KEY_*` names everywhere (a Windows backend maps them to VK codes — no schema change); `status.Backend` is protocol-v4 wire vocabulary, so a Windows overlay backend is a protocol-extension decision (until then the overlay is disabled there via `NullStatusSink`). Still to build: `WH_KEYBOARD_LL` listener dispatching through a queue (edges fire under the daemon lock), `SendInput` paste, Win32 clipboard with read-back, toast notifier, cue player, named-mutex lock, `SetConsoleCtrlHandler`, a service concept that reimplements "78 = don't restart", per-platform doctor/setup hint text, `%APPDATA%` policy, Windows packaging/CI artifacts. |
 
 ---
 
@@ -675,6 +738,14 @@ checks the in-place Recording-to-Transcribing transition, spectrum and border
 repaint, and the empty input region. These checks require the opt-in integration
 suite and real hardware.
 
+Sound-pack acceptance runs the real-player integration smoke for all four
+bundled packs and a filesystem custom pack. Listen to every bundled pack on
+headphones, laptop speakers, and desktop speakers in lifecycle order. Then test
+real hold and toggle dictation with each pack. For every bundled start cue, a
+silent press/release must remain success-shaped: no transcript, paste, or error
+cue. The checked-in generated-pack bytes must also match a fresh deterministic
+render before merge.
+
 ### Cold-start and logging acceptance
 
 Before a dev → main merge, perform the following on the real target machine in
@@ -703,7 +774,7 @@ preserved; `delivery/feedback.py` and `overlay/render.py` now anchor assets on
 
 | Old | New |
 |---|---|
-| `cli.py` | `cli/__init__.py` + `cli/__main__.py` + `cli/commands/{run,transcribe,model,doctor,devices,setup}.py` |
+| `cli.py` | `cli/__init__.py` + `cli/__main__.py` + `cli/commands/{run,transcribe,model,doctor,devices,setup,sounds}.py` |
 | `doctor.py`, `setup.py`, `setup_config.py`, `calibration.py` | `cli/` (same basenames) |
 | `worker.py`, `model.py`, `format.py` | `transcribe/` (same basenames) |
 | `overlay.py` | `overlay/supervisor.py` |
@@ -715,3 +786,57 @@ preserved; `delivery/feedback.py` and `overlay/render.py` now anchor assets on
 Unmoved at the package root: `__init__.py`, `_version.py`, `daemon.py`,
 `hotkey.py`, `audio.py`, `config.py`, `status.py`, `assets/`. `tests/` mirrors
 the grouping with unchanged test basenames.
+
+---
+
+## Amendment: platform boundary extraction (2026-08-21)
+
+Every host-OS/desktop surface moved behind a new `stenographer.platform`
+subpackage so the core imports and its pure tests collect on any platform.
+Linux behavior is unchanged: moved functions keep their bodies, `doctor`
+output is byte-identical, the smoke suite and real dictation pass. The one
+structural change is `hotkey.ChordTracker`, the platform-neutral held-key /
+edge / release-guard state machine extracted from the old `HotkeyListener`
+by inheritance; `platform/linux/hotkey.py:EvdevHotkeyListener` is the old
+class minus that core, feeding `_key_event(device_id, code, value)` from its
+reader threads.
+
+| Old | New |
+|---|---|
+| `daemon.py` lock path / `is_lock_contention` / `acquire_single_instance_lock` / `SingleInstanceLockError` | `platform/linux/lock.py` (+ `FlockSingleInstanceLock`); the error class lives in `platform/base.py` |
+| `daemon.run` `signal.signal(SIGINT/SIGTERM)` | `Platform.install_stop_signal_handlers` |
+| `hotkey.py` evdev half (`is_main_keyboard`, `auto_detect_paths`, `HotkeyListener` I/O) + `cli/setup._hotkey_devices` | `platform/linux/hotkey.py` (`EvdevKeyTable`, `EvdevHotkeyListener`, `list_hotkey_devices`) |
+| `hotkey.parse_binding(spec)` via `evdev.ecodes` | `hotkey.parse_binding(spec, keys: KeyTable)` |
+| `cli/binding_capture.py` termios/select/evdev capture | `platform/linux/binding_capture.py`; the core keeps the reducer, `serialize_capture(state, keys)`, and a delegating `capture_binding` |
+| `delivery/deliver.py` `UinputKeyboard`, `chord_events` | `platform/linux/uinput.py` |
+| `delivery/deliver.py` `ClipboardBackend`, `pick_backend`, `detect_clipboard_backend`, `copy_both_selections(_x11)`, `copy_for_backend` + `doctor._probe_clipboard` | `platform/linux/clipboard.py` (+ `probe_clipboard`); `delivery/deliver.py` is `Deliverer` only |
+| `delivery/notify.py` | `platform/linux/notify.py` (`NotifySendNotifier`) |
+| `delivery/feedback.py` `detect_player`, `build_play_command`, Popen | `platform/linux/cues.py` (`LinuxCuePlayer`); `Feedback(cfg=, player=)` keeps mute/volume/asset policy |
+| `utils/childenv.py` | `platform/linux/process.py` (+ `helper_spawn_kwargs`) |
+| `config.resolve_config_path` XDG branch, `logging_setup.resolve_state_dir`, daemon `XDG_RUNTIME_DIR` | `platform/linux/dirs.py` (`config_path`, `state_dir`, `runtime_dir`); `STENOGRAPHER_CONFIG` stays in `config.py` |
+| `cli/doctor.py` `_in_input_group`, `_service_status`, `/dev/uinput` access + `cli/setup._restart_service` systemctl call | `platform/linux/probe.py` (`probe_host() -> HostProbe`, `restart_service() -> (ok, detail)`) |
+| `cli/doctor.probe_overlay` + `overlay/supervisor._select_backend` hard-coded wayland→x11 | `platform/linux/overlay.py` `overlay_backends()` spec list; doctor loops probes (last reason wins, equivalent), the helper constructs the first that succeeds |
+
+`Platform` contract (`platform/base.py`, stdlib-only): `config_path`,
+`state_dir`, `runtime_dir`; `keys`, `hotkey_listener`, `hotkey_devices`,
+`capture_binding`; `key_injector`, `clipboard_writer`, `notifier`,
+`cue_player`; `helper_spawn_kwargs`, `single_instance_lock`,
+`install_stop_signal_handlers`; `probe_host`, `restart_service`,
+`overlay_backends`. `current_platform()` is a cached `sys.platform` switch;
+`platform/windows/` is a stub that imports anywhere (the Linux bundle collects
+it) and reports everything unavailable. `overlay/wayland.py` and
+`overlay/x11.py` stay in `overlay/` (helper-side backends reachable only via
+`overlay_backends()`); their pure tests `importorskip` pywayland/Xlib.
+`evdev`, `pywayland`, and `python-xlib` carry `sys_platform == 'linux'`
+markers; CI adds a `windows-latest` unit-only job.
+
+Unchanged and still settled as the *Linux* contract: §2.5 (target: any
+Wayland session), §2.6 (uinput, zero fallback axes), §2.7 (wl-copy/xclip +
+Shift+Insert), §2.9 (completion shells), §2.16 (mode/symlink preservation),
+§4.13 (`doctor.REQUIRED` as the startup gate). evdev `KEY_*` names remain the
+canonical `hotkey.binding` vocabulary on every platform and `hotkey.device` is
+backend-defined; there is no schema change, no migration, and no new key. A
+Windows backend must satisfy the same Protocols and is a separate phase (§7).
+One incidental fix: `EvdevKeyTable.name` resolves aliased evdev codes (stored
+as tuples by python-evdev, e.g. `KEY_MUTE`) to their first name, where the old
+`_canonical_key_name` only recognised lists and raised for them during capture.

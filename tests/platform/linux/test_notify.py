@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Pure-logic tests for notify.py: build_notify_command argv only.
 
-The Popen send in Notifier.error is never mock-tested (§6.2); a broken notifier
+The Popen send in NotifySendNotifier.error is never mock-tested (§6.2); a broken notifier
 degrades to a no-op and is validated by real use, not by asserting a mocked call.
 """
 
 from __future__ import annotations
 
-from stenographer.delivery.notify import build_notify_command
+from stenographer.platform.linux.notify import build_notify_command
 
 
 def test_build_notify_command_exact_argv():

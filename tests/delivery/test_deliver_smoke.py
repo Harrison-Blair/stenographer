@@ -37,14 +37,14 @@ pytestmark = pytest.mark.integration
 if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
     pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
 
-from stenographer.delivery.deliver import (  # noqa: E402
+from stenographer.delivery.deliver import Deliverer  # noqa: E402
+from stenographer.platform.linux.clipboard import (  # noqa: E402
     ClipboardBackend,
-    Deliverer,
-    UinputKeyboard,
     copy_for_backend,
     detect_clipboard_backend,
 )
-from stenographer.utils.childenv import child_env  # noqa: E402
+from stenographer.platform.linux.process import child_env  # noqa: E402
+from stenographer.platform.linux.uinput import UinputKeyboard  # noqa: E402
 
 BACKEND = detect_clipboard_backend()
 

@@ -4,6 +4,17 @@ name: draft release
 on:
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+      - "packaging/**"
+      - "scripts/build.sh"
+      - "scripts/cue_audition.py"
+      - "scripts/progress.sh"
+      - "scripts/release_guard.py"
+      - "scripts/sound_asset_guard.py"
+      - "LICENSE"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
@@ -137,6 +148,9 @@ jobs:
             grep -F "stenographer/assets/completions/${completion}" \
               "${RUNNER_TEMP}/wheel-files.txt"
           done
+          .venv/bin/python scripts/sound_asset_guard.py \
+            "dist/stenographer-${VERSION}-py3-none-any.whl" \
+            --prefix stenographer/assets/sounds
           tar -tzf "dist/stenographer-${VERSION}.tar.gz" \
             > "${RUNNER_TEMP}/sdist-files.txt"
           grep -Fx "stenographer-${VERSION}/LICENSE" "${RUNNER_TEMP}/sdist-files.txt"
@@ -145,6 +159,9 @@ jobs:
               "stenographer-${VERSION}/src/stenographer/assets/completions/${completion}" \
               "${RUNNER_TEMP}/sdist-files.txt"
           done
+          .venv/bin/python scripts/sound_asset_guard.py \
+            "dist/stenographer-${VERSION}.tar.gz" \
+            --prefix "stenographer-${VERSION}/src/stenographer/assets/sounds"
           cd dist
           sha256sum \
             "stenographer-${VERSION}-py3-none-any.whl" \
@@ -220,6 +237,9 @@ jobs:
           tar -tzf "release/stenographer-${VERSION}-linux-${ARCHIVE_ARCH}.tar.gz" \
             > "${RUNNER_TEMP}/standalone-files.txt"
           grep -Fx 'stenographer/LICENSE' "${RUNNER_TEMP}/standalone-files.txt"
+          .venv/bin/python scripts/sound_asset_guard.py \
+            "release/stenographer-${VERSION}-linux-${ARCHIVE_ARCH}.tar.gz" \
+            --prefix stenographer/_internal/stenographer/assets/sounds
           cd release
           sha256sum "stenographer-${VERSION}-linux-${ARCHIVE_ARCH}.tar.gz" \
             > "release-${ARCHIVE_ARCH}.SHA256SUMS"

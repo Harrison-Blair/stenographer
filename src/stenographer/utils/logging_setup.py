@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
+from stenographer.platform import current_platform
+
 if TYPE_CHECKING:
     from multiprocessing.queues import Queue
 
@@ -33,12 +35,6 @@ def resolve_log_level(value: str | None) -> int:
         return logging.INFO
     level = logging.getLevelNamesMapping().get(value.upper())
     return level if isinstance(level, int) else logging.INFO
-
-
-def resolve_state_dir(env: Mapping[str, str], home: Path) -> Path:
-    """Resolve the application state directory using XDG precedence."""
-    root = Path(env["XDG_STATE_HOME"]) if env.get("XDG_STATE_HOME") else home / ".local/state"
-    return root / _LOGGER_NAME
 
 
 def setup_logging(
@@ -74,7 +70,8 @@ def setup_logging(
 
     if not any(isinstance(handler, logging.handlers.RotatingFileHandler) for handler in owned):
         try:
-            log_path = resolve_state_dir(resolved_env, resolved_home) / _LOG_FILENAME
+            state_dir = current_platform().state_dir(resolved_env, resolved_home)
+            log_path = state_dir / _LOG_FILENAME
             log_path.parent.mkdir(parents=True, exist_ok=True)
             file_handler = logging.handlers.RotatingFileHandler(
                 log_path,
