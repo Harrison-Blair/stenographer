@@ -11,7 +11,7 @@
 >
 >    *\- [Merriam Webster](https://www.merriam-webster.com/dictionary/stenographer)*
 
-[![release](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Harrison-Blair/stenographer/badges/release.json)](https://github.com/Harrison-Blair/stenographer/releases)
+[![release](https://img.shields.io/github/v/release/Harrison-Blair/stenographer?color=brightgreen)](https://github.com/Harrison-Blair/stenographer/releases)
 
 Local, offline, Wayland push-to-talk / toggle dictation daemon. Press a
 configurable hotkey, speak, get the text at your cursor and in your
