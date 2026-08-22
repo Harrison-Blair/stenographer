@@ -36,6 +36,8 @@ from stenographer.transcribe.format import format_transcript
 from stenographer.transcribe.worker import Worker, WorkerError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import numpy as np
 
     from stenographer.cli.doctor import Capabilities
@@ -50,6 +52,17 @@ _PIPELINE_JOIN_SECONDS = 30.0
 
 def _ignore_edge() -> None:
     """Falling-edge sink for toggle mode: only presses drive the session."""
+
+
+def edge_handlers(daemon: Daemon, mode: str) -> tuple[Callable[[], None], Callable[[], None]]:
+    """Map ``hotkey.mode`` onto the (rising, falling) edge callbacks.
+
+    In toggle mode only presses drive the session, so the falling edge is inert.
+    PURE given *daemon*: it reads no config and touches no platform surface.
+    """
+    if mode == "toggle":
+        return daemon.on_toggle_press, _ignore_edge
+    return daemon.on_key_down, daemon.on_key_up
 
 
 def _play_cue(feedback: Feedback, name: str) -> None:
@@ -237,10 +250,7 @@ class Daemon:
             status=status,
         )
         daemon_ref = daemon
-        if cfg.hotkey.mode == "toggle":
-            on_start, on_stop = daemon.on_toggle_press, _ignore_edge
-        else:
-            on_start, on_stop = daemon.on_key_down, daemon.on_key_up
+        on_start, on_stop = edge_handlers(daemon, cfg.hotkey.mode)
         log.info("hotkey: mode=%s", cfg.hotkey.mode)
         listener = plat.hotkey_listener(
             chord=parse_binding(cfg.hotkey.binding, plat.keys()),

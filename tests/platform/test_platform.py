@@ -39,9 +39,12 @@ def test_windows_stub_conforms_and_reports_everything_unavailable():
     assert plat.overlay_backends() == ()
     assert plat.hotkey_devices() == []
     assert plat.cue_player() is None
-    assert plat.keys().name(29) is None
+    # The KEY_* vocabulary is core data, so the stub speaks it even with no
+    # backend: a binding must parse and render wherever config is read.
+    assert plat.keys().code("KEY_RIGHTCTRL") == 97
+    assert plat.keys().name(29) == "KEY_LEFTCTRL"
     with pytest.raises(KeyError):
-        plat.keys().code("KEY_RIGHTCTRL")
+        plat.keys().code("KEY_NOT_A_REAL_KEY")
     plat.notifier().error("must not raise")
     with pytest.raises(UnsupportedPlatformError):
         plat.key_injector()
@@ -64,3 +67,18 @@ def test_windows_stub_directories_honour_xdg_then_windows_conventions():
     assert plat.state_dir({"LOCALAPPDATA": "C:/Users/alice/AppData/Local"}, home) == Path(
         "C:/Users/alice/AppData/Local/stenographer"
     )
+
+
+def test_every_provider_parses_the_shipped_default_binding():
+    """The guard for the Windows CI break: a provider that cannot parse the
+    default binding fails here, on Linux, instead of only on the Windows runner.
+
+    Seen to FAIL against the stub's old empty key table (BindingError: unknown
+    key 'KEY_RIGHTCTRL').
+    """
+    from stenographer.config import Config
+    from stenographer.hotkey import parse_binding
+
+    default = Config.defaults().hotkey.binding
+    for provider in (current_platform(), WindowsPlatform()):
+        assert parse_binding(default, provider.keys()), provider.name

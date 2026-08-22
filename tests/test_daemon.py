@@ -7,9 +7,12 @@ one-at-a-time admission rule (``can_start``), the toggle-mode press mapping
 unconditionally), the stale-timer guard (``max_duration_applies``, seen to
 fail against a stub that ignores the generation), the overlay publish policy as
 bound by ``_publish_state`` (``should_publish_state``, seen to fail against a
-dedup-only stub), and that ``Daemon.build`` wires all
-collaborators lazily (no uinput device, stream, or model opened) with a safe
-pre-start ``stop``, per ``hotkey.mode``. Nothing mocks
+dedup-only stub), the mode-to-edge mapping (``edge_handlers``), and that
+``Daemon.build`` wires all collaborators lazily (no uinput device, stream, or
+model opened) with a safe pre-start ``stop``, per ``hotkey.mode``. The two
+full-build tests need a host that actually provides a hotkey listener and key
+injector, so they skip on a provider that raises ``UnsupportedPlatformError``
+(the mapping itself is covered purely, and runs everywhere). Nothing mocks
 subprocess/UInput/wl-copy/Worker (§6.2); the real utterance path is the M5
 manual dictation acceptance procedure.
 """
@@ -25,11 +28,13 @@ from stenographer.daemon import (
     Outcome,
     can_start,
     classify_pipeline,
+    edge_handlers,
     max_duration_applies,
     should_publish_state,
     startup_clipboard_backend,
     toggle_action,
 )
+from stenographer.platform.base import UnsupportedPlatformError
 from stenographer.status import OverlayState
 
 
@@ -147,14 +152,51 @@ def test_startup_gate_ignores_optional_capabilities_and_reuses_backend():
     assert startup_clipboard_backend(caps) == "x11"
 
 
+def _build_or_skip(cfg):
+    """Build for real, or skip where the host provides no hotkey/paste backend.
+
+    Expressed as a capability rather than an OS name so a provider that grows
+    a real backend starts running these checks without touching the test.
+    """
+    from stenographer.daemon import Daemon
+
+    try:
+        return Daemon.build(cfg, clipboard_backend="wl-copy")
+    except UnsupportedPlatformError as exc:
+        pytest.skip(f"no hotkey/injection backend on this host: {exc}")
+
+
+class _EdgeSpy:
+    """Stands in for a Daemon: edge_handlers only reads bound methods."""
+
+    def on_key_down(self) -> None: ...
+
+    def on_key_up(self) -> None: ...
+
+    def on_toggle_press(self) -> None: ...
+
+
+def test_edge_handlers_map_mode_to_rising_and_falling_callbacks():
+    # Seen to FAIL against a mapping that ignores the mode and returns the hold
+    # pair for both. Pure: no platform, no listener, no device.
+    daemon = _EdgeSpy()
+
+    assert edge_handlers(daemon, "hold") == (daemon.on_key_down, daemon.on_key_up)
+
+    on_start, on_stop = edge_handlers(daemon, "toggle")
+    assert on_start == daemon.on_toggle_press
+    # Only presses drive the session: the falling edge must be inert.
+    assert on_stop not in (daemon.on_key_up, daemon.on_key_down)
+    assert on_stop() is None
+
+
 def test_build_wires_collaborators_lazily():
     # Package A (hotkey.py) is built concurrently against the documented
     # contract; skip this wiring check until it lands, then run it for real.
     pytest.importorskip("stenographer.hotkey")
     from stenographer.config import Config
-    from stenographer.daemon import Daemon
 
-    daemon = Daemon.build(Config.defaults(), clipboard_backend="wl-copy")
+    daemon = _build_or_skip(Config.defaults())
     try:
         # Built but nothing opened: startup preparation happens only after the
         # single-instance lock is acquired in run().
@@ -176,9 +218,8 @@ def test_build_wires_toggle_mode_press_only():
     # is opened, no mocks.
     pytest.importorskip("stenographer.hotkey")
     from stenographer.config import Config
-    from stenographer.daemon import Daemon
 
-    hold = Daemon.build(Config.defaults(), clipboard_backend="wl-copy")
+    hold = _build_or_skip(Config.defaults())
     try:
         assert hold._listener._on_start == hold.on_key_down
         assert hold._listener._on_stop == hold.on_key_up
@@ -189,7 +230,7 @@ def test_build_wires_toggle_mode_press_only():
     toggle_cfg = dataclasses.replace(
         defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="toggle")
     )
-    toggle = Daemon.build(toggle_cfg, clipboard_backend="wl-copy")
+    toggle = _build_or_skip(toggle_cfg)
     try:
         # Only presses drive the session; the falling edge must be inert.
         assert toggle._listener._on_start == toggle.on_toggle_press

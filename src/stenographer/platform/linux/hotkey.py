@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import evdev
 
 from stenographer.hotkey import ChordTracker, chord_active
+from stenographer.keycodes import CODE_NAMES, KEY_CODES
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -35,16 +36,28 @@ _REACQUIRE_INTERVAL_SECONDS = 2.0
 
 
 class EvdevKeyTable:
-    """``KEY_*`` names <-> evdev codes, exactly as ``evdev.ecodes`` spells them."""
+    """``KEY_*`` names <-> codes: the running kernel's evdev first, then the
+    core :mod:`stenographer.keycodes` table.
+
+    evdev leads so a kernel newer than the generated table still resolves its
+    own keys; the fallback keeps this table a superset of the vocabulary every
+    other provider speaks. The two agree today -- see
+    ``tests/platform/linux/test_keycodes_drift.py``.
+    """
 
     def code(self, name: str) -> int:
-        return evdev.ecodes.ecodes[name]
+        try:
+            return evdev.ecodes.ecodes[name]
+        except KeyError:
+            return KEY_CODES[name]
 
     def name(self, code: int) -> str | None:
         name = evdev.ecodes.KEY.get(code)
         if isinstance(name, list | tuple):
             name = name[0] if name else None
-        return name if isinstance(name, str) else None
+        if isinstance(name, str):
+            return name
+        return CODE_NAMES.get(code)
 
 
 def is_main_keyboard(name: str, key_codes: Iterable[int]) -> bool:

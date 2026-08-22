@@ -47,7 +47,7 @@ def test_legacy_pack_preserves_the_original_wav_bytes() -> None:
     assert actual == _LEGACY_SHA256
 
 
-def test_directory_guard_rejects_missing_extra_and_symlinked_assets(tmp_path: Path) -> None:
+def test_directory_guard_rejects_missing_and_extra_assets(tmp_path: Path) -> None:
     root = tmp_path / "sounds"
     _write_tree(root)
     (root / EXPECTED_PATHS[0]).unlink()
@@ -56,8 +56,16 @@ def test_directory_guard_rejects_missing_extra_and_symlinked_assets(tmp_path: Pa
     with pytest.raises(SoundAssetGuardError, match=r"missing=.*extra="):
         check_sound_assets(root)
 
-    (root / "legacy/extra.wav").unlink()
-    (root / EXPECTED_PATHS[0]).symlink_to(root / EXPECTED_PATHS[1])
+
+def test_directory_guard_rejects_symlinked_assets(tmp_path: Path) -> None:
+    root = tmp_path / "sounds"
+    _write_tree(root)
+    (root / EXPECTED_PATHS[0]).unlink()
+    try:
+        (root / EXPECTED_PATHS[0]).symlink_to(root / EXPECTED_PATHS[1])
+    except OSError as exc:  # unprivileged Windows has no symlink permission
+        pytest.skip(f"symlinks unavailable: {exc}")
+
     with pytest.raises(SoundAssetGuardError, match="must not be symlinks"):
         check_sound_assets(root)
 

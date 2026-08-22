@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from stenographer.keycodes import StaticKeyTable
 from stenographer.platform.base import HostProbe, NullNotifier, UnsupportedPlatformError
 
 if TYPE_CHECKING:
@@ -32,14 +33,6 @@ if TYPE_CHECKING:
     )
 
 _APP = "stenographer"
-
-
-class _EmptyKeyTable:
-    def code(self, name: str) -> int:
-        raise KeyError(name)
-
-    def name(self, code: int) -> str | None:
-        return None
 
 
 class WindowsPlatform:
@@ -69,7 +62,9 @@ class WindowsPlatform:
 
     # --- hotkey / input ---
     def keys(self) -> KeyTable:
-        return _EmptyKeyTable()
+        # The KEY_* vocabulary is core data, not a host capability: a binding
+        # must still parse and render where no hotkey backend exists.
+        return StaticKeyTable()
 
     def hotkey_listener(
         self,

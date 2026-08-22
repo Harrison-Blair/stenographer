@@ -11,8 +11,11 @@ from stenographer.config import Config, ConfigError, load_or_default
 
 
 def test_config_error_message():
-    err = ConfigError(pathlib.Path("/x"), "asr.beam_size", "bad")
-    assert str(err) == "/x: asr.beam_size: bad"
+    # Interpolate the path rather than a POSIX literal: the rendered separator
+    # is the host's, so "/x" would not match the WindowsPath spelling.
+    path = pathlib.Path("/x")
+    err = ConfigError(path, "asr.beam_size", "bad")
+    assert str(err) == f"{path}: asr.beam_size: bad"
     assert err.key == "asr.beam_size"
 
 

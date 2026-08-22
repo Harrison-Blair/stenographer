@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import sys
 from itertools import pairwise
 from types import MappingProxyType
 
@@ -342,6 +343,16 @@ def test_position_rejects_output_too_small_for_visible_pill() -> None:
 # spectrum bar interior, state dot center, drop shadow, pill interior, and the
 # label region — so cache or compositing-order restructuring cannot silently
 # change the rendered frame.
+#
+# Two of those coordinates land on label glyphs in the states that draw one
+# (RECORDING draws no label, so all six are geometry there).  Glyph positions
+# come from Pillow's bundled shaping/FreeType build, not from anything here:
+# "Transcribing" advances 95.58px through raqm and 98.0px through the BASIC
+# layout engine on the same font file, and a ~2px shift changes whether x=86
+# and x=140 sit on ink or on a gap.  So the text samples are pinned only on the
+# stack they were sampled from, and every geometry sample is pinned everywhere
+# — the compositing order, supersample/downscale path, and render cache stay
+# covered on every platform.
 _GOLDEN_COORDINATES = {
     "border_top": (150, 11),
     "bar_interior": (86, 40),
@@ -370,11 +381,24 @@ _GOLDEN_TRANSCRIBING = {
 }
 
 
+# The two samples that land on label glyphs in a state that draws a label.
+_TEXT_SAMPLES = frozenset({"bar_interior", "label_region"})
+
+
+def _reference_text_stack() -> bool:
+    """True on the platform the label goldens were sampled from.
+
+    Linux is the shipped platform and the reference rasterizer; elsewhere the
+    Pillow wheel's shaping/FreeType build sets its own glyph advances.
+    """
+    return sys.platform.startswith("linux")
+
+
 @pytest.mark.parametrize(
-    ("state", "levels", "golden"),
+    ("state", "levels", "golden", "text_samples"),
     [
-        (OverlayState.RECORDING, (128,) * SPECTRUM_BANDS, _GOLDEN_RECORDING),
-        (OverlayState.TRANSCRIBING, None, _GOLDEN_TRANSCRIBING),
+        (OverlayState.RECORDING, (128,) * SPECTRUM_BANDS, _GOLDEN_RECORDING, frozenset()),
+        (OverlayState.TRANSCRIBING, None, _GOLDEN_TRANSCRIBING, _TEXT_SAMPLES),
     ],
     ids=["recording", "transcribing"],
 )
@@ -382,10 +406,14 @@ def test_golden_pixels_pin_composited_output_bytes(
     state: OverlayState,
     levels: tuple[int, ...] | None,
     golden: dict[str, tuple[int, int, int, int]],
+    text_samples: frozenset[str],
 ) -> None:
     frame = render_overlay(state, scale=1.0, levels=levels, loading_elapsed=0.75)
 
-    sampled = {
-        name: frame.image.getpixel(coordinates) for name, coordinates in _GOLDEN_COORDINATES.items()
-    }
-    assert sampled == golden
+    expected = golden
+    if text_samples and not _reference_text_stack():
+        expected = {name: rgba for name, rgba in golden.items() if name not in text_samples}
+    assert expected, "every sample was dropped: the geometry goldens must still be checked"
+
+    sampled = {name: frame.image.getpixel(_GOLDEN_COORDINATES[name]) for name in expected}
+    assert sampled == expected

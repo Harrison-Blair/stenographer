@@ -26,6 +26,7 @@ BLOCKED = (
 
 CORE = (
     "stenographer.status",
+    "stenographer.keycodes",
     "stenographer.config",
     "stenographer.audio",
     "stenographer.hotkey",
