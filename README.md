@@ -33,29 +33,6 @@ assistants). Everything below this comment is generated / maintained
 content. To change the project description, edit above this line.
 -->
 
-## What it is
-
-Press a hotkey, speak, and the text appears at your cursor.
-
-`stenographer` is a push-to-talk / toggle dictation daemon for any Wayland
-session. It listens to Linux evdev keyboard events, records from the configured
-microphone while the hotkey is held (or, with `hotkey.mode = "toggle"`, between
-one press and the next), transcribes locally with
-[faster-whisper](https://github.com/SYSTRAN/faster-whisper), and delivers the
-utterance to the focused application: the transcript is copied to both
-selections (via `wl-copy`, or via `xclip` under XWayland on compositors without
-a data-control protocol, such as GNOME 46 and older), then pasted with a single
-Shift+Insert chord sent through a kernel `uinput` virtual keyboard. Because injection is
-display-server-independent, it works identically on wlroots compositors
-(Hyprland, sway, …) and on GNOME/Mutter.
-
-Everything is offline and English-only. Nothing is sent anywhere; the daemon
-never touches the network (the model is fetched once, explicitly, with
-`stenographer model download`).
-
-The architecture and binding behavioral decisions are recorded in
-[docs/reauthor.md](docs/reauthor.md).
-
 ## Quick start
 
 ```sh
