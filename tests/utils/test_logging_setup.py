@@ -7,14 +7,12 @@ import logging
 import logging.handlers
 import os
 from io import StringIO
-from pathlib import Path
 
 import pytest
 
 from stenographer.utils.logging_setup import (
     owned_handlers,
     resolve_log_level,
-    resolve_state_dir,
     setup_logging,
     shutdown_logging,
 )
@@ -32,18 +30,6 @@ from stenographer.utils.logging_setup import (
 )
 def test_resolve_log_level(value, expected):
     assert resolve_log_level(value) == expected
-
-
-def test_resolve_state_dir_prefers_xdg_state_home():
-    assert resolve_state_dir({"XDG_STATE_HOME": "/state"}, Path("/home/alice")) == Path(
-        "/state/stenographer"
-    )
-
-
-def test_resolve_state_dir_falls_back_below_home():
-    assert resolve_state_dir({}, Path("/home/alice")) == Path(
-        "/home/alice/.local/state/stenographer"
-    )
 
 
 def _require_integration() -> None:

@@ -21,6 +21,7 @@ if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
 from stenographer import daemon  # noqa: E402
 from stenographer.cli import doctor  # noqa: E402
 from stenographer.config import Config  # noqa: E402
+from stenographer.platform.linux import lock  # noqa: E402
 
 
 def test_missing_required_capability_precedes_real_lock(capsys):
@@ -30,9 +31,9 @@ def test_missing_required_capability_precedes_real_lock(capsys):
     if not missing:
         pytest.skip("host has every required daemon capability")
 
-    fd = daemon.acquire_single_instance_lock()
+    fd = lock.acquire_single_instance_lock()
     if fd < 0:
-        pytest.skip(f"another instance already holds {daemon.LOCK_PATH}")
+        pytest.skip(f"another instance already holds {lock.LOCK_PATH}")
     try:
         assert daemon.run(cfg) == 78
     finally:

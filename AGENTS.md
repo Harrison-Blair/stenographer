@@ -28,8 +28,11 @@ fixed. It must never grow transcript preview, controls, GTK, or raw-audio IPC.
 - `src/stenographer/` — core modules at the root (`daemon`, `hotkey`, `audio`,
   `config`, `status`) plus subpackages: `cli/` (surface, `commands/`, setup and
   doctor engines), `transcribe/` (`worker`, `model`, `format`), `overlay/`
-  (supervisor, backends, `protocols/`), `delivery/` (`deliver`, `feedback`,
-  `notify`), `utils/`, and `assets/` (WAV cues, icon, font, native completions).
+  (supervisor, backends, `protocols/`), `delivery/` (`deliver`, `feedback`),
+  `platform/` (the host boundary: `base` protocols, `linux/` backends, a
+  `windows/` stub), `utils/`, and `assets/` (WAV cues, icon, font, native
+  completions). Core modules never import a Linux-only module; everything
+  OS-specific is reached through `stenographer.platform.current_platform()`.
 - `tests/` — mirrors the subpackage grouping; unit tests (pure logic) plus
   `test_*_smoke.py` integration tests.
 - `packaging/stenographer.service` — the systemd user unit.

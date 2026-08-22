@@ -300,7 +300,9 @@ class Config:
 
     @classmethod
     def write_default(cls, path: pathlib.Path) -> None:
-        path.write_text(_DEFAULT_TOML, encoding="utf-8")
+        # Bytes, not text mode: setup writes LF bytes, and a CRLF default on
+        # Windows would make the first setup save always rewrite the file.
+        path.write_bytes(_DEFAULT_TOML.encode("utf-8"))
 
 
 def resolve_config_path(*, create_parent: bool = True) -> pathlib.Path:
@@ -310,9 +312,9 @@ def resolve_config_path(*, create_parent: bool = True) -> pathlib.Path:
     if env_path:
         path = pathlib.Path(env_path)
     else:
-        xdg = os.environ.get("XDG_CONFIG_HOME")
-        base = pathlib.Path(xdg) if xdg else pathlib.Path.home() / ".config"
-        path = base / "stenographer" / "config.toml"
+        from stenographer.platform import current_platform
+
+        path = current_platform().config_path(os.environ, pathlib.Path.home())
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
     return path

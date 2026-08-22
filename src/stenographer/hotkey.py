@@ -1,50 +1,44 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Mode-agnostic evdev hotkey listener plus its pure helpers (spec §4.9).
+"""Platform-neutral hotkey vocabulary and chord state machine (spec §4.9).
 
-The listener owns no state machine, hybrid mode, cancel binding, double-tap
-timer, or feedback wiring (the daemon plays cues in its on_start/on_stop
-callbacks). It reports chord edges — rising edge to on_start, falling edge to
-on_stop; the daemon maps them to session actions per ``hotkey.mode`` (hold or
-toggle). It also exposes wait_binding_released as the deliverer's modifier
-release-guard (§4.2).
+``parse_binding`` turns a ``+``-joined chord of evdev ``KEY_*`` names into
+codes through the platform's :class:`~stenographer.platform.base.KeyTable`.
+:class:`ChordTracker` owns the held-key union, the rising/falling edge
+dispatch, and ``wait_binding_released`` (the deliverer's modifier release-guard,
+§4.2); it has no device I/O. A platform listener (the evdev one lives in
+``stenographer.platform.linux.hotkey``) subclasses it and feeds
+``_key_event(device_id, code, value)`` from its reader threads. It owns no state
+machine beyond edges, no hybrid mode, cancel binding, double-tap timer, or
+feedback wiring: the daemon maps edges to session actions per ``hotkey.mode``.
 
-The pure helpers (parse_binding, is_main_keyboard, chord_active, edge) are the
+The pure helpers (parse_binding, chord_active, edge) and the tracker are the
 unit targets; the real read loop is exercised by the uinput loopback smoke (§6).
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import threading
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-import evdev
-
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable
+
+    from stenographer.platform.base import KeyTable
 
 logger = logging.getLogger(__name__)
-
-_KEY_A = evdev.ecodes.KEY_A
-_KEY_Z = evdev.ecodes.KEY_Z
-_MIN_LETTER_KEYS = 10  # a real keyboard has 26 (A-Z); mice report 0-2
-_NON_KEYBOARD_NAME_TOKENS = ("consumer control", "system control", "mouse", "touchpad", "trackpad")
-_RESCAN_INTERVAL_SECONDS = 2.0
-_REACQUIRE_INTERVAL_SECONDS = 2.0
 
 
 class BindingError(ValueError):
     """Raised by parse_binding on an empty or unknown key token."""
 
 
-def parse_binding(spec: str) -> frozenset[int]:
+def parse_binding(spec: str, keys: KeyTable) -> frozenset[int]:
     """Parse a '+'-joined evdev chord into a frozenset of codes (ALL held = active).
 
     Empty spec / empty piece raises BindingError; an unknown token raises it
-    naming the token. Order is irrelevant. PURE.
+    naming the token. Order is irrelevant. PURE given *keys*.
     """
     spec = spec.strip()
     if not spec:
@@ -55,21 +49,10 @@ def parse_binding(spec: str) -> frozenset[int]:
         if not name:
             raise BindingError(f"hotkey.binding: empty key in {spec!r}")
         try:
-            codes.add(evdev.ecodes.ecodes[name])
+            codes.add(keys.code(name))
         except KeyError:
             raise BindingError(f"hotkey.binding: unknown key {name!r}") from None
     return frozenset(codes)
-
-
-def is_main_keyboard(name: str, key_codes: Iterable[int]) -> bool:
-    """True if *name*/*key_codes* look like a real main keyboard: not a
-    consumer-control/mouse/touchpad HID, and >= _MIN_LETTER_KEYS in KEY_A..Z. PURE.
-    """
-    lowered = name.lower()
-    if any(token in lowered for token in _NON_KEYBOARD_NAME_TOKENS):
-        return False
-    letters = sum(1 for code in key_codes if _KEY_A <= code <= _KEY_Z)
-    return letters >= _MIN_LETTER_KEYS
 
 
 def chord_active(held: set[int], chord: frozenset[int]) -> bool:
@@ -86,54 +69,27 @@ def edge(was_active: bool, is_active: bool) -> Literal["start", "stop"] | None:
     return None
 
 
-def _glob_event_nodes() -> list[str]:
-    """Return all /dev/input/event* paths (patchable test seam)."""
-    return [str(p) for p in sorted(Path("/dev/input").glob("event*"))]
+class ChordTracker:
+    """Edge reporter over a held-key union: chord rising edge -> on_start,
+    falling edge -> on_stop. The daemon decides what an edge means (hold vs
+    toggle mode).
 
-
-def auto_detect_paths() -> list[str]:
-    """Return every main-keyboard /dev/input/event* path, most-capable first.
-
-    All matching HIDs are listened on so that whichever interface a QMK/VIA
-    keyboard routes a keypress through, the chord still fires.
-    """
-    candidates: list[tuple[int, str]] = []
-    for path in _glob_event_nodes():
-        try:
-            device = evdev.InputDevice(path)
-        except OSError:
-            continue
-        try:
-            keys = device.capabilities().get(evdev.ecodes.EV_KEY, ())
-            if is_main_keyboard(device.name, keys):
-                candidates.append((len(keys), path))
-        finally:
-            device.close()
-    candidates.sort(key=lambda c: (-c[0], c[1]))
-    return [path for _, path in candidates]
-
-
-class HotkeyListener:
-    """Evdev edge reporter: chord rising edge -> on_start, falling edge -> on_stop.
-    The daemon decides what an edge means (hold vs toggle mode).
-
-    Listens on the configured device or every auto-detected keyboard, unioning
-    held keys across HIDs under _held_lock (a press on one HID may release on
-    another). Edges are computed under the shared dispatch *lock* so two readers
-    cannot double-fire. The device is never grabbed: non-chord keys pass through.
+    Held keys are unioned across input devices under _held_lock (a press on
+    one device may release on another). Edges are computed under the shared
+    dispatch *lock* so two readers cannot double-fire. Subclasses register a
+    device in ``_held_by_device`` and call :meth:`_key_event` per key
+    transition; ``_stop_event`` is the shared shutdown flag.
     """
 
     def __init__(
         self,
         *,
         chord: frozenset[int],
-        device_path: str | None,
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
         lock: threading.RLock,
     ) -> None:
         self._chord = chord
-        self._device_path = device_path
         self._on_start = on_start
         self._on_stop = on_stop
         self._lock = lock
@@ -143,40 +99,6 @@ class HotkeyListener:
         self._transition_lock = threading.Lock()
         self._active = False
         self._stop_event = threading.Event()
-        self._supervisor: threading.Thread | None = None
-        self._readers: list[threading.Thread] = []
-        self._devices: list[evdev.InputDevice] = []
-
-    def start(self) -> None:
-        if self._supervisor is not None:
-            return
-        self._stop_event.clear()
-        self._supervisor = threading.Thread(target=self._run, name="hotkey-listener", daemon=True)
-        self._supervisor.start()
-
-    def stop(self, timeout: float = 2.0) -> None:
-        with self._transition_lock:
-            self._stop_event.set()
-        with self._held_lock:
-            devices = list(self._devices)
-            self._devices.clear()
-            self._held_by_device.clear()
-            self._held.clear()
-        for device in devices:
-            with contextlib.suppress(OSError):
-                device.close()
-        for t in list(self._readers):
-            t.join(timeout=timeout)
-        if self._supervisor is not None:
-            self._supervisor.join(timeout=timeout)
-        self._readers = []
-        self._supervisor = None
-        with self._lock:
-            self._active = False
-
-    @property
-    def is_running(self) -> bool:
-        return self._supervisor is not None and self._supervisor.is_alive()
 
     def wait_binding_released(self, timeout: float = 1.5, poll_interval: float = 0.01) -> bool:
         """True once no binding key is held (or the listener stopped); False on
@@ -195,164 +117,48 @@ class HotkeyListener:
                 return False
             self._stop_event.wait(poll_interval)
 
-    def _resolve_paths(self) -> list[str]:
-        return [self._device_path] if self._device_path else auto_detect_paths()
-
-    def _run(self) -> None:
-        paths = self._resolve_paths()
-        while not self._stop_event.is_set():
-            devices: list[evdev.InputDevice] = []
-            for path in paths:
-                with contextlib.suppress(OSError):
-                    devices.append(evdev.InputDevice(path))
-            if devices:
-                for device in devices:
-                    logger.info("hotkey: listening on %s (%s)", device.path, device.name)
-                with self._held_lock:
-                    self._held.clear()
-                    self._held_by_device = {id(device): set() for device in devices}
-                    self._devices = devices
-                self._active = False
-                self._readers = [self._spawn_reader(d) for d in devices]
-                self._supervise()
-                for t in list(self._readers):
-                    t.join(timeout=0.5)
-                if self._stop_event.is_set():
-                    return
-                logger.warning("hotkey: all keyboard devices lost; re-detecting")
-            else:
-                # No target device is currently openable (unplugged, stale
-                # explicit path, or a permissions gap). Back off before retrying
-                # so an outage cannot busy-loop the daemon: with an explicit
-                # hotkey.device, _resolve_paths always yields that path, so
-                # _reacquire returns instantly and never blocks (§4.9).
-                logger.debug(
-                    "hotkey: no openable keyboard device; retrying in %ss",
-                    _REACQUIRE_INTERVAL_SECONDS,
-                )
-                self._stop_event.wait(_REACQUIRE_INTERVAL_SECONDS)
-            paths = self._reacquire()
-            if not paths:
-                logger.error("hotkey: no readable keyboard device; listener exiting")
-                return
-
-    def _reacquire(self) -> list[str]:
-        while not self._stop_event.is_set():
-            paths = self._resolve_paths()
-            if paths:
-                return paths
-            self._stop_event.wait(_REACQUIRE_INTERVAL_SECONDS)
-        return []
-
-    def _supervise(self) -> None:
-        """Wait until every reader dies or stop is requested; while at least one
-        reader lives, periodically rescan (auto-detect mode only) to pick up a
-        hotplugged keyboard without disturbing an in-flight press.
+    def _key_event(self, device_id: int, code: int, value: int) -> bool:
+        """Feed one device's key transition into the shared held state and dispatch
+        chord edges. A missed release (a second keydown with no keyup) is
+        synthesized; _held is derived from the per-device sets so device loss
+        can remove only that device's contribution. Returns False once
+        *device_id* is no longer registered (the reader should stop).
         """
-        next_rescan = time.monotonic() + _RESCAN_INTERVAL_SECONDS
-        while not self._stop_event.is_set():
-            self._stop_event.wait(0.5)
-            self._readers = [t for t in self._readers if t.is_alive()]
-            if not self._readers:
-                return
-            if self._device_path is None and time.monotonic() >= next_rescan:
-                self._rescan()
-                next_rescan = time.monotonic() + _RESCAN_INTERVAL_SECONDS
-
-    def _rescan(self) -> None:
-        with self._held_lock:
-            known = {device.path for device in self._devices}
-        for path in auto_detect_paths():
-            if self._stop_event.is_set() or path in known:
-                continue
-            try:
-                device = evdev.InputDevice(path)
-            except OSError:
-                continue
-            logger.info("hotkey: hotplug — now listening on %s (%s)", path, device.name)
+        with self._transition_lock:
+            after_release = stuck = False
             with self._held_lock:
-                if self._stop_event.is_set():
-                    device.close()
-                    return
-                self._devices.append(device)
-                self._held_by_device[id(device)] = set()
-            self._readers.append(self._spawn_reader(device))
-
-    def _spawn_reader(self, device: evdev.InputDevice) -> threading.Thread:
-        t = threading.Thread(
-            target=self._reader_loop,
-            args=(device,),
-            name=f"hotkey-reader:{device.path}",
-            daemon=True,
-        )
-        t.start()
-        return t
-
-    def _reader_loop(self, device: evdev.InputDevice) -> None:
-        """Feed one device's key events into the shared held state and dispatch chord
-        edges. A missed release (a second keydown with no keyup) is synthesized;
-        _held is derived from the per-device sets so device loss can remove only
-        that HID's contribution.
-        """
-        try:
-            for event in device.read_loop():
-                if self._stop_event.is_set():
-                    return
-                if event.type != evdev.ecodes.EV_KEY:
-                    continue
-                code, value = event.code, event.value
-                with self._transition_lock:
-                    after_release = stuck = False
-                    with self._held_lock:
-                        device_held = self._held_by_device.get(id(device))
-                        if device_held is None:
-                            return
-                        if value == 1:
-                            if code in device_held:
-                                stuck = True
-                                device_held.remove(code)
-                                self._rebuild_held()
-                                after_release = chord_active(self._held, self._chord)
-                            device_held.add(code)
-                        elif value == 0:
-                            if code in device_held:
-                                device_held.remove(code)
-                            else:
-                                # Some multi-interface keyboards route a key-up
-                                # through a different HID from its key-down.
-                                for held in self._held_by_device.values():
-                                    held.discard(code)
-                        else:
-                            continue  # autorepeat (value 2) and any other value
+                device_held = self._held_by_device.get(device_id)
+                if device_held is None:
+                    return False
+                if value == 1:
+                    if code in device_held:
+                        stuck = True
+                        device_held.remove(code)
                         self._rebuild_held()
-                        is_active = chord_active(self._held, self._chord)
-                    if stuck:
-                        self._update(after_release)
-                    self._update(is_active)
-        except OSError as exc:
-            if not self._stop_event.is_set():
-                logger.warning("hotkey: device %s lost: %s", device.path, exc)
-        finally:
-            self._device_lost(device)
+                        after_release = chord_active(self._held, self._chord)
+                    device_held.add(code)
+                elif value == 0:
+                    if code in device_held:
+                        device_held.remove(code)
+                    else:
+                        # Some multi-interface keyboards route a key-up
+                        # through a different HID from its key-down.
+                        for held in self._held_by_device.values():
+                            held.discard(code)
+                else:
+                    return True  # autorepeat (value 2) and any other value
+                self._rebuild_held()
+                is_active = chord_active(self._held, self._chord)
+            if stuck:
+                self._update(after_release)
+            self._update(is_active)
+        return True
 
     def _rebuild_held(self) -> None:
         """Rebuild the shared union. Caller holds _held_lock."""
         self._held.clear()
         for device_held in self._held_by_device.values():
             self._held.update(device_held)
-
-    def _device_lost(self, device: evdev.InputDevice) -> None:
-        """Drop one HID's state and report any resulting falling edge."""
-        with self._transition_lock:
-            with self._held_lock:
-                self._held_by_device.pop(id(device), None)
-                self._devices = [opened for opened in self._devices if opened is not device]
-                self._rebuild_held()
-                is_active = chord_active(self._held, self._chord)
-            with contextlib.suppress(OSError):
-                device.close()
-            if not self._stop_event.is_set():
-                self._update(is_active)
 
     def _update(self, is_active: bool) -> None:
         """Dispatch a chord edge under the shared lock. The was-active read and the

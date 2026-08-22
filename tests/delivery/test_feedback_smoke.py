@@ -24,9 +24,11 @@ if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
     pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
 
 from stenographer.config import FeedbackConfig  # noqa: E402
-from stenographer.delivery.feedback import CUES, Feedback, detect_player  # noqa: E402
+from stenographer.delivery.feedback import CUES, Feedback  # noqa: E402
+from stenographer.platform.linux.cues import LinuxCuePlayer, detect_player  # noqa: E402
 
-if detect_player() is None:
+PLAYER = detect_player()
+if PLAYER is None:
     pytest.skip(
         "no audio player (canberra-gtk-play/pw-play/paplay) on PATH",
         allow_module_level=True,
@@ -34,7 +36,7 @@ if detect_player() is None:
 
 
 def test_play_each_cue_audibly():
-    fb = Feedback(cfg=FeedbackConfig(volume=0.6, mute=False))
+    fb = Feedback(cfg=FeedbackConfig(volume=0.6, mute=False), player=LinuxCuePlayer(PLAYER))
     try:
         for name in ("record_start", "record_stop", "delivered", "error"):
             assert name in CUES

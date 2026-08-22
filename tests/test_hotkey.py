@@ -1,86 +1,79 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure-logic tests for hotkey.py: parse_binding, is_main_keyboard, chord_active,
-edge. No mocks, no devices — the real read loop is covered by the uinput loopback
-smoke in test_hotkey_smoke.py (§6).
+"""Pure-logic tests for hotkey.py: parse_binding, chord_active, edge, and the
+platform-neutral ChordTracker state machine. No mocks, no devices — the key table
+is a tiny dict-backed value (pure input, not a mock of evdev) and the tracker is
+driven through ``_key_event`` exactly as a platform reader thread would. The real
+read loop is covered by the uinput loopback smoke in test_hotkey_smoke.py (§6).
 
 Each test here was seen to FAIL against a deliberately broken stub before the real
 implementation made it pass:
   - parse_binding not raising on an unknown token
-  - is_main_keyboard ignoring the name-token / letter-count filters
   - chord_active dropping the non-empty / subset checks
   - edge returning None for every (was, is) pair
+  - ChordTracker ignoring the stuck-key synthesis / cross-device release
 """
 
 from __future__ import annotations
 
 import threading
-import time
 
-import evdev
 import pytest
 
 from stenographer.hotkey import (
     BindingError,
-    HotkeyListener,
+    ChordTracker,
     chord_active,
     edge,
-    is_main_keyboard,
     parse_binding,
 )
 
-_KEY_A = evdev.ecodes.KEY_A
-_KEY_Z = evdev.ecodes.KEY_Z
+_TABLE = {"KEY_A": 30, "KEY_LEFTCTRL": 29, "KEY_RIGHTALT": 100, "KEY_RIGHTCTRL": 97}
+
+
+class _Keys:
+    """Dict-backed KeyTable: the same acceptance contract, no evdev."""
+
+    def code(self, name: str) -> int:
+        return _TABLE[name]
+
+    def name(self, code: int) -> str | None:
+        for key, value in _TABLE.items():
+            if value == code:
+                return key
+        return None
+
+
+KEYS = _Keys()
 
 
 def test_parse_single_key():
-    assert parse_binding("KEY_RIGHTALT") == frozenset({evdev.ecodes.KEY_RIGHTALT})
+    assert parse_binding("KEY_RIGHTALT", KEYS) == frozenset({100})
 
 
 def test_parse_chord_is_order_independent():
-    forward = parse_binding("KEY_LEFTCTRL+KEY_A")
-    reversed_ = parse_binding("KEY_A+KEY_LEFTCTRL")
+    forward = parse_binding("KEY_LEFTCTRL+KEY_A", KEYS)
+    reversed_ = parse_binding("KEY_A+KEY_LEFTCTRL", KEYS)
     assert forward == reversed_
-    assert forward == frozenset({evdev.ecodes.KEY_LEFTCTRL, evdev.ecodes.KEY_A})
+    assert forward == frozenset({29, 30})
 
 
 def test_parse_tolerates_whitespace():
-    assert parse_binding("  KEY_A + KEY_LEFTCTRL ") == frozenset(
-        {evdev.ecodes.KEY_A, evdev.ecodes.KEY_LEFTCTRL}
-    )
+    assert parse_binding("  KEY_A + KEY_LEFTCTRL ", KEYS) == frozenset({30, 29})
 
 
 def test_parse_empty_raises():
     with pytest.raises(BindingError):
-        parse_binding("   ")
+        parse_binding("   ", KEYS)
 
 
 def test_parse_trailing_plus_raises():
     with pytest.raises(BindingError):
-        parse_binding("KEY_A+")
+        parse_binding("KEY_A+", KEYS)
 
 
 def test_parse_unknown_token_names_it():
     with pytest.raises(BindingError, match="KEY_NOPE"):
-        parse_binding("KEY_NOPE")
-
-
-def test_main_keyboard_true_for_plain_named_full_keyboard():
-    codes = range(_KEY_A, _KEY_Z + 1)  # >= 10 codes in the letter range
-    assert is_main_keyboard("My Keyboard", codes) is True
-
-
-def test_mouse_name_is_rejected_even_with_letter_keys():
-    codes = range(_KEY_A, _KEY_Z + 1)
-    assert is_main_keyboard("Logitech USB Mouse", codes) is False
-
-
-def test_consumer_control_name_is_rejected():
-    codes = range(_KEY_A, _KEY_Z + 1)
-    assert is_main_keyboard("Keychron Q1 Consumer Control", codes) is False
-
-
-def test_too_few_letter_keys_is_rejected():
-    assert is_main_keyboard("Volume Dial", [_KEY_A, _KEY_A + 1, _KEY_A + 2]) is False
+        parse_binding("KEY_NOPE", KEYS)
 
 
 def test_chord_active_requires_full_subset():
@@ -100,38 +93,52 @@ def test_edge_maps_all_four_combinations():
     assert edge(True, True) is None
 
 
-def test_unopenable_explicit_device_backs_off_instead_of_spinning():
-    """An explicit hotkey.device that cannot be opened (unplugged, stale path, or
-    a permissions gap) must back off between retries, not busy-loop the CPU.
-
-    Regression guard: _resolve_paths returns the explicit path unconditionally,
-    so the acquisition loop must sleep on a failed open rather than re-detecting
-    instantly. A nonexistent path makes evdev.InputDevice raise a real OSError —
-    no device is ever created, so this stays a control-flow test. The retry rate
-    is observed by counting _resolve_paths calls; the busy-loop bug does
-    thousands in 0.3s, the backoff does a handful.
-
-    Seen to FAIL against the pre-fix listener (count in the thousands).
-    """
-    listener = HotkeyListener(
-        chord=parse_binding("KEY_RIGHTALT"),
-        device_path="/dev/input/stenographer-nonexistent",
-        on_start=lambda: None,
-        on_stop=lambda: None,
+def _tracker(chord: frozenset[int], *devices: int) -> tuple[ChordTracker, list[str]]:
+    events: list[str] = []
+    tracker = ChordTracker(
+        chord=chord,
+        on_start=lambda: events.append("start"),
+        on_stop=lambda: events.append("stop"),
         lock=threading.RLock(),
     )
-    calls = {"n": 0}
-    real_resolve = listener._resolve_paths
+    tracker._held_by_device = {device: set() for device in devices}
+    return tracker, events
 
-    def counting_resolve():
-        calls["n"] += 1
-        return real_resolve()
 
-    listener._resolve_paths = counting_resolve
-    listener.start()
-    try:
-        time.sleep(0.3)
-    finally:
-        listener.stop()
+def test_tracker_reports_one_edge_per_chord_transition():
+    tracker, events = _tracker(frozenset({29, 30}), 1)
+    assert tracker._key_event(1, 29, 1) is True
+    assert events == []
+    tracker._key_event(1, 30, 1)
+    assert events == ["start"]
+    tracker._key_event(1, 30, 2)  # autorepeat never re-fires
+    tracker._key_event(1, 29, 0)
+    assert events == ["start", "stop"]
+    assert tracker.wait_binding_released(timeout=0.0) is False  # 30 still held
+    tracker._key_event(1, 30, 0)
+    assert tracker.wait_binding_released(timeout=0.0) is True
 
-    assert calls["n"] < 20, f"listener spun {calls['n']} times in 0.3s (expected backoff)"
+
+def test_tracker_synthesizes_missed_release_on_repeated_keydown():
+    # A second keydown with no keyup in between means a release was lost:
+    # the tracker reports stop then start, not a silent continuation.
+    tracker, events = _tracker(frozenset({100}), 1)
+    tracker._key_event(1, 100, 1)
+    tracker._key_event(1, 100, 1)
+    assert events == ["start", "stop", "start"]
+
+
+def test_tracker_unions_devices_and_releases_across_them():
+    # Press on HID 1, release routed through HID 2 (multi-interface keyboards).
+    tracker, events = _tracker(frozenset({100}), 1, 2)
+    tracker._key_event(1, 100, 1)
+    assert events == ["start"]
+    tracker._key_event(2, 100, 0)
+    assert events == ["start", "stop"]
+    assert tracker._held == set()
+
+
+def test_tracker_rejects_unregistered_device():
+    tracker, events = _tracker(frozenset({100}), 1)
+    assert tracker._key_event(7, 100, 1) is False
+    assert events == []

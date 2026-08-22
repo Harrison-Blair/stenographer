@@ -10,19 +10,16 @@ timer. An accepted start also warms the ASR model on a background thread while
 capture remains authoritative. All state transitions are guarded by one lock so
 a key event, a timer firing, and a pipeline completion cannot race. Pure policy
 (``classify_pipeline``, ``can_start``, ``toggle_action``,
-``max_duration_applies``, ``is_lock_contention``) and the single-instance lock
-helper is part of the unit-testable surface; the wired daemon is exercised by real dictation (the M5
-manual acceptance procedure).
+``max_duration_applies``) is the unit-testable surface; the single-instance
+lock and signal handling come from the current :class:`~stenographer.platform.base.Platform`;
+the wired daemon is exercised by real dictation (the M5 manual acceptance procedure).
 """
 
 from __future__ import annotations
 
 import contextlib
-import errno
-import fcntl
 import logging
 import os
-import pathlib
 import signal
 import sys
 import threading
@@ -30,14 +27,10 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Literal
 
 from stenographer.audio import Recorder, speech_gate_passes
-from stenographer.delivery.deliver import (
-    ClipboardBackend,
-    Deliverer,
-    UinputKeyboard,
-    copy_for_backend,
-)
+from stenographer.delivery.deliver import Deliverer
 from stenographer.delivery.feedback import Feedback
-from stenographer.delivery.notify import Notifier
+from stenographer.platform import current_platform
+from stenographer.platform.base import SingleInstanceLockError
 from stenographer.status import NullStatusSink, OverlayState, StatusSink, should_publish_state
 from stenographer.transcribe.format import format_transcript
 from stenographer.transcribe.worker import Worker, WorkerError
@@ -47,6 +40,7 @@ if TYPE_CHECKING:
 
     from stenographer.cli.doctor import Capabilities
     from stenographer.config import Config
+    from stenographer.platform.base import Notifier, Platform
 
 log = logging.getLogger(__name__)
 
@@ -144,59 +138,13 @@ def max_duration_applies(armed_generation: int, current_generation: int, recordi
     return armed_generation == current_generation and recording
 
 
-def _default_lock_path() -> pathlib.Path:
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-    return pathlib.Path(runtime) / "stenographer.lock"
-
-
-LOCK_PATH = _default_lock_path()
-
-
-class SingleInstanceLockError(OSError):
-    """Lock-file I/O failed while acquiring the single-instance lock — not contention."""
-
-
-def is_lock_contention(exc: OSError) -> bool:
-    """Classify a non-blocking flock failure: contention or real I/O error. PURE.
-
-    Only a lock held elsewhere (EAGAIN/EWOULDBLOCK, per flock(2)) means another
-    instance is running; anything else is lock-file I/O gone wrong.
-    """
-    return exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK)
-
-
-def startup_clipboard_backend(caps: Capabilities) -> ClipboardBackend | None:
-    """Gate daemon startup on doctor requirements and reuse its backend. PURE."""
+def startup_clipboard_backend(caps: Capabilities) -> str | None:
+    """Gate daemon startup on doctor requirements and reuse its backend name. PURE."""
     from stenographer.cli import doctor
 
     if doctor.missing_required(caps):
         return None
-    return ClipboardBackend(caps.clipboard_backend)
-
-
-def acquire_single_instance_lock(path: pathlib.Path = LOCK_PATH) -> int:
-    """Take the single-instance flock. Return the held fd, or -1 if another
-    open file description already holds it. The PID is written into the file.
-
-    Any lock-file failure that is NOT contention raises
-    :class:`SingleInstanceLockError` instead of masquerading as -1.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as exc:
-        os.close(fd)
-        if is_lock_contention(exc):
-            return -1
-        raise SingleInstanceLockError(f"could not take single-instance lock {path}") from exc
-    try:
-        os.ftruncate(fd, 0)
-        os.write(fd, f"{os.getpid()}\n".encode())
-    except OSError as exc:
-        os.close(fd)  # also releases the flock just taken
-        raise SingleInstanceLockError(f"could not write pid to lock file {path}") from exc
-    return fd
+    return caps.clipboard_backend
 
 
 class Daemon:
@@ -240,13 +188,15 @@ class Daemon:
         cls,
         cfg: Config,
         *,
-        clipboard_backend: ClipboardBackend,
+        clipboard_backend: str,
         status: StatusSink | None = None,
+        platform: Platform | None = None,
     ) -> Daemon:
-        from stenographer.hotkey import HotkeyListener, parse_binding
+        from stenographer.hotkey import parse_binding
 
-        feedback = Feedback(cfg=cfg.feedback)
-        notifier = Notifier()
+        plat = platform if platform is not None else current_platform()
+        feedback = Feedback(cfg=cfg.feedback, player=plat.cue_player())
+        notifier = plat.notifier()
         status = status if status is not None else NullStatusSink()
         daemon_ref: Daemon | None = None
 
@@ -287,17 +237,17 @@ class Daemon:
         else:
             on_start, on_stop = daemon.on_key_down, daemon.on_key_up
         log.info("hotkey: mode=%s", cfg.hotkey.mode)
-        listener = HotkeyListener(
-            chord=parse_binding(cfg.hotkey.binding),
-            device_path=cfg.hotkey.device,
+        listener = plat.hotkey_listener(
+            chord=parse_binding(cfg.hotkey.binding, plat.keys()),
+            device=cfg.hotkey.device,
             on_start=on_start,
             on_stop=on_stop,
             lock=daemon._lock,
         )
         deliverer = Deliverer(
-            keyboard=UinputKeyboard(),
+            keyboard=plat.key_injector(),
             wait_released=listener.wait_binding_released,
-            copy=copy_for_backend(clipboard_backend),
+            copy=plat.clipboard_writer(clipboard_backend),
         )
         daemon._listener = listener
         daemon._deliverer = deliverer
@@ -536,6 +486,7 @@ def run(cfg: Config) -> int:
     from stenographer.cli import doctor
     from stenographer.hotkey import BindingError
 
+    plat = current_platform()
     caps = doctor.probe(cfg)
     clipboard_backend = startup_clipboard_backend(caps)
     if clipboard_backend is None:
@@ -554,23 +505,26 @@ def run(cfg: Config) -> int:
         except Exception as exc:
             log.warning("overlay: unavailable error_type=%s", type(exc).__name__)
 
-    log.info("deliver: clipboard_backend=%s", clipboard_backend.value)
+    log.info("deliver: clipboard_backend=%s", clipboard_backend)
     try:
-        daemon = Daemon.build(cfg, clipboard_backend=clipboard_backend, status=status)
+        daemon = Daemon.build(
+            cfg, clipboard_backend=clipboard_backend, status=status, platform=plat
+        )
     except BindingError as exc:
         with contextlib.suppress(Exception):
             status.close()
         print(f"stenographer: {exc}", file=sys.stderr)
         return 78
 
+    lock = plat.single_instance_lock()
     try:
-        fd = acquire_single_instance_lock()
+        acquired = lock.acquire()
     except SingleInstanceLockError as exc:
         with contextlib.suppress(Exception):
             status.close()
         print(f"stenographer: {exc}", file=sys.stderr)
         return 78
-    if fd < 0:
+    if not acquired:
         with contextlib.suppress(Exception):
             status.close()
         print("stenographer: another instance is already running.", file=sys.stderr)
@@ -580,8 +534,7 @@ def run(cfg: Config) -> int:
         log.info("signal: received %s, stopping", signal.Signals(signum).name)
         daemon.request_stop()
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, _handler)
+    plat.install_stop_signal_handlers(_handler)
 
     try:
         try:
@@ -598,5 +551,5 @@ def run(cfg: Config) -> int:
         daemon.stop()
         with contextlib.suppress(Exception):
             status.close()
-        os.close(fd)
+        lock.release()
     return 0

@@ -41,6 +41,10 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 `integration`-marked tests touch the real clipboard / audio / uinput / model and
 are skipped unless `STENOGRAPHER_INTEGRATION=1` is set.
 
+CI runs the unit suite on Ubuntu and, as a portability proof only, on
+`windows-latest` (`unit-windows`: install, pure suites, `--help`; no Windows
+backend exists, `tests/platform/linux/` is not collected there).
+
 ## Testing policy (binding — docs/reauthor.md §6)
 
 1. Unit tests cover **pure logic only** (formatter, config validation, gate
@@ -54,6 +58,10 @@ are skipped unless `STENOGRAPHER_INTEGRATION=1` is set.
    (extract the pure part) instead of writing the mock.
 5. A new pure-logic test only counts once it has been SEEN to fail against
    broken/stubbed behavior.
+6. `tests/platform/test_core_isolation.py` imports every core module in a fresh
+   interpreter with `evdev`/`fcntl`/`termios`/`grp`/`pty`/`pywayland`/`Xlib`/
+   `stenographer.platform.linux` blocked; a module-level Linux import anywhere
+   in the core fails it. `tests/platform/linux/` is ignored off-Linux.
 
 ## Architecture
 
@@ -62,7 +70,27 @@ mirrors the grouping. Core modules stay at the package root: `daemon.py`,
 `hotkey.py`, `audio.py`, `config.py`, `status.py`, plus the `assets/` data dir.
 Subpackages: `cli/` (surface + subcommand engines), `transcribe/` (ASR),
 `overlay/` (visual feedback + vendored `protocols/`), `delivery/` (output
-surfaces), `utils/` (`childenv.py`, `logging_setup.py`).
+policy), `platform/` (the host boundary), `utils/` (`logging_setup.py`).
+
+- **`platform/`** — the only place OS/desktop-specific code lives. `base.py`
+  (stdlib-only Protocols: `Platform`, `KeyTable`, `HotkeyListener`,
+  `KeyInjector`, `ClipboardWriter`, `Notifier`, `CuePlayer`,
+  `SingleInstanceLock`, `OverlayBackendSpec`, `HostProbe`, plus
+  `SingleInstanceLockError`, `UnsupportedPlatformError`, `NullNotifier`);
+  `__init__.py` (`current_platform()`, a cached `sys.platform` switch — always
+  import as `from stenographer.platform import …`); `linux/` (`LinuxPlatform`
+  with every Linux surface moved here verbatim: `dirs` XDG paths, `process`
+  child env, `lock` flock, `hotkey` evdev table/auto-detect/`EvdevHotkeyListener`,
+  `binding_capture` termios+select capture, `uinput` Shift+Insert injector,
+  `clipboard` wl-copy/xclip writers + backend detection, `notify` notify-send,
+  `cues` canberra/pw-play/paplay, `probe` doctor host probes + systemctl,
+  `overlay` layer-shell→XWayland spec list); `windows/` (a stdlib-only stub that
+  imports everywhere and reports every surface unavailable, so `doctor` exits 78
+  and `run` is refused by the REQUIRED gate). Each `LinuxPlatform` method
+  lazy-imports its sibling so `stenographer --help` never loads evdev. Core
+  modules never import `stenographer.platform.linux`; `Daemon.build(...,
+  platform=)` is the single wiring point. `hotkey.binding` keeps evdev `KEY_*`
+  names as the canonical vocabulary on every platform (no schema change).
 
 - **`cli/`** — argparse surface + lazy dispatch in `cli/__init__.py` (console
   script `stenographer.cli:main`); `cli/__main__.py` keeps the helper re-exec
@@ -79,10 +107,12 @@ surfaces), `utils/` (`childenv.py`, `logging_setup.py`).
   only `hold` and `toggle`. Follow-up never installs, enables, or starts an
   inactive service. A changed standard config may restart an already-active
   standard user service, but a custom `STENOGRAPHER_CONFIG` path never does.
-- **`cli/binding_capture.py`** — immutable pure key-event reducer plus the quick
-  setup's non-grabbing evdev capture boundary. It unions held state across
-  auto-detected keyboards, retains press order, ignores repeats, restores TTY
-  state, and emits a validated canonical binding after all keys are released.
+- **`cli/binding_capture.py`** — immutable pure key-event reducer and
+  `serialize_capture(state, keys)`, plus a thin `capture_binding` delegator to
+  `current_platform().capture_binding`. The Linux capture
+  (`platform/linux/binding_capture.py`) unions held state across auto-detected
+  keyboards without grabbing, retains press order, ignores repeats, restores
+  TTY state, and emits a validated canonical binding after all keys are released.
 - **`cli/setup_config.py`** — tomlkit-backed preservation of comments, ordering,
   unknown content, and symlinks while materializing the complete schema. It
   validates through production `Config`, detects concurrent edits, creates an
@@ -93,17 +123,25 @@ surfaces), `utils/` (`childenv.py`, `logging_setup.py`).
   validation. It uses the selected `Recorder`, never analyzes in the callback,
   and never affects capture, `min_speech_rms`, speech gating, ASR, persistence
   beyond that fixed key, or overlay IPC.
-- **`daemon.py`** — the orchestrator: hotkey → record → transcribe → deliver;
-  single-instance flock on `$XDG_RUNTIME_DIR/stenographer.lock`; signal
-  handling. It prepares audio after taking the lock and before starting the
+- **`daemon.py`** — the orchestrator: hotkey → record → transcribe → deliver.
+  `Daemon.build(cfg, clipboard_backend=, status=, platform=)` asks the platform
+  for the listener, key injector, clipboard writer, notifier, and cue player;
+  `run()` takes the platform's single-instance lock (flock on
+  `$XDG_RUNTIME_DIR/stenographer.lock` on Linux) and installs its stop-signal
+  handlers. It prepares audio after taking the lock and before starting the
   listener. Capture starts before the `record_start` cue, then a background
   worker request warms a cold model while recording continues. Capture stops
   and secures samples before the `record_stop` cue. One utterance at a time. In
   toggle mode a generation-guarded timer ends the session at
   `audio.max_recording_seconds` through the same stop path.
-- **`hotkey.py`** — evdev hotkey listener: chord parse, main-keyboard
-  auto-detection, rescan on read error. Reports chord edges; the daemon maps
-  them to session actions per `hotkey.mode`. Requires `input` group.
+- **`hotkey.py`** — platform-neutral: `parse_binding(spec, keys)` through the
+  platform `KeyTable`, `chord_active`/`edge`, and `ChordTracker` (held-key union
+  across devices, stuck-key synthesis, edge dispatch under the daemon lock,
+  `wait_binding_released`). `platform/linux/hotkey.py` subclasses it as
+  `EvdevHotkeyListener` (main-keyboard auto-detection, hotplug rescan, rescan on
+  read error) and feeds `_key_event(device_id, code, value)`. Reports chord
+  edges; the daemon maps them to session actions per `hotkey.mode`. Requires
+  `input` group on Linux.
 - **`audio.py`** — PortAudio recorder: pre-negotiates and retains a stopped
   stream for reuse across captures; block-copy callback with a latest-only
   handoff to the optional overlay supervisor (no analysis in the callback), RMS
@@ -131,20 +169,27 @@ surfaces), `utils/` (`childenv.py`, `logging_setup.py`).
   and failure-disabled. No display
   or helper-process I/O may run under the daemon state lock.
 - **`utils/logging_setup.py`** — idempotent stderr + rotating state-file setup for
-  every command; 5 MiB with three backups, `STENOGRAPHER_LOG_LEVEL`, and
-  privacy-safe worker forwarding.
+  every command (state dir from the platform); 5 MiB with three backups,
+  `STENOGRAPHER_LOG_LEVEL`, and privacy-safe worker forwarding.
 - **`transcribe/model.py`** — faster-whisper wrapper: fixed anti-hallucination decode
   stack, output validation (`PathologicalOutputError`), `local_files_only` —
   the daemon never touches the network.
-- **`delivery/deliver.py`** — copy to BOTH selections, confirm the copy, wait for
-  physical hotkey release (a held modifier would corrupt the chord), then
-  uinput Shift+Insert. A failed copy must never fire the chord.
+- **`delivery/deliver.py`** — `Deliverer` policy only: copy (platform
+  `ClipboardWriter`, confirmed — both selections on Linux), wait for physical
+  hotkey release (a held modifier would corrupt the chord), then the platform
+  `KeyInjector` chord (uinput Shift+Insert on Linux). A failed copy must never
+  fire the chord.
 - **`transcribe/format.py`** — fixed zero-knob formatter (spacing, sentence
   caps, "i"→"I").
-- **`delivery/feedback.py`** — four WAV cues via `canberra-gtk-play`, with
-  `pw-play`/`paplay` fallbacks; degrades to no-op.
+- **`delivery/feedback.py`** — four WAV cues, mute/volume/asset policy, played
+  through the platform `CuePlayer` (`canberra-gtk-play` with `pw-play`/`paplay`
+  fallbacks on Linux); no player → no-op.
 - **`cli/doctor.py`** — capability probe; exit 78 when a required capability is
-  missing. `delivery/notify.py` — `notify-send` errors, no-op if absent.
+  missing. `REQUIRED` keeps its field names (`uinput_writable`, `input_group`,
+  `has_mic`, `model_cached`, `clipboard`) but sources the host half from
+  `current_platform().probe_host()` and the overlay status from
+  `overlay_backends()`; labels and fix hints stay here. Error notifications come
+  from the platform `Notifier` (`notify-send` on Linux, no-op if absent).
 - **`config.py`** — TOML config, exactly 19 keys in 4 sections (`hotkey`,
   `audio`, `asr`, `feedback`), frozen dataclasses, key-scoped `ConfigError` →
   exit 78, missing file written with annotated defaults, and an in-memory load

@@ -66,7 +66,7 @@ if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
 import sounddevice  # noqa: E402
 
 from stenographer.audio import Recorder  # noqa: E402
-from stenographer.daemon import (  # noqa: E402
+from stenographer.platform.linux.lock import (  # noqa: E402
     LOCK_PATH,
     acquire_single_instance_lock,
 )

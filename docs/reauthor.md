@@ -605,6 +605,7 @@ open. When one is added, it must still pass the §1 razor at that time.
 | **`bench`** | Standalone script in `scripts/`, driving the public `model.py` API. Does not re-enter the package. |
 | **Distribution layer** (installer, self-update, completions) | Blocked on external users existing. Clean config validation and a small codebase are the only v1 prerequisites, and both are core goals anyway. *Partially reintroduced 2026-08: the local PyInstaller onedir build and single-machine per-user installer, a `main`-only draft-release workflow for native Linux x86_64/AArch64 bundles plus Python distributions, and static Bash/Zsh/Fish completions cached by the installer under XDG data directories. Publishing remains manual. There is still no multi-distro/curl-pipe-bash installer, self-update, dynamic completion, or shell-configuration editing; the rest of this row stays gated.* |
 | **`dictate` one-shot** | Trivial recomposition of daemon pieces if ever wanted. |
+| **Windows backend** | *Seam extracted 2026-08-21 (see the amendment below).* `stenographer.platform` holds the host boundary; the core never imports a Linux module and `tests/platform/test_core_isolation.py` proves it; `Daemon.build(platform=)` is the one wiring point; `doctor.REQUIRED` names are semantic (injector available / listener permitted / clipboard available) so the startup gate needs no renaming; `hotkey.binding` keeps evdev `KEY_*` names everywhere (a Windows backend maps them to VK codes — no schema change); `status.Backend` is protocol-v4 wire vocabulary, so a Windows overlay backend is a protocol-extension decision (until then the overlay is disabled there via `NullStatusSink`). Still to build: `WH_KEYBOARD_LL` listener dispatching through a queue (edges fire under the daemon lock), `SendInput` paste, Win32 clipboard with read-back, toast notifier, cue player, named-mutex lock, `SetConsoleCtrlHandler`, a service concept that reimplements "78 = don't restart", per-platform doctor/setup hint text, `%APPDATA%` policy, Windows packaging/CI artifacts. |
 
 ---
 
@@ -715,3 +716,57 @@ preserved; `delivery/feedback.py` and `overlay/render.py` now anchor assets on
 Unmoved at the package root: `__init__.py`, `_version.py`, `daemon.py`,
 `hotkey.py`, `audio.py`, `config.py`, `status.py`, `assets/`. `tests/` mirrors
 the grouping with unchanged test basenames.
+
+---
+
+## Amendment: platform boundary extraction (2026-08-21)
+
+Every host-OS/desktop surface moved behind a new `stenographer.platform`
+subpackage so the core imports and its pure tests collect on any platform.
+Linux behavior is unchanged: moved functions keep their bodies, `doctor`
+output is byte-identical, the smoke suite and real dictation pass. The one
+structural change is `hotkey.ChordTracker`, the platform-neutral held-key /
+edge / release-guard state machine extracted from the old `HotkeyListener`
+by inheritance; `platform/linux/hotkey.py:EvdevHotkeyListener` is the old
+class minus that core, feeding `_key_event(device_id, code, value)` from its
+reader threads.
+
+| Old | New |
+|---|---|
+| `daemon.py` lock path / `is_lock_contention` / `acquire_single_instance_lock` / `SingleInstanceLockError` | `platform/linux/lock.py` (+ `FlockSingleInstanceLock`); the error class lives in `platform/base.py` |
+| `daemon.run` `signal.signal(SIGINT/SIGTERM)` | `Platform.install_stop_signal_handlers` |
+| `hotkey.py` evdev half (`is_main_keyboard`, `auto_detect_paths`, `HotkeyListener` I/O) + `cli/setup._hotkey_devices` | `platform/linux/hotkey.py` (`EvdevKeyTable`, `EvdevHotkeyListener`, `list_hotkey_devices`) |
+| `hotkey.parse_binding(spec)` via `evdev.ecodes` | `hotkey.parse_binding(spec, keys: KeyTable)` |
+| `cli/binding_capture.py` termios/select/evdev capture | `platform/linux/binding_capture.py`; the core keeps the reducer, `serialize_capture(state, keys)`, and a delegating `capture_binding` |
+| `delivery/deliver.py` `UinputKeyboard`, `chord_events` | `platform/linux/uinput.py` |
+| `delivery/deliver.py` `ClipboardBackend`, `pick_backend`, `detect_clipboard_backend`, `copy_both_selections(_x11)`, `copy_for_backend` + `doctor._probe_clipboard` | `platform/linux/clipboard.py` (+ `probe_clipboard`); `delivery/deliver.py` is `Deliverer` only |
+| `delivery/notify.py` | `platform/linux/notify.py` (`NotifySendNotifier`) |
+| `delivery/feedback.py` `detect_player`, `build_play_command`, Popen | `platform/linux/cues.py` (`LinuxCuePlayer`); `Feedback(cfg=, player=)` keeps mute/volume/asset policy |
+| `utils/childenv.py` | `platform/linux/process.py` (+ `helper_spawn_kwargs`) |
+| `config.resolve_config_path` XDG branch, `logging_setup.resolve_state_dir`, daemon `XDG_RUNTIME_DIR` | `platform/linux/dirs.py` (`config_path`, `state_dir`, `runtime_dir`); `STENOGRAPHER_CONFIG` stays in `config.py` |
+| `cli/doctor.py` `_in_input_group`, `_service_status`, `/dev/uinput` access + `cli/setup._restart_service` systemctl call | `platform/linux/probe.py` (`probe_host() -> HostProbe`, `restart_service() -> (ok, detail)`) |
+| `cli/doctor.probe_overlay` + `overlay/supervisor._select_backend` hard-coded wayland→x11 | `platform/linux/overlay.py` `overlay_backends()` spec list; doctor loops probes (last reason wins, equivalent), the helper constructs the first that succeeds |
+
+`Platform` contract (`platform/base.py`, stdlib-only): `config_path`,
+`state_dir`, `runtime_dir`; `keys`, `hotkey_listener`, `hotkey_devices`,
+`capture_binding`; `key_injector`, `clipboard_writer`, `notifier`,
+`cue_player`; `helper_spawn_kwargs`, `single_instance_lock`,
+`install_stop_signal_handlers`; `probe_host`, `restart_service`,
+`overlay_backends`. `current_platform()` is a cached `sys.platform` switch;
+`platform/windows/` is a stub that imports anywhere (the Linux bundle collects
+it) and reports everything unavailable. `overlay/wayland.py` and
+`overlay/x11.py` stay in `overlay/` (helper-side backends reachable only via
+`overlay_backends()`); their pure tests `importorskip` pywayland/Xlib.
+`evdev`, `pywayland`, and `python-xlib` carry `sys_platform == 'linux'`
+markers; CI adds a `windows-latest` unit-only job.
+
+Unchanged and still settled as the *Linux* contract: §2.5 (target: any
+Wayland session), §2.6 (uinput, zero fallback axes), §2.7 (wl-copy/xclip +
+Shift+Insert), §2.9 (completion shells), §2.16 (mode/symlink preservation),
+§4.13 (`doctor.REQUIRED` as the startup gate). evdev `KEY_*` names remain the
+canonical `hotkey.binding` vocabulary on every platform and `hotkey.device` is
+backend-defined; there is no schema change, no migration, and no new key. A
+Windows backend must satisfy the same Protocols and is a separate phase (§7).
+One incidental fix: `EvdevKeyTable.name` resolves aliased evdev codes (stored
+as tuples by python-evdev, e.g. `KEY_MUTE`) to their first name, where the old
+`_canonical_key_name` only recognised lists and raised for them during capture.

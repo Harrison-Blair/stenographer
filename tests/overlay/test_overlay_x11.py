@@ -6,6 +6,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+
+pytest.importorskip("Xlib")
+
 from Xlib import X
 
 from stenographer.overlay.render import EDGE_OFFSET, render_overlay

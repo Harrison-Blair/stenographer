@@ -4,7 +4,7 @@
 ``notify-send`` is fired non-blocking and no-ops when absent. Only short,
 caller-supplied error strings are ever passed — never audio or transcript text
 (§4.12). The one pure unit target is ``build_notify_command`` (mirroring
-feedback.build_play_command); the Popen call is never mock-tested (§6.2).
+cues.build_play_command); the Popen call is never mock-tested (§6.2).
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import logging
 import shutil
 import subprocess
 
-from stenographer.utils.childenv import child_env
+from stenographer.platform.linux.process import child_env
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def build_notify_command(message: str) -> list[str]:
     return ["notify-send", "-a", "Stenographer", "-u", "critical", "Stenographer", message]
 
 
-class Notifier:
+class NotifySendNotifier:
     """Fires error notifications, degrading to a no-op when notify-send is absent."""
 
     def __init__(self) -> None:

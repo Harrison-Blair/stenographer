@@ -2,7 +2,7 @@
 """Integration smoke suite for the PTT hotkey listener (spec §6.3).
 
 Real, non-mocked input path: a genuine evdev.UInput keyboard advertising
-KEY_A..KEY_Z plus the binding key, a HotkeyListener pointed at that device's
+KEY_A..KEY_Z plus the binding key, an EvdevHotkeyListener pointed at that device's
 read-back node, and the binding key emitted down then up. Nothing is mocked —
 the kernel virtual input device is the actual resource the listener reads, and
 the callbacks are driven by real EV_KEY events round-tripping through it.
@@ -27,7 +27,8 @@ if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
 
 import evdev  # noqa: E402
 
-from stenographer.hotkey import HotkeyListener, parse_binding  # noqa: E402
+from stenographer.hotkey import parse_binding  # noqa: E402
+from stenographer.platform.linux.hotkey import EvdevHotkeyListener, EvdevKeyTable  # noqa: E402
 
 _BINDING = evdev.ecodes.KEY_RIGHTALT
 
@@ -52,8 +53,8 @@ def test_uinput_loopback_drives_start_then_stop():
 
     starts: list[int] = []
     stops: list[int] = []
-    listener = HotkeyListener(
-        chord=parse_binding("KEY_RIGHTALT"),
+    listener = EvdevHotkeyListener(
+        chord=parse_binding("KEY_RIGHTALT", EvdevKeyTable()),
         device_path=node,
         on_start=lambda: starts.append(1),
         on_stop=lambda: stops.append(1),
@@ -104,8 +105,8 @@ def test_destroying_held_uinput_drives_one_stop_and_releases_guard():
         stops.append(1)
         stopped.set()
 
-    listener = HotkeyListener(
-        chord=parse_binding("KEY_RIGHTALT"),
+    listener = EvdevHotkeyListener(
+        chord=parse_binding("KEY_RIGHTALT", EvdevKeyTable()),
         device_path=node,
         on_start=on_start,
         on_stop=on_stop,

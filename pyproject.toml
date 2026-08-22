@@ -12,12 +12,12 @@ dependencies = [
     "sounddevice>=0.4.7",
     "numpy>=2.0",
     "faster-whisper>=1.0.0",
-    "evdev>=1.4",
+    "evdev>=1.4; sys_platform == 'linux'",
     "soundfile>=0.12",
     "huggingface_hub>=0.23",
     "pillow>=11.0",
-    "pywayland==0.4.18",
-    "python-xlib==0.33",
+    "pywayland==0.4.18; sys_platform == 'linux'",
+    "python-xlib==0.33; sys_platform == 'linux'",
     "tomlkit>=0.13",
 ]
 

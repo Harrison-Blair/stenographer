@@ -26,6 +26,7 @@ from stenographer.overlay.spectrum import (
     SPECTRUM_FPS,
     SpectrumAnalyzer,
 )
+from stenographer.platform import current_platform
 from stenographer.status import (
     ERROR_DISPLAY_SECONDS,
     Command,
@@ -376,6 +377,7 @@ class OverlaySupervisor:
                         stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL,
                         bufsize=0,
+                        **current_platform().helper_spawn_kwargs(),
                     )
                 except (OSError, ValueError) as exc:
                     log.warning("overlay: helper_start_failed error_type=%s", type(exc).__name__)
@@ -560,20 +562,13 @@ def _write_helper_message(stream: BinaryIO, message: ReadyMessage | UnavailableM
 
 
 def _select_backend():
-    """Construct the preferred available backend; imports stay helper-local."""
-    try:
-        from stenographer.overlay.wayland import LayerShellBackend
-
-        return LayerShellBackend()
-    except Exception:
-        pass
-
-    try:
-        from stenographer.overlay.x11 import X11OverlayBackend
-
-        return X11OverlayBackend()
-    except Exception:
-        raise RuntimeError("overlay backends unavailable") from None
+    """Construct the first available platform backend; imports stay helper-local."""
+    for spec in current_platform().overlay_backends():
+        try:
+            return spec.construct()
+        except Exception:
+            continue
+    raise RuntimeError("overlay backends unavailable") from None
 
 
 def run_overlay_helper(

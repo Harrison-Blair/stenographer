@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("pywayland")
+
 from stenographer.overlay.wayland import (
     REQUIRED_GLOBALS,
     RegistryInventory,
