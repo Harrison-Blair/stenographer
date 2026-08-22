@@ -1,10 +1,10 @@
 [project]
 name = "stenographer"
 dynamic = ["version"]
-description = "Local, offline, Wayland push-to-talk / toggle dictation."
+description = "Local, offline, Wayland push-to-talk dictation."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license-files = ["LICENSE"]
 authors = [{ name = "stenographer contributors" }]
 
@@ -14,18 +14,17 @@ dependencies = [
     "faster-whisper>=1.0.0",
     "evdev>=1.4",
     "soundfile>=0.12",
-    "packaging>=24.0",
-    "certifi>=2024.0",
     "huggingface_hub>=0.23",
-    "argcomplete>=3.5",
-    "PyGObject>=3.50",
+    "pillow>=11.0",
+    "pywayland==0.4.18",
+    "python-xlib==0.33",
+    "tomlkit>=0.13",
 ]
 
 [project.optional-dependencies]
 dev = [
     "ruff>=0.5",
     "pytest>=8",
-    "pytest-asyncio>=0.23",
 ]
 build = [
     "pyinstaller>=6.10",
@@ -47,16 +46,17 @@ path = "src/stenographer/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/stenographer"]
 include = [
-    "src/stenographer/assets/sounds/*.wav",
-    "src/stenographer/assets/sounds/*.ogg",
-    "src/stenographer/assets/icons/*.png",
     "src/stenographer/assets/fonts/*.ttf",
-    "src/stenographer/assets/fonts/*-OFL.txt",
+    "src/stenographer/assets/fonts/*.txt",
+    "src/stenographer/assets/icons/*.png",
+    "src/stenographer/assets/sounds/*.wav",
+    "src/stenographer/assets/completions/*",
+    "src/stenographer/overlay/protocols/**/*.py",
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM", "RUF"]

@@ -1,182 +1,82 @@
 # AGENTS.md
 
-## Current state
+Guidance for AI agents working in this repository. `CLAUDE.md` carries the
+canonical command reference and architecture map; this file adds the rules an
+agent must not learn the hard way. When the two disagree, `CLAUDE.md` wins.
 
-The project is a Wayland push-to-talk / toggle dictation daemon. The
-whole tree — `src/`, `tests/`, `packaging/`, `scripts/`, `BUILD.md` —
-is committed and released (current version in
-`src/stenographer/_version.py`).
+## What you are working on
 
-Key tracked paths:
+A Wayland push-to-talk dictation daemon: hold a hotkey, speak, release — the
+transcript is copied to both Wayland selections and pasted at the cursor via a
+`uinput` Shift+Insert chord. Offline, English-only, Python ≥ 3.12,
+GPL-3.0-or-later.
 
-- `README.md` — project readme (user-owned description + auto-generated
-  install / run / configure sections; do not edit above the "DO NOT EDIT"
-  line).
-- `BUILD.md` — standalone-binary build instructions.
-- `LICENSE` — GNU GPL v3-or-later.
-- `.python-version` — pins Python 3.14 (consumable by `pyenv` / `uv`).
-- `pyproject.toml` — project metadata, runtime + dev + build
-  `optional-dependencies`, hatchling build, ruff config, pytest
-  config (with an `integration` marker, opt-in via
-  `STENOGRAPHER_INTEGRATION=1`).
-- `src/stenographer/` — the package (cli, `_parser`, session,
-  capabilities, errors, notification, update, bench, and the `config/`,
-  `visualizer/`, `hotkey/`, `audio/`, `asr/`, `output/` subpackages +
-  `assets/`).
-- `tests/` — pytest suite mirroring `src/` plus `tests/fixtures/`.
-- `packaging/` — `stenographer.service.in` (systemd user unit template),
-  `stenographer.spec` (PyInstaller), PyInstaller hooks, bash completion.
-- `scripts/` — `build.sh`, `install.sh`, `reinstall.sh`,
-  `install-hooks.sh`, `download_model.py`, `gen_cues.py`.
-- `.github/workflows/release.yml` — release CI (runs on merge to `main`).
+The codebase is ~2k lines, with a flat package in `src/stenographer/` and tests
+in `tests/`. `docs/reauthor.md` is the binding design record: its §2 decisions
+are settled, §4 is the behavioral knowledge inventory
+that binds every change, §6 is the testing policy, §7 lists deliberately cut
+features. Do not reintroduce cut features (old HUD, transcript preview,
+toggle/hybrid modes, self-update, PyInstaller packaging, wtype) without that
+document being revised first. The sole visual exception is the isolated
+lifecycle pill documented in decisions §2.15/§4.17. Its only animations are
+exactly 18 locally analyzed spectrum bars while recording and a 2-second amber
+breathing border while the model is actively loading; state interiors stay
+fixed. It must never grow transcript preview, controls, GTK, or raw-audio IPC.
 
-Gitignored: `.venv/` (the project virtualenv; see **Tooling**), and
-`build/` / `dist/` (PyInstaller working / output directories).
+## Layout
 
-The release workflow lives at `.github/workflows/release.yml` and runs on
-every merge to `main` (plus `workflow_dispatch`): it lints, tests, builds the
-binary, and publishes a `v<version>` release. Features are developed on the
-`dev` branch and merged to `main` to release; each such merge must bump
-`__version__` in `src/stenographer/_version.py`.
+- `src/stenographer/` — core modules at the root (`daemon`, `hotkey`, `audio`,
+  `config`, `status`) plus subpackages: `cli/` (surface, `commands/`, setup and
+  doctor engines), `transcribe/` (`worker`, `model`, `format`), `overlay/`
+  (supervisor, backends, `protocols/`), `delivery/` (`deliver`, `feedback`,
+  `notify`), `utils/`, and `assets/` (WAV cues, icon, font, native completions).
+- `tests/` — mirrors the subpackage grouping; unit tests (pure logic) plus
+  `test_*_smoke.py` integration tests.
+- `packaging/stenographer.service` — the systemd user unit.
+- `scripts/build.sh` / `scripts/install.sh` — local bundle and per-user install.
+- `docs/` — `reauthor.md` (design record), `code-smells.md` and
+  `refactoring-techniques.md` (review/refactor references).
 
-## Tooling
+## Hard rules
 
-The project venv is `.venv/` (gitignored) and the Python version pin
-is `.python-version` (3.14).
+1. **Venv only.** Every tool runs as `.venv/bin/...` (`pip`, `ruff`, `pytest`).
+   Never system Python. Recreate with
+   `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`.
+2. **Python 3.12 compatibility.** ruff targets py312; no 3.13+/3.14-only syntax.
+3. **SPDX header** (`GPL-3.0-or-later`) on every source file.
+4. **Testing policy is binding** (docs/reauthor.md §6): unit tests for pure
+   logic only; never mock `subprocess`/`UInput`/`wl-copy` to assert a call
+   would have happened; a new pure-logic test must be SEEN to fail against
+   broken behavior; the integration smoke suite
+   (`STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest`) is the real gate and needs a
+   real machine — do not set that variable in CI or sandboxes.
+5. **Behavioral invariants** (docs/reauthor.md §4) — the ones most often at
+   risk in edits: never gate audio on absolute RMS defaults (quiet-mic rule);
+   the paste chord fires only after a confirmed clipboard copy AND physical
+   hotkey release; the daemon never touches the network (`local_files_only`);
+   the PortAudio callback only copies blocks; logs never contain transcript
+   text or audio.
+6. **Narrow distribution boundary.** The local PyInstaller onedir build,
+   single-machine per-user installer, and `main`-only x86_64/AArch64 draft
+   release workflow are allowed. Self-update, automatic publishing,
+   and multi-distro installers remain cut. Static Bash, Zsh, and Fish
+   completions are allowed; keep them dependency-free and discovery-free.
+7. **Overlay isolation.** The optional helper may receive only fixed lifecycle
+   metadata, a model-loading active/inactive boolean, and 18 quantized spectrum
+   levels over the versioned protocol. Pulse timing is helper-local. Raw microphone
+   samples stay in the daemon-side supervisor; the helper remains click-through
+   and must degrade to disabled without affecting daemon success. Never put
+   analysis/display/process I/O under daemon locks or send transcript, raw audio,
+   device/model names, config values, or detailed errors across IPC.
+8. **Branch model.** Develop on `dev`. Merging to `main` requires the smoke
+   suite and real dictation to pass on a real machine first.
+9. **Commits** are conventional (`feat:`, `fix:`, `chore:`) with no
+   attribution trailers. Run the quick verification loop before committing.
 
-- **Run Python via the venv.** Do not use the system `python` /
-  `pip` for project work.
-  - Direct: `.venv/bin/python ...`
-  - Or activate first (`source .venv/bin/activate`), then use
-    `python` / `pip` as usual.
-- **Lint and format with the venv's `ruff`.** Never rely on a
-  system-installed `ruff`.
-  - `.venv/bin/ruff check .`
-  - `.venv/bin/ruff format .`
-  - `.venv/bin/ruff check --fix .` for autofixes.
-- **Test with the venv's `pytest`.** Two marker buckets:
-  - default (`-ra`) — fast, no environment dependencies.
-  - `integration` — touches the user's clipboard / audio / display.
-    Skipped unless `STENOGRAPHER_INTEGRATION=1` is set in the
-    environment.
-  - Run all: `.venv/bin/pytest`
-  - Run unit only: `.venv/bin/pytest -m "not integration"`
-- **Verification before committing changes to code.** Run both
-  `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .`
-  and resolve any reported issues. For code-touching changes, also
-  run `.venv/bin/pytest -m "not integration"` and confirm green.
-- **Recreating the venv.** If `.venv/` is missing or stale:
-  `python3 -m venv .venv && .venv/bin/pip install -e ".[dev,build]"`.
-  The `dev` extra pulls in `ruff` and `pytest`; the `build` extra
-  pulls in `pyinstaller` for the standalone binary. Building the mandatory
-  PyGObject dependency also needs the distro's GObject-introspection and
-  Cairo development packages; the GTK overlay additionally needs GTK4 and
-  `gtk4-layer-shell`.
-- **Building the standalone binary.** `scripts/build.sh` (wraps
-  `pyinstaller --noconfirm --clean packaging/stenographer.spec`).
-  Output: `dist/stenographer/stenographer`. Runtime system
-  requirements on the target machine: `wtype`, `wl-clipboard`,
-  `pipewire` (or `pulseaudio`), `libevdev1`, `libportaudio2`,
-  GTK4, `gtk4-layer-shell`, `libnotify` (`notify-send`), plus the user's `input` group
-  membership. See `BUILD.md`.
+## Quick verification loop
 
-## Post-change workflow
-
-After modifying any source file under `src/` or `tests/`, run through these
-steps in order:
-
-1. **Lint and format.**
-   ```
-   .venv/bin/ruff check . && .venv/bin/ruff format --check .
-   ```
-   Use `.venv/bin/ruff check --fix .` to auto-fix fixable issues.
-2. **Run unit tests.**
-   ```
-   .venv/bin/pytest -m "not integration"
-   ```
-3. **Build the standalone binary.**
-   ```
-   scripts/build.sh
-   ```
-   Output goes to `dist/stenographer/stenographer`.
-
-## Development workflow
-
-The code and tests are the source of truth. `session.py`
-is the orchestrator that wires the components together — start there when
-tracing behaviour.
-
-**New feature or new component.** Add the module under the matching
-subpackage (`hotkey/`, `audio/`, `asr/`, `output/`, `config/`,
-`visualizer/`, or top-level for cross-cutting concerns), give it a
-docstring describing its contract,
-mirror it with a `tests/test_*.py`, and wire it into `Session` /
-`cli.py`. Every new source file carries the SPDX header.
-
-**Requirement or behaviour change.** Change the code and update the
-tests that pin the old behaviour in the same change. If the change
-touches config, keep the `Config` dataclass, `doctor`, and the README's
-generated config section in sync.
-
-**Bug fix.** Write a test that reproduces the bug (confirm it fails
-against the unfixed code), then fix.
-
-## Established stack
-
-These decisions are baked into `pyproject.toml`.
-
-- **Stack:** Python 3.14 CLI daemon.
-- **Wayland HUD:** PyGObject + GTK4 + `gtk4-layer-shell`, with `notify-send`
-  as the automatic fallback.
-- **Layout:** `src/stenographer/` (src-layout); `tests/` mirrors
-  the package layout.
-- **Project metadata:** `pyproject.toml` is the single source of
-  truth. Built with `hatchling`.
-- **Tests:** `pytest`, with `pytest-asyncio` available and an
-  `integration` marker. Run via the venv.
-- **Types:** not yet enforced. `mypy` or `pyright` is a future addition.
-- **License:** GPL-3.0-or-later — every new source file MUST carry
-  `SPDX-License-Identifier: GPL-3.0-or-later` at the top.
-- **Distribution:** `pip install` (or `pipx install`) via the wheel
-  built from `pyproject.toml`; **and** a PyInstaller `--onedir`
-  binary at `dist/stenographer/stenographer` for users who do not
-  want a `pip install` at all. The ASR model (~800 MB) is **not**
-  bundled; users fetch it once with `stenographer model download`.
-
-## Where to look
-
-When in doubt, read the code in this order:
-
-1. `src/stenographer/session.py` — the orchestrator; how one utterance
-   flows hotkey → record → transcribe → output.
-2. `src/stenographer/cli.py` + `_parser.py` — CLI surface, subcommands,
-   process lifecycle, signals, single-instance lock.
-3. The component module for the area being changed:
-   `hotkey/` (binding, listener, state machine), `audio/` (capture,
-   feedback), `asr/` (model, worker), `output/` (inject,
-   clipboard, delivery).
-4. `config/` — config schema (including `[stenographer.update]`):
-   dataclasses in `schema.py`, per-section validators in `builders.py`,
-   `Config` + load entry points in `__init__.py`.
-5. `errors.py` — degradation policy and exit codes.
-6. `capabilities.py` — the `doctor` probe.
-7. `update.py` — the `update` subcommand (GitHub Releases transport,
-   onedir self-replace, daemon stop / start).
-8. `README.md` / `BUILD.md` — install, run, and packaging behaviour.
-9. `visualizer/` — GTK4 layer-shell status HUD and frequency-band analysis
-   (`indicator.py` facade, `overlay_client.py` daemon side, `overlay_app.py`
-   GTK helper process, `spectrum.py` FFT, `protocol.py` shared labels).
-
-## When this file goes stale
-
-- If `.venv/` is recreated with different packages, or
-  `.python-version` is bumped, keep the **Tooling** block in sync.
-- If `pyproject.toml` changes (new optional-dependency, new
-  pytest marker, ruff rule change, hatch config), keep the
-  **Established stack** and **Tooling** blocks in sync.
-- If a new component is added to `src/`, mirror it under `tests/`
-  and reference it in **Where to look**.
-- If CI is added, document required services, env vars, and test
-  prerequisites here.
-- If a new top-level layout decision is made (e.g. monorepo,
-  separate `cli/` package), update **Established stack**.
+```sh
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv/bin/pytest -m "not integration"
+.venv/bin/stenographer --help
+```

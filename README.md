@@ -33,463 +33,267 @@ assistants). Everything below this comment is generated / maintained
 content. To change the project description, edit above this line.
 -->
 
-## Quick start
-
-For a released Linux x86_64 build:
-
-```sh
-curl -fsSL https://github.com/Harrison-Blair/stenographer/releases/latest/download/install.sh | bash
-~/.local/bin/stenographer doctor
-```
-
-The installer verifies the release checksum, offers to install system
-dependencies and add you to the `input` group, asks for a hotkey, microphone,
-and ASR model, then installs and enables the systemd user service. If it adds
-you to `input`, log out and back in before expecting the hotkey to work.
-
-Follow the service log with:
-
-```sh
-journalctl --user -u stenographer.service -f
-```
-
 ## What it is
 
-`stenographer` listens to Linux evdev keyboard events, records from the
-configured input device, transcribes locally with faster-whisper, and delivers
-the completed utterance to the focused Wayland application. The default output
-path copies the text to both Wayland selections and sends one `Shift+Insert`
-chord with `wtype`.
+Press a hotkey, speak, and the text appears at your cursor.
 
-Word-level decoding runs while recording. The GTK layer-shell HUD displays an
-append-only stable transcript prefix and a fainter italic revisable tail in a
-fixed two-line preview, plus a live microphone spectrum. It does not send
-partial text to the application or clipboard: final delivery happens once,
-after the final decode. When the GTK
-overlay is healthy, status and update notices stay in the bottom-center HUD
-instead of going through SwayNC or another notification daemon. If the overlay
-is unavailable, those notices fall back to `notify-send`; transcript previews
-are only shown in the GTK HUD.
+`stenographer` is a push-to-talk / toggle dictation daemon for any Wayland
+session. It listens to Linux evdev keyboard events, records from the configured
+microphone while the hotkey is held (or, with `hotkey.mode = "toggle"`, between
+one press and the next), transcribes locally with
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper), and delivers the
+utterance to the focused application: the transcript is copied to both
+selections (via `wl-copy`, or via `xclip` under XWayland on compositors without
+a data-control protocol, such as GNOME 46 and older), then pasted with a single
+Shift+Insert chord sent through a kernel `uinput` virtual keyboard. Because injection is
+display-server-independent, it works identically on wlroots compositors
+(Hyprland, sway, …) and on GNOME/Mutter.
 
-The generated default configuration uses right-Alt in push-to-talk mode and an
-English-only model. The release installer asks for a hotkey (suggesting
-right-Ctrl) and lets you choose from English and multilingual models.
+Everything is offline and English-only. Nothing is sent anywhere; the daemon
+never touches the network (the model is fetched once, explicitly, with
+`stenographer model download`).
 
-## Hotkey behavior
+The architecture and binding behavioral decisions are recorded in
+[docs/reauthor.md](docs/reauthor.md).
 
-Set `hotkey.trigger_mode` to one of:
+## Quick start
 
-- `ptt` (default): hold the hotkey to record and release it to transcribe.
-- `toggle`: press once to start recording and press again to stop.
-- `hybrid`: hold for at least `hotkey.toggle_threshold_seconds` for
-  push-to-talk. To latch toggle recording, double-tap within
-  `hotkey.double_tap_window_seconds`; a lone short tap is discarded.
+```sh
+git clone https://github.com/Harrison-Blair/stenographer
+cd stenographer
+python3 -m venv .venv && .venv/bin/pip install -e .
+.venv/bin/stenographer setup --quick    # configure essentials, download, check capabilities
+.venv/bin/stenographer run              # foreground daemon
+```
 
-While the main hotkey is held, press `hotkey.cancel_binding` (Escape by
-default) to discard the active recording and cancel queued or in-flight
-transcription. Set the cancel binding to `""` to disable it.
+`setup --quick` configures the hotkey, microphone, cues, and optional display
+spectrum, offers the explicit ~1.5 GB model download when needed, and runs the
+normal capability probe. Plain `setup` remains the complete 19-key review. You
+can instead run `stenographer model download` and `stenographer doctor` directly.
+
+Hold the hotkey (default: right-Ctrl), speak, release. The transcript is pasted
+at your cursor and left on the clipboard. Prefer press-to-start,
+press-again-to-stop? Set `hotkey.mode = "toggle"` — in that mode a forgotten
+recording ends automatically at `audio.max_recording_seconds` as if you had
+pressed again.
+
+On a cold start, model loading begins as soon as recording starts and overlaps
+your speech; only unfinished loading time remains after recording ends. By
+default a small, click-through pill shows an 18-band live spectrum while
+recording. A short cold recording changes directly to the same-width Transcribing
+pill while the model finishes loading. While the load is active, a subtle amber
+border breathes around whichever pill is visible; there is no loading label or
+loading dot. Transcribing, Delivering, and Error are fixed states. Raw microphone
+samples stay in the daemon; the isolated display helper receives only 18 quantized
+levels and an active/inactive loading boolean, never pulse timing, transcript text,
+model/device names, configuration values, or detailed errors. Set
+`feedback.overlay = false` to disable the whole visual surface and its analysis;
+sound cues, notifications, and dictation continue unchanged.
 
 ## Requirements
 
-- Linux with a Wayland compositor on which `wtype` can inject keystrokes.
-- Membership in the `input` group, or a uaccess rule for the keyboard
-  device, so the daemon can read `/dev/input/event*`.
-- A working PortAudio input device, normally provided through PipeWire or
-  PulseAudio.
-- System packages:
+- Linux with any Wayland compositor.
+- Read access to `/dev/input/event*` — membership in the `input` group
+  (`sudo usermod -aG input $USER`, then re-login).
+- Write access to `/dev/uinput` for the paste chord (a udev rule or the
+  `uinput` group).
+- `wl-clipboard` (for `wl-copy`) on compositors with a data-control protocol
+  (wlroots, GNOME 47+); `xclip` on compositors without one (GNOME 46 and
+  older) — `stenographer doctor` reports which backend was detected.
+- A PortAudio input device (PipeWire or PulseAudio provide this).
+- Optional: `canberra-gtk-play` (preferred), `pw-play`, or `paplay` for the sound
+  cues, and `notify-send` for error notifications — both degrade to no-ops when
+  absent.
+- Optional visual feedback uses native Wayland layer-shell when the compositor
+  provides it, otherwise a compatible XWayland server. If neither backend is
+  usable, only the pill is disabled.
 
-  | Capability | Debian / Ubuntu | Fedora | Purpose |
-  |---|---|---|---|
-  | `wtype` | `wtype` | `wtype` | Final typing or paste chord |
-  | `wl-copy` | `wl-clipboard` | `wl-clipboard` | Clipboard and default paste transport |
-  | `pw-play` or `paplay` | `pipewire-audio` or `pulseaudio-utils` | `pipewire-utils` or `pulseaudio-utils` | Audio cues |
-  | `notify-send` | `libnotify-bin` | `libnotify` | Fallback status notifications |
-  | libevdev | `libevdev1` | `libevdev` | Global hotkey |
-  | PortAudio | `libportaudio2` | `portaudio` | Microphone capture |
-  | GTK4 layer shell | `libgtk-4-1`, `libgtk4-layer-shell0`, `gir1.2-freedesktop`, `gir1.2-gtk4layershell-1.0` | `gobject-introspection`, `gtk4`, `gtk4-layer-shell` | HUD and transcript preview |
+`stenographer doctor` probes all of the above and prints exactly one overlay
+status (`disabled`, `layer-shell`, `XWayland fallback`, or an actionable
+unavailable reason). Overlay availability is informational and never changes
+the command's exit status; a missing required dictation capability still gives
+exit code 78.
 
-The audio cues, notifications, and GTK HUD degrade independently when their
-optional runtime is absent. The default `clipboard_paste` output requires both
-`wl-copy` and `wtype`; without `wtype`, the transcript remains recoverable on
-the clipboard but is not pasted.
+Python 3.12 or newer.
 
-Python 3.14 or newer is required for source, wheel, and editable installs. The
-prebuilt onedir release includes Python, but still needs the system CLIs and
-libraries above.
-
-## Install
-
-### Quick install (prebuilt binary)
-
-The release installer supports apt, dnf, and pacman systems. It installs to
-`~/.local/share/stenographer/` and links
-`~/.local/bin/stenographer`.
+## Running as a service
 
 ```sh
-curl -fsSL https://github.com/Harrison-Blair/stenographer/releases/latest/download/install.sh | bash
+scripts/install.sh
 ```
 
-Prompts read directly from the terminal even when the script is piped to
-`bash`. To inspect it first, download `install.sh` from
-[GitHub Releases](https://github.com/Harrison-Blair/stenographer/releases),
-read it, and run it locally. Local-script options are:
+builds the standalone bundle (see [BUILD.md](BUILD.md)), copies it to
+`~/.local/share/stenographer/`, symlinks `~/.local/bin/stenographer`, installs
+`packaging/stenographer.service` as a systemd user unit, and enables + starts
+it (`--no-enable` / `--no-start` to opt out, `--install-dir DIR` to relocate).
+It also caches native Bash, Zsh, and Fish completion definitions under
+`$XDG_DATA_HOME` (default `~/.local/share`) without changing shell configuration.
+Equivalent manual steps:
 
 ```sh
-./install.sh --version X.Y.Z   # install a specific release
-./install.sh --yes             # accept all prompts (non-interactive)
-./install.sh --no-deps         # skip the system-package step
+cp packaging/stenographer.service ~/.config/systemd/user/
+systemctl --user enable --now stenographer.service
+journalctl --user -u stenographer -f
 ```
 
-`STENOGRAPHER_REPO=OWNER/REPO` and `STENOGRAPHER_VERSION=X.Y.Z` provide
-equivalent environment overrides. If the model download is skipped or fails,
-the installer enables but does not start the service; download the model and
-run `stenographer start`.
+The unit's `ExecStart` points at `~/.local/share/stenographer/stenographer`;
+edit the path if you run from a venv instead.
 
-### From source
+## Shell completion
 
-Install the runtime packages above plus the compiler, GObject-introspection,
-Cairo, and libevdev development headers required to build PyGObject and evdev.
-On Debian/Ubuntu:
+Generate one deterministic native definition with:
 
 ```sh
-sudo apt install gcc pkg-config libcairo2-dev libgirepository-2.0-dev \
-  libevdev-dev gir1.2-freedesktop gir1.2-gtk-4.0
+stenographer completion bash
+stenographer completion zsh
+stenographer completion fish
 ```
 
-Then build and install the PyInstaller onedir bundle:
+The installer writes all three to the standard XDG locations:
 
-```sh
-git clone https://github.com/Harrison-Blair/stenographer.git
-cd stenographer
-python3.14 -m venv .venv
-.venv/bin/pip install -e ".[dev,build]"
-scripts/reinstall.sh
-```
+- Bash: `$XDG_DATA_HOME/bash-completion/completions/stenographer`. Install and
+  enable `bash-completion` so Bash discovers it.
+- Zsh: `$XDG_DATA_HOME/zsh/site-functions/_stenographer`. Add that directory to
+  `fpath` before `autoload -Uz compinit && compinit`; the installer prints the
+  exact one-time lines but never edits `.zshrc`.
+- Fish: `$XDG_DATA_HOME/fish/vendor_completions.d/stenographer.fish`, loaded
+  automatically by Fish.
 
-`scripts/reinstall.sh` always rebuilds the current checkout, verifies that its
-version ends in `-dev`, stops an active local daemon after the build succeeds,
-and invokes `scripts/install.sh` to copy `dist/stenographer/` to
-`~/.local/share/stenographer/`, installs bash completion, writes the systemd
-user unit, and enables and starts the freshly built daemon. Run it again after
-changing or updating the source checkout to reinstall the latest local dev
-version. This locally built onedir installation may also use
-`stenographer update` to switch to the newest stable release; its
-`~/.local/bin/stenographer` symlink remains in place. Running
-`scripts/reinstall.sh` later restores the current local `-dev` build.
-
-Useful local-installer options:
-
-```sh
-scripts/reinstall.sh --no-enable
-scripts/reinstall.sh --no-start
-scripts/reinstall.sh --install-dir /absolute/path
-```
-
-Both `--no-enable` and `--no-start` install the unit without enabling or
-starting it. See [BUILD.md](BUILD.md) for standalone build and manual unpacking
-details.
-
-For development, the editable install created above can be run directly:
-
-```sh
-.venv/bin/stenographer doctor
-.venv/bin/stenographer run
-```
-
-An editable or locally built wheel install provides the `stenographer`
-console script, but does not install completion or a systemd unit. Use
-`stenographer enable` if you want the installed console script to create its
-user unit.
-
-### Shell completion (bash)
-
-`scripts/install.sh` installs bash tab-completion automatically (to
-`~/.local/share/bash-completion/completions/stenographer`, loaded
-lazily by the `bash-completion` package). The release installer and
-wheel/editable installs do not set it up. With `argcomplete` installed, add
-this to `~/.bashrc`:
-
-```sh
-eval "$(register-python-argcomplete stenographer)"
-```
-
-## First-run setup
-
-```sh
-stenographer devices             # list input device names and indices
-stenographer model download      # fetch the model selected in the config
-stenographer doctor              # probe the resolved configuration and runtime
-```
-
-Model size depends on `asr.model`. `doctor` creates the default configuration
-if none exists, reports each required or optional capability, and exits 78
-when `input` group membership, a microphone, or the configured ASR model is
-missing.
-
-## Run
-
-```sh
-stenographer run                 # foreground daemon, Ctrl-C to stop
-stenographer dictate             # one-shot: arm, dictate, exit
-stenographer transcribe FILE     # batch: print formatted transcript to stdout (default)
-stenographer transcribe FILE --raw # batch: print the raw, unformatted transcript verbatim
-stenographer devices             # list audio input devices
-stenographer model download      # fetch the ASR model
-stenographer bench FILE_OR_DIR   # benchmark a model/beam/compute matrix
-stenographer bench FILE_OR_DIR --incremental  # replay configured partial cadence
-stenographer bench --record 10 --save sample.wav
-stenographer update              # update a prebuilt onedir installation
-stenographer doctor              # print capabilities + resolved config
-stenographer --version
-
-# systemd user unit management
-stenographer enable [--no-start] # install + enable the unit, then start it
-stenographer start               # start an already-installed unit
-stenographer stop                # stop the daemon (systemd or foreground)
-stenographer status              # show daemon state, uptime, and systemd preview
-stenographer disable             # stop + disable the unit
-```
-
-`-c/--config PATH` is a global option and must precede the subcommand, for
-example `stenographer --config ./config.toml doctor`. Run
-`stenographer SUBCOMMAND --help` for subcommand-specific options. The default
-benchmark matrix may load or download several large models.
-
-`stenographer run` holds a single-instance `fcntl.flock` on
-`$XDG_RUNTIME_DIR/stenographer.lock`; a second `run` exits 1 with
-`another instance is already running.`
-
-## Updating
-
-`stenographer update` checks GitHub Releases for a newer version of
-the onedir binary, downloads the matching tarball, verifies its
-SHA-256, and replaces the running install in place. If the daemon
-is running under systemd, it is stopped before the swap and started
-afterwards. Development builds retain their `-dev` version locally and may
-switch to the newest stable release even when its numeric version is lower.
-
-```sh
-stenographer update              # check, prompt, install, restart
-stenographer update --check      # only print whether an update is available
-stenographer update --yes        # non-interactive
-stenographer update --prerelease # include pre-release tags
-stenographer update --no-restart # leave the daemon stopped after the swap
-stenographer update --repo OWNER/REPO
-```
-
-`update` only self-updates the onedir binary built by `scripts/build.sh`.
-A wheel, editable, pip, or pipx install is not replaced; upgrade it using the
-same tool and package source that installed it. Configure the target repo / channel in
-`~/.config/stenographer/config.toml` under `[stenographer.update]`. The
-startup update check is off by default because it contacts GitHub; set
-`update.check_on_startup = true` to have each daemon launch run a non-blocking
-check that notifies when an update is available. Updates are never installed
-automatically.
-
-## Configure
-
-Resolution order:
-
-1. `--config PATH`, which sets `$STENOGRAPHER_CONFIG` for the process.
-2. `$STENOGRAPHER_CONFIG`, if set.
-3. `$XDG_CONFIG_HOME/stenographer/config.toml` (default
-   `~/.config/stenographer/config.toml`).
-
-If the resolved path does not exist, the first configuration-aware command
-writes the default file there, then loads it. The file is loaded once per
-process; restart the daemon to pick up edits. Bad values cause exit code 78
-(`EX_CONFIG`) with a precise file, key, and validation message.
-
-The generated defaults are:
-
-```toml
-# stenographer configuration
-
-[stenographer]
-
-# Hotkey
-hotkey.binding = "KEY_RIGHTALT"
-hotkey.toggle_threshold_seconds = 0.5
-hotkey.double_tap_window_seconds = 0.35
-hotkey.cancel_binding = "KEY_ESC"
-hotkey.device = ""
-hotkey.trigger_mode = "ptt"
-
-# Audio capture
-audio.sample_rate = 16000
-audio.frames_per_buffer = 1024
-audio.input_device = ""
-audio.max_recording_seconds = 600
-# 0 disables the pre-decode energy gate
-audio.min_speech_rms = 0.0005
-
-# ASR
-asr.model = "Systran/faster-whisper-medium.en"
-asr.language = "en"
-asr.beam_size = 1
-asr.compute_type = "int8"
-asr.silence_threshold = 0.6
-asr.vad_filter = true
-asr.max_new_tokens = 128
-# 0 detects affinity-available physical cores (maximum 8)
-asr.cpu_threads = 0
-asr.mode = "lazy"
-asr.idle_unload_seconds = 900
-# hotwords: proper nouns / jargon to bias recognition toward, e.g. "wtype, Wayland"
-asr.hotwords = ""
-# initial_prompt: free-text context prepended to decoding (style/domain hints)
-asr.initial_prompt = ""
-
-# Audio feedback
-feedback.volume = 0.6
-feedback.mute = false
-
-# Bottom-center Wayland spectrum overlay
-visualizer.enabled = true
-visualizer.frequency_bands = 16
-visualizer.min_frequency = 80.0
-visualizer.max_frequency = 8000.0
-visualizer.margin_bottom = 32
-
-# Text output
-output.injection_method = "clipboard_paste"
-output.append_trailing_space = true
-output.max_chars = 4096
-
-# Clipboard
-clipboard.enabled = true
-
-# Incremental word-level decoding (always enabled).
-# min_chunk_seconds / beam_size are the CPU knobs if re-decodes lag.
-incremental.min_chunk_seconds = 1.0
-incremental.agreement_n = 2
-incremental.beam_size = null
-incremental.max_buffer_seconds = 20.0
-incremental.interim_timeout_seconds = 5.0
-incremental.release_timeout_seconds = 8.0
-
-# Formatting heuristics (applies to all output modes)
-formatting.paragraph_pause_seconds = 0.0
-formatting.capitalize_sentences = true
-formatting.normalize_spacing = true
-
-# Update
-update.check_on_startup = false
-update.repo = "Harrison-Blair/stenographer"
-update.channel = "stable"
-update.base_url = "https://api.github.com"
-update.asset_pattern = "stenographer-{version}-linux-x86_64.tar.gz"
-update.timeout_seconds = 60
-
-[stenographer.feedback.cues]
-ptt_on = ""
-ptt_off = ""
-toggle_on = ""
-toggle_off = ""
-cancel = ""
-discard = ""
-error = ""
-segment = ""
-transcribe_done = ""
-model_loading = ""
-model_ready = ""
-```
-
-An empty device or optional string selects the automatic/default behavior.
-For compatibility, the loader also accepts a bare `null` for optional values,
-although standard TOML represents these defaults as empty strings.
-
-`asr.mode = "lazy"` loads the model on first use and unloads it after
-`asr.idle_unload_seconds`; `0` disables idle unloading. Set the mode to
-`"eager"` to load at daemon startup. `incremental.beam_size = null` inherits
-`asr.beam_size`. `asr.cpu_threads = 0` counts physical cores visible through
-the process CPU affinity and uses at most eight (falling back to four if CPU
-topology is unavailable); explicit values from 1 through 64 override detection.
-
-`output.injection_method` must be `"type"` or `"clipboard_paste"`. Paste mode
-requires `clipboard.enabled = true`; type mode can leave a convenience copy on
-the regular clipboard when clipboard support is enabled. In type mode,
-`output.max_chars` caps what is typed while the full transcript remains on the
-clipboard; paste mode copies and pastes the full transcript without applying
-the cap. The pre-0.9.2 values `"text"` and `"paste"` are accepted with a
-deprecation warning and mapped to their current names.
-
-`audio.min_speech_rms` requires two consecutive 50 ms frames above the
-configured RMS before decoding, rejecting dead air and isolated clicks; `0`
-disables this gate. The decoder also trims trailing silence before interim and
-final passes. A silent final tail discards provisional preview text while
-preserving already committed speech.
-
-`asr.vad_filter` enables Silero VAD with conservative speech/padding settings.
-`asr.silence_threshold` is passed to faster-whisper's native no-speech filter
-and remains a post-decode segment gate. A two-second hallucination-silence
-guard is enabled. Decoding uses one deterministic greedy pass, blocks repeated
-3-grams, and dynamically reduces `asr.max_new_tokens` for short audio, with a
-smaller allowance for interim previews than final and batch decoding. Model
-files are opened from the local cache only during transcription.
-
-Native inference runs in a restartable child process. Interim decodes are
-abandoned after `incremental.interim_timeout_seconds`; after key release, a
-final transcript or the latest confidence-gated preview is ready within
-`incremental.release_timeout_seconds`. Recovered text uses the error cue to
-signal that the result may be incomplete. Clipboard and cursor-injection tools
-keep their own independent timeouts.
-At release, queued previews are invalidated immediately. An active preview gets
-up to 750 ms (and no more than one quarter of the release timeout) to finish;
-its hypothesis may be reused for finalization but is not published after release.
-Legacy `streaming.*` tuning keys are migrated to `incremental.*` with warnings;
-incremental decoding itself is always enabled.
-
-See [`src/stenographer/config.py`](src/stenographer/config.py) for validation
-ranges and the complete schema.
-
-## Run under systemd
-
-The quick installer and `scripts/install.sh` both set up the systemd
-user unit for you. To manage it yourself, the binary can install and
-control its own unit — no need to hand-edit unit files:
-
-```sh
-stenographer enable             # write the unit, enable it, and start now
-stenographer enable --no-start  # write + enable, but don't start yet
-stenographer start              # start an already-installed unit
-stenographer stop               # stop the daemon
-stenographer status             # inspect daemon and systemd status
-stenographer disable            # stop + disable the unit
-journalctl --user -u stenographer.service -f
-```
-
-`enable` writes `~/.config/systemd/user/stenographer.service` with an
-`ExecStart` pointing at the running binary (backing up any existing unit
-to `…stenographer.service.bak`), runs `daemon-reload`, then enables it.
-
-`status` reports whether the daemon is running under systemd or in the
-foreground, along with its PID, uptime, unit-file path, enabled state, runtime
-lock, and systemd active state. It finishes with a plain-text
-`systemctl --user status` preview containing up to 10 recent journal lines.
-The command exits 0 only when it confirms a live daemon; stopped or
-indeterminate states exit 1. Recent journal output can contain application
-diagnostics and, when debug transcript logging is enabled, dictated text.
-
-If you'd rather wire it up by hand — e.g. against a binary unpacked to a
-non-default location like `/opt/` — the raw unit template is at
-`packaging/stenographer.service.in`. Copy it to
-`~/.config/systemd/user/stenographer.service` (substituting `%h` with
-your home directory and adjusting `ExecStart` to your binary path), then
-`systemctl --user enable --now stenographer.service`.
-
-`Restart=on-failure`; binds to `graphical-session.target`. The daemon
-is foreground; systemd handles daemonization.
+The definitions complete the public commands and flags plus local file paths
+for `transcribe FILE`. They do not probe devices, models, configuration, audio,
+or the network.
 
 ## Logging
 
-Logs go to stderr and a rotating file at
-`$XDG_STATE_HOME/stenographer/stenographer.log` (default
-`~/.local/state/stenographer/stenographer.log`). Override the level
-with `STENOGRAPHER_LOG_LEVEL=DEBUG|INFO|WARNING|ERROR`. Logs include
-privacy-safe audio/decode metrics and transcript lengths, but never audio or
-transcript text.
+Every command logs to stderr and to
+`$XDG_STATE_HOME/stenographer/stenographer.log` (or
+`~/.local/state/stenographer/stenographer.log` when `XDG_STATE_HOME` is unset).
+The file rotates at 5 MiB and keeps three backups. Set
+`STENOGRAPHER_LOG_LEVEL=debug` (level names are case-insensitive) for additional
+diagnostics; the default and the fallback for an invalid value are `INFO`.
+
+Logs contain timings, counts, negotiated audio settings, and transcript lengths,
+never dictated text or audio. If the state directory cannot be created, the
+command continues with stderr logging and reports the problem there.
+
+## Configuration
+
+`~/.config/stenographer/config.toml` is created with annotated defaults on
+first run. Its four sections contain 19 supported keys:
+
+| Section | Keys |
+|---|---|
+| `hotkey` | `binding` (evdev key/chord, default `KEY_RIGHTCTRL`), `device`, `mode` (`hold` \| `toggle`, default `hold`) |
+| `audio` | `input_device`, `min_speech_rms`, `max_recording_seconds` |
+| `asr` | `model`, `compute_type`, `beam_size`, `hotwords`, `initial_prompt`, `vad_filter`, `silence_threshold`, `idle_unload_seconds`, `cpu_threads` |
+| `feedback` | `volume`, `mute`, `overlay` (default `true`), `spectrum_floor_dbfs` (scalar default `-45.0` or an 18-band calibrated profile) |
+
+Note: `hotwords` require a full (non-distil) model — the default
+`Systran/faster-whisper-medium.en` supports them.
+
+### Interactive setup
+
+Run `stenographer setup --quick` for the focused, rerunnable path. It selects an
+automatic, detected, or manually entered hotkey device; captures one key or a
+held chord live (without grabbing the keyboard), keeps the current binding, or
+accepts validated evdev names typed by hand. Capture waits until every key is
+released, times out after 15 seconds, and leaves Ctrl-C working. Quick setup then
+chooses `hold` or `toggle`, the microphone, cue volume/mute, and the optional
+overlay. Its review explicitly retains the audio gate, recording limit, and all
+ASR settings.
+
+Plain `stenographer setup` keeps the complete 19-key review: Hotkey, Audio, ASR,
+and Feedback one section at a time. Detected microphone and hotkey devices are
+offered while keeping automatic-device and manual-entry choices available. Enter
+retains the displayed value; optional strings have an explicit clear choice. The
+final review can save, cancel without making changes, or return to any section.
+Both paths support only the documented `hold` and `toggle` trigger modes.
+
+Setup materializes all 19 supported keys but preserves hand-written comments,
+inline comments, ordering, unknown keys, and unrelated layout. Before writing,
+it refuses to overwrite a file changed while the wizard was open and validates
+the result with the same schema used by every other command. An existing file
+gets an exact timestamped `.bak-…Z` copy; the replacement is atomic, retains the
+file mode, and updates a symlink target without replacing the symlink. If the
+rendered bytes are unchanged, neither the config nor a backup is written.
+
+When the overlay is enabled, choose Keep, Manual, or Automatic for
+`feedback.spectrum_floor_dbfs`; quick setup skips this step when the overlay is
+disabled. When no profile exists, Automatic is recommended by default. It asks
+for a quiet room,
+counts down for three seconds, records five seconds from the selected microphone,
+then records three seconds of normal speech to verify visibility. The silent
+sample produces one fixed floor for each of the 18 bars; the voice sample only
+checks the result and never changes it. Calibration never changes captured audio,
+`audio.min_speech_rms`, speech detection, or transcription, and it cannot learn or
+fade while the daemon runs. Recalibrate after changing microphones or input gain.
+
+After saving, setup offers the network model download only if the selected
+model is absent and then reports every result from `stenographer doctor`. Quick
+setup defaults that explicit download prompt to yes; the full wizard retains its
+existing no default. Setup does not restart when a required capability is missing.
+If configuration bytes
+changed and the standard systemd user service is already active, it offers to
+restart it (default: yes). It never installs, enables, or starts an inactive
+service, and it never restarts a service when `STENOGRAPHER_CONFIG` selects a
+custom path; in those cases it prints the command to run yourself. A successful
+quick setup ends with the configured hold/toggle tryout and the applicable
+foreground, start, restart, install, and journal guidance for the observed
+service state.
+
+Setup requires an interactive terminal. A normal Cancel exits 0, Ctrl-C or EOF
+exits 130, non-TTY use exits 2, invalid configuration or missing required
+capabilities exits 78, and write/download/probe/restart failures exit 1. Once a
+configuration is saved, a later setup failure does not roll it back.
+
+### Overlay scope and limitations
+
+The native layer-shell backend uses the overlay layer and has strong stacking
+for normal, tiled, maximized, and fullscreen application windows. Its output is
+chosen by the compositor at the start of each utterance. The XWayland fallback
+chooses the connected RandR monitor under the pointer, falls back to the primary
+monitor, and keeps that placement until the pill hides. Focused-monitor choice
+and stacking over exclusive fullscreen windows are best-effort under XWayland.
+Neither backend appears over lock screens or other protected shell surfaces.
+
+The recording pill contains exactly 18 solid spectrum bars that animate only
+while recording. `feedback.spectrum_floor_dbfs` is either one manual floor shared
+by all bars or the 18 fixed floors produced by setup. Each band maps through a
+30 dB visual range capped at `-12` dBFS. Input at or below its floor stays on the
+4 px baseline tick; input at or above its ceiling reaches full height. A calibrated
+bass-noise floor therefore cannot suppress quieter speech bands, and sustained
+speech never becomes a new baseline. This display-only mapping never filters
+recorded audio or changes transcription. The
+only other animation is a 2-second amber border pulse while the model is actively
+loading; it applies to any visible pill and is timed entirely inside the helper.
+The overlay has no transcript preview, raw-audio IPC, controls, GTK dependency, or
+success state, and it never takes keyboard or pointer input. Every visible pill is
+280×64; all labels, dots, geometry, and post-recording pill interiors remain fixed.
+
+## CLI
+
+| Command | Purpose |
+|---|---|
+| `stenographer run` | the daemon |
+| `stenographer transcribe FILE [--raw]` | batch-transcribe an audio file |
+| `stenographer model download` | fetch the ASR model into the local cache |
+| `stenographer doctor` | capability probe with fix hints |
+| `stenographer devices` | list audio input devices |
+| `stenographer setup [--quick]` | configure all keys or just essentials, then guide first-use checks |
+| `stenographer completion {bash,zsh,fish}` | print one native shell completion definition |
+
+## Development
+
+```sh
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv/bin/pytest -m "not integration"          # unit tests (pure logic)
+STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest    # real smoke suite (this machine)
+```
+
+The integration suite genuinely creates a uinput device, writes the clipboard,
+plays cues, and loads the model — run it on a real session before merging.
 
 ## License
 
-GPL-3.0-or-later. See `LICENSE`.
+GPL-3.0-or-later.

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# systemd USER unit for the stenographer daemon.
+#   install:  scripts/install.sh  (or: cp packaging/stenographer.service ~/.config/systemd/user/)
+#   enable:   systemctl --user enable --now stenographer.service
+#   logs:     journalctl --user -u stenographer -f
+#
+# ExecStart points at the installed onedir bundle (see scripts/install.sh).
+# Exit code 78 means a missing capability or bad config (see `stenographer
+# doctor`); restarting will not fix it, so it is excluded from Restart=.
+
+[Unit]
+Description=Stenographer push-to-talk dictation daemon
+After=graphical-session.target pipewire.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/stenographer/stenographer run
+Restart=on-failure
+RestartSec=2
+RestartPreventExitStatus=78
+
+[Install]
+WantedBy=graphical-session.target

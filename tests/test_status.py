@@ -1,302 +1,302 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Lifecycle status collection and rendering."""
+"""Pure tests for lifecycle/spectrum data and the versioned overlay protocol."""
 
 from __future__ import annotations
 
-import pathlib
-import subprocess
-
 import pytest
 
-import stenographer.status as status_mod
-from stenographer._parser import build_parser
-
-
-def _completed(
-    args: list[str],
-    *,
-    returncode: int = 0,
-    stdout: str = "",
-    stderr: str = "",
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr=stderr)
-
-
-def _systemd_status(**overrides: object) -> status_mod.SystemdStatus:
-    values: dict[str, object] = {
-        "available": True,
-        "load_state": "loaded",
-        "fragment_path": "/home/test/.config/systemd/user/stenographer.service",
-        "unit_file_state": "enabled",
-        "active_state": "active",
-        "sub_state": "running",
-        "main_pid": 1234,
-        "preview": "● stenographer.service\n   Active: active (running)",
-    }
-    values.update(overrides)
-    return status_mod.SystemdStatus(**values)
-
-
-def test_collect_systemd_status_includes_plain_ten_line_preview(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(status_mod.shutil, "which", lambda _: "/usr/bin/systemctl")
-    calls: list[tuple[list[str], dict[str, object]]] = []
-
-    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append((args, kwargs))
-        if "show" in args:
-            return _completed(
-                args,
-                stdout=(
-                    "LoadState=loaded\n"
-                    "FragmentPath=/home/test/.config/systemd/user/stenographer.service\n"
-                    "UnitFileState=enabled\n"
-                    "ActiveState=active\n"
-                    "SubState=running\n"
-                    "MainPID=1234\n"
-                ),
-            )
-        return _completed(args, returncode=3, stdout="● stenographer.service\n   Active: inactive")
-
-    monkeypatch.setattr(status_mod.subprocess, "run", fake_run)
-
-    result = status_mod.collect_systemd_status()
-
-    assert result.available is True
-    assert result.main_pid == 1234
-    assert result.preview.endswith("Active: inactive")
-    preview_args, preview_kwargs = calls[1]
-    assert preview_args == [
-        "systemctl",
-        "--user",
-        "status",
-        "stenographer.service",
-        "--no-pager",
-        "--full",
-        "--lines=10",
-    ]
-    env = preview_kwargs["env"]
-    assert isinstance(env, dict)
-    assert env["SYSTEMD_COLORS"] == "0"
-    assert env["SYSTEMD_PAGER"] == "cat"
-    assert preview_kwargs["timeout"] == 5
-
-
-def test_collect_systemd_status_handles_missing_systemctl(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(status_mod.shutil, "which", lambda _: None)
-
-    result = status_mod.collect_systemd_status()
-
-    assert result.available is False
-    assert "not available" in result.preview
-
-
-def test_collect_systemd_status_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(status_mod.shutil, "which", lambda _: "/usr/bin/systemctl")
-
-    def timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.TimeoutExpired(cmd="systemctl", timeout=5)
-
-    monkeypatch.setattr(status_mod.subprocess, "run", timeout)
-
-    result = status_mod.collect_systemd_status()
-
-    assert result.available is False
-    assert result.error == "systemctl timed out after 5s"
-
-
-def test_collect_systemd_status_preserves_missing_unit_diagnostic(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(status_mod.shutil, "which", lambda _: "/usr/bin/systemctl")
-
-    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        if "show" in args:
-            return _completed(args, returncode=1, stderr="Unit not found")
-        return _completed(
-            args, returncode=4, stderr="Unit stenographer.service could not be found."
-        )
-
-    monkeypatch.setattr(status_mod.subprocess, "run", fake_run)
-
-    result = status_mod.collect_systemd_status()
-
-    assert result.available is False
-    assert result.error == "Unit not found"
-    assert result.preview == "Unit stenographer.service could not be found."
-
-
-def test_collect_runtime_lock_reports_stale_pid(tmp_path: pathlib.Path) -> None:
-    lock_path = tmp_path / "stenographer.lock"
-    lock_path.write_text("1234\n")
-
-    result = status_mod.collect_runtime_lock(lock_path)
-
-    assert result == status_mod.RuntimeLockStatus("stale (PID 1234)", pid=1234)
-    assert lock_path.exists()
-
-
-def test_collect_runtime_lock_reports_held_pid(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    lock_path = tmp_path / "stenographer.lock"
-    lock_path.write_text("1234\n")
-
-    def locked(*args: object) -> None:
-        raise BlockingIOError
-
-    monkeypatch.setattr(status_mod.fcntl, "flock", locked)
-
-    result = status_mod.collect_runtime_lock(lock_path)
-
-    assert result == status_mod.RuntimeLockStatus("held", held=True, pid=1234)
-
-
-def test_collect_status_prefers_live_systemd_process(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    unit_path = tmp_path / "stenographer.service"
-    monkeypatch.setattr(status_mod, "collect_systemd_status", _systemd_status)
-    monkeypatch.setattr(
-        status_mod,
-        "collect_runtime_lock",
-        lambda _: status_mod.RuntimeLockStatus("held", held=True, pid=1234),
-    )
-    monkeypatch.setattr(status_mod, "_pid_exists", lambda pid: pid == 1234)
-    monkeypatch.setattr(status_mod, "process_uptime", lambda _: 3723.8)
-
-    result = status_mod.collect_status(tmp_path / "lock", unit_path)
-
-    assert result.running is True
-    assert result.manager == "systemd"
-    assert result.pid == 1234
-    assert result.uptime_seconds == 3723.8
-    assert result.unit_path == pathlib.Path("/home/test/.config/systemd/user/stenographer.service")
-
-
-def test_collect_status_detects_foreground_daemon_without_systemd(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        status_mod,
-        "collect_systemd_status",
-        lambda: _systemd_status(
-            available=False,
-            fragment_path="",
-            unit_file_state="unknown",
-            active_state="unknown",
-            sub_state="unknown",
-            main_pid=None,
-            preview="(systemctl unavailable)",
-        ),
-    )
-    monkeypatch.setattr(
-        status_mod,
-        "collect_runtime_lock",
-        lambda _: status_mod.RuntimeLockStatus("held", held=True, pid=4321),
-    )
-    monkeypatch.setattr(status_mod, "_pid_exists", lambda pid: pid == 4321)
-    monkeypatch.setattr(status_mod, "process_uptime", lambda _: 65.0)
-
-    result = status_mod.collect_status(tmp_path / "lock", tmp_path / "unit")
-
-    assert result.running is True
-    assert result.manager == "foreground"
-    assert result.pid == 4321
-
-
-def test_collect_status_reports_failed_service_as_stopped(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        status_mod,
-        "collect_systemd_status",
-        lambda: _systemd_status(
-            unit_file_state="disabled",
-            active_state="failed",
-            sub_state="failed",
-            main_pid=None,
-        ),
-    )
-    monkeypatch.setattr(
-        status_mod,
-        "collect_runtime_lock",
-        lambda _: status_mod.RuntimeLockStatus("stale (PID 9999)", pid=9999),
-    )
-    monkeypatch.setattr(status_mod, "_pid_exists", lambda _: False)
-
-    result = status_mod.collect_status(tmp_path / "lock", tmp_path / "unit")
-
-    assert result.running is False
-    assert result.manager is None
-    assert result.pid is None
-
-
-def test_render_status_shows_lifecycle_and_preview() -> None:
-    report = status_mod.DaemonStatus(
-        running=True,
-        manager="systemd",
-        pid=1234,
-        uptime_seconds=93_784,
-        unit_path=pathlib.Path("/home/test/stenographer.service"),
-        systemd=_systemd_status(),
-        runtime_lock=status_mod.RuntimeLockStatus("held", held=True, pid=1234),
-    )
-
-    output = status_mod.render_status(report)
-
-    assert "daemon:       running" in output
-    assert "manager:      systemd" in output
-    assert "uptime:       1d 2h 3m 4s" in output
-    assert "enabled:      yes (enabled)" in output
-    assert "systemd:      active (running)" in output
-    assert "systemd status preview" in output
-    assert "● stenographer.service" in output
+from stenographer.status import (
+    MAX_MESSAGE_BYTES,
+    SPECTRUM_BANDS,
+    Backend,
+    Command,
+    CommandMessage,
+    DisplayMessageGate,
+    LineReader,
+    LoadingActivityMessage,
+    NullStatusSink,
+    OverlayState,
+    ProtocolError,
+    ReadyMessage,
+    SpectrumMessage,
+    StateMessage,
+    UnavailableMessage,
+    UnavailableReason,
+    coalesce_spectrum_messages,
+    decode_message,
+    drain_display_stream,
+    encode_message,
+    error_timeout_applies,
+    should_publish_state,
+)
 
 
 @pytest.mark.parametrize(
-    ("seconds", "expected"),
+    "message",
     [
-        (0, "0s"),
-        (59.9, "59s"),
-        (60, "1m 0s"),
-        (3_661, "1h 1m 1s"),
-        (None, "unknown"),
+        StateMessage(generation=7, state=OverlayState.RECORDING),
+        SpectrumMessage(generation=7, sequence=4, levels=tuple(range(SPECTRUM_BANDS))),
+        LoadingActivityMessage(active=True),
+        LoadingActivityMessage(active=False),
+        CommandMessage(command=Command.SHUTDOWN),
+        ReadyMessage(backend=Backend.LAYER_SHELL),
+        ReadyMessage(backend=Backend.XWAYLAND),
+        UnavailableMessage(reason=UnavailableReason.BACKENDS_UNAVAILABLE),
     ],
 )
-def test_format_uptime(seconds: float | None, expected: str) -> None:
-    assert status_mod.format_uptime(seconds) == expected
+def test_protocol_round_trip_is_one_ndjson_record(message):
+    encoded = encode_message(message)
+    assert encoded.endswith("\n")
+    assert encoded.count("\n") == 1
+    assert len(encoded.encode()) <= MAX_MESSAGE_BYTES
+    assert decode_message(encoded) == message
 
 
-def test_cmd_status_exit_code_tracks_live_daemon(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: pathlib.Path,
-) -> None:
-    stopped = status_mod.DaemonStatus(
-        running=False,
-        manager=None,
-        pid=None,
-        uptime_seconds=None,
-        unit_path=None,
-        systemd=_systemd_status(
-            fragment_path="",
-            unit_file_state="disabled",
-            active_state="inactive",
-            sub_state="dead",
-            main_pid=None,
-        ),
-        runtime_lock=status_mod.RuntimeLockStatus("absent"),
+def test_protocol_uses_version_four_and_only_fixed_state_fields():
+    encoded = encode_message(StateMessage(3, OverlayState.TRANSCRIBING))
+    assert encoded == '{"v":4,"type":"state","generation":3,"state":"transcribing"}\n'
+    assert "transcript" not in encoded
+    assert "audio" not in encoded
+
+
+def test_visible_state_set_has_no_loading_pill() -> None:
+    assert tuple(OverlayState) == (
+        OverlayState.HIDDEN,
+        OverlayState.RECORDING,
+        OverlayState.TRANSCRIBING,
+        OverlayState.DELIVERING,
+        OverlayState.ERROR,
     )
-    monkeypatch.setattr(status_mod, "collect_status", lambda *_: stopped)
-
-    assert status_mod.cmd_status(tmp_path / "lock", tmp_path / "unit") == 1
-    assert "daemon:       stopped" in capsys.readouterr().out
 
 
-def test_parser_accepts_status_subcommand() -> None:
-    args = build_parser().parse_args(["status"])
-    assert args.subcommand == "status"
+def test_state_publication_repeats_errors_but_suppresses_other_duplicates() -> None:
+    assert should_publish_state(OverlayState.RECORDING, OverlayState.TRANSCRIBING) is True
+    assert should_publish_state(OverlayState.RECORDING, OverlayState.RECORDING) is False
+    assert should_publish_state(OverlayState.ERROR, OverlayState.ERROR) is True
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        "",
+        "not json\n",
+        '{"v":1,"type":"state","generation":0,"state":"hidden"}\n',
+        '{"v":2,"type":"state","generation":0,"state":"hidden"}\n',
+        '{"v":3,"type":"state","generation":0,"state":"hidden"}\n',
+        '{"v":4.0,"type":"state","generation":0,"state":"hidden"}\n',
+        '{"v":4,"v":4,"type":"state","generation":0,"state":"hidden"}\n',
+        '{"v":4,"type":"state","generation":0,"state":"hidden","state":"secret"}\n',
+        '{"v":4,"type":"state","generation":true,"state":"hidden"}\n',
+        '{"v":4,"type":"state","generation":-1,"state":"hidden"}\n',
+        '{"v":4,"type":"state","generation":0,"state":"success"}\n',
+        '{"v":4,"type":"state","generation":0,"state":"model_loading"}\n',
+        '{"v":4,"type":"state","generation":0,"state":"hidden","text":"secret"}\n',
+        '{"v":4,"type":"lifecycle","generation":1,"event":"model_ready"}\n',
+        '{"v":4,"type":"lifecycle","generation":1,"event":"transcript_ready"}\n',
+        '{"v":4,"type":"ready","backend":"gtk"}\n',
+        '{"v":4,"type":"unavailable","reason":"a detailed display error"}\n',
+        '{"v":4,"type":"command","command":"show_preview"}\n',
+        '{"v":4,"type":"command","command":"shutdown"}\ntrailing',
+    ],
+)
+def test_protocol_rejects_malformed_or_expansive_records_without_echo(record):
+    with pytest.raises(ProtocolError) as exc:
+        decode_message(record)
+    assert "secret" not in str(exc.value)
+    assert "detailed" not in str(exc.value)
+
+
+def test_protocol_rejects_oversize_records_before_parsing():
+    with pytest.raises(ProtocolError, match="too large"):
+        decode_message(" " * (MAX_MESSAGE_BYTES + 1))
+
+
+def test_encoder_rejects_invalid_typed_values():
+    with pytest.raises(ProtocolError, match="state"):
+        encode_message(StateMessage(1, "recording"))
+    with pytest.raises(ProtocolError, match="generation"):
+        encode_message(StateMessage(True, OverlayState.RECORDING))
+    with pytest.raises(ProtocolError, match="levels"):
+        encode_message(SpectrumMessage(1, 0, (0,) * (SPECTRUM_BANDS - 1)))
+    with pytest.raises(ProtocolError, match="levels"):
+        encode_message(SpectrumMessage(1, 0, (0,) * (SPECTRUM_BANDS - 1) + (256,)))
+    with pytest.raises(ProtocolError, match="levels"):
+        encode_message(SpectrumMessage(1, 0, (0,) * (SPECTRUM_BANDS - 1) + (True,)))
+    with pytest.raises(ProtocolError, match="activity"):
+        encode_message(LoadingActivityMessage(1))
+
+
+def test_loading_activity_protocol_is_a_strict_boolean_only() -> None:
+    assert encode_message(LoadingActivityMessage(True)) == (
+        '{"v":4,"type":"loading_activity","active":true}\n'
+    )
+    assert encode_message(LoadingActivityMessage(False)) == (
+        '{"v":4,"type":"loading_activity","active":false}\n'
+    )
+    for record in (
+        '{"v":4,"type":"loading_activity","active":1}\n',
+        '{"v":4,"type":"loading_activity","active":"true"}\n',
+        '{"v":4,"type":"loading_activity","active":null}\n',
+        '{"v":4,"type":"loading_activity","active":true,"phase":0}\n',
+    ):
+        with pytest.raises(ProtocolError, match=r"activity|fields"):
+            decode_message(record)
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        '{"v":4,"type":"spectrum","generation":3,"sequence":0,"levels":[0]}\n',
+        '{"v":4,"type":"spectrum","generation":3,"sequence":0,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,256]}\n',
+        '{"v":4,"type":"spectrum","generation":3,"sequence":0,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,true]}\n',
+        '{"v":4,"type":"spectrum","generation":3,"sequence":false,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}\n',
+        '{"v":4,"type":"spectrum","generation":3,"sequence":0,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"text":"secret"}\n',
+    ],
+)
+def test_protocol_rejects_malformed_spectrum_records(record):
+    with pytest.raises(ProtocolError) as exc:
+        decode_message(record)
+    assert "secret" not in str(exc.value)
+
+
+def test_display_gate_rejects_stale_generations_and_unordered_spectrum():
+    gate = DisplayMessageGate()
+    recording = StateMessage(4, OverlayState.RECORDING)
+    assert gate.accept(recording) is True
+    assert gate.accept(SpectrumMessage(4, 0, (0,) * SPECTRUM_BANDS)) is True
+    assert gate.accept(SpectrumMessage(4, 0, (1,) * SPECTRUM_BANDS)) is False
+    assert gate.accept(SpectrumMessage(3, 1, (2,) * SPECTRUM_BANDS)) is False
+    assert gate.accept(StateMessage(5, OverlayState.HIDDEN)) is True
+    assert gate.accept(SpectrumMessage(4, 2, (3,) * SPECTRUM_BANDS)) is False
+    assert gate.accept(SpectrumMessage(5, 3, (4,) * SPECTRUM_BANDS)) is False
+
+
+def test_loading_activity_preserves_recording_generation_and_spectrum_order() -> None:
+    gate = DisplayMessageGate()
+    assert gate.accept(StateMessage(4, OverlayState.RECORDING)) is True
+    assert gate.accept(SpectrumMessage(4, 0, (0,) * SPECTRUM_BANDS)) is True
+    assert gate.accept(LoadingActivityMessage(True)) is True
+    assert gate.loading_active is True
+    assert gate.recording_generation == 4
+    assert gate.accept(SpectrumMessage(4, 1, (1,) * SPECTRUM_BANDS)) is True
+    assert gate.accept(LoadingActivityMessage(False)) is True
+    assert gate.loading_active is False
+    assert gate.accept(SpectrumMessage(4, 2, (2,) * SPECTRUM_BANDS)) is True
+
+
+def test_spectrum_coalescing_keeps_latest_adjacent_frame_and_ordering_barriers():
+    state = StateMessage(3, OverlayState.RECORDING)
+    first = SpectrumMessage(3, 0, (1,) * SPECTRUM_BANDS)
+    latest = SpectrumMessage(3, 1, (2,) * SPECTRUM_BANDS)
+    loading = LoadingActivityMessage(True)
+    hidden = StateMessage(4, OverlayState.HIDDEN)
+
+    assert coalesce_spectrum_messages((state, first, latest, loading, first, hidden)) == (
+        state,
+        latest,
+        loading,
+        first,
+        hidden,
+    )
+
+
+def test_incremental_line_reader_frames_only_complete_bounded_records():
+    record = encode_message(StateMessage(2, OverlayState.RECORDING)).encode()
+    reader = LineReader()
+
+    assert reader.feed(record[:7]) == []
+    assert reader.feed(record[7:]) == [record]
+    reader.finish()
+
+
+def test_incremental_line_reader_rejects_oversize_and_truncated_records():
+    reader = LineReader()
+    with pytest.raises(ProtocolError, match="too large"):
+        reader.feed(b"x" * MAX_MESSAGE_BYTES)
+
+    reader = LineReader()
+    reader.feed(b'{"v":4')
+    with pytest.raises(ProtocolError, match="mid-record"):
+        reader.finish()
+
+
+def _drain_context() -> tuple[LineReader, DisplayMessageGate]:
+    return LineReader(), DisplayMessageGate()
+
+
+def test_drain_display_stream_frames_records_split_across_chunks():
+    reader, gate = _drain_context()
+    first = encode_message(StateMessage(1, OverlayState.RECORDING)).encode()
+    second = encode_message(SpectrumMessage(1, 0, (7,) * SPECTRUM_BANDS)).encode()
+    stream = first + second
+
+    assert drain_display_stream(stream[:9], reader, gate) == ()
+    assert drain_display_stream(stream[9:], reader, gate) == (
+        StateMessage(1, OverlayState.RECORDING),
+        SpectrumMessage(1, 0, (7,) * SPECTRUM_BANDS),
+    )
+    reader.finish()
+
+
+def test_drain_display_stream_rejects_stale_generations_through_the_gate():
+    reader, gate = _drain_context()
+    stream = (
+        encode_message(StateMessage(5, OverlayState.RECORDING))
+        + encode_message(StateMessage(3, OverlayState.TRANSCRIBING))
+        + encode_message(SpectrumMessage(3, 0, (1,) * SPECTRUM_BANDS))
+    ).encode()
+
+    assert drain_display_stream(stream, reader, gate) == (StateMessage(5, OverlayState.RECORDING),)
+
+
+def test_drain_display_stream_coalesces_adjacent_spectrum_frames_only():
+    reader, gate = _drain_context()
+    stream = (
+        encode_message(StateMessage(2, OverlayState.RECORDING))
+        + encode_message(SpectrumMessage(2, 0, (1,) * SPECTRUM_BANDS))
+        + encode_message(SpectrumMessage(2, 1, (2,) * SPECTRUM_BANDS))
+        + encode_message(LoadingActivityMessage(True))
+        + encode_message(SpectrumMessage(2, 2, (3,) * SPECTRUM_BANDS))
+        + encode_message(CommandMessage(Command.SHUTDOWN))
+    ).encode()
+
+    assert drain_display_stream(stream, reader, gate) == (
+        StateMessage(2, OverlayState.RECORDING),
+        SpectrumMessage(2, 1, (2,) * SPECTRUM_BANDS),
+        LoadingActivityMessage(True),
+        SpectrumMessage(2, 2, (3,) * SPECTRUM_BANDS),
+        CommandMessage(Command.SHUTDOWN),
+    )
+
+
+def test_drain_display_stream_rejects_malformed_and_oversize_lines():
+    reader, gate = _drain_context()
+    with pytest.raises(ProtocolError, match="not valid JSON"):
+        drain_display_stream(b"{broken\n", reader, gate)
+
+    reader, gate = _drain_context()
+    with pytest.raises(ProtocolError, match="too large"):
+        drain_display_stream(b"x" * MAX_MESSAGE_BYTES, reader, gate)
+
+
+def test_drain_display_stream_rejects_unexpected_parent_message_types():
+    reader, gate = _drain_context()
+    stream = encode_message(ReadyMessage(Backend.XWAYLAND)).encode()
+    with pytest.raises(ProtocolError, match="unexpected parent protocol message"):
+        drain_display_stream(stream, reader, gate)
+
+
+def test_error_timeout_is_guarded_by_generation_and_state():
+    error = StateMessage(10, OverlayState.ERROR)
+    assert error_timeout_applies(10, error) is True
+    assert error_timeout_applies(9, error) is False
+    assert error_timeout_applies(10, StateMessage(10, OverlayState.RECORDING)) is False
+
+
+def test_null_sink_accepts_all_fixed_display_metadata():
+    sink = NullStatusSink()
+    sink.publish(OverlayState.RECORDING)
+    sink.loading_activity(True)
+    sink.loading_activity(False)
+    sink.audio_block(object(), 16000, 4)
+    sink.close()

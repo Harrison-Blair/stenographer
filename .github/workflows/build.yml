@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: build
+
+# This validates both native bundles but deliberately does not publish them.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  completion:
+    name: native shell completion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install native shells
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bash-completion fish zsh
+      - name: Install CLI without runtime dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --no-deps -e .
+      - name: Check completion syntax and behavior
+        run: scripts/check-completions.sh
+
+  build-release:
+    # The main-branch ruleset requires this exact check name.
+    name: build release binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Verify native architecture
+        run: test "$(uname -m)" = x86_64
+      - name: Install system build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential file libffi-dev libportaudio2 libwayland-dev \
+            pkg-config python3-dev
+      - name: Install build dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e ".[build]"
+      - name: Build and inspect standalone bundle
+        run: |
+          scripts/build.sh --verbose
+          file dist/stenographer/stenographer | tee /tmp/stenographer-file.txt
+          grep -Eq 'x86-64|x86_64' /tmp/stenographer-file.txt
+          dist/stenographer/stenographer --version
+          dist/stenographer/stenographer --help
+
+  build-release-arm64:
+    name: build release binary (ARM64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Verify native architecture
+        run: test "$(uname -m)" = aarch64
+      - name: Install system and PyWayland source-build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential file libffi-dev libportaudio2 libwayland-dev \
+            pkg-config python3-dev
+      - name: Install build dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e ".[build]"
+      - name: Build and inspect standalone bundle
+        run: |
+          scripts/build.sh --verbose
+          file dist/stenographer/stenographer | tee /tmp/stenographer-file.txt
+          grep -Eq 'ARM aarch64|aarch64' /tmp/stenographer-file.txt
+          dist/stenographer/stenographer --version
+          dist/stenographer/stenographer --help

@@ -1,324 +1,405 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Read-only lifecycle status collection for the Stenographer daemon.
+"""Privacy-safe lifecycle and display data shared with the overlay helper.
 
-The collector combines systemd user-unit metadata with the daemon's runtime
-lock so foreground launches remain visible when no systemd unit is active.
-It never creates, removes, or repairs either resource.
+The display helper is optional and isolated from dictation.  This module keeps
+its contract deliberately small: fixed enums, strict versioned NDJSON, and pure
+generation/coalescing policy.  The only model-load metadata is a boolean whose
+pulse timing stays helper-local.  No protocol variant has a free-form payload
+or contains raw microphone samples.
 """
 
 from __future__ import annotations
 
-import errno
-import fcntl
-import os
-import pathlib
-import shutil
-import subprocess
+import json
+from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import StrEnum
+from typing import Protocol, runtime_checkable
 
-from stenographer.systemd import UNIT_NAME
+PROTOCOL_VERSION = 4
+MAX_MESSAGE_BYTES = 512
+MAX_GENERATION = (1 << 63) - 1
+ERROR_DISPLAY_SECONDS = 2.5
+SPECTRUM_BANDS = 18
 
-_SYSTEMD_PROPERTIES = (
-    "LoadState",
-    "FragmentPath",
-    "UnitFileState",
-    "ActiveState",
-    "SubState",
-    "MainPID",
+
+class OverlayState(StrEnum):
+    HIDDEN = "hidden"
+    RECORDING = "recording"
+    TRANSCRIBING = "transcribing"
+    DELIVERING = "delivering"
+    ERROR = "error"
+
+
+def should_publish_state(current: OverlayState, candidate: OverlayState) -> bool:
+    """Return whether a daemon state update needs a new helper generation. PURE.
+
+    Stable operational states are coalesced, but each error represents a new
+    failure and therefore needs its own display deadline.
+    """
+    return candidate is OverlayState.ERROR or candidate is not current
+
+
+class Command(StrEnum):
+    SHUTDOWN = "shutdown"
+
+
+class Backend(StrEnum):
+    LAYER_SHELL = "layer-shell"
+    XWAYLAND = "xwayland"
+
+
+class UnavailableReason(StrEnum):
+    """Fixed diagnostics safe to expose to the parent and ``doctor``."""
+
+    NO_WAYLAND_DISPLAY = "no_wayland_display"
+    WAYLAND_CONNECT_FAILED = "wayland_connect_failed"
+    REQUIRED_GLOBALS_MISSING = "required_wayland_globals_missing"
+    NO_X_DISPLAY = "no_x_display"
+    X_CONNECT_FAILED = "x_connect_failed"
+    X_ARGB_UNAVAILABLE = "x_argb_unavailable"
+    X_EXTENSIONS_UNAVAILABLE = "x_extensions_unavailable"
+    BACKENDS_UNAVAILABLE = "backends_unavailable"
+    BACKEND_LOST = "backend_lost"
+    HELPER_CRASHED = "helper_crashed"
+    PROTOCOL_ERROR = "protocol_error"
+    INTERNAL_ERROR = "internal_error"
+
+
+@dataclass(frozen=True, slots=True)
+class StateMessage:
+    generation: int
+    state: OverlayState
+
+
+@dataclass(frozen=True, slots=True)
+class SpectrumMessage:
+    generation: int
+    sequence: int
+    levels: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LoadingActivityMessage:
+    active: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CommandMessage:
+    command: Command
+
+
+@dataclass(frozen=True, slots=True)
+class ReadyMessage:
+    backend: Backend
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableMessage:
+    reason: UnavailableReason
+
+
+ProtocolMessage = (
+    StateMessage
+    | SpectrumMessage
+    | LoadingActivityMessage
+    | CommandMessage
+    | ReadyMessage
+    | UnavailableMessage
 )
-_SYSTEMCTL_TIMEOUT_SECONDS = 5
 
 
-@dataclass(frozen=True)
-class SystemdStatus:
-    """A snapshot of the systemd user unit and its human-readable preview."""
-
-    available: bool
-    load_state: str = "unknown"
-    fragment_path: str = ""
-    unit_file_state: str = "unknown"
-    active_state: str = "unknown"
-    sub_state: str = "unknown"
-    main_pid: int | None = None
-    preview: str = "(systemd status unavailable)"
-    error: str | None = None
+class ProtocolError(ValueError):
+    """A malformed helper message, described without reproducing its payload."""
 
 
-@dataclass(frozen=True)
-class RuntimeLockStatus:
-    """A snapshot of the single-instance runtime lock."""
-
-    state: str
-    held: bool = False
-    pid: int | None = None
+def _valid_generation(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_GENERATION
 
 
-@dataclass(frozen=True)
-class DaemonStatus:
-    """Combined daemon, systemd unit, and runtime-lock status."""
-
-    running: bool
-    manager: str | None
-    pid: int | None
-    uptime_seconds: float | None
-    unit_path: pathlib.Path | None
-    systemd: SystemdStatus
-    runtime_lock: RuntimeLockStatus
-
-
-def _systemctl_environment() -> dict[str, str]:
-    """Return an environment that makes captured systemctl output readable."""
-    return {
-        **os.environ,
-        "SYSTEMD_COLORS": "0",
-        "SYSTEMD_PAGER": "cat",
-    }
-
-
-def _parse_systemd_properties(output: str) -> dict[str, str]:
-    properties: dict[str, str] = {}
-    for line in output.splitlines():
-        key, separator, value = line.partition("=")
-        if separator and key in _SYSTEMD_PROPERTIES:
-            properties[key] = value
-    return properties
-
-
-def _parse_pid(value: str | None) -> int | None:
-    if value is None or not value.isdigit():
-        return None
-    pid = int(value)
-    return pid if pid > 0 else None
-
-
-def collect_systemd_status() -> SystemdStatus:
-    """Collect stable unit properties and a ten-line ``systemctl status`` preview."""
-    if shutil.which("systemctl") is None:
-        return SystemdStatus(
-            available=False,
-            preview="(systemctl is not available)",
-            error="systemctl is not available",
+def _valid_levels(value: object) -> bool:
+    return (
+        isinstance(value, tuple | list)
+        and len(value) == SPECTRUM_BANDS
+        and all(
+            isinstance(level, int) and not isinstance(level, bool) and 0 <= level <= 255
+            for level in value
         )
-
-    env = _systemctl_environment()
-    property_arg = "--property=" + ",".join(_SYSTEMD_PROPERTIES)
-    try:
-        show_result = subprocess.run(
-            ["systemctl", "--user", "show", UNIT_NAME, "--no-pager", property_arg],
-            check=False,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=_SYSTEMCTL_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        message = f"systemctl timed out after {_SYSTEMCTL_TIMEOUT_SECONDS}s"
-        return SystemdStatus(available=False, preview=f"({message})", error=message)
-    except OSError as exc:
-        message = f"cannot run systemctl: {exc}"
-        return SystemdStatus(available=False, preview=f"({message})", error=message)
-
-    properties = _parse_systemd_properties(show_result.stdout)
-    show_error = None
-    if show_result.returncode != 0:
-        show_error = show_result.stderr.strip() or "systemctl show failed"
-
-    try:
-        preview_result = subprocess.run(
-            [
-                "systemctl",
-                "--user",
-                "status",
-                UNIT_NAME,
-                "--no-pager",
-                "--full",
-                "--lines=10",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=_SYSTEMCTL_TIMEOUT_SECONDS,
-        )
-        preview = (
-            preview_result.stdout.rstrip()
-            or preview_result.stderr.rstrip()
-            or "(systemctl status returned no output)"
-        )
-    except subprocess.TimeoutExpired:
-        preview = f"(systemctl status timed out after {_SYSTEMCTL_TIMEOUT_SECONDS}s)"
-    except OSError as exc:
-        preview = f"(cannot run systemctl status: {exc})"
-
-    return SystemdStatus(
-        available=bool(properties),
-        load_state=properties.get("LoadState", "unknown"),
-        fragment_path=properties.get("FragmentPath", ""),
-        unit_file_state=properties.get("UnitFileState", "unknown"),
-        active_state=properties.get("ActiveState", "unknown"),
-        sub_state=properties.get("SubState", "unknown"),
-        main_pid=_parse_pid(properties.get("MainPID")),
-        preview=preview,
-        error=show_error,
     )
 
 
-def collect_runtime_lock(lock_path: pathlib.Path) -> RuntimeLockStatus:
-    """Inspect whether *lock_path* is held without creating or removing it."""
-    if not lock_path.exists():
-        return RuntimeLockStatus("absent")
+def _expect_fields(obj: dict, fields: frozenset[str]) -> None:
+    if frozenset(obj) != fields:
+        raise ProtocolError("protocol record has unexpected fields")
 
+
+def _object_without_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    obj: dict[str, object] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ProtocolError("protocol record has duplicate fields")
+        obj[key] = value
+    return obj
+
+
+def _enum_value(enum_type, value: object, field: str):
+    if not isinstance(value, str):
+        raise ProtocolError(f"protocol field {field} has wrong type")
     try:
-        with lock_path.open(encoding="utf-8") as lock_file:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                try:
-                    value = lock_file.read().strip()
-                except OSError as exc:
-                    return RuntimeLockStatus(f"held (cannot read PID: {exc})", held=True)
-                pid = _parse_pid(value)
-                if pid is None:
-                    return RuntimeLockStatus("held (invalid PID)", held=True)
-                return RuntimeLockStatus("held", held=True, pid=pid)
-            except OSError as exc:
-                if exc.errno in (errno.EACCES, errno.EAGAIN):
-                    return RuntimeLockStatus("held (PID unavailable)", held=True)
-                return RuntimeLockStatus(f"unknown ({exc})")
-
-            value = lock_file.read().strip()
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-    except OSError as exc:
-        return RuntimeLockStatus(f"unknown ({exc})")
-
-    pid = _parse_pid(value)
-    if pid is not None:
-        return RuntimeLockStatus(f"stale (PID {pid})", pid=pid)
-    if value:
-        return RuntimeLockStatus("stale (invalid PID)")
-    return RuntimeLockStatus("stale (empty)")
+        return enum_type(value)
+    except ValueError:
+        raise ProtocolError(f"protocol field {field} has unknown value") from None
 
 
-def _pid_exists(pid: int | None) -> bool:
-    if pid is None:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def process_uptime(pid: int) -> float | None:
-    """Return Linux process uptime in seconds, or ``None`` if it races with exit."""
-    try:
-        stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
-        closing_parenthesis = stat.rfind(")")
-        fields_after_name = stat[closing_parenthesis + 2 :].split()
-        start_ticks = int(fields_after_name[19])
-        ticks_per_second = os.sysconf("SC_CLK_TCK")
-        system_uptime = float(pathlib.Path("/proc/uptime").read_text().split()[0])
-    except OSError, ValueError, IndexError:
-        return None
-    return max(0.0, system_uptime - (start_ticks / ticks_per_second))
-
-
-def collect_status(lock_path: pathlib.Path, unit_path: pathlib.Path) -> DaemonStatus:
-    """Return a combined point-in-time lifecycle report."""
-    systemd = collect_systemd_status()
-    runtime_lock = collect_runtime_lock(lock_path)
-
-    systemd_live = systemd.active_state in {"active", "activating", "reloading"} and _pid_exists(
-        systemd.main_pid
-    )
-    lock_live = runtime_lock.held and _pid_exists(runtime_lock.pid)
-
-    if systemd_live:
-        manager = "systemd"
-        pid = systemd.main_pid
-    elif lock_live:
-        manager = "foreground"
-        pid = runtime_lock.pid
+def encode_message(message: ProtocolMessage) -> str:
+    """Encode exactly one bounded NDJSON record."""
+    if isinstance(message, StateMessage):
+        if not _valid_generation(message.generation):
+            raise ProtocolError("protocol generation is out of range")
+        if not isinstance(message.state, OverlayState):
+            raise ProtocolError("protocol state has wrong type")
+        payload = {
+            "v": PROTOCOL_VERSION,
+            "type": "state",
+            "generation": message.generation,
+            "state": message.state.value,
+        }
+    elif isinstance(message, SpectrumMessage):
+        if not _valid_generation(message.generation):
+            raise ProtocolError("protocol generation is out of range")
+        if not _valid_generation(message.sequence):
+            raise ProtocolError("protocol sequence is out of range")
+        if not isinstance(message.levels, tuple) or not _valid_levels(message.levels):
+            raise ProtocolError("protocol spectrum levels are invalid")
+        payload = {
+            "v": PROTOCOL_VERSION,
+            "type": "spectrum",
+            "generation": message.generation,
+            "sequence": message.sequence,
+            "levels": list(message.levels),
+        }
+    elif isinstance(message, LoadingActivityMessage):
+        if not isinstance(message.active, bool):
+            raise ProtocolError("protocol loading activity has wrong type")
+        payload = {
+            "v": PROTOCOL_VERSION,
+            "type": "loading_activity",
+            "active": message.active,
+        }
+    elif isinstance(message, CommandMessage):
+        if not isinstance(message.command, Command):
+            raise ProtocolError("protocol command has wrong type")
+        payload = {"v": PROTOCOL_VERSION, "type": "command", "command": message.command.value}
+    elif isinstance(message, ReadyMessage):
+        if not isinstance(message.backend, Backend):
+            raise ProtocolError("protocol backend has wrong type")
+        payload = {"v": PROTOCOL_VERSION, "type": "ready", "backend": message.backend.value}
+    elif isinstance(message, UnavailableMessage):
+        if not isinstance(message.reason, UnavailableReason):
+            raise ProtocolError("protocol unavailable reason has wrong type")
+        payload = {"v": PROTOCOL_VERSION, "type": "unavailable", "reason": message.reason.value}
     else:
-        manager = None
-        pid = None
-
-    discovered_unit_path: pathlib.Path | None = None
-    if systemd.fragment_path:
-        discovered_unit_path = pathlib.Path(systemd.fragment_path)
-    elif unit_path.is_file():
-        discovered_unit_path = unit_path
-
-    return DaemonStatus(
-        running=pid is not None,
-        manager=manager,
-        pid=pid,
-        uptime_seconds=process_uptime(pid) if pid is not None else None,
-        unit_path=discovered_unit_path,
-        systemd=systemd,
-        runtime_lock=runtime_lock,
-    )
+        raise ProtocolError("unsupported protocol message type")
+    record = json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n"
+    if len(record.encode("utf-8")) > MAX_MESSAGE_BYTES:
+        raise ProtocolError("protocol record is too large")
+    return record
 
 
-def format_uptime(seconds: float | None) -> str:
-    """Format an uptime duration as compact days, hours, minutes, and seconds."""
-    if seconds is None:
-        return "unknown"
-    remaining = max(0, int(seconds))
-    days, remaining = divmod(remaining, 86_400)
-    hours, remaining = divmod(remaining, 3_600)
-    minutes, seconds_part = divmod(remaining, 60)
-    parts: list[str] = []
-    if days:
-        parts.append(f"{days}d")
-    if hours or days:
-        parts.append(f"{hours}h")
-    if minutes or hours or days:
-        parts.append(f"{minutes}m")
-    parts.append(f"{seconds_part}s")
-    return " ".join(parts)
+def decode_message(record: str | bytes) -> ProtocolMessage:
+    """Decode one strict NDJSON record without reflecting malformed content."""
+    if isinstance(record, bytes):
+        if len(record) > MAX_MESSAGE_BYTES:
+            raise ProtocolError("protocol record is too large")
+        try:
+            record = record.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ProtocolError("protocol record is not UTF-8") from None
+    elif not isinstance(record, str):
+        raise ProtocolError("protocol record has wrong type")
+    if len(record.encode("utf-8")) > MAX_MESSAGE_BYTES:
+        raise ProtocolError("protocol record is too large")
+    if record.endswith("\n"):
+        record = record[:-1]
+    if not record or "\n" in record or "\r" in record:
+        raise ProtocolError("protocol record is not one NDJSON line")
+    try:
+        obj = json.loads(record, object_pairs_hook=_object_without_duplicate_keys)
+    except (json.JSONDecodeError, RecursionError):
+        raise ProtocolError("protocol record is not valid JSON") from None
+    if not isinstance(obj, dict):
+        raise ProtocolError("protocol record is not an object")
+    version = obj.get("v")
+    if not isinstance(version, int) or isinstance(version, bool) or version != PROTOCOL_VERSION:
+        raise ProtocolError("unsupported protocol version")
+    message_type = obj.get("type")
+    if message_type == "state":
+        _expect_fields(obj, frozenset({"v", "type", "generation", "state"}))
+        if not _valid_generation(obj["generation"]):
+            raise ProtocolError("protocol generation is out of range")
+        return StateMessage(obj["generation"], _enum_value(OverlayState, obj["state"], "state"))
+    if message_type == "spectrum":
+        _expect_fields(obj, frozenset({"v", "type", "generation", "sequence", "levels"}))
+        if not _valid_generation(obj["generation"]):
+            raise ProtocolError("protocol generation is out of range")
+        if not _valid_generation(obj["sequence"]):
+            raise ProtocolError("protocol sequence is out of range")
+        if not _valid_levels(obj["levels"]):
+            raise ProtocolError("protocol spectrum levels are invalid")
+        return SpectrumMessage(obj["generation"], obj["sequence"], tuple(obj["levels"]))
+    if message_type == "loading_activity":
+        _expect_fields(obj, frozenset({"v", "type", "active"}))
+        if not isinstance(obj["active"], bool):
+            raise ProtocolError("protocol loading activity has wrong type")
+        return LoadingActivityMessage(obj["active"])
+    if message_type == "command":
+        _expect_fields(obj, frozenset({"v", "type", "command"}))
+        return CommandMessage(_enum_value(Command, obj["command"], "command"))
+    if message_type == "ready":
+        _expect_fields(obj, frozenset({"v", "type", "backend"}))
+        return ReadyMessage(_enum_value(Backend, obj["backend"], "backend"))
+    if message_type == "unavailable":
+        _expect_fields(obj, frozenset({"v", "type", "reason"}))
+        return UnavailableMessage(_enum_value(UnavailableReason, obj["reason"], "reason"))
+    raise ProtocolError("protocol record has unknown message type")
 
 
-def _format_enabled(systemd: SystemdStatus) -> str:
-    state = systemd.unit_file_state
-    if state in {"enabled", "enabled-runtime"}:
-        return f"yes ({state})"
-    if state == "unknown" and systemd.load_state == "not-found":
-        return "no (not installed)"
-    if state == "unknown":
-        return "unknown"
-    return f"no ({state})"
+class LineReader:
+    """Bounded incremental NDJSON framing shared by pipe and display loops."""
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+
+    def feed(self, chunk: bytes) -> list[bytes]:
+        if not chunk:
+            return []
+        self._buffer.extend(chunk)
+        records = []
+        while (newline := self._buffer.find(b"\n")) >= 0:
+            record = bytes(self._buffer[: newline + 1])
+            del self._buffer[: newline + 1]
+            if len(record) > MAX_MESSAGE_BYTES:
+                raise ProtocolError("protocol record is too large")
+            records.append(record)
+        if len(self._buffer) >= MAX_MESSAGE_BYTES:
+            raise ProtocolError("protocol record is too large")
+        return records
+
+    def finish(self) -> None:
+        if self._buffer:
+            raise ProtocolError("protocol stream ended mid-record")
 
 
-def render_status(status: DaemonStatus) -> str:
-    """Render a human-readable lifecycle report and systemd preview."""
-    systemd_state = status.systemd.active_state
-    if status.systemd.sub_state != "unknown":
-        systemd_state += f" ({status.systemd.sub_state})"
+@dataclass(slots=True)
+class DisplayMessageGate:
+    """Reject stale generated records without coupling loading to recording. PURE."""
 
-    lines = [
-        "stenographer status",
-        "====================",
-        f"daemon:       {'running' if status.running else 'stopped'}",
-        f"manager:      {status.manager or 'none'}",
-        f"pid:          {status.pid if status.pid is not None else '-'}",
-        f"uptime:       {format_uptime(status.uptime_seconds) if status.running else '-'}",
-        f"unit file:    {status.unit_path if status.unit_path is not None else 'not installed'}",
-        f"enabled:      {_format_enabled(status.systemd)}",
-        f"systemd:      {systemd_state}",
-        f"runtime lock: {status.runtime_lock.state}",
-        "",
-        "systemd status preview",
-        "======================",
-        status.systemd.preview,
-    ]
-    return "\n".join(lines)
+    current: int = -1
+    recording_generation: int | None = None
+    sequence: int = -1
+    loading_active: bool = False
+
+    def accept(
+        self,
+        message: StateMessage | SpectrumMessage | LoadingActivityMessage,
+    ) -> bool:
+        if isinstance(message, LoadingActivityMessage):
+            self.loading_active = message.active
+            return True
+        if isinstance(message, SpectrumMessage):
+            if message.generation != self.recording_generation or message.sequence <= self.sequence:
+                return False
+            self.sequence = message.sequence
+            return True
+        if not isinstance(message, StateMessage):
+            raise TypeError("display gate accepts only generated display messages")
+        if not _valid_generation(message.generation):
+            raise ValueError("generation must be a non-negative signed 64-bit integer")
+        if message.generation <= self.current:
+            return False
+        self.current = message.generation
+        self.recording_generation = (
+            message.generation if message.state is OverlayState.RECORDING else None
+        )
+        self.sequence = -1
+        return True
 
 
-def cmd_status(lock_path: pathlib.Path, unit_path: pathlib.Path) -> int:
-    """Print the current daemon status and return zero only when it is running."""
-    status = collect_status(lock_path, unit_path)
-    print(render_status(status))
-    return 0 if status.running else 1
+def coalesce_spectrum_messages(
+    messages: Iterable[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage],
+) -> tuple[
+    StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage,
+    ...,
+]:
+    """Replace adjacent spectrum frames while retaining every ordering barrier."""
+    pending: list[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage] = []
+    for message in messages:
+        if (
+            isinstance(message, SpectrumMessage)
+            and pending
+            and isinstance(pending[-1], SpectrumMessage)
+        ):
+            pending[-1] = message
+        else:
+            pending.append(message)
+    return tuple(pending)
+
+
+def drain_display_stream(
+    chunk: bytes,
+    reader: LineReader,
+    gate: DisplayMessageGate,
+) -> tuple[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage, ...]:
+    """Frame, decode, gate, and coalesce one chunk of the parent display stream.
+
+    Only display and command records are valid from the parent; any other
+    protocol message raises ``ProtocolError`` without reflecting its content.
+    """
+    accepted: list[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage] = []
+    for record in reader.feed(chunk):
+        message = decode_message(record)
+        if isinstance(message, StateMessage | SpectrumMessage | LoadingActivityMessage):
+            if not gate.accept(message):
+                continue
+        elif not isinstance(message, CommandMessage):
+            raise ProtocolError("unexpected parent protocol message")
+        accepted.append(message)
+    return coalesce_spectrum_messages(accepted)
+
+
+def error_timeout_applies(expected_generation: int, current: StateMessage) -> bool:
+    """Guard a delayed hide so it cannot erase a newer visible state."""
+    return current.generation == expected_generation and current.state is OverlayState.ERROR
+
+
+@runtime_checkable
+class StatusSink(Protocol):
+    """Nonblocking daemon-side lifecycle destination.
+
+    Concrete sinks may enqueue work, but these calls must not perform display or
+    child-process I/O because hotkey callbacks invoke them under the daemon lock.
+    """
+
+    def publish(self, state: OverlayState) -> None: ...
+
+    def loading_activity(self, active: bool) -> None: ...
+
+    def audio_block(self, samples: object, sample_rate: int, stream_epoch: int) -> None: ...
+
+    def close(self) -> None: ...
+
+
+class NullStatusSink:
+    """No-op sink used when the overlay is disabled or unavailable."""
+
+    def publish(self, state: OverlayState) -> None:
+        pass
+
+    def loading_activity(self, active: bool) -> None:
+        pass
+
+    def audio_block(self, samples: object, sample_rate: int, stream_epoch: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass

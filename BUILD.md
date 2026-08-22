@@ -1,121 +1,100 @@
-<!--
-SPDX-License-Identifier: GPL-3.0-or-later
--->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Building a standalone binary
+# Building a standalone bundle
 
-The project can be packaged as a self-contained Linux binary via PyInstaller.
-The result needs no `pip install` and no Python on the target system (other
-than the system libraries PyInstaller cannot bundle).
+A local PyInstaller onedir build for machines without a Python setup, plus a
+limited draft-release channel for Linux x86_64 and AArch64. Scope remains
+deliberately narrow: no multi-distro installer or self-update (see
+`docs/reauthor.md` §7). The included installer targets one machine and one user
+only.
 
 ## Quick start
 
 ```sh
-.venv/bin/pip install -e ".[build]"
+python3 -m venv .venv                      # if not already present
+.venv/bin/pip install -e ".[dev,build]"
 scripts/build.sh
-./dist/stenographer/stenographer --version
-./dist/stenographer/stenographer doctor
+dist/stenographer/stenographer --version
 ```
 
-## Prebuilt binaries
+## Draft releases
 
-Prebuilt `dist/stenographer/` bundles (one per release) are attached
-to the GitHub Releases for this repository. The release workflow
-(`.github/workflows/release.yml`) builds them on every merge to `main` and
-attaches the tarball + SHA-256, plus a self-bootstrapping `install.sh`.
+A push to `main`, or a manual workflow dispatch targeting `main`, creates or
+refreshes an unpublished GitHub draft for the checked-in `X.Y.Z` version. It
+does so only after lint, non-integration tests, and both native standalone
+builds pass. The draft contains:
 
-The easiest way to consume a release is the installer, which downloads
-the tarball, verifies its SHA-256, installs it, and sets up systemd +
-config for you:
+- `stenographer-X.Y.Z-linux-x86_64.tar.gz`
+- `stenographer-X.Y.Z-linux-aarch64.tar.gz`
+- `stenographer-X.Y.Z-py3-none-any.whl`
+- `stenographer-X.Y.Z.tar.gz`
+- `SHA256SUMS`
+
+Each standalone archive contains the complete onedir bundle and `LICENSE`.
+The workflow checks every SHA-256 entry and records signed provenance for all
+five files. It never publishes a release: publishing the reviewed draft
+manually creates the stable `vX.Y.Z` release.
+
+The native ARM runner validates packaging, executable architecture, `--version`,
+and `--help`; it cannot validate Wayland, microphone, or uinput behavior. Before
+publishing the first AArch64 release, run `doctor` and real dictation on an
+AArch64 Wayland machine.
+
+PyWayland 0.4.18 normally installs from a wheel. If no wheel exists for the
+host Python/architecture, installing the source package also needs a C compiler,
+Python development headers, Wayland client/server development headers, and
+libffi development headers (for example `build-essential`, `python3-dev`,
+`libwayland-dev`, and `libffi-dev` on Debian-family systems). These are build
+requirements only; the onedir bundle contains the completed CFFI extension.
+
+`scripts/build.sh` and `scripts/install.sh` show elapsed time and the current
+phase in animated progress bars, with the last three log lines beneath them.
+The build also shows measured hook and hidden-import counts. Both deliberately
+omit an overall percentage and ETA because their underlying tools expose no
+reliable total work estimate. Full tool output goes to `dist/build.log` /
+`dist/install.log` (dumped on failure); pass `--verbose` to stream the raw
+output instead.
+
+To force a fresh build and immediately install it, run:
 
 ```sh
-curl -fsSL https://github.com/Harrison-Blair/stenographer/releases/latest/download/install.sh | bash
+scripts/reinstall.sh
 ```
 
-To do it by hand instead:
+Installer options are forwarded to `scripts/install.sh`; `--verbose` applies
+to both stages.
 
-```sh
-VERSION=0.7.0
-curl -L -o /tmp/stenographer.tar.gz \
-  "https://github.com/Harrison-Blair/stenographer/releases/download/v${VERSION}/stenographer-${VERSION}-linux-x86_64.tar.gz"
-curl -L -o /tmp/stenographer.tar.gz.sha256 \
-  "https://github.com/Harrison-Blair/stenographer/releases/download/v${VERSION}/stenographer-${VERSION}-linux-x86_64.sha256"
-cd /tmp && sha256sum -c stenographer.tar.gz.sha256
-tar -xzf stenographer.tar.gz
-mv stenographer /opt/
-/opt/stenographer/stenographer --version
-```
+## What you get
 
-Or, if you have a previous build installed, just run
-`./dist/stenographer/stenographer update`.
+An onedir bundle at `dist/stenographer/` — the `stenographer` binary plus an
+`_internal/` tree. It is relocatable as a directory: copy the whole thing
+anywhere and symlink the binary onto your `PATH`. Do not extract single files
+out of it.
 
-## Output
+The bundle includes the lifecycle icon, Caveat font and OFL license, native
+Bash/Zsh/Fish completion definitions, generated
+layer-shell/fractional-scale/viewporter Python bindings, Pillow, python-xlib,
+and the completed PyWayland CFFI extension with its collected shared-library
+requirements. Protocol bindings are generated in the source tree before
+building; neither installed source packages nor frozen helpers run a protocol
+scanner. The private helper re-exec entry remains intentionally absent from
+public `--help` output.
 
-`dist/stenographer/stenographer` is a launcher script. The bundled payload
-lives in `dist/stenographer/_internal/` (the Python interpreter, all
-dependencies, and the six sound cues under
-`_internal/stenographer/assets/sounds/`).
+## Deliberately not bundled
 
-The total directory is currently ~510 MB on Linux x86_64. The largest
-contributors include the GTK runtime, CTranslate2, and ONNX Runtime.
-The small Silero VAD ONNX asset shipped by faster-whisper is bundled under
-`_internal/faster_whisper/assets/`; the speech-recognition model remains an
-external download.
+The target system must provide:
 
-## What the binary does NOT bundle
+- **libportaudio** (e.g. the `libportaudio2` package) — excluded from the
+  bundle by `packaging/hook-sounddevice.py` so the system audio stack is
+  used; found at runtime via `packaging/rthooks/py_rth_portaudio.py`.
+- **`wl-copy`** (wl-clipboard) — clipboard delivery.
+- **`canberra-gtk-play`, `pw-play`, or `paplay`** — audio cues, in preference
+  order (degrades to silent if absent).
+- **`/dev/uinput` write access** and membership in the **`input` group** —
+  paste chord and hotkey capture.
+- **The ASR model** (~1.5 GB) — never bundled. Fetch it once with
+  `dist/stenographer/stenographer model download` (the only network path;
+  `certifi` is bundled for exactly this).
 
-| Asset                                | How the user gets it                            |
-|--------------------------------------|-------------------------------------------------|
-| ASR model (`whisper-medium.en`, ~1.5 GB) | `./dist/stenographer/stenographer model download` |
-| System CLIs (`wtype`, `wl-copy`, `pw-play`, `paplay`, `notify-send`) | Distro packages — see the Requirements table in `README.md` |
-| System libraries (`libevdev`, `libportaudio`, GTK4, `gtk4-layer-shell`) | Distro packages |
-
-## Runtime dependencies on the target machine
-
-Install once on the target machine (Debian/Ubuntu names shown):
-
-```sh
-sudo apt install wtype wl-clipboard pipewire-audio libevdev1 libportaudio2 \
-  libnotify-bin libgtk-4-1 libgtk4-layer-shell0 gir1.2-freedesktop \
-  gir1.2-gtk4layershell-1.0
-sudo usermod -aG input $USER   # log out / back in for this to take effect
-```
-
-The user must be in the `input` group for the hotkey to be capturable.
-
-## systemd integration with the binary
-
-Replace the `ExecStart` line in
-`packaging/stenographer.service.in` with:
-
-```ini
-ExecStart=/opt/stenographer/stenographer run
-```
-
-(or wherever the user copies `dist/stenographer/`).
-
-## Development workflow
-
-Develop features on the `dev` branch. Merging `dev` → `main` triggers
-`.github/workflows/release.yml`, which lints, tests, builds the binary, and
-**publishes** a `v<version>` GitHub release. Because the workflow refuses to
-reuse an existing release, **every merge to `main` must bump
-`__version__` in `src/stenographer/_version.py`.** Source and local builds use
-the `<version>-dev` form; the release workflow validates and strips that suffix
-in its temporary checkout before building the published binary.
-
-Set up the git hooks once after cloning:
-
-```sh
-./scripts/install-hooks.sh
-```
-
-This points `core.hooksPath` at `.githooks/`, whose `pre-commit` hook runs
-`ruff format` on staged Python files and re-stages them — so commits are always
-formatted and CI's `ruff format --check` never fails on your work.
-
-## Rebuilding
-
-The build is fully reproducible from `packaging/stenographer.spec` and
-`scripts/build.sh`. No manual steps are required beyond installing
-`.[build]` and running the script.
+`dist/stenographer/stenographer doctor` reports exactly what is missing
+(exit 78 when a required capability is absent).

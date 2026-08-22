@@ -4,10 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`stenographer` is a Wayland-only, local-only push-to-talk / toggle dictation
-daemon. Press a global hotkey, speak, and the recognised text is typed at the
-cursor (via `wtype`) and copied to the Wayland clipboard (via `wl-copy`).
-Offline, English-only, GPL-3.0-or-later, Python ≥ 3.14.
+`stenographer` is a Wayland, local-only push-to-talk dictation daemon. Hold a
+global hotkey, speak, release: the recognized text is copied to both Wayland
+selections (`wl-copy`) and pasted at the cursor via a `uinput` Shift+Insert
+chord — display-server-independent, so it works on wlroots compositors and
+GNOME alike. Hold is the default; `hotkey.mode = "toggle"` presses once to
+start and again to stop. Offline, English-only, GPL-3.0-or-later, Python ≥ 3.12.
+
+`docs/reauthor.md` is the design record — its §2 decisions are settled, its §4
+behavioral knowledge inventory binds every change, and its §6 testing policy is
+codified below. Do not reintroduce cut features (transcript preview/the old HUD,
+the hybrid trigger mode, self-update,
+release distribution) without revisiting that document's §7 add-later ledger.
+The isolated lifecycle pill—with exactly 18 live spectrum bars while recording
+and a helper-local amber border pulse only while the model loads—and local
+PyInstaller onedir build are the documented exceptions, not general permission
+to restore the old GUI or distribution surface.
 
 ## Commands
 
@@ -15,157 +27,157 @@ All Python tooling runs through the repo venv (`.venv/`, gitignored). **Never
 use the system `python` / `pip` / `ruff` / `pytest`.** Recreate the venv with:
 
 ```sh
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev,build]"
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ```
-
-PyGObject is a mandatory dependency, so that install needs the distro's
-GObject-introspection and Cairo development packages present; the overlay
-additionally needs GTK4 and `gtk4-layer-shell` at runtime.
 
 - **Lint / format:** `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .`
   (`.venv/bin/ruff check --fix .` to autofix).
 - **Test (unit):** `.venv/bin/pytest -m "not integration"`
 - **Test (all, incl. env-touching):** `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest`
-- **Single test:** `.venv/bin/pytest tests/test_session.py::test_name`
-- **Build standalone binary:** `scripts/build.sh` → `dist/stenographer/stenographer`
-  (wraps `pyinstaller --noconfirm --clean packaging/stenographer.spec`).
-- **Full source install:** `scripts/install.sh` (builds, installs to
-  `~/.local/share/stenographer/`, symlinks launcher into `~/.local/bin/`,
-  enables the systemd user unit).
+- **Single test:** `.venv/bin/pytest tests/test_daemon.py::test_name`
+- **CLI smoke:** `.venv/bin/stenographer --help` / `--version` /
+  `.venv/bin/stenographer setup --help`
 
-`integration`-marked tests touch the real clipboard / audio / display and are
-skipped unless `STENOGRAPHER_INTEGRATION=1` is set.
+`integration`-marked tests touch the real clipboard / audio / uinput / model and
+are skipped unless `STENOGRAPHER_INTEGRATION=1` is set.
 
-Run the git hooks once after cloning (`./scripts/install-hooks.sh`) so
-`ruff format` runs on staged Python at commit time.
+## Testing policy (binding — docs/reauthor.md §6)
 
-## Release / branch model
-
-Develop on `dev`. The repo always carries a `X.Y.Z-dev` version in
-`src/stenographer/_version.py` — the `-dev` suffix identifies local/source
-builds and **must never appear in a published release** (neither the binary nor
-the source the release tag points at).
-
-Merging `dev` → `main` triggers `.github/workflows/release.yml`, which lints,
-tests, then: validates that `_version.py` ends in `-dev`, strips the suffix to
-`X.Y.Z`, commits that stable version as a dedicated release commit, tags it
-`vX.Y.Z`, builds the binary from it, and **publishes** the `vX.Y.Z` GitHub
-release from that tag. The stable commit is only ever reachable through the
-tag; `main` itself keeps carrying `-dev`. The workflow refuses to reuse an
-existing release, so **every merge to `main` must bump the base version in
-`src/stenographer/_version.py`** (keeping the `-dev` suffix).
+1. Unit tests cover **pure logic only** (formatter, config validation, gate
+   math, protocol encode/decode, parser).
+2. **No mocked-subprocess theater**: never write a test that mocks
+   `subprocess` / `UInput` / `wl-copy` and asserts "we would have called it".
+3. The **integration smoke suite is the real gate**: it genuinely creates a
+   uinput device, writes the clipboard, plays cues, loads the model. Green
+   smoke on a real machine precedes any dev → main merge.
+4. Mock-only testability is a design smell — restructure the component
+   (extract the pure part) instead of writing the mock.
+5. A new pure-logic test only counts once it has been SEEN to fail against
+   broken/stubbed behavior.
 
 ## Architecture
 
-The package is `src/stenographer/` (src-layout); `tests/` mirrors it.
+Package `src/stenographer/` (src-layout), grouped into subpackages; `tests/`
+mirrors the grouping. Core modules stay at the package root: `daemon.py`,
+`hotkey.py`, `audio.py`, `config.py`, `status.py`, plus the `assets/` data dir.
+Subpackages: `cli/` (surface + subcommand engines), `transcribe/` (ASR),
+`overlay/` (visual feedback + vendored `protocols/`), `delivery/` (output
+surfaces), `utils/` (`childenv.py`, `logging_setup.py`).
 
-**Entry point** — `cli.py` (`main`) dispatches subcommands: `run`, `dictate`,
-`transcribe`, `model download`, `update`, `doctor`, `devices`, `bench`, plus
-systemd management (`enable`/`start`/`stop`/`disable`). The argument parser
-lives separately in `_parser.py` so the argcomplete hot path can build it
-without the heavy imports. `run` holds a single-instance `fcntl.flock` on
-`$XDG_RUNTIME_DIR/stenographer.lock`.
+- **`cli/`** — argparse surface + lazy dispatch in `cli/__init__.py` (console
+  script `stenographer.cli:main`); `cli/__main__.py` keeps the helper re-exec
+  `python -m stenographer.cli` working; thin per-subcommand handlers in
+  `cli/commands/`: `run`, `transcribe`, `model download`, `doctor`, `devices`,
+  `setup`, `completion {bash,zsh,fish}`. Heavy imports (faster-whisper,
+  sounddevice, evdev) stay inside subcommand handlers, never at module scope.
+  Completion emits packaged static definitions and performs no device, model,
+  configuration, audio, or network discovery.
+- **`cli/setup.py`** — TTY-only setup engines. Plain `setup` keeps the sectioned
+  review of all 19 existing config keys; `setup --quick` edits only hotkey,
+  microphone, cues, overlay, and display-spectrum calibration while retaining
+  every omitted value. Both save through the same preservation layer and offer
+  only `hold` and `toggle`. Follow-up never installs, enables, or starts an
+  inactive service. A changed standard config may restart an already-active
+  standard user service, but a custom `STENOGRAPHER_CONFIG` path never does.
+- **`cli/binding_capture.py`** — immutable pure key-event reducer plus the quick
+  setup's non-grabbing evdev capture boundary. It unions held state across
+  auto-detected keyboards, retains press order, ignores repeats, restores TTY
+  state, and emits a validated canonical binding after all keys are released.
+- **`cli/setup_config.py`** — tomlkit-backed preservation of comments, ordering,
+  unknown content, and symlinks while materializing the complete schema. It
+  validates through production `Config`, detects concurrent edits, creates an
+  exact timestamped backup, and atomically preserves the target mode. Unchanged
+  bytes are not written.
+- **`cli/calibration.py`** — one-shot, post-capture 18-band estimator for the
+  existing `feedback.spectrum_floor_dbfs`, followed by display-only voice
+  validation. It uses the selected `Recorder`, never analyzes in the callback,
+  and never affects capture, `min_speech_rms`, speech gating, ASR, persistence
+  beyond that fixed key, or overlay IPC.
+- **`daemon.py`** — the orchestrator: hotkey → record → transcribe → deliver;
+  single-instance flock on `$XDG_RUNTIME_DIR/stenographer.lock`; signal
+  handling. It prepares audio after taking the lock and before starting the
+  listener. Capture starts before the `record_start` cue, then a background
+  worker request warms a cold model while recording continues. Capture stops
+  and secures samples before the `record_stop` cue. One utterance at a time. In
+  toggle mode a generation-guarded timer ends the session at
+  `audio.max_recording_seconds` through the same stop path.
+- **`hotkey.py`** — evdev hotkey listener: chord parse, main-keyboard
+  auto-detection, rescan on read error. Reports chord edges; the daemon maps
+  them to session actions per `hotkey.mode`. Requires `input` group.
+- **`audio.py`** — PortAudio recorder: pre-negotiates and retains a stopped
+  stream for reuse across captures; block-copy callback with a latest-only
+  handoff to the optional overlay supervisor (no analysis in the callback), RMS
+  speech gate (two consecutive 50 ms frames — see the quiet-mic note in
+  docs/reauthor.md §4.1), sample-rate fallback + resample. A stale retained
+  stream gets one close/renegotiate/start recovery attempt.
+- **`transcribe/worker.py`** — ASR child process: one job at a time, killed after
+  `asr.idle_unload_seconds`, respawned on demand, crash-isolated from the
+  daemon. It supports a load-only request on recording start; decode serializes
+  behind an unfinished warm-up, and idle eviction is held through the recording
+  pipeline. Child logs cross a multiprocessing queue to parent-owned handlers;
+  the child never opens the rotating file. Results carry word timestamps (keeps
+  the streaming door open).
+- **`status.py`** — fixed lifecycle states plus the strict protocol v4 NDJSON
+  contract and pure generation/coalescing policy. Its variable records are 18
+  quantized levels for the current recording generation and a model-loading
+  boolean; pulse timing stays helper-local, with no transcript or raw-audio payloads.
+- **`overlay/spectrum.py`** — pure daemon-side 32 ms Hann/zero-padded FFT band analysis at
+  60 fps, fixed scalar-or-18-band floors with a 30 dB range capped at −12 dBFS,
+  2.5/22.5 ms smoothing, and 18-level quantization. It never adapts during
+  recording or affects the speech gate or recorded audio.
+- **`overlay/`** — optional isolated visual feedback: `supervisor.py` (helper
+  spawn/mailbox/backend selection), `render.py`, `wayland.py` (layer-shell,
+  preferred), `x11.py` (XWayland fallback), vendored `protocols/`; click-through
+  and failure-disabled. No display
+  or helper-process I/O may run under the daemon state lock.
+- **`utils/logging_setup.py`** — idempotent stderr + rotating state-file setup for
+  every command; 5 MiB with three backups, `STENOGRAPHER_LOG_LEVEL`, and
+  privacy-safe worker forwarding.
+- **`transcribe/model.py`** — faster-whisper wrapper: fixed anti-hallucination decode
+  stack, output validation (`PathologicalOutputError`), `local_files_only` —
+  the daemon never touches the network.
+- **`delivery/deliver.py`** — copy to BOTH selections, confirm the copy, wait for
+  physical hotkey release (a held modifier would corrupt the chord), then
+  uinput Shift+Insert. A failed copy must never fire the chord.
+- **`transcribe/format.py`** — fixed zero-knob formatter (spacing, sentence
+  caps, "i"→"I").
+- **`delivery/feedback.py`** — four WAV cues via `canberra-gtk-play`, with
+  `pw-play`/`paplay` fallbacks; degrades to no-op.
+- **`cli/doctor.py`** — capability probe; exit 78 when a required capability is
+  missing. `delivery/notify.py` — `notify-send` errors, no-op if absent.
+- **`config.py`** — TOML config, exactly 19 keys in 4 sections (`hotkey`,
+  `audio`, `asr`, `feedback`), frozen dataclasses, key-scoped `ConfigError` →
+  exit 78, missing file written with annotated defaults, and an in-memory load
+  path used to validate setup output. No migrations or extra setup-only keys.
+  `hotkey.mode` (`hold` | `toggle`) defaults to `hold`. `feedback.overlay`
+  defaults true and controls only the optional visual surface;
+  `feedback.spectrum_floor_dbfs` defaults to a scalar −45.0 dBFS and also accepts
+  the fixed 18-band profile written by setup calibration.
 
-**`session.py` — the orchestrator.** `Session` is the single point of state
-transitions for one utterance: hotkey → record → transcribe → output. Every
-callback from the hotkey listener, recorder, and worker funnels through
-session methods guarded by a lock, so concurrent key events and shutdown
-signals can't race. When wiring components together, this is the file that
-ties them.
+`stenographer setup` and `setup --quick` require a TTY: non-TTY exits 2, normal
+cancellation exits 0, and Ctrl-C/EOF exits 130. Invalid existing configuration and
+missing required doctor capabilities exit 78; write, download, probe, and restart
+failures exit 1. After saving, failures are reported without rolling configuration
+back. Quick setup defaults an absent-model download prompt to yes; full setup keeps
+its no default. Automatic
+floor calibration is a static five-second room-noise measurement after a silent
+three-second countdown: discard 0.5 seconds, measure non-overlapping 32 ms windows,
+take each band's 95th percentile plus 3 dB rounded upward, clamp quiet band results
+to −96 dBFS, and reject results above −13 dBFS plus short, digitally silent, or
+strongly nonstationary captures. A separate three-second normal-voice capture
+verifies visible contrast but never changes the profile. It is not runtime
+calibration or speech-gate calibration.
 
-The component modules it wires:
-
-- **`hotkey/`** — `binding.py` parses the config binding string; `listener.py`
-  is the evdev read loop over `/dev/input/event*` (requires `input` group);
-  `state_machine.py` is a **pure** state machine implementing the three
-  `hotkey.trigger_mode` values: `ptt` (the default — record while held),
-  `toggle` (a press latches recording on, the next press stops it), and
-  `hybrid` (≥`toggle_threshold_seconds` hold = push-to-talk, a short press
-  followed by a second tap within `double_tap_window_seconds` latches toggle).
-- **`audio/`** — `capture.py` (`Recorder`) captures mic audio via
-  `sounddevice`/PortAudio with silence detection; `feedback.py` plays the WAV
-  cues in `assets/sounds/` via `pw-play`/`paplay`.
-- **`asr/`** — `model.py` wraps faster-whisper (`Model`); `worker.py` runs
-  transcription in a spawned child process (`ProcessWorker`) off the main thread
-  with cancellation support and idle model unload: one batch job per utterance
-  (`submit`) or one word-timestamped re-decode (`submit_words`);
-  `streaming.py` is the **pure** LocalAgreement-N committer — a word joins the
-  committed prefix only after N consecutive re-decodes agree on it; that prefix
-  is append-only, while the latest uncommitted hypothesis is exposed as a
-  revisable provisional tail.
-- **`output/`** — `inject.py` (`Injector`, types via `wtype`),
-  `clipboard.py` (`ClipboardManager`, via `wl-copy`), `formatter.py`
-  (`HeuristicFormatter`: spacing / capitalisation / pause-based paragraph
-  breaks; append-only, so it is safe in the incremental path), and
-  `delivery.py` (`TranscriptDelivery`: the final-transcript delivery policy —
-  injection, `max_chars` cap, recovery copy, paste chord — extracted from
-  `Session`, which delegates to it). The clipboard is populated
-  independently, so it's the fallback when injection fails.
-- **`live.py`** — `IncrementalDriver`, the incremental decoding driver
-  (`[incremental]` config; always on for daemon recordings, not gated by a
-  config flag or by `output.injection_method`): recorder partials → coalesce →
-  `submit_words` re-decode → committer → formatter → preview callback, with
-  tail-silence guarding and window trimming. **Invariant: it never writes to
-  the clipboard or the focused application** — it returns one final transcript
-  and `Session` delivers it exactly once. Everything it publishes en route is
-  a preview (stable prefix + revisable provisional tail) rendered only in the
-  overlay. `LiveStreamer` remains as a compatibility alias for the old name;
-  new code uses `IncrementalDriver`.
-- **`visualizer/`** — the status HUD (`[visualizer]` config), wired by
-  `cli.py` and driven by `Session` state transitions. `indicator.py`
-  (`StatusIndicator`) is the daemon-side facade; `overlay_client.py`
-  (`LayerShellOverlay`) spawns a GTK4 layer-shell helper subprocess
-  (`stenographer _visualizer`) and talks to it over JSON-lines on stdin;
-  `overlay_app.py` (`run_overlay_process`) is the helper-process side (its
-  GTK imports stay function-local, and `__main__.py` carries the
-  `python -m stenographer.visualizer --child` dev entry); `spectrum.py`
-  (`SpectrumAnalyzer`) does FFT band analysis on a dedicated thread fed by a
-  one-slot queue, so the PortAudio callback only ever copies a block;
-  `protocol.py` holds the bits both sides share (`_HUD_STATE_LABELS`, the
-  single source of truth for HUD state labels). The package `__init__`
-  re-exports only `StatusIndicator` and `run_overlay_process`.
-  `StatusIndicator` prefers the overlay and **transparently falls back** to
-  `notification.py` when GTK, layer shell, or Wayland is unavailable — so
-  nothing in the daemon may assume the overlay exists. Preview text goes to
-  the overlay only; it is never sent to `notify-send`.
-
-**Cross-cutting:**
-
-- **`config/`** — TOML config schema and loading, split by lifecycle:
-  `schema.py` (the frozen section dataclasses, `ALLOWED_*` constants,
-  `ConfigError`), `sections.py` (`_Section` typed accessors + `_merge`),
-  `builders.py` (the per-section `_build_*` validators + migrations),
-  `serialize.py` (the default-TOML writer), with the `Config` dataclass and
-  load entry points in `__init__.py`, which re-exports the public surface —
-  consumers keep importing `from stenographer.config`.
-  `_validate_cross_section` enforces one invariant *at load time*, raising
-  `ConfigError` rather than coercing: `output.injection_method =
-  "clipboard_paste"` requires `clipboard.enabled`, because the clipboard is
-  the paste transport rather than a convenience copy. Renamed keys are
-  **migrated, not rejected**: `_build_output` maps the pre-0.9.2
-  `text`/`paste` spellings onto `type`/`clipboard_paste` with a deprecation
-  warning (`ALLOWED_INJECTION_METHODS` holds only the new names), and
-  `_migrate_streaming_table` folds a legacy `[streaming]` table into
-  `[incremental]`, warning that `streaming.enabled` is ignored since
-  incremental decoding is now unconditional. That is the pattern to follow:
-  a hard rejection fails `run` at startup and forces every existing config to
-  be hand-edited, so weigh it against migrating with a warning.
-- **`capabilities.py`** — the probe behind `doctor`: checks `wtype`, `wl-copy`,
-  audio player, `input` group membership, mic, and the ASR model.
-- **`errors.py`** — error-handling policy. Components MUST raise
-  `StenographerError` subclasses and use `notify_failure` / `fatal` /
-  `degrade_capability` rather than inventing their own error behaviour. `doctor`
-  exits 78 when a required capability is missing.
-- **`notification.py`** — desktop notifications via `notify-send` (no-op if absent).
-- **`update.py`** — self-update from GitHub Releases (SHA-256 verify, onedir
-  self-replace, daemon stop/start). The pure functions are unit-tested; `cli.py`
-  wires them to the interactive prompt.
-
-The ASR model (~1.5 GB) is **never** bundled — users fetch it once with
-`stenographer model download`.
+The ASR model (~1.5 GB) is **never** bundled — `stenographer model download`
+fetches it once. `asr.hotwords` require a full (non-distil) model.
 
 ## Conventions
 
 - Every source file carries `SPDX-License-Identifier: GPL-3.0-or-later` at the top.
-- ruff: line length 100, target py314, rules `E,F,I,B,UP,N,SIM,RUF`.
+- ruff: line length 100, target py312, rules `E,F,I,B,UP,N,SIM,RUF`. All code
+  must stay Python-3.12-compatible.
 - `pyproject.toml` (hatchling) is the single source of truth for metadata/deps.
+- Develop on `dev`; merge to `main` only after the integration smoke suite and
+  real dictation pass on a real machine.
+- Logs may contain numeric/structural metrics and transcript lengths, never
+  transcript text, audio, samples, or result representations.

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # PyInstaller runtime hook: ensure the system's libportaudio is findable
 # by ctypes when running inside a frozen bundle.  See BUILD.md:
-# libportaudio2 is a required system dependency and MUST NOT be bundled.
+# libportaudio is a required system dependency and MUST NOT be bundled.
 
 import os
 import sys
