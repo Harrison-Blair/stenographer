@@ -8,7 +8,7 @@ _stenographer() {
 
     if ((COMP_CWORD == 1)); then
         mapfile -t COMPREPLY < <(
-            compgen -W 'run transcribe model doctor devices setup completion -h --help --version' -- "${cur}"
+            compgen -W 'run transcribe model doctor devices setup sounds completion -h --help --version' -- "${cur}"
         )
         return
     fi
@@ -19,6 +19,15 @@ _stenographer() {
             ;;
         setup)
             mapfile -t COMPREPLY < <(compgen -W '-h --help --quick' -- "${cur}")
+            ;;
+        sounds)
+            if [[ "${cur}" == -* ]]; then
+                mapfile -t COMPREPLY < <(compgen -W '-h --help --list --preview' -- "${cur}")
+            else
+                mapfile -t COMPREPLY < <(
+                    compgen -W 'legacy warm-desk soft-electronic minimal-ui' -- "${cur}"
+                )
+            fi
             ;;
         model)
             if ((COMP_CWORD == 2)); then

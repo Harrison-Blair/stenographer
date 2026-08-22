@@ -43,7 +43,7 @@ def test_render_preserves_comments_order_and_unknown_content():
     assert Config.loads(rendered) == reviewed
 
 
-def test_render_materializes_all_19_known_keys():
+def test_render_materializes_all_20_known_keys():
     rendered = ConfigDocument.loads("").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
 
@@ -65,8 +65,9 @@ def test_render_materializes_all_19_known_keys():
         "mute",
         "overlay",
         "spectrum_floor_dbfs",
+        "sound_pack",
     ]
-    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 19
+    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 20
 
 
 def test_render_encodes_optional_strings_as_empty_strings():
@@ -113,6 +114,7 @@ def test_render_round_trips_nondefault_production_config():
             mute=True,
             overlay=False,
             spectrum_floor_dbfs=-72.0,
+            sound_pack="warm-desk",
         ),
     )
 

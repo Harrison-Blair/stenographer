@@ -192,10 +192,15 @@ class Daemon:
         status: StatusSink | None = None,
         platform: Platform | None = None,
     ) -> Daemon:
+        from stenographer.config import resolve_config_path
         from stenographer.hotkey import parse_binding
 
         plat = platform if platform is not None else current_platform()
-        feedback = Feedback(cfg=cfg.feedback, player=plat.cue_player())
+        feedback = Feedback(
+            cfg=cfg.feedback,
+            player=plat.cue_player(),
+            config_dir=resolve_config_path(create_parent=False).parent,
+        )
         notifier = plat.notifier()
         status = status if status is not None else NullStatusSink()
         daemon_ref: Daemon | None = None

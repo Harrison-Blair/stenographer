@@ -31,7 +31,16 @@ def test_no_command_prints_help(capsys):
     assert dispatch([]) == 0
     out = capsys.readouterr().out
     assert "usage: stenographer" in out
-    for command in ("run", "transcribe", "model", "doctor", "devices", "setup", "completion"):
+    for command in (
+        "run",
+        "transcribe",
+        "model",
+        "doctor",
+        "devices",
+        "setup",
+        "sounds",
+        "completion",
+    ):
         assert command in out
 
 
@@ -58,6 +67,21 @@ def test_setup_quick_flag_defaults_false_and_parses_true():
 
     assert parser.parse_args(["setup"]).quick is False
     assert parser.parse_args(["setup", "--quick"]).quick is True
+
+
+def test_sounds_command_forms_parse_and_conflicts_exit_two():
+    parser = build_parser()
+
+    assert parser.parse_args(["sounds"]).pack is None
+    assert parser.parse_args(["sounds", "legacy"]).pack == "legacy"
+    assert parser.parse_args(["sounds", "--list"]).list_packs is True
+    assert parser.parse_args(["sounds", "--preview", "minimal-ui"]).preview == "minimal-ui"
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["sounds", "legacy", "--list"])
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["sounds", "legacy", "--preview", "minimal-ui"])
+    assert exc.value.code == 2
 
 
 @pytest.mark.parametrize("command", ["run", "doctor", "devices", "setup"])
@@ -91,6 +115,20 @@ def test_quick_setup_dispatches_flag_to_handler(monkeypatch):
     monkeypatch.setattr(setup_command, "cmd_setup", lambda args: seen.append(args.quick) or 0)
     assert dispatch(["setup", "--quick"]) == 0
     assert seen == [True]
+
+
+def test_sounds_dispatches_to_handler(monkeypatch):
+    from stenographer.cli.commands import sounds as sounds_command
+
+    seen = []
+    monkeypatch.setattr(
+        sounds_command,
+        "cmd_sounds",
+        lambda args: seen.append((args.pack, args.list_packs, args.preview)) or 0,
+    )
+
+    assert dispatch(["sounds", "warm-desk"]) == 0
+    assert seen == [("warm-desk", False, None)]
 
 
 def test_format_input_devices_marks_default_and_skips_outputs():

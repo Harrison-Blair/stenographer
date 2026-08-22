@@ -37,6 +37,8 @@ complete -c stenographer -n __stenographer_needs_command -f -a devices \
     -d 'List audio input devices'
 complete -c stenographer -n __stenographer_needs_command -f -a setup \
     -d 'Interactively configure stenographer'
+complete -c stenographer -n __stenographer_needs_command -f -a sounds \
+    -d 'List, preview, or select a sound pack'
 complete -c stenographer -n __stenographer_needs_command -f -a completion \
     -d 'Emit a native shell completion definition'
 complete -c stenographer -n __stenographer_needs_command -f -s h -l help \
@@ -44,7 +46,7 @@ complete -c stenographer -n __stenographer_needs_command -f -s h -l help \
 complete -c stenographer -n __stenographer_needs_command -f -l version \
     -d 'Show version'
 
-for command in run transcribe model doctor devices setup completion
+for command in run transcribe model doctor devices setup sounds completion
     complete -c stenographer -n "__stenographer_command_is $command" -f -s h -l help \
         -d 'Show help'
 end
@@ -54,6 +56,13 @@ complete -c stenographer -n '__stenographer_command_is transcribe' -f -l raw \
 complete -c stenographer -n __stenographer_transcribe_file_needed -F
 complete -c stenographer -n '__stenographer_command_is setup' -f -l quick \
     -d 'Configure essentials only'
+
+complete -c stenographer -n '__stenographer_command_is sounds' -f -l list \
+    -d 'List available sound packs'
+complete -c stenographer -n '__stenographer_command_is sounds' -f -l preview \
+    -d 'Preview a sound pack without selecting it'
+complete -c stenographer -n '__stenographer_command_is sounds' -f \
+    -a 'legacy warm-desk soft-electronic minimal-ui'
 
 complete -c stenographer -n '__stenographer_nested_command_needed model' -f -a download \
     -d 'Download the ASR model'

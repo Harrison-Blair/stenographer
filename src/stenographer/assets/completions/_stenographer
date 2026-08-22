@@ -12,6 +12,7 @@ _stenographer_impl() {
             'doctor[probe required capabilities]' \
             'devices[list audio input devices]' \
             'setup[interactively configure stenographer]' \
+            'sounds[list, preview, or select a sound pack]' \
             'completion[emit a native shell completion definition]' \
             '-h[show help]' '--help[show help]' '--version[show version]'
         return
@@ -25,6 +26,19 @@ _stenographer_impl() {
         setup)
             _values 'option' '-h[show help]' '--help[show help]' \
                 '--quick[configure essentials only]'
+            ;;
+        sounds)
+            if [[ "${PREFIX}" == -* ]]; then
+                _values 'option' '-h[show help]' '--help[show help]' \
+                    '--list[list available sound packs]' \
+                    '--preview[preview a sound pack without selecting it]'
+            else
+                _values 'bundled sound pack' \
+                    'legacy[current original cues]' \
+                    'warm-desk[warm acoustic cues]' \
+                    'soft-electronic[soft electronic cues]' \
+                    'minimal-ui[minimal interface cues]'
+            fi
             ;;
         model)
             if ((CURRENT == 3)); then

@@ -222,6 +222,25 @@ def _prompt_number(
     )  # type: ignore[return-value]
 
 
+def _prompt_sound_pack(console: _Console, current: str, config_dir: pathlib.Path) -> str:
+    """Offer bundled and valid custom packs without playing any cue."""
+
+    from stenographer.cli.sounds import parse_sound_pack_choice
+    from stenographer.delivery.feedback import discover_sound_packs
+
+    choices = discover_sound_packs(config_dir)
+    console.write("Sound packs:")
+    for number, name in enumerate(choices, 1):
+        console.write(f"  {number}. {name}")
+    prompt = f"Sound pack [{current}; Enter keeps, number/name selects]: "
+    return str(
+        console.validated(
+            prompt,
+            lambda text: parse_sound_pack_choice(text, current, choices),
+        )
+    )
+
+
 def _audio_devices() -> list[tuple[str, str]]:
     """Return selectable input devices. PortAudio errors degrade to no suggestions."""
 
@@ -301,7 +320,7 @@ def _prompt_typed_binding(console: _Console, current: str) -> str:
     )
 
 
-def _edit_hotkey(console: _Console, config: Config) -> Config:
+def _edit_hotkey(console: _Console, config: Config, config_dir: pathlib.Path) -> Config:
     console.write("\nHotkey")
     console.write("Binding uses evdev key names joined with '+'. Mode is hold or toggle only.")
 
@@ -317,7 +336,7 @@ def _edit_hotkey(console: _Console, config: Config) -> Config:
     return dataclasses.replace(config, hotkey=hotkey)
 
 
-def _edit_audio(console: _Console, config: Config) -> Config:
+def _edit_audio(console: _Console, config: Config, config_dir: pathlib.Path) -> Config:
     console.write("\nAudio")
     console.write("min_speech_rms is the pre-decode energy gate; 0 disables it.")
     audio = dataclasses.replace(
@@ -345,7 +364,7 @@ def _edit_audio(console: _Console, config: Config) -> Config:
     return dataclasses.replace(config, audio=audio)
 
 
-def _edit_asr(console: _Console, config: Config) -> Config:
+def _edit_asr(console: _Console, config: Config, config_dir: pathlib.Path) -> Config:
     console.write("\nASR")
     asr = dataclasses.replace(
         config.asr,
@@ -437,13 +456,14 @@ def _automatic_floor(
         return current
 
 
-def _edit_feedback(console: _Console, config: Config) -> Config:
+def _edit_feedback(console: _Console, config: Config, config_dir: pathlib.Path) -> Config:
     console.write("\nFeedback")
     feedback = dataclasses.replace(
         config.feedback,
         volume=float(_prompt_number(console, "Cue volume", config.feedback.volume, 0.0, 1.0)),
         mute=_prompt_bool(console, "Mute cues", config.feedback.mute),
         overlay=_prompt_bool(console, "Show lifecycle overlay", config.feedback.overlay),
+        sound_pack=_prompt_sound_pack(console, config.feedback.sound_pack, config_dir),
     )
     console.write()
     console.write("IMPORTANT: spectrum calibration affects only the 18 visual bars.")
@@ -464,7 +484,7 @@ def _edit_feedback(console: _Console, config: Config) -> Config:
     return dataclasses.replace(config, feedback=feedback)
 
 
-_EDITORS: Mapping[str, Callable[[_Console, Config], Config]] = {
+_EDITORS: Mapping[str, Callable[[_Console, Config, pathlib.Path], Config]] = {
     "hotkey": _edit_hotkey,
     "audio": _edit_audio,
     "asr": _edit_asr,
@@ -486,10 +506,10 @@ def _review(console: _Console, config: Config) -> None:
             )
 
 
-def _wizard(console: _Console, initial: Config) -> Config:
+def _wizard(console: _Console, initial: Config, config_dir: pathlib.Path) -> Config:
     config = initial
     for section in _SECTIONS:
-        config = _EDITORS[section](console, config)
+        config = _EDITORS[section](console, config, config_dir)
     while True:
         _review(console, config)
         action = console.validated(
@@ -500,7 +520,7 @@ def _wizard(console: _Console, initial: Config) -> Config:
             return config
         if action == "cancel":
             raise SetupCancelledError
-        config = _EDITORS[str(action)](console, config)
+        config = _EDITORS[str(action)](console, config, config_dir)
 
 
 def _capture_or_choose_binding(
@@ -540,7 +560,13 @@ def _capture_or_choose_binding(
         return current
 
 
-def _quick_wizard(console: _Console, initial: Config, *, new_config: bool) -> Config:
+def _quick_wizard(
+    console: _Console,
+    initial: Config,
+    config_dir: pathlib.Path,
+    *,
+    new_config: bool,
+) -> Config:
     config = initial
     console.write("\nHotkey")
     device = _prompt_device(console, "Hotkey", config.hotkey.device, _hotkey_devices())
@@ -574,6 +600,7 @@ def _quick_wizard(console: _Console, initial: Config, *, new_config: bool) -> Co
         volume=float(_prompt_number(console, "Cue volume", config.feedback.volume, 0.0, 1.0)),
         mute=_prompt_bool(console, "Mute cues", config.feedback.mute),
         overlay=_prompt_bool(console, "Show lifecycle overlay", config.feedback.overlay),
+        sound_pack=_prompt_sound_pack(console, config.feedback.sound_pack, config_dir),
     )
     console.write()
     console.write("IMPORTANT: spectrum calibration controls only the 18 display bars.")
@@ -609,6 +636,7 @@ def _quick_wizard(console: _Console, initial: Config, *, new_config: bool) -> Co
     console.write(f"  feedback.volume = {config.feedback.volume}")
     console.write(f"  feedback.mute = {config.feedback.mute}")
     console.write(f"  feedback.overlay = {config.feedback.overlay}")
+    console.write(f"  feedback.sound_pack = {config.feedback.sound_pack}")
     floor_display = (
         "calibrated 18-band profile"
         if isinstance(config.feedback.spectrum_floor_dbfs, tuple)
@@ -814,9 +842,9 @@ def run(
     console.write("Press Enter to retain each current value.")
     try:
         reviewed = (
-            _quick_wizard(console, document.config, new_config=not path.exists())
+            _quick_wizard(console, document.config, path.parent, new_config=not path.exists())
             if quick
-            else _wizard(console, document.config)
+            else _wizard(console, document.config, path.parent)
         )
     except SetupCancelledError:
         console.write("Setup cancelled; configuration was not changed.")

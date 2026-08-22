@@ -73,9 +73,10 @@ The installer builds the standalone bundle, installs
 ~/.local/bin/stenographer setup --quick
 ```
 
-Use `setup --quick` for normal setup or `setup` to review every setting. The
-wizard offers the separate, approximately 1.5 GB model download and then checks
-the microphone, clipboard, model, and input permissions.
+Use `setup --quick` for normal setup or `setup` to review every setting. Both
+wizards offer the bundled and valid custom sound packs, then offer the separate,
+approximately 1.5 GB model download and check the microphone, clipboard, model,
+and input permissions.
 
 Configuration lives at `~/.config/stenographer/config.toml`. Hold-to-talk is
 the default. To use toggle mode and hide visual feedback, set:
@@ -86,6 +87,7 @@ mode = "toggle"
 
 [feedback]
 overlay = false
+sound_pack = "minimal-ui"
 ```
 
 ### 4. Start and dictate
@@ -109,9 +111,32 @@ stop.
 | `stenographer doctor` | Check required capabilities and print fixes. |
 | `stenographer devices` | List audio input devices. |
 | `stenographer setup [--quick]` | Configure everything, or only the common settings. |
+| `stenographer sounds [PACK]` | List, preview, or select a whole sound pack. |
 | `stenographer completion {bash,zsh,fish}` | Print a native shell completion definition. |
 
 Add `--help` to any command for its full usage.
+
+## Sound packs
+
+Four packs ship in a fixed order: `legacy` preserves the original cues,
+followed by `warm-desk`, `soft-electronic`, and the default `minimal-ui`. Use
+`stenographer sounds` for the TTY selector, `stenographer sounds --list` to see
+the effective selection, or preview without saving:
+
+```sh
+stenographer sounds --preview warm-desk
+stenographer sounds soft-electronic
+```
+
+The selector always changes the complete four-cue pack; there are no per-cue
+overrides or downloads. A custom pack lives at
+`~/.config/stenographer/sounds/<pack>/` (or beside the active custom config) and
+contains `record_start.wav`, `record_stop.wav`, `delivered.wav`, and `error.wav`.
+Pack names use lowercase letters, digits, and hyphens. Each cue must be a
+readable, nonempty, uncompressed PCM WAV shorter than 300 ms, with one or two
+channels, an 8–192 kHz sample rate, and 8/16/24/32-bit samples. Other files are
+ignored, but an incomplete or invalid pack is unavailable as a unit. Restart the
+daemon after selecting or editing a custom pack.
 
 ## How it works and privacy
 
@@ -142,9 +167,9 @@ systemctl --user restart stenographer.service
 ~/.local/bin/stenographer setup --quick
 ```
 
-Run plain `setup` when you need all settings. Sound cues and desktop error
-notifications are optional and become no-ops if no supported player or
-`notify-send` is available.
+Run plain `setup` when you need all settings. Use `stenographer sounds` when you
+want to audition cue packs. Sound cues and desktop error notifications are
+optional and become no-ops if no supported player or `notify-send` is available.
 
 ## Requirements and limitations
 
@@ -171,8 +196,13 @@ See [BUILD.md](BUILD.md) for standalone builds. From the repository venv, run:
 ```sh
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 .venv/bin/pytest -m "not integration"
+scripts/check-completions.sh
+.venv/bin/python scripts/cue_audition.py --verify-packaged
 .venv/bin/stenographer --help
 ```
+
+The completion checker runs every supported shell available locally and reports
+missing shells as skipped; CI installs and checks Bash, Zsh, and Fish.
 
 The integration suite and real dictation are the release gate and must run in a
 real graphical session, not CI or a sandbox. `tests/platform/test_core_isolation.py`

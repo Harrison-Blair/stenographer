@@ -48,6 +48,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Configure the hotkey, microphone, and feedback essentials only.",
     )
+    sounds = subparsers.add_parser("sounds", help="List, preview, or select a sound pack.")
+    sounds_mode = sounds.add_mutually_exclusive_group()
+    sounds_mode.add_argument("pack", nargs="?", help="Sound-pack name to select.")
+    sounds_mode.add_argument(
+        "--list",
+        action="store_true",
+        dest="list_packs",
+        help="List available bundled and custom sound packs.",
+    )
+    sounds_mode.add_argument(
+        "--preview",
+        metavar="PACK",
+        help="Preview a sound pack without changing configuration.",
+    )
     completion = subparsers.add_parser(
         "completion", help="Emit a native shell completion definition."
     )
@@ -98,6 +112,10 @@ def dispatch(argv: Sequence[str] | None = None) -> int:
         from stenographer.cli.commands.completion import cmd_completion
 
         return cmd_completion(args)
+    if args.command == "sounds":
+        from stenographer.cli.commands.sounds import cmd_sounds
+
+        return cmd_sounds(args)
     from stenographer.cli.commands.setup import cmd_setup
 
     return cmd_setup(args)

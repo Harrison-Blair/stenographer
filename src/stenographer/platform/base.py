@@ -85,9 +85,13 @@ class Notifier(Protocol):
 
 
 class CuePlayer(Protocol):
-    """Plays one cue file non-blocking; ``Feedback`` owns mute/volume/asset policy."""
+    """Plays cue files; ``Feedback`` owns mute/volume/asset policy."""
 
     def play(self, path: Path, volume: float) -> None: ...
+
+    def preview(self, path: Path, volume: float) -> None:
+        """Play one cue to completion, raising when playback fails."""
+        ...
 
 
 class SingleInstanceLock(Protocol):

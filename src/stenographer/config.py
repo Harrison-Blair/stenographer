@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import tomllib
 from dataclasses import asdict, dataclass
 
@@ -21,6 +22,8 @@ ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
 ALLOWED_HOTKEY_MODES: frozenset[str] = frozenset({"hold", "toggle"})
 MIN_SPECTRUM_FLOOR_DBFS = -96.0
 MAX_SPECTRUM_FLOOR_DBFS = -13.0
+SOUND_PACK_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+DEFAULT_SOUND_PACK = "minimal-ui"
 
 SpectrumFloor = float | tuple[float, ...]
 
@@ -68,6 +71,7 @@ class FeedbackConfig:
     mute: bool
     overlay: bool = True
     spectrum_floor_dbfs: SpectrumFloor = -45.0
+    sound_pack: str = DEFAULT_SOUND_PACK
 
 
 @dataclass(frozen=True)
@@ -184,11 +188,19 @@ def _build_asr(table: dict, path: pathlib.Path) -> AsrConfig:
 
 def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
     r = _Reader(table, path, "feedback")
+    sound_pack = r.str("sound_pack")
+    if SOUND_PACK_PATTERN.fullmatch(sound_pack) is None:
+        raise ConfigError(
+            path,
+            "feedback.sound_pack",
+            "must match [a-z0-9][a-z0-9-]{0,63}",
+        )
     return FeedbackConfig(
         volume=r.ranged_number("volume", 0.0, 1.0),
         mute=r.bool("mute"),
         overlay=r.bool("overlay"),
         spectrum_floor_dbfs=r.spectrum_floor("spectrum_floor_dbfs"),
+        sound_pack=sound_pack,
     )
 
 
@@ -202,7 +214,7 @@ def _merge(base: dict, overlay: dict) -> dict:
     return result
 
 
-_DEFAULT_TOML = """\
+_DEFAULT_TOML = f"""\
 # stenographer configuration.
 
 [stenographer.hotkey]
@@ -231,6 +243,7 @@ volume = 0.6
 mute = false
 overlay = true                 # best-effort lifecycle pill; dictation is independent
 spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
+sound_pack = "{DEFAULT_SOUND_PACK}"      # bundled pack name or valid pack under sounds/
 """
 
 
@@ -262,6 +275,7 @@ class Config:
                 mute=False,
                 overlay=True,
                 spectrum_floor_dbfs=-45.0,
+                sound_pack=DEFAULT_SOUND_PACK,
             ),
         )
 

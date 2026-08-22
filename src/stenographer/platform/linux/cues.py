@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Cue playback via canberra-gtk-play / pw-play / paplay (the Linux ``CuePlayer``).
 
-``build_play_command`` is the pure unit target; ``LinuxCuePlayer.play`` only
-spawns the chosen player — mute, volume, and asset policy stay in
-``stenographer.delivery.feedback.Feedback``.
+``build_play_command`` is the pure unit target. Runtime cues are spawned
+non-blocking; explicit previews wait (bounded by ``PREVIEW_TIMEOUT_SECONDS``)
+and report player failure or a stalled player. Mute, volume, and asset policy
+stay in ``stenographer.delivery.feedback.Feedback``.
 """
 
 from __future__ import annotations
@@ -17,6 +18,10 @@ from stenographer.platform.linux.process import child_env
 
 if TYPE_CHECKING:
     import pathlib
+
+# Cues are at most ~0.3 s long; a preview that has not finished in ten seconds
+# means the player is stalled, not still playing.
+PREVIEW_TIMEOUT_SECONDS = 10.0
 
 
 def build_play_command(player: str, path: pathlib.Path, volume: float) -> list[str]:
@@ -46,7 +51,7 @@ def detect_player() -> str | None:
 
 
 class LinuxCuePlayer:
-    """Spawns the detected command-line player, detached and non-blocking."""
+    """Runs the detected player asynchronously for cues and synchronously for previews."""
 
     def __init__(self, player: str) -> None:
         self._player = player
@@ -57,5 +62,21 @@ class LinuxCuePlayer:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=child_env(),
+        )
+
+    def preview(self, path: pathlib.Path, volume: float) -> None:
+        """Play one preview cue completely so command failure is observable.
+
+        Waits at most ``PREVIEW_TIMEOUT_SECONDS``; ``subprocess.TimeoutExpired``
+        propagates so callers can report a stalled player.
+        """
+
+        subprocess.run(
+            build_play_command(self._player, path, volume),
+            check=True,
+            timeout=PREVIEW_TIMEOUT_SECONDS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=child_env(),
         )
