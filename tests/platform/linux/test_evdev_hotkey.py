@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Linux hotkey backend: the evdev key table, main-keyboard detection, and the
 acquisition back-off. No devices are opened — the real read loop is covered by
-the uinput loopback smoke in tests/test_hotkey_smoke.py (§6).
+the uinput loopback smoke in tests/test_hotkey_smoke.py.
 """
 
 from __future__ import annotations

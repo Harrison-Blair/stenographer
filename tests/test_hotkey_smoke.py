@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke suite for the PTT hotkey listener (spec §6.3).
+"""Integration smoke suite for the PTT hotkey listener.
 
 Real, non-mocked input path: a genuine evdev.UInput keyboard advertising
 KEY_A..KEY_Z plus the binding key, an EvdevHotkeyListener pointed at that device's
@@ -7,28 +7,23 @@ read-back node, and the binding key emitted down then up. Nothing is mocked —
 the kernel virtual input device is the actual resource the listener reads, and
 the callbacks are driven by real EV_KEY events round-tripping through it.
 
-Self-skips unless STENOGRAPHER_INTEGRATION=1, /dev/uinput is writable, and the
-created node is readable back, so the default unit run never creates an input
-device.
+Collected only with STENOGRAPHER_INTEGRATION=1, and skipped further unless
+/dev/uinput is writable and the created node is readable back, so the default
+unit run never creates an input device.
 """
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 
+import evdev
 import pytest
 
+from stenographer.hotkey import parse_binding
+from stenographer.platform.linux.hotkey import EvdevHotkeyListener, EvdevKeyTable
+
 pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
-import evdev  # noqa: E402
-
-from stenographer.hotkey import parse_binding  # noqa: E402
-from stenographer.platform.linux.hotkey import EvdevHotkeyListener, EvdevKeyTable  # noqa: E402
 
 _BINDING = evdev.ecodes.KEY_RIGHTALT
 

@@ -3,22 +3,17 @@
 
 Runs the actual capability probe against this machine and asserts the CLI
 exit code agrees with the probe's own decision — 0 when everything required
-is present, 78 otherwise (spec §8; exit-78 contract).
+is present, 78 otherwise (the exit-78 contract).
 """
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
+from stenographer.cli import doctor, main
+from stenographer.config import Config
+
 pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
-from stenographer.cli import doctor, main  # noqa: E402
-from stenographer.config import Config  # noqa: E402
 
 
 def test_probe_returns_real_capabilities():

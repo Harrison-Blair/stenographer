@@ -9,18 +9,12 @@ import threading
 import time
 
 import pytest
+from Xlib import X, Xatom
+from Xlib import display as xdisplay
+from Xlib.ext import shape
 
-pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
-from Xlib import X, Xatom  # noqa: E402
-from Xlib import display as xdisplay  # noqa: E402
-from Xlib.ext import shape  # noqa: E402
-
-from stenographer.overlay.x11 import X11OverlayBackend, X11Unavailable  # noqa: E402
-from stenographer.status import (  # noqa: E402
+from stenographer.overlay.x11 import X11OverlayBackend, X11Unavailable
+from stenographer.status import (
     SPECTRUM_BANDS,
     Command,
     CommandMessage,
@@ -30,6 +24,8 @@ from stenographer.status import (  # noqa: E402
     StateMessage,
     encode_message,
 )
+
+pytestmark = pytest.mark.integration
 
 
 def _find_window(display, expected_id: int):

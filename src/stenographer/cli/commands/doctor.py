@@ -4,17 +4,17 @@
 from __future__ import annotations
 
 import argparse
+from typing import TYPE_CHECKING
 
-from stenographer.cli import _fatal
+from stenographer.cli.commands import with_config
+
+if TYPE_CHECKING:
+    from stenographer.config import Config
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
+@with_config
+def cmd_doctor(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer import config
     from stenographer.cli import doctor
-
-    try:
-        cfg = config.load_or_default()
-    except config.ConfigError as exc:
-        return _fatal(str(exc))
 
     return doctor.run(cfg, config.resolve_config_path())

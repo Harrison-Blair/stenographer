@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Integration smoke suite for the batch transcribe path.
 
-Four real, non-mocked checks (spec §6.3):
+Four real, non-mocked checks:
 
   * equivalence  — the public ``transcribe`` command produces the same text as
     the surviving model.Model + format.format_transcript API on the same
@@ -13,15 +13,15 @@ Four real, non-mocked checks (spec §6.3):
   * hotwords     — a proper noun set in asr.hotwords is honored in the decode.
 
 The model-based checks really load the medium.en model and decode a
-machine-supplied clip; nothing is mocked. The whole module self-skips unless
-STENOGRAPHER_INTEGRATION=1, the model is cached locally, and the fixture WAV is
-present — so the default unit run never touches the network or the ASR stack.
+machine-supplied clip; nothing is mocked. The whole module is collected only
+with STENOGRAPHER_INTEGRATION=1, and skipped further unless the model is cached
+locally and the fixture WAV is present — so the default unit run never touches
+the network or the ASR stack.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import os
 import pathlib
 
 import numpy as np
@@ -34,9 +34,6 @@ _CLIP = _FIXTURES / "speech_16k.wav"
 _HOTWORD_CLIP = _FIXTURES / "hotword_16k.wav"
 _HOTWORD_NOUN = "Anthropic"
 _MODEL_ID = "Systran/faster-whisper-medium.en"
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
 
 if not _CLIP.exists():
     pytest.skip(f"fixture WAV absent: {_CLIP}", allow_module_level=True)
@@ -64,7 +61,7 @@ def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
     config.Config.write_default(config_path)
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
     cfg = config.Config.load(config_path)
-    assert cfg.asr.model == _MODEL_ID  # hotwords require the full model (§4.4)
+    assert cfg.asr.model == _MODEL_ID  # hotwords require the full, non-distil model
 
     m = model.Model(cfg.asr)
     try:
@@ -144,5 +141,5 @@ def test_hotword_is_honored():
 
     # End-to-end proof the hotword plumbing reaches the decoder and the noun
     # survives. A discriminating without-hotword decode (noun absent/wrong) is
-    # left to manual §4.4 validation on the dev machine.
+    # left to manual hotword validation on the dev machine.
     assert _HOTWORD_NOUN.lower() in text.lower()

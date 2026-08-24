@@ -2,7 +2,8 @@
 """Pure-logic tests for capture configuration, the RMS gate, and resampling.
 
 Constructing a ``Recorder`` is pure. Its stream lifecycle touches PortAudio and
-is covered by the integration smoke suite, never by mocking (§6).
+is covered by the integration smoke suite, never by mocking (the testing policy
+in AGENTS.md).
 """
 
 from __future__ import annotations

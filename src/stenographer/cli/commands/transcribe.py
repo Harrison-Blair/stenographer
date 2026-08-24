@@ -6,20 +6,20 @@ from __future__ import annotations
 import argparse
 import pathlib
 import sys
+from typing import TYPE_CHECKING
 
 from stenographer.cli import _fatal
+from stenographer.cli.commands import with_config
+
+if TYPE_CHECKING:
+    from stenographer.config import Config
 
 _SAMPLE_RATE = 16000
 
 
-def cmd_transcribe(args: argparse.Namespace) -> int:
-    from stenographer import config
+@with_config
+def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.transcribe.format import format_transcript
-
-    try:
-        cfg = config.load_or_default()
-    except config.ConfigError as exc:
-        return _fatal(str(exc))
 
     path = pathlib.Path(args.file)
     if not path.exists():

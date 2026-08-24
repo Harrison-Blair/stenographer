@@ -2,7 +2,7 @@
 """The single-instance flock: pure errno classifier and REAL mutual exclusion.
 
 ``is_lock_contention`` was seen to fail against an all-contention stub; the
-exclusion test takes a real flock on a tmp path (no mocks, §6.2).
+exclusion test takes a real flock on a tmp path (no mocks).
 """
 
 from __future__ import annotations

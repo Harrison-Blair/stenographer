@@ -2,7 +2,7 @@
 """Pure-logic tests for the uinput injector: chord_events() ordering.
 
 The uinput device itself is covered by the integration smoke suite in
-tests/delivery/test_deliver_smoke.py — nothing here mocks UInput (§6).
+tests/delivery/test_deliver_smoke.py — nothing here mocks UInput.
 """
 
 from __future__ import annotations

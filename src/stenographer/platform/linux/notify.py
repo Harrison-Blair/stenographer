@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Desktop notifications, errors only (spec §3, disposition table).
+"""Desktop notifications, errors only.
 
 ``notify-send`` is fired non-blocking and no-ops when absent. Only short,
 caller-supplied error strings are ever passed — never audio or transcript text
-(§4.12). The one pure unit target is ``build_notify_command`` (mirroring
-cues.build_play_command); the Popen call is never mock-tested (§6.2).
+(the log-privacy rule). The one pure unit target is ``build_notify_command``
+(mirroring cues.build_play_command); the Popen call is never mock-tested.
 """
 
 from __future__ import annotations

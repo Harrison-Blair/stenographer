@@ -13,7 +13,7 @@ model opened) with a safe pre-start ``stop``, per ``hotkey.mode``. The two
 full-build tests need a host that actually provides a hotkey listener and key
 injector, so they skip on a provider that raises ``UnsupportedPlatformError``
 (the mapping itself is covered purely, and runs everywhere). Nothing mocks
-subprocess/UInput/wl-copy/Worker (§6.2); the real utterance path is the M5
+subprocess/UInput/wl-copy/Worker; the real utterance path is the M5
 manual dictation acceptance procedure.
 """
 
@@ -63,7 +63,7 @@ def test_gate_failure_is_silent():
 
 
 def test_empty_transcript_is_silent():
-    # Gate passed but the decode was empty/all-gated: success-shaped, no error (§4.7).
+    # Gate passed but the decode was empty/all-gated: success-shaped, no error.
     assert classify_pipeline(gate_passed=True, transcript_nonempty=False, deliver_result=None) == (
         Outcome.SILENT,
         None,
@@ -81,7 +81,7 @@ def test_failed_delivery_is_error_with_message():
     outcome, message = classify_pipeline(
         gate_passed=True, transcript_nonempty=True, deliver_result=False
     )
-    # A False deliver on non-empty text is never silent (§4.3): the copy failed,
+    # A False deliver on non-empty text is never silent: the copy failed,
     # so the chord was withheld and the user must be told.
     assert outcome is Outcome.ERROR
     assert message
@@ -97,7 +97,7 @@ def test_can_start_only_when_fully_idle():
 def test_toggle_action_maps_press_edges():
     # Idle press starts; a press while recording always stops, even during
     # shutdown, so a live capture is never stranded. A press during
-    # transcription (busy) neither starts nor queues (§5, one at a time).
+    # transcription (busy) neither starts nor queues — one utterance at a time.
     assert toggle_action(recording=False, busy=False, stopping=False) == "start"
     assert toggle_action(recording=True, busy=False, stopping=False) == "stop"
     assert toggle_action(recording=False, busy=True, stopping=False) is None

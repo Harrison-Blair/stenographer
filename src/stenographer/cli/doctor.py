@@ -5,7 +5,7 @@ The environment probing lives in :func:`probe` (host half from the current
 platform's ``probe_host``/``overlay_backends``, plus the microphone and model
 cache); the exit-78 decision (:func:`missing_required`) and the report rendering
 (:func:`render`) are pure so they are unit-testable without mocking the
-environment (spec §6.5). ``REQUIRED`` names are semantic — injector available,
+environment. ``REQUIRED`` names are semantic — injector available,
 listener permitted, clipboard available — and stay the daemon's startup gate.
 """
 
@@ -14,6 +14,7 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 
+from stenographer.cli.audio_probe import has_input_device, query_devices
 from stenographer.config import Config
 from stenographer.platform import current_platform
 from stenographer.status import Backend, UnavailableReason
@@ -97,13 +98,7 @@ _OVERLAY_FIX_HINTS = {
 
 
 def _has_mic() -> bool:
-    import sounddevice
-
-    try:
-        devices = sounddevice.query_devices()
-    except sounddevice.PortAudioError:
-        return False
-    return any(d.get("max_input_channels", 0) > 0 for d in devices)
+    return has_input_device(query_devices().devices)
 
 
 def probe_overlay(enabled: bool) -> OverlayCapability:

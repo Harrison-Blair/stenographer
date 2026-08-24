@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import datetime
-import os
 from dataclasses import replace
 
 import pytest
@@ -13,9 +12,6 @@ from stenographer.cli.setup_config import ConfigChangedError, ConfigDocument
 from stenographer.config import Config, resolve_config_path
 
 pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
 
 
 def test_missing_config_stays_absent_until_save(tmp_path):

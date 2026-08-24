@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""faster-whisper wrapper: fixed anti-hallucination decode stack (§4.5/§4.6).
+"""faster-whisper wrapper: fixed anti-hallucination decode stack.
 
 All testable logic lives in the pure helpers so the ``WhisperModel`` call never
 needs mocking; faster-whisper is imported inside ``Model.__init__`` so the cache
@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from stenographer.constants import SAMPLE_RATE
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -23,7 +25,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_SAMPLE_RATE = 16000
 _MAX_NEW_TOKENS = 128
 _HALLUCINATION_SILENCE_SECONDS = 2.0
 _WORDS_PER_VAD_SECOND = 8
@@ -98,7 +99,7 @@ class Model:
         if samples.ndim == 2:
             samples = samples.mean(axis=1) if samples.shape[1] > 1 else samples.squeeze(-1)
         cfg = self._cfg
-        audio_seconds = samples.shape[0] / _SAMPLE_RATE
+        audio_seconds = samples.shape[0] / SAMPLE_RATE
         segments_iter, info = self._impl.transcribe(
             samples,
             language="en",
@@ -140,7 +141,7 @@ class Model:
             "segments=%d words=%d transcript_chars=%d",
             round((time.monotonic() - started) * 1000),
             samples.shape[0],
-            round(vad_seconds * _SAMPLE_RATE),
+            round(vad_seconds * SAMPLE_RATE),
             len(result.segments),
             sum(len(s.words) for s in result.segments),
             len(result.text),
@@ -195,7 +196,7 @@ def _validate_output(
     vad_seconds: float,
 ) -> None:
     """Reject invalid timestamps and decoder-runaway word density. Messages carry
-    no transcript content so pathological output never leaks dictated text (§4.6)."""
+    no transcript content so pathological output never leaks dictated text."""
     if not math.isfinite(vad_seconds) or vad_seconds < 0:
         raise PathologicalOutputError("invalid VAD duration")
     tolerance = 1.0
@@ -240,7 +241,7 @@ def is_model_cached(model_id: str) -> bool:
     """True if the model's ``config.json`` is in the local HF cache (no network).
 
     Delegate cache layout and environment resolution to huggingface_hub so this
-    stays aligned with model loading and ``snapshot_download`` (§4.11).
+    stays aligned with model loading and ``snapshot_download``.
     """
     from huggingface_hub import try_to_load_from_cache
 
@@ -249,7 +250,7 @@ def is_model_cached(model_id: str) -> bool:
 
 
 def download_model(model_id: str) -> None:
-    """Fetch the model into the local HF cache using the §4.11 allow-list."""
+    """Fetch the model into the local HF cache using the fixed allow-list."""
     from huggingface_hub import snapshot_download
 
     snapshot_download(

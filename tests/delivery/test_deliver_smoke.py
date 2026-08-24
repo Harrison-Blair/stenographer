@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke suite for delivery (spec §6.3).
+"""Integration smoke suite for delivery.
 
 Real, non-mocked boundaries: genuine backend detection against the session
 compositor, a real copy → read-back round trip on BOTH selections through the
@@ -18,33 +18,30 @@ without a focused window under test:
     GNOME Wayland session. After the chord fires, confirm the unique string was
     pasted at the cursor in the focused terminal on EACH compositor.
 
-Self-skips unless STENOGRAPHER_INTEGRATION=1, the selected backend's binaries
-are on PATH, and a uinput device can actually be opened (writable /dev/uinput),
-so the default unit run never touches the clipboard or creates an input device.
+Collected only with STENOGRAPHER_INTEGRATION=1, and skipped further unless the
+selected backend's binaries are on PATH and a uinput device can actually be
+opened (writable /dev/uinput), so the default unit run never touches the
+clipboard or creates an input device.
 """
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import uuid
 
 import pytest
 
-pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
-from stenographer.delivery.deliver import Deliverer  # noqa: E402
-from stenographer.platform.linux.clipboard import (  # noqa: E402
+from stenographer.delivery.deliver import Deliverer
+from stenographer.platform.linux.clipboard import (
     ClipboardBackend,
     copy_for_backend,
     detect_clipboard_backend,
 )
-from stenographer.platform.linux.process import child_env  # noqa: E402
-from stenographer.platform.linux.uinput import UinputKeyboard  # noqa: E402
+from stenographer.platform.linux.process import child_env
+from stenographer.platform.linux.uinput import UinputKeyboard
+
+pytestmark = pytest.mark.integration
 
 BACKEND = detect_clipboard_backend()
 

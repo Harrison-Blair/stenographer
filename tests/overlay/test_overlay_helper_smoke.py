@@ -10,12 +10,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
-from stenographer.status import (  # noqa: E402
+from stenographer.status import (
     Backend,
     Command,
     CommandMessage,
@@ -24,6 +19,8 @@ from stenographer.status import (  # noqa: E402
     decode_message,
     encode_message,
 )
+
+pytestmark = pytest.mark.integration
 
 
 def _assert_private_helper_is_log_free(command: tuple[str, ...], tmp_path: Path) -> None:

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Audio capture: the ``Recorder`` and the pure energy gate.
 
-The PortAudio callback only copies each block (§4.8). ``sounddevice`` is
-imported lazily inside ``Recorder.prepare`` so the pure helpers (the RMS gate
+The PortAudio callback only copies each block — never analysis. ``sounddevice``
+is imported lazily inside ``Recorder.prepare`` so the pure helpers (the RMS gate
 and the resampler) import without PortAudio present. Sample-rate and channel
-fallback (§4.9) polyphase-resample the capture to the fixed ASR rate.
+fallback polyphase-resample the capture to the fixed ASR rate.
 """
 
 from __future__ import annotations
@@ -19,9 +19,10 @@ from typing import Any
 
 import numpy as np
 
+from stenographer.constants import SAMPLE_RATE
+
 logger = logging.getLogger(__name__)
 
-_SAMPLE_RATE = 16000
 _GATE_FRAME_SECONDS = 0.050
 _FALLBACK_SAMPLE_RATES: tuple[int, ...] = (48000, 44100, 22050, 16000, 8000)
 _FALLBACK_CHANNELS: tuple[int, ...] = (2, 1)
@@ -38,7 +39,7 @@ class RecorderState(Enum):
 
 
 def speech_gate_passes(samples: np.ndarray, sample_rate: int, min_rms: float) -> bool:
-    """True if the capture clears the pre-decode energy gate (§4.1).
+    """True if the capture clears the pre-decode energy gate.
 
     Disabled (always True) when *min_rms* <= 0. Otherwise the capture passes
     only when two consecutive 50 ms frames both exceed the RMS threshold, so
@@ -124,7 +125,7 @@ class Recorder:
         self._on_block = on_block
         self._stream: Any = None
         self._stream_epoch = 0
-        self._device_rate = _SAMPLE_RATE
+        self._device_rate = SAMPLE_RATE
         self._channels = 1
         self._blocks: list[np.ndarray] = []
         self._frames = 0
@@ -167,7 +168,7 @@ class Recorder:
         self._selected_device = int(device["index"])
 
     def _negotiate(self, sounddevice: Any) -> None:
-        rates = [_SAMPLE_RATE, *(r for r in _FALLBACK_SAMPLE_RATES if r != _SAMPLE_RATE)]
+        rates = [SAMPLE_RATE, *(r for r in _FALLBACK_SAMPLE_RATES if r != SAMPLE_RATE)]
         rejected: Exception | None = None
         for channels in _FALLBACK_CHANNELS:
             for rate in rates:
@@ -195,11 +196,11 @@ class Recorder:
                     self._channels = channels
                     self._max_frames = self._max_seconds * rate
                     self._state = RecorderState.PREPARED
-                    if rate != _SAMPLE_RATE:
+                    if rate != SAMPLE_RATE:
                         logger.warning(
                             "recorder: fallback rate_hz=%d requested_rate_hz=%d",
                             rate,
-                            _SAMPLE_RATE,
+                            SAMPLE_RATE,
                         )
                     return
         assert rejected is not None
@@ -300,8 +301,8 @@ class Recorder:
             capped = self._capped
             self._state = RecorderState.PREPARED
             audio = np.concatenate(self._blocks) if self._blocks else np.empty(0, dtype=np.float32)
-            if self._device_rate != _SAMPLE_RATE:
-                audio = _resample_poly(audio, self._device_rate, _SAMPLE_RATE)
+            if self._device_rate != SAMPLE_RATE:
+                audio = _resample_poly(audio, self._device_rate, SAMPLE_RATE)
             audio = audio.astype(np.float32, copy=False)
         except Exception as exc:
             failed_frames = self._frames

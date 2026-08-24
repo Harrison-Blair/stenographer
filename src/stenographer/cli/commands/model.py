@@ -4,18 +4,17 @@
 from __future__ import annotations
 
 import argparse
+from typing import TYPE_CHECKING
 
-from stenographer.cli import _fatal
+from stenographer.cli.commands import with_config
+
+if TYPE_CHECKING:
+    from stenographer.config import Config
 
 
-def cmd_model_download(args: argparse.Namespace) -> int:
-    from stenographer import config
+@with_config
+def cmd_model_download(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.transcribe import model
-
-    try:
-        cfg = config.load_or_default()
-    except config.ConfigError as exc:
-        return _fatal(str(exc))
 
     model.download_model(cfg.asr.model)
     print(f"stenographer: downloaded {cfg.asr.model}")

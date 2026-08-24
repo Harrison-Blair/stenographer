@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke suite for the ASR worker (spec §6.3).
+"""Integration smoke suite for the ASR worker.
 
 Real, non-mocked process lifecycle: a genuinely spawned child loads the model
 through a load-only warm-up and decodes a bundled 16 kHz WAV. Covers warm-up
@@ -11,9 +11,9 @@ kill the real child, an honest in-repo stand-in for external death, not a
 subprocess mock. Shutdown cancellation suspends a real child to prove a stalled
 decode cannot hold the daemon open indefinitely.
 
-Self-skips unless STENOGRAPHER_INTEGRATION=1, the model is cached locally, and
-the fixture WAV is present, so the default unit run never spawns a process,
-loads the model, or touches the network.
+Collected only with STENOGRAPHER_INTEGRATION=1, and skipped further unless the
+model is cached locally and the fixture WAV is present, so the default unit run
+never spawns a process, loads the model, or touches the network.
 """
 
 from __future__ import annotations
@@ -33,9 +33,6 @@ pytestmark = pytest.mark.integration
 _FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures"
 _CLIP = _FIXTURES / "speech_16k.wav"
 _MODEL_ID = "Systran/faster-whisper-medium.en"
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
 
 if not _CLIP.exists():
     pytest.skip(f"fixture WAV absent: {_CLIP}", allow_module_level=True)
@@ -77,7 +74,7 @@ def test_transcribe_through_child_matches_in_process():
 
     assert result.text.strip() == expected.text.strip()
     assert result.text.strip() != ""
-    # Word timestamps must survive the spawn/pickle round trip (§7 door-opener).
+    # Word timestamps must survive the spawn/pickle round trip.
     assert any(seg.words for seg in result.segments)
 
 

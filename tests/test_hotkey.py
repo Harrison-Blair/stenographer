@@ -3,7 +3,7 @@
 platform-neutral ChordTracker state machine. No mocks, no devices — the key table
 is a tiny dict-backed value (pure input, not a mock of evdev) and the tracker is
 driven through ``_key_event`` exactly as a platform reader thread would. The real
-read loop is covered by the uinput loopback smoke in test_hotkey_smoke.py (§6).
+read loop is covered by the uinput loopback smoke in test_hotkey_smoke.py.
 
 Each test here was seen to FAIL against a deliberately broken stub before the real
 implementation made it pass:

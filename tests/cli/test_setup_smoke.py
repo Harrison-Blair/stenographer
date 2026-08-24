@@ -10,29 +10,24 @@ from __future__ import annotations
 
 import io
 import os
+import pty
+import select
+import termios
 import threading
 import time
 
+import evdev
 import pytest
 
+from stenographer.cli import doctor, setup
+from stenographer.cli.binding_capture import capture_binding
+from stenographer.cli.calibration import calibrate_spectrum_profile
+from stenographer.config import Config
+from stenographer.platform.linux.probe import service_status
+from stenographer.status import SPECTRUM_BANDS
+from stenographer.transcribe import model
+
 pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
-import pty  # noqa: E402
-import select  # noqa: E402
-import termios  # noqa: E402
-
-import evdev  # noqa: E402
-
-from stenographer.cli import doctor, setup  # noqa: E402
-from stenographer.cli.binding_capture import capture_binding  # noqa: E402
-from stenographer.cli.calibration import calibrate_spectrum_profile  # noqa: E402
-from stenographer.config import Config  # noqa: E402
-from stenographer.platform.linux.probe import service_status  # noqa: E402
-from stenographer.status import SPECTRUM_BANDS  # noqa: E402
-from stenographer.transcribe import model  # noqa: E402
 
 
 def _open_binding_uinput() -> evdev.UInput:

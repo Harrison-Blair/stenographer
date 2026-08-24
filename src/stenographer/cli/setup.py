@@ -242,22 +242,11 @@ def _prompt_sound_pack(console: _Console, current: str, config_dir: pathlib.Path
 
 
 def _audio_devices() -> list[tuple[str, str]]:
-    """Return selectable input devices. PortAudio errors degrade to no suggestions."""
+    """Return selectable input devices. An unusable PortAudio means no suggestions."""
 
-    try:
-        import sounddevice
-    except ImportError:
-        return []
+    from stenographer.cli.audio_probe import input_device_choices, query_devices
 
-    try:
-        devices = sounddevice.query_devices()
-    except Exception:
-        return []
-    return [
-        (str(index), f"{index}: {device.get('name', '?')}")
-        for index, device in enumerate(devices)
-        if device.get("max_input_channels", 0) > 0
-    ]
+    return input_device_choices(query_devices().devices)
 
 
 def _hotkey_devices() -> list[tuple[str, str]]:

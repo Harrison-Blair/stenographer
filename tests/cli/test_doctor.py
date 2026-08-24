@@ -2,7 +2,8 @@
 """Pure-logic tests for the doctor report: decision and rendering only.
 
 The environment probe itself is exercised by test_doctor_smoke.py (integration,
-non-mocked) per spec §6 — nothing here stubs the environment.
+non-mocked) per the testing policy in AGENTS.md — nothing here stubs the
+environment.
 """
 
 from __future__ import annotations

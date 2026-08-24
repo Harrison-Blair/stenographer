@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Paste injection: a persistent uinput virtual keyboard emitting Shift+Insert (§2.6/§2.7).
+"""Paste injection: a persistent uinput virtual keyboard emitting Shift+Insert.
 
 One injection path per session, zero per-utterance fallback: no wtype, no
 per-character typing, no max_chars. ``chord_events`` is the pure unit target; the
-device itself is covered by the integration smoke suite, never by mocks (§6).
+device itself is covered by the integration smoke suite, never by mocks (the
+testing policy in AGENTS.md).
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ class UinputKeyboard:
     device-enumeration race and its latency). The device is opened lazily on the
     first ``send_chord`` and settled once before its first event, or the
     compositor may drop the chord. PermissionError/FileNotFoundError on
-    ``/dev/uinput`` propagate — doctor owns the message (§4.13), so it must not
+    ``/dev/uinput`` propagate — doctor owns the message, so it must not
     silently no-op.
     """
 
