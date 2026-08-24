@@ -66,8 +66,8 @@ def test_inapplicable_gate_never_reports_or_exits():
 def test_save_report_states_the_saved_path_and_backup():
     lines = save_report_lines(
         changed=True,
-        path=pathlib.Path("/cfg/config.toml"),
-        backup_path=pathlib.Path("/cfg/config.toml.bak-1"),
+        path=pathlib.PurePosixPath("/cfg/config.toml"),
+        backup_path=pathlib.PurePosixPath("/cfg/config.toml.bak-1"),
         saved_prefix="Saved",
         unchanged_message="Configuration is unchanged; no file was written.",
     )
@@ -78,7 +78,7 @@ def test_save_report_states_the_saved_path_and_backup():
 def test_save_report_omits_a_missing_backup():
     lines = save_report_lines(
         changed=True,
-        path=pathlib.Path("/cfg/config.toml"),
+        path=pathlib.PurePosixPath("/cfg/config.toml"),
         backup_path=None,
         saved_prefix="Selected sound pack legacy; saved",
         unchanged_message="Sound pack legacy is already selected; no file was written.",
@@ -90,8 +90,8 @@ def test_save_report_omits_a_missing_backup():
 def test_unchanged_save_reports_only_the_unchanged_sentence():
     lines = save_report_lines(
         changed=False,
-        path=pathlib.Path("/cfg/config.toml"),
-        backup_path=pathlib.Path("/cfg/config.toml.bak-1"),
+        path=pathlib.PurePosixPath("/cfg/config.toml"),
+        backup_path=pathlib.PurePosixPath("/cfg/config.toml.bak-1"),
         saved_prefix="Saved",
         unchanged_message="Configuration is unchanged; no file was written.",
     )

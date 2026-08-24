@@ -32,7 +32,7 @@ from stenographer.cli.setup import (
 from stenographer.config import Config
 from stenographer.platform.base import HostGuidance
 
-_CONFIG_PATH = pathlib.Path("/tmp/custom.toml")
+_CONFIG_PATH = pathlib.PurePosixPath("/tmp/custom.toml")
 
 _GUIDANCE = HostGuidance(
     capability_labels={},

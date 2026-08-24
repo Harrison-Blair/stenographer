@@ -198,7 +198,7 @@ def quick_review_lines(config: Config) -> list[str]:
 
 def quick_tryout_lines(
     config: Config,
-    path: pathlib.Path,
+    path: pathlib.PurePath,
     guidance: HostGuidance,
     *,
     custom_config: bool,

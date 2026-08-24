@@ -131,8 +131,8 @@ def load_document(
 def save_report_lines(
     *,
     changed: bool,
-    path: pathlib.Path,
-    backup_path: pathlib.Path | None,
+    path: pathlib.PurePath,
+    backup_path: pathlib.PurePath | None,
     saved_prefix: str,
     unchanged_message: str,
 ) -> list[str]:
