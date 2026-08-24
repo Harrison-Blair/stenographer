@@ -11,7 +11,8 @@
 #     found at runtime via rthooks/py_rth_portaudio.py)
 #   - wl-copy, canberra-gtk-play / pw-play / paplay CLIs; /dev/uinput access + `input` group
 # The ASR model (~1.5 GB) is never bundled; `stenographer model download`
-# fetches it into the HuggingFace cache (the only network path — hence certifi).
+# fetches it into the HuggingFace cache (the only download path — hence certifi,
+# which the daemon-start update notice's metadata request also uses when present).
 
 # -*- mode: python ; coding: utf-8 -*-
 from importlib.util import find_spec

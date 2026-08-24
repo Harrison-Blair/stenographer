@@ -62,6 +62,7 @@ def test_windows_stub_conforms_and_reports_everything_unavailable():
     with pytest.raises(KeyError):
         plat.keys().code("KEY_NOT_A_REAL_KEY")
     plat.notifier().error("must not raise")
+    plat.notifier().info("must not raise")
     with pytest.raises(UnsupportedPlatformError):
         plat.key_injector()
     with pytest.raises(UnsupportedPlatformError):

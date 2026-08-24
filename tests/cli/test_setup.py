@@ -262,6 +262,7 @@ def test_full_review_lists_every_section_and_field():
         "  volume = 0.6",
         "  mute = False",
         "  overlay = True",
+        "  update_check = True",
         "  spectrum_floor_dbfs = -45.0",
         "  sound_pack = minimal-ui",
     ]
@@ -289,6 +290,7 @@ def test_quick_review_lists_only_the_keys_the_quick_wizard_edits():
         "  feedback.volume = 0.6",
         "  feedback.mute = False",
         "  feedback.overlay = True",
+        "  feedback.update_check = True",
         "  feedback.sound_pack = minimal-ui",
         "  feedback.spectrum_floor_dbfs = -45.0",
         "Audio-gate, recording-limit, and all ASR settings will be retained unchanged.",

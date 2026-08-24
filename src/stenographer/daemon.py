@@ -25,6 +25,7 @@ import os
 import sys
 import threading
 from enum import Enum, auto
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from stenographer.audio import Recorder, speech_gate_passes
@@ -562,6 +563,19 @@ def run(cfg: Config) -> int:
                 "recorder: startup_prepare_failed error_type=%s recovery=next_keypress",
                 type(exc).__name__,
             )
+        if cfg.feedback.update_check:
+            try:
+                from stenographer._version import __version__
+                from stenographer.update_check import start_background_check
+
+                log.debug("update_check: enabled")
+                start_background_check(
+                    __version__,
+                    plat.state_dir(os.environ, Path.home()),
+                    daemon._notifier,
+                )
+            except Exception as exc:
+                log.debug("update_check: not started error_type=%s", type(exc).__name__)
         daemon.run()
     except KeyboardInterrupt:
         pass

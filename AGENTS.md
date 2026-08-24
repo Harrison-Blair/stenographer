@@ -28,8 +28,15 @@ helper-local amber border pulse only while the model loads, fixed state
 interiors — never transcript preview, controls, GTK, or raw-audio IPC), the
 local PyInstaller onedir build + per-user installer + `main`-only draft
 release workflow (with a read-only release-preflight rehearsal — version/tag
-guard plus wheel/sdist verification — on PRs into `main`), and static
-Bash/Zsh/Fish completions.
+guard plus wheel/sdist verification — on PRs into `main`), the curl-piped
+`scripts/quick-install.sh` bootstrap (installs the latest *published*
+release's native bundle by handing it to that release's own sdist
+`install.sh` after `SHA256SUMS` verification — an install path, never
+self-update), the daemon-start update *notice* (at most one metadata-only
+HTTPS request per 24 h for the latest published GitHub release tag, a desktop
+notification pointing at the README quick-install command, opt out with
+`feedback.update_check = false` — it never downloads and never updates
+anything), and static Bash/Zsh/Fish completions.
 
 ## Commands
 
@@ -185,8 +192,14 @@ The rule is structural, not stylistic, and it is enforced by a test.
      the clipboard already holds the transcript as recovery.
    - An empty transcript or failed speech gate is success-shaped: no paste,
      no error cue.
-   - The daemon never touches the network (`local_files_only`); only
-     `stenographer model download` may.
+   - The ASR path never touches the network (`local_files_only`), and
+     `stenographer model download` is the only command that may download
+     anything. The daemon's sole other network access is the update notice's
+     single metadata request: a background daemon thread that is never joined,
+     off the hot path, 5 s timeout, at most one request per 24 h, successful or
+     not, via the record in the state directory, every failure DEBUG-logged and
+     otherwise silent, disabled by `feedback.update_check = false`, and sending
+     nothing but the request itself.
    - The PortAudio callback only copies blocks (no analysis, allocation-heavy
      work, or slow-consumer locks).
    - One utterance at a time; a start press during transcription neither
@@ -227,7 +240,7 @@ The rule is structural, not stylistic, and it is enforced by a test.
    `<active-config-directory>/sounds/<pack>/`, local-only, and must pass the
    four-cue WAV validation; invalid selection warns once and falls back to
    `minimal-ui`. Static completions expose only the four bundled names.
-9. **Config is fixed** — exactly 20 keys in 4 sections (`hotkey`, `audio`,
+9. **Config is fixed** — exactly 21 keys in 4 sections (`hotkey`, `audio`,
    `asr`, `feedback`), frozen dataclasses, key-scoped `ConfigError` → exit 78,
    no migrations, no setup-only keys. Setup/sounds save through the tomlkit
    preservation layer (comments, ordering, unknown content, symlinks, mode;
@@ -246,6 +259,9 @@ The rule is structural, not stylistic, and it is enforced by a test.
 - After capture/logging-affecting changes: a cold-start dictation retains its
   opening words, and an inspection of `stenographer.log` + the journal shows
   metrics but no transcript or audio content.
+- After update-notice changes: a build whose `_version.py` is temporarily
+  lowered pops the notification on daemon start with dictation unaffected, and
+  `feedback.update_check = false` makes no request at all.
 
 ## Architecture map
 
@@ -256,12 +272,13 @@ authoritative when editing.
 
 | Module | Role |
 |---|---|
-| `daemon.py` | Orchestrator: hotkey → record → transcribe → deliver. `Daemon.build(cfg, clipboard_backend=, status=, platform=)`; `run()` takes the platform single-instance lock, installs stop handlers, prepares audio, starts the listener. Warms a cold model in the background once capture starts; toggle mode ends at `audio.max_recording_seconds` through the same stop path. |
+| `daemon.py` | Orchestrator: hotkey → record → transcribe → deliver. `Daemon.build(cfg, clipboard_backend=, status=, platform=)`; `run()` takes the platform single-instance lock, installs stop handlers, prepares audio, starts the listener, and — when `feedback.update_check` is on — starts the update-notice thread. Warms a cold model in the background once capture starts; toggle mode ends at `audio.max_recording_seconds` through the same stop path. |
 | `hotkey.py` | Platform-neutral `parse_binding` (via `KeyTable`), `chord_active`/`edge`, `ChordTracker` (held-key union across devices, stuck-key synthesis, `wait_binding_released`). Providers subclass it and feed `_key_event(device_id, code, value)`. |
 | `keycodes.py` | Generated pure `KEY_*`/`BTN_*` name→code table (`scripts/gen_keycodes.py`); drift test on Linux. |
 | `binding_capture.py` | Core capture vocabulary shared by `cli/` and every provider: `BindingCaptureError`, `CaptureState`, `KeyEvent`, pure `reduce_capture`, `serialize_capture` (validated canonical `KEY_*` names). No host imports. |
 | `capabilities.py` | The shared capability gate (core, so the daemon never imports `cli/`): `Capabilities` / `OverlayCapability` with names identical to `HostProbe`'s, `REQUIRED`, pure `missing_required` (→ exit 78 / startup refusal), and the read-only `probe` / `probe_overlay` (host half from `probe_host()`, plus mic and model cache). Labels, fix hints, and rendering live in `cli/doctor.py`. |
 | `audio_probe.py` | The one PortAudio input-device enumeration (`query_devices`, never raises) plus its pure adapters, shared by the capability gate, `setup`, and `devices`. |
+| `update_check.py` | The daemon-start update notice (core, stdlib-only apart from an optional `certifi` CA bundle): pure `evaluate` (installed vs. latest tag, 1 h re-notify floor, never notifies for a local build ahead of the release), pure `build_request` and `tag_from_location` (the redirect target must sit under the repository's `releases/tag/` prefix, and the message renders from the parsed tag, never the URL), the cached record, and the thin edge — `fetch_latest_tag` (one metadata-only `HEAD` for the latest GitHub release, `User-Agent: stenographer-update-check`), `start_background_check`, and `run_check` (stamps the 24 h window on every attempt, fetches only when it has lapsed), which notifies through the platform `Notifier.info`. |
 | `audio.py` | PortAudio recorder: retained pre-negotiated stream, block-copy callback with latest-only handoff to the overlay supervisor, RMS speech gate, sample-rate fallback + resample, one stale-stream recovery. |
 | `config.py` | TOML → frozen dataclasses; missing file written with annotated defaults (`default_toml()` renders the template at write time so the `hotkey.device` comment comes from `HostGuidance`); in-memory load path for validating setup output. |
 | `status.py` | Lifecycle states + strict protocol-v4 NDJSON contract + pure generation/coalescing policy. |
@@ -272,7 +289,7 @@ authoritative when editing.
 | `platform/` | The host boundary — see above. |
 | `utils/logging_setup.py` | Idempotent stderr + rotating state-file logging (5 MiB × 3), `STENOGRAPHER_LOG_LEVEL`, privacy-safe worker forwarding. |
 | `assets/` | Sound packs (`sounds/<pack>/`), icon, font, static completions. |
-| `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `gen_keycodes.py`, `cue_audition.py`, `sound_asset_guard.py`. |
+| `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `quick-install.sh` (release bootstrap behind the README one-liner), `gen_keycodes.py`, `cue_audition.py`, `sound_asset_guard.py`. |
 | `docs/` | `windows/SCOPE.md` (Windows backend scope), `code-smells.md` / `refactoring-techniques.md` (review/refactor references), `cue-audition.md`. |
 
 The ASR model (~1.5 GB) is never bundled — `stenographer model download`

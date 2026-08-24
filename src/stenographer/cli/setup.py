@@ -41,6 +41,7 @@ _QUICK_REVIEW_FIELDS = (
     ("feedback", "volume"),
     ("feedback", "mute"),
     ("feedback", "overlay"),
+    ("feedback", "update_check"),
     ("feedback", "sound_pack"),
     ("feedback", "spectrum_floor_dbfs"),
 )
@@ -558,6 +559,9 @@ def _edit_feedback_section(
         volume=float(_prompt_number(console, "Cue volume", config.feedback.volume, 0.0, 1.0)),
         mute=_prompt_bool(console, "Mute cues", config.feedback.mute),
         overlay=_prompt_bool(console, "Show lifecycle overlay", config.feedback.overlay),
+        update_check=_prompt_bool(
+            console, "Check for updates at daemon start", config.feedback.update_check
+        ),
         sound_pack=_prompt_sound_pack(console, config.feedback.sound_pack, config_dir),
     )
     console.write()

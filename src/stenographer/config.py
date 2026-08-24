@@ -70,6 +70,7 @@ class FeedbackConfig:
     volume: float
     mute: bool
     overlay: bool = True
+    update_check: bool = True
     spectrum_floor_dbfs: SpectrumFloor = -45.0
     sound_pack: str = DEFAULT_SOUND_PACK
 
@@ -201,6 +202,7 @@ def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
         volume=r.ranged_number("volume", 0.0, 1.0),
         mute=r.bool("mute"),
         overlay=r.bool("overlay"),
+        update_check=r.bool("update_check"),
         spectrum_floor_dbfs=r.spectrum_floor("spectrum_floor_dbfs"),
         sound_pack=sound_pack,
     )
@@ -244,6 +246,7 @@ cpu_threads = 0                # 0 = auto (physical cores, capped at 8)
 volume = 0.6
 mute = false
 overlay = true                 # best-effort lifecycle pill; dictation is independent
+update_check = true            # daily HTTPS check for a newer release; a notice, never self-update
 spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
 sound_pack = "{sound_pack}"      # bundled pack name or valid pack under sounds/
 """
@@ -292,6 +295,7 @@ class Config:
                 volume=0.6,
                 mute=False,
                 overlay=True,
+                update_check=True,
                 spectrum_floor_dbfs=-45.0,
                 sound_pack=DEFAULT_SOUND_PACK,
             ),

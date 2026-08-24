@@ -35,6 +35,12 @@ The workflow checks every SHA-256 entry and records signed provenance for all
 five files. It never publishes a release: publishing the reviewed draft
 manually creates the stable `vX.Y.Z` release.
 
+The README's one-line installer, `scripts/quick-install.sh`, consumes that
+published release: it downloads the native standalone archive, the source
+distribution, and `SHA256SUMS`, verifies both archives, and runs the source
+distribution's `scripts/install.sh` on the prebuilt bundle. Renaming any of
+those assets breaks it.
+
 The native ARM runner validates packaging, executable architecture, `--version`,
 and `--help`; it cannot validate Wayland, microphone, or uinput behavior. Before
 publishing the first AArch64 release, run `doctor` and real dictation on an

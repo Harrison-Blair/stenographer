@@ -34,6 +34,26 @@ assistants). Everything below this comment is generated / maintained
 content. To change the project description, edit above this line.
 -->
 
+## Quick install
+
+On Linux x86_64 or AArch64 with a Wayland session and a systemd user manager:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start
+```
+
+This downloads the latest release's prebuilt bundle, verifies it against the
+release's `SHA256SUMS`, installs `~/.local/bin/stenographer`, and installs and
+enables the systemd user service — no Python or build tools needed.
+`--no-start` leaves the service stopped until you have configured it and
+downloaded the model; drop it (and everything after `bash`) when upgrading an
+existing install. Any other `scripts/install.sh` option can be passed the same
+way. The bundle is built on Ubuntu 24.04, so it needs a comparably recent
+glibc; on older systems build from source instead (step 2 below).
+
+After the quick install, check the permissions in step 1, skip step 2, and
+continue from step 3.
+
 ## Quick start
 
 ### 1. Check the essentials
@@ -54,6 +74,8 @@ package names vary by distribution; `stenographer doctor` reports what is
 missing.
 
 ### 2. Install the user service
+
+Skip this step if you used the quick install above.
 
 ```sh
 git clone https://github.com/Harrison-Blair/stenographer.git
@@ -153,10 +175,16 @@ evdev for the hotkey, a `uinput` Shift+Insert chord for the paste, `wl-copy` or
 `notify-send`, an `flock` under `$XDG_RUNTIME_DIR`, and XDG paths. Hotkey
 bindings use evdev `KEY_*` names on every platform.
 
-The model download is explicit; daemon operation is offline. Logs may contain
-timings and counts, but never transcript text or audio. See
-[AGENTS.md](AGENTS.md) for the binding behavioral and architecture
-decisions.
+The model download is explicit, and dictation is offline: audio, transcripts,
+configuration, and device or model names never leave the machine. The daemon's
+only network access is the update notice — at most one request per 24 hours,
+successful or not: a single metadata-only request for the latest GitHub release
+tag, showing a desktop notification when a newer version exists and pointing
+back at the quick-install command above. It never downloads anything; a failed
+check is silent, and the next attempt waits for the 24-hour window. Turn it off
+with `update_check = false` under `[feedback]`. Logs may contain timings and
+counts, but never transcript text or audio. See [AGENTS.md](AGENTS.md) for the
+binding behavioral and architecture decisions.
 
 ## Service and troubleshooting
 
