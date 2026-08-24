@@ -79,9 +79,13 @@ type ClipboardWriter = Callable[[str], bool]
 
 
 class Notifier(Protocol):
-    """Error notifications; must never raise and never block the daemon."""
+    """Desktop notifications; must never raise and never block the daemon."""
 
     def error(self, message: str) -> None: ...
+
+    def info(self, message: str) -> None:
+        """Show *message* as a normal-urgency notice, with ``error``'s guarantees."""
+        ...
 
 
 class CuePlayer(Protocol):
@@ -331,4 +335,7 @@ class NullNotifier:
     """Notifier that does nothing (mirrors ``status.NullStatusSink``)."""
 
     def error(self, message: str) -> None:
+        return None
+
+    def info(self, message: str) -> None:
         return None

@@ -65,6 +65,7 @@ CORE = (
     "stenographer.audio_probe",
     "stenographer.capabilities",
     "stenographer.binding_capture",
+    "stenographer.update_check",
     "stenographer.daemon",
     "stenographer.delivery.deliver",
     "stenographer.delivery.feedback",

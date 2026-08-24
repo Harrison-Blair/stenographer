@@ -39,6 +39,7 @@ def test_defaults_match_spec():
     assert d.feedback.volume == 0.6
     assert d.feedback.mute is False
     assert d.feedback.overlay is True
+    assert d.feedback.update_check is True
     assert d.feedback.spectrum_floor_dbfs == -45.0
     assert d.feedback.sound_pack == "minimal-ui"
 
@@ -105,6 +106,28 @@ def test_overlay_can_be_disabled_without_restating_feedback_defaults(tmp_path):
     assert cfg.feedback.mute == Config.defaults().feedback.mute
     assert cfg.feedback.spectrum_floor_dbfs == Config.defaults().feedback.spectrum_floor_dbfs
     assert cfg.feedback.sound_pack == "minimal-ui"
+
+
+def test_update_check_can_be_disabled_without_restating_feedback_defaults(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("[stenographer.feedback]\nupdate_check = false\n")
+    cfg = Config.load(p)
+    assert cfg.feedback.update_check is False
+    assert cfg.feedback.overlay == Config.defaults().feedback.overlay
+    assert cfg.feedback.volume == Config.defaults().feedback.volume
+
+
+def test_config_written_before_update_check_existed_opts_in_without_migration(tmp_path):
+    p = tmp_path / "config.toml"
+    original = "[stenographer.feedback]\noverlay = false\n"
+    p.write_text(original)
+
+    assert Config.load(p).feedback.update_check is True
+    assert p.read_text() == original
+
+
+def test_default_template_documents_the_update_check_as_enabled():
+    assert Config.loads(default_toml()).feedback.update_check is True
 
 
 def test_old_config_inherits_default_sound_pack_without_migration(tmp_path):
@@ -188,6 +211,7 @@ def test_unknown_keys_ignored(tmp_path):
         ("[stenographer.feedback]\nvolume = -1\n", "feedback.volume"),
         ('[stenographer.feedback]\nmute = "no"\n', "feedback.mute"),
         ('[stenographer.feedback]\noverlay = "yes"\n', "feedback.overlay"),
+        ('[stenographer.feedback]\nupdate_check = "yes"\n', "feedback.update_check"),
         ('[stenographer.feedback]\nsound_pack = "Minimal UI"\n', "feedback.sound_pack"),
         ('[stenographer.feedback]\nsound_pack = "-minimal"\n', "feedback.sound_pack"),
         ('[stenographer.feedback]\nsound_pack = "a_thing"\n', "feedback.sound_pack"),

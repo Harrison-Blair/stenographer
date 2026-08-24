@@ -175,10 +175,16 @@ evdev for the hotkey, a `uinput` Shift+Insert chord for the paste, `wl-copy` or
 `notify-send`, an `flock` under `$XDG_RUNTIME_DIR`, and XDG paths. Hotkey
 bindings use evdev `KEY_*` names on every platform.
 
-The model download is explicit; daemon operation is offline. Logs may contain
-timings and counts, but never transcript text or audio. See
-[AGENTS.md](AGENTS.md) for the binding behavioral and architecture
-decisions.
+The model download is explicit, and dictation is offline: audio, transcripts,
+configuration, and device or model names never leave the machine. The daemon's
+only network access is the update notice — at most one request per 24 hours,
+successful or not: a single metadata-only request for the latest GitHub release
+tag, showing a desktop notification when a newer version exists and pointing
+back at the quick-install command above. It never downloads anything; a failed
+check is silent, and the next attempt waits for the 24-hour window. Turn it off
+with `update_check = false` under `[feedback]`. Logs may contain timings and
+counts, but never transcript text or audio. See [AGENTS.md](AGENTS.md) for the
+binding behavioral and architecture decisions.
 
 ## Service and troubleshooting
 

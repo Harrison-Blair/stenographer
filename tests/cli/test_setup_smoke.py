@@ -142,9 +142,9 @@ def test_real_quick_setup_persists_and_runs_guided_checks(tmp_path, monkeypatch)
 
     drain = threading.Thread(target=drain_output)
     drain.start()
-    # auto device; keep binding; hold; default mic/volume/mute/overlay/sound pack;
-    # automatic spectrum; accept; save
-    os.write(input_master, b"\nkeep\n\n\n\n\n\n\n\n\n\n")
+    # auto device; keep binding; hold; default mic/volume/mute/overlay/update
+    # check/sound pack; automatic spectrum; accept; save
+    os.write(input_master, b"\nkeep\n\n\n\n\n\n\n\n\n\n\n")
     try:
         exit_code = setup.run(quick=True, stdin=stdin, stdout=stdout, stderr=stdout)
         expected = 78 if missing_required(probe(Config.load(config_path))) else 0
