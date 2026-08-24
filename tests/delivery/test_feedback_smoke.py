@@ -1,31 +1,26 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Integration smoke suite for cue playback and sound packs (spec §6.3).
+"""Integration smoke suite for cue playback and sound packs.
 
 Really plays the four lifecycle cues through ``Feedback.play`` and then all
 four cues from every bundled pack plus a discovered custom pack through the
 detected audio player (canberra-gtk-play/pw-play/paplay) — no mocks. Each pack
 plays record_start, record_stop, delivered, error in order.
 
-Self-skips unless STENOGRAPHER_INTEGRATION=1 and an audio player is on PATH, so
-the default unit run never spawns a player or makes sound.
+Collected only with STENOGRAPHER_INTEGRATION=1, and skipped further unless an
+audio player is on PATH, so the default unit run never spawns a player or makes
+sound.
 """
 
 from __future__ import annotations
 
-import os
 import pathlib
 import shutil
 import time
 
 import pytest
 
-pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
-from stenographer.config import FeedbackConfig  # noqa: E402
-from stenographer.delivery.feedback import (  # noqa: E402
+from stenographer.config import FeedbackConfig
+from stenographer.delivery.feedback import (
     BUNDLED_PACKS,
     CUE_ORDER,
     Feedback,
@@ -33,7 +28,9 @@ from stenographer.delivery.feedback import (  # noqa: E402
     load_sound_pack,
     preview_sound_pack,
 )
-from stenographer.platform.linux.cues import LinuxCuePlayer, detect_player  # noqa: E402
+from stenographer.platform.linux.cues import LinuxCuePlayer, detect_player
+
+pytestmark = pytest.mark.integration
 
 PLAYER = detect_player()
 if PLAYER is None:

@@ -28,6 +28,7 @@ from stenographer.overlay.render import (
     STATE_LABELS,
     LoadingPulse,
     _crop_transparent,
+    layer_margin_bottom,
     loading_border_opacity,
     overlay_position,
     premultiplied_argb32,
@@ -336,6 +337,26 @@ def test_position_rejects_output_too_small_for_visible_pill() -> None:
 
     with pytest.raises(ValueError, match="output"):
         overlay_position((0, 0, PILL_WIDTH - 1, 480), frame)
+
+
+def test_layer_margin_offsets_visible_pill_not_shadow_canvas() -> None:
+    assert layer_margin_bottom(canvas_height=88, pill_bottom=72, edge_offset=32) == 16
+
+
+def test_layer_margin_and_position_agree_on_the_pill_edge_offset() -> None:
+    frame = render_overlay(OverlayState.RECORDING)
+    output = (0, 0, 1920, 1080)
+
+    _x, y = overlay_position(output, frame)
+    margin = layer_margin_bottom(canvas_height=frame.height, pill_bottom=frame.pill_bounds[3])
+
+    assert output[3] - (y + frame.pill_bounds[3]) == EDGE_OFFSET
+    assert margin + (frame.height - frame.pill_bounds[3]) == EDGE_OFFSET
+
+
+def test_layer_margin_rejects_a_shadow_canvas_deeper_than_the_offset() -> None:
+    with pytest.raises(ValueError, match="edge offset"):
+        layer_margin_bottom(canvas_height=88, pill_bottom=40, edge_offset=32)
 
 
 # Exact RGBA values sampled from the reference renderer at scale 1.0.  These

@@ -141,6 +141,23 @@ def validate_voice_visibility(
         raise CalibrationError("voice sample is not clearly above room noise")
 
 
+def _record_room_noise(recorder: Recorder, on_countdown: Callable[[int], None]) -> np.ndarray:
+    """Prepare *recorder*, count the room down to silence, and return the quiet capture.
+
+    ``on_countdown`` receives 3, 2, 1 during the silent countdown and then 0
+    immediately before capture starts. Clearing the returned buffer is the
+    caller's job, because only the caller knows when it is done with it.
+    """
+    recorder.prepare()
+    for remaining in range(COUNTDOWN_SECONDS, 0, -1):
+        on_countdown(remaining)
+        time.sleep(1.0)
+    on_countdown(0)
+    recorder.start()
+    time.sleep(float(CAPTURE_SECONDS))
+    return recorder.stop()
+
+
 def calibrate_spectrum_profile(
     device: str | int | None,
     *,
@@ -152,14 +169,7 @@ def calibrate_spectrum_profile(
     quiet = np.empty(0, dtype=np.float32)
     voice = np.empty(0, dtype=np.float32)
     try:
-        recorder.prepare()
-        for remaining in range(COUNTDOWN_SECONDS, 0, -1):
-            on_countdown(remaining)
-            time.sleep(1.0)
-        on_countdown(0)
-        recorder.start()
-        time.sleep(float(CAPTURE_SECONDS))
-        quiet = recorder.stop()
+        quiet = _record_room_noise(recorder, on_countdown)
         profile = estimate_spectrum_profile(quiet, 16000)
 
         on_voice_prompt()
@@ -181,21 +191,13 @@ def calibrate_spectrum_floor(
 ) -> float:
     """Capture room noise from *device* and return its display-only floor.
 
-    ``on_countdown`` receives 3, 2, 1 during the silent countdown and then 0
-    immediately before capture starts. The recorder and every returned sample
-    buffer are cleared on success, failure, or interruption.
+    The countdown contract is ``_record_room_noise``'s; the recorder and every
+    returned sample buffer are cleared on success, failure, or interruption.
     """
     recorder = Recorder(device=device, max_seconds=CAPTURE_SECONDS)
     captured = np.empty(0, dtype=np.float32)
     try:
-        recorder.prepare()
-        for remaining in range(COUNTDOWN_SECONDS, 0, -1):
-            on_countdown(remaining)
-            time.sleep(1.0)
-        on_countdown(0)
-        recorder.start()
-        time.sleep(float(CAPTURE_SECONDS))
-        captured = recorder.stop()
+        captured = _record_room_noise(recorder, on_countdown)
         return estimate_spectrum_floor(captured, 16000)
     finally:
         recorder.close()

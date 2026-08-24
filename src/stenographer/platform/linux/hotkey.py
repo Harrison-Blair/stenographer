@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The evdev hotkey backend: key-name table, main-keyboard auto-detection, and
-the non-grabbing multi-HID listener over ``/dev/input/event*`` (spec §4.9).
+the non-grabbing multi-HID listener over ``/dev/input/event*``.
 
 ``EvdevHotkeyListener`` extends the platform-neutral
 :class:`~stenographer.hotkey.ChordTracker` with device opening, hotplug rescan
 on read error, and per-HID reader threads. ``is_main_keyboard`` is the pure
-unit target; the real read loop is exercised by the uinput loopback smoke (§6).
+unit target; the real read loop is exercised by the uinput loopback smoke.
 """
 
 from __future__ import annotations
@@ -205,7 +205,7 @@ class EvdevHotkeyListener(ChordTracker):
                 # explicit path, or a permissions gap). Back off before retrying
                 # so an outage cannot busy-loop the daemon: with an explicit
                 # hotkey.device, _resolve_paths always yields that path, so
-                # _reacquire returns instantly and never blocks (§4.9).
+                # _reacquire returns instantly and never blocks.
                 logger.debug(
                     "hotkey: no openable keyboard device; retrying in %ss",
                     _REACQUIRE_INTERVAL_SECONDS,

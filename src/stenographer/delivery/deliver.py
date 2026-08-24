@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Final-output boundary: copy → confirm → release-guard → paste chord (spec §2.7, §4.2/§4.3).
+"""Final-output boundary: copy → confirm → release-guard → paste chord.
 
 The clipboard writer and the key injector come from the current platform
 (``stenographer.platform``); this module holds only the delivery policy, which
@@ -43,11 +43,11 @@ class Deliverer:
     def deliver(self, text: str) -> bool:
         """Deliver *text* at the cursor. Return True once the chord is sent.
 
-        Empty text is success-shaped upstream (§4.7): return False, no side
-        effects. A failed copy returns False WITHOUT sending the chord (§4.3) —
-        a chord after a failed copy pastes stale clipboard content. On a
-        release-wait timeout, proceed anyway (§4.2): the clipboard already holds
-        the transcript as recovery.
+        Empty text is success-shaped upstream: return False, no side effects.
+        A failed copy returns False WITHOUT sending the chord (the
+        copy-confirmed-before-paste rule) — a chord after a failed copy pastes
+        stale clipboard content. On a release-wait timeout, proceed anyway: the
+        clipboard already holds the transcript as recovery.
         """
         if not text:
             return False

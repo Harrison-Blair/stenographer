@@ -4,18 +4,16 @@
 from __future__ import annotations
 
 import argparse
+from typing import TYPE_CHECKING
 
-from stenographer.cli import _fatal
+from stenographer.cli.commands import with_config
+
+if TYPE_CHECKING:
+    from stenographer.config import Config
 
 
-def cmd_run(args: argparse.Namespace) -> int:
-    from stenographer import config
-
-    try:
-        cfg = config.load_or_default()
-    except config.ConfigError as exc:
-        return _fatal(str(exc))
-
+@with_config
+def cmd_run(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer import daemon
 
     return daemon.run(cfg)

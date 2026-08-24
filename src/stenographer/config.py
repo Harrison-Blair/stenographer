@@ -105,20 +105,22 @@ class _Reader:
             raise self._err(key, f"expected string, got {type(value).__name__}: {value!r}")
         return value
 
+    def _in_range(self, key: str, value: float, lo: float, hi: float) -> None:
+        if not lo <= value <= hi:
+            raise self._err(key, f"must be in [{lo}, {hi}], got {value}")
+
     def ranged_int(self, key: str, lo: int, hi: int) -> int:
         value = self.table.get(key)
         if not isinstance(value, int) or isinstance(value, bool):
             raise self._err(key, f"expected int, got {type(value).__name__}: {value!r}")
-        if not lo <= value <= hi:
-            raise self._err(key, f"must be in [{lo}, {hi}], got {value}")
+        self._in_range(key, value, lo, hi)
         return value
 
     def ranged_number(self, key: str, lo: float, hi: float) -> float:
         value = self.table.get(key)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise self._err(key, f"expected number, got {type(value).__name__}: {value!r}")
-        if not lo <= value <= hi:
-            raise self._err(key, f"must be in [{lo}, {hi}], got {value}")
+        self._in_range(key, value, lo, hi)
         return float(value)
 
     def choice(self, key: str, allowed: frozenset[str]) -> str:
@@ -214,12 +216,12 @@ def _merge(base: dict, overlay: dict) -> dict:
     return result
 
 
-_DEFAULT_TOML = f"""\
+_DEFAULT_TOML_TEMPLATE = """\
 # stenographer configuration.
 
 [stenographer.hotkey]
 binding = "KEY_RIGHTCTRL"
-device = ""                    # explicit /dev/input/event* path; "" = auto-detect
+device = ""                    # {hotkey_device_comment}
 mode = "hold"                  # hold = push-to-talk; toggle = press to start, press again to stop
 
 [stenographer.audio]
@@ -243,8 +245,24 @@ volume = 0.6
 mute = false
 overlay = true                 # best-effort lifecycle pill; dictation is independent
 spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
-sound_pack = "{DEFAULT_SOUND_PACK}"      # bundled pack name or valid pack under sounds/
+sound_pack = "{sound_pack}"      # bundled pack name or valid pack under sounds/
 """
+
+
+def default_toml() -> str:
+    """The annotated default config, with the host's ``hotkey.device`` comment.
+
+    Rendered at write time rather than at import: what a hotkey device *is*
+    differs per host, so that one comment comes from ``HostGuidance`` and the
+    core never spells a device-node convention.
+    """
+
+    from stenographer.platform import current_platform
+
+    return _DEFAULT_TOML_TEMPLATE.format(
+        hotkey_device_comment=current_platform().guidance().hotkey_device_comment,
+        sound_pack=DEFAULT_SOUND_PACK,
+    )
 
 
 @dataclass(frozen=True)
@@ -316,7 +334,7 @@ class Config:
     def write_default(cls, path: pathlib.Path) -> None:
         # Bytes, not text mode: setup writes LF bytes, and a CRLF default on
         # Windows would make the first setup save always rewrite the file.
-        path.write_bytes(_DEFAULT_TOML.encode("utf-8"))
+        path.write_bytes(default_toml().encode("utf-8"))
 
 
 def resolve_config_path(*, create_parent: bool = True) -> pathlib.Path:

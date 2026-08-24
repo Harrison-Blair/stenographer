@@ -9,15 +9,42 @@ import pathlib
 import pytest
 
 from stenographer.cli import sounds
+from stenographer.cli.console import Console
 from stenographer.cli.sounds import (
     MenuAction,
+    format_menu_lines,
     format_sound_pack_list,
     parse_menu_action,
     parse_sound_pack_choice,
+    post_save_lines,
     restart_disposition,
     selection_may_prompt,
 )
 from stenographer.config import Config
+from stenographer.platform.base import HostGuidance
+
+_BUNDLED = ("legacy", "warm-desk", "soft-electronic", "minimal-ui")
+
+# Host prose is an input: every word below differs from the Linux provider's, so
+# a hardcoded command in sounds.py cannot pass these cases.
+_GUIDANCE = HostGuidance(
+    capability_labels={},
+    capability_fix_hints={},
+    clipboard_fix_hints={},
+    clipboard_fix_hint_default="enable a pasteboard",
+    overlay_backend_labels={},
+    overlay_fix_hints={},
+    overlay_fix_hint_default="no display backend",
+    service_noun="host agent",
+    service_name="steno-agent",
+    service_installer="steno-agent install",
+    service_unknown_detail="cannot query the agent manager",
+    service_start_command="steno-agent start",
+    service_restart_command="steno-agent restart",
+    service_log_command="steno-agent logs -f",
+    hotkey_device_comment="device id; empty auto-detects",
+    run_with_config=lambda path: f"STENO_CONFIG={path} stenographer run",
+)
 
 
 @pytest.mark.parametrize(
@@ -74,6 +101,72 @@ def test_list_reports_unavailable_configured_pack_and_effective_fallback():
     assert lines[-1] == "  configured: gone-pack (unavailable)"
 
 
+def test_menu_numbers_every_pack_and_keeps_the_listing_labels():
+    lines = format_menu_lines(
+        ("legacy", "warm-desk", "my-pack"),
+        _BUNDLED,
+        current="my-pack",
+        effective="my-pack",
+    )
+
+    assert lines == [
+        "  1. legacy (bundled)",
+        "  2. warm-desk (bundled)",
+        "  3. my-pack (custom, current, effective)",
+    ]
+
+
+def test_menu_appends_the_unavailable_note_for_a_configured_pack_that_is_gone():
+    lines = format_menu_lines(
+        ("legacy", "minimal-ui"),
+        _BUNDLED,
+        current="gone-pack",
+        effective="minimal-ui",
+    )
+
+    assert lines == [
+        "  1. legacy (bundled)",
+        "  2. minimal-ui (bundled, effective)",
+        "  configured: gone-pack (unavailable)",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ("none", []),
+        ("custom-guidance", ["Custom STENOGRAPHER_CONFIG path: service restart was not offered."]),
+        (
+            "restart-guidance",
+            [
+                "Restart the daemon to apply the sound pack; for the standard active service, "
+                "run `steno-agent restart`."
+            ],
+        ),
+        (
+            "unknown-guidance",
+            [
+                "Could not determine steno-agent status; restart the daemon manually "
+                "to apply the sound pack."
+            ],
+        ),
+        (
+            "inactive-guidance",
+            [
+                "Service is not active; sounds did not start it. "
+                "Run `steno-agent start` when ready; the new pack applies when it starts."
+            ],
+        ),
+    ],
+)
+def test_post_save_guidance_arms_report_and_succeed(action, expected):
+    assert post_save_lines(action, _GUIDANCE) == (expected, 0)
+
+
+def test_post_save_leaves_the_offer_restart_arm_to_the_caller():
+    assert post_save_lines("offer-restart", _GUIDANCE) is None
+
+
 @pytest.mark.parametrize(
     ("changed", "custom", "interactive", "active", "expected"),
     [
@@ -105,7 +198,7 @@ def test_only_tty_selection_may_offer_restart_prompt():
 
 def _menu(answers: str, packs, *, load, preview, discover):
     stdout, stderr = io.StringIO(), io.StringIO()
-    console = sounds._Console(io.StringIO(answers), stdout, stderr)
+    console = Console(io.StringIO(answers), stdout, stderr)
     chosen = sounds._choose_from_menu(
         console,
         Config.defaults(),

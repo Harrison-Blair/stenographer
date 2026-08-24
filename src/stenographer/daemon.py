@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The orchestrator: hotkey → record → transcribe → deliver (spec §5).
+"""The orchestrator: hotkey → record → transcribe → deliver.
 
 The single module holding cross-component state. One utterance at a time, no
-queue: a start press during transcription is ignored (§5). Two hotkey modes:
+queue: a start press during transcription is ignored. Two hotkey modes:
 ``hold`` (push-to-talk, the default) maps key-down/key-up straight to
 start/stop; ``toggle`` maps each press through ``toggle_action`` and ends a
 forgotten recording via a generation-guarded ``audio.max_recording_seconds``
@@ -11,8 +11,10 @@ capture remains authoritative. All state transitions are guarded by one lock so
 a key event, a timer firing, and a pipeline completion cannot race. Pure policy
 (``classify_pipeline``, ``can_start``, ``toggle_action``,
 ``max_duration_applies``) is the unit-testable surface; the single-instance
-lock and signal handling come from the current :class:`~stenographer.platform.base.Platform`;
-the wired daemon is exercised by real dictation (the M5 manual acceptance procedure).
+lock and stop handling come from the current :class:`~stenographer.platform.base.Platform`
+(which names the stop — ``"SIGTERM"``, later ``"CTRL_CLOSE"`` — so the core
+holds no POSIX vocabulary); the wired daemon is exercised by real dictation
+(the M5 manual acceptance procedure).
 """
 
 from __future__ import annotations
@@ -20,13 +22,13 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import signal
 import sys
 import threading
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Literal
 
 from stenographer.audio import Recorder, speech_gate_passes
+from stenographer.constants import SAMPLE_RATE
 from stenographer.delivery.deliver import Deliverer
 from stenographer.delivery.feedback import Feedback
 from stenographer.platform import current_platform
@@ -40,13 +42,12 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from stenographer.cli.doctor import Capabilities
+    from stenographer.capabilities import Capabilities
     from stenographer.config import Config
     from stenographer.platform.base import Notifier, Platform
 
 log = logging.getLogger(__name__)
 
-_SAMPLE_RATE = 16000
 _PIPELINE_JOIN_SECONDS = 30.0
 
 
@@ -106,9 +107,9 @@ def classify_pipeline(
     """Map a pipeline run to its outcome and optional error message. PURE.
 
     A failed energy gate or an empty transcript is success-shaped — no paste, no
-    error cue (§4.7). Otherwise the delivery result decides: a False deliver on
+    error cue. Otherwise the delivery result decides: a False deliver on
     non-empty text is an error (deliver already withheld the chord on copy
-    failure, §4.3), never treated as silent.
+    failure), never treated as silent.
     """
     if not gate_passed:
         return (Outcome.SILENT, None)
@@ -120,7 +121,7 @@ def classify_pipeline(
 
 
 def can_start(recording: bool, busy: bool, stopping: bool) -> bool:
-    """Admit a new utterance only when idle (§5, one at a time). PURE."""
+    """Admit a new utterance only when idle — one utterance at a time. PURE."""
     return not (recording or busy or stopping)
 
 
@@ -152,10 +153,10 @@ def max_duration_applies(armed_generation: int, current_generation: int, recordi
 
 
 def startup_clipboard_backend(caps: Capabilities) -> str | None:
-    """Gate daemon startup on doctor requirements and reuse its backend name. PURE."""
-    from stenographer.cli import doctor
+    """Gate daemon startup on the capability requirements and reuse its backend name. PURE."""
+    from stenographer.capabilities import missing_required
 
-    if doctor.missing_required(caps):
+    if missing_required(caps):
         return None
     return caps.clipboard_backend
 
@@ -276,6 +277,17 @@ class Daemon:
             self._overlay_state = state
             _publish_status(self._status, state)
 
+    def _fail(self, notify_msg: str) -> None:
+        """Announce a failed phase on every user-facing channel at once.
+
+        The error pill, the error cue and the notification always travel
+        together; each call site keeps its own log line, since the level and
+        the recorded event differ per phase.
+        """
+        self._publish_state(OverlayState.ERROR)
+        _play_cue(self._feedback, "error")
+        self._notifier.error(notify_msg)
+
     def _on_model_loading(self) -> None:
         """Publish cold-load activity without replacing the current pill."""
         with self._lock:
@@ -350,9 +362,7 @@ class Daemon:
                 log.error("recorder: failed phase=start error_type=%s", type(exc).__name__)
                 self._recorder.close()
                 self._worker.release_model()
-                self._publish_state(OverlayState.ERROR)
-                _play_cue(self._feedback, "error")
-                self._notifier.error("could not start recording")
+                self._fail("could not start recording")
                 self._recording = False
                 return
             self._recording = True
@@ -385,9 +395,7 @@ class Daemon:
             except Exception as exc:
                 log.error("recorder: failed phase=stop error_type=%s", type(exc).__name__)
                 self._recorder.close()
-                self._publish_state(OverlayState.ERROR)
-                _play_cue(self._feedback, "error")
-                self._notifier.error("recording failed; audio was discarded")
+                self._fail("recording failed; audio was discarded")
                 self._worker.release_model()
                 return
             self._busy = True
@@ -403,7 +411,7 @@ class Daemon:
 
     def _run_pipeline(self, samples: np.ndarray) -> None:
         try:
-            gate_passed = speech_gate_passes(samples, _SAMPLE_RATE, self._cfg.audio.min_speech_rms)
+            gate_passed = speech_gate_passes(samples, SAMPLE_RATE, self._cfg.audio.min_speech_rms)
             if not gate_passed:
                 log.info("pipeline: outcome=SILENT (gate)")
                 self._publish_state(OverlayState.HIDDEN)
@@ -418,9 +426,7 @@ class Daemon:
                     self._publish_state(OverlayState.HIDDEN)
                     return
                 log.warning("pipeline: transcription_failed error_type=%s", type(exc).__name__)
-                self._publish_state(OverlayState.ERROR)
-                _play_cue(self._feedback, "error")
-                self._notifier.error("transcription failed")
+                self._fail("transcription failed")
                 return
             if self._stop_event.is_set():
                 log.info("pipeline: outcome=CANCELLED phase=post_transcribe")
@@ -436,9 +442,7 @@ class Daemon:
                 deliver_result = self._deliverer.deliver(text) if transcript_nonempty else None
             except Exception as exc:
                 log.warning("pipeline: delivery_failed error_type=%s", type(exc).__name__)
-                self._publish_state(OverlayState.ERROR)
-                _play_cue(self._feedback, "error")
-                self._notifier.error("delivery failed")
+                self._fail("delivery failed")
                 return
             outcome, message = classify_pipeline(
                 gate_passed=True,
@@ -450,9 +454,7 @@ class Daemon:
                 self._publish_state(OverlayState.HIDDEN)
                 _play_cue(self._feedback, "delivered")
             elif outcome is Outcome.ERROR:
-                self._publish_state(OverlayState.ERROR)
-                _play_cue(self._feedback, "error")
-                self._notifier.error(message or "delivery failed")
+                self._fail(message or "delivery failed")
         finally:
             with self._lock:
                 self._worker.release_model()
@@ -496,22 +498,32 @@ class Daemon:
         self._publish_state(OverlayState.HIDDEN)
 
 
+def _startup_failure(status: StatusSink, message: str, code: int) -> int:
+    """Report a startup bail-out on stderr and hand back its exit code.
+
+    Any overlay opened before the failure is closed first, so a rejected start
+    never strands a helper process.
+    """
+    with contextlib.suppress(Exception):
+        status.close()
+    print(f"stenographer: {message}", file=sys.stderr)
+    return code
+
+
 def run(cfg: Config) -> int:
     """Build and run the daemon. Returns the process exit code."""
-    from stenographer.cli import doctor
+    from stenographer.capabilities import probe
     from stenographer.hotkey import BindingError
 
     plat = current_platform()
-    caps = doctor.probe(cfg)
+    status: StatusSink = NullStatusSink()
+    caps = probe(cfg)
     clipboard_backend = startup_clipboard_backend(caps)
     if clipboard_backend is None:
-        print(
-            "stenographer: required capabilities unavailable; run `stenographer doctor`",
-            file=sys.stderr,
+        return _startup_failure(
+            status, "required capabilities unavailable; run `stenographer doctor`", 78
         )
-        return 78
 
-    status: StatusSink = NullStatusSink()
     if cfg.feedback.overlay:
         try:
             from stenographer.overlay import OverlaySupervisor
@@ -526,30 +538,21 @@ def run(cfg: Config) -> int:
             cfg, clipboard_backend=clipboard_backend, status=status, platform=plat
         )
     except BindingError as exc:
-        with contextlib.suppress(Exception):
-            status.close()
-        print(f"stenographer: {exc}", file=sys.stderr)
-        return 78
+        return _startup_failure(status, str(exc), 78)
 
     lock = plat.single_instance_lock()
     try:
         acquired = lock.acquire()
     except SingleInstanceLockError as exc:
-        with contextlib.suppress(Exception):
-            status.close()
-        print(f"stenographer: {exc}", file=sys.stderr)
-        return 78
+        return _startup_failure(status, str(exc), 78)
     if not acquired:
-        with contextlib.suppress(Exception):
-            status.close()
-        print("stenographer: another instance is already running.", file=sys.stderr)
-        return 1
+        return _startup_failure(status, "another instance is already running.", 1)
 
-    def _handler(signum: int, frame: object) -> None:
-        log.info("signal: received %s, stopping", signal.Signals(signum).name)
+    def _handler(reason: str) -> None:
+        log.info("stop: received %s, stopping", reason)
         daemon.request_stop()
 
-    plat.install_stop_signal_handlers(_handler)
+    plat.install_stop_handlers(_handler)
 
     try:
         try:

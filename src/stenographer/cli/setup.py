@@ -8,18 +8,42 @@ kept in the command path and is imported only after CLI dispatch.
 from __future__ import annotations
 
 import dataclasses
-import os
+import functools
 import pathlib
-import shlex
-import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
-from stenographer.cli.setup_config import ConfigDocument, ConfigPersistenceError
+from stenographer.cli.console import (
+    Console,
+    ask_yes_no,
+    custom_config_selected,
+    load_document,
+    open_console,
+    parse_bool,
+    report_save,
+    require_interactive,
+    restart_service,
+)
+from stenographer.cli.setup_config import ConfigPersistenceError
 from stenographer.config import ALLOWED_COMPUTE_TYPES, Config, ConfigError
+
+if TYPE_CHECKING:
+    from stenographer.platform.base import HostGuidance
 
 _CLEAR = "clear"
 _SECTIONS = ("hotkey", "audio", "asr", "feedback")
+#: The keys the quick wizard edits, in the order its review screen lists them.
+_QUICK_REVIEW_FIELDS = (
+    ("hotkey", "device"),
+    ("hotkey", "binding"),
+    ("hotkey", "mode"),
+    ("audio", "input_device"),
+    ("feedback", "volume"),
+    ("feedback", "mute"),
+    ("feedback", "overlay"),
+    ("feedback", "sound_pack"),
+    ("feedback", "spectrum_floor_dbfs"),
+)
 
 
 class SetupCancelledError(Exception):
@@ -48,19 +72,6 @@ def parse_choice(text: str, current: str, choices: Iterable[str]) -> str:
     if not matches:
         raise ValueError(f"choose one of: {', '.join(allowed)}")
     return matches[0]
-
-
-def parse_bool(text: str, current: bool) -> bool:
-    """Parse yes/no with Enter retaining the current value."""
-
-    value = text.strip().casefold()
-    if not value:
-        return current
-    if value in {"y", "yes", "true", "on", "1"}:
-        return True
-    if value in {"n", "no", "false", "off", "0"}:
-        return False
-    raise ValueError("enter yes or no")
 
 
 def parse_number(
@@ -149,57 +160,120 @@ def followup_exit_code(*, operational_failure: bool, missing_required: bool) -> 
     return 0
 
 
-@dataclasses.dataclass
-class _Console:
-    stdin: TextIO
-    stdout: TextIO
-    stderr: TextIO
-
-    def write(self, message: str = "") -> None:
-        print(message, file=self.stdout)
-
-    def error(self, message: str) -> None:
-        print(f"stenographer: {message}", file=self.stderr)
-
-    def ask(self, prompt: str) -> str:
-        self.stdout.write(prompt)
-        self.stdout.flush()
-        line = self.stdin.readline()
-        if line == "":
-            raise EOFError
-        return line.rstrip("\r\n")
-
-    def validated(self, prompt: str, parser: Callable[[str], object]) -> object:
-        while True:
-            try:
-                return parser(self.ask(prompt))
-            except ValueError as exc:
-                self.error(str(exc))
+def _display_optional(value: object) -> str:
+    return "automatic/unset" if value is None else str(value)
 
 
-def _display_optional(value: str | None) -> str:
-    return value if value is not None else "automatic/unset"
+def field_display(value: object, field_name: str) -> str:
+    """Render one configuration value the way both review screens show it."""
+
+    if field_name == "spectrum_floor_dbfs" and isinstance(value, tuple):
+        return "calibrated 18-band profile"
+    return _display_optional(value)
 
 
-def _prompt_string(console: _Console, label: str, current: str) -> str:
+def review_lines(config: Config) -> list[str]:
+    """Render the full review: every section, every field, in declaration order."""
+
+    lines = ["\nReview"]
+    for section_name in _SECTIONS:
+        lines.append(f"[{section_name}]")
+        section = getattr(config, section_name)
+        for field in dataclasses.fields(section):
+            value = field_display(getattr(section, field.name), field.name)
+            lines.append(f"  {field.name} = {value}")
+    return lines
+
+
+def quick_review_lines(config: Config) -> list[str]:
+    """Render the quick review: only the keys the quick wizard can change."""
+
+    lines = ["\nQuick setup review"]
+    for section_name, field_name in _QUICK_REVIEW_FIELDS:
+        value = getattr(getattr(config, section_name), field_name)
+        lines.append(f"  {section_name}.{field_name} = {field_display(value, field_name)}")
+    lines.append("Audio-gate, recording-limit, and all ASR settings will be retained unchanged.")
+    return lines
+
+
+def quick_tryout_lines(
+    config: Config,
+    path: pathlib.PurePath,
+    guidance: HostGuidance,
+    *,
+    custom_config: bool,
+    service_enabled: str | None,
+    service_active: str | None,
+    restart_pending: bool,
+) -> list[str]:
+    """Render the closing tryout instructions for a successful quick setup.
+
+    Which daemon the user should reach for depends on the config path, whether a
+    restart is still pending, and the service state; the trigger sentence
+    depends on the hotkey mode, and the log hint on the config path again.
+    """
+
+    lines = ["\nTry a real dictation"]
+    if custom_config:
+        command = guidance.run_with_config(str(path))
+        lines.append(f"Run `{command}` in a terminal; the standard service was not changed.")
+    elif restart_pending:
+        lines.append(
+            f"Apply the saved configuration first with `{guidance.service_restart_command}`."
+        )
+    elif service_active == "active":
+        lines.append(f"{guidance.service_name} is active and ready for a tryout.")
+    elif service_enabled is None and service_active == "inactive":
+        lines.append(
+            "The service is not installed. Run `stenographer run` in a terminal, "
+            f"or install it with `{guidance.service_installer}`."
+        )
+    elif service_active is not None:
+        lines.append(
+            "The service is inactive. Start it with "
+            f"`{guidance.service_start_command}`; setup did not start it."
+        )
+    else:
+        lines.append(
+            "The user-service state could not be determined. Run `stenographer run` "
+            "in a terminal to try the configuration."
+        )
+
+    if config.hotkey.mode == "toggle":
+        lines.append(
+            f"Focus a text field, press {config.hotkey.binding}, speak, then press it again."
+        )
+    else:
+        lines.append(f"Focus a text field, hold {config.hotkey.binding}, speak, then release it.")
+    if custom_config:
+        lines.append(
+            "Watch that foreground command for logs; the standard service log is "
+            f"`{guidance.service_log_command}`."
+        )
+    else:
+        lines.append(f"Follow service logs with `{guidance.service_log_command}`.")
+    return lines
+
+
+def _prompt_string(console: Console, label: str, current: str) -> str:
     def parse(text: str) -> str:
         return text.strip() or current
 
     return str(console.validated(f"{label} [{current}]: ", parse))
 
 
-def _prompt_optional(console: _Console, label: str, current: str | None) -> str | None:
+def _prompt_optional(console: Console, label: str, current: str | None) -> str | None:
     prompt = f"{label} [{_display_optional(current)}; Enter keeps, '{_CLEAR}' unsets]: "
-    return console.validated(prompt, lambda text: parse_optional_string(text, current))  # type: ignore[return-value]
+    return console.validated(prompt, lambda text: parse_optional_string(text, current))
 
 
-def _prompt_choice(console: _Console, label: str, current: str, choices: Sequence[str]) -> str:
+def _prompt_choice(console: Console, label: str, current: str, choices: Sequence[str]) -> str:
     joined = "/".join(choices)
     prompt = f"{label} ({joined}) [{current}]: "
     return str(console.validated(prompt, lambda text: parse_choice(text, current, choices)))
 
 
-def _prompt_bool(console: _Console, label: str, current: bool) -> bool:
+def _prompt_bool(console: Console, label: str, current: bool) -> bool:
     default = "yes" if current else "no"
     return bool(
         console.validated(f"{label} (yes/no) [{default}]: ", lambda s: parse_bool(s, current))
@@ -207,7 +281,7 @@ def _prompt_bool(console: _Console, label: str, current: bool) -> bool:
 
 
 def _prompt_number(
-    console: _Console,
+    console: Console,
     label: str,
     current: int | float,
     minimum: int | float,
@@ -219,10 +293,10 @@ def _prompt_number(
     return console.validated(
         prompt,
         lambda text: parse_number(text, current, minimum=minimum, maximum=maximum, integer=integer),
-    )  # type: ignore[return-value]
+    )
 
 
-def _prompt_sound_pack(console: _Console, current: str, config_dir: pathlib.Path) -> str:
+def _prompt_sound_pack(console: Console, current: str, config_dir: pathlib.Path) -> str:
     """Offer bundled and valid custom packs without playing any cue."""
 
     from stenographer.cli.sounds import parse_sound_pack_choice
@@ -242,22 +316,11 @@ def _prompt_sound_pack(console: _Console, current: str, config_dir: pathlib.Path
 
 
 def _audio_devices() -> list[tuple[str, str]]:
-    """Return selectable input devices. PortAudio errors degrade to no suggestions."""
+    """Return selectable input devices. An unusable PortAudio means no suggestions."""
 
-    try:
-        import sounddevice
-    except ImportError:
-        return []
+    from stenographer.audio_probe import input_device_choices, query_devices
 
-    try:
-        devices = sounddevice.query_devices()
-    except Exception:
-        return []
-    return [
-        (str(index), f"{index}: {device.get('name', '?')}")
-        for index, device in enumerate(devices)
-        if device.get("max_input_channels", 0) > 0
-    ]
+    return input_device_choices(query_devices().devices)
 
 
 def _hotkey_devices() -> list[tuple[str, str]]:
@@ -268,7 +331,7 @@ def _hotkey_devices() -> list[tuple[str, str]]:
 
 
 def _prompt_device(
-    console: _Console,
+    console: Console,
     label: str,
     current: str | None,
     devices: Sequence[tuple[str, str]],
@@ -294,7 +357,7 @@ def _prompt_device(
         f"{label} [{_display_optional(current)}; Enter keeps, number selects, "
         "'auto' unsets, or type a value]: "
     )
-    return console.validated(prompt, parse)  # type: ignore[return-value]
+    return console.validated(prompt, parse)
 
 
 def _parse_binding(text: str) -> str:
@@ -311,7 +374,7 @@ def _parse_binding(text: str) -> str:
     return value
 
 
-def _prompt_typed_binding(console: _Console, current: str) -> str:
+def _prompt_typed_binding(console: Console, current: str) -> str:
     return str(
         console.validated(
             f"Binding [{current}]: ",
@@ -320,9 +383,12 @@ def _prompt_typed_binding(console: _Console, current: str) -> str:
     )
 
 
-def _edit_hotkey(console: _Console, config: Config, config_dir: pathlib.Path) -> Config:
+def _edit_hotkey(console: Console, config: Config) -> Config:
     console.write("\nHotkey")
-    console.write("Binding uses evdev key names joined with '+'. Mode is hold or toggle only.")
+    console.write(
+        "Binding uses key names (the evdev KEY_* vocabulary) joined with '+'. "
+        "Mode is hold or toggle only."
+    )
 
     hotkey = dataclasses.replace(
         config.hotkey,
@@ -336,7 +402,7 @@ def _edit_hotkey(console: _Console, config: Config, config_dir: pathlib.Path) ->
     return dataclasses.replace(config, hotkey=hotkey)
 
 
-def _edit_audio(console: _Console, config: Config, config_dir: pathlib.Path) -> Config:
+def _edit_audio(console: Console, config: Config) -> Config:
     console.write("\nAudio")
     console.write("min_speech_rms is the pre-decode energy gate; 0 disables it.")
     audio = dataclasses.replace(
@@ -364,7 +430,7 @@ def _edit_audio(console: _Console, config: Config, config_dir: pathlib.Path) -> 
     return dataclasses.replace(config, audio=audio)
 
 
-def _edit_asr(console: _Console, config: Config, config_dir: pathlib.Path) -> Config:
+def _edit_asr(console: Console, config: Config) -> Config:
     console.write("\nASR")
     asr = dataclasses.replace(
         config.asr,
@@ -400,7 +466,7 @@ def _edit_asr(console: _Console, config: Config, config_dir: pathlib.Path) -> Co
     return dataclasses.replace(config, asr=asr)
 
 
-def _manual_floor(console: _Console, current: float | tuple[float, ...]) -> float:
+def _manual_floor(console: Console, current: float | tuple[float, ...]) -> float:
     from stenographer.overlay.spectrum import DEFAULT_SPECTRUM_FLOOR_DBFS
 
     scalar = current if isinstance(current, float) else DEFAULT_SPECTRUM_FLOOR_DBFS
@@ -408,7 +474,7 @@ def _manual_floor(console: _Console, current: float | tuple[float, ...]) -> floa
 
 
 def _automatic_floor(
-    console: _Console,
+    console: Console,
     config: Config,
     current: float | tuple[float, ...],
 ) -> float | tuple[float, ...]:
@@ -428,16 +494,11 @@ def _automatic_floor(
                     "Speak normally now for three seconds so visibility can be verified."
                 ),
             )
-        except CalibrationError as exc:
-            console.error(f"automatic calibration rejected: {exc}")
-            action = _prompt_choice(console, "Next", "keep", ("retry", "manual", "keep"))
-            if action == "retry":
-                continue
-            if action == "manual":
-                return _manual_floor(console, current)
-            return current
         except Exception as exc:
-            console.error(f"automatic calibration failed: {exc}")
+            # A CalibrationError is the estimator refusing the capture; anything
+            # else is the machine failing to produce one.
+            outcome = "rejected" if isinstance(exc, CalibrationError) else "failed"
+            console.error(f"automatic calibration {outcome}: {exc}")
             action = _prompt_choice(console, "Next", "keep", ("retry", "manual", "keep"))
             if action == "retry":
                 continue
@@ -456,7 +517,41 @@ def _automatic_floor(
         return current
 
 
-def _edit_feedback(console: _Console, config: Config, config_dir: pathlib.Path) -> Config:
+def _choose_floor(
+    console: Console,
+    config: Config,
+    current: float | tuple[float, ...],
+) -> float | tuple[float, ...]:
+    """Offer the automatic / keep / manual spectrum-response choice and apply it."""
+
+    default_action = "keep" if isinstance(current, tuple) else "automatic"
+    action = _prompt_choice(
+        console,
+        "Spectrum response",
+        default_action,
+        ("automatic", "keep", "manual"),
+    )
+    if action == "manual":
+        return _manual_floor(console, current)
+    if action == "automatic":
+        return _automatic_floor(console, config, current)
+    return current
+
+
+def _edit_feedback_section(
+    console: Console,
+    config: Config,
+    config_dir: pathlib.Path,
+    *,
+    notice: Sequence[str],
+    skip_floor_without_overlay: bool,
+) -> Config:
+    """Prompt the feedback keys both wizards share, then the spectrum response.
+
+    The wizards differ only in *notice* (their calibration disclaimer) and in
+    whether a disabled overlay skips the spectrum question entirely.
+    """
+
     console.write("\nFeedback")
     feedback = dataclasses.replace(
         config.feedback,
@@ -466,50 +561,54 @@ def _edit_feedback(console: _Console, config: Config, config_dir: pathlib.Path) 
         sound_pack=_prompt_sound_pack(console, config.feedback.sound_pack, config_dir),
     )
     console.write()
-    console.write("IMPORTANT: spectrum calibration affects only the 18 visual bars.")
-    console.write("It never changes capture, min_speech_rms, speech gating, or transcription.")
+    for line in notice:
+        console.write(line)
     floor = feedback.spectrum_floor_dbfs
-    default_action = "keep" if isinstance(floor, tuple) else "automatic"
-    action = _prompt_choice(
-        console,
-        "Spectrum response",
-        default_action,
-        ("automatic", "keep", "manual"),
+    if skip_floor_without_overlay and not feedback.overlay:
+        console.write("Overlay is disabled, so display-spectrum calibration was skipped.")
+    else:
+        # Calibration only reads the (already chosen) input device from here.
+        floor = _choose_floor(console, dataclasses.replace(config, feedback=feedback), floor)
+    return dataclasses.replace(
+        config,
+        feedback=dataclasses.replace(feedback, spectrum_floor_dbfs=floor),
     )
-    if action == "manual":
-        floor = _manual_floor(console, floor)
-    elif action == "automatic":
-        floor = _automatic_floor(console, config, floor)
-    feedback = dataclasses.replace(feedback, spectrum_floor_dbfs=floor)
-    return dataclasses.replace(config, feedback=feedback)
 
 
-_EDITORS: Mapping[str, Callable[[_Console, Config, pathlib.Path], Config]] = {
-    "hotkey": _edit_hotkey,
-    "audio": _edit_audio,
-    "asr": _edit_asr,
-    "feedback": _edit_feedback,
-}
+def _edit_feedback(console: Console, config: Config, *, config_dir: pathlib.Path) -> Config:
+    return _edit_feedback_section(
+        console,
+        config,
+        config_dir,
+        notice=(
+            "IMPORTANT: spectrum calibration affects only the 18 visual bars.",
+            "It never changes capture, min_speech_rms, speech gating, or transcription.",
+        ),
+        skip_floor_without_overlay=False,
+    )
 
 
-def _review(console: _Console, config: Config) -> None:
-    console.write("\nReview")
-    for section_name in _SECTIONS:
-        console.write(f"[{section_name}]")
-        section = getattr(config, section_name)
-        for field in dataclasses.fields(section):
-            value = getattr(section, field.name)
-            if field.name == "spectrum_floor_dbfs" and isinstance(value, tuple):
-                value = "calibrated 18-band profile"
-            console.write(
-                f"  {field.name} = {_display_optional(value) if value is None else value}"
-            )
+def _editors(config_dir: pathlib.Path) -> Mapping[str, Callable[[Console, Config], Config]]:
+    """Bind the section editors to *config_dir*; only feedback has any use for it."""
+
+    return {
+        "hotkey": _edit_hotkey,
+        "audio": _edit_audio,
+        "asr": _edit_asr,
+        "feedback": functools.partial(_edit_feedback, config_dir=config_dir),
+    }
 
 
-def _wizard(console: _Console, initial: Config, config_dir: pathlib.Path) -> Config:
+def _review(console: Console, config: Config) -> None:
+    for line in review_lines(config):
+        console.write(line)
+
+
+def _wizard(console: Console, initial: Config, config_dir: pathlib.Path) -> Config:
+    editors = _editors(config_dir)
     config = initial
     for section in _SECTIONS:
-        config = _EDITORS[section](console, config, config_dir)
+        config = editors[section](console, config)
     while True:
         _review(console, config)
         action = console.validated(
@@ -520,11 +619,11 @@ def _wizard(console: _Console, initial: Config, config_dir: pathlib.Path) -> Con
             return config
         if action == "cancel":
             raise SetupCancelledError
-        config = _EDITORS[str(action)](console, config, config_dir)
+        config = editors[str(action)](console, config)
 
 
 def _capture_or_choose_binding(
-    console: _Console,
+    console: Console,
     current: str,
     device: str | None,
     *,
@@ -537,7 +636,8 @@ def _capture_or_choose_binding(
     if action == "type":
         return _prompt_typed_binding(console, current)
 
-    from stenographer.cli.binding_capture import BindingCaptureError, capture_binding
+    from stenographer.binding_capture import BindingCaptureError
+    from stenographer.cli.binding_capture import capture_binding
 
     while True:
         console.write(
@@ -549,7 +649,7 @@ def _capture_or_choose_binding(
             console.error(f"binding capture failed: {exc}")
         else:
             console.write(f"Captured binding: {captured}")
-            if _ask_yes_no(console, "Use this binding?", default=True):
+            if ask_yes_no(console, "Use this binding?", default=True):
                 return captured
 
         action = _prompt_choice(console, "Next", "retry", ("retry", "type", "keep"))
@@ -561,7 +661,7 @@ def _capture_or_choose_binding(
 
 
 def _quick_wizard(
-    console: _Console,
+    console: Console,
     initial: Config,
     config_dir: pathlib.Path,
     *,
@@ -594,80 +694,27 @@ def _quick_wizard(
         audio=dataclasses.replace(config.audio, input_device=input_device),
     )
 
-    console.write("\nFeedback")
-    feedback = dataclasses.replace(
-        config.feedback,
-        volume=float(_prompt_number(console, "Cue volume", config.feedback.volume, 0.0, 1.0)),
-        mute=_prompt_bool(console, "Mute cues", config.feedback.mute),
-        overlay=_prompt_bool(console, "Show lifecycle overlay", config.feedback.overlay),
-        sound_pack=_prompt_sound_pack(console, config.feedback.sound_pack, config_dir),
-    )
-    console.write()
-    console.write("IMPORTANT: spectrum calibration controls only the 18 display bars.")
-    console.write(
-        "It does not affect capture, speech detection, audio gates, ASR, or transcription."
-    )
-    floor = feedback.spectrum_floor_dbfs
-    if feedback.overlay:
-        default_action = "keep" if isinstance(floor, tuple) else "automatic"
-        action = _prompt_choice(
-            console,
-            "Spectrum response",
-            default_action,
-            ("automatic", "keep", "manual"),
-        )
-        calibration_config = dataclasses.replace(config, feedback=feedback)
-        if action == "manual":
-            floor = _manual_floor(console, floor)
-        elif action == "automatic":
-            floor = _automatic_floor(console, calibration_config, floor)
-    else:
-        console.write("Overlay is disabled, so display-spectrum calibration was skipped.")
-    config = dataclasses.replace(
+    config = _edit_feedback_section(
+        console,
         config,
-        feedback=dataclasses.replace(feedback, spectrum_floor_dbfs=floor),
+        config_dir,
+        notice=(
+            "IMPORTANT: spectrum calibration controls only the 18 display bars.",
+            "It does not affect capture, speech detection, audio gates, ASR, or transcription.",
+        ),
+        skip_floor_without_overlay=True,
     )
 
-    console.write("\nQuick setup review")
-    console.write(f"  hotkey.device = {_display_optional(config.hotkey.device)}")
-    console.write(f"  hotkey.binding = {config.hotkey.binding}")
-    console.write(f"  hotkey.mode = {config.hotkey.mode}")
-    console.write(f"  audio.input_device = {_display_optional(config.audio.input_device)}")
-    console.write(f"  feedback.volume = {config.feedback.volume}")
-    console.write(f"  feedback.mute = {config.feedback.mute}")
-    console.write(f"  feedback.overlay = {config.feedback.overlay}")
-    console.write(f"  feedback.sound_pack = {config.feedback.sound_pack}")
-    floor_display = (
-        "calibrated 18-band profile"
-        if isinstance(config.feedback.spectrum_floor_dbfs, tuple)
-        else config.feedback.spectrum_floor_dbfs
-    )
-    console.write(f"  feedback.spectrum_floor_dbfs = {floor_display}")
-    console.write("Audio-gate, recording-limit, and all ASR settings will be retained unchanged.")
+    for line in quick_review_lines(config):
+        console.write(line)
     action = console.validated("Save [Enter/S] or Cancel [C]: ", parse_quick_review_action)
     if action == "cancel":
         raise SetupCancelledError
     return config
 
 
-def _ask_yes_no(console: _Console, prompt: str, *, default: bool) -> bool:
-    marker = "Y/n" if default else "y/N"
-    return bool(console.validated(f"{prompt} [{marker}]: ", lambda text: parse_bool(text, default)))
-
-
-def _restart_service(console: _Console) -> bool:
-    from stenographer.platform import current_platform
-
-    ok, detail = current_platform().restart_service()
-    if not ok:
-        console.error(f"could not restart stenographer.service: {detail}")
-        return False
-    console.write("Restarted stenographer.service.")
-    return True
-
-
 def _guided_setup(
-    console: _Console,
+    console: Console,
     config: Config,
     path: pathlib.Path,
     *,
@@ -675,9 +722,12 @@ def _guided_setup(
     custom_config: bool,
     quick: bool = False,
 ) -> int:
+    from stenographer import capabilities
     from stenographer.cli import doctor
+    from stenographer.platform import current_platform
     from stenographer.transcribe import model
 
+    guidance = current_platform().guidance()
     operational_failure = False
     try:
         cached = model.is_model_cached(config.asr.model)
@@ -689,7 +739,7 @@ def _guided_setup(
         console.write(
             f"\nModel {config.asr.model} is not cached (download is approximately 1.5 GB)."
         )
-        if _ask_yes_no(console, "Download it from the network now?", default=quick):
+        if ask_yes_no(console, "Download it from the network now?", default=quick):
             try:
                 model.download_model(config.asr.model)
             except Exception as exc:
@@ -699,13 +749,13 @@ def _guided_setup(
                 console.write("Model download complete.")
 
     try:
-        caps = doctor.probe(config)
+        caps = capabilities.probe(config)
     except Exception as exc:
         console.error(f"capability probe failed: {exc}")
         return 1
     console.write()
-    console.write(doctor.render(caps, config, path))
-    missing = bool(doctor.missing_required(caps))
+    console.write(doctor.render(caps, config, path, guidance))
+    missing = bool(capabilities.missing_required(caps))
     if missing:
         console.write("Service restart skipped until required capabilities are available.")
         return followup_exit_code(operational_failure=operational_failure, missing_required=True)
@@ -717,10 +767,12 @@ def _guided_setup(
         missing_required=False,
         service_active=caps.service_active,
     ):
-        if _ask_yes_no(
-            console, "Restart the active stenographer.service to apply changes?", default=True
+        if ask_yes_no(
+            console,
+            f"Restart the active {guidance.service_name} to apply changes?",
+            default=True,
         ):
-            if not _restart_service(console):
+            if not restart_service(console):
                 operational_failure = True
         else:
             restart_pending = True
@@ -728,11 +780,11 @@ def _guided_setup(
         console.write("Custom STENOGRAPHER_CONFIG path: service restart was not offered.")
     elif changed and caps.service_active != "active":
         if caps.service_enabled is None:
-            console.write("Service is not installed; run scripts/install.sh when ready.")
+            console.write(f"Service is not installed; run {guidance.service_installer} when ready.")
         else:
             console.write(
                 "Service is not active; setup did not start it. "
-                "Run `systemctl --user start stenographer.service` when ready."
+                f"Run `{guidance.service_start_command}` when ready."
             )
     exit_code = followup_exit_code(
         operational_failure=operational_failure,
@@ -743,6 +795,7 @@ def _guided_setup(
             console,
             config,
             path,
+            guidance,
             custom_config=custom_config,
             service_enabled=caps.service_enabled,
             service_active=caps.service_active,
@@ -752,55 +805,26 @@ def _guided_setup(
 
 
 def _print_quick_tryout(
-    console: _Console,
+    console: Console,
     config: Config,
     path: pathlib.Path,
+    guidance: HostGuidance,
     *,
     custom_config: bool,
     service_enabled: str | None,
     service_active: str | None,
     restart_pending: bool,
 ) -> None:
-    console.write("\nTry a real dictation")
-    if custom_config:
-        command = f"STENOGRAPHER_CONFIG={shlex.quote(str(path))} stenographer run"
-        console.write(f"Run `{command}` in a terminal; the standard service was not changed.")
-    elif restart_pending:
-        console.write(
-            "Apply the saved configuration first with "
-            "`systemctl --user restart stenographer.service`."
-        )
-    elif service_active == "active":
-        console.write("stenographer.service is active and ready for a tryout.")
-    elif service_enabled is None and service_active == "inactive":
-        console.write(
-            "The service is not installed. Run `stenographer run` in a terminal, "
-            "or install it with `scripts/install.sh`."
-        )
-    elif service_active is not None:
-        console.write(
-            "The service is inactive. Start it with "
-            "`systemctl --user start stenographer.service`; setup did not start it."
-        )
-    else:
-        console.write(
-            "The user-service state could not be determined. Run `stenographer run` "
-            "in a terminal to try the configuration."
-        )
-
-    if config.hotkey.mode == "toggle":
-        console.write(
-            f"Focus a text field, press {config.hotkey.binding}, speak, then press it again."
-        )
-    else:
-        console.write(f"Focus a text field, hold {config.hotkey.binding}, speak, then release it.")
-    if custom_config:
-        console.write(
-            "Watch that foreground command for logs; the standard service log is "
-            "`journalctl --user -u stenographer -f`."
-        )
-    else:
-        console.write("Follow service logs with `journalctl --user -u stenographer -f`.")
+    for line in quick_tryout_lines(
+        config,
+        path,
+        guidance,
+        custom_config=custom_config,
+        service_enabled=service_enabled,
+        service_active=service_active,
+        restart_pending=restart_pending,
+    ):
+        console.write(line)
 
 
 def run(
@@ -812,30 +836,21 @@ def run(
 ) -> int:
     """Run the TTY-only setup wizard and guided capability checks."""
 
-    input_stream = sys.stdin if stdin is None else stdin
-    output_stream = sys.stdout if stdout is None else stdout
-    error_stream = sys.stderr if stderr is None else stderr
-    console = _Console(input_stream, output_stream, error_stream)
-    if not input_stream.isatty() or not output_stream.isatty():
-        console.error("setup requires an interactive terminal")
-        return 2
+    console = open_console(stdin, stdout, stderr)
+    gate = require_interactive(console, "setup requires an interactive terminal")
+    if gate is not None:
+        return gate
 
-    from stenographer.config import resolve_config_path
-
-    path = resolve_config_path(create_parent=False)
-    custom_config = bool(os.environ.get("STENOGRAPHER_CONFIG"))
-    try:
-        document = ConfigDocument.load(path)
-    except ConfigError as exc:
-        console.error(str(exc))
-        return 78
-    except ConfigPersistenceError as exc:
-        console.error(str(exc))
-        return 1
-    except KeyboardInterrupt:
-        console.write()
-        console.error("setup interrupted")
-        return 130
+    custom_config = custom_config_selected()
+    loaded = load_document(
+        console,
+        interrupt_message="setup interrupted",
+        blank_line_before_interrupt=True,
+    )
+    if isinstance(loaded, int):
+        return loaded
+    document = loaded
+    path = document.path
 
     console.write("Stenographer quick setup" if quick else "Stenographer setup")
     console.write(f"Configuration: {path}")
@@ -866,12 +881,12 @@ def run(
         console.write()
         console.error("setup interrupted")
         return 130
-    if result.changed:
-        console.write(f"Saved {result.path}")
-        if result.backup_path is not None:
-            console.write(f"Backup: {result.backup_path}")
-    else:
-        console.write("Configuration is unchanged; no file was written.")
+    report_save(
+        console,
+        result,
+        saved_prefix="Saved",
+        unchanged_message="Configuration is unchanged; no file was written.",
+    )
 
     try:
         return _guided_setup(

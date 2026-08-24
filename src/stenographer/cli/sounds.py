@@ -4,15 +4,25 @@
 from __future__ import annotations
 
 import dataclasses
-import os
 import pathlib
-import sys
 from collections.abc import Callable, Sequence
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
-from stenographer.cli.setup import _ask_yes_no, _Console, _restart_service
-from stenographer.cli.setup_config import ConfigDocument, ConfigPersistenceError
+from stenographer.cli.console import (
+    Console,
+    ask_yes_no,
+    custom_config_selected,
+    load_document,
+    open_console,
+    report_save,
+    require_interactive,
+    restart_service,
+)
+from stenographer.cli.setup_config import ConfigPersistenceError
 from stenographer.config import Config, ConfigError
+
+if TYPE_CHECKING:
+    from stenographer.platform.base import HostGuidance
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -50,6 +60,29 @@ def parse_sound_pack_choice(text: str, current: str, choices: Sequence[str]) -> 
     raise ValueError(f"choose a number from 1-{len(choices)} or an available sound-pack name")
 
 
+def _pack_description(
+    pack: str,
+    bundled_names: frozenset[str],
+    *,
+    current: str,
+    effective: str | None,
+) -> str:
+    """Render one pack's name with its source and current/effective labels."""
+
+    labels = ["bundled" if pack in bundled_names else "custom"]
+    if pack == current:
+        labels.append("current")
+    if pack == effective:
+        labels.append("effective")
+    return f"{pack} ({', '.join(labels)})"
+
+
+def _unavailable_line(current: str) -> str:
+    """The trailing note for a configured pack that is not among the available ones."""
+
+    return f"  configured: {current} (unavailable)"
+
+
 def format_sound_pack_list(
     packs: Sequence[str],
     bundled: Sequence[str],
@@ -60,17 +93,37 @@ def format_sound_pack_list(
     """Render available packs, their source, and current/effective markers."""
 
     bundled_names = frozenset(bundled)
-    lines: list[str] = []
-    for pack in packs:
-        labels = ["bundled" if pack in bundled_names else "custom"]
-        if pack == current:
-            labels.append("current")
-        if pack == effective:
-            labels.append("effective")
-        marker = "*" if pack == effective else " "
-        lines.append(f"{marker} {pack} ({', '.join(labels)})")
+    lines = [
+        f"{'*' if pack == effective else ' '} "
+        f"{_pack_description(pack, bundled_names, current=current, effective=effective)}"
+        for pack in packs
+    ]
     if current not in packs:
-        lines.append(f"  configured: {current} (unavailable)")
+        lines.append(_unavailable_line(current))
+    return lines
+
+
+def format_menu_lines(
+    packs: Sequence[str],
+    bundled: Sequence[str],
+    *,
+    current: str,
+    effective: str | None,
+) -> list[str]:
+    """Render the numbered selection menu: one line per pack, then any unavailable note.
+
+    The menu numbers the choices instead of marking the effective pack, but names
+    and labels stay identical to the listing's.
+    """
+
+    bundled_names = frozenset(bundled)
+    lines = [
+        f"  {number}. "
+        f"{_pack_description(pack, bundled_names, current=current, effective=effective)}"
+        for number, pack in enumerate(packs, 1)
+    ]
+    if current not in packs:
+        lines.append(_unavailable_line(current))
     return lines
 
 
@@ -96,6 +149,36 @@ def restart_disposition(
     return "inactive-guidance"
 
 
+def post_save_lines(action: str, guidance: HostGuidance) -> tuple[list[str], int] | None:
+    """Render the guidance a non-interactive restart disposition prints, with its exit code.
+
+    ``None`` means the disposition is not one of the print-and-return arms —
+    today only ``offer-restart``, whose prompt I/O stays with the caller.
+    """
+
+    if action == "none":
+        return [], 0
+    if action == "custom-guidance":
+        return ["Custom STENOGRAPHER_CONFIG path: service restart was not offered."], 0
+    if action == "restart-guidance":
+        return [
+            "Restart the daemon to apply the sound pack; for the standard active service, run "
+            f"`{guidance.service_restart_command}`."
+        ], 0
+    if action == "unknown-guidance":
+        return [
+            f"Could not determine {guidance.service_name} status; restart the daemon manually "
+            "to apply the sound pack."
+        ], 0
+    if action == "inactive-guidance":
+        return [
+            "Service is not active; sounds did not start it. "
+            f"Run `{guidance.service_start_command}` when ready; "
+            "the new pack applies when it starts."
+        ], 0
+    return None
+
+
 def selection_may_prompt(*, terminal: bool) -> bool:
     """Menu and direct selections may prompt after saving only on a terminal."""
 
@@ -112,7 +195,7 @@ def _effective_name(config: Config, config_dir: pathlib.Path) -> str | None:
     return _sound_pack_api().effective_sound_pack_name(config.feedback.sound_pack, config_dir)
 
 
-def _preview(console: _Console, config: Config, pack: object) -> bool:
+def _preview(console: Console, config: Config, pack: object) -> bool:
     from stenographer.platform import current_platform
 
     api = _sound_pack_api()
@@ -133,12 +216,12 @@ def _preview(console: _Console, config: Config, pack: object) -> bool:
 
 
 def _choose_from_menu(
-    console: _Console,
+    console: Console,
     config: Config,
     config_dir: pathlib.Path,
     packs: Sequence[str],
     *,
-    preview: Callable[[_Console, Config, object], bool] = _preview,
+    preview: Callable[[Console, Config, object], bool] = _preview,
     discover: Callable[[], Sequence[str]] | None = None,
     load: Callable[[str], object] | None = None,
 ) -> str | None:
@@ -157,18 +240,14 @@ def _choose_from_menu(
         return api.load_sound_pack(name, config_dir) if load is None else load(name)
 
     while True:
-        effective = _effective_name(config, config_dir)
         console.write("Sound packs")
-        lines = format_sound_pack_list(
+        for line in format_menu_lines(
             packs,
             api.BUNDLED_PACKS,
             current=config.feedback.sound_pack,
-            effective=effective,
-        )
-        for number, line in enumerate(lines[: len(packs)], 1):
-            console.write(f"  {number}. {line[2:]}")
-        if config.feedback.sound_pack not in packs:
-            console.write(lines[-1])
+            effective=_effective_name(config, config_dir),
+        ):
+            console.write(line)
         count = len(packs)
         action = console.validated(
             f"Select 1-{count}, preview P1-P{count}, or cancel Q: ",
@@ -190,7 +269,7 @@ def _choose_from_menu(
 
 
 def _post_save(
-    console: _Console,
+    console: Console,
     *,
     changed: bool,
     custom_config: bool,
@@ -198,12 +277,13 @@ def _post_save(
 ) -> int:
     from stenographer.platform import current_platform
 
+    guidance = current_platform().guidance()
     service_active: str | None = None
     if changed and interactive and not custom_config:
         try:
             service_active = current_platform().probe_host().service_active
         except Exception as exc:
-            console.error(f"could not determine stenographer.service status: {exc}")
+            console.error(f"could not determine {guidance.service_name} status: {exc}")
             console.write("Restart the daemon manually to apply the saved sound pack.")
             return 1
 
@@ -213,37 +293,20 @@ def _post_save(
         interactive=interactive,
         service_active=service_active,
     )
-    if action == "none":
-        return 0
-    if action == "custom-guidance":
-        console.write("Custom STENOGRAPHER_CONFIG path: service restart was not offered.")
-        return 0
-    if action == "restart-guidance":
-        console.write(
-            "Restart the daemon to apply the sound pack; for the standard active service, run "
-            "`systemctl --user restart stenographer.service`."
-        )
-        return 0
-    if action == "unknown-guidance":
-        console.write(
-            "Could not determine stenographer.service status; restart the daemon manually "
-            "to apply the sound pack."
-        )
-        return 0
-    if action == "inactive-guidance":
-        console.write(
-            "Service is not active; sounds did not start it. Run `systemctl --user start "
-            "stenographer.service` when ready; the new pack applies when it starts."
-        )
-        return 0
-    if not _ask_yes_no(
+    reported = post_save_lines(action, guidance)
+    if reported is not None:
+        lines, exit_code = reported
+        for line in lines:
+            console.write(line)
+        return exit_code
+    if not ask_yes_no(
         console,
-        "Restart the active stenographer.service to apply the sound pack?",
+        f"Restart the active {guidance.service_name} to apply the sound pack?",
         default=True,
     ):
-        console.write("Run `systemctl --user restart stenographer.service` to apply it later.")
+        console.write(f"Run `{guidance.service_restart_command}` to apply it later.")
         return 0
-    return 0 if _restart_service(console) else 1
+    return 0 if restart_service(console) else 1
 
 
 def run(
@@ -257,32 +320,27 @@ def run(
 ) -> int:
     """Run ``stenographer sounds`` in direct, listing, preview, or menu mode."""
 
-    input_stream = sys.stdin if stdin is None else stdin
-    output_stream = sys.stdout if stdout is None else stdout
-    error_stream = sys.stderr if stderr is None else stderr
-    console = _Console(input_stream, output_stream, error_stream)
+    console = open_console(stdin, stdout, stderr)
     menu_mode = pack_name is None and not list_only and preview_name is None
-    interactive = input_stream.isatty() and output_stream.isatty()
-    if menu_mode and not interactive:
-        console.error("sounds requires an interactive terminal when no pack or option is given")
-        return 2
+    interactive = console.interactive
+    gate = require_interactive(
+        console,
+        "sounds requires an interactive terminal when no pack or option is given",
+        when=menu_mode,
+    )
+    if gate is not None:
+        return gate
 
-    from stenographer.config import resolve_config_path
+    loaded = load_document(
+        console,
+        interrupt_message="sounds interrupted",
+        blank_line_before_interrupt=False,
+    )
+    if isinstance(loaded, int):
+        return loaded
+    document = loaded
 
-    path = resolve_config_path(create_parent=False)
-    try:
-        document = ConfigDocument.load(path)
-    except ConfigError as exc:
-        console.error(str(exc))
-        return 78
-    except ConfigPersistenceError as exc:
-        console.error(str(exc))
-        return 1
-    except KeyboardInterrupt:
-        console.error("sounds interrupted")
-        return 130
-
-    config_dir = path.parent
+    config_dir = document.path.parent
     api = _sound_pack_api()
     try:
         packs = api.discover_sound_packs(config_dir)
@@ -331,16 +389,16 @@ def run(
         except (ConfigPersistenceError, ConfigError) as exc:
             console.error(str(exc))
             return 1
-        if result.changed:
-            console.write(f"Selected sound pack {selected}; saved {result.path}")
-            if result.backup_path is not None:
-                console.write(f"Backup: {result.backup_path}")
-        else:
-            console.write(f"Sound pack {selected} is already selected; no file was written.")
+        report_save(
+            console,
+            result,
+            saved_prefix=f"Selected sound pack {selected}; saved",
+            unchanged_message=f"Sound pack {selected} is already selected; no file was written.",
+        )
         return _post_save(
             console,
             changed=result.changed,
-            custom_config=bool(os.environ.get("STENOGRAPHER_CONFIG")),
+            custom_config=custom_config_selected(),
             interactive=selection_may_prompt(terminal=interactive),
         )
     except (KeyboardInterrupt, EOFError):

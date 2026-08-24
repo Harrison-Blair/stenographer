@@ -7,7 +7,7 @@ import pathlib
 
 import pytest
 
-from stenographer.config import Config, ConfigError, load_or_default
+from stenographer.config import Config, ConfigError, default_toml, load_or_default
 
 
 def test_config_error_message():
@@ -47,6 +47,24 @@ def test_write_default_round_trips(tmp_path):
     p = tmp_path / "config.toml"
     Config.write_default(p)
     assert Config.load(p) == Config.defaults()
+
+
+def test_default_template_takes_its_hotkey_device_comment_from_the_platform():
+    """``/dev/input/event*`` is a Linux fact, so the host supplies that comment.
+
+    Seen to FAIL against the hardcoded template (the rendered comment stayed
+    "explicit /dev/input/event* path" while the platform said otherwise).
+    """
+
+    from stenographer.platform import current_platform
+
+    expected = current_platform().guidance().hotkey_device_comment
+    rendered = default_toml()
+    assert f'device = ""                    # {expected}\n' in rendered
+    # The comment column is fixed so every annotated key still lines up.
+    assert rendered.count("                    # ") == 1
+    # Still valid, still the documented defaults.
+    assert Config.loads(rendered) == Config.defaults()
 
 
 def test_loads_validates_without_a_file():

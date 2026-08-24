@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Read-only host probes behind ``doctor`` (spec §4.13) and the systemd restart.
+"""Read-only host probes behind ``doctor`` and the systemd restart.
 
 Nothing here writes, opens a device, or touches the network; the probes feed
 ``doctor.Capabilities`` through :class:`~stenographer.platform.base.HostProbe`.

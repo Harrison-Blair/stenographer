@@ -2,7 +2,7 @@
 """Pure-logic tests for the clipboard writers: pick_backend() and copy_for_backend().
 
 The copy round trips (wl-copy and xclip) are covered by the integration smoke
-suite in tests/delivery/test_deliver_smoke.py — nothing here mocks subprocess (§6).
+suite in tests/delivery/test_deliver_smoke.py — nothing here mocks subprocess.
 """
 
 from __future__ import annotations

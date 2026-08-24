@@ -155,7 +155,7 @@ bindings use evdev `KEY_*` names on every platform.
 
 The model download is explicit; daemon operation is offline. Logs may contain
 timings and counts, but never transcript text or audio. See
-[docs/reauthor.md](docs/reauthor.md) for the binding behavioral and architecture
+[AGENTS.md](AGENTS.md) for the binding behavioral and architecture
 decisions.
 
 ## Service and troubleshooting

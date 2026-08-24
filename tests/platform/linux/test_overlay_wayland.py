@@ -1,19 +1,23 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure tests for native overlay scale and registry policy."""
+"""Pure tests for native overlay scale, registry, and flush policy."""
 
 from __future__ import annotations
+
+import errno
 
 import pytest
 
 pytest.importorskip("pywayland")
 
-from stenographer.overlay.wayland import (
+from stenographer.platform.linux.overlay_backends.wayland import (
     REQUIRED_GLOBALS,
+    GlobalRemoval,
     RegistryInventory,
     ScalePlan,
     callback_is_current,
     choose_scale_plan,
-    layer_margin_bottom,
+    classify_global_removal,
+    flush_wants_write,
 )
 
 
@@ -66,10 +70,6 @@ def test_invalid_scale_hints_fall_back_safely():
     assert choose_scale_plan(integer_scale=3, preferred_scale_120=0).render_scale == 3.0
 
 
-def test_layer_margin_offsets_visible_pill_not_shadow_canvas():
-    assert layer_margin_bottom(canvas_height=88, pill_bottom=72, edge_offset=32) == 16
-
-
 def test_callback_epoch_policy_uses_identity_and_rejects_destroyed_epoch():
     current = object()
     stale = object()
@@ -88,3 +88,26 @@ def test_callback_epoch_policy_does_not_accept_merely_equal_tokens():
     stale = EqualToken()
     assert current == stale
     assert callback_is_current(stale, current) is False
+
+
+def test_losing_a_required_global_is_unrecoverable_and_hotplug_is_not():
+    assert classify_global_removal("wl_compositor") is GlobalRemoval.LOST
+    assert classify_global_removal("zwlr_layer_shell_v1") is GlobalRemoval.LOST
+    assert classify_global_removal("wl_output") is GlobalRemoval.OUTPUT
+    assert classify_global_removal("wp_viewporter") is GlobalRemoval.IGNORE
+
+
+def test_an_unknown_global_name_is_ignored_rather_than_treated_as_a_loss():
+    assert classify_global_removal(None) is GlobalRemoval.IGNORE
+
+
+def test_a_full_socket_asks_for_write_interest_instead_of_failing():
+    assert flush_wants_write(0, errno.EPIPE) is False
+    assert flush_wants_write(12, 0) is False
+    assert flush_wants_write(-1, errno.EAGAIN) is True
+    assert flush_wants_write(-1, errno.EWOULDBLOCK) is True
+
+
+def test_any_other_short_flush_is_a_lost_connection():
+    with pytest.raises(RuntimeError, match="flush"):
+        flush_wants_write(-1, errno.EPIPE)

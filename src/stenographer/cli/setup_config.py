@@ -15,7 +15,7 @@ import tomlkit
 from tomlkit.exceptions import ParseError
 from tomlkit.toml_document import TOMLDocument
 
-from stenographer.config import _DEFAULT_TOML, Config, ConfigError
+from stenographer.config import Config, ConfigError, default_toml
 
 
 class ConfigPersistenceError(Exception):
@@ -55,7 +55,7 @@ class ConfigDocument:
             source = path.read_bytes()
         except FileNotFoundError:
             source = None
-            content = _DEFAULT_TOML
+            content = default_toml()
         except OSError as e:
             raise ConfigError(path, "<file>", f"cannot read: {e}") from e
         else:

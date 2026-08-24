@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """ASR child process: one request at a time, restart-if-dead, kill-on-idle.
 
-Radically simplified per decision §2.10: no job queue, no supersession, no
+Radically simplified by design: no job queue, no supersession, no
 interim jobs. The parent is a blocking, synchronous handle that serialises
 requests through a single lock; the child owns a lazily-built ``model.Model``
 and accepts a load-only warm-up before decoding one utterance at a time. Child
@@ -24,6 +24,7 @@ import time
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
+from stenographer.constants import SAMPLE_RATE
 from stenographer.transcribe.model import Model, PathologicalOutputError, TranscriptionResult
 
 if TYPE_CHECKING:
@@ -40,7 +41,6 @@ _JOIN_SECONDS = 2.0
 _MODEL_LOAD_TIMEOUT_SECONDS = 120.0
 _DECODE_MIN_TIMEOUT_SECONDS = 60.0
 _DECODE_REALTIME_MULTIPLIER = 4.0
-_SAMPLE_RATE = 16_000
 
 
 class WorkerError(RuntimeError):
@@ -49,7 +49,7 @@ class WorkerError(RuntimeError):
 
 
 class WorkerPathologicalError(WorkerError):
-    """The child rejected a degenerate decode (§4.6). Surfaced distinctly so
+    """The child rejected a degenerate decode. Surfaced distinctly so
     the daemon can discard rather than deliver; carries only the serialised
     detail string, since the original instance cannot cross the boundary."""
 
@@ -115,7 +115,7 @@ def should_teardown_for_response_error(exc: WorkerError) -> bool:
 def decode_timeout_seconds(
     sample_frames: int,
     *,
-    sample_rate: int = _SAMPLE_RATE,
+    sample_rate: int = SAMPLE_RATE,
     minimum_seconds: float = _DECODE_MIN_TIMEOUT_SECONDS,
     realtime_multiplier: float = _DECODE_REALTIME_MULTIPLIER,
 ) -> float:
@@ -132,7 +132,7 @@ def response_poll_timeout(
 
 def classify_error(exc: Exception) -> tuple[str, str]:
     """Child-side: map an exception to a ``(kind, detail)`` tuple. The detail
-    carries only exception metadata — never audio or transcript text (§4.12)."""
+    carries only exception metadata — never audio or transcript text."""
     if isinstance(exc, PathologicalOutputError):
         return ("pathological", str(exc))
     return ("inference", f"{type(exc).__name__}: {exc}")
@@ -164,7 +164,7 @@ def _describe_shape(message: object) -> str:
 def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) -> None:
     """Spawn entry (module-level, picklable). Load and decode one request at a
     time, staying healthy after a caught error. The model is built lazily on the
-    first load request so the child inherits local-cache-only load (§4.11)."""
+    first load request so the child inherits the local-cache-only load."""
     from stenographer.utils.logging_setup import configure_worker_logging
 
     configure_worker_logging(log_q, log_level)

@@ -11,9 +11,6 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
 
 def test_model_probe_honors_huggingface_hub_cache(tmp_path):
     model_id = "stenographer/cache-probe"

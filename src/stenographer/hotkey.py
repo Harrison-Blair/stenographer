@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Platform-neutral hotkey vocabulary and chord state machine (spec §4.9).
+"""Platform-neutral hotkey vocabulary and chord state machine.
 
 ``parse_binding`` turns a ``+``-joined chord of evdev ``KEY_*`` names into
 codes through the platform's :class:`~stenographer.platform.base.KeyTable`.
 :class:`ChordTracker` owns the held-key union, the rising/falling edge
-dispatch, and ``wait_binding_released`` (the deliverer's modifier release-guard,
-§4.2); it has no device I/O. A platform listener (the evdev one lives in
+dispatch, and ``wait_binding_released`` (the deliverer's modifier
+release-guard); it has no device I/O. A platform listener (the evdev one lives in
 ``stenographer.platform.linux.hotkey``) subclasses it and feeds
 ``_key_event(device_id, code, value)`` from its reader threads. It owns no state
 machine beyond edges, no hybrid mode, cancel binding, double-tap timer, or
 feedback wiring: the daemon maps edges to session actions per ``hotkey.mode``.
 
 The pure helpers (parse_binding, chord_active, edge) and the tracker are the
-unit targets; the real read loop is exercised by the uinput loopback smoke (§6).
+unit targets; the real read loop is exercised by the uinput loopback smoke.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ class ChordTracker:
     def wait_binding_released(self, timeout: float = 1.5, poll_interval: float = 0.01) -> bool:
         """True once no binding key is held (or the listener stopped); False on
         timeout. Polls only _held under _held_lock — never the dispatch lock — so
-        it cannot deadlock against a reader thread (§4.2).
+        it cannot deadlock against a reader thread.
         """
         deadline = time.monotonic() + timeout
         while True:

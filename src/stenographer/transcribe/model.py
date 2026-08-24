@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""faster-whisper wrapper: fixed anti-hallucination decode stack (§4.5/§4.6).
+"""faster-whisper wrapper: fixed anti-hallucination decode stack.
 
 All testable logic lives in the pure helpers so the ``WhisperModel`` call never
 needs mocking; faster-whisper is imported inside ``Model.__init__`` so the cache
@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
+
+from stenographer.constants import SAMPLE_RATE
 
 if TYPE_CHECKING:
     import numpy as np
@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_SAMPLE_RATE = 16000
 _MAX_NEW_TOKENS = 128
 _HALLUCINATION_SILENCE_SECONDS = 2.0
 _WORDS_PER_VAD_SECOND = 8
@@ -70,7 +69,12 @@ class Model:
     def __init__(self, cfg: AsrConfig) -> None:
         from faster_whisper import WhisperModel
 
-        cpu_threads = resolve_cpu_threads(cfg.cpu_threads)
+        from stenographer.platform import current_platform
+
+        # An explicit thread count short-circuits the host probe entirely.
+        cpu_threads = cfg.cpu_threads or resolve_cpu_threads(
+            0, current_platform().physical_core_count()
+        )
         started = time.monotonic()
         self._impl = WhisperModel(
             cfg.model,
@@ -98,7 +102,7 @@ class Model:
         if samples.ndim == 2:
             samples = samples.mean(axis=1) if samples.shape[1] > 1 else samples.squeeze(-1)
         cfg = self._cfg
-        audio_seconds = samples.shape[0] / _SAMPLE_RATE
+        audio_seconds = samples.shape[0] / SAMPLE_RATE
         segments_iter, info = self._impl.transcribe(
             samples,
             language="en",
@@ -140,7 +144,7 @@ class Model:
             "segments=%d words=%d transcript_chars=%d",
             round((time.monotonic() - started) * 1000),
             samples.shape[0],
-            round(vad_seconds * _SAMPLE_RATE),
+            round(vad_seconds * SAMPLE_RATE),
             len(result.segments),
             sum(len(s.words) for s in result.segments),
             len(result.text),
@@ -152,33 +156,14 @@ class Model:
             del self._impl
 
 
-def resolve_cpu_threads(
-    configured: int,
-    *,
-    affinity: set[int] | None = None,
-    topology_root: Path = Path("/sys/devices/system/cpu"),
-) -> int:
-    """Explicit value passes through; else count affinity-visible physical cores
-    (unique package/core pairs), capped at eight, falling back to four."""
+def resolve_cpu_threads(configured: int, physical_cores: int | None) -> int:
+    """Explicit value passes through; else *physical_cores* capped at eight,
+    falling back to four when the host could not count them."""
     if configured:
         return configured
-    if affinity is None:
-        try:
-            affinity = set(os.sched_getaffinity(0))
-        except (AttributeError, OSError):
-            return _CPU_THREAD_FALLBACK
-    if not affinity:
+    if physical_cores is None or physical_cores < 1:
         return _CPU_THREAD_FALLBACK
-    physical: set[tuple[str, str]] = set()
-    try:
-        for cpu in affinity:
-            topology = topology_root / f"cpu{cpu}" / "topology"
-            package = (topology / "physical_package_id").read_text(encoding="ascii").strip()
-            core = (topology / "core_id").read_text(encoding="ascii").strip()
-            physical.add((package, core))
-    except (OSError, ValueError):
-        return _CPU_THREAD_FALLBACK
-    return min(_AUTO_CPU_THREAD_CAP, len(physical)) or _CPU_THREAD_FALLBACK
+    return min(_AUTO_CPU_THREAD_CAP, physical_cores)
 
 
 def _token_budget(configured_max: int, audio_seconds: float) -> int:
@@ -195,7 +180,7 @@ def _validate_output(
     vad_seconds: float,
 ) -> None:
     """Reject invalid timestamps and decoder-runaway word density. Messages carry
-    no transcript content so pathological output never leaks dictated text (§4.6)."""
+    no transcript content so pathological output never leaks dictated text."""
     if not math.isfinite(vad_seconds) or vad_seconds < 0:
         raise PathologicalOutputError("invalid VAD duration")
     tolerance = 1.0
@@ -240,7 +225,7 @@ def is_model_cached(model_id: str) -> bool:
     """True if the model's ``config.json`` is in the local HF cache (no network).
 
     Delegate cache layout and environment resolution to huggingface_hub so this
-    stays aligned with model loading and ``snapshot_download`` (§4.11).
+    stays aligned with model loading and ``snapshot_download``.
     """
     from huggingface_hub import try_to_load_from_cache
 
@@ -249,7 +234,7 @@ def is_model_cached(model_id: str) -> bool:
 
 
 def download_model(model_id: str) -> None:
-    """Fetch the model into the local HF cache using the §4.11 allow-list."""
+    """Fetch the model into the local HF cache using the fixed allow-list."""
     from huggingface_hub import snapshot_download
 
     snapshot_download(

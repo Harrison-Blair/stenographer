@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Clipboard writers: copy the transcript to BOTH selections, confirmed (spec §2.7).
+"""Clipboard writers: copy the transcript to BOTH selections, confirmed.
 
 Two backends, chosen ONCE at daemon startup by compositor capability (see
 ``detect_clipboard_backend``):
@@ -15,7 +15,8 @@ Two backends, chosen ONCE at daemon startup by compositor capability (see
 
 The clipboard is always written and doubles as the recovery path. ``pick_backend``
 and ``copy_for_backend`` are the pure unit targets; the copy round trips are
-covered by the integration smoke suite, never by mocks (§6).
+covered by the integration smoke suite, never by mocks (the testing policy in
+AGENTS.md).
 """
 
 from __future__ import annotations

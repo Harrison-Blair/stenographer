@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Optional isolated visual feedback: helper supervision, backends, rendering, spectrum."""
+"""Optional isolated visual feedback: helper supervision, reducer, rendering, spectrum.
+
+The OS-specific helper backends live in ``platform/linux/overlay_backends/``.
+"""
 
 from stenographer.overlay.entry import private_entry_requested
 

@@ -491,3 +491,18 @@ def overlay_position(
     x = output_x + (output_width - frame.width) // 2
     y = output_y + output_height - physical_offset - frame.pill_bounds[3]
     return x, y
+
+
+def layer_margin_bottom(
+    *, canvas_height: int, pill_bottom: int, edge_offset: int = EDGE_OFFSET
+) -> int:
+    """Translate a visible-pill offset into a bottom-anchored canvas margin.
+
+    The counterpart of ``overlay_position`` for a display server that places
+    the surface itself: both keep the *pill* the requested distance from the
+    output edge, so the shadow canvas below it never becomes visible padding.
+    """
+    margin = edge_offset - (canvas_height - pill_bottom)
+    if margin < 0:
+        raise ValueError("overlay shadow canvas exceeds the requested edge offset")
+    return margin

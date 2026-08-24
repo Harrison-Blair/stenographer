@@ -6,6 +6,16 @@ from __future__ import annotations
 import argparse
 import sys
 
+from stenographer.audio_probe import query_devices
+
+
+def _default_input_index(default_device: object) -> int:
+    """Pure: PortAudio's default *input* index, or ``-1`` when there is none."""
+    try:
+        return int(default_device[0])  # type: ignore[index]
+    except (TypeError, IndexError, ValueError):
+        return -1
+
 
 def _format_input_devices(devices: list[dict], default_index: int) -> list[str]:
     """Pure: render the input-device listing, marking the default with ``*``."""
@@ -22,17 +32,11 @@ def _format_input_devices(devices: list[dict], default_index: int) -> list[str]:
 
 
 def cmd_devices(args: argparse.Namespace) -> int:
-    import sounddevice
-
-    try:
-        devices = sounddevice.query_devices()
-    except sounddevice.PortAudioError as exc:
-        print(f"stenographer: audio subsystem unavailable: {exc}", file=sys.stderr)
+    query = query_devices()
+    if query.error is not None:
+        print(f"stenographer: {query.error}", file=sys.stderr)
         return 1
-    try:
-        default_index = sounddevice.default.device[0]
-    except (TypeError, IndexError):
-        default_index = -1
-    for line in _format_input_devices(list(devices), default_index):
+    default_index = _default_input_index(query.default_device)
+    for line in _format_input_devices(list(query.devices), default_index):
         print(line)
     return 0

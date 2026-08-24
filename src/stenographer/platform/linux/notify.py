@@ -1,19 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Desktop notifications, errors only (spec §3, disposition table).
+"""Desktop notifications, errors only.
 
 ``notify-send`` is fired non-blocking and no-ops when absent. Only short,
 caller-supplied error strings are ever passed — never audio or transcript text
-(§4.12). The one pure unit target is ``build_notify_command`` (mirroring
-cues.build_play_command); the Popen call is never mock-tested (§6.2).
+(the log-privacy rule). The one pure unit target is ``build_notify_command``
+(mirroring cues.build_play_command); the Popen call is never mock-tested.
 """
 
 from __future__ import annotations
 
 import logging
 import shutil
-import subprocess
 
-from stenographer.platform.linux.process import child_env
+from stenographer.platform.linux.process import spawn_detached
 
 log = logging.getLogger(__name__)
 
@@ -41,12 +40,6 @@ class NotifySendNotifier:
         if not self._available:
             return
         try:
-            subprocess.Popen(
-                build_notify_command(message),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                env=child_env(),
-            )
+            spawn_detached(build_notify_command(message))
         except OSError as exc:
             log.debug("notify: send failed: %s", exc)

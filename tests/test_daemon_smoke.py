@@ -47,7 +47,7 @@ window. It cannot be asserted programmatically.
        real-machine merge gate; the sandbox-safe unit suite is not a substitute.
 
 The automated tests below use the real default PortAudio input and actual lock
-path. They self-skip unless STENOGRAPHER_INTEGRATION=1.
+path. They are collected only with STENOGRAPHER_INTEGRATION=1.
 """
 
 from __future__ import annotations
@@ -57,19 +57,15 @@ import time
 
 import numpy as np
 import pytest
+import sounddevice
 
-pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
-import sounddevice  # noqa: E402
-
-from stenographer.audio import Recorder  # noqa: E402
-from stenographer.platform.linux.lock import (  # noqa: E402
+from stenographer.audio import Recorder
+from stenographer.platform.linux.lock import (
     LOCK_PATH,
     acquire_single_instance_lock,
 )
+
+pytestmark = pytest.mark.integration
 
 
 def _recorder() -> Recorder:

@@ -9,18 +9,13 @@ import threading
 import time
 
 import pytest
+from Xlib import X, Xatom
+from Xlib import display as xdisplay
+from Xlib.ext import shape
 
-pytestmark = pytest.mark.integration
-
-if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-    pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1", allow_module_level=True)
-
-from Xlib import X, Xatom  # noqa: E402
-from Xlib import display as xdisplay  # noqa: E402
-from Xlib.ext import shape  # noqa: E402
-
-from stenographer.overlay.x11 import X11OverlayBackend, X11Unavailable  # noqa: E402
-from stenographer.status import (  # noqa: E402
+from stenographer.platform.linux.overlay_backends.base import BackendUnavailableError
+from stenographer.platform.linux.overlay_backends.x11 import X11OverlayBackend
+from stenographer.status import (
     SPECTRUM_BANDS,
     Command,
     CommandMessage,
@@ -30,6 +25,8 @@ from stenographer.status import (  # noqa: E402
     StateMessage,
     encode_message,
 )
+
+pytestmark = pytest.mark.integration
 
 
 def _find_window(display, expected_id: int):
@@ -111,7 +108,7 @@ def test_real_xwayland_window_is_click_through_and_updates_in_place():
     thread = threading.Thread(target=serve, name="test-xwayland-overlay")
     thread.start()
     result = ready.get(timeout=3)
-    if isinstance(result, X11Unavailable):
+    if isinstance(result, BackendUnavailableError):
         os.close(write_fd)
         thread.join(timeout=3)
         pytest.skip(f"XWayland unavailable: {result.reason.value}")
