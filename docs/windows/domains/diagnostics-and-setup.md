@@ -151,7 +151,7 @@ otherwise assert Linux prose against the Windows table; what remains in `tests/c
 uses a synthetic `HostText` and therefore passes on both runners.
 
 ### WIN-DIAG-03 — Implement the Windows `HostProbe`
-Phase: 1   Depends on: WIN-DIAG-01, `WIN-FEED: in-process sounddevice cue player` (for the player name)
+Phase: 1   Depends on: WIN-DIAG-01, WIN-FEED-01
 Files: `src/stenographer/platform/windows/probe.py` (EDIT),
 `src/stenographer/platform/windows/__init__.py` (EDIT),
 `tests/platform/windows/test_probe.py` (NEW), `tests/platform/windows/test_probe_smoke.py` (NEW)
@@ -209,7 +209,7 @@ the hotkey with a global keyboard hook, so hotkey.device is ignored; press Enter
 Linux's note is `None` and prints nothing.
 
 ### WIN-DIAG-05 — Wire the logon-task state and D7 integrity reporting into doctor
-Phase: 2   Depends on: WIN-DIAG-02, WIN-DIAG-03, `WIN-LIFE: schtasks query parser`
+Phase: 2   Depends on: WIN-DIAG-02, WIN-DIAG-03, WIN-LIFE-06
 Files: `src/stenographer/platform/base.py` (EDIT), `src/stenographer/cli/doctor.py` (EDIT),
 `src/stenographer/platform/windows/probe.py` (EDIT), `tests/platform/windows/test_probe.py` (EDIT),
 `tests/cli/test_doctor.py` (EDIT)
@@ -241,7 +241,7 @@ reason, or timed out → `(None, None, None)`; present → `("enabled"|"disabled
 run level)`.
 
 ### WIN-DIAG-06 — Offer the `/rl HIGHEST` re-registration from setup
-Phase: 2   Depends on: WIN-DIAG-04, WIN-DIAG-05, `WIN-LIFE: logon-task builder with the elevated flag`
+Phase: 2   Depends on: WIN-DIAG-04, WIN-DIAG-05, WIN-LIFE-05
 Files: `src/stenographer/platform/base.py` (EDIT), `src/stenographer/cli/setup.py` (EDIT),
 `src/stenographer/platform/windows/__init__.py` (EDIT), `tests/cli/test_setup.py` (EDIT),
 `tests/platform/windows/test_setup_smoke.py` (NEW)
@@ -264,7 +264,7 @@ The offer prints `text.elevation_prompt` (the trade first, per §D7 and WIN-DIAG
 `console.error` and sets `operational_failure`, which `followup_exit_code` already turns into exit 1.
 
 ### WIN-DIAG-07 — Windows binding capture: temporary hook plus console quieting
-Phase: 2   Depends on: `WIN-INPUT: WH_KEYBOARD_LL listener`, `WIN-INPUT: KEY_* ↔ VK table`
+Phase: 2   Depends on: WIN-INPUT-02, WIN-INPUT-01
 Files: `src/stenographer/platform/windows/binding_capture.py` (NEW),
 `src/stenographer/platform/windows/__init__.py` (EDIT),
 `tests/platform/windows/test_binding_capture.py` (NEW)

@@ -197,7 +197,7 @@ before the refactor, and `build.yml`'s existing `build release binary` and `buil
 (ARM64)` jobs remain the end-to-end proof.
 
 ### WIN-PKG-04 — Write `scripts/install.ps1`, the admin-free per-user installer
-Phase: 4   Depends on: WIN-PKG-03, `WIN-LIFE: schtasks logon-task argv builder (elevated flag)`
+Phase: 4   Depends on: WIN-PKG-03, WIN-LIFE-05
 Files: `scripts/install.ps1` (NEW)
 Pure tests: none — PowerShell has no unit runner in this repo, and the only extractable logic (the
 task argv) is WIN-LIFE's pure builder by WIN-PKG-P5. Syntax is checked in CI by

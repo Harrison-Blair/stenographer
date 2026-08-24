@@ -141,7 +141,7 @@ Module surface, exactly:
   concurrently in one process: `run` never previews and `sounds` never starts a daemon.
 
 ### WIN-FEED-02 — Implement the PowerShell toast notifier
-Phase: 1   Depends on: `WIN-LIFE: child env`
+Phase: 1   Depends on: WIN-LIFE-02
 Files: `src/stenographer/platform/windows/notify.py` (NEW),
 `tests/platform/windows/test_notify.py` (NEW), `tests/platform/windows/test_notify_smoke.py` (NEW)
 Pure tests: `tests/platform/windows/test_notify.py::test_build_notify_command_exact_argv`,

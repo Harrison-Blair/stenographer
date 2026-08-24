@@ -872,6 +872,33 @@ Scheduler's native restart is not a cheap variant: `schtasks` flags cannot set
 restart-on-failure, so it requires generating task XML, making it more work than
 the plain logon task while still retrying an exit-78 daemon.
 
+Writing the seven domain plans against the code refined four of the mechanisms
+above without reversing any decision, and the plans record each in full. The
+paste chord is sent as a **virtual key**, never `KEYEVENTF_SCANCODE`, because a
+scan code injects physical key *position* and the foreground layout re-maps it —
+under Dvorak the chord would become Ctrl+K and no-op; this is the deliberate
+inverse of the listener, which resolves scan-code-first precisely so a binding
+survives a layout change. `build_notify_command()` takes **no message argument**,
+because PowerShell `-Command` takes source code and interpolating a caller
+string there is arbitrary code execution; the message crosses via the child
+environment instead, which makes §4.12's privacy rule structural. Cue
+**resampling is mandatory**, because the bundled `legacy` pack is 44100 Hz while
+the other three are 48000. And **auto-repeat must be mapped to evdev value 2** in
+the provider: Windows delivers repeats as bare `WM_KEYDOWN`, which
+`ChordTracker._key_event` reads as a lost release and answers with
+stop-then-start, so holding the push-to-talk key would storm the daemon.
+
+Three claims in SCOPE.md were also falsified against the code and are corrected
+in the plans: `overlay/supervisor.py` does **not** carry over untouched, because
+it registers the helper's stdout pipe with `selectors.DefaultSelector()` and
+`select()` accepts only sockets on Windows; `packaging/hook-sounddevice.py` does
+**not** mostly carry over, because it excludes `libportaudio*`, which on Windows
+is the `sounddevice` wheel's only copy of the DLL; and `packaging/stenographer.spec`
+raises at module scope when `pywayland` is absent, aborting every Windows build
+before `Analysis`. Separately, `daemon.py`'s graceful stop joins two 30 s waits,
+so the ~5 s `CTRL_CLOSE` budget cannot be a correctness dependency, and
+`signal.Signals(signum).name` raises for console events such as `CTRL_LOGOFF`.
+
 Still open and explicitly **not** decided here: PowerShell completions (decision
 4 fixes the completion surface at Bash/Zsh/Fish), hybrid trigger mode, and
 per-device hotkey selection. Each still requires its own amendment.

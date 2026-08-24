@@ -220,7 +220,7 @@ station visibility and monitor count (WIN-OVL-P4). `WindowsPlatform.overlay_back
 `(OverlayBackendSpec(Backend.WIN32, _probe_win32, _construct_win32),)`.
 
 ### WIN-OVL-06 — Windows helper end to end, and the severability check
-Phase: 3   Depends on: WIN-OVL-02, WIN-OVL-05; WIN-LIFE: helper_spawn_kwargs CREATE_NO_WINDOW;
+Phase: 3   Depends on: WIN-OVL-02, WIN-OVL-05; WIN-LIFE-02;
 WIN-PKG: tests/platform/windows collection guard and the Windows smoke-gate job
 Files: `tests/overlay/test_overlay_helper_smoke.py` (EDIT),
 `tests/platform/windows/test_overlay_helper_win32_smoke.py` (NEW)
