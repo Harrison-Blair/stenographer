@@ -27,7 +27,9 @@ lifecycle pill (exactly 18 locally analyzed spectrum bars while recording, a
 helper-local amber border pulse only while the model loads, fixed state
 interiors — never transcript preview, controls, GTK, or raw-audio IPC), the
 local PyInstaller onedir build + per-user installer + `main`-only draft
-release workflow, and static Bash/Zsh/Fish completions.
+release workflow (with a read-only release-preflight rehearsal — version/tag
+guard plus wheel/sdist verification — on PRs into `main`), and static
+Bash/Zsh/Fish completions.
 
 ## Commands
 
