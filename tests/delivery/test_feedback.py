@@ -16,6 +16,8 @@ from stenographer.delivery.feedback import (
     DEFAULT_SOUND_PACK,
     Feedback,
     _wav_header_ok,
+    _wav_payload_ok,
+    cue_audible,
     discover_sound_packs,
     effective_sound_pack_name,
     is_valid_pack_name,
@@ -302,3 +304,23 @@ def test_effective_name_is_none_when_nothing_resolves(tmp_path):
 def test_feedback_requires_explicit_config_dir():
     with pytest.raises(TypeError):
         Feedback(cfg=FeedbackConfig(volume=0.6, mute=False), player=None)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    ("mute", "volume", "has_player", "expected"),
+    [
+        (False, 0.6, True, True),
+        (True, 0.6, True, False),
+        (False, 0.0, True, False),
+        (False, -0.1, True, False),
+        (False, 0.6, False, False),
+    ],
+)
+def test_cue_audible_needs_unmuted_positive_volume_and_a_player(mute, volume, has_player, expected):
+    assert cue_audible(mute, volume, has_player=has_player) is expected
+
+
+def test_wav_payload_must_match_the_declared_frame_geometry():
+    assert _wav_payload_ok(4800, 1200, 2, 2) is True
+    assert _wav_payload_ok(4799, 1200, 2, 2) is False
+    assert _wav_payload_ok(0, 0, 1, 2) is True

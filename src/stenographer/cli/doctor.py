@@ -23,25 +23,13 @@ from stenographer.capabilities import (
     missing_required,
     probe,
 )
-from stenographer.status import Backend, UnavailableReason
+from stenographer.status import UnavailableReason
 
 if TYPE_CHECKING:
     import pathlib
 
     from stenographer.config import Config
     from stenographer.platform.base import HostGuidance
-
-
-_OVERLAY_FIX_HINTS = {
-    UnavailableReason.NO_X_DISPLAY: "no X display; set DISPLAY or enable XWayland",
-    UnavailableReason.X_CONNECT_FAILED: (
-        "cannot connect to XWayland; check DISPLAY and session access"
-    ),
-    UnavailableReason.X_ARGB_UNAVAILABLE: "XWayland has no usable 32-bit ARGB visual",
-    UnavailableReason.X_EXTENSIONS_UNAVAILABLE: (
-        "XWayland requires the Shape and RandR extensions"
-    ),
-}
 
 
 def format_service_status(enabled: str | None, active: str | None, guidance: HostGuidance) -> str:
@@ -53,18 +41,16 @@ def format_service_status(enabled: str | None, active: str | None, guidance: Hos
     return f"{enabled}, {active or 'unknown'}"
 
 
-def format_overlay_status(capability: OverlayCapability) -> str:
+def format_overlay_status(capability: OverlayCapability, guidance: HostGuidance) -> str:
     """Pure one-line status for an optional overlay capability."""
     if not capability.enabled:
         return "disabled"
-    if capability.backend is Backend.LAYER_SHELL:
-        return "layer-shell"
-    if capability.backend is Backend.XWAYLAND:
-        return "XWayland fallback"
+    if capability.backend is not None:
+        return guidance.overlay_backend_labels.get(
+            capability.backend.value, capability.backend.value
+        )
     reason = capability.reason or UnavailableReason.BACKENDS_UNAVAILABLE
-    hint = _OVERLAY_FIX_HINTS.get(
-        reason, "no usable layer-shell or XWayland backend; check the graphical session"
-    )
+    hint = guidance.overlay_fix_hints.get(reason, guidance.overlay_fix_hint_default)
     return f"unavailable — {hint}"
 
 
@@ -101,7 +87,7 @@ def render(
     lines.append(f"  audio player: {player}")
     service = format_service_status(caps.service_enabled, caps.service_active, guidance)
     lines.append(f"  {guidance.service_noun}: {service}")
-    lines.append(f"  overlay: {format_overlay_status(caps.overlay)}")
+    lines.append(f"  overlay: {format_overlay_status(caps.overlay, guidance)}")
     lines.append("")
     missing = missing_required(caps)
     labels = [guidance.capability_labels.get(name, name) for name in missing]

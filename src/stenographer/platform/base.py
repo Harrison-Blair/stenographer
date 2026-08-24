@@ -204,6 +204,11 @@ class HostGuidance:
     capability_fix_hints: Mapping[str, str]
     clipboard_fix_hints: Mapping[str, str]
     clipboard_fix_hint_default: str
+    overlay_backend_labels: Mapping[str, str]
+    """Display name per ``status.Backend`` value in the doctor report."""
+    overlay_fix_hints: Mapping[UnavailableReason, str]
+    """Why an overlay backend is unusable, keyed by the probe's fixed reason."""
+    overlay_fix_hint_default: str
     service_noun: str
     """What the user-visible background service is called (``doctor``'s row label)."""
     service_name: str

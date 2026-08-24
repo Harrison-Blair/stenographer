@@ -10,11 +10,10 @@ from typing import TYPE_CHECKING
 
 from stenographer.cli import _fatal
 from stenographer.cli.commands import with_config
+from stenographer.constants import SAMPLE_RATE
 
 if TYPE_CHECKING:
     from stenographer.config import Config
-
-_SAMPLE_RATE = 16000
 
 
 @with_config
@@ -42,7 +41,7 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.audio import _resample_poly
 
     samples = samples.mean(axis=1, dtype="float32")
-    samples = _resample_poly(samples, sample_rate, _SAMPLE_RATE)
+    samples = _resample_poly(samples, sample_rate, SAMPLE_RATE)
 
     m = model.Model(cfg.asr)
     try:

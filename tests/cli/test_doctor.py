@@ -49,6 +49,16 @@ _GUIDANCE = HostGuidance(
     },
     clipboard_fix_hints={"wl-copy": "install wl-clipboard", "x11": _XCLIP_HINT},
     clipboard_fix_hint_default="install wl-clipboard",
+    overlay_backend_labels={"layer-shell": "layer-shell", "xwayland": "XWayland fallback"},
+    overlay_fix_hints={
+        UnavailableReason.NO_X_DISPLAY: "no X display; set DISPLAY or enable XWayland",
+        UnavailableReason.X_EXTENSIONS_UNAVAILABLE: (
+            "XWayland requires the Shape and RandR extensions"
+        ),
+    },
+    overlay_fix_hint_default=(
+        "no usable layer-shell or XWayland backend; check the graphical session"
+    ),
     service_noun="systemd unit",
     service_name="stenographer.service",
     service_installer="scripts/install.sh",
@@ -78,6 +88,9 @@ _OTHER_GUIDANCE = HostGuidance(
     },
     clipboard_fix_hints={"native": "enable the pasteboard bridge"},
     clipboard_fix_hint_default="no pasteboard backend",
+    overlay_backend_labels={},
+    overlay_fix_hints={},
+    overlay_fix_hint_default="no display backend",
     service_noun="background agent",
     service_name="the stenographer agent",
     service_installer="the agent installer",

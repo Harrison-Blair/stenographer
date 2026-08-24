@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import logging
 import shutil
-import subprocess
 
-from stenographer.platform.linux.process import child_env
+from stenographer.platform.linux.process import spawn_detached
 
 log = logging.getLogger(__name__)
 
@@ -41,12 +40,6 @@ class NotifySendNotifier:
         if not self._available:
             return
         try:
-            subprocess.Popen(
-                build_notify_command(message),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                env=child_env(),
-            )
+            spawn_detached(build_notify_command(message))
         except OSError as exc:
             log.debug("notify: send failed: %s", exc)

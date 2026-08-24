@@ -11,6 +11,7 @@ from __future__ import annotations
 import shlex
 
 from stenographer.platform.base import HostGuidance
+from stenographer.status import UnavailableReason
 
 _UNIT = "stenographer.service"
 _XCLIP_HINT = "install xclip (the compositor lacks a data-control protocol; GNOME 46 and older)"
@@ -44,6 +45,20 @@ def guidance() -> HostGuidance:
         },
         clipboard_fix_hints={"wl-copy": _WL_CLIPBOARD_HINT, "x11": _XCLIP_HINT},
         clipboard_fix_hint_default=_WL_CLIPBOARD_HINT,
+        overlay_backend_labels={"layer-shell": "layer-shell", "xwayland": "XWayland fallback"},
+        overlay_fix_hints={
+            UnavailableReason.NO_X_DISPLAY: "no X display; set DISPLAY or enable XWayland",
+            UnavailableReason.X_CONNECT_FAILED: (
+                "cannot connect to XWayland; check DISPLAY and session access"
+            ),
+            UnavailableReason.X_ARGB_UNAVAILABLE: "XWayland has no usable 32-bit ARGB visual",
+            UnavailableReason.X_EXTENSIONS_UNAVAILABLE: (
+                "XWayland requires the Shape and RandR extensions"
+            ),
+        },
+        overlay_fix_hint_default=(
+            "no usable layer-shell or XWayland backend; check the graphical session"
+        ),
         service_noun="systemd unit",
         service_name=_UNIT,
         service_installer="scripts/install.sh",

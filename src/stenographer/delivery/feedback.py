@@ -115,7 +115,17 @@ def _valid_wav(path: pathlib.Path) -> bool:
     except (EOFError, MemoryError, OSError, wave.Error):
         return False
 
-    return len(frames) == frame_count * channels * sample_width
+    return _wav_payload_ok(len(frames), frame_count, channels, sample_width)
+
+
+def cue_audible(mute: bool, volume: float, *, has_player: bool) -> bool:
+    """Whether a cue may make sound at all: unmuted, positive volume, a player. PURE."""
+    return not mute and volume > 0.0 and has_player
+
+
+def _wav_payload_ok(frames_len: int, frame_count: int, channels: int, sample_width: int) -> bool:
+    """A truncated payload must fail validation even when the header parses. PURE."""
+    return frames_len == frame_count * channels * sample_width
 
 
 def sound_pack_cue_paths(
@@ -331,7 +341,7 @@ class Feedback:
         return self._pack
 
     def play(self, name: str) -> None:
-        if self._cfg.mute or self._cfg.volume <= 0.0 or self._player is None:
+        if not cue_audible(self._cfg.mute, self._cfg.volume, has_player=self._player is not None):
             return
         path = self._pack.path_for(name)
         if path is None:

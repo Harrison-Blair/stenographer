@@ -14,7 +14,7 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
-from stenographer.platform.linux.process import child_env
+from stenographer.platform.linux.process import child_env, spawn_detached
 
 if TYPE_CHECKING:
     import pathlib
@@ -57,13 +57,7 @@ class LinuxCuePlayer:
         self._player = player
 
     def play(self, path: pathlib.Path, volume: float) -> None:
-        subprocess.Popen(
-            build_play_command(self._player, path, volume),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            env=child_env(),
-        )
+        spawn_detached(build_play_command(self._player, path, volume))
 
     def preview(self, path: pathlib.Path, volume: float) -> None:
         """Play one preview cue completely so command failure is observable.
