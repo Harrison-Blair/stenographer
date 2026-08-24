@@ -59,12 +59,15 @@ The rule is structural, not stylistic, and it is enforced by a test.
   OS/desktop-specific code may exist. `platform/base.py` is stdlib-only and
   defines the contract as `typing.Protocol`s: `Platform`, `KeyTable`,
   `HotkeyListener`, `KeyInjector`, `ClipboardWriter`, `Notifier`, `CuePlayer`,
-  `SingleInstanceLock`, `OverlayBackendSpec`, `HostProbe`, `HostGuidance`, plus
+  `SingleInstanceLock`, `HelperTransport` / `HelperProcess`,
+  `OverlayBackendSpec`, `HostProbe`, `HostGuidance`, plus
   `UnsupportedPlatformError`, `SingleInstanceLockError`, `NullNotifier`.
   `platform/linux/` is `LinuxPlatform` (XDG dirs, child env, flock, evdev
   hotkeys + binding capture, uinput Shift+Insert, wl-copy/xclip, notify-send,
-  canberra/pw-play/paplay cues, doctor probes + systemctl, layer-shell→XWayland
-  overlay specs, and every Linux word the CLI prints in `linux/guidance.py`).
+  canberra/pw-play/paplay cues, sysfs CPU topology, doctor probes + systemctl,
+  the overlay helper's pipes/`select`/SIGTERM→SIGKILL transport in
+  `linux/helper.py`, layer-shell→XWayland overlay specs, and every Linux word
+  the CLI prints in `linux/guidance.py`).
   `platform/windows/` is `WindowsPlatform`: today a stub that
   imports everywhere and reports every surface unavailable (`doctor` exits 78,
   `run` is refused); it will grow `WH_KEYBOARD_LL`, `SendInput`, Win32
@@ -80,7 +83,12 @@ The rule is structural, not stylistic, and it is enforced by a test.
   `evdev`, `fcntl`, `termios`, `grp`, `pty`, `pywayland`, `Xlib`, or any
   Win32 module — not even lazily inside a function. `tests/platform/
   test_core_isolation.py` imports every core module in a fresh interpreter
-  with those names blocked; a violation anywhere in the core fails it.
+  with those names blocked; a violation anywhere in the core fails it. Some
+  stdlib modules import fine everywhere and only *behave* per-OS — a core
+  driver (`overlay/supervisor.py`, `audio.py`, `hotkey.py`, `daemon.py`)
+  therefore never reaches for `subprocess`, `selectors`, `fcntl`, `signal`,
+  `msvcrt`, or raw `os.read`/`os.kill` either; the same test greps their
+  source for it.
 - **Provider modules are lazy.** Each `LinuxPlatform` / `WindowsPlatform`
   method lazy-imports its sibling backend so `stenographer --help` never
   loads evdev or pywin32; `platform/__init__.py` and both provider
@@ -105,7 +113,11 @@ The rule is structural, not stylistic, and it is enforced by a test.
   `cli/doctor.py`, `cli/setup.py`, `cli/sounds.py`, and `config.py` own the
   sentence frames only — `systemctl`, `journalctl`, `install.sh`,
   `/dev/uinput`, `usermod`, `wl-clipboard`, and `xclip` must appear nowhere
-  under `src/stenographer/` outside `platform/linux/`.
+  under `src/stenographer/` outside `platform/linux/`. Signal *names* are host
+  prose too: `install_stop_handlers(handler)` calls back with a ready-made
+  reason string (`"SIGTERM"`, later `"CTRL_CLOSE"`), formatted by the provider
+  inside stop context — allocation-light and exception-safe, because the stop
+  must fire even when the code cannot be named.
 - **How to add or change host behaviour.** (1) If it is a new capability,
   add a Protocol method/type to `platform/base.py` with a stdlib-only
   signature. (2) Implement it in `platform/linux/`, and in
@@ -117,9 +129,11 @@ The rule is structural, not stylistic, and it is enforced by a test.
   device, or OS call, the host part has leaked into the core — move it behind
   the Protocol instead. (5) Paths, env lookup (`XDG_*`, `%APPDATA%`,
   `%LOCALAPPDATA%`), process/child env, signals vs console handlers, locks,
-  service control, and notifications are all host concerns; never hardcode a
-  Linux assumption (`/dev/uinput`, `/tmp`, `os.getuid`, `fcntl`, `SIGTERM`
-  semantics, `systemctl`, `/` separators) in core code.
+  service control, notifications, and machine introspection (CPU affinity and
+  topology → `physical_core_count()`) are all host concerns; never hardcode a
+  Linux assumption (`/dev/uinput`, `/tmp`, `/sys`, `os.getuid`,
+  `os.sched_getaffinity`, `fcntl`, `SIGTERM` semantics, `systemctl`, `/`
+  separators) in core code.
 - **Tests follow the same line.** `tests/platform/linux/` holds Linux-only
   tests (skipped/ignored off-Linux); pure overlay backend tests `importorskip`
   pywayland/Xlib. New core tests must pass on `windows-latest` with no Linux
@@ -171,9 +185,10 @@ The rule is structural, not stylistic, and it is enforced by a test.
      captured audio. The anti-hallucination decode stack (VAD pre-filter,
      no-speech gate, silence trimming, short-audio token ceiling, output
      validation) is fixed behavior, not configuration.
-   - `asr.cpu_threads = 0` means affinity-visible *physical* cores capped at
+   - `asr.cpu_threads = 0` means the host's `physical_core_count()` capped at
      8 — CTranslate2 scales badly past that and hyperthread counting is
-     slower.
+     slower. A host that cannot count physical cores returns `None` and the
+     thread count falls back to 4; never substitute a logical-CPU count.
    - `asr.hotwords` silently deletes words on distil models; hotword support
      requires a full model (why the default is `faster-whisper-medium.en`).
 6. **Privacy in logs** — numeric/structural metrics and transcript *lengths*
@@ -231,7 +246,7 @@ authoritative when editing.
 | `status.py` | Lifecycle states + strict protocol-v4 NDJSON contract + pure generation/coalescing policy. |
 | `transcribe/` | `worker.py` (crash-isolated ASR child: one job at a time, load-only warm-up, idle unload after `asr.idle_unload_seconds`, fixed load/decode deadlines, logs via queue), `model.py` (faster-whisper, anti-hallucination stack, `PathologicalOutputError`, `local_files_only`), `format.py` (zero-knob formatter). |
 | `delivery/` | `deliver.py` (`Deliverer` policy: confirmed copy → wait for release → `KeyInjector` chord), `feedback.py` (resolve one sound pack at startup, mute/volume policy, `CuePlayer`; no player → no-op). |
-| `overlay/` | `spectrum.py` (pure 32 ms Hann FFT, 18 bands, fixed floors, 18-level quantization), `supervisor.py` (helper spawn/mailbox/backend selection), `render.py`, `wayland.py` / `x11.py` helper backends reached only via `overlay_backends()`, vendored `protocols/`. |
+| `overlay/` | `spectrum.py` (pure 32 ms Hann FFT, 18 bands, fixed floors, 18-level quantization), `supervisor.py` (mailbox, NDJSON framing, readiness deadline, restart budget, and shutdown policy — the child itself is spawned, polled, read, and killed through `HelperTransport` / `HelperProcess`), `render.py`, `wayland.py` / `x11.py` helper backends reached only via `overlay_backends()`, vendored `protocols/`. |
 | `cli/` | argparse surface + lazy dispatch (`stenographer.cli:main`; `python -m stenographer.cli` for helper re-exec); `commands/` thin handlers for `run`, `transcribe`, `model download`, `doctor`, `devices`, `setup`, `sounds`, `completion {bash,zsh,fish}`. Heavy imports stay inside handlers. Engines: `setup.py` (TTY-only full / `--quick`), `setup_config.py` (preservation layer), `binding_capture.py` (thin `current_platform().capture_binding` delegator; the pure reducer is core `stenographer.binding_capture`), `calibration.py` (one-shot 18-band floor estimator for `feedback.spectrum_floor_dbfs` only), `doctor.py` (report layout: pure `render`/`format_service_status` taking a `HostGuidance`, plus `run`; the gate itself is core `stenographer.capabilities` and every host word is the platform's), `sounds.py`. Completion is static — no device/model/config/audio/network discovery. |
 | `platform/` | The host boundary — see above. |
 | `utils/logging_setup.py` | Idempotent stderr + rotating state-file logging (5 MiB × 3), `STENOGRAPHER_LOG_LEVEL`, privacy-safe worker forwarding. |

@@ -52,6 +52,9 @@ def test_windows_stub_conforms_and_reports_everything_unavailable():
     assert plat.overlay_backends() == ()
     assert plat.hotkey_devices() == []
     assert plat.cue_player() is None
+    # os.cpu_count() counts logical CPUs; the stub must not pass that off as a
+    # physical-core count, so it says "cannot tell" and the core falls back.
+    assert plat.physical_core_count() is None
     # The KEY_* vocabulary is core data, so the stub speaks it even with no
     # backend: a binding must parse and render wherever config is read.
     assert plat.keys().code("KEY_RIGHTCTRL") == 97
@@ -65,6 +68,38 @@ def test_windows_stub_conforms_and_reports_everything_unavailable():
         plat.clipboard_writer("unavailable")
     with pytest.raises(UnsupportedPlatformError):
         plat.single_instance_lock()
+    # The overlay supervisor asks for a transport before it spawns anything; a
+    # stub that answered with a half-working one would spawn a helper Windows
+    # cannot poll or terminate, instead of disabling the overlay.
+    with pytest.raises(UnsupportedPlatformError):
+        plat.helper_transport()
+
+
+def test_providers_name_a_stop_reason_without_ever_raising():
+    """The reason string is host vocabulary, and it is formatted in stop context.
+
+    ``install_stop_handlers`` hands the core a label, not a signal number, so
+    the naming happens inside the provider's own handler — a POSIX signal
+    handler today, a console-control callback on Windows later. A raise there
+    would swallow the stop instead of logging it, so an unnameable code must
+    degrade to a label rather than blow up. Seen to FAIL against an unguarded
+    ``signal.Signals(signum).name`` (ValueError: 999 is not a valid Signals).
+    """
+
+    import signal
+
+    from stenographer.platform.windows import signal_reason as windows_reason
+
+    providers = [windows_reason]
+    if sys.platform.startswith("linux"):
+        from stenographer.platform.linux import signal_reason as linux_reason
+
+        providers.append(linux_reason)
+
+    for reason in providers:
+        assert reason(signal.SIGINT) == "SIGINT"
+        assert reason(signal.SIGTERM) == "SIGTERM"
+        assert "999" in reason(999)
 
 
 def test_windows_stub_returns_complete_and_non_posix_guidance():

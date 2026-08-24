@@ -18,44 +18,29 @@ from stenographer.transcribe.model import (
 )
 
 
-def _make_topology(root, cpu_to_core, package="0"):
-    """Build a fake /sys topology tree mapping cpu index -> core_id."""
-    for cpu, core in cpu_to_core.items():
-        topo = root / f"cpu{cpu}" / "topology"
-        topo.mkdir(parents=True)
-        (topo / "physical_package_id").write_text(package, encoding="ascii")
-        (topo / "core_id").write_text(str(core), encoding="ascii")
-
-
 def test_resolve_cpu_threads_explicit_passthrough():
-    assert resolve_cpu_threads(3, affinity={0, 1, 2, 3}) == 3
+    # An explicit config value wins even when the host counted its cores.
+    assert resolve_cpu_threads(3, 16) == 3
 
 
-def test_resolve_cpu_threads_counts_physical_cores(tmp_path):
-    # 4 cpus mapping onto 4 distinct core ids -> 4 physical cores.
-    _make_topology(tmp_path, {0: 0, 1: 1, 2: 2, 3: 3})
-    assert resolve_cpu_threads(0, affinity={0, 1, 2, 3}, topology_root=tmp_path) == 4
+def test_resolve_cpu_threads_uses_physical_core_count():
+    assert resolve_cpu_threads(0, 4) == 4
 
 
-def test_resolve_cpu_threads_counts_dedupes_hyperthreads(tmp_path):
-    # 4 cpus but only 2 distinct core ids (hyperthread siblings) -> 2.
-    _make_topology(tmp_path, {0: 0, 1: 0, 2: 1, 3: 1})
-    assert resolve_cpu_threads(0, affinity={0, 1, 2, 3}, topology_root=tmp_path) == 2
+def test_resolve_cpu_threads_caps_at_eight():
+    # CTranslate2 scales badly past eight threads, so a big machine is capped.
+    assert resolve_cpu_threads(0, 16) == 8
 
 
-def test_resolve_cpu_threads_caps_at_eight(tmp_path):
-    cpu_to_core = {i: i for i in range(16)}
-    _make_topology(tmp_path, cpu_to_core)
-    assert resolve_cpu_threads(0, affinity=set(range(16)), topology_root=tmp_path) == 8
+def test_resolve_cpu_threads_falls_back_when_host_cannot_count():
+    # None is the host saying "cannot tell" (no affinity call, unreadable
+    # topology, Windows stub) — never a guess derived from logical CPUs.
+    assert resolve_cpu_threads(0, None) == 4
 
 
-def test_resolve_cpu_threads_empty_affinity_fallback(tmp_path):
-    assert resolve_cpu_threads(0, affinity=set(), topology_root=tmp_path) == 4
-
-
-def test_resolve_cpu_threads_unreadable_topology_fallback(tmp_path):
-    # No files created under tmp_path -> read_text raises FileNotFoundError (OSError).
-    assert resolve_cpu_threads(0, affinity={0, 1}, topology_root=tmp_path) == 4
+@pytest.mark.parametrize("count", [0, -1])
+def test_resolve_cpu_threads_falls_back_on_nonsense_count(count):
+    assert resolve_cpu_threads(0, count) == 4
 
 
 def test_token_budget_short_audio_is_small():

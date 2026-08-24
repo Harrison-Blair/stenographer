@@ -30,8 +30,3 @@ def _scrub(env: dict[str, str], frozen: bool) -> dict[str, str]:
 def child_env() -> dict[str, str]:
     """The environment every spawned helper process should run with."""
     return _scrub(dict(os.environ), getattr(sys, "frozen", False))
-
-
-def helper_spawn_kwargs() -> dict[str, object]:
-    """Extra ``Popen`` keyword arguments for the overlay helper (none on Linux)."""
-    return {}

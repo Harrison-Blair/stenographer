@@ -11,8 +11,10 @@ capture remains authoritative. All state transitions are guarded by one lock so
 a key event, a timer firing, and a pipeline completion cannot race. Pure policy
 (``classify_pipeline``, ``can_start``, ``toggle_action``,
 ``max_duration_applies``) is the unit-testable surface; the single-instance
-lock and signal handling come from the current :class:`~stenographer.platform.base.Platform`;
-the wired daemon is exercised by real dictation (the M5 manual acceptance procedure).
+lock and stop handling come from the current :class:`~stenographer.platform.base.Platform`
+(which names the stop — ``"SIGTERM"``, later ``"CTRL_CLOSE"`` — so the core
+holds no POSIX vocabulary); the wired daemon is exercised by real dictation
+(the M5 manual acceptance procedure).
 """
 
 from __future__ import annotations
@@ -20,7 +22,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import signal
 import sys
 import threading
 from enum import Enum, auto
@@ -547,11 +548,11 @@ def run(cfg: Config) -> int:
     if not acquired:
         return _startup_failure(status, "another instance is already running.", 1)
 
-    def _handler(signum: int, frame: object) -> None:
-        log.info("signal: received %s, stopping", signal.Signals(signum).name)
+    def _handler(reason: str) -> None:
+        log.info("stop: received %s, stopping", reason)
         daemon.request_stop()
 
-    plat.install_stop_signal_handlers(_handler)
+    plat.install_stop_handlers(_handler)
 
     try:
         try:

@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from stenographer.constants import SAMPLE_RATE
@@ -71,7 +69,12 @@ class Model:
     def __init__(self, cfg: AsrConfig) -> None:
         from faster_whisper import WhisperModel
 
-        cpu_threads = resolve_cpu_threads(cfg.cpu_threads)
+        from stenographer.platform import current_platform
+
+        # An explicit thread count short-circuits the host probe entirely.
+        cpu_threads = cfg.cpu_threads or resolve_cpu_threads(
+            0, current_platform().physical_core_count()
+        )
         started = time.monotonic()
         self._impl = WhisperModel(
             cfg.model,
@@ -153,33 +156,14 @@ class Model:
             del self._impl
 
 
-def resolve_cpu_threads(
-    configured: int,
-    *,
-    affinity: set[int] | None = None,
-    topology_root: Path = Path("/sys/devices/system/cpu"),
-) -> int:
-    """Explicit value passes through; else count affinity-visible physical cores
-    (unique package/core pairs), capped at eight, falling back to four."""
+def resolve_cpu_threads(configured: int, physical_cores: int | None) -> int:
+    """Explicit value passes through; else *physical_cores* capped at eight,
+    falling back to four when the host could not count them."""
     if configured:
         return configured
-    if affinity is None:
-        try:
-            affinity = set(os.sched_getaffinity(0))
-        except (AttributeError, OSError):
-            return _CPU_THREAD_FALLBACK
-    if not affinity:
+    if physical_cores is None or physical_cores < 1:
         return _CPU_THREAD_FALLBACK
-    physical: set[tuple[str, str]] = set()
-    try:
-        for cpu in affinity:
-            topology = topology_root / f"cpu{cpu}" / "topology"
-            package = (topology / "physical_package_id").read_text(encoding="ascii").strip()
-            core = (topology / "core_id").read_text(encoding="ascii").strip()
-            physical.add((package, core))
-    except (OSError, ValueError):
-        return _CPU_THREAD_FALLBACK
-    return min(_AUTO_CPU_THREAD_CAP, len(physical)) or _CPU_THREAD_FALLBACK
+    return min(_AUTO_CPU_THREAD_CAP, physical_cores)
 
 
 def _token_budget(configured_max: int, audio_seconds: float) -> int:

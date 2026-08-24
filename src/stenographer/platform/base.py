@@ -102,6 +102,63 @@ class SingleInstanceLock(Protocol):
     def release(self) -> None: ...
 
 
+class HelperProcess(Protocol):
+    """One live overlay-helper child process, with its two pipes.
+
+    The supervisor owns every policy above this line (mailbox, NDJSON framing,
+    readiness deadline, restart budget); the host owns pipe creation, the
+    blocking wait for helper output, and process termination — none of which
+    survives a move between OSes unchanged (``selectors.SelectSelector``
+    accepts only sockets on Windows; POSIX signal escalation has no analogue
+    there).
+    """
+
+    def write(self, data: bytes) -> None:
+        """Write *data* to the helper's stdin and flush; raises ``OSError``."""
+        ...
+
+    def close_input(self) -> None:
+        """Close the helper's stdin so it sees EOF. Never raises."""
+        ...
+
+    def wait_readable(self, timeout: float) -> bool:
+        """Block up to *timeout* seconds; ``True`` when stdout has bytes or EOF."""
+        ...
+
+    def read(self, size: int) -> bytes:
+        """Read at most *size* bytes; ``b""`` at EOF *and* on any read error."""
+        ...
+
+    def is_running(self) -> bool:
+        """``True`` while the child has not exited (no blocking, no reaping)."""
+        ...
+
+    def wait(self, timeout: float) -> None:
+        """Wait up to *timeout* seconds for a voluntary exit. Never raises."""
+        ...
+
+    def terminate(self, grace_seconds: float) -> None:
+        """Stop the child with the host's escalation, then reap it. Never raises.
+
+        Called after the supervisor has already granted an expected exit its
+        own grace period, so an implementation escalates immediately; *grace*
+        bounds each step of that escalation.
+        """
+        ...
+
+    def close(self) -> None:
+        """Release the pipes and any polling resources. Never raises."""
+        ...
+
+
+class HelperTransport(Protocol):
+    """Spawns overlay helper processes with the pipe layout the supervisor needs."""
+
+    def spawn(self, command: Sequence[str]) -> HelperProcess:
+        """Start *command*; raises ``OSError``/``ValueError`` when it cannot start."""
+        ...
+
+
 class OverlayBackend(Protocol):
     """Helper-side display backend (see ``overlay.supervisor.run_overlay_helper``)."""
 
@@ -223,15 +280,35 @@ class Platform(Protocol):
     def cue_player(self) -> CuePlayer | None: ...
 
     # --- process / lifecycle ---
-    def helper_spawn_kwargs(self) -> dict[str, object]:
-        """Extra ``subprocess.Popen`` keyword arguments for the overlay helper."""
+    def helper_transport(self) -> HelperTransport:
+        """Transport for the overlay helper child; raises when the host has none."""
         ...
 
     def single_instance_lock(self) -> SingleInstanceLock: ...
 
-    def install_stop_signal_handlers(self, handler: Callable[[int, object], None]) -> None: ...
+    def install_stop_handlers(self, handler: Callable[[str], None]) -> None:
+        """Ask the host to call ``handler(reason)`` when the user stops the daemon.
+
+        ``reason`` is a short human-readable label for the log line only
+        (``"SIGTERM"``, ``"SIGINT"``, later ``"CTRL_CLOSE"``): naming the stop
+        is host vocabulary, so the provider — not the core — formats it. The
+        core's handler runs in whatever context the host delivers (a POSIX
+        signal handler, a Windows console-control thread), so a provider must
+        keep its own formatting allocation-light and exception-safe: the stop
+        must fire even when the reason cannot be named.
+        """
+        ...
 
     # --- probes ---
+    def physical_core_count(self) -> int | None:
+        """Affinity-visible physical cores, or ``None`` when the host cannot tell.
+
+        Hyperthread siblings count once; a host that cannot see its own
+        topology says so rather than guessing, so the core can apply its
+        documented fallback instead of an inflated logical-CPU number.
+        """
+        ...
+
     def probe_host(self) -> HostProbe: ...
 
     def guidance(self) -> HostGuidance:

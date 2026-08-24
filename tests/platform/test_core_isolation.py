@@ -29,6 +29,22 @@ LINUX_WORDS = re.compile(
     r"|stenographer\.service"
 )
 
+# Core modules that drive a child process, a device, or the process lifecycle
+# may only do so through the platform Protocols: spawning, polling,
+# signalling, and raw-fd I/O are where portable-looking stdlib calls stop
+# being portable (SelectSelector takes only sockets on Windows; terminate()
+# there is already a kill; a console-control code fed to signal.Signals
+# raises). ``transcribe/worker.py`` and the overlay *helper* backends are
+# deliberately absent: the worker child and the helper process are their own
+# processes, not the daemon's portable core.
+PROCESS_MODULES = re.compile(
+    r"^\s*(?:import|from)\s+(subprocess|selectors|fcntl|signal|msvcrt)\b", re.M
+)
+
+RAW_FD_IO = re.compile(r"\bos\.(?:read|write|kill|waitpid|pipe)\(")
+
+TRANSPORT_FREE = ("overlay/supervisor.py", "audio.py", "hotkey.py", "daemon.py")
+
 BLOCKED = (
     "evdev",
     "fcntl",
@@ -101,6 +117,28 @@ def test_core_never_hardcodes_linux_prose():
         if not path.is_relative_to(PLATFORM_ROOT / "linux")
         and LINUX_WORDS.search(path.read_text(encoding="utf-8"))
     )
+    assert not offenders, offenders
+
+
+def test_core_drivers_never_spawn_poll_or_signal_directly():
+    """The overlay supervisor talks to its child through ``HelperTransport`` only.
+
+    A module-level import would be caught by the blocked-import test below only
+    if the module were Linux-only, and ``subprocess``/``selectors`` are not —
+    they import fine on Windows and then fail at *runtime* (SelectSelector
+    rejects a pipe handle, terminate() skips straight to a kill). Source text
+    is therefore the honest guard. Seen to FAIL against the pre-transport
+    supervisor (``import os``/``selectors``/``subprocess`` plus ``os.read``),
+    and against the pre-``install_stop_handlers`` daemon (``import signal``
+    for ``signal.Signals(signum).name`` in its stop handler — POSIX
+    vocabulary that would raise on a Windows console-control code).
+    """
+
+    offenders = []
+    for relative in TRANSPORT_FREE:
+        source = (SRC_ROOT / relative).read_text(encoding="utf-8")
+        offenders += [f"{relative}: import {m.group(1)}" for m in PROCESS_MODULES.finditer(source)]
+        offenders += [f"{relative}: {m.group(0)}" for m in RAW_FD_IO.finditer(source)]
     assert not offenders, offenders
 
 

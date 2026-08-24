@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from stenographer.platform.base import (
         CuePlayer,
+        HelperTransport,
         HostGuidance,
         HostProbe,
         HotkeyListener,
@@ -27,6 +28,21 @@ if TYPE_CHECKING:
         OverlayBackendSpec,
         SingleInstanceLock,
     )
+
+
+def signal_reason(signum: int) -> str:
+    """Name a stop signal for the core's log line. PURE.
+
+    Runs inside a signal handler, so it stays allocation-light (the enum
+    lookup returns an interned name) and never raises: an unrecognized number
+    — a signal this build's ``signal.Signals`` does not know — degrades to a
+    numeric label so ``request_stop`` still fires behind it.
+    """
+
+    try:
+        return signal.Signals(signum).name
+    except Exception:
+        return f"signal {signum}"
 
 
 class LinuxPlatform:
@@ -102,21 +118,29 @@ class LinuxPlatform:
         return LinuxCuePlayer(player) if player is not None else None
 
     # --- process / lifecycle ---
-    def helper_spawn_kwargs(self) -> dict[str, object]:
-        from stenographer.platform.linux.process import helper_spawn_kwargs
+    def helper_transport(self) -> HelperTransport:
+        from stenographer.platform.linux.helper import LinuxHelperTransport
 
-        return helper_spawn_kwargs()
+        return LinuxHelperTransport()
 
     def single_instance_lock(self) -> SingleInstanceLock:
         from stenographer.platform.linux.lock import FlockSingleInstanceLock
 
         return FlockSingleInstanceLock()
 
-    def install_stop_signal_handlers(self, handler: Callable[[int, object], None]) -> None:
+    def install_stop_handlers(self, handler: Callable[[str], None]) -> None:
+        def _on_signal(signum: int, frame: object) -> None:
+            handler(signal_reason(signum))
+
         for sig in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, handler)
+            signal.signal(sig, _on_signal)
 
     # --- probes ---
+    def physical_core_count(self) -> int | None:
+        from stenographer.platform.linux.cpu import physical_core_count
+
+        return physical_core_count()
+
     def probe_host(self) -> HostProbe:
         from stenographer.platform.linux.probe import probe_host
 

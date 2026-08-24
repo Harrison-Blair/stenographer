@@ -11,6 +11,7 @@ provisional (``%APPDATA%`` / ``%LOCALAPPDATA%``, honouring ``XDG_*`` when set).
 
 from __future__ import annotations
 
+import signal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 
     from stenographer.platform.base import (
         CuePlayer,
+        HelperTransport,
         HotkeyListener,
         KeyInjector,
         KeyTable,
@@ -44,6 +46,23 @@ def _run_with_config(path: str) -> str:
     """``cmd.exe`` syntax for running the daemon against an explicit config path."""
 
     return f'set "STENOGRAPHER_CONFIG={path}" && stenographer run'
+
+
+def signal_reason(signum: int) -> str:
+    """Name a stop signal for the core's log line. PURE.
+
+    Every stop reaching the stub arrives as a signal number; the console
+    events ``SetConsoleCtrlHandler`` delivers (``CTRL_CLOSE_EVENT`` and
+    friends) are *not* signal numbers and will be named by their own mapping
+    when that handler lands — feeding one to ``signal.Signals`` would raise
+    inside the host's stop callback. Hence the guard: an unnameable code
+    degrades to a numeric label so ``request_stop`` still fires behind it.
+    """
+
+    try:
+        return signal.Signals(signum).name
+    except Exception:
+        return f"signal {signum}"
 
 
 class WindowsPlatform:
@@ -110,18 +129,36 @@ class WindowsPlatform:
         return None
 
     # --- process / lifecycle ---
-    def helper_spawn_kwargs(self) -> dict[str, object]:
-        return {}
+    def helper_transport(self) -> HelperTransport:
+        # The overlay is disabled on Windows (``overlay_backends()`` is empty,
+        # and no ``Backend`` wire value names a Windows surface yet), so the
+        # supervisor has nothing to supervise. A real transport lands with the
+        # overlay backend: ``CREATE_NO_WINDOW`` so the helper never flashes a
+        # console, an overlapped/threaded stdout wait (``SelectSelector``
+        # accepts only sockets here), and ``TerminateProcess`` escalation.
+        raise UnsupportedPlatformError("the overlay helper is not available on Windows yet")
 
     def single_instance_lock(self) -> SingleInstanceLock:
         raise UnsupportedPlatformError("single-instance lock is not available on Windows yet")
 
-    def install_stop_signal_handlers(self, handler: Callable[[int, object], None]) -> None:
-        import signal
+    def install_stop_handlers(self, handler: Callable[[str], None]) -> None:
+        # Ctrl-C only, until SetConsoleCtrlHandler lands: a console close or
+        # logoff still kills the process without a stop reason.
+        def _on_signal(signum: int, frame: object) -> None:
+            handler(signal_reason(signum))
 
-        signal.signal(signal.SIGINT, handler)
+        signal.signal(signal.SIGINT, _on_signal)
 
     # --- probes ---
+    def physical_core_count(self) -> int | None:
+        # ``os.cpu_count()`` reports *logical* CPUs, so on any SMT machine it is
+        # roughly double the physical count — passing it off as physical would
+        # oversubscribe CTranslate2 rather than help it. The honest source is
+        # ``GetLogicalProcessorInformationEx`` (ctypes), which lands with the
+        # real backend; until then the host says it cannot tell and the core's
+        # documented fallback applies.
+        return None
+
     def probe_host(self) -> HostProbe:
         return HostProbe(
             key_injector_ok=False,
