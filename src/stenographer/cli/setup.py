@@ -10,13 +10,15 @@ from __future__ import annotations
 import dataclasses
 import os
 import pathlib
-import shlex
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
 from stenographer.cli.setup_config import ConfigDocument, ConfigPersistenceError
 from stenographer.config import ALLOWED_COMPUTE_TYPES, Config, ConfigError
+
+if TYPE_CHECKING:
+    from stenographer.platform.base import HostGuidance
 
 _CLEAR = "clear"
 _SECTIONS = ("hotkey", "audio", "asr", "feedback")
@@ -244,7 +246,7 @@ def _prompt_sound_pack(console: _Console, current: str, config_dir: pathlib.Path
 def _audio_devices() -> list[tuple[str, str]]:
     """Return selectable input devices. An unusable PortAudio means no suggestions."""
 
-    from stenographer.cli.audio_probe import input_device_choices, query_devices
+    from stenographer.audio_probe import input_device_choices, query_devices
 
     return input_device_choices(query_devices().devices)
 
@@ -311,7 +313,10 @@ def _prompt_typed_binding(console: _Console, current: str) -> str:
 
 def _edit_hotkey(console: _Console, config: Config, config_dir: pathlib.Path) -> Config:
     console.write("\nHotkey")
-    console.write("Binding uses evdev key names joined with '+'. Mode is hold or toggle only.")
+    console.write(
+        "Binding uses key names (the evdev KEY_* vocabulary) joined with '+'. "
+        "Mode is hold or toggle only."
+    )
 
     hotkey = dataclasses.replace(
         config.hotkey,
@@ -526,7 +531,8 @@ def _capture_or_choose_binding(
     if action == "type":
         return _prompt_typed_binding(console, current)
 
-    from stenographer.cli.binding_capture import BindingCaptureError, capture_binding
+    from stenographer.binding_capture import BindingCaptureError
+    from stenographer.cli.binding_capture import capture_binding
 
     while True:
         console.write(
@@ -647,11 +653,13 @@ def _ask_yes_no(console: _Console, prompt: str, *, default: bool) -> bool:
 def _restart_service(console: _Console) -> bool:
     from stenographer.platform import current_platform
 
-    ok, detail = current_platform().restart_service()
+    plat = current_platform()
+    ok, detail = plat.restart_service()
+    name = plat.guidance().service_name
     if not ok:
-        console.error(f"could not restart stenographer.service: {detail}")
+        console.error(f"could not restart {name}: {detail}")
         return False
-    console.write("Restarted stenographer.service.")
+    console.write(f"Restarted {name}.")
     return True
 
 
@@ -664,9 +672,12 @@ def _guided_setup(
     custom_config: bool,
     quick: bool = False,
 ) -> int:
+    from stenographer import capabilities
     from stenographer.cli import doctor
+    from stenographer.platform import current_platform
     from stenographer.transcribe import model
 
+    guidance = current_platform().guidance()
     operational_failure = False
     try:
         cached = model.is_model_cached(config.asr.model)
@@ -688,13 +699,13 @@ def _guided_setup(
                 console.write("Model download complete.")
 
     try:
-        caps = doctor.probe(config)
+        caps = capabilities.probe(config)
     except Exception as exc:
         console.error(f"capability probe failed: {exc}")
         return 1
     console.write()
-    console.write(doctor.render(caps, config, path))
-    missing = bool(doctor.missing_required(caps))
+    console.write(doctor.render(caps, config, path, guidance))
+    missing = bool(capabilities.missing_required(caps))
     if missing:
         console.write("Service restart skipped until required capabilities are available.")
         return followup_exit_code(operational_failure=operational_failure, missing_required=True)
@@ -707,7 +718,9 @@ def _guided_setup(
         service_active=caps.service_active,
     ):
         if _ask_yes_no(
-            console, "Restart the active stenographer.service to apply changes?", default=True
+            console,
+            f"Restart the active {guidance.service_name} to apply changes?",
+            default=True,
         ):
             if not _restart_service(console):
                 operational_failure = True
@@ -717,11 +730,11 @@ def _guided_setup(
         console.write("Custom STENOGRAPHER_CONFIG path: service restart was not offered.")
     elif changed and caps.service_active != "active":
         if caps.service_enabled is None:
-            console.write("Service is not installed; run scripts/install.sh when ready.")
+            console.write(f"Service is not installed; run {guidance.service_installer} when ready.")
         else:
             console.write(
                 "Service is not active; setup did not start it. "
-                "Run `systemctl --user start stenographer.service` when ready."
+                f"Run `{guidance.service_start_command}` when ready."
             )
     exit_code = followup_exit_code(
         operational_failure=operational_failure,
@@ -732,6 +745,7 @@ def _guided_setup(
             console,
             config,
             path,
+            guidance,
             custom_config=custom_config,
             service_enabled=caps.service_enabled,
             service_active=caps.service_active,
@@ -744,6 +758,7 @@ def _print_quick_tryout(
     console: _Console,
     config: Config,
     path: pathlib.Path,
+    guidance: HostGuidance,
     *,
     custom_config: bool,
     service_enabled: str | None,
@@ -752,24 +767,23 @@ def _print_quick_tryout(
 ) -> None:
     console.write("\nTry a real dictation")
     if custom_config:
-        command = f"STENOGRAPHER_CONFIG={shlex.quote(str(path))} stenographer run"
+        command = guidance.run_with_config(str(path))
         console.write(f"Run `{command}` in a terminal; the standard service was not changed.")
     elif restart_pending:
         console.write(
-            "Apply the saved configuration first with "
-            "`systemctl --user restart stenographer.service`."
+            f"Apply the saved configuration first with `{guidance.service_restart_command}`."
         )
     elif service_active == "active":
-        console.write("stenographer.service is active and ready for a tryout.")
+        console.write(f"{guidance.service_name} is active and ready for a tryout.")
     elif service_enabled is None and service_active == "inactive":
         console.write(
             "The service is not installed. Run `stenographer run` in a terminal, "
-            "or install it with `scripts/install.sh`."
+            f"or install it with `{guidance.service_installer}`."
         )
     elif service_active is not None:
         console.write(
             "The service is inactive. Start it with "
-            "`systemctl --user start stenographer.service`; setup did not start it."
+            f"`{guidance.service_start_command}`; setup did not start it."
         )
     else:
         console.write(
@@ -786,10 +800,10 @@ def _print_quick_tryout(
     if custom_config:
         console.write(
             "Watch that foreground command for logs; the standard service log is "
-            "`journalctl --user -u stenographer -f`."
+            f"`{guidance.service_log_command}`."
         )
     else:
-        console.write("Follow service logs with `journalctl --user -u stenographer -f`.")
+        console.write(f"Follow service logs with `{guidance.service_log_command}`.")
 
 
 def run(

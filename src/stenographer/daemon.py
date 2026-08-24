@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from stenographer.cli.doctor import Capabilities
+    from stenographer.capabilities import Capabilities
     from stenographer.config import Config
     from stenographer.platform.base import Notifier, Platform
 
@@ -152,10 +152,10 @@ def max_duration_applies(armed_generation: int, current_generation: int, recordi
 
 
 def startup_clipboard_backend(caps: Capabilities) -> str | None:
-    """Gate daemon startup on doctor requirements and reuse its backend name. PURE."""
-    from stenographer.cli import doctor
+    """Gate daemon startup on the capability requirements and reuse its backend name. PURE."""
+    from stenographer.capabilities import missing_required
 
-    if doctor.missing_required(caps):
+    if missing_required(caps):
         return None
     return caps.clipboard_backend
 
@@ -511,12 +511,12 @@ def _startup_failure(status: StatusSink, message: str, code: int) -> int:
 
 def run(cfg: Config) -> int:
     """Build and run the daemon. Returns the process exit code."""
-    from stenographer.cli import doctor
+    from stenographer.capabilities import probe
     from stenographer.hotkey import BindingError
 
     plat = current_platform()
     status: StatusSink = NullStatusSink()
-    caps = doctor.probe(cfg)
+    caps = probe(cfg)
     clipboard_backend = startup_clipboard_backend(caps)
     if clipboard_backend is None:
         return _startup_failure(

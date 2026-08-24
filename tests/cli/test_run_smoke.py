@@ -14,7 +14,7 @@ import os
 import pytest
 
 from stenographer import daemon
-from stenographer.cli import doctor
+from stenographer.capabilities import missing_required, probe
 from stenographer.config import Config
 from stenographer.platform.linux import lock
 
@@ -23,8 +23,8 @@ pytestmark = pytest.mark.integration
 
 def test_missing_required_capability_precedes_real_lock(capsys):
     cfg = Config.defaults()
-    caps = doctor.probe(cfg)
-    missing = doctor.missing_required(caps)
+    caps = probe(cfg)
+    missing = missing_required(caps)
     if not missing:
         pytest.skip("host has every required daemon capability")
 

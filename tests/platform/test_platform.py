@@ -8,9 +8,22 @@ from pathlib import Path
 
 import pytest
 
+from stenographer.capabilities import REQUIRED
 from stenographer.platform import current_platform
-from stenographer.platform.base import HostProbe, Platform, UnsupportedPlatformError
+from stenographer.platform.base import HostGuidance, HostProbe, Platform, UnsupportedPlatformError
 from stenographer.platform.windows import WindowsPlatform
+
+# Words no non-Linux provider may borrow: guidance is the platform's own prose.
+_LINUX_ONLY_WORDS = (
+    "systemctl",
+    "journalctl",
+    "install.sh",
+    "/dev/uinput",
+    "/dev/input",
+    "usermod",
+    "wl-clipboard",
+    "xclip",
+)
 
 
 def test_current_platform_matches_host_and_is_cached():
@@ -52,6 +65,44 @@ def test_windows_stub_conforms_and_reports_everything_unavailable():
         plat.clipboard_writer("unavailable")
     with pytest.raises(UnsupportedPlatformError):
         plat.single_instance_lock()
+
+
+def test_windows_stub_returns_complete_and_non_posix_guidance():
+    """The stub must still answer every guidance question, in its own words.
+
+    A missing capability key would make ``doctor`` render a KeyError instead of
+    a report, and a borrowed systemd/POSIX string would be a lie on Windows.
+    Seen to FAIL against a stub with no ``guidance`` (AttributeError) and
+    against one returning the Linux wording.
+    """
+
+    g = WindowsPlatform().guidance()
+    assert isinstance(g, HostGuidance)
+    assert set(g.capability_labels) == set(REQUIRED)
+    assert set(g.capability_fix_hints) == set(REQUIRED) - {"clipboard_ok"}
+    assert g.clipboard_fix_hint_default
+    assert g.run_with_config("C:/Users/alice/config.toml") == (
+        'set "STENOGRAPHER_CONFIG=C:/Users/alice/config.toml" && stenographer run'
+    )
+
+    prose = " ".join(
+        (
+            *g.capability_labels.values(),
+            *g.capability_fix_hints.values(),
+            *g.clipboard_fix_hints.values(),
+            g.clipboard_fix_hint_default,
+            g.service_noun,
+            g.service_installer,
+            g.service_unknown_detail,
+            g.service_start_command,
+            g.service_restart_command,
+            g.service_log_command,
+            g.hotkey_device_comment,
+            g.run_with_config("C:/config.toml"),
+        )
+    )
+    for word in _LINUX_ONLY_WORDS:
+        assert word not in prose, word
 
 
 def test_windows_stub_directories_honour_xdg_then_windows_conventions():

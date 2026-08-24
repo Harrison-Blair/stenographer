@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from stenographer.cli.audio_probe import query_devices
+from stenographer.audio_probe import query_devices
 
 
 def _default_input_index(default_device: object) -> int:

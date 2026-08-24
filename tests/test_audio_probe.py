@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from stenographer.cli.audio_probe import has_input_device, input_device_choices
+from stenographer.audio_probe import has_input_device, input_device_choices
 from stenographer.cli.commands.devices import _default_input_index
 
 _DEVICES = [

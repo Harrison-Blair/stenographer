@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""One PortAudio input-device enumeration for the whole CLI.
+"""One PortAudio input-device enumeration for the whole program.
 
-`doctor`, `setup`, and `devices` all ask the same question — which PortAudio
-devices can record — so :func:`query_devices` is the only place that imports
+The capability gate, `setup`, and `devices` all ask the same question — which
+PortAudio devices can record — so :func:`query_devices` is the only place
+that imports
 ``sounddevice`` (lazily, so the parser stays cheap). It has a single failure
 policy: the enumeration is advisory at every call site, so ANY failure — an
 absent ``sounddevice`` (``ImportError``), a missing PortAudio library

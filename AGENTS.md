@@ -59,18 +59,20 @@ The rule is structural, not stylistic, and it is enforced by a test.
   OS/desktop-specific code may exist. `platform/base.py` is stdlib-only and
   defines the contract as `typing.Protocol`s: `Platform`, `KeyTable`,
   `HotkeyListener`, `KeyInjector`, `ClipboardWriter`, `Notifier`, `CuePlayer`,
-  `SingleInstanceLock`, `OverlayBackendSpec`, `HostProbe`, plus
+  `SingleInstanceLock`, `OverlayBackendSpec`, `HostProbe`, `HostGuidance`, plus
   `UnsupportedPlatformError`, `SingleInstanceLockError`, `NullNotifier`.
   `platform/linux/` is `LinuxPlatform` (XDG dirs, child env, flock, evdev
   hotkeys + binding capture, uinput Shift+Insert, wl-copy/xclip, notify-send,
   canberra/pw-play/paplay cues, doctor probes + systemctl, layer-shell→XWayland
-  overlay specs). `platform/windows/` is `WindowsPlatform`: today a stub that
+  overlay specs, and every Linux word the CLI prints in `linux/guidance.py`).
+  `platform/windows/` is `WindowsPlatform`: today a stub that
   imports everywhere and reports every surface unavailable (`doctor` exits 78,
   `run` is refused); it will grow `WH_KEYBOARD_LL`, `SendInput`, Win32
   clipboard, toast, cue player, named mutex, `SetConsoleCtrlHandler`.
 - **How the core reaches it.** Everything else — `daemon`, `hotkey`, `audio`,
-  `config`, `status`, `cli/`, `transcribe/`, `overlay/` (daemon side),
-  `delivery/`, `utils/` — is *core* and talks to the host only through
+  `audio_probe`, `capabilities`, `config`, `status`, `cli/`, `transcribe/`,
+  `overlay/` (daemon side), `delivery/`, `utils/` — is *core* and talks to
+  the host only through
   `from stenographer.platform import current_platform` (a cached
   `sys.platform` switch) or an injected Protocol instance.
   `Daemon.build(cfg, platform=)` is the single wiring point. Core never
@@ -90,9 +92,20 @@ The rule is structural, not stylistic, and it is enforced by a test.
   holds the table so a Windows provider maps names → VK codes without a schema
   change. `status.Backend` is protocol-v4 wire vocabulary; a Windows overlay
   backend is a protocol-extension decision, and until then the overlay is
-  disabled there. `doctor.REQUIRED` field names are semantic (injector
-  available, listener permitted, clipboard available, mic, model) — the
-  startup gate needs no renaming per OS; only labels and fix hints differ.
+  disabled there. `capabilities.Capabilities` / `REQUIRED` field names are
+  semantic and identical to `platform/base.HostProbe`'s (`key_injector_ok`,
+  `hotkey_access_ok`, `has_mic`, `model_cached`, `clipboard_ok`) — the shared
+  daemon/`doctor` startup gate needs no renaming per OS. Prose, however, is
+  *not* shared vocabulary: the capability labels and fix hints keyed by those
+  same names, the clipboard hints keyed by backend, the service noun /
+  installer / unknown-state detail / start / restart / log-follow commands,
+  the `hotkey.device` comment in the default config template, and the shell
+  syntax for "run against this config path" all come from
+  `platform/base.HostGuidance` via `current_platform().guidance()`.
+  `cli/doctor.py`, `cli/setup.py`, `cli/sounds.py`, and `config.py` own the
+  sentence frames only — `systemctl`, `journalctl`, `install.sh`,
+  `/dev/uinput`, `usermod`, `wl-clipboard`, and `xclip` must appear nowhere
+  under `src/stenographer/` outside `platform/linux/`.
 - **How to add or change host behaviour.** (1) If it is a new capability,
   add a Protocol method/type to `platform/base.py` with a stdlib-only
   signature. (2) Implement it in `platform/linux/`, and in
@@ -210,13 +223,16 @@ authoritative when editing.
 | `daemon.py` | Orchestrator: hotkey → record → transcribe → deliver. `Daemon.build(cfg, clipboard_backend=, status=, platform=)`; `run()` takes the platform single-instance lock, installs stop handlers, prepares audio, starts the listener. Warms a cold model in the background once capture starts; toggle mode ends at `audio.max_recording_seconds` through the same stop path. |
 | `hotkey.py` | Platform-neutral `parse_binding` (via `KeyTable`), `chord_active`/`edge`, `ChordTracker` (held-key union across devices, stuck-key synthesis, `wait_binding_released`). Providers subclass it and feed `_key_event(device_id, code, value)`. |
 | `keycodes.py` | Generated pure `KEY_*`/`BTN_*` name→code table (`scripts/gen_keycodes.py`); drift test on Linux. |
+| `binding_capture.py` | Core capture vocabulary shared by `cli/` and every provider: `BindingCaptureError`, `CaptureState`, `KeyEvent`, pure `reduce_capture`, `serialize_capture` (validated canonical `KEY_*` names). No host imports. |
+| `capabilities.py` | The shared capability gate (core, so the daemon never imports `cli/`): `Capabilities` / `OverlayCapability` with names identical to `HostProbe`'s, `REQUIRED`, pure `missing_required` (→ exit 78 / startup refusal), and the read-only `probe` / `probe_overlay` (host half from `probe_host()`, plus mic and model cache). Labels, fix hints, and rendering live in `cli/doctor.py`. |
+| `audio_probe.py` | The one PortAudio input-device enumeration (`query_devices`, never raises) plus its pure adapters, shared by the capability gate, `setup`, and `devices`. |
 | `audio.py` | PortAudio recorder: retained pre-negotiated stream, block-copy callback with latest-only handoff to the overlay supervisor, RMS speech gate, sample-rate fallback + resample, one stale-stream recovery. |
-| `config.py` | TOML → frozen dataclasses; missing file written with annotated defaults; in-memory load path for validating setup output. |
+| `config.py` | TOML → frozen dataclasses; missing file written with annotated defaults (`default_toml()` renders the template at write time so the `hotkey.device` comment comes from `HostGuidance`); in-memory load path for validating setup output. |
 | `status.py` | Lifecycle states + strict protocol-v4 NDJSON contract + pure generation/coalescing policy. |
 | `transcribe/` | `worker.py` (crash-isolated ASR child: one job at a time, load-only warm-up, idle unload after `asr.idle_unload_seconds`, fixed load/decode deadlines, logs via queue), `model.py` (faster-whisper, anti-hallucination stack, `PathologicalOutputError`, `local_files_only`), `format.py` (zero-knob formatter). |
 | `delivery/` | `deliver.py` (`Deliverer` policy: confirmed copy → wait for release → `KeyInjector` chord), `feedback.py` (resolve one sound pack at startup, mute/volume policy, `CuePlayer`; no player → no-op). |
 | `overlay/` | `spectrum.py` (pure 32 ms Hann FFT, 18 bands, fixed floors, 18-level quantization), `supervisor.py` (helper spawn/mailbox/backend selection), `render.py`, `wayland.py` / `x11.py` helper backends reached only via `overlay_backends()`, vendored `protocols/`. |
-| `cli/` | argparse surface + lazy dispatch (`stenographer.cli:main`; `python -m stenographer.cli` for helper re-exec); `commands/` thin handlers for `run`, `transcribe`, `model download`, `doctor`, `devices`, `setup`, `sounds`, `completion {bash,zsh,fish}`. Heavy imports stay inside handlers. Engines: `setup.py` (TTY-only full / `--quick`), `setup_config.py` (preservation layer), `binding_capture.py` (pure reducer + `current_platform().capture_binding`), `calibration.py` (one-shot 18-band floor estimator for `feedback.spectrum_floor_dbfs` only), `doctor.py` (`REQUIRED` gate → exit 78; host half from `probe_host()`), `sounds.py`. Completion is static — no device/model/config/audio/network discovery. |
+| `cli/` | argparse surface + lazy dispatch (`stenographer.cli:main`; `python -m stenographer.cli` for helper re-exec); `commands/` thin handlers for `run`, `transcribe`, `model download`, `doctor`, `devices`, `setup`, `sounds`, `completion {bash,zsh,fish}`. Heavy imports stay inside handlers. Engines: `setup.py` (TTY-only full / `--quick`), `setup_config.py` (preservation layer), `binding_capture.py` (thin `current_platform().capture_binding` delegator; the pure reducer is core `stenographer.binding_capture`), `calibration.py` (one-shot 18-band floor estimator for `feedback.spectrum_floor_dbfs` only), `doctor.py` (report layout: pure `render`/`format_service_status` taking a `HostGuidance`, plus `run`; the gate itself is core `stenographer.capabilities` and every host word is the platform's), `sounds.py`. Completion is static — no device/model/config/audio/network discovery. |
 | `platform/` | The host boundary — see above. |
 | `utils/logging_setup.py` | Idempotent stderr + rotating state-file logging (5 MiB × 3), `STENOGRAPHER_LOG_LEVEL`, privacy-safe worker forwarding. |
 | `assets/` | Sound packs (`sounds/<pack>/`), icon, font, static completions. |

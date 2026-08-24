@@ -59,20 +59,25 @@ mechanism that satisfies the same contract:
 | `CuePlayer` | canberra/pw-play/paplay subprocesses | **In-process `sounddevice` + `soundfile` playback** on a thread with numpy gain scaling — honours `feedback.volume`, reuses existing deps, and PortAudio supports an output stream alongside capture. (`winsound` is stdlib but has no volume control, which would violate the config contract.) `play` is fire-and-forget; `preview` blocks and raises, per the protocol. | none (reuses existing deps) |
 | `SingleInstanceLock` | flock in `$XDG_RUNTIME_DIR` | **Named mutex** — `CreateMutexW("Local\\stenographer")`; `ERROR_ALREADY_EXISTS` maps to contention (`acquire() -> False`), other failures raise `SingleInstanceLockError`. `Local\` scopes per session, mirroring the per-user flock semantics. | ctypes |
 | `install_stop_signal_handlers` | SIGINT/SIGTERM | `signal.signal(SIGINT)` (already in the stub) **plus `SetConsoleCtrlHandler`** for CTRL_BREAK/CTRL_CLOSE. CTRL_CLOSE grants ~5 s before force-kill, so shutdown must stay fast. | ctypes |
-| `capture_binding` | termios + select + evdev | Reuse the **same pure reducer** in `cli/binding_capture.py`, fed from a temporary LL hook; replace the termios quiet-terminal with `SetConsoleMode` echo suppression / an `msvcrt` input-buffer drain. Ctrl-C behaviour preserved. | ctypes, msvcrt |
+| `capture_binding` | termios + select + evdev | Reuse the **same pure reducer** in `stenographer/binding_capture.py`, fed from a temporary LL hook; replace the termios quiet-terminal with `SetConsoleMode` echo suppression / an `msvcrt` input-buffer drain. Ctrl-C behaviour preserved. | ctypes, msvcrt |
 | `hotkey_devices` | evdev enumeration | Returns `[]` — an LL hook is global and cannot select devices; setup already degrades gracefully on an empty list. `hotkey.device` is documented as ignored on Windows (see §9: Raw Input is the deferred alternative if per-device selection is ever wanted). | — |
-| `probe_host` / `restart_service` | uinput access, input group, systemctl | The semantic `doctor.REQUIRED` names survive unchanged (that was the point of the extraction): `key_injector_ok` ≈ always true, `hotkey_access_ok` ≈ hook installable, clipboard probe, cue player detection, plus the service story (§4). | ctypes |
+| `probe_host` / `restart_service` | uinput access, input group, systemctl | The semantic `capabilities.REQUIRED` names survive unchanged (that was the point of the extraction): `key_injector_ok` ≈ always true, `hotkey_access_ok` ≈ hook installable, clipboard probe, cue player detection, plus the service story (§4). | ctypes |
 | `helper_spawn_kwargs` | `{}` | `creationflags=CREATE_NO_WINDOW` so the overlay helper never flashes a console window. | stdlib |
 | `overlay_backends` | layer-shell → XWayland specs | See §3. Empty until the overlay phase lands (overlay stays disabled via `NullStatusSink`, exactly as designed). | — |
+| `guidance` | `linux/guidance.py`: uinput/input-group hints, systemd commands, `/dev/input/event*` config comment, `STENOGRAPHER_CONFIG=… stenographer run` | The stub already returns a complete `HostGuidance` with honest provisional wording. Real values follow the backends: injector/hook hints once §2's mechanisms land, clipboard hints once the Win32 writer does, and the service noun / installer / start / restart / log-follow commands from whatever §4 settles on. `run_with_config` is `cmd.exe` `set "VAR=…" && …` syntax — never `shlex`. | none (pure strings) |
 
 All Win32 calls stay inside method bodies (the lazy-provider rule): `--help`,
 the import-isolation test, and the Linux bundle's `collect_submodules` over the
 Windows package must never touch them.
 
-`cli/doctor.py` needs a small refactor alongside the provider: the
-`_FIX_HINTS` / `_LABELS` / `_CLIPBOARD_FIX_HINTS` dicts are Linux prose
-(`sudo usermod -aG input`, "install wl-clipboard") — per-platform hint/label
-text is part of this scope. The gate math and `REQUIRED` names do not change.
+The doctor/setup text refactor is **done**: the Linux prose that used to live
+in `cli/doctor.py` (`_FIX_HINTS` / `_LABELS` / `_CLIPBOARD_FIX_HINTS`) now
+comes from `platform/base.HostGuidance` via `current_platform().guidance()`,
+alongside the service commands `cli/setup.py` and `cli/sounds.py` print and the
+`hotkey.device` comment `config.py` writes. Windows work only has to replace
+the stub's provisional strings — no core module changes. The gate itself
+(`stenographer.capabilities`: `Capabilities`, `REQUIRED`, `missing_required`,
+`probe`) is core and does not change either.
 
 ## 3. Overlay (largest single item, and a protocol decision)
 

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from stenographer.platform.base import (
         CuePlayer,
+        HostGuidance,
         HostProbe,
         HotkeyListener,
         KeyInjector,
@@ -120,6 +121,11 @@ class LinuxPlatform:
         from stenographer.platform.linux.probe import probe_host
 
         return probe_host()
+
+    def guidance(self) -> HostGuidance:
+        from stenographer.platform.linux.guidance import guidance
+
+        return guidance()
 
     def restart_service(self) -> tuple[bool, str]:
         from stenographer.platform.linux.probe import restart_service

@@ -19,7 +19,8 @@ import time
 import evdev
 import pytest
 
-from stenographer.cli import doctor, setup
+from stenographer.capabilities import missing_required, probe
+from stenographer.cli import setup
 from stenographer.cli.binding_capture import capture_binding
 from stenographer.cli.calibration import calibrate_spectrum_profile
 from stenographer.config import Config
@@ -145,7 +146,7 @@ def test_real_quick_setup_persists_and_runs_guided_checks(tmp_path, monkeypatch)
     os.write(input_master, b"\nkeep\n\n\n\n\n\n\n\n\n\n")
     try:
         exit_code = setup.run(quick=True, stdin=stdin, stdout=stdout, stderr=stdout)
-        expected = 78 if doctor.missing_required(doctor.probe(Config.load(config_path))) else 0
+        expected = 78 if missing_required(probe(Config.load(config_path))) else 0
     finally:
         stdout.flush()
         stop_drain.set()
@@ -184,10 +185,10 @@ def test_real_active_service_restart():
         pytest.skip("set STENOGRAPHER_SETUP_RESTART_SMOKE=1 to restart an active user service")
     if os.environ.get("STENOGRAPHER_CONFIG"):
         pytest.skip("a custom STENOGRAPHER_CONFIG must never trigger service restart")
-    caps = doctor.probe(Config.defaults())
+    caps = probe(Config.defaults())
     if caps.service_active != "active":
         pytest.skip("stenographer.service is not active; setup must not start it")
-    if doctor.missing_required(caps):
+    if missing_required(caps):
         pytest.skip("setup must not restart while a required capability is missing")
 
     output = io.StringIO()

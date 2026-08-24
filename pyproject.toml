@@ -1,7 +1,7 @@
 [project]
 name = "stenographer"
 dynamic = ["version"]
-description = "Local, offline, Wayland push-to-talk dictation."
+description = "Local, offline push-to-talk dictation."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
 requires-python = ">=3.12"

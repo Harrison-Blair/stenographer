@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import evdev
 
-from stenographer.cli.binding_capture import (
+from stenographer.binding_capture import (
     BindingCaptureError,
     CaptureState,
     KeyEvent,

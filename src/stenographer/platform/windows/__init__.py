@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from stenographer.keycodes import StaticKeyTable
-from stenographer.platform.base import HostProbe, NullNotifier, UnsupportedPlatformError
+from stenographer.platform.base import (
+    HostGuidance,
+    HostProbe,
+    NullNotifier,
+    UnsupportedPlatformError,
+)
 
 if TYPE_CHECKING:
     import threading
@@ -33,6 +38,12 @@ if TYPE_CHECKING:
     )
 
 _APP = "stenographer"
+
+
+def _run_with_config(path: str) -> str:
+    """``cmd.exe`` syntax for running the daemon against an explicit config path."""
+
+    return f'set "STENOGRAPHER_CONFIG={path}" && stenographer run'
 
 
 class WindowsPlatform:
@@ -81,7 +92,7 @@ class WindowsPlatform:
         return []
 
     def capture_binding(self, stdin: TextIO, device: str | None, *, timeout: float) -> str:
-        from stenographer.cli.binding_capture import BindingCaptureError
+        from stenographer.binding_capture import BindingCaptureError
 
         raise BindingCaptureError("binding capture is not available on Windows yet")
 
@@ -120,6 +131,36 @@ class WindowsPlatform:
             cue_player=None,
             service_enabled=None,
             service_active=None,
+        )
+
+    def guidance(self) -> HostGuidance:
+        # Provisional but honest: there is no Windows backend, no service
+        # integration, and no POSIX shell, so nothing here promises one.
+        return HostGuidance(
+            capability_labels={
+                "key_injector_ok": "paste injection",
+                "hotkey_access_ok": "global hotkey hook",
+                "has_mic": "microphone",
+                "model_cached": "ASR model cached",
+                "clipboard_ok": "clipboard",
+            },
+            capability_fix_hints={
+                "key_injector_ok": "no Windows paste-injection backend exists yet",
+                "hotkey_access_ok": "no Windows hotkey backend exists yet",
+                "has_mic": "no audio input device found; check the microphone / PortAudio",
+                "model_cached": "run: stenographer model download",
+            },
+            clipboard_fix_hints={},
+            clipboard_fix_hint_default="no Windows clipboard backend exists yet",
+            service_noun="background service (not available on Windows yet)",
+            service_name="the stenographer service",
+            service_installer="the Windows service installer (not available yet)",
+            service_unknown_detail="Windows has no service integration yet",
+            service_start_command="stenographer run",
+            service_restart_command="stenographer run",
+            service_log_command="stenographer run",
+            hotkey_device_comment='reserved for a future device selector; "" = auto-detect',
+            run_with_config=_run_with_config,
         )
 
     def restart_service(self) -> tuple[bool, str]:

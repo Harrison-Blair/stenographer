@@ -198,12 +198,13 @@ def _post_save(
 ) -> int:
     from stenographer.platform import current_platform
 
+    guidance = current_platform().guidance()
     service_active: str | None = None
     if changed and interactive and not custom_config:
         try:
             service_active = current_platform().probe_host().service_active
         except Exception as exc:
-            console.error(f"could not determine stenographer.service status: {exc}")
+            console.error(f"could not determine {guidance.service_name} status: {exc}")
             console.write("Restart the daemon manually to apply the saved sound pack.")
             return 1
 
@@ -221,27 +222,28 @@ def _post_save(
     if action == "restart-guidance":
         console.write(
             "Restart the daemon to apply the sound pack; for the standard active service, run "
-            "`systemctl --user restart stenographer.service`."
+            f"`{guidance.service_restart_command}`."
         )
         return 0
     if action == "unknown-guidance":
         console.write(
-            "Could not determine stenographer.service status; restart the daemon manually "
+            f"Could not determine {guidance.service_name} status; restart the daemon manually "
             "to apply the sound pack."
         )
         return 0
     if action == "inactive-guidance":
         console.write(
-            "Service is not active; sounds did not start it. Run `systemctl --user start "
-            "stenographer.service` when ready; the new pack applies when it starts."
+            "Service is not active; sounds did not start it. "
+            f"Run `{guidance.service_start_command}` when ready; "
+            "the new pack applies when it starts."
         )
         return 0
     if not _ask_yes_no(
         console,
-        "Restart the active stenographer.service to apply the sound pack?",
+        f"Restart the active {guidance.service_name} to apply the sound pack?",
         default=True,
     ):
-        console.write("Run `systemctl --user restart stenographer.service` to apply it later.")
+        console.write(f"Run `{guidance.service_restart_command}` to apply it later.")
         return 0
     return 0 if _restart_service(console) else 1
 

@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="stenographer",
-        description="Local, offline, Wayland push-to-talk dictation.",
+        description="Local, offline push-to-talk dictation.",
     )
     parser.add_argument("--version", action="version", version=__version__)
 

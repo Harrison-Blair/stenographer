@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from stenographer.capabilities import Capabilities, OverlayCapability, missing_required, probe
 from stenographer.cli import doctor, main
 from stenographer.config import Config
 
@@ -17,13 +18,13 @@ pytestmark = pytest.mark.integration
 
 
 def test_probe_returns_real_capabilities():
-    caps = doctor.probe(Config.defaults())
-    assert isinstance(caps, doctor.Capabilities)
+    caps = probe(Config.defaults())
+    assert isinstance(caps, Capabilities)
     assert caps.clipboard_backend in ("wl-copy", "x11")
-    assert caps.audio_player in ("canberra-gtk-play", "pw-play", "paplay", None)
+    assert caps.cue_player in ("canberra-gtk-play", "pw-play", "paplay", None)
     assert caps.service_enabled is None or isinstance(caps.service_enabled, str)
     assert caps.service_active is None or isinstance(caps.service_active, str)
-    assert isinstance(caps.overlay, doctor.OverlayCapability)
+    assert isinstance(caps.overlay, OverlayCapability)
     assert doctor.format_overlay_status(caps.overlay) in {
         "disabled",
         "layer-shell",
@@ -37,8 +38,8 @@ def test_probe_returns_real_capabilities():
 
 
 def test_doctor_exit_code_matches_probe(capsys):
-    caps = doctor.probe(Config.defaults())
-    expected = 78 if doctor.missing_required(caps) else 0
+    caps = probe(Config.defaults())
+    expected = 78 if missing_required(caps) else 0
     assert main(["doctor"]) == expected
     out = capsys.readouterr().out
     assert "capabilities" in out
