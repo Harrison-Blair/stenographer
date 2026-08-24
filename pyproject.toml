@@ -51,7 +51,7 @@ include = [
     "src/stenographer/assets/icons/*.png",
     "src/stenographer/assets/sounds/**/*.wav",
     "src/stenographer/assets/completions/*",
-    "src/stenographer/overlay/protocols/**/*.py",
+    "src/stenographer/platform/linux/overlay_backends/protocols/**/*.py",
 ]
 
 [tool.ruff]

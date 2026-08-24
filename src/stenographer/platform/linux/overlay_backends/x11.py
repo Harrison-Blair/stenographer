@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """XWayland fallback for the isolated lifecycle/spectrum overlay.
 
-The backend accepts fixed lifecycle states, a loading-activity boolean, and 18
-quantized recording levels. Pulse timing, X server queries, window management,
-and image uploads remain in the helper process; the pure helpers at the top make
-placement policy independently testable.
+The backend supplies only X primitives to ``HelperBackend``: RandR monitor
+inventory and DPI, an override-redirect ARGB window with an empty input shape,
+chunked ZPixmap uploads, and the bounded post-map EWMH reassertions XWayland
+needs.  Lifecycle policy, the selector loop, the loading-frame timer, and the
+frame request are shared (see ``base.py``); the pure helpers at the top make
+placement and parsing policy independently testable.
 """
 
 from __future__ import annotations
@@ -13,41 +15,21 @@ import contextlib
 import math
 import os
 import re
-import selectors
 import struct
 import time
 from dataclasses import dataclass
-from typing import BinaryIO
 
 from Xlib import X, Xatom, Xutil
 from Xlib import display as xdisplay
 from Xlib.ext import randr, shape
 from Xlib.protocol import rq
 
-from stenographer.overlay.render import (
-    EDGE_OFFSET,
-    LoadingPulse,
-    OverlayFrame,
-    overlay_position,
-    premultiplied_argb32,
-    render_overlay,
+from stenographer.overlay.render import OverlayFrame, overlay_position, premultiplied_argb32
+from stenographer.platform.linux.overlay_backends.base import (
+    BackendUnavailableError,
+    HelperBackend,
 )
-from stenographer.status import (
-    ERROR_DISPLAY_SECONDS,
-    SPECTRUM_BANDS,
-    Backend,
-    Command,
-    CommandMessage,
-    DisplayMessageGate,
-    LineReader,
-    LoadingActivityMessage,
-    OverlayState,
-    ProtocolError,
-    SpectrumMessage,
-    StateMessage,
-    UnavailableReason,
-    drain_display_stream,
-)
+from stenographer.status import Backend, OverlayState, UnavailableReason
 
 _ARGB_DEPTH = 32
 _BYTES_PER_PIXEL = 4
@@ -198,6 +180,20 @@ def _valid_monitor(monitor: Monitor) -> bool:
     return monitor.connected and monitor.width > 0 and monitor.height > 0
 
 
+def placement_output_vanished(
+    placement: Placement | None, connected_outputs: frozenset[int] | set[int]
+) -> bool:
+    """Return whether the frozen placement's output stopped existing. PURE.
+
+    Ordinary topology and geometry updates must preserve placement for the
+    whole visible utterance; only a vanished selected output permits a move.
+    The root fallback (``output is None``) never vanishes.
+    """
+    if placement is None or placement.monitor.output is None:
+        return False
+    return placement.monitor.output not in connected_outputs
+
+
 def select_monitor(
     monitors: tuple[Monitor, ...] | list[Monitor],
     *,
@@ -279,19 +275,6 @@ def plan_upload_chunks(
     return tuple(chunks)
 
 
-def x11_position(monitor: Monitor, frame: OverlayFrame) -> tuple[int, int]:
-    """Place the visible pill exactly 32 logical pixels above an output edge."""
-    return overlay_position(monitor.rect, frame, edge_offset=EDGE_OFFSET)
-
-
-class X11Unavailable(RuntimeError):  # noqa: N818 - fixed backend API name
-    """Fixed-reason XWayland probe failure safe to report through status IPC."""
-
-    def __init__(self, reason: UnavailableReason) -> None:
-        super().__init__(reason.value)
-        self.reason = reason
-
-
 def select_argb_visual(visuals, visual_formats: dict[int, int], formats: dict[int, PictFormat]):
     """Return a core TrueColor visual proven alpha-capable by X RENDER."""
     for visual in visuals:
@@ -311,6 +294,37 @@ def select_argb_visual(visuals, visual_formats: dict[int, int], formats: dict[in
     return None
 
 
+def parse_pict_format_screens(screen_data: bytes, num_screens: int) -> dict[int, int]:
+    """Map visual id -> picture format id from the RENDER reply tail. PURE.
+
+    After the fixed format array, QueryPictFormats nests screens -> depths ->
+    (visual, format) pairs.  All fields are native byte order because the X
+    connection uses the client's byte order.  A reply that ends early is a
+    protocol violation, never a partial mapping.
+    """
+    data = memoryview(bytes(screen_data))
+    offset = 0
+    visual_formats: dict[int, int] = {}
+
+    def unpack(layout: str):
+        nonlocal offset
+        size = struct.calcsize(layout)
+        if offset + size > len(data):
+            raise ValueError("truncated RENDER format inventory")
+        values = struct.unpack_from(layout, data, offset)
+        offset += size
+        return values
+
+    for _screen in range(num_screens):
+        num_depths, _fallback = unpack("=LL")
+        for _depth in range(num_depths):
+            _depth_value, _pad, num_visuals, _pad2 = unpack("=BBHL")
+            for _visual in range(num_visuals):
+                visual_id, format_id = unpack("=LL")
+                visual_formats[visual_id] = format_id
+    return visual_formats
+
+
 def _render_formats(display) -> tuple[dict[int, int], dict[int, PictFormat]] | None:
     extension = display.query_extension(_RENDER_EXTENSION)
     if not extension.present:
@@ -326,49 +340,16 @@ def _render_formats(display) -> tuple[dict[int, int], dict[int, PictFormat]] | N
         )
         for item in reply.formats
     }
-
-    # After the fixed format array, QueryPictFormats nests screens -> depths
-    # -> (visual, format) pairs.  All fields are native byte order because the
-    # X connection uses the client's byte order.
-    data = memoryview(reply.screen_data)
-    offset = 0
-    visual_formats: dict[int, int] = {}
-
-    def unpack(layout: str):
-        nonlocal offset
-        size = struct.calcsize(layout)
-        if offset + size > len(data):
-            raise ValueError("truncated RENDER format inventory")
-        values = struct.unpack_from(layout, data, offset)
-        offset += size
-        return values
-
-    for _screen in range(reply.num_screens):
-        num_depths, _fallback = unpack("=LL")
-        for _depth in range(num_depths):
-            _depth_value, _pad, num_visuals, _pad2 = unpack("=BBHL")
-            for _visual in range(num_visuals):
-                visual_id, format_id = unpack("=LL")
-                visual_formats[visual_id] = format_id
-    return visual_formats, formats
+    return parse_pict_format_screens(reply.screen_data, reply.num_screens), formats
 
 
-def probe_x11() -> UnavailableReason | None:
-    """Read-only X fallback probe; return a fixed reason or None when usable."""
-    try:
-        backend = X11OverlayBackend()
-    except X11Unavailable as exc:
-        return exc.reason
-    backend.close()
-    return None
-
-
-class X11OverlayBackend:
+class X11OverlayBackend(HelperBackend):
     """Override-redirect, non-input XWayland lifecycle pill."""
 
     backend = Backend.XWAYLAND
 
     def __init__(self) -> None:
+        super().__init__()
         self._display = None
         self._screen = None
         self._visual = None
@@ -379,25 +360,19 @@ class X11OverlayBackend:
         self._placement: Placement | None = None
         self._window_epoch = 0
         self._stacking_reassert: StackingReassertPlan | None = None
-        self._state = OverlayState.HIDDEN
-        self._levels = (0,) * SPECTRUM_BANDS
-        self._pulse = LoadingPulse()
-        self._error_deadline: float | None = None
-        self._error_generation: int | None = None
-        self._closed = False
 
         if not os.environ.get("DISPLAY"):
-            raise X11Unavailable(UnavailableReason.NO_X_DISPLAY)
+            raise BackendUnavailableError(UnavailableReason.NO_X_DISPLAY)
         try:
             self._display = xdisplay.Display()
         except Exception:
-            raise X11Unavailable(UnavailableReason.X_CONNECT_FAILED) from None
+            raise BackendUnavailableError(UnavailableReason.X_CONNECT_FAILED) from None
         try:
             if not (
                 self._display.has_extension(shape.extname)
                 and self._display.has_extension(randr.extname)
             ):
-                raise X11Unavailable(UnavailableReason.X_EXTENSIONS_UNAVAILABLE)
+                raise BackendUnavailableError(UnavailableReason.X_EXTENSIONS_UNAVAILABLE)
             self._screen = self._display.screen()
             render_formats = _render_formats(self._display)
             visuals = (
@@ -410,7 +385,7 @@ class X11OverlayBackend:
                 None if render_formats is None else select_argb_visual(visuals, *render_formats)
             )
             if selected is None:
-                raise X11Unavailable(UnavailableReason.X_ARGB_UNAVAILABLE)
+                raise BackendUnavailableError(UnavailableReason.X_ARGB_UNAVAILABLE)
             self._visual, self._pict_format = selected
             # Select only output topology changes.  Pointer/key/button events
             # are intentionally never selected by this click-through helper.
@@ -420,12 +395,12 @@ class X11OverlayBackend:
                 | randr.RROutputChangeNotifyMask
             )
             self._display.sync()
-        except X11Unavailable:
+        except BackendUnavailableError:
             self.close()
             raise
         except Exception:
             self.close()
-            raise X11Unavailable(UnavailableReason.X_EXTENSIONS_UNAVAILABLE) from None
+            raise BackendUnavailableError(UnavailableReason.X_EXTENSIONS_UNAVAILABLE) from None
 
     def _root_monitor(self) -> Monitor:
         assert self._screen is not None
@@ -516,19 +491,24 @@ class X11OverlayBackend:
             ],
         )
 
+    def _draw(self) -> None:
+        self._show(self._state)
+
+    def _repaint(self) -> None:
+        if self._window is not None:
+            self._show(self._state)
+
+    def _teardown(self) -> None:
+        self._destroy_window()
+
     def _show(self, state: OverlayState, *, monitor: Monitor | None = None) -> None:
         assert self._display is not None and self._screen is not None and self._visual is not None
         if self._placement is None:
             monitor = monitor or self._choose_monitor()
             self._placement = freeze_placement(None, monitor, self._scale_for(monitor))
         placement = self._placement
-        frame = render_overlay(
-            state,
-            scale=placement.scale,
-            levels=self._levels if state is OverlayState.RECORDING else None,
-            loading_elapsed=self._pulse.elapsed(time.monotonic()),
-        )
-        x, y = x11_position(placement.monitor, frame)
+        frame = self._frame(state, scale=placement.scale)
+        x, y = overlay_position(placement.monitor.rect, frame)
 
         created = self._window is None
         if created:
@@ -617,81 +597,16 @@ class X11OverlayBackend:
             with contextlib.suppress(Exception):
                 self._display.flush()
 
-    def _apply(
-        self,
-        message: (StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage),
-    ) -> bool:
-        if isinstance(message, CommandMessage):
-            if message.command is not Command.SHUTDOWN:
-                raise ProtocolError("unsupported helper command")
-            return False
-        if isinstance(message, LoadingActivityMessage):
-            now = time.monotonic()
-            if not self._pulse.set_active(message.active, now):
-                return True
-            if message.active and self._state is not OverlayState.HIDDEN:
-                self._pulse.arm(now)
-            if self._state is not OverlayState.HIDDEN and self._window is not None:
-                self._show(self._state)
-            return True
-        if isinstance(message, SpectrumMessage):
-            self._levels = message.levels
-            if self._state is OverlayState.RECORDING and self._window is not None:
-                self._show(OverlayState.RECORDING)
-            return True
-
-        self._state = message.state
-        if message.state is OverlayState.RECORDING:
-            self._levels = (0,) * SPECTRUM_BANDS
-        if message.state is OverlayState.ERROR:
-            self._error_generation = message.generation
-            self._error_deadline = time.monotonic() + ERROR_DISPLAY_SECONDS
-        else:
-            self._error_generation = None
-            self._error_deadline = None
-        if message.state is OverlayState.HIDDEN:
-            self._destroy_window()
-        else:
-            self._show(message.state)
-            if self._pulse.active:
-                self._pulse.arm(time.monotonic())
-        return True
-
-    def _expire_error(self, gate: DisplayMessageGate) -> None:
-        if self._error_deadline is None or time.monotonic() < self._error_deadline:
-            return
-        if gate.current == self._error_generation and self._state is OverlayState.ERROR:
-            self._state = OverlayState.HIDDEN
-            self._destroy_window()
-        self._error_deadline = None
-        self._error_generation = None
-
-    def _event_timeout(self, gate: DisplayMessageGate) -> float | None:
-        now = time.monotonic()
-        timeouts = []
-        if self._error_deadline is not None and gate.current == self._error_generation:
-            timeouts.append(max(0.0, self._error_deadline - now))
-        reassert_timeout = stacking_reassert_timeout(
-            self._stacking_reassert,
-            current_epoch=self._window_epoch,
-            now=now,
+    def _extra_timeouts(self, now: float) -> tuple[float | None, ...]:
+        return (
+            stacking_reassert_timeout(
+                self._stacking_reassert,
+                current_epoch=self._window_epoch,
+                now=now,
+            ),
         )
-        if reassert_timeout is not None:
-            timeouts.append(reassert_timeout)
-        loading_timeout = self._pulse.timeout(now, self._state is not OverlayState.HIDDEN)
-        if loading_timeout is not None:
-            timeouts.append(loading_timeout)
-        return min(timeouts) if timeouts else None
 
-    def _expire_loading_animation(self) -> None:
-        now = time.monotonic()
-        if not self._pulse.frame_due(now, self._state is not OverlayState.HIDDEN):
-            return
-        self._pulse.advance(now)
-        if self._window is not None:
-            self._show(self._state)
-
-    def _expire_stacking_reassert(self) -> None:
+    def _on_extra_timers(self) -> None:
         due, self._stacking_reassert = consume_stacking_reassert(
             self._stacking_reassert,
             current_epoch=self._window_epoch,
@@ -703,7 +618,11 @@ class X11OverlayBackend:
         self._window.configure(stack_mode=X.Above)
         self._display.flush()
 
-    def _handle_x_events(self) -> None:
+    def _display_fd(self) -> int:
+        assert self._display is not None
+        return self._display.fileno()
+
+    def _on_display_readable(self, _mask: int) -> None:
         assert self._display is not None
         saw_event = False
         while self._display.pending_events():
@@ -714,48 +633,15 @@ class X11OverlayBackend:
         connected_outputs = {
             monitor.output for monitor in self._monitors() if _valid_monitor(monitor)
         }
-        selected = self._placement.monitor.output
-        if selected is None or selected in connected_outputs:
+        if not placement_output_vanished(self._placement, connected_outputs):
             return
-        # Preserve placement through ordinary topology/geometry updates.  Only
-        # a vanished selected output permits relocation during an utterance.
         state = self._state
         replacement = self._choose_monitor()
         self._destroy_window()
         if state is not OverlayState.HIDDEN:
             self._show(state, monitor=replacement)
 
-    def run(self, input_stream: BinaryIO) -> None:
-        assert self._display is not None
-        reader = LineReader()
-        gate = DisplayMessageGate()
-        selector = selectors.DefaultSelector()
-        selector.register(input_stream.fileno(), selectors.EVENT_READ, "input")
-        selector.register(self._display.fileno(), selectors.EVENT_READ, "display")
-        try:
-            while True:
-                events = selector.select(self._event_timeout(gate))
-                self._expire_error(gate)
-                self._expire_stacking_reassert()
-                self._expire_loading_animation()
-                for key, _mask in events:
-                    if key.data == "display":
-                        self._handle_x_events()
-                        continue
-                    chunk = os.read(key.fd, 4096)
-                    if not chunk:
-                        reader.finish()
-                        return
-                    for message in drain_display_stream(chunk, reader, gate):
-                        if not self._apply(message):
-                            return
-        finally:
-            selector.close()
-
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+    def _close(self) -> None:
         self._destroy_window()
         if self._display is not None:
             with contextlib.suppress(Exception):
@@ -769,16 +655,15 @@ __all__ = [
     "Placement",
     "StackingReassertPlan",
     "X11OverlayBackend",
-    "X11Unavailable",
     "choose_dpi_scale",
     "consume_stacking_reassert",
     "freeze_placement",
+    "parse_pict_format_screens",
     "parse_xft_dpi",
+    "placement_output_vanished",
     "plan_upload_chunks",
-    "probe_x11",
     "select_argb_visual",
     "select_monitor",
     "stacking_reassert_timeout",
     "start_stacking_reassert",
-    "x11_position",
 ]

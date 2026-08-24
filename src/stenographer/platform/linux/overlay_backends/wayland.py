@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Native layer-shell display backend for the isolated overlay helper."""
+"""Native layer-shell display backend for the isolated overlay helper.
+
+The backend supplies only layer-shell primitives to ``HelperBackend``: registry
+inventory and hotplug classification, surface creation with its bufferless
+initial commit, scale selection, ``wl_shm`` buffer management, and the
+non-blocking flush toggling the loop's write interest.  Lifecycle policy, the
+selector loop, the loading-frame timer, and the frame request are shared (see
+``base.py``); the pure helpers at the top make each decision testable without a
+compositor.
+"""
 
 from __future__ import annotations
 
@@ -8,48 +17,39 @@ import errno
 import mmap
 import os
 import selectors
-import time
 from dataclasses import dataclass
-from typing import BinaryIO
+from enum import StrEnum
 
 from pywayland import ffi
 from pywayland.client import Display
 from pywayland.protocol.wayland import WlCompositor, WlOutput, WlShm
 
-from stenographer.overlay.protocols.fractional_scale_v1 import WpFractionalScaleManagerV1
-from stenographer.overlay.protocols.viewporter import WpViewporter
-from stenographer.overlay.protocols.wlr_layer_shell_unstable_v1 import (
-    ZwlrLayerShellV1,
-    ZwlrLayerSurfaceV1,
-)
 from stenographer.overlay.render import (
     CANVAS_HEIGHT,
     CANVAS_WIDTH,
-    EDGE_OFFSET,
-    LoadingPulse,
+    layer_margin_bottom,
     premultiplied_argb32,
-    render_overlay,
 )
-from stenographer.status import (
-    SPECTRUM_BANDS,
-    Backend,
-    Command,
-    CommandMessage,
-    DisplayMessageGate,
-    LineReader,
-    LoadingActivityMessage,
-    OverlayState,
-    ProtocolError,
-    SpectrumMessage,
-    StateMessage,
-    UnavailableReason,
-    drain_display_stream,
+from stenographer.platform.linux.overlay_backends.base import (
+    DISPLAY_KEY,
+    BackendUnavailableError,
+    HelperBackend,
 )
+from stenographer.platform.linux.overlay_backends.protocols.fractional_scale_v1 import (
+    WpFractionalScaleManagerV1,
+)
+from stenographer.platform.linux.overlay_backends.protocols.viewporter import WpViewporter
+from stenographer.platform.linux.overlay_backends.protocols.wlr_layer_shell_unstable_v1 import (
+    ZwlrLayerShellV1,
+    ZwlrLayerSurfaceV1,
+)
+from stenographer.status import Backend, OverlayState, UnavailableReason
 
 REQUIRED_GLOBALS = ("wl_compositor", "wl_shm", "zwlr_layer_shell_v1")
 _OPTIONAL_GLOBALS = ("wp_fractional_scale_manager_v1", "wp_viewporter")
 _REQUIRED_VERSIONS = {"wl_compositor": 3, "wl_shm": 1, "zwlr_layer_shell_v1": 1}
 _MAX_IN_FLIGHT_BUFFERS = 3
+_OUTPUT_INTERFACE = "wl_output"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +57,42 @@ class _Global:
     name: int
     interface: str
     version: int
+
+
+class GlobalRemoval(StrEnum):
+    """What losing one advertised global means for a running surface."""
+
+    IGNORE = "ignore"
+    LOST = "lost"
+    OUTPUT = "output"
+
+
+def classify_global_removal(interface: str | None) -> GlobalRemoval:
+    """Classify a ``global_remove`` by interface without touching the display.
+
+    Losing a required global is unrecoverable; losing an output only matters
+    when the surface had entered it. Anything else is a hotplug detail.
+    """
+    if interface is None:
+        return GlobalRemoval.IGNORE
+    if interface in REQUIRED_GLOBALS:
+        return GlobalRemoval.LOST
+    if interface == _OUTPUT_INTERFACE:
+        return GlobalRemoval.OUTPUT
+    return GlobalRemoval.IGNORE
+
+
+def flush_wants_write(result: int, error_number: int) -> bool:
+    """Classify one ``wl_display_flush`` result. PURE.
+
+    A short flush on a full socket is normal back-pressure and asks the loop
+    for write interest; any other failure is a lost connection.
+    """
+    if result >= 0:
+        return False
+    if error_number in {errno.EAGAIN, errno.EWOULDBLOCK}:
+        return True
+    raise RuntimeError("Wayland display flush failed")
 
 
 class RegistryInventory:
@@ -110,25 +146,9 @@ def choose_scale_plan(*, integer_scale: int, preferred_scale_120: int | None = N
     return ScalePlan(float(integer_scale), integer_scale, None)
 
 
-def layer_margin_bottom(*, canvas_height: int, pill_bottom: int, edge_offset: int) -> int:
-    """Translate a visible-pill offset into the layer surface's canvas margin."""
-    margin = edge_offset - (canvas_height - pill_bottom)
-    if margin < 0:
-        raise ValueError("overlay shadow canvas exceeds the requested edge offset")
-    return margin
-
-
 def callback_is_current(callback_proxy: object, current_proxy: object | None) -> bool:
     """Accept an event only when it belongs to the current surface epoch."""
     return current_proxy is not None and callback_proxy is current_proxy
-
-
-class WaylandUnavailableError(RuntimeError):
-    """Fixed-reason layer-shell probe failure."""
-
-    def __init__(self, reason: UnavailableReason) -> None:
-        super().__init__(reason.value)
-        self.reason = reason
 
 
 @dataclass(slots=True)
@@ -143,20 +163,21 @@ class _ShmBuffer:
             self.mapping.close()
 
 
-class LayerShellBackend:
+class LayerShellBackend(HelperBackend):
     """One-display, one-surface-at-a-time layer-shell client."""
 
     backend = Backend.LAYER_SHELL
 
     def __init__(self) -> None:
+        super().__init__()
         if not os.environ.get("WAYLAND_DISPLAY"):
-            raise WaylandUnavailableError(UnavailableReason.NO_WAYLAND_DISPLAY)
+            raise BackendUnavailableError(UnavailableReason.NO_WAYLAND_DISPLAY)
 
         self._display = Display()
         try:
             self._display.connect()
         except Exception:
-            raise WaylandUnavailableError(UnavailableReason.WAYLAND_CONNECT_FAILED) from None
+            raise BackendUnavailableError(UnavailableReason.WAYLAND_CONNECT_FAILED) from None
 
         self._inventory = RegistryInventory()
         self._registry = self._display.get_registry()
@@ -164,7 +185,6 @@ class LayerShellBackend:
         self._registry.dispatcher["global_remove"] = self._on_global_remove
         self._initialized = False
         self._lost = False
-        self._closed = False
 
         self._compositor = None
         self._compositor_version = 0
@@ -183,41 +203,38 @@ class LayerShellBackend:
         self._viewport = None
         self._configured = False
         self._preferred_scale_120: int | None = None
-        self._state = OverlayState.HIDDEN
-        self._levels = (0,) * SPECTRUM_BANDS
-        self._pulse = LoadingPulse()
         self._buffers: dict[int, _ShmBuffer] = {}
         self._render_pending = False
 
         try:
             self._roundtrip()
             if self._inventory.missing_required():
-                raise WaylandUnavailableError(UnavailableReason.REQUIRED_GLOBALS_MISSING)
+                raise BackendUnavailableError(UnavailableReason.REQUIRED_GLOBALS_MISSING)
             self._bind_globals()
             self._initialized = True
             self._roundtrip()
-        except WaylandUnavailableError:
+        except BackendUnavailableError:
             self.close()
             raise
         except Exception:
             self.close()
-            raise WaylandUnavailableError(UnavailableReason.WAYLAND_CONNECT_FAILED) from None
+            raise BackendUnavailableError(UnavailableReason.WAYLAND_CONNECT_FAILED) from None
 
     def _on_global(self, _registry, name: int, interface: str, version: int) -> None:
         self._inventory.add(name, interface, version)
-        if self._initialized and interface == "wl_output":
+        if self._initialized and interface == _OUTPUT_INTERFACE:
             self._bind_output(name, version)
 
     def _on_global_remove(self, _registry, name: int) -> None:
         item = self._inventory.remove(name)
-        if item is None:
-            return
-        if item.interface in REQUIRED_GLOBALS:
+        removal = classify_global_removal(None if item is None else item.interface)
+        if removal is GlobalRemoval.LOST:
             self._lost = True
             return
-        if item.interface != "wl_output":
+        if removal is not GlobalRemoval.OUTPUT:
             return
-        output_entry = self._outputs.pop(name, None)
+        assert item is not None
+        output_entry = self._outputs.pop(item.name, None)
         if output_entry is None:
             return
         output, bound_version = output_entry
@@ -225,7 +242,7 @@ class LayerShellBackend:
         self._entered_outputs.discard(output)
         self._output_scales.pop(output, None)
         self._release_output(output, bound_version)
-        if was_entered and self._state is not OverlayState.HIDDEN:
+        if was_entered and self._visible:
             try:
                 state = self._state
                 self._destroy_surface()
@@ -257,7 +274,7 @@ class LayerShellBackend:
             self._viewporter = self._registry.bind(viewporter.name, WpViewporter, 1)
 
         for item in self._inventory.values():
-            if item.interface == "wl_output":
+            if item.interface == _OUTPUT_INTERFACE:
                 self._bind_output(item.name, item.version)
 
     def _bind_output(self, name: int, advertised_version: int) -> None:
@@ -337,17 +354,26 @@ class LayerShellBackend:
         if callback_is_current(_layer_surface, self._layer_surface):
             self._lost = True
 
+    def _draw(self) -> None:
+        if self._surface is None:
+            # NULL output deliberately lets the compositor pick the recently
+            # interacted output at each hidden-to-visible transition.
+            self._create_surface(self._state)
+        else:
+            self._present_if_configured()
+
+    def _repaint(self) -> None:
+        self._present_if_configured()
+
+    def _teardown(self) -> None:
+        self._destroy_surface()
+
     def _create_surface(self, state: OverlayState) -> None:
         assert self._compositor is not None and self._layer_shell is not None
-        logical_frame = render_overlay(
-            state,
-            levels=self._levels if state is OverlayState.RECORDING else None,
-            loading_elapsed=self._pulse.elapsed(time.monotonic()),
-        )
+        logical_frame = self._frame(state)
         margin_bottom = layer_margin_bottom(
             canvas_height=logical_frame.height,
             pill_bottom=logical_frame.pill_bounds[3],
-            edge_offset=EDGE_OFFSET,
         )
         surface = self._compositor.create_surface()
         surface.dispatcher["enter"] = self._on_surface_enter
@@ -384,7 +410,7 @@ class LayerShellBackend:
         surface.commit()
 
     def _present_if_configured(self) -> None:
-        if not self._configured or self._surface is None or self._state is OverlayState.HIDDEN:
+        if not self._configured or self._surface is None or not self._visible:
             return
         if len(self._buffers) >= _MAX_IN_FLIGHT_BUFFERS:
             self._render_pending = True
@@ -393,12 +419,7 @@ class LayerShellBackend:
             integer_scale=self._integer_scale(),
             preferred_scale_120=(self._preferred_scale_120 if self._viewport is not None else None),
         )
-        frame = render_overlay(
-            self._state,
-            scale=plan.render_scale,
-            levels=self._levels if self._state is OverlayState.RECORDING else None,
-            loading_elapsed=self._pulse.elapsed(time.monotonic()),
-        )
+        frame = self._frame(self._state, scale=plan.render_scale)
         buffer = self._create_buffer(
             premultiplied_argb32(frame.image),
             width=frame.width,
@@ -479,99 +500,30 @@ class LayerShellBackend:
                 with contextlib.suppress(Exception):
                     proxy.destroy()
 
-    def _animate_loading(self, now: float) -> None:
-        if not self._pulse.frame_due(now, self._state is not OverlayState.HIDDEN):
-            return
-        self._pulse.advance(now)
-        self._present_if_configured()
+    def _display_fd(self) -> int:
+        return self._display.get_fd()
 
-    def _apply(
-        self,
-        message: (StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage),
-    ) -> bool:
-        if isinstance(message, CommandMessage):
-            if message.command is not Command.SHUTDOWN:
-                raise ProtocolError("unsupported helper command")
-            return False
-        if isinstance(message, LoadingActivityMessage):
-            now = time.monotonic()
-            if not self._pulse.set_active(message.active, now):
-                return True
-            if message.active and self._state is not OverlayState.HIDDEN:
-                self._pulse.arm(now)
-            if self._state is not OverlayState.HIDDEN:
-                self._present_if_configured()
-            return True
-        if isinstance(message, SpectrumMessage):
-            self._levels = message.levels
-            if self._state is OverlayState.RECORDING:
-                self._present_if_configured()
-            return True
-        state = message.state
-        self._state = state
-        if state is OverlayState.RECORDING:
-            self._levels = (0,) * SPECTRUM_BANDS
-        if state is OverlayState.HIDDEN:
-            self._pulse.disarm_frames()
-            self._destroy_surface()
-        elif self._surface is None:
-            # NULL output deliberately lets the compositor pick the recently
-            # interacted output at each hidden-to-visible transition.
-            self._create_surface(state)
-        else:
-            self._present_if_configured()
-        if self._pulse.active and state is not OverlayState.HIDDEN:
-            self._pulse.arm(time.monotonic())
-        return True
+    def _before_select(self, selector: selectors.BaseSelector) -> None:
+        want_write = self._flush_display()
+        selector.modify(
+            self._display_fd(),
+            selectors.EVENT_READ | (selectors.EVENT_WRITE if want_write else 0),
+            DISPLAY_KEY,
+        )
 
-    def run(self, input_stream: BinaryIO) -> None:
-        reader = LineReader()
-        gate = DisplayMessageGate()
-        input_fd = input_stream.fileno()
-        display_fd = self._display.get_fd()
-        selector = selectors.DefaultSelector()
-        selector.register(input_fd, selectors.EVENT_READ, "input")
-        selector.register(display_fd, selectors.EVENT_READ, "display")
-        want_write = False
-        try:
-            while not self._lost:
-                want_write = self._flush_display()
-                selector.modify(
-                    display_fd,
-                    selectors.EVENT_READ | (selectors.EVENT_WRITE if want_write else 0),
-                    "display",
-                )
-                now = time.monotonic()
-                events = selector.select(
-                    self._pulse.timeout(now, self._state is not OverlayState.HIDDEN)
-                )
-                self._animate_loading(time.monotonic())
-                for key, mask in events:
-                    if key.data == "input":
-                        chunk = os.read(input_fd, 4096)
-                        if not chunk:
-                            reader.finish()
-                            return
-                        for message in drain_display_stream(chunk, reader, gate):
-                            if not self._apply(message):
-                                return
-                    elif mask & selectors.EVENT_READ:
-                        self._display.read()
-                        self._display.dispatch(block=False)
-                    if key.data == "display" and mask & selectors.EVENT_WRITE:
-                        want_write = self._flush_display()
-                if self._lost:
-                    raise RuntimeError("layer-shell backend was closed")
-        finally:
-            selector.close()
+    def _on_display_readable(self, mask: int) -> None:
+        if mask & selectors.EVENT_READ:
+            self._display.read()
+            self._display.dispatch(block=False)
+        if mask & selectors.EVENT_WRITE:
+            self._flush_display()
+
+    def _after_events(self) -> None:
+        if self._lost:
+            raise RuntimeError("layer-shell backend was closed")
 
     def _flush_display(self) -> bool:
-        result = self._display.flush()
-        if result >= 0:
-            return False
-        if ffi.errno in {errno.EAGAIN, errno.EWOULDBLOCK}:
-            return True
-        raise RuntimeError("Wayland display flush failed")
+        return flush_wants_write(self._display.flush(), ffi.errno)
 
     @staticmethod
     def _release_output(output, bound_version: int) -> None:
@@ -581,10 +533,7 @@ class LayerShellBackend:
             else:
                 output.destroy()
 
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+    def _close(self) -> None:
         self._destroy_surface()
         for output, bound_version in tuple(self._outputs.values()):
             self._release_output(output, bound_version)
@@ -610,3 +559,16 @@ class LayerShellBackend:
         with contextlib.suppress(Exception):
             self._display.disconnect()
         self._drop_buffers()
+
+
+__all__ = [
+    "REQUIRED_GLOBALS",
+    "GlobalRemoval",
+    "LayerShellBackend",
+    "RegistryInventory",
+    "ScalePlan",
+    "callback_is_current",
+    "choose_scale_plan",
+    "classify_global_removal",
+    "flush_wants_write",
+]

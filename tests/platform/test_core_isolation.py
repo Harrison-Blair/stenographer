@@ -86,6 +86,7 @@ CORE = (
     "stenographer.cli.commands.completion",
     "stenographer.overlay",
     "stenographer.overlay.supervisor",
+    "stenographer.overlay.reducer",
     "stenographer.overlay.render",
     "stenographer.overlay.spectrum",
     "stenographer.transcribe.worker",

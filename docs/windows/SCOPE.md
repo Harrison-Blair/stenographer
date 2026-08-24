@@ -89,7 +89,8 @@ Windows overlay therefore requires:
    decision** per AGENTS.md, additive member vs. version bump to be recorded.
 2. An `OverlayBackendSpec` (probe + construct) from
    `WindowsPlatform.overlay_backends()`.
-3. A helper-side backend (`overlay/win32.py`, sibling of `wayland.py`/`x11.py`,
+3. A helper-side backend (`platform/windows/overlay_backends/win32.py`, mirroring
+   the Linux `platform/linux/overlay_backends/wayland.py`/`x11.py`,
    reachable only via `overlay_backends()`): a layered, click-through, topmost
    window (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW |
    WS_EX_TOPMOST`) blitting the existing Pillow `render.py` output via
@@ -99,10 +100,18 @@ Windows overlay therefore requires:
 4. A `HelperTransport` implementation (see §2) — the only Windows code the
    daemon-side supervisor needs.
 
-The daemon-side supervisor, spectrum analysis, NDJSON protocol, and renderer
-all carry over untouched. Estimated 400–600 lines and the fiddliest Win32 code
-in the project — but **severable**: dictation parity does not depend on it, and
-the overlay is failure-disabled by design.
+The daemon-side supervisor, spectrum analysis, NDJSON protocol, renderer, and
+the `overlay/reducer.py` message→intent state machine all carry over untouched:
+a Windows backend implements only the display primitives its Linux siblings do
+(`_draw`, `_teardown`, `_display_fd`/wait, `_close`) and inherits lifecycle
+policy, the 2.5 s error auto-hide (supervisor-owned), and the loading-frame
+timer. The one structural caveat: `overlay_backends/base.py` runs its loop on
+`selectors` over stdin plus a display descriptor, which Windows does not
+support (`SelectSelector` accepts only sockets) — so a Win32 backend supplies
+its own loop against the same reducer and hooks rather than subclassing the
+Linux base. Estimated 400–600 lines and the fiddliest Win32 code in the
+project — but **severable**: dictation parity does not depend on it, and the
+overlay is failure-disabled by design.
 
 ## 4. Service story (a design decision, not just code)
 

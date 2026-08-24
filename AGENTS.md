@@ -56,7 +56,9 @@ OS- and desktop-specific code is **fully disconnected** from business logic.
 The rule is structural, not stylistic, and it is enforced by a test.
 
 - **Where host code lives.** `src/stenographer/platform/` is the *only* place
-  OS/desktop-specific code may exist. `platform/base.py` is stdlib-only and
+  OS/desktop-specific code may exist — with no exceptions left: the overlay
+  helper's layer-shell and XWayland backends live under
+  `platform/linux/overlay_backends/` too. `platform/base.py` is stdlib-only and
   defines the contract as `typing.Protocol`s: `Platform`, `KeyTable`,
   `HotkeyListener`, `KeyInjector`, `ClipboardWriter`, `Notifier`, `CuePlayer`,
   `SingleInstanceLock`, `HelperTransport` / `HelperProcess`,
@@ -66,8 +68,13 @@ The rule is structural, not stylistic, and it is enforced by a test.
   hotkeys + binding capture, uinput Shift+Insert, wl-copy/xclip, notify-send,
   canberra/pw-play/paplay cues, sysfs CPU topology, doctor probes + systemctl,
   the overlay helper's pipes/`select`/SIGTERM→SIGKILL transport in
-  `linux/helper.py`, layer-shell→XWayland overlay specs, and every Linux word
-  the CLI prints in `linux/guidance.py`).
+  `linux/helper.py`, the layer-shell→XWayland overlay specs in `linux/overlay.py`
+  plus the helper-side backends and vendored Wayland protocol bindings they
+  construct in `linux/overlay_backends/` (whose `base.py` holds everything the
+  two backends share — `BackendUnavailableError`, `probe_backend`, the selector
+  loop with its hooks, the loading-frame timer, the frame request, idempotent
+  `close()` — so a backend module is only its own display primitives), and every
+  Linux word the CLI prints in `linux/guidance.py`).
   `platform/windows/` is `WindowsPlatform`: today a stub that
   imports everywhere and reports every surface unavailable (`doctor` exits 78,
   `run` is refused); it will grow `WH_KEYBOARD_LL`, `SendInput`, Win32
@@ -91,8 +98,9 @@ The rule is structural, not stylistic, and it is enforced by a test.
   source for it.
 - **Provider modules are lazy.** Each `LinuxPlatform` / `WindowsPlatform`
   method lazy-imports its sibling backend so `stenographer --help` never
-  loads evdev or pywin32; `platform/__init__.py` and both provider
-  `__init__.py` files must stay importable on every OS (the Linux bundle
+  loads evdev or pywin32; `platform/__init__.py`, both provider
+  `__init__.py` files, and `linux/overlay_backends/__init__.py` must stay
+  stdlib-only and importable on every OS (the Linux bundle
   `collect_submodules` the Windows stub too). OS-only third-party deps carry
   `sys_platform` markers in `pyproject.toml`.
 - **Shared vocabulary is core data, not a host capability.** `hotkey.binding`
@@ -136,9 +144,12 @@ The rule is structural, not stylistic, and it is enforced by a test.
   `os.sched_getaffinity`, `fcntl`, `SIGTERM` semantics, `systemctl`, `/`
   separators) in core code.
 - **Tests follow the same line.** `tests/platform/linux/` holds Linux-only
-  tests (skipped/ignored off-Linux); pure overlay backend tests `importorskip`
-  pywayland/Xlib. New core tests must pass on `windows-latest` with no Linux
-  backend present.
+  tests (skipped/ignored off-Linux), including the overlay backend tests; the
+  ones that touch a backend module additionally `importorskip` pywayland/Xlib,
+  while the shared `overlay_backends/base.py` tests need neither.
+  `tests/overlay/` keeps only the shared pure ones (spectrum, render, reducer,
+  supervisor, protocol). New core tests must pass on `windows-latest` with no
+  Linux backend present.
 
 ## Hard rules
 
@@ -200,7 +211,14 @@ The rule is structural, not stylistic, and it is enforced by a test.
    samples stay in the daemon-side supervisor; the helper is click-through and
    failure-disabled. Never run analysis/display/process I/O under daemon
    locks; never send transcript, raw audio, device/model names, config values,
-   or detailed errors across IPC.
+   or detailed errors across IPC. The helper decides *nothing* about the
+   lifecycle: `overlay/reducer.py` (core, pure, clock-injected) folds one
+   accepted record into a redraw/teardown/stop intent for every backend, and
+   the daemon-side supervisor is the **single authority** for the fixed 2.5 s
+   error auto-hide — it queues the guarded hide (`status.error_timeout_applies`)
+   like any other state. A backend must never run its own error timer: a
+   supervisor that has stopped sends no further states *and* closes the
+   helper's stdin, which ends the helper anyway.
 8. **Sound-pack boundary** — selection is global and whole-pack only. Bundled
    packs: `legacy`, `warm-desk`, `soft-electronic`, `minimal-ui` (reserved
    names, win collisions, listed only when complete). Custom packs live under
@@ -247,7 +265,7 @@ authoritative when editing.
 | `status.py` | Lifecycle states + strict protocol-v4 NDJSON contract + pure generation/coalescing policy. |
 | `transcribe/` | `worker.py` (crash-isolated ASR child: one job at a time, load-only warm-up, idle unload after `asr.idle_unload_seconds`, fixed load/decode deadlines, logs via queue), `model.py` (faster-whisper, anti-hallucination stack, `PathologicalOutputError`, `local_files_only`), `format.py` (zero-knob formatter). |
 | `delivery/` | `deliver.py` (`Deliverer` policy: confirmed copy → wait for release → `KeyInjector` chord), `feedback.py` (resolve one sound pack at startup, mute/volume policy, `CuePlayer`; no player → no-op). |
-| `overlay/` | `spectrum.py` (pure 32 ms Hann FFT, 18 bands, fixed floors, 18-level quantization), `supervisor.py` (mailbox, NDJSON framing, readiness deadline, restart budget, and shutdown policy — the child itself is spawned, polled, read, and killed through `HelperTransport` / `HelperProcess`), `render.py`, `wayland.py` / `x11.py` helper backends reached only via `overlay_backends()`, vendored `protocols/`. |
+| `overlay/` | Core-side only: `spectrum.py` (pure 32 ms Hann FFT, 18 bands, fixed floors, 18-level quantization), `supervisor.py` (mailbox, NDJSON framing, readiness deadline, restart budget, the 2.5 s error auto-hide, and shutdown policy — the child itself is spawned, polled, read, and killed through `HelperTransport` / `HelperProcess`), `reducer.py` (the pure message→intent state machine every helper backend runs: command rejection, loading-edge dedupe, spectrum apply, state transitions with the recording level reset, teardown and pulse re-arm decisions), `render.py` (pure Pillow frame plus both placement policies, `overlay_position` / `layer_margin_bottom`), `entry.py`. The OS-specific helper backends live in `platform/linux/overlay_backends/` (shared `base.py`, `wayland.py` / `x11.py`, vendored `protocols/`) and are reached only via `overlay_backends()`. |
 | `cli/` | argparse surface + lazy dispatch (`stenographer.cli:main`; `python -m stenographer.cli` for helper re-exec); `commands/` thin handlers for `run`, `transcribe`, `model download`, `doctor`, `devices`, `setup`, `sounds`, `completion {bash,zsh,fish}`. Heavy imports stay inside handlers. Engines: `console.py` (the shared interactive frame both `setup` and `sounds` build on: `Console`, stream defaulting, the TTY gate, the config-document load ladder, save reporting, yes/no and service-restart prompts), `setup.py` (TTY-only full / `--quick`), `setup_config.py` (preservation layer), `binding_capture.py` (thin `current_platform().capture_binding` delegator; the pure reducer is core `stenographer.binding_capture`), `calibration.py` (one-shot 18-band floor estimator for `feedback.spectrum_floor_dbfs` only), `doctor.py` (report layout: pure `render`/`format_service_status` taking a `HostGuidance`, plus `run`; the gate itself is core `stenographer.capabilities` and every host word is the platform's), `sounds.py`. Completion is static — no device/model/config/audio/network discovery. |
 | `platform/` | The host boundary — see above. |
 | `utils/logging_setup.py` | Idempotent stderr + rotating state-file logging (5 MiB × 3), `STENOGRAPHER_LOG_LEVEL`, privacy-safe worker forwarding. |

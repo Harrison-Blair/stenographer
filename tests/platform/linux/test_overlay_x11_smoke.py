@@ -13,7 +13,8 @@ from Xlib import X, Xatom
 from Xlib import display as xdisplay
 from Xlib.ext import shape
 
-from stenographer.overlay.x11 import X11OverlayBackend, X11Unavailable
+from stenographer.platform.linux.overlay_backends.base import BackendUnavailableError
+from stenographer.platform.linux.overlay_backends.x11 import X11OverlayBackend
 from stenographer.status import (
     SPECTRUM_BANDS,
     Command,
@@ -107,7 +108,7 @@ def test_real_xwayland_window_is_click_through_and_updates_in_place():
     thread = threading.Thread(target=serve, name="test-xwayland-overlay")
     thread.start()
     result = ready.get(timeout=3)
-    if isinstance(result, X11Unavailable):
+    if isinstance(result, BackendUnavailableError):
         os.close(write_fd)
         thread.join(timeout=3)
         pytest.skip(f"XWayland unavailable: {result.reason.value}")
