@@ -28,8 +28,11 @@ helper-local amber border pulse only while the model loads, fixed state
 interiors — never transcript preview, controls, GTK, or raw-audio IPC), the
 local PyInstaller onedir build + per-user installer + `main`-only draft
 release workflow (with a read-only release-preflight rehearsal — version/tag
-guard plus wheel/sdist verification — on PRs into `main`), and static
-Bash/Zsh/Fish completions.
+guard plus wheel/sdist verification — on PRs into `main`), the curl-piped
+`scripts/quick-install.sh` bootstrap (installs the latest *published*
+release's native bundle by handing it to that release's own sdist
+`install.sh` after `SHA256SUMS` verification — an install path, never
+self-update), and static Bash/Zsh/Fish completions.
 
 ## Commands
 
@@ -272,7 +275,7 @@ authoritative when editing.
 | `platform/` | The host boundary — see above. |
 | `utils/logging_setup.py` | Idempotent stderr + rotating state-file logging (5 MiB × 3), `STENOGRAPHER_LOG_LEVEL`, privacy-safe worker forwarding. |
 | `assets/` | Sound packs (`sounds/<pack>/`), icon, font, static completions. |
-| `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `gen_keycodes.py`, `cue_audition.py`, `sound_asset_guard.py`. |
+| `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `quick-install.sh` (release bootstrap behind the README one-liner), `gen_keycodes.py`, `cue_audition.py`, `sound_asset_guard.py`. |
 | `docs/` | `windows/SCOPE.md` (Windows backend scope), `code-smells.md` / `refactoring-techniques.md` (review/refactor references), `cue-audition.md`. |
 
 The ASR model (~1.5 GB) is never bundled — `stenographer model download`

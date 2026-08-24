@@ -34,6 +34,26 @@ assistants). Everything below this comment is generated / maintained
 content. To change the project description, edit above this line.
 -->
 
+## Quick install
+
+On Linux x86_64 or AArch64 with a Wayland session and a systemd user manager:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start
+```
+
+This downloads the latest release's prebuilt bundle, verifies it against the
+release's `SHA256SUMS`, installs `~/.local/bin/stenographer`, and installs and
+enables the systemd user service — no Python or build tools needed.
+`--no-start` leaves the service stopped until you have configured it and
+downloaded the model; drop it (and everything after `bash`) when upgrading an
+existing install. Any other `scripts/install.sh` option can be passed the same
+way. The bundle is built on Ubuntu 24.04, so it needs a comparably recent
+glibc; on older systems build from source instead (step 2 below).
+
+After the quick install, check the permissions in step 1, skip step 2, and
+continue from step 3.
+
 ## Quick start
 
 ### 1. Check the essentials
@@ -54,6 +74,8 @@ package names vary by distribution; `stenographer doctor` reports what is
 missing.
 
 ### 2. Install the user service
+
+Skip this step if you used the quick install above.
 
 ```sh
 git clone https://github.com/Harrison-Blair/stenographer.git
