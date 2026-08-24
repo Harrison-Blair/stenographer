@@ -1,11 +1,9 @@
 # AGENTS.md
 
 Guidance for AI agents (and humans) working in this repository. This is the
-single canonical file; `CLAUDE.md` imports it and adds nothing. When this file
-and `docs/reauthor.md` disagree, `docs/reauthor.md` wins — it is the design
-record: its §2 decisions are settled, its §4 behavioral knowledge inventory
-binds every change, §6 is the testing policy, §7 lists deliberately cut
-features.
+single canonical file — the design record as well as the working guide.
+`CLAUDE.md` imports it and adds nothing. Settled decisions live here; changing
+one means editing this file in the same commit as the code that changes it.
 
 ## What this is
 
@@ -17,16 +15,18 @@ GPL-3.0-or-later, Python ≥ 3.12.
 
 **Target platforms: Linux (Wayland, any compositor) and Windows.** Linux is
 the shipping backend; Windows currently has a stdlib-only stub provider and a
-CI portability job, with the real backend tracked in `docs/reauthor.md` §7.
+CI portability job, with the real backend scoped in `docs/windows/SCOPE.md`.
 Every change must keep both targets viable — see *Platform boundary* below.
 
-Do not reintroduce cut features (old HUD / transcript preview, hybrid trigger
-mode, self-update, sound downloads, per-cue overrides, multi-distro installers)
-without revising `docs/reauthor.md` first. Already authorized: toggle mode, the
-isolated lifecycle pill (exactly 18 locally analyzed spectrum bars while
-recording, a helper-local amber border pulse only while the model loads, fixed
-state interiors — never transcript preview, controls, GTK, or raw-audio IPC),
-the local PyInstaller onedir build + per-user installer + `main`-only draft
+Do not reintroduce cut features (old GTK HUD / transcript preview, hybrid
+trigger mode, cancel binding, `dictate`, `bench`, per-character typing / wtype,
+live preview / incremental decoding, self-update, sound downloads, per-cue
+overrides, config migrations, multi-distro installers) without recording the
+decision in this file first. Already authorized: toggle mode, the isolated
+lifecycle pill (exactly 18 locally analyzed spectrum bars while recording, a
+helper-local amber border pulse only while the model loads, fixed state
+interiors — never transcript preview, controls, GTK, or raw-audio IPC), the
+local PyInstaller onedir build + per-user installer + `main`-only draft
 release workflow, and static Bash/Zsh/Fish completions.
 
 ## Commands
@@ -120,23 +120,49 @@ The rule is structural, not stylistic, and it is enforced by a test.
 3. **SPDX header** `SPDX-License-Identifier: GPL-3.0-or-later` on every
    source file. `pyproject.toml` (hatchling) is the single source of truth
    for metadata/deps.
-4. **Testing policy is binding** (docs/reauthor.md §6): unit tests for pure
-   logic only (formatter, config validation, gate math, protocol
-   encode/decode, parser); never mock `subprocess` / `UInput` / `wl-copy` /
-   Win32 to assert a call would have happened; mock-only testability is a
-   design smell — extract the pure part; a new pure-logic test only counts
-   once it has been SEEN to fail against broken behavior; the integration
-   smoke suite (genuinely creates a uinput device, writes the clipboard, plays
-   cues, loads the model) is the real gate and must be green on a real machine
-   before any dev → main merge.
-5. **Behavioral invariants** (docs/reauthor.md §4) most at risk in edits:
-   never gate audio on absolute RMS defaults (quiet-mic rule — two consecutive
-   50 ms frames); the paste chord fires only after a *confirmed* clipboard
-   copy AND physical hotkey release — a failed copy never fires the chord; the
-   daemon never touches the network (`local_files_only`); the PortAudio
-   callback only copies blocks (no analysis); one utterance at a time; capture
-   starts before the `record_start` cue and stops/secures samples before
-   `record_stop`.
+4. **Testing policy is binding.** Unit tests cover pure logic only —
+   formatter, config validation, gate/spectrum/calibration math, protocol
+   encode/decode and ordering, renderer geometry, chord parsing, capture
+   reducers, TOML transformation. Never mock `subprocess` / `UInput` /
+   `wl-copy` / Win32 to assert a call would have happened: a green mock proves
+   nothing (489 mocked tests once stayed green for a year while paste was
+   dead). Mock-only testability is a design smell — extract the pure part
+   instead of writing the mock. A new pure-logic test only counts once it has
+   been SEEN to fail against broken behavior. The integration smoke suite
+   (genuinely creates a uinput device, writes and reads back the clipboard,
+   plays every bundled pack, loads the model) is the real gate. Keep the
+   test:src ratio near 1:1 — beyond that, tests are re-testing the same logic
+   through different layers.
+5. **Behavioral invariants** — binding on every change:
+   - Never gate audio on absolute RMS defaults (quiet mics fall below
+     "normal" thresholds); the speech gate requires two consecutive 50 ms
+     frames above `audio.min_speech_rms`, and `0` disables it.
+   - The paste chord fires only after a *confirmed* clipboard copy AND
+     physical hotkey release. A failed copy never fires the chord (it would
+     paste stale clipboard content); a still-held modifier would mutate the
+     chord, so delivery waits for release and, on wait timeout, proceeds —
+     the clipboard already holds the transcript as recovery.
+   - An empty transcript or failed speech gate is success-shaped: no paste,
+     no error cue.
+   - The daemon never touches the network (`local_files_only`); only
+     `stenographer model download` may.
+   - The PortAudio callback only copies blocks (no analysis, allocation-heavy
+     work, or slow-consumer locks).
+   - One utterance at a time; a start press during transcription neither
+     starts nor queues.
+   - Capture starts before the `record_start` cue and stops/secures samples
+     before `record_stop`; cue failures cannot delay capture boundaries or
+     orphan a recording.
+   - Model load is press-lazy (starts on the first accepted recording, never
+     at daemon startup) and intentionally silent so no cue contaminates
+     captured audio. The anti-hallucination decode stack (VAD pre-filter,
+     no-speech gate, silence trimming, short-audio token ceiling, output
+     validation) is fixed behavior, not configuration.
+   - `asr.cpu_threads = 0` means affinity-visible *physical* cores capped at
+     8 — CTranslate2 scales badly past that and hyperthread counting is
+     slower.
+   - `asr.hotwords` silently deletes words on distil models; hotword support
+     requires a full model (why the default is `faster-whisper-medium.en`).
 6. **Privacy in logs** — numeric/structural metrics and transcript *lengths*
    only; never transcript text, audio, samples, or result representations.
 7. **Overlay isolation** — the optional helper receives only fixed lifecycle
@@ -157,15 +183,27 @@ The rule is structural, not stylistic, and it is enforced by a test.
    no migrations, no setup-only keys. Setup/sounds save through the tomlkit
    preservation layer (comments, ordering, unknown content, symlinks, mode;
    timestamped backup; unchanged bytes not written).
-10. **Branch model** — develop on `dev`; merge to `main` only after the smoke
-    suite and real dictation pass on a real machine. Commits are conventional
+10. **Branch model** — develop on `dev`; merge to `main` only after the
+    acceptance gates below pass on a real machine. Commits are conventional
     (`feat:`, `fix:`, `chore:`) with no attribution trailers.
+
+## Acceptance gates (real machine, before dev → main)
+
+- `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest` green.
+- Real dictation end-to-end in both `hold` and `toggle` modes.
+- After overlay-affecting changes: the pill appears on recording start and
+  disappears on stop, the amber border breathes only during a cold load, and
+  killing the helper never affects dictation.
+- After capture/logging-affecting changes: a cold-start dictation retains its
+  opening words, and an inspection of `stenographer.log` + the journal shows
+  metrics but no transcript or audio content.
 
 ## Architecture map
 
 `src/stenographer/` (src-layout); `tests/` mirrors the grouping. Behavioral
 detail for every item below (exit codes, calibration math, menu semantics,
-cue ordering) lives in `docs/reauthor.md` §4 — do not re-derive it from code.
+cue ordering) lives in the module docstrings and their tests — keep those
+authoritative when editing.
 
 | Module | Role |
 |---|---|
@@ -175,7 +213,7 @@ cue ordering) lives in `docs/reauthor.md` §4 — do not re-derive it from code.
 | `audio.py` | PortAudio recorder: retained pre-negotiated stream, block-copy callback with latest-only handoff to the overlay supervisor, RMS speech gate, sample-rate fallback + resample, one stale-stream recovery. |
 | `config.py` | TOML → frozen dataclasses; missing file written with annotated defaults; in-memory load path for validating setup output. |
 | `status.py` | Lifecycle states + strict protocol-v4 NDJSON contract + pure generation/coalescing policy. |
-| `transcribe/` | `worker.py` (crash-isolated ASR child: one job at a time, load-only warm-up, idle unload after `asr.idle_unload_seconds`, logs via queue), `model.py` (faster-whisper, anti-hallucination stack, `PathologicalOutputError`, `local_files_only`), `format.py` (zero-knob formatter). |
+| `transcribe/` | `worker.py` (crash-isolated ASR child: one job at a time, load-only warm-up, idle unload after `asr.idle_unload_seconds`, fixed load/decode deadlines, logs via queue), `model.py` (faster-whisper, anti-hallucination stack, `PathologicalOutputError`, `local_files_only`), `format.py` (zero-knob formatter). |
 | `delivery/` | `deliver.py` (`Deliverer` policy: confirmed copy → wait for release → `KeyInjector` chord), `feedback.py` (resolve one sound pack at startup, mute/volume policy, `CuePlayer`; no player → no-op). |
 | `overlay/` | `spectrum.py` (pure 32 ms Hann FFT, 18 bands, fixed floors, 18-level quantization), `supervisor.py` (helper spawn/mailbox/backend selection), `render.py`, `wayland.py` / `x11.py` helper backends reached only via `overlay_backends()`, vendored `protocols/`. |
 | `cli/` | argparse surface + lazy dispatch (`stenographer.cli:main`; `python -m stenographer.cli` for helper re-exec); `commands/` thin handlers for `run`, `transcribe`, `model download`, `doctor`, `devices`, `setup`, `sounds`, `completion {bash,zsh,fish}`. Heavy imports stay inside handlers. Engines: `setup.py` (TTY-only full / `--quick`), `setup_config.py` (preservation layer), `binding_capture.py` (pure reducer + `current_platform().capture_binding`), `calibration.py` (one-shot 18-band floor estimator for `feedback.spectrum_floor_dbfs` only), `doctor.py` (`REQUIRED` gate → exit 78; host half from `probe_host()`), `sounds.py`. Completion is static — no device/model/config/audio/network discovery. |
@@ -183,7 +221,7 @@ cue ordering) lives in `docs/reauthor.md` §4 — do not re-derive it from code.
 | `utils/logging_setup.py` | Idempotent stderr + rotating state-file logging (5 MiB × 3), `STENOGRAPHER_LOG_LEVEL`, privacy-safe worker forwarding. |
 | `assets/` | Sound packs (`sounds/<pack>/`), icon, font, static completions. |
 | `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `gen_keycodes.py`, `cue_audition.py`, `sound_asset_guard.py`. |
-| `docs/` | `reauthor.md` (design record), `code-smells.md` / `refactoring-techniques.md` (review/refactor references), `cue-audition.md`. |
+| `docs/` | `windows/SCOPE.md` (Windows backend scope), `code-smells.md` / `refactoring-techniques.md` (review/refactor references), `cue-audition.md`. |
 
 The ASR model (~1.5 GB) is never bundled — `stenographer model download`
 fetches it once; `asr.hotwords` require a full (non-distil) model.
