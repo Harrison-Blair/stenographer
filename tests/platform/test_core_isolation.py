@@ -70,6 +70,7 @@ CORE = (
     "stenographer.delivery.feedback",
     "stenographer.cli",
     "stenographer.cli.doctor",
+    "stenographer.cli.console",
     "stenographer.cli.setup",
     "stenographer.cli.setup_config",
     "stenographer.cli.sounds",

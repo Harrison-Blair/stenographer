@@ -23,6 +23,7 @@ from stenographer.capabilities import missing_required, probe
 from stenographer.cli import setup
 from stenographer.cli.binding_capture import capture_binding
 from stenographer.cli.calibration import calibrate_spectrum_profile
+from stenographer.cli.console import Console, restart_service
 from stenographer.config import Config
 from stenographer.platform.linux.probe import service_status
 from stenographer.status import SPECTRUM_BANDS
@@ -192,7 +193,7 @@ def test_real_active_service_restart():
         pytest.skip("setup must not restart while a required capability is missing")
 
     output = io.StringIO()
-    console = setup._Console(io.StringIO(), output, output)
+    console = Console(io.StringIO(), output, output)
 
-    assert setup._restart_service(console) is True
+    assert restart_service(console) is True
     assert "Restarted stenographer.service" in output.getvalue()
