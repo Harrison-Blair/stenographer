@@ -11,9 +11,9 @@ from __future__ import annotations
 import pytest
 
 from stenographer.capabilities import Capabilities, OverlayCapability, missing_required, probe
-from stenographer.cli import doctor
+from stenographer.cli import doctor, main
 from stenographer.config import Config
-from stenographer.platform import current_platform, main
+from stenographer.platform import current_platform
 
 pytestmark = pytest.mark.integration
 
