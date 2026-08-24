@@ -667,7 +667,7 @@ open. When one is added, it must still pass the §1 razor at that time.
 | **`bench`** | Standalone script in `scripts/`, driving the public `model.py` API. Does not re-enter the package. |
 | **Distribution layer** (installer, self-update, completions) | Blocked on external users existing. Clean config validation and a small codebase are the only v1 prerequisites, and both are core goals anyway. *Partially reintroduced 2026-08: the local PyInstaller onedir build and single-machine per-user installer, a `main`-only draft-release workflow for native Linux x86_64/AArch64 bundles plus Python distributions, and static Bash/Zsh/Fish completions cached by the installer under XDG data directories. Publishing remains manual. There is still no multi-distro/curl-pipe-bash installer, self-update, dynamic completion, or shell-configuration editing; the rest of this row stays gated.* |
 | **`dictate` one-shot** | Trivial recomposition of daemon pieces if ever wanted. |
-| **Windows backend** | *Seam extracted 2026-08-21 (see the amendment below).* `stenographer.platform` holds the host boundary; the core never imports a Linux module and `tests/platform/test_core_isolation.py` proves it; `Daemon.build(platform=)` is the one wiring point; `doctor.REQUIRED` names are semantic (injector available / listener permitted / clipboard available) so the startup gate needs no renaming; `hotkey.binding` keeps evdev `KEY_*` names everywhere (a Windows backend maps them to VK codes — no schema change); `status.Backend` is protocol-v4 wire vocabulary, so a Windows overlay backend is a protocol-extension decision (until then the overlay is disabled there via `NullStatusSink`). Still to build: `WH_KEYBOARD_LL` listener dispatching through a queue (edges fire under the daemon lock), `SendInput` paste, Win32 clipboard with read-back, toast notifier, cue player, named-mutex lock, `SetConsoleCtrlHandler`, a service concept that reimplements "78 = don't restart", per-platform doctor/setup hint text, `%APPDATA%` policy, Windows packaging/CI artifacts. |
+| **Windows backend** | *Seam extracted 2026-08-21 (see the amendment below).* `stenographer.platform` holds the host boundary; the core never imports a Linux module and `tests/platform/test_core_isolation.py` proves it; `Daemon.build(platform=)` is the one wiring point; `doctor.REQUIRED` names are semantic (injector available / listener permitted / clipboard available) so the startup gate needs no renaming; `hotkey.binding` keeps evdev `KEY_*` names everywhere (a Windows backend maps them to VK codes — no schema change); `status.Backend` is protocol-v4 wire vocabulary, so a Windows overlay backend is a protocol-extension decision (until then the overlay is disabled there via `NullStatusSink`). Still to build: `WH_KEYBOARD_LL` listener dispatching through a queue (edges fire under the daemon lock), `SendInput` paste, Win32 clipboard with read-back, toast notifier, cue player, named-mutex lock, `SetConsoleCtrlHandler`, a service concept that reimplements "78 = don't restart", per-platform doctor/setup hint text, `%APPDATA%` policy, Windows packaging/CI artifacts. *Decisions settled 2026-08-24 (see the amendment below); per-domain implementation plans in `docs/windows/domains/`.* |
 
 ---
 
@@ -840,3 +840,38 @@ Windows backend must satisfy the same Protocols and is a separate phase (§7).
 One incidental fix: `EvdevKeyTable.name` resolves aliased evdev codes (stored
 as tuples by python-evdev, e.g. `KEY_MUTE`) to their first name, where the old
 `_canonical_key_name` only recognised lists and raised for them during capture.
+
+---
+
+## Amendment: Windows backend decisions (2026-08-24)
+
+`docs/windows/SCOPE.md` (2026-08-23) mapped the Windows backend and closed with
+eight decisions this record reserves to the owner, required to be settled before
+phase 1. They are settled here. Nothing below changes Linux behavior; §2.5–2.7,
+§2.9, §2.16 and §4.13 remain the *Linux* contract exactly as the 2026-08-21
+amendment left them. The per-domain implementation plans that build on these
+decisions live in `docs/windows/domains/`.
+
+| # | Decision | Consequence |
+|---|---|---|
+| 1 | **Paste chord is Ctrl+V** on Windows, not Shift+Insert. | §2.7's chord is Linux-only. Decision 7's rationale — "the most broadly honored paste chord across toolkits" — is a claim about GTK/Qt and Linux terminals, where paste is commonly Ctrl+Shift+V; on Windows Ctrl+V is the OS-wide convention including cmd.exe and Windows Terminal, and Shift+Insert no-ops silently in parts of WinUI3/UWP. Single-path delivery is unchanged; only the constant differs. |
+| 2 | **Autostart is a `schtasks` ONLOGON task with no auto-restart.** | A Windows Service runs in session 0 and cannot hook, `SendInput`, or reach the user clipboard, so the daemon stays a user-session process. Task Scheduler cannot condition restart on an exit code: no-restart honors "78 = don't restart" trivially and is a strict subset of a supervisor wrapper, which stays a clean later addition. Accepted regression: `Restart=on-failure` has no Windows equivalent — a transient crash waits for next logon. |
+| 3 | **Toasts via a PowerShell subprocess.** | Structural clone of `platform/linux/notify.py`: pure `build_notify_command`, non-blocking `Popen`, failures swallowed to debug. Accepted cost: an unregistered app has no AppUserModelID, so the toast borrows PowerShell's and is branded accordingly — cosmetic, on the errors-only path. `windows-toasts` rejected to hold the near-zero-new-dependency verdict. |
+| 4 | **Cues play in-process via `sounddevice`/`soundfile`.** | Departs from the Linux spawn-a-player pattern because `winsound` has no volume control and would silently break the `feedback.volume` contract. Deletes the `build_play_command` pure target, so §6 requires a replacement: `prepare_cue(samples, volume)`. Opens an output stream alongside the retained capture stream, and playback is a singleton (a second cue cuts off the first). |
+| 5 | **`WH_KEYBOARD_LL` listener; `hotkey.device` warns once and is ignored.** | The hook callback translates VK → evdev code and enqueues only — a §4.8-class invariant, since Windows silently removes hooks whose callbacks stall. `hotkey_devices()` returns `[]`; `setup` already degrades on an empty list. The Linux-only warning is raised by the provider, never by `config.py`, keeping core host-blind. No schema change and no new key. Raw Input stays a deferred door for per-device selection. |
+| 6 | **Overlay vocabulary grows additively; `PROTOCOL_VERSION` stays 4.** | `Backend.WIN32 = "win32"` plus any needed `UnavailableReason` members. The decoder requires exact version equality and the helper is re-exec'd from the same installation, so daemon and helper are always one build and a bump protects against nothing. Follows `UnavailableReason`'s existing additive growth with backend-specific members. |
+| 7 | **Medium integrity by default; `/rl HIGHEST` is a documented opt-in.** | UIPI blocks a medium-integrity hook from seeing keystrokes typed into an elevated foreground window and blocks `SendInput` into one, so dictation dies while such a window has focus. The clipboard write is *not* blocked, so the copy-as-recovery path survives. Elevating by default would break the no-admin per-user install, worsen the antivirus heuristic match (unsigned bundle + global hook + administrator), and turn any compromise into an admin-level one — the same reasoning that keeps the Linux daemon a *user* unit. It also would not reach the UAC secure desktop. Accepted scope, surfaced by `doctor`; Authenticode signing is the recorded long-term fix for this and for the antivirus risk. |
+| 8 | **Merge gate is per-platform, scoped by changed paths.** | Rule 10's real-machine smoke gate applies per platform: changes confined to `platform/linux/**` need the Linux suite, changes confined to `platform/windows/**` need the Windows suite, and anything else — core, `cli/`, `overlay/`, `status.py`, `packaging/`, `scripts/`, `pyproject.toml` — needs **both**. A real Windows machine is available for the loop, so the gate is enforceable rather than aspirational. |
+
+Two corrections to SCOPE.md carried into the plans. Its §4 describes the Linux
+policy as "print the systemctl command, never install"; `scripts/install.sh`
+installs, enables and starts the unit, and the print-only policy belongs to
+`doctor`/`setup`, which only restart an already-installed one — so the Windows
+installer registers the logon task. And its §4 alternative of enabling Task
+Scheduler's native restart is not a cheap variant: `schtasks` flags cannot set
+restart-on-failure, so it requires generating task XML, making it more work than
+the plain logon task while still retrying an exit-78 daemon.
+
+Still open and explicitly **not** decided here: PowerShell completions (decision
+4 fixes the completion surface at Bash/Zsh/Fish), hybrid trigger mode, and
+per-device hotkey selection. Each still requires its own amendment.
