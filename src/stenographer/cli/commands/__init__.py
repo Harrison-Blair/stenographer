@@ -21,17 +21,21 @@ def with_config(
 
     A ``ConfigError`` never reaches the handler: its message is printed
     verbatim and the command ends at exit 78. The config import lives inside
-    the wrapper so the module keeps its stdlib-only import graph.
+    the wrapper so the module keeps its stdlib-only import graph. This is also
+    the first point in any config-reading command where ``feedback.log_level``
+    exists, so the stderr threshold is applied here rather than per handler.
     """
 
     @functools.wraps(handler)
     def wrapper(args: argparse.Namespace) -> int:
         from stenographer import config
+        from stenographer.utils.logging_setup import apply_stderr_level
 
         try:
             cfg = config.load_or_default()
         except config.ConfigError as exc:
             return _fatal(str(exc))
+        apply_stderr_level(cfg.feedback.log_level)
         return handler(args, cfg)
 
     return wrapper

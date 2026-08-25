@@ -37,10 +37,10 @@ _MAX_BYTES = 5 * 1024 * 1024
 _BACKUP_COUNT = 3
 _HANDLER_MARKER = "_stenographer_owned"
 _FILE_WARNING_MARKER = "_stenographer_file_warning_emitted"
-_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s%(utt_suffix)s"
-_JOURNAL_FORMAT = "%(levelname)s %(name)s %(message)s%(utt_suffix)s"
-# Records that never passed the logger's filter (the ASR child's, logging's own)
-# still format: the suffix is a rendered field, not a required attribute.
+_FORMAT = "%(asctime)s %(levelname)s %(name)s%(utt_suffix)s %(message)s"
+_JOURNAL_FORMAT = "%(levelname)s %(name)s%(utt_suffix)s %(message)s"
+# Records that never passed an owned queue handler (logging's own, an embedding
+# host's) still format: the suffix is a rendered field, not a required attribute.
 _FORMAT_DEFAULTS = {"utt_suffix": ""}
 
 _listener: logging.handlers.QueueListener | None = None
@@ -85,11 +85,17 @@ def set_utterance(number: int | None) -> None:
 
 
 class UtteranceFilter(logging.Filter):
-    """Attach the current utterance id to each record it passes."""
+    """Stamp the current utterance id on each record it passes.
+
+    It belongs on the queue handler, not on the ``stenographer`` logger: every
+    module logs through ``getLogger(__name__)``, and a logger's own filters run
+    only for records emitted on that exact logger. Handler filters run in
+    ``Handler.handle`` — in the thread that emitted the record, before the
+    queue hands it to the listener.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
         number = _utterance
-        record.utt = number
         record.utt_suffix = "" if number is None else f" utt={number}"
         return True
 
@@ -117,7 +123,12 @@ def log_failure(
         log.log(level, _with_fields(event, {**fields, "error": kind, "detail": str(exc)}))
         log.debug(_with_fields(event, {**fields, "error": kind}), exc_info=exc)
         return
-    frames = " | ".join(" ".join(frame.split()) for frame in traceback.format_tb(exc.__traceback__))
+    # file:line:function only: source text could quote a literal, and a value
+    # with spaces in it would break the key=value line it lands in.
+    frames = "|".join(
+        f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+        for frame in traceback.extract_tb(exc.__traceback__)
+    )
     log.log(level, _with_fields(event, {**fields, "error": kind, "frames": frames or None}))
 
 
@@ -126,16 +137,14 @@ def setup_logging(
     env: Mapping[str, str] | None = None,
     home: Path | None = None,
     stderr: TextIO | None = None,
-    stderr_level: str | None = None,
 ) -> logging.Logger:
     """Install the Stenographer-owned logging pipeline once.
 
-    *stderr_level* is the configured threshold for the stderr/journal sink;
-    ``STENOGRAPHER_LOG_LEVEL`` outranks it for the whole process. The CLI runs
-    this before any config exists, so the daemon re-applies the configured
-    value through :func:`apply_stderr_level`. Existing handlers, including
-    handlers installed by an embedding host, are left untouched. File setup
-    errors degrade to stderr and are reported once.
+    The stderr/journal threshold starts at ``STENOGRAPHER_LOG_LEVEL`` (or INFO):
+    the CLI runs this before any config exists, and the configured
+    ``feedback.log_level`` is applied later through :func:`apply_stderr_level`.
+    Existing handlers, including handlers installed by an embedding host, are
+    left untouched. File setup errors degrade to stderr and are reported once.
     """
     global _listener, _stderr_level_pinned
     resolved_env = os.environ if env is None else env
@@ -143,13 +152,12 @@ def setup_logging(
     resolved_stderr = sys.stderr if stderr is None else stderr
     override = resolved_env.get("STENOGRAPHER_LOG_LEVEL")
     _stderr_level_pinned = bool(override)
-    level = resolve_log_level(override or stderr_level)
+    level = resolve_log_level(override)
     logger = logging.getLogger(_LOGGER_NAME)
     # The logger passes everything; the sinks decide. Anything it dropped here
     # would be missing from the always-DEBUG file too.
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
-    _install_utterance_filter(logger)
 
     if _listener is None:
         stream_handler = logging.StreamHandler(resolved_stderr)
@@ -167,6 +175,7 @@ def setup_logging(
         log_queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
         queue_handler = logging.handlers.QueueHandler(log_queue)
         _mark_owned(queue_handler)
+        queue_handler.addFilter(UtteranceFilter())
         logger.addHandler(queue_handler)
         _listener = logging.handlers.QueueListener(log_queue, *sinks, respect_handler_level=True)
         _listener.start()
@@ -214,8 +223,8 @@ def configure_worker_logging(log_queue: Queue, level: int) -> None:
         handler.close()
     queue_handler = logging.handlers.QueueHandler(log_queue)
     _mark_owned(queue_handler)
+    queue_handler.addFilter(UtteranceFilter())
     logger.addHandler(queue_handler)
-    _install_utterance_filter(logger)
     logger.setLevel(level)
     logger.propagate = False
 
@@ -229,9 +238,6 @@ def shutdown_logging() -> None:
         if getattr(handler, _HANDLER_MARKER, False):
             logger.removeHandler(handler)
             handler.close()
-    for log_filter in tuple(logger.filters):
-        if getattr(log_filter, _HANDLER_MARKER, False):
-            logger.removeFilter(log_filter)
     listener, _listener = _listener, None
     if listener is not None:
         listener.stop()
@@ -253,18 +259,8 @@ def _render(value: object) -> str:
     return f"{value:g}" if isinstance(value, float) else str(value)
 
 
-def _mark_owned(handler: logging.Handler | logging.Filter) -> None:
+def _mark_owned(handler: logging.Handler) -> None:
     setattr(handler, _HANDLER_MARKER, True)
-
-
-def _install_utterance_filter(logger: logging.Logger) -> None:
-    # On the logger, not the sinks: it must run in the thread that emitted the
-    # record, before the queue hands it to another one.
-    if any(getattr(existing, _HANDLER_MARKER, False) for existing in logger.filters):
-        return
-    log_filter = UtteranceFilter()
-    _mark_owned(log_filter)
-    logger.addFilter(log_filter)
 
 
 def _set_stderr_level(level: int) -> None:

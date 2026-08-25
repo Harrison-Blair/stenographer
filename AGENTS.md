@@ -38,8 +38,8 @@ notification pointing at the README quick-install command, opt out with
 `feedback.update_check = false` — it never downloads and never updates
 anything), the queue-backed logging pipeline (one listener thread owning the
 stderr sink and the always-DEBUG rotating file, `subsystem: event key=value`
-lines, `utt=N` correlation, `feedback.log_level`, and a helper-local
-`overlay-helper.log`), and static Bash/Zsh/Fish completions.
+lines, `utt=N` correlation, and `feedback.log_level`), and static
+Bash/Zsh/Fish completions.
 
 ## Commands
 
@@ -234,13 +234,11 @@ The rule is structural, not stylistic, and it is enforced by a test.
    report never depends on a threshold set before the failure. Exceptions are
    logged through `log_failure(log, level, event, exc, *, safe=)`: `safe=True`
    renders `str(exc)` at *level* and the full traceback at DEBUG; `safe=False`
-   renders the class name and `traceback.format_tb` frames only — the message
-   is never formatted at any level. The text-capable lineages are the ASR
-   child's `classify_error` inference branch (its detail becomes the
-   `WorkerError` text) and the xclip clipboard read-back; neither may log a
-   `CalledProcessError`'s `.output` or `.args`. The overlay helper writes its
-   own `overlay-helper.log` in the state directory rather than sharing the
-   daemon's file — nothing new crosses the IPC boundary to get there.
+   renders the class name and the traceback's `file:line:function` frames only
+   — the message is never formatted at any level. The text-capable lineages
+   are the ASR child's `classify_error` inference branch (its detail becomes
+   the `WorkerError` text) and the xclip clipboard read-back; neither may log
+   a `CalledProcessError`'s `.output`, `.stdout`, or `.stderr` capture.
 7. **Overlay isolation** — the optional helper receives only fixed lifecycle
    metadata, a model-loading boolean, and 18 quantized spectrum levels over
    the versioned NDJSON protocol (v4); pulse timing is helper-local; raw
@@ -308,7 +306,7 @@ authoritative when editing.
 | `overlay/` | Core-side only: `spectrum.py` (pure 32 ms Hann FFT, 18 bands, fixed floors, 18-level quantization), `supervisor.py` (mailbox, NDJSON framing, readiness deadline, restart budget, the 2.5 s error auto-hide, and shutdown policy — the child itself is spawned, polled, read, and killed through `HelperTransport` / `HelperProcess`), `reducer.py` (the pure message→intent state machine every helper backend runs: command rejection, loading-edge dedupe, spectrum apply, state transitions with the recording level reset, teardown and pulse re-arm decisions), `render.py` (pure Pillow frame plus both placement policies, `overlay_position` / `layer_margin_bottom`), `entry.py`. The OS-specific helper backends live in `platform/linux/overlay_backends/` (shared `base.py`, `wayland.py` / `x11.py`, vendored `protocols/`) and are reached only via `overlay_backends()`. |
 | `cli/` | argparse surface + lazy dispatch (`stenographer.cli:main`; `python -m stenographer.cli` for helper re-exec); `commands/` thin handlers for `run`, `transcribe`, `model download`, `doctor`, `devices`, `setup`, `sounds`, `completion {bash,zsh,fish}`. Heavy imports stay inside handlers. Engines: `console.py` (the shared interactive frame both `setup` and `sounds` build on: `Console`, stream defaulting, the TTY gate, the config-document load ladder, save reporting, yes/no and service-restart prompts), `setup.py` (TTY-only full / `--quick`), `setup_config.py` (preservation layer), `binding_capture.py` (thin `current_platform().capture_binding` delegator; the pure reducer is core `stenographer.binding_capture`), `calibration.py` (one-shot 18-band floor estimator for `feedback.spectrum_floor_dbfs` only), `doctor.py` (report layout: pure `render`/`format_service_status` taking a `HostGuidance`, plus `run`; the gate itself is core `stenographer.capabilities` and every host word is the platform's), `sounds.py`. Completion is static — no device/model/config/audio/network discovery. |
 | `platform/` | The host boundary — see above. |
-| `utils/logging_setup.py` | The logging pipeline: a `QueueHandler` on the `stenographer` logger and one `QueueListener` thread owning both sinks — stderr (threshold from `STENOGRAPHER_LOG_LEVEL`, else `feedback.log_level` re-applied by `run` through `apply_stderr_level`; no `asctime` when `Platform.journal_attached`) and the unconditionally DEBUG rotating state file (5 MiB × 3). Pure `fmt_event` / `stderr_format`, the `utt=N` filter (`set_utterance`), tiered `log_failure`, privacy-safe worker forwarding (the child's listener targets these same sinks via `owned_handlers()`), and a `shutdown_logging` that stops the listener so the tail is never lost. |
+| `utils/logging_setup.py` | The logging pipeline: a `QueueHandler` on the `stenographer` logger and one `QueueListener` thread owning both sinks — stderr (threshold from `STENOGRAPHER_LOG_LEVEL`, else `feedback.log_level`, re-applied by `with_config` through `apply_stderr_level`; no `asctime` when `Platform.journal_attached`) and the unconditionally DEBUG rotating state file (5 MiB × 3). Pure `fmt_event` / `stderr_format`, the `utt=N` filter on the queue handler (`set_utterance`), tiered `log_failure`, privacy-safe worker forwarding (the child's listener targets these same sinks via `owned_handlers()`), and a `shutdown_logging` that stops the listener so the tail is never lost (`cli.main` runs it in a `finally`). |
 | `assets/` | Sound packs (`sounds/<pack>/`), icon, font, static completions. |
 | `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `quick-install.sh` (release bootstrap behind the README one-liner), `gen_keycodes.py`, `cue_audition.py`, `sound_asset_guard.py`. |
 | `docs/` | `windows/SCOPE.md` (Windows backend scope), `code-smells.md` / `refactoring-techniques.md` (review/refactor references), `cue-audition.md`. |

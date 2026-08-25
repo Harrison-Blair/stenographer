@@ -447,7 +447,6 @@ class Worker:
         self._request_q = self._ctx.Queue()
         self._response_q = self._ctx.Queue()
         self._log_q = self._ctx.Queue()
-        parent_logger = logging.getLogger("stenographer")
         # The parent's own handler is a queue forwarder, so fanning out to it
         # would enqueue the child's records a second time; the child's listener
         # targets the same real sinks the parent's listener owns.
@@ -464,7 +463,8 @@ class Worker:
                 self._request_q,
                 self._response_q,
                 self._log_q,
-                parent_logger.getEffectiveLevel(),
+                # The file sink is always DEBUG, so the child forwards everything.
+                logging.DEBUG,
             ),
             daemon=True,
         )

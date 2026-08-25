@@ -37,7 +37,7 @@ def captured():
     stream = StringIO()
     handler = logging.StreamHandler(stream)
     handler.setFormatter(
-        logging.Formatter("%(levelname)s %(message)s%(utt_suffix)s", defaults={"utt_suffix": ""})
+        logging.Formatter("%(levelname)s%(utt_suffix)s %(message)s", defaults={"utt_suffix": ""})
     )
     logger.addHandler(handler)
     yield logger, stream
@@ -179,7 +179,8 @@ def test_fmt_event_renders_fields_in_call_order_and_omits_missing_ones():
 
 def test_utterance_filter_stamps_the_current_id_and_clears_it(captured):
     logger, stream = captured
-    logger.addFilter(UtteranceFilter())
+    # On the handler, as production installs it: filters run in Handler.handle.
+    logger.handlers[0].addFilter(UtteranceFilter())
     try:
         set_utterance(7)
         logger.info(fmt_event("pipeline", "started"))
@@ -188,8 +189,31 @@ def test_utterance_filter_stamps_the_current_id_and_clears_it(captured):
     finally:
         set_utterance(None)
 
-    assert "INFO pipeline: started utt=7" in stream.getvalue()
+    assert "INFO utt=7 pipeline: started" in stream.getvalue()
     assert "INFO pipeline: idle\n" in stream.getvalue()
+
+
+def test_setup_wires_the_utterance_stamp_onto_module_loggers(tmp_path):
+    """Every module logs through ``getLogger(__name__)``, not the parent logger.
+
+    A stamp installed where those records never pass would correlate nothing.
+    Seen to FAIL with the filter on the ``stenographer`` logger (logger filters
+    run only for records emitted on that exact logger, so ``utt=`` was absent).
+    """
+
+    shutdown_logging()
+    stream = StringIO()
+    setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=stream)
+    try:
+        set_utterance(7)
+        logging.getLogger("stenographer.daemon").info(fmt_event("pipeline", "started"))
+    finally:
+        set_utterance(None)
+        shutdown_logging()
+
+    # Ahead of the message, so it can never trail a traceback the queue
+    # handler merged into the record's text.
+    assert "utt=7 pipeline: started" in stream.getvalue()
 
 
 def test_log_failure_unsafe_never_renders_the_exception_message(captured):
@@ -208,7 +232,12 @@ def test_log_failure_unsafe_never_renders_the_exception_message(captured):
     records = stream.getvalue()
     assert CANARY not in records
     assert "WARNING asr: job_failed phase=decode error=RuntimeError frames=" in records
-    assert "test_logging_setup.py" in records
+    # One space-free key=value token of file:line:function — not a pasted
+    # traceback, and never the source text (a literal there could quote data).
+    frames = records.split("frames=", 1)[1].strip()
+    assert frames.startswith("test_logging_setup.py:")
+    assert " " not in frames
+    assert "raise RuntimeError" not in records
 
 
 def test_log_failure_safe_renders_the_message_and_a_debug_traceback(captured):

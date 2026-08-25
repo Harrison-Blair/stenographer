@@ -147,6 +147,81 @@ def test_format_input_devices_empty():
     ]
 
 
+def test_main_flushes_the_log_queue_before_returning(monkeypatch, tmp_path, capsys):
+    """Nothing else stops the listener: its thread is daemonic and never joined.
+
+    Seen to FAIL against a ``main`` that dispatched without the ``finally``
+    (only the handful of records the listener happened to drain in time
+    reached the stream; the tail — the teardown lines — was lost).
+    """
+
+    import logging
+
+    import stenographer.cli as cli
+    from stenographer.utils.logging_setup import fmt_event, shutdown_logging
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.delenv("STENOGRAPHER_LOG_LEVEL", raising=False)
+
+    def fake_dispatch(argv):
+        log = logging.getLogger("stenographer.daemon")
+        for step in range(500):
+            log.info(fmt_event("daemon", "stopping", step=step))
+        return 0
+
+    monkeypatch.setattr(cli, "dispatch", fake_dispatch)
+    try:
+        assert cli.main([]) == 0
+        # Read before any cleanup of our own: the question is what ``main``
+        # itself had written by the time it returned.
+        written = capsys.readouterr().err
+    finally:
+        shutdown_logging()
+
+    assert "daemon: stopping step=499" in written
+
+
+def test_with_config_applies_the_configured_log_level(monkeypatch, tmp_path):
+    """Every config-reading command gets the threshold, not just ``run``.
+
+    Seen to FAIL with the call living in ``cmd_run`` (a handler wrapped by
+    ``with_config`` still logged at INFO under `log_level = "error"`).
+    """
+
+    import argparse
+    import dataclasses
+    import logging
+    from io import StringIO
+
+    import stenographer.config as config
+    from stenographer.cli.commands import with_config
+    from stenographer.utils.logging_setup import fmt_event, setup_logging, shutdown_logging
+
+    defaults = config.Config.defaults()
+    quiet = dataclasses.replace(
+        defaults, feedback=dataclasses.replace(defaults.feedback, log_level="error")
+    )
+    monkeypatch.setattr(config, "load_or_default", lambda: quiet)
+    monkeypatch.delenv("STENOGRAPHER_LOG_LEVEL", raising=False)
+
+    def handler(args, cfg):
+        logging.getLogger("stenographer.doctor").info(fmt_event("doctor", "probing"))
+        logging.getLogger("stenographer.doctor").error(fmt_event("doctor", "refused"))
+        return 0
+
+    shutdown_logging()
+    stream = StringIO()
+    setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=stream)
+    try:
+        assert with_config(handler)(argparse.Namespace()) == 0
+    finally:
+        shutdown_logging()
+
+    written = stream.getvalue()
+    assert "doctor: probing" not in written
+    assert "doctor: refused" in written
+
+
 def test_run_dispatches_config_to_daemon(monkeypatch):
     # `run` loads config and hands it to daemon.run, returning its exit code.
     # daemon.run is stubbed here to verify wiring only (not to assert a mocked
