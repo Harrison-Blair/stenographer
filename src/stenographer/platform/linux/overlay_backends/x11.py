@@ -12,6 +12,7 @@ placement and parsing policy independently testable.
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import os
 import re
@@ -30,6 +31,9 @@ from stenographer.platform.linux.overlay_backends.base import (
     HelperBackend,
 )
 from stenographer.status import Backend, OverlayState, UnavailableReason
+from stenographer.utils.logging_setup import fmt_event, log_failure
+
+log = logging.getLogger(__name__)
 
 _ARGB_DEPTH = 32
 _BYTES_PER_PIXEL = 4
@@ -365,13 +369,20 @@ class X11OverlayBackend(HelperBackend):
             raise BackendUnavailableError(UnavailableReason.NO_X_DISPLAY)
         try:
             self._display = xdisplay.Display()
-        except Exception:
+        except Exception as exc:
+            # ``from None`` on the wire: the parent gets the fixed reason only.
+            log_failure(log, logging.INFO, "overlay_helper: x_connect_failed", exc, safe=True)
             raise BackendUnavailableError(UnavailableReason.X_CONNECT_FAILED) from None
         try:
-            if not (
-                self._display.has_extension(shape.extname)
-                and self._display.has_extension(randr.extname)
-            ):
+            missing = tuple(
+                name
+                for name in (shape.extname, randr.extname)
+                if not self._display.has_extension(name)
+            )
+            if missing:
+                log.info(
+                    fmt_event("overlay_helper", "x_extensions_missing", missing="|".join(missing))
+                )
                 raise BackendUnavailableError(UnavailableReason.X_EXTENSIONS_UNAVAILABLE)
             self._screen = self._display.screen()
             render_formats = _render_formats(self._display)
@@ -398,8 +409,9 @@ class X11OverlayBackend(HelperBackend):
         except BackendUnavailableError:
             self.close()
             raise
-        except Exception:
+        except Exception as exc:
             self.close()
+            log_failure(log, logging.INFO, "overlay_helper: x_setup_failed", exc, safe=True)
             raise BackendUnavailableError(UnavailableReason.X_EXTENSIONS_UNAVAILABLE) from None
 
     def _root_monitor(self) -> Monitor:
@@ -644,8 +656,10 @@ class X11OverlayBackend(HelperBackend):
     def _close(self) -> None:
         self._destroy_window()
         if self._display is not None:
-            with contextlib.suppress(Exception):
+            try:
                 self._display.close()
+            except Exception as exc:
+                log_failure(log, logging.DEBUG, "overlay_helper: x_close_failed", exc, safe=True)
             self._display = None
 
 

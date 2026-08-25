@@ -59,6 +59,9 @@ class UnavailableReason(StrEnum):
     X_CONNECT_FAILED = "x_connect_failed"
     X_ARGB_UNAVAILABLE = "x_argb_unavailable"
     X_EXTENSIONS_UNAVAILABLE = "x_extensions_unavailable"
+    # A v4-compatible vocabulary extension: the reason set is fixed data, not a
+    # framing change, so adding one value bumps no protocol version.
+    BACKEND_DEPENDENCY_MISSING = "backend_dependency_missing"
     BACKENDS_UNAVAILABLE = "backends_unavailable"
     BACKEND_LOST = "backend_lost"
     HELPER_CRASHED = "helper_crashed"

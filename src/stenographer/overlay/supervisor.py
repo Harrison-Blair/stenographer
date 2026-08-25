@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
 from stenographer.overlay.entry import OVERLAY_ENTRY_ARG
@@ -48,8 +50,17 @@ from stenographer.status import (
     encode_message,
     error_timeout_applies,
 )
+from stenographer.utils.logging_setup import (
+    cap_helper_log,
+    fmt_event,
+    helper_log_path,
+    log_failure,
+    setup_helper_logging,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from stenographer.platform.base import HelperProcess
 
 log = logging.getLogger(__name__)
@@ -383,7 +394,7 @@ class OverlaySupervisor:
             while True:
                 self._mailbox.expire_error()
                 try:
-                    helper = transport.spawn(command)
+                    helper = transport.spawn(command, stderr_path=_helper_stderr_path())
                 except (OSError, ValueError) as exc:
                     log.warning("overlay: helper_start_failed error_type=%s", type(exc).__name__)
                     if not budget.on_exit(unexpected=True):
@@ -537,50 +548,129 @@ class OverlaySupervisor:
         helper.terminate(_SHUTDOWN_GRACE_SECONDS)
 
 
+def _helper_stderr_path() -> Path | None:
+    """The file a spawned helper's stderr appends to, capped before it is opened.
+
+    The parent caps it so the child, which caps the same path before installing
+    its own handler, finds it already small and leaves the inode alone — one
+    file, two append-mode descriptors, and no rotation while either is open.
+    """
+    try:
+        path = helper_log_path(os.environ, Path.home())
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log.debug(fmt_event("overlay", "helper_log_unavailable", error=type(exc).__name__))
+        return None
+    cap_helper_log(path)
+    return path
+
+
 def _write_helper_message(stream: BinaryIO, message: ReadyMessage | UnavailableMessage) -> None:
     stream.write(encode_message(message).encode("ascii"))
     stream.flush()
 
 
-def _select_backend():
+def selected_unavailable_reason(
+    reasons: Sequence[UnavailableReason | None],
+) -> UnavailableReason:
+    """Pick the reason to report once every overlay backend has refused. PURE.
+
+    The last *specific* reason wins: backends are tried in preference order, so
+    the last one to refuse is the final fallback, and its complaint is the one
+    that describes what the session actually lacks. ``BACKENDS_UNAVAILABLE``
+    survives only for the genuinely unknown case — no backend offered a reason,
+    or none was registered at all.
+    """
+    specific = [
+        reason
+        for reason in reasons
+        if reason is not None and reason is not UnavailableReason.BACKENDS_UNAVAILABLE
+    ]
+    return specific[-1] if specific else UnavailableReason.BACKENDS_UNAVAILABLE
+
+
+class _NoBackendError(Exception):
+    """Every registered backend refused; *reason* is what the parent is told."""
+
+    def __init__(self, reason: UnavailableReason) -> None:
+        super().__init__(reason.value)
+        self.reason = reason
+
+
+def _reported_reason(exc: BaseException) -> UnavailableReason | None:
+    """The fixed reason a backend attached to its refusal, if it attached one.
+
+    Read by attribute rather than by exception class: ``BackendUnavailableError``
+    lives with the backends inside the platform package, and this module is core.
+    """
+    reason = getattr(exc, "reason", None)
+    return reason if isinstance(reason, UnavailableReason) else None
+
+
+def _select_backend(log: logging.Logger):
     """Construct the first available platform backend; imports stay helper-local."""
+    reasons: list[UnavailableReason | None] = []
     for spec in current_platform().overlay_backends():
         try:
-            return spec.construct()
-        except Exception:
+            backend = spec.construct()
+        except Exception as exc:
+            reason = _reported_reason(exc)
+            reasons.append(reason)
+            log_failure(
+                log,
+                logging.INFO,
+                "overlay_helper: backend_rejected",
+                exc,
+                safe=True,
+                backend=spec.backend.value,
+                reason=reason.value if reason is not None else "unreported",
+            )
             continue
-    raise RuntimeError("overlay backends unavailable") from None
+        log.info(fmt_event("overlay_helper", "backend_selected", backend=spec.backend.value))
+        return backend
+    raise _NoBackendError(selected_unavailable_reason(reasons))
 
 
 def run_overlay_helper(
     input_stream: BinaryIO | None = None,
     output_stream: BinaryIO | None = None,
 ) -> int:
-    """Run the private display helper protocol endpoint."""
+    """Run the private display helper protocol endpoint.
+
+    The local ``log`` deliberately shadows this module's: in the child, the
+    supervisor half never runs and everything below writes to the helper's own
+    ``overlay-helper.log`` (see ``utils/logging_setup.setup_helper_logging``).
+    """
     input_stream = input_stream if input_stream is not None else sys.stdin.buffer
     output_stream = output_stream if output_stream is not None else sys.stdout.buffer
+    log = setup_helper_logging()
     try:
-        backend = _select_backend()
-    except Exception:
-        _write_helper_message(
-            output_stream, UnavailableMessage(UnavailableReason.BACKENDS_UNAVAILABLE)
-        )
+        backend = _select_backend(log)
+    except _NoBackendError as exc:
+        log.info(fmt_event("overlay_helper", "unavailable", reason=exc.reason.value))
+        _write_helper_message(output_stream, UnavailableMessage(exc.reason))
         return 0
 
     try:
         _write_helper_message(output_stream, ReadyMessage(backend.backend))
+        log.info(fmt_event("overlay_helper", "ready", backend=backend.backend.value))
         backend.run(input_stream)
-    except ProtocolError:
+    except ProtocolError as exc:
+        log_failure(log, logging.WARNING, "overlay_helper: protocol_error", exc, safe=True)
         with contextlib.suppress(Exception):
             _write_helper_message(
                 output_stream, UnavailableMessage(UnavailableReason.PROTOCOL_ERROR)
             )
         return 1
-    except Exception:
+    except Exception as exc:
+        log_failure(log, logging.WARNING, "overlay_helper: backend_lost", exc, safe=True)
         with contextlib.suppress(Exception):
             _write_helper_message(output_stream, UnavailableMessage(UnavailableReason.BACKEND_LOST))
         return 1
     finally:
-        with contextlib.suppress(Exception):
+        try:
             backend.close()
+        except Exception as exc:
+            log_failure(log, logging.DEBUG, "overlay_helper: close_failed", exc, safe=True)
+        log.info(fmt_event("overlay_helper", "closed"))
     return 0
