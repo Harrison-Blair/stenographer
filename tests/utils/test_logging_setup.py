@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import logging.handlers
 import os
@@ -238,6 +239,24 @@ def test_log_failure_unsafe_never_renders_the_exception_message(captured):
     assert frames.startswith("test_logging_setup.py:")
     assert " " not in frames
     assert "raise RuntimeError" not in records
+
+
+def test_log_failure_unsafe_frames_stay_space_free_across_frozen_import_frames(captured):
+    """A failed import puts ``<frozen importlib._bootstrap>`` frames in the traceback.
+
+    Seen to FAIL before the filename token was space-scrubbed (the frames value
+    contained ``<frozen importlib._bootstrap>`` and broke the key=value line).
+    """
+
+    logger, stream = captured
+    try:
+        importlib.import_module("stenographer_no_such_module_for_test")
+    except ImportError as exc:
+        log_failure(logger, logging.WARNING, "overlay: dependency_missing", exc, safe=False)
+
+    frames = stream.getvalue().split("frames=", 1)[1].strip()
+    assert "importlib" in frames
+    assert " " not in frames
 
 
 def test_log_failure_safe_renders_the_message_and_a_debug_traceback(captured):

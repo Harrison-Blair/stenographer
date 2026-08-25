@@ -126,7 +126,7 @@ def log_failure(
     # file:line:function only: source text could quote a literal, and a value
     # with spaces in it would break the key=value line it lands in.
     frames = "|".join(
-        f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+        f"{Path(frame.filename).name.replace(' ', '_')}:{frame.lineno}:{frame.name}"
         for frame in traceback.extract_tb(exc.__traceback__)
     )
     log.log(level, _with_fields(event, {**fields, "error": kind, "frames": frames or None}))
