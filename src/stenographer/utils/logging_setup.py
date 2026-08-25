@@ -201,6 +201,11 @@ def cap_helper_log(path: Path) -> None:
     once, before either descriptor is opened, keeps ``overlay-helper.log`` plus
     one ``.1`` backup with no rotation while the file is open. Never raises:
     an uncapped log beats a helper that will not start.
+
+    This is a start-time budget, not a live size cap. A dying display can log
+    many ``display_lost`` records inside one session, and the file will exceed
+    the budget until the next start — the supervisor's restart budget, not this
+    function, is what stops that session from running forever.
     """
     try:
         if path.stat().st_size < _HELPER_MAX_BYTES:
@@ -208,6 +213,22 @@ def cap_helper_log(path: Path) -> None:
         path.replace(path.with_name(path.name + ".1"))
     except OSError:
         return
+
+
+def _stderr_targets(path: Path, stream: TextIO) -> bool:
+    """Does *stream* already point at *path*'s current inode?
+
+    True in the spawned helper, whose stderr the transport opened on this very
+    file before the child existed. Capping then would rename the inode out from
+    under that descriptor, and every later byte of backend chatter would land
+    in a ``.1`` the next start overwrites. Identity, not path equality: only
+    ``fstat`` can see through an inherited descriptor.
+    """
+    try:
+        here, there = os.fstat(stream.fileno()), path.stat()
+    except (OSError, ValueError, AttributeError):
+        return False
+    return (here.st_dev, here.st_ino) == (there.st_dev, there.st_ino)
 
 
 def setup_helper_logging(
@@ -228,6 +249,9 @@ def setup_helper_logging(
     opened. With the file live it would be a duplicate rather than a second
     audience: the transport already points the helper's stderr at that same
     file so a backend library's own chatter lands beside these records.
+
+    Nothing here raises. A helper that cannot open its log must still serve the
+    protocol; losing the diagnostics is the lesser failure.
     """
     resolved_env = os.environ if env is None else env
     resolved_home = Path.home() if home is None else home
@@ -236,18 +260,18 @@ def setup_helper_logging(
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
 
-    stream_handler = logging.StreamHandler(resolved_stderr)
-    _mark_owned(stream_handler)
-    stream_handler.setLevel(resolve_log_level(resolved_env.get("STENOGRAPHER_LOG_LEVEL")))
-    stream_handler.setFormatter(logging.Formatter(_FORMAT, defaults=_FORMAT_DEFAULTS))
-
     log_path: Path | None = None
     try:
         log_path = helper_log_path(resolved_env, resolved_home)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        cap_helper_log(log_path)
+        if not _stderr_targets(log_path, resolved_stderr):
+            cap_helper_log(log_path)
         file_handler: logging.Handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
-    except (OSError, ValueError) as exc:
+    except Exception as exc:
+        stream_handler = logging.StreamHandler(resolved_stderr)
+        _mark_owned(stream_handler)
+        stream_handler.setLevel(resolve_log_level(resolved_env.get("STENOGRAPHER_LOG_LEVEL")))
+        stream_handler.setFormatter(logging.Formatter(_FORMAT, defaults=_FORMAT_DEFAULTS))
         logger.addHandler(stream_handler)
         _emit_file_warning(
             logger,

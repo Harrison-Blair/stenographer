@@ -49,6 +49,7 @@ from stenographer.status import (
     decode_message,
     encode_message,
     error_timeout_applies,
+    selected_unavailable_reason,
 )
 from stenographer.utils.logging_setup import (
     cap_helper_log,
@@ -59,8 +60,6 @@ from stenographer.utils.logging_setup import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from stenographer.platform.base import HelperProcess
 
 log = logging.getLogger(__name__)
@@ -570,25 +569,6 @@ def _write_helper_message(stream: BinaryIO, message: ReadyMessage | UnavailableM
     stream.flush()
 
 
-def selected_unavailable_reason(
-    reasons: Sequence[UnavailableReason | None],
-) -> UnavailableReason:
-    """Pick the reason to report once every overlay backend has refused. PURE.
-
-    The last *specific* reason wins: backends are tried in preference order, so
-    the last one to refuse is the final fallback, and its complaint is the one
-    that describes what the session actually lacks. ``BACKENDS_UNAVAILABLE``
-    survives only for the genuinely unknown case — no backend offered a reason,
-    or none was registered at all.
-    """
-    specific = [
-        reason
-        for reason in reasons
-        if reason is not None and reason is not UnavailableReason.BACKENDS_UNAVAILABLE
-    ]
-    return specific[-1] if specific else UnavailableReason.BACKENDS_UNAVAILABLE
-
-
 class _NoBackendError(Exception):
     """Every registered backend refused; *reason* is what the parent is told."""
 
@@ -607,7 +587,7 @@ def _reported_reason(exc: BaseException) -> UnavailableReason | None:
     return reason if isinstance(reason, UnavailableReason) else None
 
 
-def _select_backend(log: logging.Logger):
+def _select_backend():
     """Construct the first available platform backend; imports stay helper-local."""
     reasons: list[UnavailableReason | None] = []
     for spec in current_platform().overlay_backends():
@@ -637,19 +617,32 @@ def run_overlay_helper(
 ) -> int:
     """Run the private display helper protocol endpoint.
 
-    The local ``log`` deliberately shadows this module's: in the child, the
-    supervisor half never runs and everything below writes to the helper's own
-    ``overlay-helper.log`` (see ``utils/logging_setup.setup_helper_logging``).
+    In the child only the module logger is used, but its records land in the
+    helper's own ``overlay-helper.log``: ``setup_helper_logging`` is what
+    reconfigures the shared ``stenographer`` logger this one propagates to.
+
+    Every exit writes exactly one reply. The parent blocks on the readiness
+    deadline, so a helper that dies without a record costs it three seconds and
+    tells it nothing about why.
     """
     input_stream = input_stream if input_stream is not None else sys.stdin.buffer
     output_stream = output_stream if output_stream is not None else sys.stdout.buffer
-    log = setup_helper_logging()
+    setup_helper_logging()
     try:
-        backend = _select_backend(log)
+        backend = _select_backend()
     except _NoBackendError as exc:
         log.info(fmt_event("overlay_helper", "unavailable", reason=exc.reason.value))
         _write_helper_message(output_stream, UnavailableMessage(exc.reason))
         return 0
+    except Exception as exc:
+        # The host itself refused (no platform support, no backend registry):
+        # not a backend's fixed reason, so the unspecific one is the honest one.
+        log_failure(log, logging.WARNING, "overlay_helper: selection_failed", exc, safe=True)
+        with contextlib.suppress(Exception):
+            _write_helper_message(
+                output_stream, UnavailableMessage(UnavailableReason.BACKENDS_UNAVAILABLE)
+            )
+        return 1
 
     try:
         _write_helper_message(output_stream, ReadyMessage(backend.backend))

@@ -14,6 +14,7 @@ import sys
 import pytest
 
 from stenographer.platform.linux.overlay import overlay_backends
+from stenographer.platform.linux.overlay_backends.base import BackendUnavailableError
 from stenographer.status import Backend, UnavailableReason
 
 _BACKEND_MODULES = {
@@ -40,3 +41,21 @@ def test_a_blocked_import_never_raises_out_of_a_probe(monkeypatch):
         monkeypatch.setitem(sys.modules, module, None)
 
     assert all(spec.probe() is not None for spec in overlay_backends())
+
+
+@pytest.mark.parametrize("backend", sorted(_BACKEND_MODULES, key=lambda item: item.value))
+def test_an_unimportable_backend_constructs_the_same_reason_it_probes(backend, monkeypatch):
+    """Otherwise doctor and the running helper describe one install differently.
+
+    Seen to FAIL with the construct guard removed: a bare ``ImportError``
+    carries no ``reason``, so the helper folded it to ``backends_unavailable``
+    while the probe beside it said ``backend_dependency_missing``.
+    """
+
+    monkeypatch.setitem(sys.modules, _BACKEND_MODULES[backend], None)
+    spec = next(item for item in overlay_backends() if item.backend is backend)
+
+    with pytest.raises(BackendUnavailableError) as caught:
+        spec.construct()
+    assert caught.value.reason is UnavailableReason.BACKEND_DEPENDENCY_MISSING
+    assert caught.value.reason is spec.probe()

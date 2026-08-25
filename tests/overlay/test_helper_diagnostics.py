@@ -2,17 +2,22 @@
 """Pure tests for what the helper tells the parent when no backend will start.
 
 The helper is the only process that knows *why* a backend refused; the reason
-it forwards is the whole diagnostic the parent and ``doctor`` ever see.
+it forwards is the whole diagnostic the parent and ``doctor`` ever see. The
+fold that picks it lives in ``status`` because two callers must agree on it —
+the helper's construct loop and the read-only probe behind ``doctor``.
 """
 
 from __future__ import annotations
 
-from stenographer.overlay.supervisor import selected_unavailable_reason
+from stenographer.capabilities import OverlayCapability, probe_overlay
+from stenographer.platform.base import OverlayBackendSpec
 from stenographer.status import (
+    Backend,
     UnavailableMessage,
     UnavailableReason,
     decode_message,
     encode_message,
+    selected_unavailable_reason,
 )
 
 
@@ -55,3 +60,44 @@ def test_the_dependency_reason_round_trips_over_the_v4_protocol():
     assert '"v":4' in record
     assert '"reason":"backend_dependency_missing"' in record
     assert decode_message(record) == message
+
+
+def test_doctor_and_the_helper_fold_the_same_refusals_the_same_way(monkeypatch):
+    """A generic last refusal must not hide a specific earlier one from doctor.
+
+    Seen to FAIL against ``probe_overlay``'s own ``reason or
+    BACKENDS_UNAVAILABLE``, which kept the *last* reason: layer-shell's
+    ``required_wayland_globals_missing`` was reported by the helper's log and
+    swallowed by the report, which said ``backends_unavailable``.
+    """
+
+    refusals = {
+        Backend.LAYER_SHELL: UnavailableReason.REQUIRED_GLOBALS_MISSING,
+        Backend.XWAYLAND: UnavailableReason.BACKENDS_UNAVAILABLE,
+    }
+    specs = tuple(
+        OverlayBackendSpec(backend, (lambda r=reason: r), _unreachable)
+        for backend, reason in refusals.items()
+    )
+    monkeypatch.setattr(
+        "stenographer.capabilities.current_platform", lambda: _Platform(specs), raising=True
+    )
+
+    assert probe_overlay(True) == OverlayCapability.unavailable(
+        selected_unavailable_reason(list(refusals.values()))
+    )
+    assert probe_overlay(True).reason is UnavailableReason.REQUIRED_GLOBALS_MISSING
+
+
+def _unreachable():
+    raise AssertionError("probe_overlay must never construct a backend")
+
+
+class _Platform:
+    """The one method ``probe_overlay`` calls; no host is involved."""
+
+    def __init__(self, specs):
+        self._specs = specs
+
+    def overlay_backends(self):
+        return self._specs

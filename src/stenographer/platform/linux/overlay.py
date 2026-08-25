@@ -35,7 +35,7 @@ def _probe_layer_shell() -> UnavailableReason | None:
         log_failure(
             log,
             logging.DEBUG,
-            "overlay_helper: backend_import_failed",
+            "overlay: backend_import_failed",
             exc,
             safe=True,
             backend=Backend.LAYER_SHELL.value,
@@ -48,7 +48,7 @@ def _probe_layer_shell() -> UnavailableReason | None:
         log_failure(
             log,
             logging.DEBUG,
-            "overlay_helper: backend_probe_failed",
+            "overlay: backend_probe_failed",
             exc,
             safe=True,
             backend=Backend.LAYER_SHELL.value,
@@ -57,7 +57,22 @@ def _probe_layer_shell() -> UnavailableReason | None:
 
 
 def _construct_layer_shell() -> OverlayBackend:
-    from stenographer.platform.linux.overlay_backends.wayland import LayerShellBackend
+    from stenographer.platform.linux.overlay_backends.base import BackendUnavailableError
+
+    try:
+        from stenographer.platform.linux.overlay_backends.wayland import LayerShellBackend
+    except ImportError as exc:
+        # The same reason the probe returns: a partial install must not read as
+        # a missing compositor just because this path runs in the helper.
+        log_failure(
+            log,
+            logging.INFO,
+            "overlay_helper: backend_import_failed",
+            exc,
+            safe=True,
+            backend=Backend.LAYER_SHELL.value,
+        )
+        raise BackendUnavailableError(UnavailableReason.BACKEND_DEPENDENCY_MISSING) from None
 
     return LayerShellBackend()
 
@@ -70,7 +85,7 @@ def _probe_xwayland() -> UnavailableReason | None:
         log_failure(
             log,
             logging.DEBUG,
-            "overlay_helper: backend_import_failed",
+            "overlay: backend_import_failed",
             exc,
             safe=True,
             backend=Backend.XWAYLAND.value,
@@ -82,7 +97,7 @@ def _probe_xwayland() -> UnavailableReason | None:
         log_failure(
             log,
             logging.DEBUG,
-            "overlay_helper: backend_probe_failed",
+            "overlay: backend_probe_failed",
             exc,
             safe=True,
             backend=Backend.XWAYLAND.value,
@@ -91,7 +106,20 @@ def _probe_xwayland() -> UnavailableReason | None:
 
 
 def _construct_xwayland() -> OverlayBackend:
-    from stenographer.platform.linux.overlay_backends.x11 import X11OverlayBackend
+    from stenographer.platform.linux.overlay_backends.base import BackendUnavailableError
+
+    try:
+        from stenographer.platform.linux.overlay_backends.x11 import X11OverlayBackend
+    except ImportError as exc:
+        log_failure(
+            log,
+            logging.INFO,
+            "overlay_helper: backend_import_failed",
+            exc,
+            safe=True,
+            backend=Backend.XWAYLAND.value,
+        )
+        raise BackendUnavailableError(UnavailableReason.BACKEND_DEPENDENCY_MISSING) from None
 
     return X11OverlayBackend()
 

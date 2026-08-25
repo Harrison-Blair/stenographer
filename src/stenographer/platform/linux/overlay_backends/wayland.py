@@ -242,6 +242,7 @@ class LayerShellBackend(HelperBackend):
         item = self._inventory.remove(name)
         removal = classify_global_removal(None if item is None else item.interface)
         if removal is GlobalRemoval.LOST:
+            log.info(fmt_event("overlay_helper", "display_lost", at="global_remove"))
             self._lost = True
             return
         if removal is not GlobalRemoval.OUTPUT:
@@ -375,6 +376,7 @@ class LayerShellBackend(HelperBackend):
 
     def _on_layer_closed(self, _layer_surface) -> None:
         if callback_is_current(_layer_surface, self._layer_surface):
+            log.info(fmt_event("overlay_helper", "display_lost", at="layer_closed"))
             self._lost = True
 
     def _draw(self) -> None:

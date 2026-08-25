@@ -11,7 +11,7 @@ or contains raw microphone samples.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
@@ -67,6 +67,31 @@ class UnavailableReason(StrEnum):
     HELPER_CRASHED = "helper_crashed"
     PROTOCOL_ERROR = "protocol_error"
     INTERNAL_ERROR = "internal_error"
+
+
+def selected_unavailable_reason(
+    reasons: Sequence[UnavailableReason | None],
+) -> UnavailableReason:
+    """Pick the reason to report once every overlay backend has refused. PURE.
+
+    The last *specific* reason wins: backends are tried in preference order, so
+    the last one to refuse is the final fallback, and its complaint is the one
+    that describes what the session actually lacks. ``BACKENDS_UNAVAILABLE``
+    survives only for the genuinely unknown case — no backend offered a reason,
+    or none was registered at all.
+
+    It lives here, with the vocabulary, because two callers must agree: the
+    helper folding its construct failures (``overlay/supervisor.py``) and the
+    read-only probe behind ``doctor`` (``capabilities.probe_overlay``). A
+    second copy of the policy would let the report and the log disagree about
+    the same session.
+    """
+    specific = [
+        reason
+        for reason in reasons
+        if reason is not None and reason is not UnavailableReason.BACKENDS_UNAVAILABLE
+    ]
+    return specific[-1] if specific else UnavailableReason.BACKENDS_UNAVAILABLE
 
 
 @dataclass(frozen=True, slots=True)
