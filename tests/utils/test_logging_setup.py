@@ -201,6 +201,14 @@ def test_fmt_event_quotes_only_the_values_that_would_break_key_equals_value():
     )
 
 
+def test_fmt_event_keeps_a_multi_line_value_on_one_physical_line():
+    """Seen to FAIL when the quoted branch only escaped quotes and backslashes."""
+
+    line = fmt_event("asr", "job_failed", detail="line one\nline two")
+    assert "\n" not in line
+    assert line == 'asr: job_failed detail="line one\\nline two"'
+
+
 def test_fmt_event_escapes_quotes_and_backslashes_inside_a_quoted_value():
     # The closing quote has to stay findable, so an embedded quote or backslash
     # is escaped. Seen to FAIL against a renderer that only wrapped in quotes.

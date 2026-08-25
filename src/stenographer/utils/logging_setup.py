@@ -16,6 +16,7 @@ whether the exception's own text may be rendered at all.
 
 from __future__ import annotations
 
+import json
 import logging
 import logging.handlers
 import os
@@ -395,8 +396,9 @@ def _render(value: object) -> str:
     text = f"{value:g}" if isinstance(value, float) else str(value)
     if not any(char.isspace() for char in text) and '"' not in text:
         return text
-    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    # JSON quoting escapes the quote and backslash and also every control
+    # character, so a multi-line error detail stays one physical log line.
+    return json.dumps(text, ensure_ascii=False)
 
 
 def _mark_owned(handler: logging.Handler) -> None:

@@ -528,25 +528,23 @@ class Daemon:
                 self._publish_state(OverlayState.TRANSCRIBING)
             try:
                 result = self._worker.transcribe(samples, self._utterance_id)
-            except WorkerPathologicalError as exc:
-                if self._stop_event.is_set():
-                    outcome_name = "CANCELLED"
-                    self._publish_state(OverlayState.HIDDEN)
-                    return
-                # Caught before ``WorkerError``, which it subclasses: this
-                # detail is the audited counts-only rejection reason, and it is
-                # the only thing that explains a silently discarded decode.
-                log_failure(log, logging.WARNING, "pipeline: transcription_failed", exc, safe=True)
-                self._fail("transcription failed")
-                return
             except WorkerError as exc:
                 if self._stop_event.is_set():
                     outcome_name = "CANCELLED"
                     self._publish_state(OverlayState.HIDDEN)
                     return
-                # safe=False: the message is the ASR child's serialised detail,
-                # which its inference branch can build from decoder output.
-                log_failure(log, logging.WARNING, "pipeline: transcription_failed", exc, safe=False)
+                # A pathological rejection carries the audited counts-only
+                # reason, the one thing that explains a silently discarded
+                # decode; any other detail is the ASR child's serialised
+                # message, which its inference branch can build from decoder
+                # output, so it is never rendered.
+                log_failure(
+                    log,
+                    logging.WARNING,
+                    "pipeline: transcription_failed",
+                    exc,
+                    safe=isinstance(exc, WorkerPathologicalError),
+                )
                 self._fail("transcription failed")
                 return
             self._apply_decode(record, result)
