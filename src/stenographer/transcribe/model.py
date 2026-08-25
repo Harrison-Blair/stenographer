@@ -63,6 +63,9 @@ class TranscriptionResult:
     text: str
     duration_seconds: float
     segments: list[SegmentInfo] = field(default_factory=list)
+    #: Seconds of audio the VAD kept. Carried back to the parent so the
+    #: utterance summary can report it without a second decode-side log line.
+    vad_seconds: float = 0.0
 
 
 class Model:
@@ -84,6 +87,7 @@ class Model:
             local_files_only=True,
         )
         self._cfg = cfg
+        self.cpu_threads = cpu_threads
         log.info(
             "asr: model_loaded elapsed_ms=%d cpu_threads=%d",
             round((time.monotonic() - started) * 1000),
@@ -98,7 +102,7 @@ class Model:
                 "segments=0 words=0 transcript_chars=0",
                 round((time.monotonic() - started) * 1000),
             )
-            return TranscriptionResult(text="", duration_seconds=0.0, segments=[])
+            return TranscriptionResult(text="", duration_seconds=0.0, segments=[], vad_seconds=0.0)
         if samples.ndim == 2:
             samples = samples.mean(axis=1) if samples.shape[1] > 1 else samples.squeeze(-1)
         cfg = self._cfg
@@ -218,7 +222,9 @@ def _assemble(
         audio_seconds=audio_seconds,
         vad_seconds=vad_seconds,
     )
-    return TranscriptionResult(text=text, duration_seconds=audio_seconds, segments=kept)
+    return TranscriptionResult(
+        text=text, duration_seconds=audio_seconds, segments=kept, vad_seconds=vad_seconds
+    )
 
 
 def is_model_cached(model_id: str) -> bool:

@@ -21,6 +21,7 @@ import evdev
 
 from stenographer.hotkey import ChordTracker, chord_active
 from stenographer.keycodes import CODE_NAMES, KEY_CODES
+from stenographer.utils.logging_setup import log_failure
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -86,7 +87,8 @@ def auto_detect_paths() -> list[str]:
     for path in _glob_event_nodes():
         try:
             device = evdev.InputDevice(path)
-        except OSError:
+        except OSError as exc:
+            log_failure(logger, logging.DEBUG, "hotkey: device_skipped", exc, safe=True, path=path)
             continue
         try:
             keys = device.capabilities().get(evdev.ecodes.EV_KEY, ())
@@ -103,17 +105,28 @@ def list_hotkey_devices() -> list[tuple[str, str]]:
     devices: list[tuple[str, str]] = []
     try:
         paths = evdev.list_devices()
-    except OSError:
+    except OSError as exc:
+        # WARNING: this is why setup and doctor show an empty device list.
+        log_failure(logger, logging.WARNING, "hotkey: enumerate_failed", exc, safe=True)
         return devices
     for path in paths:
         try:
             device = evdev.InputDevice(path)
-        except OSError:
+        except OSError as exc:
+            log_failure(logger, logging.DEBUG, "hotkey: device_skipped", exc, safe=True, path=path)
             continue
         try:
             try:
                 has_keys = evdev.ecodes.EV_KEY in device.capabilities()
-            except OSError:
+            except OSError as exc:
+                log_failure(
+                    logger,
+                    logging.DEBUG,
+                    "hotkey: capabilities_unreadable",
+                    exc,
+                    safe=True,
+                    path=path,
+                )
                 continue
             if has_keys:
                 devices.append((path, f"{path}: {device.name}"))
@@ -247,7 +260,10 @@ class EvdevHotkeyListener(ChordTracker):
                 continue
             try:
                 device = evdev.InputDevice(path)
-            except OSError:
+            except OSError as exc:
+                log_failure(
+                    logger, logging.DEBUG, "hotkey: device_skipped", exc, safe=True, path=path
+                )
                 continue
             logger.info("hotkey: hotplug device=%s name=%s", path, device.name)
             with self._held_lock:

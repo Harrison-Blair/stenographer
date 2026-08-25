@@ -488,8 +488,15 @@ class OverlaySupervisor:
                     if not chunk:
                         try:
                             reader.finish()
-                        except ProtocolError:
-                            log.warning("overlay: helper_protocol_error")
+                        except ProtocolError as exc:
+                            log_failure(
+                                log,
+                                logging.WARNING,
+                                "overlay: helper_protocol_error",
+                                exc,
+                                safe=True,
+                                phase="finish",
+                            )
                         stream_failed = True
                     else:
                         try:
@@ -519,8 +526,15 @@ class OverlaySupervisor:
                                         raise ProtocolError("duplicate helper terminal message")
                                 else:
                                     raise ProtocolError("unexpected helper protocol message")
-                        except ProtocolError:
-                            log.warning("overlay: helper_protocol_error")
+                        except ProtocolError as exc:
+                            log_failure(
+                                log,
+                                logging.WARNING,
+                                "overlay: helper_protocol_error",
+                                exc,
+                                safe=True,
+                                phase="feed",
+                            )
                             stream_failed = True
                 if stream_failed:
                     break

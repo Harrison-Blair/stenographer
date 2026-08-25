@@ -93,6 +93,7 @@ CORE = (
     "stenographer.transcribe.worker",
     "stenographer.transcribe.model",
     "stenographer.transcribe.format",
+    "stenographer.transcribe.pipeline",
     "stenographer.utils.logging_setup",
     "stenographer.platform",
     "stenographer.platform.base",

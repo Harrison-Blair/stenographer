@@ -29,6 +29,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from stenographer.platform.linux.process import child_env
+from stenographer.utils.logging_setup import log_failure
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,6 +37,11 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _COPY_TIMEOUT_SECONDS = 10.0
+_COPY_ERRORS = (
+    subprocess.CalledProcessError,
+    subprocess.TimeoutExpired,
+    FileNotFoundError,
+)
 
 # Either protocol lets a background client set the selection without focus.
 _DATA_CONTROL_GLOBALS = frozenset({"ext_data_control_manager_v1", "zwlr_data_control_manager_v1"})
@@ -87,10 +93,13 @@ def detect_clipboard_backend() -> ClipboardBackend:
         globals_seen = _wayland_global_interfaces()
     except Exception as exc:
         backend = pick_backend(None, have_display=have_display)
-        log.warning(
-            "deliver: wayland_probe_failed error_type=%s backend=%s",
-            type(exc).__name__,
-            backend.value,
+        log_failure(
+            log,
+            logging.WARNING,
+            "deliver: wayland_probe_failed",
+            exc,
+            safe=True,
+            backend=backend.value,
         )
         return backend
     return pick_backend(globals_seen, have_display=have_display)
@@ -120,12 +129,17 @@ def copy_both_selections(text: str) -> bool:
                 stderr=subprocess.DEVNULL,
                 env=child_env(),
             )
-        except (
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            FileNotFoundError,
-        ) as exc:
-            log.debug("deliver: copy_failed argv=%s error=%s", " ".join(argv), exc)
+        except _COPY_ERRORS as exc:
+            # WARNING, not DEBUG: a failed copy is why nothing was pasted, and
+            # ``wl-copy``'s own complaint is host vocabulary, never transcript.
+            log_failure(
+                log,
+                logging.WARNING,
+                "deliver: copy_failed",
+                exc,
+                safe=True,
+                argv=" ".join(argv),
+            )
             return False
     return True
 
@@ -144,6 +158,8 @@ def copy_both_selections_x11(text: str) -> bool:
     for selection in ("clipboard", "primary"):
         argv = ["xclip", "-selection", selection]
         try:
+            # The write discards both streams, so nothing it can raise has ever
+            # seen the selection: its own complaint is host vocabulary.
             subprocess.run(
                 argv,
                 input=payload,
@@ -153,6 +169,18 @@ def copy_both_selections_x11(text: str) -> bool:
                 stderr=subprocess.DEVNULL,
                 env=child_env(),
             )
+        except _COPY_ERRORS as exc:
+            log_failure(
+                log,
+                logging.WARNING,
+                "deliver: copy_failed",
+                exc,
+                safe=True,
+                argv=" ".join(argv),
+                phase="write",
+            )
+            return False
+        try:
             readback = subprocess.run(
                 [*argv, "-o"],
                 check=True,
@@ -160,12 +188,22 @@ def copy_both_selections_x11(text: str) -> bool:
                 capture_output=True,
                 env=child_env(),
             )
-        except (
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            FileNotFoundError,
-        ) as exc:
-            log.debug("deliver: copy_failed argv=%s error=%s", " ".join(argv), exc)
+        except _COPY_ERRORS as exc:
+            # safe=False, and split from the write above for exactly this
+            # reason: the read-back captures the selection, so a raised
+            # ``CalledProcessError``/``TimeoutExpired`` carries the clipboard's
+            # own bytes on ``.output``/``.stdout``. Only the class name and the
+            # traceback frames may ever be rendered from this lineage; the argv
+            # is ours, so it is passed as a field rather than read off ``.cmd``.
+            log_failure(
+                log,
+                logging.WARNING,
+                "deliver: copy_failed",
+                exc,
+                safe=False,
+                argv=" ".join(argv),
+                phase="readback",
+            )
             return False
         if readback.stdout != payload:
             log.warning(

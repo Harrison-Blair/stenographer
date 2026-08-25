@@ -12,6 +12,7 @@ from importlib.resources import files
 from typing import TYPE_CHECKING
 
 from stenographer.config import DEFAULT_SOUND_PACK, SOUND_PACK_PATTERN
+from stenographer.utils.logging_setup import fmt_event, log_failure
 
 if TYPE_CHECKING:
     from stenographer.config import FeedbackConfig
@@ -112,10 +113,27 @@ def _valid_wav(path: pathlib.Path) -> bool:
             if not _wav_header_ok(channels, sample_width, sample_rate, frame_count, compression):
                 return False
             frames = wav.readframes(frame_count)
-    except (EOFError, MemoryError, OSError, wave.Error):
+    except (EOFError, MemoryError, OSError, wave.Error) as exc:
+        # A cue that silently fails validation is indistinguishable from a
+        # muted daemon, so name the file and the reason it was rejected.
+        log_failure(logger, logging.WARNING, "feedback: cue_invalid", exc, safe=True, path=path)
         return False
 
-    return _wav_payload_ok(len(frames), frame_count, channels, sample_width)
+    if not _wav_payload_ok(len(frames), frame_count, channels, sample_width):
+        logger.warning(
+            fmt_event(
+                "feedback",
+                "cue_invalid",
+                path=path,
+                reason="truncated_payload",
+                frame_bytes=len(frames),
+                frame_count=frame_count,
+                channels=channels,
+                sample_width=sample_width,
+            )
+        )
+        return False
+    return True
 
 
 def cue_audible(mute: bool, volume: float, *, has_player: bool) -> bool:

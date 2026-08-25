@@ -22,6 +22,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Literal
 
+from stenographer.utils.logging_setup import fmt_event
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -105,17 +107,37 @@ class ChordTracker:
         timeout. Polls only _held under _held_lock — never the dispatch lock — so
         it cannot deadlock against a reader thread.
         """
-        deadline = time.monotonic() + timeout
+        started_at = time.monotonic()
+        deadline = started_at + timeout
         while True:
             if self._stop_event.is_set():
-                return True
+                return self._report_release(started_at, released=True, reason="listener_stopped")
             with self._held_lock:
                 still_held = bool(self._chord & self._held)
             if not still_held:
-                return True
+                return self._report_release(started_at, released=True, reason="released")
             if time.monotonic() >= deadline:
-                return False
+                return self._report_release(started_at, released=False, reason="timeout")
             self._stop_event.wait(poll_interval)
+
+    @staticmethod
+    def _report_release(started_at: float, *, released: bool, reason: str) -> bool:
+        """Log how long the release guard actually waited, success included.
+
+        The success case is the interesting one: a wait that is consistently
+        near the timeout means the chord is being reported released late, which
+        is invisible if only the timeout is ever logged.
+        """
+        logger.debug(
+            fmt_event(
+                "hotkey",
+                "release_wait",
+                elapsed_ms=round((time.monotonic() - started_at) * 1000.0, 1),
+                released=int(released),
+                reason=reason,
+            )
+        )
+        return released
 
     def _key_event(self, device_id: int, code: int, value: int) -> bool:
         """Feed one device's key transition into the shared held state and dispatch

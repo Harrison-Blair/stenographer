@@ -24,28 +24,37 @@ import logging
 import os
 import sys
 import threading
+import time
 from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from stenographer.audio import Recorder, speech_gate_passes
+from stenographer.audio import Recorder, speech_gate_stats
 from stenographer.constants import SAMPLE_RATE
 from stenographer.delivery.deliver import Deliverer
 from stenographer.delivery.feedback import Feedback
 from stenographer.platform import current_platform
 from stenographer.platform.base import SingleInstanceLockError
 from stenographer.status import NullStatusSink, OverlayState, StatusSink, should_publish_state
-from stenographer.transcribe.format import format_transcript
-from stenographer.transcribe.worker import Worker, WorkerError
+from stenographer.transcribe.pipeline import (
+    UtteranceRecord,
+    log_gate,
+    log_summary,
+    transcript_text,
+)
+from stenographer.transcribe.worker import Worker, WorkerError, WorkerPathologicalError
+from stenographer.utils.logging_setup import fmt_event, log_failure, set_utterance
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     import numpy as np
 
-    from stenographer.capabilities import Capabilities
+    from stenographer.audio import CaptureStats
+    from stenographer.capabilities import Capabilities, OverlayCapability
     from stenographer.config import Config
     from stenographer.platform.base import Notifier, Platform
+    from stenographer.transcribe.model import TranscriptionResult
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +81,7 @@ def _play_cue(feedback: Feedback, name: str) -> None:
     try:
         feedback.play(name)
     except Exception as exc:
-        log.warning("feedback: cue_failed cue=%s error_type=%s", name, type(exc).__name__)
+        log_failure(log, logging.WARNING, "feedback: cue_failed", exc, safe=True, cue=name)
 
 
 def _publish_status(status: StatusSink, state: OverlayState) -> None:
@@ -80,8 +89,8 @@ def _publish_status(status: StatusSink, state: OverlayState) -> None:
     try:
         status.publish(state)
     except Exception as exc:
-        log.warning(
-            "overlay: publish_failed state=%s error_type=%s", state.value, type(exc).__name__
+        log_failure(
+            log, logging.WARNING, "overlay: publish_failed", exc, safe=True, state=state.value
         )
 
 
@@ -89,10 +98,13 @@ def _publish_loading_activity(status: StatusSink, active: bool) -> None:
     try:
         status.loading_activity(active)
     except Exception as exc:
-        log.warning(
-            "overlay: loading_activity_failed active=%s error_type=%s",
-            active,
-            type(exc).__name__,
+        log_failure(
+            log,
+            logging.WARNING,
+            "overlay: loading_activity_failed",
+            exc,
+            safe=True,
+            active=int(active),
         )
 
 
@@ -124,6 +136,22 @@ def classify_pipeline(
 def can_start(recording: bool, busy: bool, stopping: bool) -> bool:
     """Admit a new utterance only when idle — one utterance at a time. PURE."""
     return not (recording or busy or stopping)
+
+
+def ignored_edge_reason(recording: bool, busy: bool, stopping: bool) -> str:
+    """Name why an edge was refused, most specific state first. PURE.
+
+    "recording_or_busy" was true of every refusal and therefore explained none
+    of them; a press that vanished during shutdown looked exactly like one that
+    vanished mid-decode.
+    """
+    if recording:
+        return "recording"
+    if busy:
+        return "busy"
+    if stopping:
+        return "stopping"
+    return "none"
 
 
 def toggle_action(
@@ -191,7 +219,10 @@ class Daemon:
         self._recording = False
         self._busy = False
         self._overlay_state = OverlayState.HIDDEN
-        self._session_generation = 0
+        # Also the stale-timer generation: a max-duration timer applies only to
+        # the utterance it was armed for, and each accepted start is a new one.
+        self._utterance_id = 0
+        self._record: UtteranceRecord | None = None
         self._max_timer: threading.Timer | None = None
         self._warmup_thread: threading.Thread | None = None
         self._pipeline_thread: threading.Thread | None = None
@@ -301,23 +332,27 @@ class Daemon:
         with self._lock:
             _publish_loading_activity(self._status, False)
 
-    def _warm_model(self) -> None:
+    def _warm_model(self, utterance: int) -> None:
         try:
-            self._worker.warmup()
+            self._worker.warmup(utterance)
         except WorkerError as exc:
             if not self._stop_event.is_set():
-                log.warning("worker: warmup_failed error_type=%s", type(exc).__name__)
+                # safe=False: a WorkerError round-trips the ASR child's own
+                # ``classify_error`` detail, whose inference branch can quote
+                # decoder text derived from the audio.
+                log_failure(log, logging.WARNING, "worker: warmup_failed", exc, safe=False)
 
-    def _start_model_warmup(self) -> None:
+    def _start_model_warmup(self, utterance: int) -> None:
         thread = threading.Thread(
             target=self._warm_model,
+            args=(utterance,),
             name="stenographer-model-warmup",
             daemon=True,
         )
         try:
             thread.start()
         except RuntimeError as exc:
-            log.warning("worker: warmup_start_failed error_type=%s", type(exc).__name__)
+            log_failure(log, logging.WARNING, "worker: warmup_start_failed", exc, safe=True)
             return
         self._warmup_thread = thread
 
@@ -333,11 +368,22 @@ class Daemon:
                 self.on_key_down()
             elif action == "stop":
                 self.on_key_up()
+            else:
+                log.debug(
+                    fmt_event(
+                        "hotkey",
+                        "toggle_press_ignored",
+                        reason=ignored_edge_reason(
+                            self._recording, self._busy, self._stop_event.is_set()
+                        ),
+                    )
+                )
 
     def _on_max_duration(self, generation: int) -> None:
         """Timer thread: end a toggle recording exactly as a second press would."""
         with self._lock:
-            if not max_duration_applies(generation, self._session_generation, self._recording):
+            if not max_duration_applies(generation, self._utterance_id, self._recording):
+                log.debug(fmt_event("hotkey", "max_duration_ignored", reason="stale_or_idle"))
                 return
             log.info(
                 "recorder: max_duration_stop seconds=%d",
@@ -354,25 +400,38 @@ class Daemon:
     def on_key_down(self) -> None:
         with self._lock:
             if not can_start(self._recording, self._busy, self._stop_event.is_set()):
-                log.debug("hotkey: key_down_ignored reason=recording_or_busy")
+                log.debug(
+                    fmt_event(
+                        "hotkey",
+                        "key_down_ignored",
+                        reason=ignored_edge_reason(
+                            self._recording, self._busy, self._stop_event.is_set()
+                        ),
+                    )
+                )
                 return
             self._worker.hold_model()
+            started_at = time.perf_counter()
             try:
                 self._recorder.start()
             except Exception as exc:
-                log.error("recorder: failed phase=start error_type=%s", type(exc).__name__)
+                log_failure(log, logging.ERROR, "recorder: failed", exc, safe=True, phase="start")
                 self._recorder.close()
                 self._worker.release_model()
                 self._fail("could not start recording")
                 self._recording = False
                 return
             self._recording = True
-            self._session_generation += 1
+            self._utterance_id += 1
+            set_utterance(self._utterance_id)
+            self._record = UtteranceRecord(
+                utt=self._utterance_id, started_at=started_at, mode=self._cfg.hotkey.mode
+            )
             if self._cfg.hotkey.mode == "toggle":
                 timer = threading.Timer(
                     self._cfg.audio.max_recording_seconds,
                     self._on_max_duration,
-                    args=(self._session_generation,),
+                    args=(self._utterance_id,),
                 )
                 timer.name = "stenographer-max-duration"
                 timer.daemon = True
@@ -380,11 +439,12 @@ class Daemon:
                 self._max_timer = timer
             self._publish_state(OverlayState.RECORDING)
             _play_cue(self._feedback, "record_start")
-            self._start_model_warmup()
+            self._start_model_warmup(self._utterance_id)
 
     def on_key_up(self) -> None:
         with self._lock:
             if not self._recording:
+                log.debug(fmt_event("hotkey", "key_up_ignored", reason="not_recording"))
                 return
             self._recording = False
             self._cancel_max_timer()
@@ -394,47 +454,108 @@ class Daemon:
             try:
                 samples = self._recorder.stop()
             except Exception as exc:
-                log.error("recorder: failed phase=stop error_type=%s", type(exc).__name__)
+                log_failure(log, logging.ERROR, "recorder: failed", exc, safe=True, phase="stop")
                 self._recorder.close()
                 self._fail("recording failed; audio was discarded")
                 self._worker.release_model()
-                return
-            self._busy = True
-            _play_cue(self._feedback, "record_stop")
-            thread = threading.Thread(
-                target=self._run_pipeline,
-                args=(samples,),
-                name="stenographer-pipeline",
-                daemon=True,
-            )
-            self._pipeline_thread = thread
-            thread.start()
+                self._emit_summary(self._take_record(Outcome.ERROR.name))
+            else:
+                self._apply_capture(self._recorder.last_capture)
+                self._busy = True
+                _play_cue(self._feedback, "record_stop")
+                thread = threading.Thread(
+                    target=self._run_pipeline,
+                    args=(samples,),
+                    name="stenographer-pipeline",
+                    daemon=True,
+                )
+                self._pipeline_thread = thread
+                thread.start()
+
+    def _apply_capture(self, stats: CaptureStats | None) -> None:
+        """Fold the recorder's own numbers into the utterance record."""
+        record = self._record
+        if record is None or stats is None:
+            return
+        record.activate_ms = stats.activate_ms
+        record.capture_s = stats.capture_seconds
+        record.in_frames = stats.input_frames
+        record.out_frames = stats.output_frames
+        record.overflow = stats.overflow
+        record.capped = stats.capped
+
+    def _take_record(self, outcome: str) -> UtteranceRecord | None:
+        """Detach the in-flight record and stamp its outcome."""
+        record, self._record = self._record, None
+        if record is not None:
+            record.outcome = outcome
+        return record
+
+    def _emit_summary(self, record: UtteranceRecord | None) -> None:
+        """Close out one utterance: its single INFO line, then clear ``utt``.
+
+        Called with the state lock held. Logging is a queue put, not process
+        I/O — the listener thread owns the sinks — and holding the lock is what
+        keeps a fast re-press from allocating the next id and clearing the
+        stamp between this line and the record it belongs to.
+        """
+        if record is None:
+            return
+        record.total_ms = (time.perf_counter() - record.started_at) * 1000.0
+        log_summary(record)
+        set_utterance(None)
 
     def _run_pipeline(self, samples: np.ndarray) -> None:
+        record = self._record
+        outcome_name = Outcome.ERROR.name
         try:
-            gate_passed = speech_gate_passes(samples, SAMPLE_RATE, self._cfg.audio.min_speech_rms)
-            if not gate_passed:
-                log.info("pipeline: done outcome=SILENT reason=gate")
+            # The gate runs here, on the pipeline thread, and never in the
+            # PortAudio callback or under the state lock.
+            stats = speech_gate_stats(samples, SAMPLE_RATE, self._cfg.audio.min_speech_rms)
+            log_gate(stats)
+            if record is not None:
+                record.gate = "pass" if stats.passed else "fail"
+                record.peak_rms = stats.peak_rms
+                record.frames_above = stats.frames_above
+            if not stats.passed:
+                outcome_name = Outcome.SILENT.name
                 self._publish_state(OverlayState.HIDDEN)
                 return
-            if not self._worker.is_model_ready:
+            cold = not self._worker.is_model_ready
+            if record is not None:
+                record.cold = cold
+            if cold:
                 self._publish_state(OverlayState.TRANSCRIBING)
             try:
-                result = self._worker.transcribe(samples)
+                result = self._worker.transcribe(samples, self._utterance_id)
             except WorkerError as exc:
                 if self._stop_event.is_set():
-                    log.info("pipeline: done outcome=CANCELLED phase=transcribe")
+                    outcome_name = "CANCELLED"
                     self._publish_state(OverlayState.HIDDEN)
                     return
-                log.warning("pipeline: transcription_failed error_type=%s", type(exc).__name__)
+                # A pathological rejection carries the audited counts-only
+                # reason, the one thing that explains a silently discarded
+                # decode; any other detail is the ASR child's serialised
+                # message, which its inference branch can build from decoder
+                # output, so it is never rendered.
+                log_failure(
+                    log,
+                    logging.WARNING,
+                    "pipeline: transcription_failed",
+                    exc,
+                    safe=isinstance(exc, WorkerPathologicalError),
+                )
                 self._fail("transcription failed")
                 return
+            self._apply_decode(record, result)
             if self._stop_event.is_set():
-                log.info("pipeline: done outcome=CANCELLED phase=post_transcribe")
+                outcome_name = "CANCELLED"
                 self._publish_state(OverlayState.HIDDEN)
                 return
             transcript_nonempty = bool(result.text.strip())
-            text = format_transcript(result.text, trailing_space=True)
+            text = transcript_text(result)
+            if record is not None:
+                record.chars_out = len(text)
             if not transcript_nonempty:
                 self._publish_state(OverlayState.HIDDEN)
             else:
@@ -442,15 +563,16 @@ class Daemon:
             try:
                 deliver_result = self._deliverer.deliver(text) if transcript_nonempty else None
             except Exception as exc:
-                log.warning("pipeline: delivery_failed error_type=%s", type(exc).__name__)
+                log_failure(log, logging.WARNING, "pipeline: delivery_failed", exc, safe=True)
                 self._fail("delivery failed")
                 return
+            self._apply_delivery(record, attempted=transcript_nonempty)
             outcome, message = classify_pipeline(
                 gate_passed=True,
                 transcript_nonempty=transcript_nonempty,
                 deliver_result=deliver_result,
             )
-            log.info("pipeline: done outcome=%s chars=%d", outcome.name, len(text))
+            outcome_name = outcome.name
             if outcome is Outcome.DELIVERED:
                 self._publish_state(OverlayState.HIDDEN)
                 _play_cue(self._feedback, "delivered")
@@ -460,6 +582,32 @@ class Daemon:
             with self._lock:
                 self._worker.release_model()
                 self._busy = False
+                self._emit_summary(self._take_record(outcome_name))
+
+    def _apply_decode(self, record: UtteranceRecord | None, result: TranscriptionResult) -> None:
+        """Fold the worker's timings and the decode's shape into the record."""
+        if record is None:
+            return
+        timings = self._worker.last_timings
+        if timings is not None:
+            record.lock_wait_ms = timings.lock_wait_ms
+            record.load_ms = timings.load_ms
+            record.decode_ms = timings.decode_ms
+        record.vad_frames = round(result.vad_seconds * SAMPLE_RATE)
+        record.segments = len(result.segments)
+        record.words = sum(len(segment.words) for segment in result.segments)
+        record.chars_raw = len(result.text)
+
+    def _apply_delivery(self, record: UtteranceRecord | None, *, attempted: bool) -> None:
+        """Fold the delivery's cost in — ``attempted`` says a copy was tried at all."""
+        if record is None or not attempted:
+            return
+        timings = self._deliverer.last_timings
+        if timings is None:
+            return
+        record.copy_ms = timings.copy_ms
+        record.release_wait_ms = timings.release_wait_ms
+        record.release_timeout = timings.release_timeout
 
     def run(self) -> None:
         """Start the listener and block until stopped."""
@@ -496,7 +644,118 @@ class Daemon:
             self._cancel_max_timer()
             self._recorder.close()
             self._recording = False
+            # A recording torn down mid-flight still owes the log its one line;
+            # without this a press-then-stop leaves an utterance unaccounted for.
+            self._emit_summary(self._take_record("CANCELLED"))
         self._publish_state(OverlayState.HIDDEN)
+        set_utterance(None)
+
+
+def _overlay_backend_name(overlay: OverlayCapability) -> str:
+    """Name the overlay backend the daemon will actually get. PURE."""
+    if not overlay.enabled:
+        return "disabled"
+    if overlay.backend is not None:
+        return overlay.backend.value
+    if overlay.reason is not None:
+        return f"unavailable_{overlay.reason.value}"
+    return "unknown"
+
+
+def _shown(value: object) -> object:
+    """Render an unset optional visibly: a banner key must never go missing."""
+    if value is None:
+        return "<unset>"
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, tuple):
+        return ",".join(f"{item:g}" for item in value)
+    return value
+
+
+def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Path) -> None:
+    """Record the whole effective configuration once, at INFO.
+
+    A report that does not say what the daemon was actually configured with
+    forces every question back to the reporter, so this is written before the
+    startup gate can refuse — a refused start is exactly when it is wanted.
+
+    ``asr.hotwords`` and ``asr.initial_prompt`` are the only config values that
+    hold arbitrary user prose; they are reported as sizes. Everything else is
+    the user's own settings, which rule 6 does not restrict.
+    """
+    from stenographer._version import __version__
+    from stenographer.transcribe.model import resolve_cpu_threads
+
+    version = sys.version_info
+    log.info(
+        fmt_event(
+            "banner",
+            "build",
+            version=__version__,
+            python=f"{version.major}.{version.minor}.{version.micro}",
+            platform=plat.name,
+            config=config_path,
+        )
+    )
+    log.info(
+        fmt_event(
+            "banner",
+            "backends",
+            clipboard=_shown(caps.clipboard_backend),
+            overlay=_overlay_backend_name(caps.overlay),
+            cue_player=_shown(caps.cue_player),
+        )
+    )
+    log.info(
+        fmt_event(
+            "banner",
+            "config_hotkey",
+            binding=cfg.hotkey.binding,
+            device=_shown(cfg.hotkey.device),
+            mode=cfg.hotkey.mode,
+        )
+    )
+    log.info(
+        fmt_event(
+            "banner",
+            "config_audio",
+            input_device=_shown(cfg.audio.input_device),
+            min_speech_rms=cfg.audio.min_speech_rms,
+            max_recording_seconds=cfg.audio.max_recording_seconds,
+        )
+    )
+    asr = cfg.asr
+    log.info(
+        fmt_event(
+            "banner",
+            "config_asr",
+            model=asr.model,
+            compute_type=asr.compute_type,
+            beam_size=asr.beam_size,
+            hotwords_words=len((asr.hotwords or "").split()),
+            initial_prompt_chars=len(asr.initial_prompt or ""),
+            vad_filter=_shown(asr.vad_filter),
+            silence_threshold=asr.silence_threshold,
+            idle_unload_seconds=asr.idle_unload_seconds,
+            cpu_threads=asr.cpu_threads,
+            resolved_cpu_threads=resolve_cpu_threads(asr.cpu_threads, plat.physical_core_count()),
+        )
+    )
+    feedback = cfg.feedback
+    log.info(
+        fmt_event(
+            "banner",
+            "config_feedback",
+            volume=feedback.volume,
+            mute=_shown(feedback.mute),
+            overlay=_shown(feedback.overlay),
+            update_check=_shown(feedback.update_check),
+            spectrum_floor_dbfs=_shown(feedback.spectrum_floor_dbfs),
+            sound_pack=feedback.sound_pack,
+            log_level=feedback.log_level,
+        )
+    )
 
 
 def _startup_failure(status: StatusSink, message: str, code: int) -> int:
@@ -514,11 +773,13 @@ def _startup_failure(status: StatusSink, message: str, code: int) -> int:
 def run(cfg: Config) -> int:
     """Build and run the daemon. Returns the process exit code."""
     from stenographer.capabilities import probe
+    from stenographer.config import resolve_config_path
     from stenographer.hotkey import BindingError
 
     plat = current_platform()
     status: StatusSink = NullStatusSink()
     caps = probe(cfg)
+    _log_banner(cfg, plat, caps, resolve_config_path(create_parent=False))
     clipboard_backend = startup_clipboard_backend(caps)
     if clipboard_backend is None:
         return _startup_failure(
@@ -531,7 +792,7 @@ def run(cfg: Config) -> int:
 
             status = OverlaySupervisor(cfg.feedback.spectrum_floor_dbfs)
         except Exception as exc:
-            log.warning("overlay: unavailable error_type=%s", type(exc).__name__)
+            log_failure(log, logging.WARNING, "overlay: unavailable", exc, safe=True)
 
     log.info("deliver: configured clipboard_backend=%s", clipboard_backend)
     try:
@@ -559,9 +820,13 @@ def run(cfg: Config) -> int:
         try:
             daemon._recorder.prepare()
         except Exception as exc:
-            log.warning(
-                "recorder: startup_prepare_failed error_type=%s recovery=next_keypress",
-                type(exc).__name__,
+            log_failure(
+                log,
+                logging.WARNING,
+                "recorder: startup_prepare_failed",
+                exc,
+                safe=True,
+                recovery="next_keypress",
             )
         if cfg.feedback.update_check:
             try:
@@ -575,7 +840,7 @@ def run(cfg: Config) -> int:
                     daemon._notifier,
                 )
             except Exception as exc:
-                log.debug("update_check: not_started error_type=%s", type(exc).__name__)
+                log_failure(log, logging.DEBUG, "update_check: not_started", exc, safe=True)
         daemon.run()
     except KeyboardInterrupt:
         pass

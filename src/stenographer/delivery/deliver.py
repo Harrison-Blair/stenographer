@@ -11,7 +11,11 @@ the transcript as recovery.
 from __future__ import annotations
 
 import logging
+import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from stenographer.utils.logging_setup import fmt_event
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,6 +23,15 @@ if TYPE_CHECKING:
     from stenographer.platform.base import ClipboardWriter, KeyInjector
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DeliveryTimings:
+    """What one delivery attempt cost, for the utterance summary line."""
+
+    copy_ms: float
+    release_wait_ms: float | None
+    release_timeout: bool | None
 
 
 class Deliverer:
@@ -39,6 +52,8 @@ class Deliverer:
         self._keyboard = keyboard
         self._wait_released = wait_released
         self._copy = copy
+        # One utterance at a time, so the last attempt is the caller's own.
+        self.last_timings: DeliveryTimings | None = None
 
     def deliver(self, text: str) -> bool:
         """Deliver *text* at the cursor. Return True once the chord is sent.
@@ -51,13 +66,31 @@ class Deliverer:
         """
         if not text:
             return False
-        if not self._copy(text):
+        copy_started_at = time.perf_counter()
+        copied = self._copy(text)
+        copy_ms = (time.perf_counter() - copy_started_at) * 1000.0
+        if not copied:
+            self.last_timings = DeliveryTimings(copy_ms, None, None)
             return False
-        if self._wait_released is not None and not self._wait_released():
-            log.warning(
-                "deliver: binding_still_held action=proceed "
-                "reason=clipboard_already_holds_transcript"
-            )
+        release_wait_ms: float | None = None
+        released: bool | None = None
+        if self._wait_released is not None:
+            release_started_at = time.perf_counter()
+            released = self._wait_released()
+            release_wait_ms = (time.perf_counter() - release_started_at) * 1000.0
+            if not released:
+                log.warning(
+                    fmt_event(
+                        "deliver",
+                        "binding_still_held",
+                        action="proceed",
+                        waited_ms=round(release_wait_ms, 1),
+                        reason="clipboard_already_holds_transcript",
+                    )
+                )
+        self.last_timings = DeliveryTimings(
+            copy_ms, release_wait_ms, None if released is None else not released
+        )
         self._keyboard.send_chord()
         return True
 

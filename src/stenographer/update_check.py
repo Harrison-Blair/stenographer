@@ -30,6 +30,8 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from stenographer.utils.logging_setup import log_failure
+
 if TYPE_CHECKING:
     import ssl
     import urllib.request
@@ -203,8 +205,8 @@ def fetch_latest_tag() -> str | None:
             build_request(), timeout=FETCH_TIMEOUT_SECONDS, context=_ssl_context()
         ) as response:
             resolved = response.geturl()
-    except Exception:
-        log.debug("update_check: fetch_failed", exc_info=True)
+    except Exception as exc:
+        log_failure(log, logging.DEBUG, "update_check: fetch_failed", exc, safe=True)
         return None
     tag = tag_from_location(resolved)
     if tag is None:
@@ -251,12 +253,12 @@ def run_check(
         try:
             state_dir.mkdir(parents=True, exist_ok=True)
             path.write_text(dump_record(updated), encoding="utf-8")
-        except OSError:
-            log.debug("update_check: record_not_written", exc_info=True)
+        except OSError as exc:
+            log_failure(log, logging.DEBUG, "update_check: record_not_written", exc, safe=True)
         if message is not None:
             notifier.info(message)
-    except Exception:
-        log.debug("update_check: failed", exc_info=True)
+    except Exception as exc:
+        log_failure(log, logging.DEBUG, "update_check: failed", exc, safe=True)
 
 
 def start_background_check(

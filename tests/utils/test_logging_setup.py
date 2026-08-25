@@ -178,6 +178,48 @@ def test_fmt_event_renders_fields_in_call_order_and_omits_missing_ones():
     )
 
 
+def test_fmt_event_quotes_only_the_values_that_would_break_key_equals_value():
+    # An argv, a PortAudio device name, a user path and an OS error's own text
+    # all carry spaces, and a bare one silently turns one field into several.
+    # Seen to FAIL against the unquoted renderer: `argv=xclip -selection
+    # clipboard` parses as argv=xclip plus two junk tokens.
+    assert fmt_event("deliver", "copy_failed", argv="xclip -selection clipboard") == (
+        'deliver: copy_failed argv="xclip -selection clipboard"'
+    )
+    assert fmt_event("logging", "file_unavailable", detail="[Errno 13] Permission denied") == (
+        'logging: file_unavailable detail="[Errno 13] Permission denied"'
+    )
+    assert fmt_event("banner", "config_audio", input_device="HD Webcam C910: USB Audio") == (
+        'banner: config_audio input_device="HD Webcam C910: USB Audio"'
+    )
+    # A path only earns quotes when it actually contains a space.
+    assert fmt_event("banner", "build", config="/home/u/.config/stenographer/config.toml") == (
+        "banner: build config=/home/u/.config/stenographer/config.toml"
+    )
+    assert fmt_event("banner", "build", config="/home/u/my configs/config.toml") == (
+        'banner: build config="/home/u/my configs/config.toml"'
+    )
+
+
+def test_fmt_event_keeps_a_multi_line_value_on_one_physical_line():
+    """Seen to FAIL when the quoted branch only escaped quotes and backslashes."""
+
+    line = fmt_event("asr", "job_failed", detail="line one\nline two")
+    assert "\n" not in line
+    assert line == 'asr: job_failed detail="line one\\nline two"'
+
+
+def test_fmt_event_escapes_quotes_and_backslashes_inside_a_quoted_value():
+    # The closing quote has to stay findable, so an embedded quote or backslash
+    # is escaped. Seen to FAIL against a renderer that only wrapped in quotes.
+    assert fmt_event("helper", "failed", detail='say "hi"') == (
+        'helper: failed detail="say \\"hi\\""'
+    )
+    assert fmt_event("helper", "failed", detail="a \\ b") == 'helper: failed detail="a \\\\ b"'
+    # A value needing no quotes keeps its backslashes bare: nothing to break.
+    assert fmt_event("helper", "failed", detail="C:\\Users") == "helper: failed detail=C:\\Users"
+
+
 def test_utterance_filter_stamps_the_current_id_and_clears_it(captured):
     logger, stream = captured
     # On the handler, as production installs it: filters run in Handler.handle.

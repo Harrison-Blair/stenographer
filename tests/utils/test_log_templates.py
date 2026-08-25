@@ -20,8 +20,11 @@ SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "stenographer"
 _LEVELS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
 _LOGGERS = frozenset({"log", "logger"})
 _NAME = r"[a-z][a-z0-9_]*"
+# A value is one bare token, or — once ``fmt_event`` has had to quote a runtime
+# value carrying whitespace — one double-quoted token with escapes inside it.
+_VALUE = r'(?:"(?:[^"\\]|\\.)*"|\S+)'
 _LABEL = re.compile(rf"{_NAME}: {_NAME}")
-_TEMPLATE = re.compile(rf"{_NAME}: {_NAME}(?: {_NAME}=\S+)*")
+_TEMPLATE = re.compile(rf"{_NAME}: {_NAME}(?: {_NAME}={_VALUE})*")
 
 
 def _literal(node: ast.expr) -> str | None:
@@ -64,6 +67,26 @@ def _offenses(source: str) -> list[str]:
         elif not _TEMPLATE.fullmatch(text):
             offenses.append(f"line {node.lineno}: {text!r}")
     return offenses
+
+
+def test_the_grammar_accepts_what_fmt_event_actually_renders():
+    """The parser and the renderer must agree about a quoted value.
+
+    ``fmt_event`` quotes any value carrying whitespace or a ``"``, so a grammar
+    that only knows bare ``\\S+`` tokens would reject the very lines the
+    renderer emits — and this file is the thing that decides whether a log line
+    is well formed. Seen to FAIL against the bare-token-only ``_VALUE``.
+    """
+    from stenographer.utils.logging_setup import fmt_event
+
+    spaced = fmt_event("deliver", "copy_failed", argv="xclip -selection clipboard", ok=0)
+    assert _TEMPLATE.fullmatch(spaced), spaced
+
+    quoted = fmt_event("helper", "failed", detail='he said "no"')
+    assert _TEMPLATE.fullmatch(quoted), quoted
+
+    bare = fmt_event("pipeline", "utterance", utt=1, gate="pass", total_ms=430.0)
+    assert _TEMPLATE.fullmatch(bare), bare
 
 
 def test_every_log_template_matches_the_event_format():

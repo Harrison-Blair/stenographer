@@ -21,12 +21,13 @@ import multiprocessing
 import queue
 import threading
 import time
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 from stenographer.constants import SAMPLE_RATE
 from stenographer.transcribe.model import Model, PathologicalOutputError, TranscriptionResult
-from stenographer.utils.logging_setup import owned_handlers
+from stenographer.utils.logging_setup import fmt_event, log_failure, owned_handlers, set_utterance
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -61,6 +62,19 @@ class WorkerProtocolError(WorkerError):
 
 class _WorkerTimeoutError(WorkerError):
     """An internal phase deadline expired while the child remained alive."""
+
+
+@dataclass(frozen=True)
+class WorkerTimings:
+    """How one ``transcribe`` call spent its wall clock, in milliseconds.
+
+    ``load_ms`` is ``None`` on a warm model, which is exactly the ``cold=0``
+    case the utterance summary reports.
+    """
+
+    lock_wait_ms: float
+    load_ms: float | None
+    decode_ms: float
 
 
 class WorkerEvent(Enum):
@@ -139,6 +153,17 @@ def classify_error(exc: Exception) -> tuple[str, str]:
     return ("inference", f"{type(exc).__name__}: {exc}")
 
 
+def error_is_safe_to_render(exc: Exception) -> bool:
+    """Whether a decode failure's own message may be logged verbatim. PURE.
+
+    Only ``PathologicalOutputError``'s is: it is audited to carry counts
+    ("word density exceeded limit (312 > 40)") and is the whole account of a
+    decode the daemon then discards. Every other decode failure comes from the
+    inference stack, whose message can quote output derived from the audio.
+    """
+    return isinstance(exc, PathologicalOutputError)
+
+
 def interpret_response(message: object) -> TranscriptionResult | WorkerEvent:
     """Parent-side: turn a child response tuple into a result or a typed raise.
     Malformed messages are described by SHAPE only, never by echoed payload."""
@@ -174,18 +199,31 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
         message = request_q.get()
         if message[0] == "stop":
             return
+        # Every request carries the parent's utterance id so the child's own
+        # ``asr:`` lines interleave with the daemon's under the same utt=N.
+        set_utterance(message[-1])
         if message[0] == "load":
             try:
                 if model is None:
                     model = Model(cfg)
             except Exception as exc:
-                log.error(
-                    "asr: job_failed phase=model_load error_type=%s",
-                    type(exc).__name__,
+                # A model-load failure names paths and library complaints, not
+                # anything derived from audio: its text may be rendered.
+                log_failure(
+                    log, logging.ERROR, "asr: job_failed", exc, safe=True, phase="model_load"
                 )
                 kind, detail = classify_error(exc)
                 response_q.put(("error", kind, detail))
                 continue
+            log.info(
+                fmt_event(
+                    "worker",
+                    "child_started",
+                    model=cfg.model,
+                    compute_type=cfg.compute_type,
+                    cpu_threads=model.cpu_threads,
+                )
+            )
             response_q.put(("model_ready",))
             continue
 
@@ -198,7 +236,14 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
         except Exception as exc:
             # Report and stay alive; native segfaults are handled by the parent
             # liveness poll, not here.
-            log.error("asr: job_failed phase=%s error_type=%s", phase, type(exc).__name__)
+            log_failure(
+                log,
+                logging.ERROR,
+                "asr: job_failed",
+                exc,
+                safe=error_is_safe_to_render(exc),
+                phase=phase,
+            )
             kind, detail = classify_error(exc)
             response_q.put(("error", kind, detail))
             continue
@@ -235,6 +280,9 @@ class Worker:
         self._model_ready = threading.Event()
         self._model_hold = threading.Event()
         self._shutdown_requested = threading.Event()
+        # One request at a time is structural here, so the last successful
+        # transcription is unambiguously the caller's own.
+        self.last_timings: WorkerTimings | None = None
 
     def hold_model(self) -> None:
         """Defer idle eviction until the current recording pipeline finishes."""
@@ -270,7 +318,7 @@ class Worker:
         with self._lock:
             self._restart_idle_timer()
 
-    def warmup(self) -> None:
+    def warmup(self, utterance: int | None = None) -> None:
         """Load the model without decoding audio.
 
         This is blocking by design; the daemon invokes it on its warm-up thread.
@@ -280,23 +328,30 @@ class Worker:
         with self._lock:
             self._begin_request()
             try:
-                self._ensure_model_loaded()
+                self._ensure_model_loaded(utterance)
             except WorkerError as exc:
                 self._finish_response_error(exc)
                 raise
             self._restart_idle_timer()
 
-    def transcribe(self, samples: np.ndarray) -> TranscriptionResult:
+    def transcribe(self, samples: np.ndarray, utterance: int | None = None) -> TranscriptionResult:
+        requested_at = time.perf_counter()
         with self._lock:
+            # Measured inside the lock so it counts the wait a concurrent
+            # warm-up imposed, which is the delay the caller actually felt.
+            lock_wait_ms = (time.perf_counter() - requested_at) * 1000.0
             self._begin_request()
+            load_started_at = time.perf_counter()
             try:
-                self._ensure_model_loaded()
+                loaded = self._ensure_model_loaded(utterance)
             except WorkerError as exc:
                 self._finish_response_error(exc)
                 raise
+            load_ms = (time.perf_counter() - load_started_at) * 1000.0 if loaded else None
             self._abort_if_shutdown_requested("transcribe")
             self._emit_lifecycle((WorkerLifecycle.TRANSCRIBING,))
-            self._request_q.put(("job", samples))
+            decode_started_at = time.perf_counter()
+            self._request_q.put(("job", samples, utterance))
             try:
                 timeout_seconds = decode_timeout_seconds(
                     samples.shape[0],
@@ -311,6 +366,11 @@ class Worker:
             except WorkerError as exc:
                 self._finish_response_error(exc)
                 raise
+            self.last_timings = WorkerTimings(
+                lock_wait_ms=lock_wait_ms,
+                load_ms=load_ms,
+                decode_ms=(time.perf_counter() - decode_started_at) * 1000.0,
+            )
             self._restart_idle_timer()
             return interpreted
 
@@ -322,12 +382,13 @@ class Worker:
             self._spawn()
         self._abort_if_shutdown_requested("request")
 
-    def _ensure_model_loaded(self) -> None:
+    def _ensure_model_loaded(self, utterance: int | None = None) -> bool:
+        """Load the model if it is cold. True when this call did the loading."""
         if self._model_ready.is_set():
-            return
+            return False
         self._emit_lifecycle(lifecycle_transition(model_loaded=False))
         try:
-            self._request_q.put(("load",))
+            self._request_q.put(("load", utterance))
             interpreted = self._wait_for_response(
                 "model_load", deadline=time.monotonic() + _MODEL_LOAD_TIMEOUT_SECONDS
             )
@@ -336,6 +397,7 @@ class Worker:
             lifecycle = lifecycle_transition(model_loaded=False, event=interpreted)
             self._model_ready.set()
             self._emit_lifecycle(lifecycle)
+            return True
         finally:
             # The optional observer is the source of display-only activity
             # metadata.  It must clear the border after both ready and error.
@@ -399,10 +461,13 @@ class Worker:
             callback()
         except Exception as exc:
             # Optional observers must never change transcription success.
-            log.warning(
-                "worker: lifecycle_callback_failed event=%s error_type=%s",
-                event,
-                type(exc).__name__,
+            log_failure(
+                log,
+                logging.WARNING,
+                "worker: lifecycle_callback_failed",
+                exc,
+                safe=True,
+                event=event,
             )
 
     def is_alive(self) -> bool:
@@ -471,7 +536,7 @@ class Worker:
         try:
             self._process.start()
         except Exception as exc:
-            log.error("worker: spawn_failed error_type=%s", type(exc).__name__)
+            log_failure(log, logging.ERROR, "worker: spawn_failed", exc, safe=True)
             self._teardown()
             raise WorkerError("could not start ASR child") from exc
         log.info("worker: spawned pid=%d", self._process.pid)
