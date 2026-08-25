@@ -55,13 +55,19 @@ def acquire_single_instance_lock(path: pathlib.Path = LOCK_PATH) -> int:
         os.close(fd)
         if is_lock_contention(exc):
             return -1
-        raise SingleInstanceLockError(f"could not take single-instance lock {path}") from exc
+        raise SingleInstanceLockError(
+            f"could not take single-instance lock {path}: "
+            f"[{errno.errorcode.get(exc.errno, exc.errno)}] {exc.strerror}"
+        ) from exc
     try:
         os.ftruncate(fd, 0)
         os.write(fd, f"{os.getpid()}\n".encode())
     except OSError as exc:
         os.close(fd)  # also releases the flock just taken
-        raise SingleInstanceLockError(f"could not write pid to lock file {path}") from exc
+        raise SingleInstanceLockError(
+            f"could not write pid to lock file {path}: "
+            f"[{errno.errorcode.get(exc.errno, exc.errno)}] {exc.strerror}"
+        ) from exc
     return fd
 
 

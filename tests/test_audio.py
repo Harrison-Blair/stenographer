@@ -11,7 +11,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from stenographer.audio import Recorder, _resample_poly, speech_gate_passes
+from stenographer.audio import (
+    Recorder,
+    _resample_poly,
+    speech_gate_passes,
+    speech_gate_stats,
+)
 
 _RATE = 16000
 _FRAME = int(_RATE * 0.050)  # 800 samples per 50 ms gate frame
@@ -122,3 +127,58 @@ def test_resample_preserves_dc_level():
 def test_gate_nonpositive_threshold_disables(min_rms):
     silence = np.zeros(_RATE, dtype=np.float32)
     assert speech_gate_passes(silence, _RATE, min_rms) is True
+
+
+def test_gate_stats_report_the_quiet_mic_rejection_it_decided():
+    # The quiet-mic case: speech at RMS 0.001 against a 0.01 threshold. The
+    # reported numbers have to be the ones the verdict was reached from, or the
+    # log cannot tell a mis-set threshold from a dead microphone. Seen to FAIL
+    # against a ``speech_gate_stats`` that counted frames above a hardcoded
+    # 0.0005 instead of the threshold it was given (frames_above became 10).
+    stats = speech_gate_stats(_signal([0.001] * 10), _RATE, 0.01)
+
+    assert stats.passed is False
+    assert stats.frames_above == 0
+    assert stats.frames_total == 10
+    assert stats.threshold == 0.01
+    assert stats.peak_rms == pytest.approx(0.001, abs=1e-6)
+    assert stats.mean_rms == pytest.approx(0.001, abs=1e-6)
+
+
+def test_gate_stats_count_every_loud_frame_not_just_the_consecutive_pair():
+    # Three loud frames, only the last two consecutive. The verdict comes from
+    # the consecutive rule; the count is of every frame over the threshold, so
+    # a near-miss capture is visible as "loud frames, but scattered".
+    stats = speech_gate_stats(_signal([0.02, 0.0, 0.02, 0.02, 0.0]), _RATE, 0.0005)
+
+    assert stats.passed is True
+    assert stats.frames_above == 3
+    assert stats.frames_total == 5
+    assert stats.peak_rms == pytest.approx(0.02, abs=1e-6)
+
+
+def test_gate_stats_and_the_verdict_come_from_one_computation():
+    # ``speech_gate_passes`` must not be able to disagree with the stats line
+    # printed beside it. Seen to FAIL against a ``speech_gate_passes`` left as
+    # its own second implementation with the two-frame minimum dropped.
+    cases = [
+        (_signal([0.0, 0.0]), 0.0005),
+        (_signal([0.0, 0.02, 0.02, 0.0]), 0.0005),
+        (_signal([0.0, 0.0, 0.02, 0.0, 0.0]), 0.0005),
+        (np.full(_FRAME, 0.02, dtype=np.float32), 0.0005),
+        (np.zeros(_RATE, dtype=np.float32), 0.0),
+        (np.empty(0, dtype=np.float32), 0.0005),
+    ]
+    for audio, min_rms in cases:
+        assert speech_gate_passes(audio, _RATE, min_rms) is (
+            speech_gate_stats(audio, _RATE, min_rms).passed
+        )
+
+
+def test_gate_stats_on_audio_too_short_to_frame():
+    stats = speech_gate_stats(np.empty(0, dtype=np.float32), _RATE, 0.0005)
+
+    assert stats.frames_total == 0
+    assert stats.frames_above == 0
+    assert stats.peak_rms == 0.0
+    assert stats.passed is False

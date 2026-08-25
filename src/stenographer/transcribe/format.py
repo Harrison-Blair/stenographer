@@ -9,6 +9,12 @@ paragraph-pause breaks, the normalize/capitalize toggles, and raw passthrough.
 
 from __future__ import annotations
 
+import logging
+
+from stenographer.utils.logging_setup import fmt_event
+
+log = logging.getLogger(__name__)
+
 _NO_SPACE_BEFORE = ",.?!;:"
 _SENTENCE_TERMINALS = ".?!"
 
@@ -34,4 +40,5 @@ def format_transcript(text: str, *, trailing_space: bool = False) -> str:
     result = "".join(out)
     if trailing_space and result:
         result += " "
+    log.debug(fmt_event("format", "applied", in_chars=len(text), out_chars=len(result)))
     return result

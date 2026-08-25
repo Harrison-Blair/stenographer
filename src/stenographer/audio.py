@@ -14,12 +14,14 @@ import logging
 import math
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
 import numpy as np
 
 from stenographer.constants import SAMPLE_RATE
+from stenographer.utils.logging_setup import fmt_event, log_failure
 
 logger = logging.getLogger(__name__)
 
@@ -38,25 +40,67 @@ class RecorderState(Enum):
     CAPTURING = auto()
 
 
-def speech_gate_passes(samples: np.ndarray, sample_rate: int, min_rms: float) -> bool:
-    """True if the capture clears the pre-decode energy gate.
+@dataclass(frozen=True)
+class GateStats:
+    """The energy gate's verdict and the numbers it was reached from."""
 
-    Disabled (always True) when *min_rms* <= 0. Otherwise the capture passes
+    peak_rms: float
+    mean_rms: float
+    frames_total: int
+    frames_above: int
+    threshold: float
+    passed: bool
+
+
+@dataclass(frozen=True)
+class CaptureStats:
+    """What one completed capture cost, for the utterance summary line."""
+
+    activate_ms: float
+    capture_seconds: float
+    input_frames: int
+    output_frames: int
+    rate_hz: int
+    channels: int
+    overflow: bool
+    capped: bool
+
+
+def speech_gate_stats(samples: np.ndarray, sample_rate: int, min_rms: float) -> GateStats:
+    """Frame the capture once and return both the verdict and its numbers. PURE.
+
+    The verdict and the reported energy come from a single computation on
+    purpose: a log line whose numbers were measured separately from the
+    decision it explains can disagree with it, and a quiet-mic false reject is
+    exactly the case that has to be diagnosable from the log alone.
+
+    Disabled (always passing) when *min_rms* <= 0. Otherwise the capture passes
     only when two consecutive 50 ms frames both exceed the RMS threshold, so
     isolated clicks and dead air are rejected without eating soft speech
     onsets — the quiet-mic case the owner's setup depends on.
     """
-    if min_rms <= 0:
-        return True
     audio = np.asarray(samples, dtype=np.float32).reshape(-1)
     frame = max(1, int(sample_rate * _GATE_FRAME_SECONDS))
     n_frames = audio.size // frame
-    if n_frames < 2:
-        return False
+    if n_frames == 0:
+        return GateStats(0.0, 0.0, 0, 0, min_rms, min_rms <= 0)
     trimmed = audio[: n_frames * frame].reshape(n_frames, frame)
     rms = np.sqrt(np.mean(trimmed * trimmed, axis=1))
     loud = rms > min_rms
-    return bool(np.any(loud[:-1] & loud[1:]))
+    passed = min_rms <= 0 or (n_frames >= 2 and bool(np.any(loud[:-1] & loud[1:])))
+    return GateStats(
+        peak_rms=float(rms.max()),
+        mean_rms=float(rms.mean()),
+        frames_total=n_frames,
+        frames_above=int(np.count_nonzero(loud)),
+        threshold=min_rms,
+        passed=passed,
+    )
+
+
+def speech_gate_passes(samples: np.ndarray, sample_rate: int, min_rms: float) -> bool:
+    """True if the capture clears the pre-decode energy gate."""
+    return speech_gate_stats(samples, sample_rate, min_rms).passed
 
 
 def _resample_poly(data: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
@@ -133,6 +177,10 @@ class Recorder:
         self._capped = False
         self._overflow = False
         self._capture_started_at: float | None = None
+        self._activation_ms = 0.0
+        # One utterance at a time (a daemon invariant), so the last completed
+        # capture is unambiguously the one the pipeline thread is about to run.
+        self._last_capture: CaptureStats | None = None
         self._state = RecorderState.UNPREPARED
 
     def prepare(self) -> None:
@@ -225,10 +273,13 @@ class Recorder:
         try:
             self._activate(recovery="none")
         except Exception as exc:
-            logger.warning(
-                "recorder: activation_failed retained=%d error_type=%s",
-                int(retained),
-                type(exc).__name__,
+            log_failure(
+                logger,
+                logging.WARNING,
+                "recorder: activation_failed",
+                exc,
+                safe=True,
+                retained=int(retained),
             )
             self._invalidate(reselect_default=True)
             if not retained:
@@ -237,9 +288,13 @@ class Recorder:
                 self.prepare()
                 self._activate(recovery="renegotiated")
             except Exception as retry_exc:
-                logger.warning(
-                    "recorder: recovery_failed phase=activate error_type=%s",
-                    type(retry_exc).__name__,
+                log_failure(
+                    logger,
+                    logging.WARNING,
+                    "recorder: recovery_failed",
+                    retry_exc,
+                    safe=True,
+                    phase="activate",
                 )
                 self._invalidate(reselect_default=True)
                 raise
@@ -251,13 +306,20 @@ class Recorder:
         self._stream.start()
         activation_ms = (time.perf_counter() - started_at) * 1000.0
         self._capture_started_at = time.perf_counter()
+        self._activation_ms = activation_ms
+        self._last_capture = None
         self._state = RecorderState.CAPTURING
-        logger.info(
-            "recorder: activated duration_ms=%.1f rate_hz=%d channels=%d recovery=%s",
-            activation_ms,
-            self._device_rate,
-            self._channels,
-            recovery,
+        # DEBUG, not INFO: this runs under the daemon's state lock, and the
+        # numbers reach the log through the utterance summary line instead.
+        logger.debug(
+            fmt_event(
+                "recorder",
+                "activated",
+                duration_ms=round(activation_ms, 1),
+                rate_hz=self._device_rate,
+                channels=self._channels,
+                recovery=recovery,
+            )
         )
 
     def _on_audio(self, indata: np.ndarray, frames: int, time_info: Any, status: Any) -> None:
@@ -308,29 +370,43 @@ class Recorder:
             failed_frames = self._frames
             failed_overflow = self._overflow
             failed_capped = self._capped
-            logger.warning(
-                "recorder: capture_failed phase=%s error_type=%s input_frames=%d "
-                "overflow=%d capped=%d",
-                phase,
-                type(exc).__name__,
-                failed_frames,
-                int(failed_overflow),
-                int(failed_capped),
+            log_failure(
+                logger,
+                logging.WARNING,
+                "recorder: capture_failed",
+                exc,
+                safe=True,
+                phase=phase,
+                input_frames=failed_frames,
+                overflow=int(failed_overflow),
+                capped=int(failed_capped),
             )
             self._invalidate(reselect_default=True)
             raise
         self._discard_samples()
         elapsed = 0.0 if capture_started_at is None else time.perf_counter() - capture_started_at
-        logger.info(
-            "recorder: captured duration_seconds=%.3f input_frames=%d output_frames=%d "
-            "rate_hz=%d channels=%d overflow=%d capped=%d",
-            elapsed,
-            input_frames,
-            audio.size,
-            self._device_rate,
-            self._channels,
-            int(overflow),
-            int(capped),
+        self._last_capture = CaptureStats(
+            activate_ms=self._activation_ms,
+            capture_seconds=elapsed,
+            input_frames=input_frames,
+            output_frames=int(audio.size),
+            rate_hz=self._device_rate,
+            channels=self._channels,
+            overflow=overflow,
+            capped=capped,
+        )
+        logger.debug(
+            fmt_event(
+                "recorder",
+                "captured",
+                duration_seconds=round(elapsed, 3),
+                input_frames=input_frames,
+                output_frames=int(audio.size),
+                rate_hz=self._device_rate,
+                channels=self._channels,
+                overflow=int(overflow),
+                capped=int(capped),
+            )
         )
         if capped:
             logger.warning(
@@ -366,7 +442,7 @@ class Recorder:
             if stream is not None:
                 stream.close(ignore_errors=False)
         except Exception as exc:
-            logger.warning("recorder: close_failed error_type=%s", type(exc).__name__)
+            log_failure(logger, logging.WARNING, "recorder: close_failed", exc, safe=True)
         finally:
             self._discard_samples()
 
@@ -376,6 +452,16 @@ class Recorder:
         self._capped = False
         self._overflow = False
         self._capture_started_at = None
+
+    @property
+    def last_capture(self) -> CaptureStats | None:
+        """Stats for the most recently completed capture, or ``None``.
+
+        Read by the pipeline thread after ``stop`` has returned its samples, so
+        the utterance summary can carry the capture's cost without the daemon
+        re-deriving it under the state lock.
+        """
+        return self._last_capture
 
     @property
     def is_active(self) -> bool:
