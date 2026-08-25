@@ -21,6 +21,7 @@ failure — and the classification (:func:`tail_errors`) and the tolerant decode
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -44,6 +45,10 @@ if TYPE_CHECKING:
 _TAIL_LEVELS = frozenset({"WARNING", "ERROR", "CRITICAL"})
 #: The file sink's format puts the level third, after a two-token ``asctime``.
 _LEVEL_COLUMN = 2
+#: ...whose first token is the date. A line that does not start with one did
+#: not start a record: it is a traceback's continuation, the helper's raw
+#: stderr, or the half-line a tail window opens on.
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 #: How much of the log's tail is read. The file rotates at 5 MiB; ten lines
 #: live far inside this window, and a report must not load the whole file.
 _TAIL_WINDOW_BYTES = 256 * 1024
@@ -51,12 +56,19 @@ _TAIL_WINDOW_BYTES = 256 * 1024
 
 @dataclass(frozen=True, slots=True)
 class LogStatus:
-    """One log file as the report sees it: ``size is None`` means absent."""
+    """One log file as the report sees it.
+
+    The three states a report must tell apart: ``size is None`` means the file
+    does not exist, ``readable=False`` means it exists but this user may not
+    open it (a daemon once started under another account leaves exactly that),
+    and otherwise ``tail`` holds its recent complaints.
+    """
 
     name: str
     path: pathlib.Path
     size: int | None
     tail: tuple[str, ...] = ()
+    readable: bool = True
 
 
 def tail_errors(text: str, n: int = 10) -> list[str]:
@@ -64,9 +76,9 @@ def tail_errors(text: str, n: int = 10) -> list[str]:
 
     The level is read from its column, not searched for: a line reporting a
     handled error at INFO is not a complaint, and a WARNING whose message
-    happens to name one is. Anything without that column — a traceback's
-    continuation lines, or the fragment of a record left at the head of a tail
-    window — is not a record and is dropped.
+    happens to name one is. A line that does not open with the sink's date is
+    not a record at all — a traceback's continuation, a helper's raw stderr,
+    the fragment left at the head of a tail window — and is dropped.
     """
     lines = [line for line in text.splitlines() if _level_of(line) in _TAIL_LEVELS]
     return lines[-n:]
@@ -82,9 +94,18 @@ def decode_tail(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _log_state(log: LogStatus) -> str:
+    """Pure: one parenthetical for a log file's size and reachability."""
+    if log.size is None:
+        return "absent"
+    return f"{log.size} bytes, unreadable" if not log.readable else f"{log.size} bytes"
+
+
 def _level_of(line: str) -> str:
     columns = line.split(maxsplit=_LEVEL_COLUMN + 1)
-    return columns[_LEVEL_COLUMN] if len(columns) > _LEVEL_COLUMN else ""
+    if len(columns) <= _LEVEL_COLUMN or not _DATE.match(columns[0]):
+        return ""
+    return columns[_LEVEL_COLUMN]
 
 
 def format_service_status(enabled: str | None, active: str | None, guidance: HostGuidance) -> str:
@@ -151,8 +172,7 @@ def render(
     lines.append("")
     lines.append("logs:")
     for log in logs:
-        size = "absent" if log.size is None else f"{log.size} bytes"
-        lines.append(f"  {log.name}: {log.path} ({size})")
+        lines.append(f"  {log.name}: {log.path} ({_log_state(log)})")
         lines.extend(f"    {line}" for line in log.tail)
     lines.append("")
     missing = missing_required(caps)
@@ -170,23 +190,28 @@ def run(cfg: Config, config_path: pathlib.Path) -> int:
 
     caps = probe(cfg)
     daemon_log, helper_log = log_paths()
-    logs = (
-        _log_status("daemon", daemon_log, tail=True),
-        _log_status("helper", helper_log, tail=False),
+    logs = tuple(
+        _log_status(name, path) for name, path in (("daemon", daemon_log), ("helper", helper_log))
     )
     print(render(caps, cfg, config_path, current_platform().guidance(), logs))
     return 78 if missing_required(caps) else 0
 
 
-def _log_status(name: str, path: pathlib.Path, *, tail: bool) -> LogStatus:
-    """Read one log file's facts. A log this process cannot read is "absent"."""
+def _log_status(name: str, path: pathlib.Path) -> LogStatus:
+    """Read one log file's facts. Neither absence nor a refusal is a failure.
+
+    The size is taken first and kept: a file this user may not open is still a
+    file, and reporting it as missing would send the reader looking for the
+    wrong problem.
+    """
     try:
         size = path.stat().st_size
-        if not tail:
-            return LogStatus(name, path, size)
+    except OSError:
+        return LogStatus(name, path, None)
+    try:
         with path.open("rb") as handle:
             handle.seek(max(0, size - _TAIL_WINDOW_BYTES))
             window = handle.read()
     except OSError:
-        return LogStatus(name, path, None)
+        return LogStatus(name, path, size, readable=False)
     return LogStatus(name, path, size, tuple(tail_errors(decode_tail(window))))
