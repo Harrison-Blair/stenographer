@@ -80,6 +80,30 @@ def test_file_runs_carry_their_own_source_field():
     assert line.startswith("pipeline: utterance utt=0 source=file outcome=DELIVERED")
 
 
+def test_error_summary_keeps_attempt_metrics_and_omits_result_metrics():
+    record = UtteranceRecord(
+        utt=0,
+        source="file",
+        outcome="ERROR",
+        out_frames=3200,
+        gate="pass",
+        peak_rms=0.1,
+        frames_above=4,
+        cold=True,
+        load_ms=10.0,
+        decode_ms=20.0,
+        total_ms=30.0,
+    )
+    line = _line(record)
+
+    assert line == (
+        "pipeline: utterance utt=0 source=file outcome=ERROR out_frames=3200 gate=pass "
+        "peak_rms=0.1 frames_above=4 cold=1 load_ms=10 decode_ms=20 total_ms=30"
+    )
+    for absent in ("vad_frames=", "segments=", "words=", "chars_raw=", "chars_out="):
+        assert absent not in line
+
+
 def test_downmix_keeps_channel_zero_not_the_channel_mean():
     # Seen to FAIL against ``samples.mean(axis=1)``: averaging a stereo capture
     # whose second channel is silent halves the speech the gate has to find,

@@ -869,6 +869,9 @@ def run(
         return loaded
     document = loaded
     path = document.path
+    from stenographer.utils.logging_setup import apply_stderr_level
+
+    apply_stderr_level(document.config.feedback.log_level)
 
     console.write("Stenographer quick setup" if quick else "Stenographer setup")
     console.write(f"Configuration: {path}")
@@ -905,6 +908,7 @@ def run(
         saved_prefix="Saved",
         unchanged_message="Configuration is unchanged; no file was written.",
     )
+    apply_stderr_level(reviewed.feedback.log_level)
 
     try:
         return _guided_setup(

@@ -15,6 +15,7 @@ import shutil
 from importlib.resources import files
 
 from stenographer.platform.linux.process import spawn_detached
+from stenographer.utils.logging_setup import log_failure
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class NotifySendNotifier:
             return str(icon) if icon.is_file() else None
         except OSError as exc:
             # An unreadable icon costs the notification its logo, never its text.
-            log.debug("notify: icon_unavailable error=%s", exc)
+            log_failure(log, logging.DEBUG, "notify: icon_unavailable", exc, safe=True)
             return None
 
     def _send(self, message: str, urgency: str) -> None:
@@ -70,7 +71,7 @@ class NotifySendNotifier:
         try:
             spawn_detached(build_notify_command(message, urgency, self._icon))
         except OSError as exc:
-            log.debug("notify: send_failed error=%s", exc)
+            log_failure(log, logging.DEBUG, "notify: send_failed", exc, safe=True)
 
     def error(self, message: str) -> None:
         """Show *message* as a critical notification, non-blocking."""

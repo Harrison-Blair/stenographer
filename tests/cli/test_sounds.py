@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import pathlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -263,3 +265,31 @@ def test_no_argument_non_tty_use_exits_two_before_loading_configuration():
 
     assert sounds.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=stderr) == 2
     assert "requires an interactive terminal" in stderr.getvalue()
+
+
+def test_sounds_applies_the_loaded_log_level_before_discovery(monkeypatch, tmp_path):
+    from stenographer.utils import logging_setup
+
+    events: list[str] = []
+    defaults = Config.defaults()
+    loaded = dataclasses.replace(
+        defaults,
+        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
+    )
+    document = SimpleNamespace(path=tmp_path / "config.toml", config=loaded)
+    api = SimpleNamespace(
+        BUNDLED_PACKS=("minimal-ui",),
+        discover_sound_packs=lambda config_dir: events.append("discover") or ("minimal-ui",),
+        effective_sound_pack_name=lambda name, config_dir: "minimal-ui",
+    )
+
+    monkeypatch.setattr(sounds, "load_document", lambda *args, **kwargs: document)
+    monkeypatch.setattr(sounds, "_sound_pack_api", lambda: api)
+    monkeypatch.setattr(
+        logging_setup,
+        "apply_stderr_level",
+        lambda level: events.append(f"level:{level}"),
+    )
+
+    assert sounds.run(list_only=True, stdout=io.StringIO(), stderr=io.StringIO()) == 0
+    assert events == ["level:warning", "discover"]

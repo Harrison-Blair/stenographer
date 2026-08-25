@@ -78,18 +78,31 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     decode_started_at = time.perf_counter()
     try:
         result = m.transcribe(samples)
-    finally:
-        m.close()
-    record.decode_ms = (time.perf_counter() - decode_started_at) * 1000.0
-    record.vad_frames = round(result.vad_seconds * SAMPLE_RATE)
-    record.segments = len(result.segments)
-    record.words = sum(len(segment.words) for segment in result.segments)
-    record.chars_raw = len(result.text)
+        vad_frames = round(result.vad_seconds * SAMPLE_RATE)
+        segments = len(result.segments)
+        words = sum(len(segment.words) for segment in result.segments)
+        chars_raw = len(result.text)
 
-    text = transcript_text(result, raw=args.raw)
-    record.chars_out = len(text)
-    record.total_ms = (time.perf_counter() - record.started_at) * 1000.0
-    log_summary(record)
+        text = transcript_text(result, raw=args.raw)
+        record.vad_frames = vad_frames
+        record.segments = segments
+        record.words = words
+        record.chars_raw = chars_raw
+        record.chars_out = len(text)
+    except Exception:
+        record.outcome = "ERROR"
+        raise
+    finally:
+        primary_error = sys.exception()
+        try:
+            m.close()
+        except Exception:
+            if primary_error is None:
+                raise
+        finally:
+            record.decode_ms = (time.perf_counter() - decode_started_at) * 1000.0
+            record.total_ms = (time.perf_counter() - record.started_at) * 1000.0
+            log_summary(record)
 
     sys.stdout.write(text)
     sys.stdout.write("\n")

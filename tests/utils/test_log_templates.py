@@ -96,3 +96,53 @@ def test_every_log_template_matches_the_event_format():
         if (offenses := _offenses(path.read_text(encoding="utf-8")))
     }
     assert not offenders, offenders
+
+
+def test_dynamic_linux_log_fields_use_the_privacy_safe_renderers():
+    """Dynamic device names and OS errors must never use logging interpolation.
+
+    Seen to FAIL against the direct ``%s`` call sites: none of the five
+    required formatter/failure lineages were present.
+    """
+
+    def shape(source: str) -> str:
+        return ast.unparse(ast.parse(source).body[0])
+
+    platform_root = SRC_ROOT / "platform" / "linux"
+    paths = (platform_root / "hotkey.py", platform_root / "notify.py")
+    actual = {
+        (path.name, ast.unparse(node))
+        for path in paths
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+    }
+    expected = {
+        (
+            "hotkey.py",
+            shape(
+                "logger.info(fmt_event('hotkey', 'listening', "
+                "device=device.path, name=device.name))"
+            ),
+        ),
+        (
+            "hotkey.py",
+            shape("logger.info(fmt_event('hotkey', 'hotplug', device=path, name=device.name))"),
+        ),
+        (
+            "hotkey.py",
+            shape(
+                "log_failure(logger, logging.WARNING, 'hotkey: device_lost', exc, "
+                "safe=True, device=device.path)"
+            ),
+        ),
+        (
+            "notify.py",
+            shape("log_failure(log, logging.DEBUG, 'notify: icon_unavailable', exc, safe=True)"),
+        ),
+        (
+            "notify.py",
+            shape("log_failure(log, logging.DEBUG, 'notify: send_failed', exc, safe=True)"),
+        ),
+    }
+
+    assert expected <= actual, {"missing": sorted(expected - actual)}

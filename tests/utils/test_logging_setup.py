@@ -82,6 +82,7 @@ def test_setup_is_idempotent_and_preserves_host_handler(tmp_path):
         assert owned_handlers() == first
         assert len(first) == 2
         logger.info("logging smoke metric=%d", 1)
+        shutdown_logging()
         assert "logging smoke metric=1" in stderr.getvalue()
         assert "logging smoke metric=1" in (tmp_path / "stenographer/stenographer.log").read_text()
     finally:
@@ -112,7 +113,7 @@ def test_file_handler_rotates_at_configured_limit(tmp_path):
         file_handler.maxBytes = 200
         for index in range(20):
             logger.info("rotation metric=%d", index)
-        file_handler.flush()
+        shutdown_logging()
 
         assert (tmp_path / "stenographer/stenographer.log.1").is_file()
     finally:
@@ -207,6 +208,30 @@ def test_fmt_event_keeps_a_multi_line_value_on_one_physical_line():
     line = fmt_event("asr", "job_failed", detail="line one\nline two")
     assert "\n" not in line
     assert line == 'asr: job_failed detail="line one\\nline two"'
+
+
+@pytest.mark.parametrize(
+    ("control", "escaped"),
+    [
+        ("\x00", "\\u0000"),
+        ("\x07", "\\u0007"),
+        ("\x1b", "\\u001b"),
+        ("\x7f", "\\u007f"),
+        ("\x85", "\\u0085"),
+    ],
+)
+def test_fmt_event_ascii_escapes_every_control_character(control, escaped):
+    line = fmt_event("helper", "failed", detail=f"café{control}")
+
+    assert line == f'helper: failed detail="caf\\u00e9{escaped}"'
+    assert control not in line
+
+
+def test_fmt_event_keeps_ordinary_unicode_unescaped():
+    assert fmt_event("helper", "failed", detail="café") == "helper: failed detail=café"
+    assert fmt_event("helper", "failed", detail="café noir") == (
+        'helper: failed detail="café noir"'
+    )
 
 
 def test_fmt_event_escapes_quotes_and_backslashes_inside_a_quoted_value():
@@ -306,12 +331,23 @@ def test_log_failure_safe_renders_the_message_and_a_debug_traceback(captured):
     try:
         raise FileNotFoundError(2, "No such file or directory")
     except FileNotFoundError as exc:
-        log_failure(logger, logging.WARNING, "notify: send_failed", exc, safe=True, tool="notify")
+        log_failure(
+            logger,
+            logging.WARNING,
+            "hotkey: device_lost",
+            exc,
+            safe=True,
+            device="USB Board Alpha",
+        )
 
     records = stream.getvalue()
-    assert "WARNING notify: send_failed tool=notify error=FileNotFoundError detail=" in records
+    assert records.count("WARNING hotkey: device_lost") == 1
+    assert (
+        'WARNING hotkey: device_lost device="USB Board Alpha" error=FileNotFoundError detail='
+    ) in records
     assert "No such file or directory" in records
-    assert "DEBUG notify: send_failed tool=notify error=FileNotFoundError" in records
+    assert records.count("DEBUG hotkey: device_lost") == 1
+    assert 'DEBUG hotkey: device_lost device="USB Board Alpha" error=FileNotFoundError' in records
     assert "Traceback (most recent call last)" in records
 
 

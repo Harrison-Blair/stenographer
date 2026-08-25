@@ -21,7 +21,7 @@ import evdev
 
 from stenographer.hotkey import ChordTracker, chord_active
 from stenographer.keycodes import CODE_NAMES, KEY_CODES
-from stenographer.utils.logging_setup import log_failure
+from stenographer.utils.logging_setup import fmt_event, log_failure
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -200,7 +200,9 @@ class EvdevHotkeyListener(ChordTracker):
                     devices.append(evdev.InputDevice(path))
             if devices:
                 for device in devices:
-                    logger.info("hotkey: listening device=%s name=%s", device.path, device.name)
+                    logger.info(
+                        fmt_event("hotkey", "listening", device=device.path, name=device.name)
+                    )
                 with self._held_lock:
                     self._held.clear()
                     self._held_by_device = {id(device): set() for device in devices}
@@ -265,7 +267,7 @@ class EvdevHotkeyListener(ChordTracker):
                     logger, logging.DEBUG, "hotkey: device_skipped", exc, safe=True, path=path
                 )
                 continue
-            logger.info("hotkey: hotplug device=%s name=%s", path, device.name)
+            logger.info(fmt_event("hotkey", "hotplug", device=path, name=device.name))
             with self._held_lock:
                 if self._stop_event.is_set():
                     device.close()
@@ -298,7 +300,14 @@ class EvdevHotkeyListener(ChordTracker):
                     return
         except OSError as exc:
             if not self._stop_event.is_set():
-                logger.warning("hotkey: device_lost device=%s error=%s", device.path, exc)
+                log_failure(
+                    logger,
+                    logging.WARNING,
+                    "hotkey: device_lost",
+                    exc,
+                    safe=True,
+                    device=device.path,
+                )
         finally:
             self._device_lost(device)
 

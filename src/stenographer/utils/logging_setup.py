@@ -23,6 +23,7 @@ import os
 import queue
 import sys
 import traceback
+import unicodedata
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
@@ -388,17 +389,19 @@ def _render(value: object) -> str:
     ``key=value`` is the whole contract the log is grepped and split on, and a
     runtime value carrying a space silently breaks it: an argv, a PortAudio
     device name, a user path, or an OS error's own ``[Errno 13] Permission
-    denied``. Those become one double-quoted token instead of several bare
-    ones; every other value stays bare, so the common line is unchanged.
+    denied``. Those and Unicode control characters become one double-quoted
+    token instead of several bare ones; every other value stays bare, so the
+    common line is unchanged.
     """
     # %g keeps a quiet mic's 0.0005 readable instead of rounding it to zero,
     # and drops the float noise a computed duration carries.
     text = f"{value:g}" if isinstance(value, float) else str(value)
-    if not any(char.isspace() for char in text) and '"' not in text:
+    has_control = any(unicodedata.category(char) == "Cc" for char in text)
+    if not has_control and not any(char.isspace() for char in text) and '"' not in text:
         return text
     # JSON quoting escapes the quote and backslash and also every control
     # character, so a multi-line error detail stays one physical log line.
-    return json.dumps(text, ensure_ascii=False)
+    return json.dumps(text, ensure_ascii=has_control)
 
 
 def _mark_owned(handler: logging.Handler) -> None:

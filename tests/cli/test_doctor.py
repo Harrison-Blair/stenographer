@@ -163,6 +163,13 @@ def test_render_all_present():
     assert "  overlay: layer-shell" in report
 
 
+def test_render_without_log_facts_omits_logs_section():
+    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE)
+
+    assert "all required capabilities present" in report
+    assert "\nlogs:" not in report
+
+
 def test_render_missing_capability_carries_fix_hint():
     caps = _caps(model_cached=False, clipboard_ok=False)
     report = doctor.render(caps, Config.defaults(), _CONFIG_PATH, _GUIDANCE, _LOGS)

@@ -135,7 +135,7 @@ def render(
     cfg: Config,
     config_path: pathlib.Path,
     guidance: HostGuidance,
-    logs: Sequence[LogStatus],
+    logs: Sequence[LogStatus] | None = None,
 ) -> str:
     """Pure: the doctor report, with an exact fix hint per missing capability.
 
@@ -169,11 +169,12 @@ def render(
     service = format_service_status(caps.service_enabled, caps.service_active, guidance)
     lines.append(f"  {guidance.service_noun}: {service}")
     lines.append(f"  overlay: {format_overlay_status(caps.overlay, guidance)}")
-    lines.append("")
-    lines.append("logs:")
-    for log in logs:
-        lines.append(f"  {log.name}: {log.path} ({_log_state(log)})")
-        lines.extend(f"    {line}" for line in log.tail)
+    if logs is not None:
+        lines.append("")
+        lines.append("logs:")
+        for log in logs:
+            lines.append(f"  {log.name}: {log.path} ({_log_state(log)})")
+            lines.extend(f"    {line}" for line in log.tail)
     lines.append("")
     missing = missing_required(caps)
     labels = [guidance.capability_labels.get(name, name) for name in missing]

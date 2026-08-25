@@ -147,6 +147,45 @@ def test_format_input_devices_empty():
     ]
 
 
+def test_main_doctor_dispatches_without_creating_the_daemon_log(monkeypatch, tmp_path):
+    """Inspection must not create the file whose absence doctor reports."""
+
+    import stenographer.cli as cli
+    from stenographer.utils.logging_setup import shutdown_logging
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    log_path = tmp_path / "stenographer" / "stenographer.log"
+    seen = []
+    monkeypatch.setattr(cli, "dispatch", lambda argv: seen.append(argv) or 0)
+    shutdown_logging()
+
+    assert cli.main(["doctor"]) == 0
+
+    assert seen == [("doctor",)]
+    assert not log_path.exists()
+
+
+def test_main_doctor_leaves_an_existing_daemon_log_unchanged(monkeypatch, tmp_path):
+    """A read-only report must leave an existing diagnostic artifact untouched."""
+
+    import stenographer.cli as cli
+    from stenographer.utils.logging_setup import shutdown_logging
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    log_path = tmp_path / "stenographer" / "stenographer.log"
+    log_path.parent.mkdir()
+    sentinel = b"existing diagnostic bytes\n"
+    log_path.write_bytes(sentinel)
+    seen = []
+    monkeypatch.setattr(cli, "dispatch", lambda argv: seen.append(argv) or 0)
+    shutdown_logging()
+
+    assert cli.main(["doctor"]) == 0
+
+    assert seen == [("doctor",)]
+    assert log_path.read_bytes() == sentinel
+
+
 def test_main_flushes_the_log_queue_before_returning(monkeypatch, tmp_path, capsys):
     """Nothing else stops the listener: its thread is daemonic and never joined.
 

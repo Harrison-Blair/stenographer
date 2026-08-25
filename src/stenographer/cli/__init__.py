@@ -139,6 +139,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return run_overlay_helper()
 
+    # Doctor reports the daemon log as an existing-or-absent host fact. Opening
+    # the logging pipeline here would create that file before it can inspect it.
+    if arguments and arguments[0] == "doctor":
+        return dispatch(arguments)
+
     from stenographer.utils.logging_setup import setup_logging
 
     setup_logging()

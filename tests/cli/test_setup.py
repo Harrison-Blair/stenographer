@@ -314,3 +314,93 @@ def test_setup_requires_an_interactive_terminal():
     stderr = io.StringIO()
     assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=stderr) == 2
     assert "requires an interactive terminal" in stderr.getvalue()
+
+
+def test_setup_applies_loaded_then_reviewed_log_levels_before_followup_work(monkeypatch, tmp_path):
+    from stenographer.cli.setup_config import SaveResult
+    from stenographer.utils import logging_setup
+
+    events: list[str] = []
+    defaults = Config.defaults()
+    loaded = dataclasses.replace(
+        defaults,
+        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
+    )
+    reviewed = dataclasses.replace(
+        loaded,
+        feedback=dataclasses.replace(loaded.feedback, log_level="debug"),
+    )
+
+    class Document:
+        path = tmp_path / "config.toml"
+        config = loaded
+
+        def save(self, config):
+            assert config is reviewed
+            events.append("save")
+            return SaveResult(False, self.path)
+
+    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
+    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: Document())
+    monkeypatch.setattr(
+        setup,
+        "_wizard",
+        lambda *args, **kwargs: events.append("wizard") or reviewed,
+    )
+    monkeypatch.setattr(
+        setup,
+        "_guided_setup",
+        lambda *args, **kwargs: events.append("guided") or 0,
+    )
+    monkeypatch.setattr(
+        logging_setup,
+        "apply_stderr_level",
+        lambda level: events.append(f"level:{level}"),
+    )
+
+    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 0
+    assert events == ["level:warning", "wizard", "save", "level:debug", "guided"]
+
+
+def test_setup_does_not_apply_a_level_when_loading_fails(monkeypatch):
+    from stenographer.utils import logging_setup
+
+    levels: list[str] = []
+    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
+    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: 78)
+    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
+
+    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 78
+    assert levels == []
+
+
+def test_setup_save_failure_keeps_the_loaded_level(monkeypatch, tmp_path):
+    from stenographer.cli.setup_config import ConfigPersistenceError
+    from stenographer.utils import logging_setup
+
+    levels: list[str] = []
+    defaults = Config.defaults()
+    loaded = dataclasses.replace(
+        defaults,
+        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
+    )
+    reviewed = dataclasses.replace(
+        loaded,
+        feedback=dataclasses.replace(loaded.feedback, log_level="debug"),
+    )
+
+    class Document:
+        path = tmp_path / "config.toml"
+        config = loaded
+
+        def save(self, config):
+            assert config is reviewed
+            raise ConfigPersistenceError("save failed")
+
+    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
+    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: Document())
+    monkeypatch.setattr(setup, "_wizard", lambda *args, **kwargs: reviewed)
+    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
+
+    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 1
+    assert levels == ["warning"]
