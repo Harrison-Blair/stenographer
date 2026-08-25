@@ -55,6 +55,9 @@ def guidance() -> HostGuidance:
             UnavailableReason.X_EXTENSIONS_UNAVAILABLE: (
                 "XWayland requires the Shape and RandR extensions"
             ),
+            UnavailableReason.BACKEND_DEPENDENCY_MISSING: (
+                "overlay backend imports failed; reinstall stenographer with its overlay extras"
+            ),
         },
         overlay_fix_hint_default=(
             "no usable layer-shell or XWayland backend; check the graphical session"

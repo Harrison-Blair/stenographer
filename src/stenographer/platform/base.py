@@ -158,8 +158,13 @@ class HelperProcess(Protocol):
 class HelperTransport(Protocol):
     """Spawns overlay helper processes with the pipe layout the supervisor needs."""
 
-    def spawn(self, command: Sequence[str]) -> HelperProcess:
-        """Start *command*; raises ``OSError``/``ValueError`` when it cannot start."""
+    def spawn(self, command: Sequence[str], *, stderr_path: Path | None = None) -> HelperProcess:
+        """Start *command*; raises ``OSError``/``ValueError`` when it cannot start.
+
+        *stderr_path* is the file the child's stderr appends to, so a display
+        library's own chatter is captured beside the helper's records instead of
+        filling a pipe nobody drains. ``None`` discards it.
+        """
         ...
 
 
