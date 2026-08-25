@@ -21,7 +21,7 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from stenographer.platform import current_platform
-from stenographer.status import Backend, UnavailableReason
+from stenographer.status import Backend, UnavailableReason, selected_unavailable_reason
 
 if TYPE_CHECKING:
     from stenographer.config import Config
@@ -82,12 +82,15 @@ def probe_overlay(enabled: bool) -> OverlayCapability:
     if not enabled:
         return OverlayCapability.disabled()
 
-    reason: UnavailableReason | None = None
+    reasons: list[UnavailableReason | None] = []
     for spec in current_platform().overlay_backends():
         reason = spec.probe()
         if reason is None:
             return OverlayCapability.available(spec.backend)
-    return OverlayCapability.unavailable(reason or UnavailableReason.BACKENDS_UNAVAILABLE)
+        reasons.append(reason)
+    # The same fold the helper applies to its construct failures, so what
+    # ``doctor`` reports and what the helper logs cannot disagree.
+    return OverlayCapability.unavailable(selected_unavailable_reason(reasons))
 
 
 def probe(cfg: Config) -> Capabilities:
