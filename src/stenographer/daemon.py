@@ -253,7 +253,7 @@ class Daemon:
         )
         daemon_ref = daemon
         on_start, on_stop = edge_handlers(daemon, cfg.hotkey.mode)
-        log.info("hotkey: mode=%s", cfg.hotkey.mode)
+        log.info("hotkey: configured mode=%s", cfg.hotkey.mode)
         listener = plat.hotkey_listener(
             chord=parse_binding(cfg.hotkey.binding, plat.keys()),
             device=cfg.hotkey.device,
@@ -354,7 +354,7 @@ class Daemon:
     def on_key_down(self) -> None:
         with self._lock:
             if not can_start(self._recording, self._busy, self._stop_event.is_set()):
-                log.debug("hotkey: key-down ignored (recording/busy/stopping)")
+                log.debug("hotkey: key_down_ignored reason=recording_or_busy")
                 return
             self._worker.hold_model()
             try:
@@ -414,7 +414,7 @@ class Daemon:
         try:
             gate_passed = speech_gate_passes(samples, SAMPLE_RATE, self._cfg.audio.min_speech_rms)
             if not gate_passed:
-                log.info("pipeline: outcome=SILENT (gate)")
+                log.info("pipeline: done outcome=SILENT reason=gate")
                 self._publish_state(OverlayState.HIDDEN)
                 return
             if not self._worker.is_model_ready:
@@ -423,14 +423,14 @@ class Daemon:
                 result = self._worker.transcribe(samples)
             except WorkerError as exc:
                 if self._stop_event.is_set():
-                    log.info("pipeline: outcome=CANCELLED phase=transcribe")
+                    log.info("pipeline: done outcome=CANCELLED phase=transcribe")
                     self._publish_state(OverlayState.HIDDEN)
                     return
                 log.warning("pipeline: transcription_failed error_type=%s", type(exc).__name__)
                 self._fail("transcription failed")
                 return
             if self._stop_event.is_set():
-                log.info("pipeline: outcome=CANCELLED phase=post_transcribe")
+                log.info("pipeline: done outcome=CANCELLED phase=post_transcribe")
                 self._publish_state(OverlayState.HIDDEN)
                 return
             transcript_nonempty = bool(result.text.strip())
@@ -450,7 +450,7 @@ class Daemon:
                 transcript_nonempty=transcript_nonempty,
                 deliver_result=deliver_result,
             )
-            log.info("pipeline: outcome=%s chars=%d", outcome.name, len(text))
+            log.info("pipeline: done outcome=%s chars=%d", outcome.name, len(text))
             if outcome is Outcome.DELIVERED:
                 self._publish_state(OverlayState.HIDDEN)
                 _play_cue(self._feedback, "delivered")
@@ -466,7 +466,7 @@ class Daemon:
         if self._listener is None:
             raise RuntimeError("daemon.run() before build()")
         self._listener.start()
-        log.info("daemon: running (pid=%d)", os.getpid())
+        log.info("daemon: running pid=%d", os.getpid())
         self._stop_event.wait()
 
     def request_stop(self) -> None:
@@ -533,7 +533,7 @@ def run(cfg: Config) -> int:
         except Exception as exc:
             log.warning("overlay: unavailable error_type=%s", type(exc).__name__)
 
-    log.info("deliver: clipboard_backend=%s", clipboard_backend)
+    log.info("deliver: configured clipboard_backend=%s", clipboard_backend)
     try:
         daemon = Daemon.build(
             cfg, clipboard_backend=clipboard_backend, status=status, platform=plat
@@ -550,7 +550,7 @@ def run(cfg: Config) -> int:
         return _startup_failure(status, "another instance is already running.", 1)
 
     def _handler(reason: str) -> None:
-        log.info("stop: received %s, stopping", reason)
+        log.info("stop: requested reason=%s", reason)
         daemon.request_stop()
 
     plat.install_stop_handlers(_handler)
@@ -575,7 +575,7 @@ def run(cfg: Config) -> int:
                     daemon._notifier,
                 )
             except Exception as exc:
-                log.debug("update_check: not started error_type=%s", type(exc).__name__)
+                log.debug("update_check: not_started error_type=%s", type(exc).__name__)
         daemon.run()
     except KeyboardInterrupt:
         pass

@@ -15,5 +15,9 @@ if TYPE_CHECKING:
 @with_config
 def cmd_run(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer import daemon
+    from stenographer.utils.logging_setup import apply_stderr_level
 
+    # Logging was installed before any config could be read; this is the first
+    # point where ``feedback.log_level`` exists.
+    apply_stderr_level(cfg.feedback.log_level)
     return daemon.run(cfg)

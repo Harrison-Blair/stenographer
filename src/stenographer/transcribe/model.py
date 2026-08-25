@@ -85,7 +85,7 @@ class Model:
         )
         self._cfg = cfg
         log.info(
-            "asr: model loaded elapsed_ms=%d cpu_threads=%d",
+            "asr: model_loaded elapsed_ms=%d cpu_threads=%d",
             round((time.monotonic() - started) * 1000),
             cpu_threads,
         )
@@ -94,7 +94,7 @@ class Model:
         started = time.monotonic()
         if samples.size == 0:
             log.info(
-                "asr: decode complete elapsed_ms=%d audio_frames=0 vad_frames=0 "
+                "asr: decode_complete elapsed_ms=%d audio_frames=0 vad_frames=0 "
                 "segments=0 words=0 transcript_chars=0",
                 round((time.monotonic() - started) * 1000),
             )
@@ -140,7 +140,7 @@ class Model:
             vad_seconds=vad_seconds,
         )
         log.info(
-            "asr: decode complete elapsed_ms=%d audio_frames=%d vad_frames=%d "
+            "asr: decode_complete elapsed_ms=%d audio_frames=%d vad_frames=%d "
             "segments=%d words=%d transcript_chars=%d",
             round((time.monotonic() - started) * 1000),
             samples.shape[0],

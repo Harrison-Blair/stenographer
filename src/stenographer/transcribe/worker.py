@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from stenographer.constants import SAMPLE_RATE
 from stenographer.transcribe.model import Model, PathologicalOutputError, TranscriptionResult
+from stenographer.utils.logging_setup import owned_handlers
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -179,7 +180,7 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
                     model = Model(cfg)
             except Exception as exc:
                 log.error(
-                    "asr: job failed phase=model_load error_type=%s",
+                    "asr: job_failed phase=model_load error_type=%s",
                     type(exc).__name__,
                 )
                 kind, detail = classify_error(exc)
@@ -197,7 +198,7 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
         except Exception as exc:
             # Report and stay alive; native segfaults are handled by the parent
             # liveness poll, not here.
-            log.error("asr: job failed phase=%s error_type=%s", phase, type(exc).__name__)
+            log.error("asr: job_failed phase=%s error_type=%s", phase, type(exc).__name__)
             kind, detail = classify_error(exc)
             response_q.put(("error", kind, detail))
             continue
@@ -347,7 +348,7 @@ class Worker:
             self._abort_if_shutdown_requested(phase)
             if not self._process.is_alive():
                 log.error(
-                    "worker: child exited phase=%s exit_code=%s",
+                    "worker: child_exited phase=%s exit_code=%s",
                     phase,
                     self._process.exitcode,
                 )
@@ -357,7 +358,7 @@ class Worker:
                 now=time.monotonic(), deadline=deadline, poll_seconds=_POLL_SECONDS
             )
             if poll_timeout == 0:
-                log.error("worker: request timed out phase=%s", phase)
+                log.error("worker: request_timeout phase=%s", phase)
                 raise _WorkerTimeoutError(f"ASR worker timed out during {phase}")
             try:
                 message = self._response_q.get(timeout=poll_timeout)
@@ -399,7 +400,7 @@ class Worker:
         except Exception as exc:
             # Optional observers must never change transcription success.
             log.warning(
-                "worker: lifecycle callback failed event=%s error_type=%s",
+                "worker: lifecycle_callback_failed event=%s error_type=%s",
                 event,
                 type(exc).__name__,
             )
@@ -439,7 +440,7 @@ class Worker:
         previous = self._process
         if previous is not None:
             log.warning(
-                "worker: replacing child phase=respawn exit_code=%s",
+                "worker: replacing_child phase=respawn exit_code=%s",
                 previous.exitcode,
             )
         self._teardown()
@@ -447,9 +448,12 @@ class Worker:
         self._response_q = self._ctx.Queue()
         self._log_q = self._ctx.Queue()
         parent_logger = logging.getLogger("stenographer")
+        # The parent's own handler is a queue forwarder, so fanning out to it
+        # would enqueue the child's records a second time; the child's listener
+        # targets the same real sinks the parent's listener owns.
         self._log_listener = logging.handlers.QueueListener(
             self._log_q,
-            *parent_logger.handlers,
+            *owned_handlers(),
             respect_handler_level=True,
         )
         self._log_listener.start()
@@ -467,7 +471,7 @@ class Worker:
         try:
             self._process.start()
         except Exception as exc:
-            log.error("worker: spawn failed error_type=%s", type(exc).__name__)
+            log.error("worker: spawn_failed error_type=%s", type(exc).__name__)
             self._teardown()
             raise WorkerError("could not start ASR child") from exc
         log.info("worker: spawned pid=%d", self._process.pid)
@@ -478,7 +482,7 @@ class Worker:
         with self._lock:
             self._idle_timer = None
             if self._model_hold.is_set():
-                log.debug("worker: unload deferred reason=recording")
+                log.debug("worker: unload_deferred reason=recording")
                 # Retry directly rather than via _restart_idle_timer: its hold
                 # gate would make this a silent no-op, leaving the child
                 # resident forever if no release ever arms a timer. The retry

@@ -159,6 +159,11 @@ class WindowsPlatform:
         # documented fallback applies.
         return None
 
+    def journal_attached(self, env: Mapping[str, str]) -> bool:
+        # No journal: the Event Log is not this process's stderr, so the stderr
+        # formatter keeps stamping its own timestamps.
+        return False
+
     def probe_host(self) -> HostProbe:
         return HostProbe(
             key_injector_ok=False,

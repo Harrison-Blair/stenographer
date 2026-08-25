@@ -265,10 +265,10 @@ def resolve_sound_pack(
     assets = bundled_root if bundled_root is not None else bundled_sound_root()
     pack, depth = _resolve_sound_pack_quietly(name, config_dir, assets)
     if depth >= 1:
-        logger.warning("sound pack unavailable or invalid; using bundled %s", DEFAULT_SOUND_PACK)
+        logger.warning("feedback: sound_pack_unavailable fallback=%s", DEFAULT_SOUND_PACK)
     if depth >= 2:
         logger.warning(
-            "bundled %s sound pack is incomplete; unavailable cues are disabled",
+            "feedback: bundled_pack_incomplete pack=%s detail=unavailable_cues_disabled",
             DEFAULT_SOUND_PACK,
         )
     return pack

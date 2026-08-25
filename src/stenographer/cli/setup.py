@@ -25,7 +25,7 @@ from stenographer.cli.console import (
     restart_service,
 )
 from stenographer.cli.setup_config import ConfigPersistenceError
-from stenographer.config import ALLOWED_COMPUTE_TYPES, Config, ConfigError
+from stenographer.config import ALLOWED_COMPUTE_TYPES, ALLOWED_LOG_LEVELS, Config, ConfigError
 
 if TYPE_CHECKING:
     from stenographer.platform.base import HostGuidance
@@ -546,11 +546,13 @@ def _edit_feedback_section(
     *,
     notice: Sequence[str],
     skip_floor_without_overlay: bool,
+    ask_log_level: bool,
 ) -> Config:
     """Prompt the feedback keys both wizards share, then the spectrum response.
 
-    The wizards differ only in *notice* (their calibration disclaimer) and in
-    whether a disabled overlay skips the spectrum question entirely.
+    The wizards differ only in *notice* (their calibration disclaimer), in
+    whether a disabled overlay skips the spectrum question entirely, and in
+    whether the log threshold is asked at all — it is not an essential.
     """
 
     console.write("\nFeedback")
@@ -564,6 +566,16 @@ def _edit_feedback_section(
         ),
         sound_pack=_prompt_sound_pack(console, config.feedback.sound_pack, config_dir),
     )
+    if ask_log_level:
+        feedback = dataclasses.replace(
+            feedback,
+            log_level=_prompt_choice(
+                console,
+                "Log level",
+                config.feedback.log_level,
+                tuple(sorted(ALLOWED_LOG_LEVELS)),
+            ),
+        )
     console.write()
     for line in notice:
         console.write(line)
@@ -589,6 +601,7 @@ def _edit_feedback(console: Console, config: Config, *, config_dir: pathlib.Path
             "It never changes capture, min_speech_rms, speech gating, or transcription.",
         ),
         skip_floor_without_overlay=False,
+        ask_log_level=True,
     )
 
 
@@ -707,6 +720,7 @@ def _quick_wizard(
             "It does not affect capture, speech detection, audio gates, ASR, or transcription.",
         ),
         skip_floor_without_overlay=True,
+        ask_log_level=False,
     )
 
     for line in quick_review_lines(config):

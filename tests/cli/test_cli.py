@@ -154,7 +154,8 @@ def test_run_dispatches_config_to_daemon(monkeypatch):
     import stenographer.config as config
     import stenographer.daemon as daemon
 
-    sentinel = object()
+    # A real Config: `run` reads feedback.log_level off it before dispatching.
+    sentinel = config.Config.defaults()
     monkeypatch.setattr(config, "load_or_default", lambda: sentinel)
     seen = {}
 

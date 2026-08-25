@@ -43,7 +43,7 @@ def test_render_preserves_comments_order_and_unknown_content():
     assert Config.loads(rendered) == reviewed
 
 
-def test_render_materializes_all_21_known_keys():
+def test_render_materializes_all_22_known_keys():
     rendered = ConfigDocument.loads("").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
 
@@ -67,8 +67,9 @@ def test_render_materializes_all_21_known_keys():
         "update_check",
         "spectrum_floor_dbfs",
         "sound_pack",
+        "log_level",
     ]
-    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 21
+    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 22
 
 
 def test_render_encodes_optional_strings_as_empty_strings():

@@ -88,7 +88,7 @@ def detect_clipboard_backend() -> ClipboardBackend:
     except Exception as exc:
         backend = pick_backend(None, have_display=have_display)
         log.warning(
-            "deliver: wayland registry probe failed error_type=%s; using %s",
+            "deliver: wayland_probe_failed error_type=%s backend=%s",
             type(exc).__name__,
             backend.value,
         )
@@ -125,7 +125,7 @@ def copy_both_selections(text: str) -> bool:
             subprocess.TimeoutExpired,
             FileNotFoundError,
         ) as exc:
-            log.debug("deliver: %s failed: %s", " ".join(argv), exc)
+            log.debug("deliver: copy_failed argv=%s error=%s", " ".join(argv), exc)
             return False
     return True
 
@@ -165,11 +165,11 @@ def copy_both_selections_x11(text: str) -> bool:
             subprocess.TimeoutExpired,
             FileNotFoundError,
         ) as exc:
-            log.debug("deliver: %s failed: %s", " ".join(argv), exc)
+            log.debug("deliver: copy_failed argv=%s error=%s", " ".join(argv), exc)
             return False
         if readback.stdout != payload:
             log.warning(
-                "deliver: xclip %s read-back mismatch expected_bytes=%d got_bytes=%d",
+                "deliver: xclip_readback_mismatch selection=%s expected_bytes=%d got_bytes=%d",
                 selection,
                 len(payload),
                 len(readback.stdout),

@@ -141,6 +141,11 @@ class LinuxPlatform:
 
         return physical_core_count()
 
+    def journal_attached(self, env: Mapping[str, str]) -> bool:
+        from stenographer.platform.linux.dirs import journal_attached
+
+        return journal_attached(env)
+
     def probe_host(self) -> HostProbe:
         from stenographer.platform.linux.probe import probe_host
 

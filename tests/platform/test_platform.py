@@ -55,6 +55,8 @@ def test_windows_stub_conforms_and_reports_everything_unavailable():
     # os.cpu_count() counts logical CPUs; the stub must not pass that off as a
     # physical-core count, so it says "cannot tell" and the core falls back.
     assert plat.physical_core_count() is None
+    # No journal to defer timestamps to, whatever the environment says.
+    assert plat.journal_attached({"JOURNAL_STREAM": "8:123456"}) is False
     # The KEY_* vocabulary is core data, so the stub speaks it even with no
     # backend: a binding must parse and render wherever config is read.
     assert plat.keys().code("KEY_RIGHTCTRL") == 97
