@@ -142,4 +142,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     from stenographer.utils.logging_setup import setup_logging
 
     setup_logging()
-    return dispatch(arguments)
+    try:
+        return dispatch(arguments)
+    finally:
+        # The listener thread is daemonic and atexit's logging.shutdown() closes
+        # the sinks without draining them, so the teardown tail — the very lines
+        # a stop is diagnosed from — would be lost without this.
+        from stenographer.utils.logging_setup import shutdown_logging
+
+        shutdown_logging()

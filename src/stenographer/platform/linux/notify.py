@@ -59,7 +59,7 @@ class NotifySendNotifier:
             return str(icon) if icon.is_file() else None
         except OSError as exc:
             # An unreadable icon costs the notification its logo, never its text.
-            log.debug("notify: icon unavailable: %s", exc)
+            log.debug("notify: icon_unavailable error=%s", exc)
             return None
 
     def _send(self, message: str, urgency: str) -> None:
@@ -70,7 +70,7 @@ class NotifySendNotifier:
         try:
             spawn_detached(build_notify_command(message, urgency, self._icon))
         except OSError as exc:
-            log.debug("notify: send failed: %s", exc)
+            log.debug("notify: send_failed error=%s", exc)
 
     def error(self, message: str) -> None:
         """Show *message* as a critical notification, non-blocking."""

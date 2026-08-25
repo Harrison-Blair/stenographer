@@ -20,6 +20,7 @@ ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
 )
 
 ALLOWED_HOTKEY_MODES: frozenset[str] = frozenset({"hold", "toggle"})
+ALLOWED_LOG_LEVELS: frozenset[str] = frozenset({"debug", "info", "warning", "error"})
 MIN_SPECTRUM_FLOOR_DBFS = -96.0
 MAX_SPECTRUM_FLOOR_DBFS = -13.0
 SOUND_PACK_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
@@ -73,6 +74,7 @@ class FeedbackConfig:
     update_check: bool = True
     spectrum_floor_dbfs: SpectrumFloor = -45.0
     sound_pack: str = DEFAULT_SOUND_PACK
+    log_level: str = "info"
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,14 @@ class _Reader:
         value = self.str(key)
         if value not in allowed:
             raise self._err(key, f"must be one of {sorted(allowed)}, got {value!r}")
+        return value
+
+    def folded_choice(self, key: str, allowed: frozenset[str]) -> str:
+        """A choice matched case-insensitively; the canonical lower-case name is kept."""
+        raw = self.str(key)
+        value = raw.casefold()
+        if value not in allowed:
+            raise self._err(key, f"must be one of {sorted(allowed)}, got {raw!r}")
         return value
 
     def spectrum_floor(self, key: str) -> SpectrumFloor:
@@ -205,6 +215,7 @@ def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
         update_check=r.bool("update_check"),
         spectrum_floor_dbfs=r.spectrum_floor("spectrum_floor_dbfs"),
         sound_pack=sound_pack,
+        log_level=r.folded_choice("log_level", ALLOWED_LOG_LEVELS),
     )
 
 
@@ -249,6 +260,7 @@ overlay = true                 # best-effort lifecycle pill; dictation is indepe
 update_check = true            # daily HTTPS check for a newer release; a notice, never self-update
 spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
 sound_pack = "{sound_pack}"      # bundled pack name or valid pack under sounds/
+log_level = "info"             # debug | info | warning | error; the file keeps debug
 """
 
 
@@ -298,6 +310,7 @@ class Config:
                 update_check=True,
                 spectrum_floor_dbfs=-45.0,
                 sound_pack=DEFAULT_SOUND_PACK,
+                log_level="info",
             ),
         )
 

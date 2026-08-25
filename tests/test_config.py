@@ -42,6 +42,7 @@ def test_defaults_match_spec():
     assert d.feedback.update_check is True
     assert d.feedback.spectrum_floor_dbfs == -45.0
     assert d.feedback.sound_pack == "minimal-ui"
+    assert d.feedback.log_level == "info"
 
 
 def test_write_default_round_trips(tmp_path):
@@ -212,6 +213,8 @@ def test_unknown_keys_ignored(tmp_path):
         ('[stenographer.feedback]\nmute = "no"\n', "feedback.mute"),
         ('[stenographer.feedback]\noverlay = "yes"\n', "feedback.overlay"),
         ('[stenographer.feedback]\nupdate_check = "yes"\n', "feedback.update_check"),
+        ('[stenographer.feedback]\nlog_level = "verbose"\n', "feedback.log_level"),
+        ("[stenographer.feedback]\nlog_level = 10\n", "feedback.log_level"),
         ('[stenographer.feedback]\nsound_pack = "Minimal UI"\n', "feedback.sound_pack"),
         ('[stenographer.feedback]\nsound_pack = "-minimal"\n', "feedback.sound_pack"),
         ('[stenographer.feedback]\nsound_pack = "a_thing"\n', "feedback.sound_pack"),
@@ -268,3 +271,17 @@ def test_malformed_toml_raises(tmp_path):
     with pytest.raises(ConfigError) as exc:
         Config.load(p)
     assert exc.value.key == "<toml>"
+
+
+@pytest.mark.parametrize("written", ["debug", "DEBUG", "Debug"])
+def test_log_level_is_case_insensitive_and_stored_folded(tmp_path, written):
+    """The threshold is a level name, not a token: spelling it loudly still works.
+
+    Seen to FAIL against a plain ``choice`` validator (``"DEBUG"`` raised a
+    key-scoped ConfigError instead of loading).
+    """
+
+    p = tmp_path / "config.toml"
+    p.write_text(f'[stenographer.feedback]\nlog_level = "{written}"\n')
+
+    assert Config.load(p).feedback.log_level == "debug"

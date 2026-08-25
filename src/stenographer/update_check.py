@@ -204,11 +204,11 @@ def fetch_latest_tag() -> str | None:
         ) as response:
             resolved = response.geturl()
     except Exception:
-        log.debug("update check: fetch failed", exc_info=True)
+        log.debug("update_check: fetch_failed", exc_info=True)
         return None
     tag = tag_from_location(resolved)
     if tag is None:
-        log.debug("update check: unexpected redirect target")
+        log.debug("update_check: unexpected_redirect_target")
     return tag
 
 
@@ -242,7 +242,7 @@ def run_check(
             # forward on restarts that never touched the network.
             updated = dataclasses.replace(updated, checked_at=moment)
         log.debug(
-            "update check: installed=%s latest=%s fetched=%s notify=%s",
+            "update_check: evaluated installed=%s latest=%s fetched=%s notify=%s",
             installed,
             updated.latest,
             fetched is not None,
@@ -252,11 +252,11 @@ def run_check(
             state_dir.mkdir(parents=True, exist_ok=True)
             path.write_text(dump_record(updated), encoding="utf-8")
         except OSError:
-            log.debug("update check: record not written", exc_info=True)
+            log.debug("update_check: record_not_written", exc_info=True)
         if message is not None:
             notifier.info(message)
     except Exception:
-        log.debug("update check failed", exc_info=True)
+        log.debug("update_check: failed", exc_info=True)
 
 
 def start_background_check(

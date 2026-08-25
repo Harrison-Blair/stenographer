@@ -265,6 +265,7 @@ def test_full_review_lists_every_section_and_field():
         "  update_check = True",
         "  spectrum_floor_dbfs = -45.0",
         "  sound_pack = minimal-ui",
+        "  log_level = info",
     ]
 
 

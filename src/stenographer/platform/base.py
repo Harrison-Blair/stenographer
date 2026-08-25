@@ -318,6 +318,15 @@ class Platform(Protocol):
         """
         ...
 
+    def journal_attached(self, env: Mapping[str, str]) -> bool:
+        """True when stderr is already a system log that stamps its own timestamps.
+
+        Purely an output-formatting question — the core asks so it can drop the
+        ``asctime`` column from the stderr formatter rather than print a second
+        timestamp beside the host's.
+        """
+        ...
+
     def probe_host(self) -> HostProbe: ...
 
     def guidance(self) -> HostGuidance:

@@ -55,8 +55,8 @@ class Deliverer:
             return False
         if self._wait_released is not None and not self._wait_released():
             log.warning(
-                "deliver: binding still held after wait; proceeding "
-                "(clipboard already holds the transcript)"
+                "deliver: binding_still_held action=proceed "
+                "reason=clipboard_already_holds_transcript"
             )
         self._keyboard.send_chord()
         return True

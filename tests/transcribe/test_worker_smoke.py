@@ -279,8 +279,8 @@ def test_spawned_worker_forwards_private_safe_decode_metrics(tmp_path):
         shutdown_logging()
 
     records = stderr.getvalue()
-    assert "asr: model loaded elapsed_ms=" in records
-    assert "asr: decode complete elapsed_ms=" in records
+    assert "asr: model_loaded elapsed_ms=" in records
+    assert "asr: decode_complete elapsed_ms=" in records
     assert f"transcript_chars={len(result.text)}" in records
     assert result.text.strip()
     assert result.text.strip() not in records
