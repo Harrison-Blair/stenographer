@@ -54,14 +54,17 @@ class GateStats:
 
 @dataclass(frozen=True)
 class CaptureStats:
-    """What one completed capture cost, for the utterance summary line."""
+    """What one completed capture cost, for the utterance summary line.
+
+    Rate and channel count are deliberately absent: they are properties of the
+    negotiated stream, not of one capture, and ``recorder: prepared`` already
+    reports them once per negotiation.
+    """
 
     activate_ms: float
     capture_seconds: float
     input_frames: int
     output_frames: int
-    rate_hz: int
-    channels: int
     overflow: bool
     capped: bool
 
@@ -96,11 +99,6 @@ def speech_gate_stats(samples: np.ndarray, sample_rate: int, min_rms: float) -> 
         threshold=min_rms,
         passed=passed,
     )
-
-
-def speech_gate_passes(samples: np.ndarray, sample_rate: int, min_rms: float) -> bool:
-    """True if the capture clears the pre-decode energy gate."""
-    return speech_gate_stats(samples, sample_rate, min_rms).passed
 
 
 def _resample_poly(data: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
@@ -390,8 +388,6 @@ class Recorder:
             capture_seconds=elapsed,
             input_frames=input_frames,
             output_frames=int(audio.size),
-            rate_hz=self._device_rate,
-            channels=self._channels,
             overflow=overflow,
             capped=capped,
         )
@@ -457,9 +453,9 @@ class Recorder:
     def last_capture(self) -> CaptureStats | None:
         """Stats for the most recently completed capture, or ``None``.
 
-        Read by the pipeline thread after ``stop`` has returned its samples, so
-        the utterance summary can carry the capture's cost without the daemon
-        re-deriving it under the state lock.
+        Read on the hotkey thread in ``Daemon.on_key_up``, immediately after
+        ``stop`` has returned its samples, so the utterance summary can carry
+        the capture's cost without the daemon re-deriving it.
         """
         return self._last_capture
 

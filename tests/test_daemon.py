@@ -28,6 +28,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -52,7 +53,11 @@ from stenographer.platform.base import UnsupportedPlatformError
 from stenographer.status import OverlayState
 from stenographer.transcribe.model import TranscriptionResult
 from stenographer.transcribe.pipeline import transcript_text
-from stenographer.transcribe.worker import WorkerError, WorkerTimings
+from stenographer.transcribe.worker import (
+    WorkerError,
+    WorkerPathologicalError,
+    WorkerTimings,
+)
 from stenographer.utils.logging_setup import UtteranceFilter, set_utterance
 
 #: Never a substring of any field name, level, subsystem or path in the log.
@@ -282,8 +287,6 @@ _CAPTURE = CaptureStats(
     capture_seconds=1.0,
     input_frames=_RATE,
     output_frames=_RATE,
-    rate_hz=_RATE,
-    channels=1,
     overflow=False,
     capped=False,
 )
@@ -552,7 +555,7 @@ def test_the_utterance_stamp_is_cleared_when_the_pipeline_finishes(daemon_logs):
         daemon.stop()
 
 
-def test_a_recorder_stop_failure_still_closes_the_utterance_off_the_lock(daemon_logs):
+def test_a_recorder_stop_failure_still_closes_the_utterance(daemon_logs):
     class _BrokenRecorder(_Recorder):
         def stop(self) -> np.ndarray:
             raise OSError("stream vanished")
@@ -568,4 +571,102 @@ def test_a_recorder_stop_failure_still_closes_the_utterance_off_the_lock(daemon_
     assert daemon._pipeline_thread is None
     assert "recorder: failed" in daemon_logs.text
     assert "outcome=ERROR" in _summary(daemon_logs)
-    assert threading.active_count() >= 1
+    assert not [t for t in threading.enumerate() if t.name == "stenographer-pipeline"]
+
+
+def test_a_pathological_decode_keeps_its_counts_only_reason(daemon_logs):
+    # PathologicalOutputError's message is audited to carry counts only, and it
+    # is the only thing that explains a decode the daemon silently discarded.
+    # Seen to FAIL against a handler that caught WorkerPathologicalError under
+    # the plain WorkerError arm at safe=False: detail= disappeared entirely.
+    reason = "decoder word density exceeded limit (312 > 40)"
+    daemon = _daemon(error=WorkerPathologicalError(reason))
+    try:
+        _run_utterance(daemon)
+    finally:
+        daemon.stop()
+
+    assert f'detail="{reason}"' in daemon_logs.text
+    assert "error=WorkerPathologicalError" in daemon_logs.text
+    assert "outcome=ERROR" in _summary(daemon_logs)
+
+
+def test_an_inference_failure_beside_it_still_renders_nothing(daemon_logs):
+    # The sibling of the test above: same handler, opposite tier. Seen to FAIL
+    # against collapsing both arms to safe=True.
+    daemon = _daemon(error=WorkerError(f"inference blew up on {CANARY}"))
+    try:
+        _run_utterance(daemon)
+    finally:
+        daemon.stop()
+
+    assert CANARY not in daemon_logs.text
+    assert "error=WorkerError" in daemon_logs.text
+
+
+def test_the_summary_is_rendered_before_the_next_press_can_be_accepted(daemon_logs):
+    """The summary reads per-utterance state, so nothing may interleave with it.
+
+    ``_emit_summary`` renders ``total_ms`` from the record's own ``started_at``
+    and then clears the process-global ``utt`` stamp. Emitting it after the
+    state lock was handed on let a fast re-press allocate the next id first:
+    utterance N reported ``total_ms`` measured from N+1's start, and N+1's
+    records went out unstamped because N's teardown cleared the stamp behind it.
+
+    Asserted directly rather than by winning a race: while the summary is being
+    rendered, no other thread may take the state lock. Seen to FAIL against
+    ``_emit_summary`` called outside the ``with self._lock:`` block (the probe
+    thread acquired it, and the ``total_ms`` check below dropped to ~0).
+    """
+    import stenographer.daemon as daemon_module
+
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    real = daemon_module.log_summary
+    lock_was_free: list[bool] = []
+
+    def spy(record):
+        # A foreign thread, because the state lock is reentrant and the
+        # emitting thread would re-acquire its own lock happily.
+        taken: list[bool] = []
+
+        def probe() -> None:
+            taken.append(daemon._lock.acquire(timeout=0.2))
+            if taken[0]:
+                daemon._lock.release()
+
+        thread = threading.Thread(target=probe, name="lock-probe")
+        thread.start()
+        thread.join(timeout=5.0)
+        lock_was_free.append(bool(taken and taken[0]))
+        real(record)
+
+    daemon_module.log_summary = spy
+    try:
+        daemon.on_key_down()
+        time.sleep(0.05)
+        daemon.on_key_up()
+        thread = daemon._pipeline_thread
+        assert thread is not None
+        thread.join(timeout=10.0)
+    finally:
+        daemon_module.log_summary = real
+        daemon.stop()
+
+    assert lock_was_free == [False], lock_was_free
+
+    line = next(m for m in daemon_logs.messages if m.startswith("pipeline: utterance utt=1 "))
+    total_ms = float(line.split("total_ms=")[1].split()[0])
+    # Measured from this utterance's own accepted start, not a shared origin.
+    assert total_ms >= 50.0, line
+
+
+def test_stop_closes_an_in_flight_recording_as_cancelled(daemon_logs):
+    # A press then a shutdown must not leave an utterance unaccounted for.
+    # Seen to FAIL against a stop() that cleared _recording without taking the
+    # record: no pipeline: utterance line was written at all.
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    daemon.on_key_down()
+    daemon.stop()
+
+    assert "outcome=CANCELLED" in _summary(daemon_logs)
+    assert _current_stamp() == ""

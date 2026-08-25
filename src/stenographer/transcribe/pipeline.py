@@ -42,6 +42,11 @@ class UtteranceRecord:
     """
 
     utt: int
+    #: ``perf_counter`` at the moment this utterance was accepted. On the
+    #: record, not on the daemon: the summary is rendered after the state lock
+    #: is handed on, and a process-global origin would already belong to the
+    #: next utterance after a fast re-press.
+    started_at: float = 0.0
     source: str | None = None
     mode: str | None = None
     outcome: str | None = None

@@ -93,10 +93,13 @@ def detect_clipboard_backend() -> ClipboardBackend:
         globals_seen = _wayland_global_interfaces()
     except Exception as exc:
         backend = pick_backend(None, have_display=have_display)
-        log.warning(
-            "deliver: wayland_probe_failed error_type=%s backend=%s",
-            type(exc).__name__,
-            backend.value,
+        log_failure(
+            log,
+            logging.WARNING,
+            "deliver: wayland_probe_failed",
+            exc,
+            safe=True,
+            backend=backend.value,
         )
         return backend
     return pick_backend(globals_seen, have_display=have_display)

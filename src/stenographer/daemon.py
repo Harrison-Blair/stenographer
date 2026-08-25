@@ -42,7 +42,7 @@ from stenographer.transcribe.pipeline import (
     log_summary,
     transcript_text,
 )
-from stenographer.transcribe.worker import Worker, WorkerError
+from stenographer.transcribe.worker import Worker, WorkerError, WorkerPathologicalError
 from stenographer.utils.logging_setup import fmt_event, log_failure, set_utterance
 
 if TYPE_CHECKING:
@@ -223,7 +223,6 @@ class Daemon:
         # the utterance it was armed for, and each accepted start is a new one.
         self._utterance_id = 0
         self._record: UtteranceRecord | None = None
-        self._utterance_started_at = 0.0
         self._max_timer: threading.Timer | None = None
         self._warmup_thread: threading.Thread | None = None
         self._pipeline_thread: threading.Thread | None = None
@@ -424,9 +423,10 @@ class Daemon:
                 return
             self._recording = True
             self._utterance_id += 1
-            self._utterance_started_at = started_at
             set_utterance(self._utterance_id)
-            self._record = UtteranceRecord(utt=self._utterance_id, mode=self._cfg.hotkey.mode)
+            self._record = UtteranceRecord(
+                utt=self._utterance_id, started_at=started_at, mode=self._cfg.hotkey.mode
+            )
             if self._cfg.hotkey.mode == "toggle":
                 timer = threading.Timer(
                     self._cfg.audio.max_recording_seconds,
@@ -442,7 +442,6 @@ class Daemon:
             self._start_model_warmup(self._utterance_id)
 
     def on_key_up(self) -> None:
-        failed: UtteranceRecord | None = None
         with self._lock:
             if not self._recording:
                 log.debug(fmt_event("hotkey", "key_up_ignored", reason="not_recording"))
@@ -459,7 +458,7 @@ class Daemon:
                 self._recorder.close()
                 self._fail("recording failed; audio was discarded")
                 self._worker.release_model()
-                failed = self._take_record(Outcome.ERROR.name)
+                self._emit_summary(self._take_record(Outcome.ERROR.name))
             else:
                 self._apply_capture(self._recorder.last_capture)
                 self._busy = True
@@ -472,9 +471,6 @@ class Daemon:
                 )
                 self._pipeline_thread = thread
                 thread.start()
-        # Outside the lock: the summary line is process I/O, and a capture that
-        # died on stop still owes the log its one line.
-        self._emit_summary(failed)
 
     def _apply_capture(self, stats: CaptureStats | None) -> None:
         """Fold the recorder's own numbers into the utterance record."""
@@ -496,10 +492,16 @@ class Daemon:
         return record
 
     def _emit_summary(self, record: UtteranceRecord | None) -> None:
-        """Close out one utterance: its single INFO line, then clear ``utt``."""
+        """Close out one utterance: its single INFO line, then clear ``utt``.
+
+        Called with the state lock held. Logging is a queue put, not process
+        I/O — the listener thread owns the sinks — and holding the lock is what
+        keeps a fast re-press from allocating the next id and clearing the
+        stamp between this line and the record it belongs to.
+        """
         if record is None:
             return
-        record.total_ms = (time.perf_counter() - self._utterance_started_at) * 1000.0
+        record.total_ms = (time.perf_counter() - record.started_at) * 1000.0
         log_summary(record)
         set_utterance(None)
 
@@ -526,6 +528,17 @@ class Daemon:
                 self._publish_state(OverlayState.TRANSCRIBING)
             try:
                 result = self._worker.transcribe(samples, self._utterance_id)
+            except WorkerPathologicalError as exc:
+                if self._stop_event.is_set():
+                    outcome_name = "CANCELLED"
+                    self._publish_state(OverlayState.HIDDEN)
+                    return
+                # Caught before ``WorkerError``, which it subclasses: this
+                # detail is the audited counts-only rejection reason, and it is
+                # the only thing that explains a silently discarded decode.
+                log_failure(log, logging.WARNING, "pipeline: transcription_failed", exc, safe=True)
+                self._fail("transcription failed")
+                return
             except WorkerError as exc:
                 if self._stop_event.is_set():
                     outcome_name = "CANCELLED"
@@ -555,7 +568,7 @@ class Daemon:
                 log_failure(log, logging.WARNING, "pipeline: delivery_failed", exc, safe=True)
                 self._fail("delivery failed")
                 return
-            self._apply_delivery(record, delivered=transcript_nonempty)
+            self._apply_delivery(record, attempted=transcript_nonempty)
             outcome, message = classify_pipeline(
                 gate_passed=True,
                 transcript_nonempty=transcript_nonempty,
@@ -571,8 +584,7 @@ class Daemon:
             with self._lock:
                 self._worker.release_model()
                 self._busy = False
-                finished = self._take_record(outcome_name)
-            self._emit_summary(finished)
+                self._emit_summary(self._take_record(outcome_name))
 
     def _apply_decode(self, record: UtteranceRecord | None, result: TranscriptionResult) -> None:
         """Fold the worker's timings and the decode's shape into the record."""
@@ -588,8 +600,9 @@ class Daemon:
         record.words = sum(len(segment.words) for segment in result.segments)
         record.chars_raw = len(result.text)
 
-    def _apply_delivery(self, record: UtteranceRecord | None, *, delivered: bool) -> None:
-        if record is None or not delivered:
+    def _apply_delivery(self, record: UtteranceRecord | None, *, attempted: bool) -> None:
+        """Fold the delivery's cost in — ``attempted`` says a copy was tried at all."""
+        if record is None or not attempted:
             return
         timings = self._deliverer.last_timings
         if timings is None:
@@ -633,6 +646,9 @@ class Daemon:
             self._cancel_max_timer()
             self._recorder.close()
             self._recording = False
+            # A recording torn down mid-flight still owes the log its one line;
+            # without this a press-then-stop leaves an utterance unaccounted for.
+            self._emit_summary(self._take_record("CANCELLED"))
         self._publish_state(OverlayState.HIDDEN)
         set_utterance(None)
 

@@ -11,12 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from stenographer.audio import (
-    Recorder,
-    _resample_poly,
-    speech_gate_passes,
-    speech_gate_stats,
-)
+from stenographer.audio import Recorder, _resample_poly, speech_gate_stats
 
 _RATE = 16000
 _FRAME = int(_RATE * 0.050)  # 800 samples per 50 ms gate frame
@@ -54,40 +49,40 @@ def test_recorder_normalizes_only_exact_nonnegative_decimal_device_strings(confi
 
 def test_gate_disabled_passes_silence():
     silence = np.zeros(_RATE, dtype=np.float32)
-    assert speech_gate_passes(silence, _RATE, 0.0) is True
+    assert speech_gate_stats(silence, _RATE, 0.0).passed is True
 
 
 def test_gate_rejects_pure_silence():
     silence = np.zeros(_RATE, dtype=np.float32)
-    assert speech_gate_passes(silence, _RATE, 0.0005) is False
+    assert speech_gate_stats(silence, _RATE, 0.0005).passed is False
 
 
 def test_gate_rejects_isolated_loud_frame():
     # One loud frame surrounded by silence: no two consecutive loud frames.
     audio = _signal([0.0, 0.0, 0.02, 0.0, 0.0])
-    assert speech_gate_passes(audio, _RATE, 0.0005) is False
+    assert speech_gate_stats(audio, _RATE, 0.0005).passed is False
 
 
 def test_gate_passes_two_consecutive_loud_frames():
     audio = _signal([0.0, 0.02, 0.02, 0.0])
-    assert speech_gate_passes(audio, _RATE, 0.0005) is True
+    assert speech_gate_stats(audio, _RATE, 0.0005).passed is True
 
 
 def test_gate_passes_quiet_mic_speech():
     # RMS ~0.001 sustained speech clears the 0.0005 default the owner relies on.
     audio = _signal([0.001] * 10)
-    assert speech_gate_passes(audio, _RATE, 0.0005) is True
+    assert speech_gate_stats(audio, _RATE, 0.0005).passed is True
 
 
 def test_gate_rejects_speech_below_threshold():
     audio = _signal([0.001] * 10)
-    assert speech_gate_passes(audio, _RATE, 0.01) is False
+    assert speech_gate_stats(audio, _RATE, 0.01).passed is False
 
 
 def test_gate_rejects_too_short_for_two_frames():
     # Fewer than two whole frames can never satisfy the consecutive rule.
     loud = np.full(_FRAME, 0.02, dtype=np.float32)
-    assert speech_gate_passes(loud, _RATE, 0.0005) is False
+    assert speech_gate_stats(loud, _RATE, 0.0005).passed is False
 
 
 def test_resample_identity_when_rates_match():
@@ -126,7 +121,7 @@ def test_resample_preserves_dc_level():
 @pytest.mark.parametrize("min_rms", [0.0, -1.0])
 def test_gate_nonpositive_threshold_disables(min_rms):
     silence = np.zeros(_RATE, dtype=np.float32)
-    assert speech_gate_passes(silence, _RATE, min_rms) is True
+    assert speech_gate_stats(silence, _RATE, min_rms).passed is True
 
 
 def test_gate_stats_report_the_quiet_mic_rejection_it_decided():
@@ -155,24 +150,6 @@ def test_gate_stats_count_every_loud_frame_not_just_the_consecutive_pair():
     assert stats.frames_above == 3
     assert stats.frames_total == 5
     assert stats.peak_rms == pytest.approx(0.02, abs=1e-6)
-
-
-def test_gate_stats_and_the_verdict_come_from_one_computation():
-    # ``speech_gate_passes`` must not be able to disagree with the stats line
-    # printed beside it. Seen to FAIL against a ``speech_gate_passes`` left as
-    # its own second implementation with the two-frame minimum dropped.
-    cases = [
-        (_signal([0.0, 0.0]), 0.0005),
-        (_signal([0.0, 0.02, 0.02, 0.0]), 0.0005),
-        (_signal([0.0, 0.0, 0.02, 0.0, 0.0]), 0.0005),
-        (np.full(_FRAME, 0.02, dtype=np.float32), 0.0005),
-        (np.zeros(_RATE, dtype=np.float32), 0.0),
-        (np.empty(0, dtype=np.float32), 0.0005),
-    ]
-    for audio, min_rms in cases:
-        assert speech_gate_passes(audio, _RATE, min_rms) is (
-            speech_gate_stats(audio, _RATE, min_rms).passed
-        )
 
 
 def test_gate_stats_on_audio_too_short_to_frame():

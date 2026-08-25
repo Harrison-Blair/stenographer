@@ -382,9 +382,21 @@ def _with_fields(head: str, fields: Mapping[str, object]) -> str:
 
 
 def _render(value: object) -> str:
+    """Render one field value, quoting it only when it would break the format.
+
+    ``key=value`` is the whole contract the log is grepped and split on, and a
+    runtime value carrying a space silently breaks it: an argv, a PortAudio
+    device name, a user path, or an OS error's own ``[Errno 13] Permission
+    denied``. Those become one double-quoted token instead of several bare
+    ones; every other value stays bare, so the common line is unchanged.
+    """
     # %g keeps a quiet mic's 0.0005 readable instead of rounding it to zero,
     # and drops the float noise a computed duration carries.
-    return f"{value:g}" if isinstance(value, float) else str(value)
+    text = f"{value:g}" if isinstance(value, float) else str(value)
+    if not any(char.isspace() for char in text) and '"' not in text:
+        return text
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _mark_owned(handler: logging.Handler) -> None:

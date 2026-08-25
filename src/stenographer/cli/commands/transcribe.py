@@ -4,6 +4,12 @@
 The same gate, the same downmix, the same formatter call and the same summary
 line as the daemon's pipeline — via ``transcribe.pipeline`` — so a file run is
 a faithful rehearsal of a dictation instead of a second, subtly different one.
+
+One deliberate difference: the gate here only *reports*. A file the user named
+explicitly is decoded whatever its energy, because the answer they asked for is
+the transcript, not a verdict. The summary therefore records ``SILENT`` when
+the gate would have rejected the audio and ``OK`` otherwise — never
+``DELIVERED``, which means a paste that this path never performs.
 """
 
 from __future__ import annotations
@@ -54,8 +60,7 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.audio import _resample_poly
 
     # ``utt=0`` is reserved for the file path: the daemon's ids start at 1.
-    record = UtteranceRecord(utt=0, source="file")
-    started_at = time.perf_counter()
+    record = UtteranceRecord(utt=0, started_at=time.perf_counter(), source="file")
     samples = _resample_poly(downmix(samples), sample_rate, SAMPLE_RATE)
     record.out_frames = int(samples.size)
 
@@ -64,6 +69,7 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     record.gate = "pass" if stats.passed else "fail"
     record.peak_rms = stats.peak_rms
     record.frames_above = stats.frames_above
+    record.outcome = "OK" if stats.passed else "SILENT"
 
     load_started_at = time.perf_counter()
     m = model.Model(cfg.asr)
@@ -82,8 +88,7 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
 
     text = transcript_text(result, raw=args.raw)
     record.chars_out = len(text)
-    record.outcome = "SILENT" if not text.strip() else "DELIVERED"
-    record.total_ms = (time.perf_counter() - started_at) * 1000.0
+    record.total_ms = (time.perf_counter() - record.started_at) * 1000.0
     log_summary(record)
 
     sys.stdout.write(text)

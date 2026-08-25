@@ -21,6 +21,7 @@ from stenographer.transcribe.worker import (
     _WorkerTimeoutError,
     classify_error,
     decode_timeout_seconds,
+    error_is_safe_to_render,
     interpret_response,
     lifecycle_transition,
     response_poll_timeout,
@@ -159,6 +160,19 @@ def test_should_arm_idle_timer_each_gate_blocks(override):
     }
     kwargs.update(override)
     assert should_arm_idle_timer(**kwargs) is False
+
+
+def test_only_the_pathological_decode_failure_may_render_its_own_message():
+    """The child's log tier, as the pure decision the child loop asks for.
+
+    Seen to FAIL against ``safe=False`` for every decode failure, which threw
+    away the counts-only rejection reason that is the sole account of a
+    discarded decode — and against ``safe=True`` for every one, which would let
+    the inference stack quote audio-derived text into the log.
+    """
+    assert error_is_safe_to_render(PathologicalOutputError("word density 312 > 40")) is True
+    assert error_is_safe_to_render(RuntimeError("decoded: hello there")) is False
+    assert error_is_safe_to_render(ValueError("cannot reshape")) is False
 
 
 def test_classify_error_pathological():

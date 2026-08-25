@@ -153,6 +153,17 @@ def classify_error(exc: Exception) -> tuple[str, str]:
     return ("inference", f"{type(exc).__name__}: {exc}")
 
 
+def error_is_safe_to_render(exc: Exception) -> bool:
+    """Whether a decode failure's own message may be logged verbatim. PURE.
+
+    Only ``PathologicalOutputError``'s is: it is audited to carry counts
+    ("word density exceeded limit (312 > 40)") and is the whole account of a
+    decode the daemon then discards. Every other decode failure comes from the
+    inference stack, whose message can quote output derived from the audio.
+    """
+    return isinstance(exc, PathologicalOutputError)
+
+
 def interpret_response(message: object) -> TranscriptionResult | WorkerEvent:
     """Parent-side: turn a child response tuple into a result or a typed raise.
     Malformed messages are described by SHAPE only, never by echoed payload."""
@@ -224,10 +235,15 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
             result = model.transcribe(samples)
         except Exception as exc:
             # Report and stay alive; native segfaults are handled by the parent
-            # liveness poll, not here.  safe=False: a decode failure is the one
-            # lineage whose message can quote decoder output derived from the
-            # audio, so only the class and the frames are ever rendered.
-            log_failure(log, logging.ERROR, "asr: job_failed", exc, safe=False, phase=phase)
+            # liveness poll, not here.
+            log_failure(
+                log,
+                logging.ERROR,
+                "asr: job_failed",
+                exc,
+                safe=error_is_safe_to_render(exc),
+                phase=phase,
+            )
             kind, detail = classify_error(exc)
             response_q.put(("error", kind, detail))
             continue
