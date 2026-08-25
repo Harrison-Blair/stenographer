@@ -11,7 +11,7 @@ word in it — capability labels, fix hints, the service noun and its installer
 — comes from the platform's :class:`~stenographer.platform.base.HostGuidance`,
 so this module carries no Linux prose.
 
-The report also names both log files and replays the daemon log's recent
+The report also names both log files and replays both log files' recent
 complaints, so a report can be pasted from one command. Reading a log is the
 only I/O this module does on its own: :func:`run` turns each file into a
 :class:`LogStatus` — a missing or unreadable log is a fact to print, never a
