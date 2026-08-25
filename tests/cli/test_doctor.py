@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure-logic tests for the doctor report: the gate decision and rendering only.
+"""Pure-logic tests for the doctor report: the gate decision, the log tail, and
+rendering only.
 
 The gate (``stenographer.capabilities``) and its rendering (``cli/doctor.py``)
-are exercised together here because the report is driven by ``REQUIRED``.
+are exercised together here because the report is driven by ``REQUIRED``. The
+"Logs" section is split the same way: ``run`` reads the files, and only its
+pure half — ``tail_errors`` and ``decode_tail`` — is asserted here, over log
+text written in the file sink's own format.
 
 The environment probe itself is exercised by test_doctor_smoke.py (integration,
 non-mocked) per the testing policy in AGENTS.md — nothing here stubs the
@@ -28,6 +32,12 @@ from stenographer.status import Backend, UnavailableReason
 # ``render`` interpolates the path: the rendered separator is the host's, so a
 # POSIX literal would not match on Windows.
 _CONFIG_PATH = pathlib.Path("/tmp/config.toml")
+
+# Log facts are an input to ``render`` too: ``run`` does the reading.
+_LOGS = (
+    doctor.LogStatus("daemon", pathlib.Path("/state/stenographer.log"), 4096),
+    doctor.LogStatus("helper", pathlib.Path("/state/overlay-helper.log"), None),
+)
 
 _XCLIP_HINT = "install xclip (the compositor lacks a data-control protocol; GNOME 46 and older)"
 
@@ -134,7 +144,7 @@ def test_cue_player_is_not_required():
 
 
 def test_render_all_present():
-    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE)
+    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE, _LOGS)
     assert "all required capabilities present" in report
     assert "MISSING" not in report
     assert str(_CONFIG_PATH) in report
@@ -145,7 +155,7 @@ def test_render_all_present():
 
 def test_render_missing_capability_carries_fix_hint():
     caps = _caps(model_cached=False, clipboard_ok=False)
-    report = doctor.render(caps, Config.defaults(), _CONFIG_PATH, _GUIDANCE)
+    report = doctor.render(caps, Config.defaults(), _CONFIG_PATH, _GUIDANCE, _LOGS)
     assert "ASR model cached: MISSING — run: stenographer model download" in report
     assert "clipboard (wl-copy): MISSING — install wl-clipboard" in report
     assert "missing required capabilities: ASR model cached, clipboard" in report
@@ -153,7 +163,7 @@ def test_render_missing_capability_carries_fix_hint():
 
 def test_render_clipboard_line_names_the_detected_backend():
     report = doctor.render(
-        _caps(clipboard_backend="x11"), Config.defaults(), _CONFIG_PATH, _GUIDANCE
+        _caps(clipboard_backend="x11"), Config.defaults(), _CONFIG_PATH, _GUIDANCE, _LOGS
     )
     assert "clipboard (x11): ok" in report
 
@@ -162,6 +172,7 @@ def test_render_clipboard_line_names_the_detected_backend():
         Config.defaults(),
         _CONFIG_PATH,
         _GUIDANCE,
+        _LOGS,
     )
     assert (
         "clipboard (x11): MISSING — install xclip "
@@ -170,7 +181,9 @@ def test_render_clipboard_line_names_the_detected_backend():
 
 
 def test_render_absent_cue_player_is_informational():
-    report = doctor.render(_caps(cue_player=None), Config.defaults(), _CONFIG_PATH, _GUIDANCE)
+    report = doctor.render(
+        _caps(cue_player=None), Config.defaults(), _CONFIG_PATH, _GUIDANCE, _LOGS
+    )
     assert "audio player: none (sound cues disabled)" in report
     assert "all required capabilities present" in report
 
@@ -199,7 +212,7 @@ def test_format_service_status_unreachable_manager():
 
 
 def test_render_carries_service_status_line():
-    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE)
+    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE, _LOGS)
     assert "systemd unit: enabled, active" in report
 
     report = doctor.render(
@@ -207,6 +220,7 @@ def test_render_carries_service_status_line():
         Config.defaults(),
         _CONFIG_PATH,
         _GUIDANCE,
+        _LOGS,
     )
     assert "systemd unit: not installed — run scripts/install.sh" in report
     assert "all required capabilities present" in report
@@ -232,7 +246,7 @@ def test_render_takes_every_host_word_from_the_supplied_guidance():
         service_enabled=None,
         service_active="inactive",
     )
-    report = doctor.render(caps, Config.defaults(), _CONFIG_PATH, _OTHER_GUIDANCE)
+    report = doctor.render(caps, Config.defaults(), _CONFIG_PATH, _OTHER_GUIDANCE, _LOGS)
 
     assert "  paste injection: MISSING — enable the injector" in report
     assert "  global hotkey hook: MISSING — permit the hook" in report
@@ -256,7 +270,7 @@ def test_render_falls_back_to_the_hosts_default_clipboard_hint():
     """An unanticipated backend name still gets that host's hint, not another's."""
 
     caps = _caps(clipboard_ok=False, clipboard_backend="something-new")
-    report = doctor.render(caps, Config.defaults(), _CONFIG_PATH, _OTHER_GUIDANCE)
+    report = doctor.render(caps, Config.defaults(), _CONFIG_PATH, _OTHER_GUIDANCE, _LOGS)
     assert "  pasteboard (something-new): MISSING — no pasteboard backend" in report
 
 
@@ -272,7 +286,117 @@ def test_overlay_report_variants_are_informational_only():
     )
     for overlay, expected in variants:
         caps = _caps(overlay=overlay)
-        report = doctor.render(caps, Config.defaults(), _CONFIG_PATH, _GUIDANCE)
+        report = doctor.render(caps, Config.defaults(), _CONFIG_PATH, _GUIDANCE, _LOGS)
         assert report.count("  overlay: ") == 1
         assert f"  overlay: {expected}" in report
         assert missing_required(caps) == []
+
+
+def _log_line(level: str, message: str, *, utt: int = 1) -> str:
+    """One line in the file sink's format (utils/logging_setup._FORMAT)."""
+    return f"2026-08-24 09:15:02,431 {level} stenographer.audio utt={utt} {message}"
+
+
+def test_tail_errors_keeps_only_warning_and_worse_in_file_order():
+    text = "\n".join(
+        [
+            _log_line("DEBUG", "audio: block_copied frames=800"),
+            _log_line("WARNING", "audio: gate_failed peak_rms=0.0004"),
+            _log_line("INFO", "daemon: utterance outcome=delivered"),
+            _log_line("ERROR", "clipboard: copy_failed error=CalledProcessError"),
+            _log_line("CRITICAL", "worker: child_lost error=BrokenPipeError"),
+        ]
+    )
+    assert doctor.tail_errors(text) == [
+        _log_line("WARNING", "audio: gate_failed peak_rms=0.0004"),
+        _log_line("ERROR", "clipboard: copy_failed error=CalledProcessError"),
+        _log_line("CRITICAL", "worker: child_lost error=BrokenPipeError"),
+    ]
+
+
+def test_tail_errors_keeps_the_last_n_only():
+    text = "\n".join(_log_line("ERROR", f"daemon: failed seq={index}") for index in range(25))
+    tail = doctor.tail_errors(text)
+    assert len(tail) == 10
+    assert tail[0] == _log_line("ERROR", "daemon: failed seq=15")
+    assert tail[-1] == _log_line("ERROR", "daemon: failed seq=24")
+    assert doctor.tail_errors(text, 3) == [
+        _log_line("ERROR", f"daemon: failed seq={index}") for index in (22, 23, 24)
+    ]
+
+
+def test_tail_errors_ignores_lines_that_are_not_records():
+    """A window opens mid-line, and a DEBUG traceback spans several of them.
+
+    Neither the fragment left at the head of a tail window nor a traceback's
+    continuation lines carry a level column, so none of them is a complaint —
+    however loudly the exception's own text reads.
+    """
+
+    complaint = _log_line("WARNING", "audio: gate_failed peak_rms=0.0004")
+    text = "\n".join(
+        [
+            "ed error=TimeoutExpired",
+            "grapher.clipboard utt=2 clipboard: copy_failed error=CalledProcessError",
+            _log_line("DEBUG", "clipboard: copy_failed error=CalledProcessError"),
+            "Traceback (most recent call last):",
+            '  File "/x/delivery/deliver.py", line 42, in copy',
+            "CalledProcessError: ERROR reported by the copy helper",
+            complaint,
+        ]
+    )
+    assert doctor.tail_errors(text) == [complaint]
+
+
+def test_tail_errors_on_an_empty_log_is_empty():
+    assert doctor.tail_errors("") == []
+    assert doctor.tail_errors("\n\n") == []
+
+
+def test_tail_errors_reads_the_level_column_not_the_message():
+    """``ERROR`` inside a message is prose; the level is the third column."""
+
+    recovered = _log_line("INFO", "worker: restarted after=ERROR job=decode")
+    complained = _log_line("WARNING", "delivery: release_wait timed out, an ERROR may follow")
+    assert doctor.tail_errors("\n".join([recovered, complained])) == [complained]
+
+
+def test_decode_tail_survives_a_character_split_by_the_window_edge():
+    """The window can open mid-character; a replaced byte beats an exception."""
+
+    complaint = _log_line("ERROR", "config: invalid key=asr.model detail=missing")
+    half_a_character = "café".encode()[-1:]
+    window = half_a_character + b" fragment\n" + complaint.encode()
+    text = doctor.decode_tail(window)
+    assert text.endswith(complaint)
+    assert doctor.tail_errors(text) == [complaint]
+
+
+def test_render_names_each_log_with_its_size_or_absence():
+    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE, _LOGS)
+    assert "logs:" in report
+    assert f"  daemon: {pathlib.Path('/state/stenographer.log')} (4096 bytes)" in report
+    assert f"  helper: {pathlib.Path('/state/overlay-helper.log')} (absent)" in report
+
+
+def test_render_replays_the_daemon_tail_under_its_log():
+    complaint = _log_line("ERROR", "clipboard: copy_failed error=CalledProcessError")
+    logs = (
+        doctor.LogStatus("daemon", pathlib.Path("/state/stenographer.log"), 4096, (complaint,)),
+        _LOGS[1],
+    )
+    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE, logs)
+    lines = report.splitlines()
+    index = lines.index(f"  daemon: {pathlib.Path('/state/stenographer.log')} (4096 bytes)")
+    assert lines[index + 1] == f"    {complaint}"
+    assert "all required capabilities present" in report
+
+
+def test_render_absent_log_contributes_one_line_and_no_body():
+    logs = (doctor.LogStatus("daemon", pathlib.Path("/state/stenographer.log"), None),)
+    report = doctor.render(_caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE, logs)
+    lines = report.splitlines()
+    index = lines.index(f"  daemon: {pathlib.Path('/state/stenographer.log')} (absent)")
+    assert lines[index + 1] == ""
+    assert "None" not in report
+    assert "all required capabilities present" in report
