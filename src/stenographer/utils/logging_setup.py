@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 _LOGGER_NAME = "stenographer"
 _LOG_FILENAME = "stenographer.log"
+_HELPER_LOG_FILENAME = "overlay-helper.log"
 _MAX_BYTES = 5 * 1024 * 1024
 _BACKUP_COUNT = 3
 _HANDLER_MARKER = "_stenographer_owned"
@@ -47,6 +48,23 @@ _listener: logging.handlers.QueueListener | None = None
 #: STENOGRAPHER_LOG_LEVEL is per-process and outranks the config value.
 _stderr_level_pinned = False
 _utterance: int | None = None
+
+
+def log_paths(
+    env: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> tuple[Path, Path]:
+    """The daemon log and the overlay helper's own log, existing or not.
+
+    Both live in the host's state directory. ``doctor`` reports them without
+    ever opening the logging pipeline, so the paths are derived here rather
+    than read back off a handler that this process may never have installed.
+    """
+    directory = current_platform().state_dir(
+        os.environ if env is None else env,
+        Path.home() if home is None else home,
+    )
+    return directory / _LOG_FILENAME, directory / _HELPER_LOG_FILENAME
 
 
 def resolve_log_level(value: str | None) -> int:
