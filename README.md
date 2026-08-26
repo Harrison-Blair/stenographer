@@ -104,10 +104,10 @@ Configuration lives at `~/.config/stenographer/config.toml`. Hold-to-talk is
 the default. To use toggle mode and hide visual feedback, set:
 
 ```toml
-[hotkey]
+[stenographer.hotkey]
 mode = "toggle"
 
-[feedback]
+[stenographer.feedback]
 overlay = false
 sound_pack = "minimal-ui"
 ```
