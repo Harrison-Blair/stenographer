@@ -23,7 +23,7 @@ def test_defaults_match_spec():
     d = Config.defaults()
     assert d.hotkey.binding == "KEY_RIGHTCTRL"
     assert d.hotkey.device is None
-    assert d.hotkey.mode == "hold"
+    assert d.hotkey.mode == "hybrid"
     assert d.hotkey.hybrid_threshold_seconds == 0.5
     assert d.audio.input_device is None
     assert d.audio.min_speech_rms == 0.0005
@@ -68,6 +68,19 @@ def test_default_template_takes_its_hotkey_device_comment_from_the_platform():
     assert rendered.count("                    # ") == 1
     # Still valid, still the documented defaults.
     assert Config.loads(rendered) == Config.defaults()
+
+
+def test_default_template_ships_the_default_mode_at_the_fixed_comment_column():
+    """The written template must agree with the dataclass default and stay aligned.
+
+    Seen to FAIL twice: with only ``HotkeyConfig.mode``/``Config.defaults``
+    changed (the template still said ``mode = "hold"``), and with the template
+    edited but not re-padded (the ``#`` moved off column 31).
+    """
+
+    line = next(text for text in default_toml().splitlines() if text.startswith("mode = "))
+    assert line.startswith(f'mode = "{Config.defaults().hotkey.mode}"')
+    assert line.index("#") == 31
 
 
 def test_loads_validates_without_a_file():

@@ -8,10 +8,11 @@ window. It cannot be asserted programmatically.
     MANUAL ACCEPTANCE PROCEDURE
     1. Ensure the model is cached (`stenographer model download`) and you are
        in the `input` group with write access to /dev/uinput.
-    2. On THREE consecutive cold service starts, focus a text field, press and
-       hold KEY_RIGHTCTRL, and say "Opening words must remain in this
-       transcription" immediately when the start cue sounds. Release the key;
-       each pasted result must retain at least "Opening words must remain".
+    2. Set hotkey.mode = "hold". On THREE consecutive cold service starts,
+       focus a text field, press and hold KEY_RIGHTCTRL, and say "Opening words
+       must remain in this transcription" immediately when the start cue
+       sounds. Release the key; each pasted result must retain at least
+       "Opening words must remain".
     3. Repeat the cold-start check once with feedback.mute=true.
     4. Set a short asr.idle_unload_seconds, complete one dictation, wait for the
        worker to unload, and repeat the immediate-speech check.
@@ -46,7 +47,7 @@ window. It cannot be asserted programmatically.
        (e.g. 5), start a recording and keep talking past the cap: the stop cue
        must fire at the cap and the transcript up to it must be delivered. A
        press during transcription must do nothing.
-    10. Set hotkey.mode = "hybrid". Tap KEY_RIGHTCTRL well inside
+    10. Set hotkey.mode = "hybrid" (the default). Tap KEY_RIGHTCTRL well inside
        hotkey.hybrid_threshold_seconds: the pill must stay up with the key
        released. Speak, tap again, and confirm the paste. Then press and hold
        past the threshold, speak, and release — it must stop on release exactly

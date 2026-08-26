@@ -21,8 +21,8 @@ instructions.
 > [!NOTE]
 > This `README.md` was generated with AI, but reviewed for accuracy by a human
 
-Default hotkey: Right Ctrl in hold-to-talk mode. Hold it, speak, and release;
-toggle and hybrid (tap to latch, hold to talk) modes are optional.
+Default hotkey: Right Ctrl in hybrid mode. Tap it to latch, or hold it, speak,
+and release; plain hold-to-talk and toggle modes are optional.
 
 
 <!--
@@ -100,8 +100,11 @@ wizards offer the bundled and valid custom sound packs, then offer the separate,
 approximately 1.5 GB model download and check the microphone, clipboard, model,
 and input permissions.
 
-Configuration lives at `~/.config/stenographer/config.toml`. Hold-to-talk is
-the default. To use toggle mode and hide visual feedback, set:
+Configuration lives at `~/.config/stenographer/config.toml`. Hybrid mode is the
+default: a tap released inside `hybrid_threshold_seconds` (default `0.5`)
+latches the recording until the next press, and a press held past it stops on
+release. To use plain hold-to-talk or toggle mode and hide visual feedback,
+set:
 
 ```toml
 [stenographer.hotkey]
@@ -112,10 +115,6 @@ overlay = false
 sound_pack = "minimal-ui"
 ```
 
-Hybrid mode decides per press: with `mode = "hybrid"`, a tap released inside
-`hybrid_threshold_seconds` (default `0.5`) latches the recording until the next
-press, and a press held past it stops on release.
-
 ### 4. Start and dictate
 
 ```sh
@@ -123,10 +122,10 @@ systemctl --user start stenographer.service
 systemctl --user status stenographer.service --no-pager
 ```
 
-Hold Right Ctrl, speak, then release. The transcript is pasted at the cursor
-and remains on the clipboard. In toggle mode, press once to start and again to
-stop. In hybrid mode, a quick tap latches until the next press and a longer
-hold ends on release.
+Hold Right Ctrl, speak, then release — or tap it to latch, speak, and tap again
+to stop. The transcript is pasted at the cursor and remains on the clipboard.
+In `hold` mode only the held press works; in `toggle` mode press once to start
+and again to stop.
 
 ## CLI
 

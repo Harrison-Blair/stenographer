@@ -272,14 +272,17 @@ def test_build_wires_toggle_mode_press_only():
     pytest.importorskip("stenographer.hotkey")
     from stenographer.config import Config
 
-    hold = _build_or_skip(Config.defaults())
+    defaults = Config.defaults()
+    hold_cfg = dataclasses.replace(
+        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hold")
+    )
+    hold = _build_or_skip(hold_cfg)
     try:
         assert hold._listener._on_start == hold.on_key_down
         assert hold._listener._on_stop == hold.on_key_up
     finally:
         hold.stop()
 
-    defaults = Config.defaults()
     toggle_cfg = dataclasses.replace(
         defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="toggle")
     )

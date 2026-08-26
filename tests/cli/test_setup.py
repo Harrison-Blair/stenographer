@@ -213,7 +213,8 @@ def test_tryout_falls_back_to_a_foreground_run_when_the_state_is_unknown():
 
 
 def test_tryout_describes_a_hold_binding_as_held_and_logs_the_service():
-    config = Config.defaults()
+    defaults = Config.defaults()
+    config = dataclasses.replace(defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hold"))
     lines = _tryout(config=config)
 
     assert lines[-2] == "Focus a text field, hold KEY_RIGHTCTRL, speak, then release it."
@@ -256,7 +257,7 @@ def test_full_review_lists_every_section_and_field():
         "[hotkey]",
         "  binding = KEY_RIGHTCTRL",
         "  device = automatic/unset",
-        "  mode = hold",
+        "  mode = hybrid",
         "  hybrid_threshold_seconds = 0.5",
         "[audio]",
         "  input_device = automatic/unset",
@@ -300,7 +301,7 @@ def test_quick_review_lists_only_the_keys_the_quick_wizard_edits():
         "\nQuick setup review",
         "  hotkey.device = automatic/unset",
         "  hotkey.binding = KEY_RIGHTCTRL",
-        "  hotkey.mode = hold",
+        "  hotkey.mode = hybrid",
         "  audio.input_device = automatic/unset",
         "  feedback.volume = 0.6",
         "  feedback.mute = False",

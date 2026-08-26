@@ -3,11 +3,11 @@
 
 The single module holding cross-component state. One utterance at a time, no
 queue: a start press during transcription is ignored. Three hotkey modes:
-``hold`` (push-to-talk, the default) maps key-down/key-up straight to
-start/stop; ``toggle`` maps each press through ``toggle_action`` and ends a
-forgotten recording via a generation-guarded ``audio.max_recording_seconds``
-timer; ``hybrid`` starts on every press like ``toggle`` and lets the release
-decide (``hybrid_release_action``) — a release before
+``hold`` (push-to-talk) maps key-down/key-up straight to start/stop;
+``toggle`` maps each press through ``toggle_action`` and ends a forgotten
+recording via a generation-guarded ``audio.max_recording_seconds`` timer;
+``hybrid`` (the default) starts on every press like ``toggle`` and lets the
+release decide (``hybrid_release_action``) — a release before
 ``hotkey.hybrid_threshold_seconds`` latches the recording for the next press
 to stop and arms that same timer for what is left of the window, a release at
 or after it stops immediately. An accepted start also warms the ASR model on a

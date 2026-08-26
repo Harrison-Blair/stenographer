@@ -9,10 +9,11 @@ one means editing this file in the same commit as the code that changes it.
 
 `stenographer` is a local-only push-to-talk dictation daemon. Hold a global
 hotkey, speak, release: the recognized text is copied to the clipboard and
-pasted at the cursor with a synthesized paste chord. `hotkey.mode = "toggle"`
-presses once to start and again to stop; `"hybrid"` lets the release decide — a
-tap shorter than `hotkey.hybrid_threshold_seconds` latches the recording until
-the next press, a longer hold stops on release. Offline, English-only,
+pasted at the cursor with a synthesized paste chord. The default
+`hotkey.mode = "hybrid"` lets the release decide — a tap shorter than
+`hotkey.hybrid_threshold_seconds` latches the recording until the next press,
+a longer hold stops on release; `"hold"` is push-to-talk and `"toggle"` presses
+once to start and again to stop. Offline, English-only,
 GPL-3.0-or-later, Python ≥ 3.12.
 
 **Target platforms: Linux (Wayland, any compositor) and Windows.** Linux is
@@ -24,7 +25,7 @@ Do not reintroduce cut features (old GTK HUD / transcript preview, cancel
 binding, `dictate`, `bench`, per-character typing / wtype, live preview /
 incremental decoding, self-update, sound downloads, per-cue overrides, config
 migrations, multi-distro installers) without recording the decision in this
-file first. Already authorized: toggle mode, the hybrid trigger mode (every
+file first. Already authorized: toggle mode, the default hybrid mode (every
 press starts; a release before `hotkey.hybrid_threshold_seconds` latches the
 recording for the next press to stop, a release at or after it stops
 immediately; the max-duration timer is armed at that latching release rather

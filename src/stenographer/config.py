@@ -43,7 +43,7 @@ class ConfigError(Exception):
 class HotkeyConfig:
     binding: str
     device: str | None
-    mode: str = "hold"
+    mode: str = "hybrid"
     hybrid_threshold_seconds: float = 0.5
 
 
@@ -241,7 +241,7 @@ _DEFAULT_TOML_TEMPLATE = """\
 [stenographer.hotkey]
 binding = "KEY_RIGHTCTRL"
 device = ""                    # {hotkey_device_comment}
-mode = "hold"                  # hold = push-to-talk; toggle = press/press; hybrid = tap or hold
+mode = "hybrid"                # hold = push-to-talk; toggle = press/press; hybrid = tap or hold
 hybrid_threshold_seconds = 0.5 # hybrid only: a press held this long stops on release
 
 [stenographer.audio]
@@ -300,7 +300,7 @@ class Config:
             hotkey=HotkeyConfig(
                 binding="KEY_RIGHTCTRL",
                 device=None,
-                mode="hold",
+                mode="hybrid",
                 hybrid_threshold_seconds=0.5,
             ),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
