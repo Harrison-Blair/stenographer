@@ -46,7 +46,15 @@ window. It cannot be asserted programmatically.
        (e.g. 5), start a recording and keep talking past the cap: the stop cue
        must fire at the cap and the transcript up to it must be delivered. A
        press during transcription must do nothing.
-    10. Run the complete opt-in integration suite. All of these checks are the
+    10. Set hotkey.mode = "hybrid". Tap KEY_RIGHTCTRL well inside
+       hotkey.hybrid_threshold_seconds: the pill must stay up with the key
+       released. Speak, tap again, and confirm the paste. Then press and hold
+       past the threshold, speak, and release — it must stop on release exactly
+       like hold mode. With a short audio.max_recording_seconds, confirm a
+       latched recording stops that many seconds after the PRESS (not after the
+       release), while a hold longer than the cap ends only on release and
+       reports capped=1 in its summary.
+    11. Run the complete opt-in integration suite. All of these checks are the
        real-machine merge gate; the sandbox-safe unit suite is not a substitute.
 
 The automated tests below use the real default PortAudio input and actual lock

@@ -10,7 +10,9 @@ one means editing this file in the same commit as the code that changes it.
 `stenographer` is a local-only push-to-talk dictation daemon. Hold a global
 hotkey, speak, release: the recognized text is copied to the clipboard and
 pasted at the cursor with a synthesized paste chord. `hotkey.mode = "toggle"`
-presses once to start and again to stop. Offline, English-only,
+presses once to start and again to stop; `"hybrid"` lets the release decide — a
+tap shorter than `hotkey.hybrid_threshold_seconds` latches the recording until
+the next press, a longer hold stops on release. Offline, English-only,
 GPL-3.0-or-later, Python ≥ 3.12.
 
 **Target platforms: Linux (Wayland, any compositor) and Windows.** Linux is
@@ -18,29 +20,34 @@ the shipping backend; Windows currently has a stdlib-only stub provider and a
 CI portability job, with the real backend scoped in `docs/windows/SCOPE.md`.
 Every change must keep both targets viable — see *Platform boundary* below.
 
-Do not reintroduce cut features (old GTK HUD / transcript preview, hybrid
-trigger mode, cancel binding, `dictate`, `bench`, per-character typing / wtype,
-live preview / incremental decoding, self-update, sound downloads, per-cue
-overrides, config migrations, multi-distro installers) without recording the
-decision in this file first. Already authorized: toggle mode, the isolated
-lifecycle pill (exactly 18 locally analyzed spectrum bars while recording, a
-helper-local amber border pulse only while the model loads, fixed state
-interiors — never transcript preview, controls, GTK, or raw-audio IPC), the
-local PyInstaller onedir build + per-user installer + `main`-only draft
-release workflow (with a read-only release-preflight rehearsal — version/tag
-guard plus wheel/sdist verification — on PRs into `main`), the curl-piped
-`scripts/quick-install.sh` bootstrap (installs the latest *published*
-release's native bundle by handing it to that release's own sdist
-`install.sh` after `SHA256SUMS` verification — an install path, never
-self-update), the daemon-start update *notice* (at most one metadata-only
-HTTPS request per 24 h for the latest published GitHub release tag, a desktop
-notification pointing at the README quick-install command, opt out with
-`feedback.update_check = false` — it never downloads and never updates
-anything), the queue-backed logging pipeline (one listener thread owning the
-stderr sink and the always-DEBUG rotating file, `subsystem: event key=value`
-lines, `utt=N` correlation, and `feedback.log_level`) with the overlay
-helper's own `overlay-helper.log` beside it in the state directory, and static
-Bash/Zsh/Fish completions.
+Do not reintroduce cut features (old GTK HUD / transcript preview, cancel
+binding, `dictate`, `bench`, per-character typing / wtype, live preview /
+incremental decoding, self-update, sound downloads, per-cue overrides, config
+migrations, multi-distro installers) without recording the decision in this
+file first. Already authorized: toggle mode, the hybrid trigger mode (every
+press starts; a release before `hotkey.hybrid_threshold_seconds` latches the
+recording for the next press to stop, a release at or after it stops
+immediately; the max-duration timer is armed at that latching release rather
+than at the press, for the window's remainder, so the cap is always measured
+from the press in every mode; no double-tap, no cancel binding, and no
+lifecycle state outside the daemon), the isolated lifecycle pill (exactly 18
+locally analyzed spectrum bars while recording, a helper-local amber border
+pulse only while the model loads, fixed state interiors — never transcript
+preview, controls, GTK, or raw-audio IPC), the local PyInstaller onedir build
++ per-user installer + `main`-only draft release workflow (with a read-only
+release-preflight rehearsal — version/tag guard plus wheel/sdist verification
+— on PRs into `main`), the curl-piped `scripts/quick-install.sh` bootstrap
+(installs the latest *published* release's native bundle by handing it to that
+release's own sdist `install.sh` after `SHA256SUMS` verification — an install
+path, never self-update), the daemon-start update *notice* (at most one
+metadata-only HTTPS request per 24 h for the latest published GitHub release
+tag, a desktop notification pointing at the README quick-install command, opt
+out with `feedback.update_check = false` — it never downloads and never
+updates anything), the queue-backed logging pipeline (one listener thread
+owning the stderr sink and the always-DEBUG rotating file, `subsystem: event
+key=value` lines, `utt=N` correlation, and `feedback.log_level`) with the
+overlay helper's own `overlay-helper.log` beside it in the state directory,
+and static Bash/Zsh/Fish completions.
 
 ## Commands
 
@@ -287,7 +294,7 @@ The rule is structural, not stylistic, and it is enforced by a test.
    `<active-config-directory>/sounds/<pack>/`, local-only, and must pass the
    four-cue WAV validation; invalid selection warns once and falls back to
    `minimal-ui`. Static completions expose only the four bundled names.
-9. **Config is fixed** — exactly 22 keys in 4 sections (`hotkey`, `audio`,
+9. **Config is fixed** — exactly 23 keys in 4 sections (`hotkey`, `audio`,
    `asr`, `feedback`), frozen dataclasses, key-scoped `ConfigError` → exit 78,
    no migrations, no setup-only keys. Setup/sounds save through the tomlkit
    preservation layer (comments, ordering, unknown content, symlinks, mode;
@@ -299,7 +306,10 @@ The rule is structural, not stylistic, and it is enforced by a test.
 ## Acceptance gates (real machine, before dev → main)
 
 - `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest` green.
-- Real dictation end-to-end in both `hold` and `toggle` modes.
+- Real dictation end-to-end in `hold`, `toggle`, and `hybrid` modes. In hybrid:
+  a tap latches until the next press, a hold past the threshold stops on
+  release, and a latched recording still ends `audio.max_recording_seconds`
+  after the press.
 - After overlay-affecting changes: the pill appears on recording start and
   disappears on stop, the amber border breathes only during a cold load, and
   killing the helper never affects dictation.
@@ -310,8 +320,9 @@ The rule is structural, not stylistic, and it is enforced by a test.
   lowered pops the notification on daemon start with dictation unaffected, and
   `feedback.update_check = false` makes no request at all.
 - After logging changes: `stenographer.log` opens with one `banner:` block
-  naming the effective configuration, every dictation leaves exactly one
-  `pipeline: utterance` line whose phases match what happened, and
+  naming the effective configuration (every key,
+  `hotkey.hybrid_threshold_seconds` included), every dictation leaves exactly
+  one `pipeline: utterance` line whose phases match what happened, and
   `tests/test_daemon_smoke.py::test_dictation_log_reports_metrics_without_the_transcript`
   passes against that real log.
 - `feedback.log_level = "debug"` changes what reaches the journal while
@@ -327,7 +338,7 @@ authoritative when editing.
 
 | Module | Role |
 |---|---|
-| `daemon.py` | Orchestrator: hotkey → record → transcribe → deliver. `Daemon.build(cfg, clipboard_backend=, status=, platform=)`; `run()` logs the startup banner (version, Python, platform, chosen backends, config path, every effective key in section order, resolved cpu_threads) before the capability gate can refuse, then takes the platform single-instance lock, installs stop handlers, prepares audio, starts the listener, and — when `feedback.update_check` is on — starts the update-notice thread. Warms a cold model in the background once capture starts; toggle mode ends at `audio.max_recording_seconds` through the same stop path. Each accepted start allocates the next `utt=N` (also the stale-max-duration-timer generation) and opens an `UtteranceRecord`; every phase fills it under the state lock, and the one `pipeline: utterance` INFO line is rendered from that record — still holding the lock, because it reads the record's own `started_at` and then clears the process-global `utt` stamp, and a re-press accepted in between would take both from it. Logging is a queue put, not process I/O. `stop()` closes an in-flight recording the same way, as `CANCELLED`. |
+| `daemon.py` | Orchestrator: hotkey → record → transcribe → deliver. `Daemon.build(cfg, clipboard_backend=, status=, platform=)`; `run()` logs the startup banner (version, Python, platform, chosen backends, config path, every effective key in section order, resolved cpu_threads) before the capability gate can refuse, then takes the platform single-instance lock, installs stop handlers, prepares audio, starts the listener, and — when `feedback.update_check` is on — starts the update-notice thread. Warms a cold model in the background once capture starts; toggle mode — and a hybrid tap that latched — ends at `audio.max_recording_seconds` through the same stop path (hybrid arms that timer at the latching release, never at the press, for the window's remainder, so the cap always runs from the press and coincides with the recorder's own sample cap); the falling edge in hybrid runs `hybrid_release_action`. Each accepted start allocates the next `utt=N` (also the stale-max-duration-timer generation) and opens an `UtteranceRecord`; every phase fills it under the state lock, and the one `pipeline: utterance` INFO line is rendered from that record — still holding the lock, because it reads the record's own `started_at` and then clears the process-global `utt` stamp, and a re-press accepted in between would take both from it. Logging is a queue put, not process I/O. `stop()` closes an in-flight recording the same way, as `CANCELLED`. |
 | `hotkey.py` | Platform-neutral `parse_binding` (via `KeyTable`), `chord_active`/`edge`, `ChordTracker` (held-key union across devices, stuck-key synthesis, `wait_binding_released`). Providers subclass it and feed `_key_event(device_id, code, value)`. |
 | `keycodes.py` | Generated pure `KEY_*`/`BTN_*` name→code table (`scripts/gen_keycodes.py`); drift test on Linux. |
 | `binding_capture.py` | Core capture vocabulary shared by `cli/` and every provider: `BindingCaptureError`, `CaptureState`, `KeyEvent`, pure `reduce_capture`, `serialize_capture` (validated canonical `KEY_*` names). No host imports. |

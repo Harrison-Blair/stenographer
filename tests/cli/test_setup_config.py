@@ -43,11 +43,11 @@ def test_render_preserves_comments_order_and_unknown_content():
     assert Config.loads(rendered) == reviewed
 
 
-def test_render_materializes_all_22_known_keys():
+def test_render_materializes_all_23_known_keys():
     rendered = ConfigDocument.loads("").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
 
-    assert list(root["hotkey"]) == ["binding", "device", "mode"]
+    assert list(root["hotkey"]) == ["binding", "device", "mode", "hybrid_threshold_seconds"]
     assert list(root["audio"]) == ["input_device", "min_speech_rms", "max_recording_seconds"]
     assert list(root["asr"]) == [
         "model",
@@ -69,7 +69,7 @@ def test_render_materializes_all_22_known_keys():
         "sound_pack",
         "log_level",
     ]
-    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 22
+    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 23
 
 
 def test_render_encodes_optional_strings_as_empty_strings():

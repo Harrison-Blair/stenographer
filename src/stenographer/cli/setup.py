@@ -244,6 +244,11 @@ def quick_tryout_lines(
         lines.append(
             f"Focus a text field, press {config.hotkey.binding}, speak, then press it again."
         )
+    elif config.hotkey.mode == "hybrid":
+        lines.append(
+            f"Focus a text field, tap {config.hotkey.binding} to latch (tap again to stop), "
+            "or hold it, speak, and release."
+        )
     else:
         lines.append(f"Focus a text field, hold {config.hotkey.binding}, speak, then release it.")
     if custom_config:
@@ -388,7 +393,7 @@ def _edit_hotkey(console: Console, config: Config) -> Config:
     console.write("\nHotkey")
     console.write(
         "Binding uses key names (the evdev KEY_* vocabulary) joined with '+'. "
-        "Mode is hold or toggle only."
+        "Mode is hold, toggle, or hybrid; the hybrid threshold splits a tap from a hold."
     )
 
     hotkey = dataclasses.replace(
@@ -398,7 +403,10 @@ def _edit_hotkey(console: Console, config: Config) -> Config:
     hotkey = dataclasses.replace(
         hotkey,
         device=_prompt_device(console, "Hotkey", hotkey.device, _hotkey_devices()),
-        mode=_prompt_choice(console, "Trigger mode", hotkey.mode, ("hold", "toggle")),
+        mode=_prompt_choice(console, "Trigger mode", hotkey.mode, ("hold", "toggle", "hybrid")),
+        hybrid_threshold_seconds=_prompt_number(
+            console, "Hybrid tap threshold (s)", hotkey.hybrid_threshold_seconds, 0.05, 5.0
+        ),
     )
     return dataclasses.replace(config, hotkey=hotkey)
 
@@ -693,7 +701,7 @@ def _quick_wizard(
         device,
         new_config=new_config,
     )
-    mode = _prompt_choice(console, "Trigger mode", config.hotkey.mode, ("hold", "toggle"))
+    mode = _prompt_choice(console, "Trigger mode", config.hotkey.mode, ("hold", "toggle", "hybrid"))
     config = dataclasses.replace(
         config,
         hotkey=dataclasses.replace(config.hotkey, device=device, binding=binding, mode=mode),

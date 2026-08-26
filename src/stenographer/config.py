@@ -19,7 +19,7 @@ ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
     {"int8", "int8_float16", "float16", "float32", "default"}
 )
 
-ALLOWED_HOTKEY_MODES: frozenset[str] = frozenset({"hold", "toggle"})
+ALLOWED_HOTKEY_MODES: frozenset[str] = frozenset({"hold", "toggle", "hybrid"})
 ALLOWED_LOG_LEVELS: frozenset[str] = frozenset({"debug", "info", "warning", "error"})
 MIN_SPECTRUM_FLOOR_DBFS = -96.0
 MAX_SPECTRUM_FLOOR_DBFS = -13.0
@@ -44,6 +44,7 @@ class HotkeyConfig:
     binding: str
     device: str | None
     mode: str = "hold"
+    hybrid_threshold_seconds: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -172,7 +173,12 @@ def _build_hotkey(table: dict, path: pathlib.Path) -> HotkeyConfig:
     binding = r.str("binding")
     if not binding:
         raise ConfigError(path, "hotkey.binding", "must be non-empty")
-    return HotkeyConfig(binding, r.optional_str("device"), r.choice("mode", ALLOWED_HOTKEY_MODES))
+    return HotkeyConfig(
+        binding,
+        r.optional_str("device"),
+        r.choice("mode", ALLOWED_HOTKEY_MODES),
+        r.ranged_number("hybrid_threshold_seconds", 0.05, 5.0),
+    )
 
 
 def _build_audio(table: dict, path: pathlib.Path) -> AudioConfig:
@@ -235,7 +241,8 @@ _DEFAULT_TOML_TEMPLATE = """\
 [stenographer.hotkey]
 binding = "KEY_RIGHTCTRL"
 device = ""                    # {hotkey_device_comment}
-mode = "hold"                  # hold = push-to-talk; toggle = press to start, press again to stop
+mode = "hold"                  # hold = push-to-talk; toggle = press/press; hybrid = tap or hold
+hybrid_threshold_seconds = 0.5 # hybrid only: a press held this long stops on release
 
 [stenographer.audio]
 input_device = ""              # PortAudio device name/index; "" = system default
@@ -290,7 +297,12 @@ class Config:
     @classmethod
     def defaults(cls) -> Config:
         return cls(
-            hotkey=HotkeyConfig(binding="KEY_RIGHTCTRL", device=None, mode="hold"),
+            hotkey=HotkeyConfig(
+                binding="KEY_RIGHTCTRL",
+                device=None,
+                mode="hold",
+                hybrid_threshold_seconds=0.5,
+            ),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
             asr=AsrConfig(
                 model="Systran/faster-whisper-medium.en",

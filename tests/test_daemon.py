@@ -5,7 +5,10 @@ Covered here: the pipeline outcome policy (``classify_pipeline``), the
 one-at-a-time admission rule (``can_start``), the toggle-mode press mapping
 (``toggle_action``, seen to fail against a stub returning "start"
 unconditionally), the stale-timer guard (``max_duration_applies``, seen to
-fail against a stub that ignores the generation), the overlay publish policy as
+fail against a stub that ignores the generation), the hybrid-mode release rule
+(``hybrid_release_action``, seen to fail against a stub using ``>`` at the
+threshold) and the latch / hold / ignored-release / remaining-window behaviours
+it drives, the overlay publish policy as
 bound by ``_publish_state`` (``should_publish_state``, seen to fail against a
 dedup-only stub), the mode-to-edge mapping (``edge_handlers``), and that
 ``Daemon.build`` wires all collaborators lazily (no uinput device, stream, or
@@ -42,6 +45,7 @@ from stenographer.daemon import (
     can_start,
     classify_pipeline,
     edge_handlers,
+    hybrid_release_action,
     ignored_edge_reason,
     max_duration_applies,
     should_publish_state,
@@ -140,6 +144,14 @@ def test_toggle_action_maps_press_edges():
     assert toggle_action(recording=True, busy=False, stopping=True) == "stop"
 
 
+def test_hybrid_release_action_splits_a_tap_from_a_hold():
+    # Seen to FAIL against a rule using ``>``: a release exactly at the
+    # threshold latched instead of stopping. Pure: no daemon, no clock.
+    assert hybrid_release_action(held_seconds=0.2, threshold=0.5) == "latch"
+    assert hybrid_release_action(held_seconds=0.5, threshold=0.5) == "stop"
+    assert hybrid_release_action(held_seconds=1.2, threshold=0.5) == "stop"
+
+
 def test_max_duration_applies_guards_stale_generation():
     # A fired timer can be blocked on the state lock while a manual stop and an
     # immediate restart advance the generation; the stale timer must not stop
@@ -210,6 +222,8 @@ class _EdgeSpy:
 
     def on_toggle_press(self) -> None: ...
 
+    def on_hybrid_release(self) -> None: ...
+
 
 def test_edge_handlers_map_mode_to_rising_and_falling_callbacks():
     # Seen to FAIL against a mapping that ignores the mode and returns the hold
@@ -223,6 +237,10 @@ def test_edge_handlers_map_mode_to_rising_and_falling_callbacks():
     # Only presses drive the session: the falling edge must be inert.
     assert on_stop not in (daemon.on_key_up, daemon.on_key_down)
     assert on_stop() is None
+
+    on_start, on_stop = edge_handlers(daemon, "hybrid")
+    assert on_start == daemon.on_toggle_press
+    assert on_stop == daemon.on_hybrid_release
 
 
 def test_build_wires_collaborators_lazily():
@@ -669,4 +687,92 @@ def test_stop_closes_an_in_flight_recording_as_cancelled(daemon_logs):
     daemon.stop()
 
     assert "outcome=CANCELLED" in _summary(daemon_logs)
+    assert _current_stamp() == ""
+
+
+def test_a_hybrid_tap_latches_until_the_next_press_whose_release_is_ignored(daemon_logs):
+    # Seen to FAIL against a release handler that always stops: the recording
+    # was already over before the second press, which then started utt=2. The
+    # stopping press's own release must decide nothing — seen to FAIL against a
+    # handler without the recording gate, which never logged the ignored line.
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0), mode="hybrid")
+    try:
+        daemon.on_toggle_press()
+        daemon.on_hybrid_release()
+        assert daemon._recording is True
+
+        daemon.on_toggle_press()
+        assert daemon._recording is False
+        daemon.on_hybrid_release()
+        thread = daemon._pipeline_thread
+        assert thread is not None
+        thread.join(timeout=10.0)
+    finally:
+        daemon.stop()
+
+    assert daemon._utterance_id == 1
+    line = _summary(daemon_logs)
+    assert "mode=hybrid" in line
+    assert "outcome=DELIVERED" in line
+    assert "hotkey: hybrid_release action=latch" in daemon_logs.text
+    assert "hotkey: hybrid_release_ignored reason=not_recording" in daemon_logs.text
+
+
+def test_a_hybrid_hold_stops_on_release(daemon_logs):
+    # Seen to FAIL against a release handler that always latches: the recording
+    # survived the release and only stop() closed it, as CANCELLED.
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0), mode="hybrid")
+    try:
+        daemon.on_toggle_press()
+        daemon._record.started_at -= 1.0
+        daemon.on_hybrid_release()
+        assert daemon._recording is False
+        thread = daemon._pipeline_thread
+        assert thread is not None
+        thread.join(timeout=10.0)
+    finally:
+        daemon.stop()
+
+    assert "outcome=DELIVERED" in _summary(daemon_logs)
+    assert "hotkey: hybrid_release action=stop" in daemon_logs.text
+
+
+def test_only_a_latched_hybrid_recording_arms_the_max_duration_timer():
+    # The cap runs from the PRESS in every mode, so the latch arms the timer for
+    # what is left of the window. Seen to FAIL against arming at the press, not
+    # arming at all, and arming for a flat max_recording_seconds.
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0), mode="hybrid")
+    try:
+        daemon.on_toggle_press()
+        assert daemon._max_timer is None
+
+        daemon._record.started_at -= 0.3
+        daemon.on_hybrid_release()
+        assert daemon._recording is True
+        assert daemon._max_timer is not None
+        assert daemon._max_timer.interval == pytest.approx(
+            daemon._cfg.audio.max_recording_seconds - 0.3, abs=0.05
+        )
+
+        daemon._on_max_duration(daemon._utterance_id)
+        assert daemon._recording is False
+        thread = daemon._pipeline_thread
+        assert thread is not None
+        thread.join(timeout=10.0)
+    finally:
+        daemon.stop()
+
+
+def test_stop_closes_a_latched_hybrid_recording_as_cancelled(daemon_logs):
+    # A latched recording has no key held to end it, so shutdown owes it the one
+    # summary line. Seen to FAIL against a stop() that took no record.
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0), mode="hybrid")
+    daemon.on_toggle_press()
+    daemon.on_hybrid_release()
+    assert daemon._recording is True
+    daemon.stop()
+
+    line = _summary(daemon_logs)
+    assert "outcome=CANCELLED" in line
+    assert "mode=hybrid" in line
     assert _current_stamp() == ""

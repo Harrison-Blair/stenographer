@@ -73,10 +73,11 @@ def test_optional_string_retains_clears_and_replaces():
 
 
 def test_choice_retains_and_is_case_insensitive():
-    assert parse_choice("", "hold", ("hold", "toggle")) == "hold"
-    assert parse_choice("TOGGLE", "hold", ("hold", "toggle")) == "toggle"
+    assert parse_choice("", "hold", ("hold", "toggle", "hybrid")) == "hold"
+    assert parse_choice("TOGGLE", "hold", ("hold", "toggle", "hybrid")) == "toggle"
+    assert parse_choice("HYBRID", "hold", ("hold", "toggle", "hybrid")) == "hybrid"
     with pytest.raises(ValueError, match="choose one of"):
-        parse_choice("hybrid", "hold", ("hold", "toggle"))
+        parse_choice("latch", "hold", ("hold", "toggle", "hybrid"))
 
 
 @pytest.mark.parametrize(("answer", "expected"), [("yes", True), ("N", False), ("", True)])
@@ -230,6 +231,18 @@ def test_tryout_describes_a_toggle_binding_as_pressed_twice():
     )
 
 
+def test_tryout_describes_a_hybrid_binding_as_tapped_or_held():
+    defaults = Config.defaults()
+    config = dataclasses.replace(
+        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hybrid", binding="KEY_F9")
+    )
+
+    assert _tryout(config=config)[-2] == (
+        "Focus a text field, tap KEY_F9 to latch (tap again to stop), "
+        "or hold it, speak, and release."
+    )
+
+
 def test_field_display_names_unset_values_and_calibrated_profiles():
     assert field_display(None, "device") == "automatic/unset"
     assert field_display(-45.0, "spectrum_floor_dbfs") == "-45.0"
@@ -244,6 +257,7 @@ def test_full_review_lists_every_section_and_field():
         "  binding = KEY_RIGHTCTRL",
         "  device = automatic/unset",
         "  mode = hold",
+        "  hybrid_threshold_seconds = 0.5",
         "[audio]",
         "  input_device = automatic/unset",
         "  min_speech_rms = 0.0005",

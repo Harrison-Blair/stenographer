@@ -13,8 +13,8 @@
 
 [![release](https://img.shields.io/github/v/release/Harrison-Blair/stenographer?color=brightgreen)](https://github.com/Harrison-Blair/stenographer/releases)
 
-Local, offline, Wayland push-to-talk / toggle dictation daemon. Press a
-configurable hotkey, speak, get the text at your cursor and in your
+Local, offline, Wayland push-to-talk, toggle, or hybrid dictation daemon.
+Press a configurable hotkey, speak, get the text at your cursor and in your
 clipboard. See [BUILD.md](BUILD.md) for the standalone-binary build
 instructions.
 
@@ -22,7 +22,7 @@ instructions.
 > This `README.md` was generated with AI, but reviewed for accuracy by a human
 
 Default hotkey: Right Ctrl in hold-to-talk mode. Hold it, speak, and release;
-toggle mode is optional.
+toggle and hybrid (tap to latch, hold to talk) modes are optional.
 
 
 <!--
@@ -112,6 +112,10 @@ overlay = false
 sound_pack = "minimal-ui"
 ```
 
+Hybrid mode decides per press: with `mode = "hybrid"`, a tap released inside
+`hybrid_threshold_seconds` (default `0.5`) latches the recording until the next
+press, and a press held past it stops on release.
+
 ### 4. Start and dictate
 
 ```sh
@@ -121,7 +125,8 @@ systemctl --user status stenographer.service --no-pager
 
 Hold Right Ctrl, speak, then release. The transcript is pasted at the cursor
 and remains on the clipboard. In toggle mode, press once to start and again to
-stop.
+stop. In hybrid mode, a quick tap latches until the next press and a longer
+hold ends on release.
 
 ## CLI
 

@@ -24,6 +24,7 @@ def test_defaults_match_spec():
     assert d.hotkey.binding == "KEY_RIGHTCTRL"
     assert d.hotkey.device is None
     assert d.hotkey.mode == "hold"
+    assert d.hotkey.hybrid_threshold_seconds == 0.5
     assert d.audio.input_device is None
     assert d.audio.min_speech_rms == 0.0005
     assert d.audio.max_recording_seconds == 600
@@ -181,6 +182,18 @@ def test_toggle_mode_without_restating_hotkey_defaults(tmp_path):
     assert cfg.hotkey.device == Config.defaults().hotkey.device
 
 
+def test_hybrid_mode_with_its_threshold_without_restating_hotkey_defaults(tmp_path):
+    # Seen to FAIL against the pre-change loader (hotkey.mode: must be one of
+    # hold, toggle -- got 'hybrid').
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer.hotkey]\nmode = "hybrid"\nhybrid_threshold_seconds = 1.25\n')
+    cfg = Config.load(p)
+    assert cfg.hotkey.mode == "hybrid"
+    assert cfg.hotkey.hybrid_threshold_seconds == 1.25
+    assert cfg.hotkey.binding == Config.defaults().hotkey.binding
+    assert cfg.hotkey.device == Config.defaults().hotkey.device
+
+
 def test_empty_string_is_unset(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text(
@@ -236,7 +249,19 @@ def test_unknown_keys_ignored(tmp_path):
             "feedback.spectrum_floor_dbfs",
         ),
         ('[stenographer.hotkey]\nbinding = ""\n', "hotkey.binding"),
-        ('[stenographer.hotkey]\nmode = "hybrid"\n', "hotkey.mode"),
+        ('[stenographer.hotkey]\nmode = "latch"\n', "hotkey.mode"),
+        (
+            "[stenographer.hotkey]\nhybrid_threshold_seconds = 0\n",
+            "hotkey.hybrid_threshold_seconds",
+        ),
+        (
+            "[stenographer.hotkey]\nhybrid_threshold_seconds = 5.5\n",
+            "hotkey.hybrid_threshold_seconds",
+        ),
+        (
+            '[stenographer.hotkey]\nhybrid_threshold_seconds = "0.5"\n',
+            "hotkey.hybrid_threshold_seconds",
+        ),
         ("[stenographer.audio]\nmax_recording_seconds = 0\n", "audio.max_recording_seconds"),
     ],
 )

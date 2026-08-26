@@ -2,19 +2,24 @@
 """The orchestrator: hotkey → record → transcribe → deliver.
 
 The single module holding cross-component state. One utterance at a time, no
-queue: a start press during transcription is ignored. Two hotkey modes:
+queue: a start press during transcription is ignored. Three hotkey modes:
 ``hold`` (push-to-talk, the default) maps key-down/key-up straight to
 start/stop; ``toggle`` maps each press through ``toggle_action`` and ends a
 forgotten recording via a generation-guarded ``audio.max_recording_seconds``
-timer. An accepted start also warms the ASR model on a background thread while
-capture remains authoritative. All state transitions are guarded by one lock so
-a key event, a timer firing, and a pipeline completion cannot race. Pure policy
-(``classify_pipeline``, ``can_start``, ``toggle_action``,
-``max_duration_applies``) is the unit-testable surface; the single-instance
-lock and stop handling come from the current :class:`~stenographer.platform.base.Platform`
-(which names the stop — ``"SIGTERM"``, later ``"CTRL_CLOSE"`` — so the core
-holds no POSIX vocabulary); the wired daemon is exercised by real dictation
-(the M5 manual acceptance procedure).
+timer; ``hybrid`` starts on every press like ``toggle`` and lets the release
+decide (``hybrid_release_action``) — a release before
+``hotkey.hybrid_threshold_seconds`` latches the recording for the next press
+to stop and arms that same timer for what is left of the window, a release at
+or after it stops immediately. An accepted start also warms the ASR model on a
+background thread while capture remains authoritative. All state transitions
+are guarded by one lock so a key event, a timer firing, and a pipeline
+completion cannot race. Pure policy (``classify_pipeline``, ``can_start``,
+``toggle_action``, ``hybrid_release_action``, ``max_duration_applies``) is the
+unit-testable surface; the single-instance lock and stop handling come from
+the current :class:`~stenographer.platform.base.Platform` (which names the
+stop — ``"SIGTERM"``, later ``"CTRL_CLOSE"`` — so the core holds no POSIX
+vocabulary); the wired daemon is exercised by real dictation (the M5 manual
+acceptance procedure).
 """
 
 from __future__ import annotations
@@ -68,11 +73,15 @@ def _ignore_edge() -> None:
 def edge_handlers(daemon: Daemon, mode: str) -> tuple[Callable[[], None], Callable[[], None]]:
     """Map ``hotkey.mode`` onto the (rising, falling) edge callbacks.
 
-    In toggle mode only presses drive the session, so the falling edge is inert.
+    In toggle mode only presses drive the session, so the falling edge is inert;
+    hybrid shares that press and gives the falling edge to ``on_hybrid_release``,
+    which decides latch vs stop.
     PURE given *daemon*: it reads no config and touches no platform surface.
     """
     if mode == "toggle":
         return daemon.on_toggle_press, _ignore_edge
+    if mode == "hybrid":
+        return daemon.on_toggle_press, daemon.on_hybrid_release
     return daemon.on_key_down, daemon.on_key_up
 
 
@@ -157,7 +166,7 @@ def ignored_edge_reason(recording: bool, busy: bool, stopping: bool) -> str:
 def toggle_action(
     *, recording: bool, busy: bool, stopping: bool
 ) -> Literal["start", "stop"] | None:
-    """Map a toggle-mode press edge to a session action. PURE.
+    """Map a toggle- or hybrid-mode press edge to a session action. PURE.
 
     A press while recording always stops — even during shutdown, so a live
     capture is never stranded. Otherwise it starts only when fully idle
@@ -168,6 +177,15 @@ def toggle_action(
     if can_start(recording, busy, stopping):
         return "start"
     return None
+
+
+def hybrid_release_action(*, held_seconds: float, threshold: float) -> Literal["stop", "latch"]:
+    """Map a hybrid-mode release to a session action. PURE.
+
+    A press held to the threshold is a hold and stops on release; anything
+    shorter is a tap, and the recording stays latched until the next press.
+    """
+    return "stop" if held_seconds >= threshold else "latch"
 
 
 def max_duration_applies(armed_generation: int, current_generation: int, recording: bool) -> bool:
@@ -357,7 +375,7 @@ class Daemon:
         self._warmup_thread = thread
 
     def on_toggle_press(self) -> None:
-        """Toggle mode: one press starts a recording, the next press stops it."""
+        """Toggle and hybrid modes: one press starts a recording, the next press stops it."""
         with self._lock:
             action = toggle_action(
                 recording=self._recording,
@@ -379,8 +397,37 @@ class Daemon:
                     )
                 )
 
+    def on_hybrid_release(self) -> None:
+        """Hybrid mode: a tap latches the recording, a held press ends it.
+
+        The press already ran through ``on_toggle_press``; only a live
+        recording's own release decides anything, so the release that follows
+        the stopping press — or a refused one — is ignored. The max-duration
+        timer is armed here rather than at the press, for the remainder of the
+        window, because a latched recording is the only hybrid state with no
+        key held to end it; a long hold behaves exactly like ``hold`` mode.
+        """
+        with self._lock:
+            record = self._record
+            if not self._recording or record is None:
+                log.debug(fmt_event("hotkey", "hybrid_release_ignored", reason="not_recording"))
+                return
+            held = time.perf_counter() - record.started_at
+            action = hybrid_release_action(
+                held_seconds=held,
+                threshold=self._cfg.hotkey.hybrid_threshold_seconds,
+            )
+            log.debug(
+                fmt_event("hotkey", "hybrid_release", action=action, held_ms=round(held * 1000))
+            )
+            if action == "stop":
+                self.on_key_up()
+            else:
+                self._arm_max_timer(record.started_at)
+
     def _on_max_duration(self, generation: int) -> None:
-        """Timer thread: end a toggle recording exactly as a second press would."""
+        """Timer thread: end a toggle or latched-hybrid recording exactly as a
+        second press would."""
         with self._lock:
             if not max_duration_applies(generation, self._utterance_id, self._recording):
                 log.debug(fmt_event("hotkey", "max_duration_ignored", reason="stale_or_idle"))
@@ -390,6 +437,25 @@ class Daemon:
                 self._cfg.audio.max_recording_seconds,
             )
             self.on_key_up()
+
+    def _arm_max_timer(self, started_at: float) -> None:
+        """Arm the cap timer for what is left of this utterance's window.
+
+        The window runs from the press in every mode, so a hybrid tap that
+        latched gets ``max_recording_seconds`` minus the time it was already
+        held: this timer and the recorder's own sample cap then end the
+        recording at the same instant. Called with the state lock held; the
+        press instant is passed in rather than read off ``self._record``, which
+        is optional only in the type, never at these call sites.
+        """
+        remaining = self._cfg.audio.max_recording_seconds - (time.perf_counter() - started_at)
+        timer = threading.Timer(
+            max(0.0, remaining), self._on_max_duration, args=(self._utterance_id,)
+        )
+        timer.name = "stenographer-max-duration"
+        timer.daemon = True
+        timer.start()
+        self._max_timer = timer
 
     def _cancel_max_timer(self) -> None:
         timer = self._max_timer
@@ -428,15 +494,7 @@ class Daemon:
                 utt=self._utterance_id, started_at=started_at, mode=self._cfg.hotkey.mode
             )
             if self._cfg.hotkey.mode == "toggle":
-                timer = threading.Timer(
-                    self._cfg.audio.max_recording_seconds,
-                    self._on_max_duration,
-                    args=(self._utterance_id,),
-                )
-                timer.name = "stenographer-max-duration"
-                timer.daemon = True
-                timer.start()
-                self._max_timer = timer
+                self._arm_max_timer(started_at)
             self._publish_state(OverlayState.RECORDING)
             _play_cue(self._feedback, "record_start")
             self._start_model_warmup(self._utterance_id)
@@ -714,6 +772,7 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             binding=cfg.hotkey.binding,
             device=_shown(cfg.hotkey.device),
             mode=cfg.hotkey.mode,
+            hybrid_threshold_seconds=cfg.hotkey.hybrid_threshold_seconds,
         )
     )
     log.info(

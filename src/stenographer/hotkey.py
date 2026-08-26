@@ -8,8 +8,8 @@ dispatch, and ``wait_binding_released`` (the deliverer's modifier
 release-guard); it has no device I/O. A platform listener (the evdev one lives in
 ``stenographer.platform.linux.hotkey``) subclasses it and feeds
 ``_key_event(device_id, code, value)`` from its reader threads. It owns no state
-machine beyond edges, no hybrid mode, cancel binding, double-tap timer, or
-feedback wiring: the daemon maps edges to session actions per ``hotkey.mode``.
+machine beyond edges, no cancel binding, double-tap timer, or feedback
+wiring: the daemon maps edges to session actions per ``hotkey.mode``.
 
 The pure helpers (parse_binding, chord_active, edge) and the tracker are the
 unit targets; the real read loop is exercised by the uinput loopback smoke.
@@ -73,8 +73,8 @@ def edge(was_active: bool, is_active: bool) -> Literal["start", "stop"] | None:
 
 class ChordTracker:
     """Edge reporter over a held-key union: chord rising edge -> on_start,
-    falling edge -> on_stop. The daemon decides what an edge means (hold vs
-    toggle mode).
+    falling edge -> on_stop. The daemon decides what an edge means (hold,
+    toggle, or hybrid mode).
 
     Held keys are unioned across input devices under _held_lock (a press on
     one device may release on another). Edges are computed under the shared
