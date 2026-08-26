@@ -960,6 +960,6 @@ def write_default(
         console,
         result,
         saved_prefix="Wrote the default configuration to",
-        unchanged_message=f"{path} already matches the defaults; no file was written.",
+        unchanged_message=f"{result.path} already matches the defaults; no file was written.",
     )
     return 0

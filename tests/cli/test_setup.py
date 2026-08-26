@@ -422,8 +422,8 @@ def test_setup_save_failure_keeps_the_loaded_level(monkeypatch, tmp_path):
 
 
 def test_write_default_creates_the_annotated_template(tmp_path, monkeypatch):
-    """Seen to FAIL against a writer that materialized keys through
-    ``ConfigDocument.load`` (the file had every key but no comments)."""
+    """Seen to FAIL against a ``write_default`` with its ``report_save`` call
+    dropped (the file appeared but nothing was printed)."""
     path = tmp_path / "nested" / "config.toml"
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
     out, err = io.StringIO(), io.StringIO()
@@ -437,8 +437,13 @@ def test_write_default_creates_the_annotated_template(tmp_path, monkeypatch):
 
 def test_write_default_leaves_an_identical_file_untouched(tmp_path, monkeypatch):
     """Seen to FAIL against a writer calling ``Config.write_default`` directly
-    (identical bytes were rewritten and a pointless backup appeared)."""
-    path = tmp_path / "config.toml"
+    (identical bytes were rewritten).
+
+    The configured path is deliberately un-normalized, so the report line is
+    only correct if it names the resolved target the save actually inspected.
+    """
+    (tmp_path / "sub").mkdir()
+    path = tmp_path / "sub" / ".." / "config.toml"
     path.write_text(default_toml(), encoding="utf-8")
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
     before = path.stat().st_mtime_ns
@@ -448,7 +453,7 @@ def test_write_default_leaves_an_identical_file_untouched(tmp_path, monkeypatch)
 
     assert path.stat().st_mtime_ns == before
     assert list(tmp_path.glob("config.toml.bak-*")) == []
-    assert "already matches the defaults" in out.getvalue()
+    assert f"{path.resolve()} already matches the defaults" in out.getvalue()
 
 
 def test_write_default_backs_up_a_customized_config_and_reports_it(tmp_path, monkeypatch):

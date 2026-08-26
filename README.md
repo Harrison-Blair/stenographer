@@ -108,7 +108,7 @@ set:
 
 ```toml
 [stenographer.hotkey]
-mode = "toggle"
+mode = "toggle"  # or "hold"
 
 [stenographer.feedback]
 overlay = false
@@ -116,8 +116,8 @@ sound_pack = "minimal-ui"
 ```
 
 `stenographer setup --default` rewrites `config.toml` with the annotated
-defaults without prompting, backing the previous file up first and printing
-where the backup went.
+defaults without prompting. Any previous file is backed up first and the
+backup path is printed.
 
 ### 4. Start and dictate
 
