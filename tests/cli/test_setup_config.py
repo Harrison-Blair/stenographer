@@ -8,7 +8,7 @@ from dataclasses import replace
 import tomlkit
 
 from stenographer.cli.setup_config import ConfigDocument
-from stenographer.config import Config
+from stenographer.config import Config, default_toml
 
 PRESERVATION_FIXTURE = """\
 # hand-written preface
@@ -139,3 +139,15 @@ def test_render_round_trips_calibrated_spectrum_profile_as_toml_array():
         profile
     )
     assert Config.loads(rendered) == reviewed
+
+
+def test_defaults_document_renders_the_annotated_template_verbatim(tmp_path):
+    """Seen to FAIL against a writer built on ``ConfigDocument.load`` (the
+    hand-written comment survived and none of the annotations appeared)."""
+    path = tmp_path / "config.toml"
+    path.write_text("[stenographer.asr]\nbeam_size = 3 # mine\n", encoding="utf-8")
+
+    rendered = ConfigDocument.defaults(path).render(Config.defaults())
+
+    assert rendered == default_toml()
+    assert "# mine" not in rendered

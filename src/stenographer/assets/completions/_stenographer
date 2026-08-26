@@ -25,7 +25,8 @@ _stenographer_impl() {
             ;;
         setup)
             _values 'option' '-h[show help]' '--help[show help]' \
-                '--quick[configure essentials only]'
+                '--quick[configure essentials only]' \
+                '--default[write the annotated default configuration]'
             ;;
         sounds)
             if [[ "${PREFIX}" == -* ]]; then

@@ -43,10 +43,16 @@ def build_parser() -> argparse.ArgumentParser:
     setup = subparsers.add_parser(
         "setup", help="Interactively review configuration and capabilities."
     )
-    setup.add_argument(
+    setup_mode = setup.add_mutually_exclusive_group()
+    setup_mode.add_argument(
         "--quick",
         action="store_true",
         help="Configure the hotkey, microphone, and feedback essentials only.",
+    )
+    setup_mode.add_argument(
+        "--default",
+        action="store_true",
+        help="Write the annotated default configuration without prompting.",
     )
     sounds = subparsers.add_parser("sounds", help="List, preview, or select a sound pack.")
     sounds_mode = sounds.add_mutually_exclusive_group()

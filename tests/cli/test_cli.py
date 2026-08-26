@@ -69,6 +69,17 @@ def test_setup_quick_flag_defaults_false_and_parses_true():
     assert parser.parse_args(["setup", "--quick"]).quick is True
 
 
+def test_setup_default_flag_parses_and_excludes_quick():
+    """Seen to FAIL against the parser without the flag (`--default` exited 2)."""
+    parser = build_parser()
+
+    assert parser.parse_args(["setup"]).default is False
+    assert parser.parse_args(["setup", "--default"]).default is True
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["setup", "--quick", "--default"])
+    assert exc.value.code == 2
+
+
 def test_sounds_command_forms_parse_and_conflicts_exit_two():
     parser = build_parser()
 
@@ -115,6 +126,18 @@ def test_quick_setup_dispatches_flag_to_handler(monkeypatch):
     monkeypatch.setattr(setup_command, "cmd_setup", lambda args: seen.append(args.quick) or 0)
     assert dispatch(["setup", "--quick"]) == 0
     assert seen == [True]
+
+
+def test_setup_default_dispatches_to_the_noninteractive_writer(monkeypatch):
+    """Seen to FAIL against a handler that ignored the flag (the wizard ran)."""
+    from stenographer.cli import setup as setup_engine
+
+    hits: list[str] = []
+    monkeypatch.setattr(setup_engine, "write_default", lambda **kw: hits.append("default") or 0)
+    monkeypatch.setattr(setup_engine, "run", lambda **kw: hits.append("run") or 1)
+
+    assert dispatch(["setup", "--default"]) == 0
+    assert hits == ["default"]
 
 
 def test_sounds_dispatches_to_handler(monkeypatch):

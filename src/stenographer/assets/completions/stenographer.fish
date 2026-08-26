@@ -56,6 +56,8 @@ complete -c stenographer -n '__stenographer_command_is transcribe' -f -l raw \
 complete -c stenographer -n __stenographer_transcribe_file_needed -F
 complete -c stenographer -n '__stenographer_command_is setup' -f -l quick \
     -d 'Configure essentials only'
+complete -c stenographer -n '__stenographer_command_is setup' -f -l default \
+    -d 'Write the annotated default configuration'
 
 complete -c stenographer -n '__stenographer_command_is sounds' -f -l list \
     -d 'List available sound packs'

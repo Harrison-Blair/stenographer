@@ -2,7 +2,9 @@
 """Interactive configuration review and guided machine setup.
 
 The prompt and policy helpers are pure. Hardware, network, and systemd work is
-kept in the command path and is imported only after CLI dispatch.
+kept in the command path and is imported only after CLI dispatch. ``--default``
+is the one non-interactive path: it stages the annotated template over the
+current bytes and saves it through the same preservation layer.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from stenographer.cli.console import (
     require_interactive,
     restart_service,
 )
-from stenographer.cli.setup_config import ConfigPersistenceError
+from stenographer.cli.setup_config import ConfigDocument, ConfigPersistenceError
 from stenographer.config import ALLOWED_COMPUTE_TYPES, ALLOWED_LOG_LEVELS, Config, ConfigError
 
 if TYPE_CHECKING:
@@ -931,3 +933,33 @@ def run(
         console.write()
         console.error("setup interrupted; saved configuration was not rolled back")
         return 130
+
+
+def write_default(
+    *,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    """Write the annotated default configuration, prompting for nothing.
+
+    No terminal gate: nothing is asked. An existing file is replaced through
+    the same preservation layer the wizard saves with, so it is backed up
+    first and identical bytes are never rewritten.
+    """
+
+    from stenographer.config import resolve_config_path
+
+    console = open_console(None, stdout, stderr)
+    path = resolve_config_path(create_parent=False)
+    try:
+        result = ConfigDocument.defaults(path).save(Config.defaults())
+    except ConfigPersistenceError as exc:
+        console.error(str(exc))
+        return 1
+    report_save(
+        console,
+        result,
+        saved_prefix="Wrote the default configuration to",
+        unchanged_message=f"{path} already matches the defaults; no file was written.",
+    )
+    return 0

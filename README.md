@@ -115,6 +115,10 @@ overlay = false
 sound_pack = "minimal-ui"
 ```
 
+`stenographer setup --default` rewrites `config.toml` with the annotated
+defaults without prompting, backing the previous file up first and printing
+where the backup went.
+
 ### 4. Start and dictate
 
 ```sh
@@ -136,7 +140,7 @@ and again to stop.
 | `stenographer model download` | Download the configured ASR model into the local cache. |
 | `stenographer doctor` | Check required capabilities and print fixes. |
 | `stenographer devices` | List audio input devices. |
-| `stenographer setup [--quick]` | Configure everything, or only the common settings. |
+| `stenographer setup [--quick \| --default]` | Configure everything, only the common settings, or write the annotated defaults without prompting. |
 | `stenographer sounds [PACK]` | List, preview, or select a whole sound pack. |
 | `stenographer completion {bash,zsh,fish}` | Print a native shell completion definition. |
 

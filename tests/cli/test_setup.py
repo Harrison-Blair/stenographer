@@ -29,7 +29,7 @@ from stenographer.cli.setup import (
     restart_eligible,
     review_lines,
 )
-from stenographer.config import Config
+from stenographer.config import Config, default_toml
 from stenographer.platform.base import HostGuidance
 
 _CONFIG_PATH = pathlib.PurePosixPath("/tmp/custom.toml")
@@ -419,3 +419,66 @@ def test_setup_save_failure_keeps_the_loaded_level(monkeypatch, tmp_path):
 
     assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 1
     assert levels == ["warning"]
+
+
+def test_write_default_creates_the_annotated_template(tmp_path, monkeypatch):
+    """Seen to FAIL against a writer that materialized keys through
+    ``ConfigDocument.load`` (the file had every key but no comments)."""
+    path = tmp_path / "nested" / "config.toml"
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
+    out, err = io.StringIO(), io.StringIO()
+
+    assert setup.write_default(stdout=out, stderr=err) == 0
+
+    assert path.read_text(encoding="utf-8") == default_toml()
+    assert f"Wrote the default configuration to {path.resolve()}" in out.getvalue()
+    assert err.getvalue() == ""
+
+
+def test_write_default_leaves_an_identical_file_untouched(tmp_path, monkeypatch):
+    """Seen to FAIL against a writer calling ``Config.write_default`` directly
+    (identical bytes were rewritten and a pointless backup appeared)."""
+    path = tmp_path / "config.toml"
+    path.write_text(default_toml(), encoding="utf-8")
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
+    before = path.stat().st_mtime_ns
+    out = io.StringIO()
+
+    assert setup.write_default(stdout=out, stderr=io.StringIO()) == 0
+
+    assert path.stat().st_mtime_ns == before
+    assert list(tmp_path.glob("config.toml.bak-*")) == []
+    assert "already matches the defaults" in out.getvalue()
+
+
+def test_write_default_backs_up_a_customized_config_and_reports_it(tmp_path, monkeypatch):
+    """Seen to FAIL against a writer that bypassed the preservation layer (the
+    previous configuration was replaced with no backup and no report line)."""
+    path = tmp_path / "config.toml"
+    original = '# mine\n[stenographer.hotkey]\nmode = "toggle"\n'
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
+    out = io.StringIO()
+
+    assert setup.write_default(stdout=out, stderr=io.StringIO()) == 0
+
+    backups = list(tmp_path.glob("config.toml.bak-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+    assert f"Backup: {backups[0]}" in out.getvalue()
+    assert path.read_text(encoding="utf-8") == default_toml()
+
+
+def test_write_default_replaces_a_config_too_broken_to_load(tmp_path, monkeypatch):
+    """The repair path parses none of the current bytes.
+
+    Seen to FAIL against a writer built on ``load_document`` (it reported
+    ``<toml>: malformed TOML`` and exited 78 without writing anything)."""
+    path = tmp_path / "config.toml"
+    path.write_bytes(b"[stenographer.hotkey\nbinding = \n")
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
+
+    assert setup.write_default(stdout=io.StringIO(), stderr=io.StringIO()) == 0
+
+    assert path.read_text(encoding="utf-8") == default_toml()
+    assert len(list(tmp_path.glob("config.toml.bak-*"))) == 1

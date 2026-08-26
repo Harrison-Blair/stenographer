@@ -78,6 +78,20 @@ class ConfigDocument:
         return cls._from_content(path, content, content.encode("utf-8"), _resolve_target(path))
 
     @classmethod
+    def defaults(cls, path: pathlib.Path) -> ConfigDocument:
+        """Stage the annotated default template over whatever *path* holds now.
+
+        The document is the template, so a save writes exactly it; the source
+        snapshot is the current file, so existing bytes are still backed up and
+        an already-default file is left untouched. Nothing parses that current
+        content — this is the one path that must work against a config too
+        broken to load.
+        """
+
+        path = pathlib.Path(path)
+        return cls._from_content(path, default_toml(), _read_current(path), _resolve_target(path))
+
+    @classmethod
     def _from_content(
         cls,
         path: pathlib.Path,

@@ -18,7 +18,7 @@ _stenographer() {
             mapfile -t COMPREPLY < <(compgen -W '-h --help' -- "${cur}")
             ;;
         setup)
-            mapfile -t COMPREPLY < <(compgen -W '-h --help --quick' -- "${cur}")
+            mapfile -t COMPREPLY < <(compgen -W '-h --help --quick --default' -- "${cur}")
             ;;
         sounds)
             if [[ "${cur}" == -* ]]; then
