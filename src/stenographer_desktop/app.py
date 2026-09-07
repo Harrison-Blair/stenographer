@@ -239,7 +239,7 @@ class Window(QMainWindow):
         self.timer.start()
 
     def _rail(self, icon: QIcon) -> QWidget:
-        """The 64 px icon rail: quill on top, one icon-and-label item per page."""
+        """The 96 px icon rail: quill on top, one icon-and-label item per page."""
         rail = QWidget()
         rail.setObjectName("railFrame")
         rail.setFixedWidth(TOKENS.rail_width)

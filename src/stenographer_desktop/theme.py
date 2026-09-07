@@ -18,6 +18,7 @@ from stenographer_desktop.icons import icon_svg
 logger = logging.getLogger(__name__)
 
 BRAND_FONT_FILE = "Caveat-wght.ttf"
+BRAND_FONT_FAMILY = "Caveat"
 BODY_POINT_SIZE = 13
 _THEME_PROPERTY = "stenographerTheme"
 
@@ -38,10 +39,10 @@ class Tokens:
     control_radius: int = 8
     rail_item_radius: int = 12
     control_height: int = 36
-    rail_width: int = 64
+    rail_width: int = 96
     rail_item: int = 56
     icon_px: int = 20
-    quill_px: int = 40
+    quill_px: int = 60
     body_pt: int = BODY_POINT_SIZE
     caption_pt: int = 12
     section_pt: int = 15
@@ -68,11 +69,15 @@ class Tokens:
 TOKENS = Tokens()
 
 
-def stylesheet(tokens: Tokens = TOKENS) -> str:
-    """Render the application stylesheet. Never names a font family: the
-    application font set by apply_brand_font is the only typeface."""
+def stylesheet(tokens: Tokens = TOKENS, *, font_family: str = BRAND_FONT_FAMILY) -> str:
+    """Render the single application stylesheet, including its typeface."""
     t = tokens
+    quoted_family = '"' + font_family.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return f"""
+QWidget {{
+    font-family: {quoted_family};
+    font-size: {t.body_pt}pt;
+}}
 QMainWindow, QDialog, QWidget#railFrame, QScrollArea, QScrollArea > QWidget > QWidget {{
     background: {t.ground};
     color: {t.text};
@@ -341,16 +346,12 @@ QToolTip {{
 
 
 def apply_brand_font(app) -> str:
-    """Register the bundled Caveat face and make it the only typeface the desktop uses.
+    """Register the bundled Caveat face and return its actual family name.
 
-    The pill's label and the header brand mark already use this face; setting it
-    as the application font means every label, control, table, dialog, message
-    box and painted chart inherits it without per-widget font calls. The script
-    face has a small x-height, so the body size sits above Qt's platform
-    default. When the asset cannot be registered the platform font stays, so a
-    broken install still shows a usable window.
+    When the asset cannot be registered, the stylesheet uses the platform font
+    so a broken install still shows a usable window.
     """
-    from PySide6.QtGui import QFont, QFontDatabase
+    from PySide6.QtGui import QFontDatabase
 
     path = files("stenographer") / "assets" / "fonts" / BRAND_FONT_FILE
     font_id = QFontDatabase.addApplicationFont(str(path))
@@ -358,7 +359,6 @@ def apply_brand_font(app) -> str:
     if not families:
         logger.warning("desktop: brand_font_unavailable file=%s", BRAND_FONT_FILE)
         return app.font().family()
-    app.setFont(QFont(families[0], BODY_POINT_SIZE))
     return families[0]
 
 
@@ -415,15 +415,16 @@ def navigation_icon(name: str, tokens: Tokens = TOKENS):
 
 
 def apply_theme(app) -> None:
-    """Style, font, palette and stylesheet, once per application.
+    """Style, register the font, and set the palette and stylesheet once.
 
     Fusion is required before any widget exists: platform styles ignore the
-    palette for message boxes and combo popups.
+    palette for app-owned message boxes and combo popups. Native system dialogs
+    keep their host rendering and font.
     """
     if app.property(_THEME_PROPERTY):
         return
     app.setStyle("Fusion")
-    apply_brand_font(app)
+    font_family = apply_brand_font(app)
     app.setPalette(palette())
-    app.setStyleSheet(stylesheet())
+    app.setStyleSheet(stylesheet(font_family=font_family))
     app.setProperty(_THEME_PROPERTY, True)

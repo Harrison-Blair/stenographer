@@ -13,8 +13,9 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from stenographer.analytics import AnalyticsSession
 from stenographer.config import Config
@@ -36,6 +37,65 @@ def wait_for(application, predicate, timeout=5):
     assert predicate()
 
 
+def test_theme_overrides_widget_fonts_and_preserves_text_roles():
+    script = """
+from PySide6.QtGui import QFontDatabase, QFontInfo
+from PySide6.QtWidgets import (
+    QApplication, QComboBox, QLabel, QLineEdit, QListWidget, QPushButton,
+    QStatusBar, QTableWidget, QVBoxLayout, QWidget,
+)
+from stenographer_desktop.charts import WordTrend
+from stenographer_desktop.theme import TOKENS, apply_theme
+
+app = QApplication([])
+root = QWidget()
+layout = QVBoxLayout(root)
+labels = {}
+for role in ("brand", "title", "caption", "section", "headline", "muted"):
+    labels[role] = QLabel(role)
+    labels[role].setProperty("role", role)
+    layout.addWidget(labels[role])
+table = QTableWidget(1, 1)
+combo = QComboBox()
+combo.addItem("Choice")
+rail = QListWidget()
+rail.setObjectName("rail")
+controls = (
+    QPushButton("Button"), QLineEdit("Line edit"), table, table.horizontalHeader(), rail,
+    combo, combo.view(), QStatusBar(), WordTrend(),
+)
+system_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+assert QFontInfo(system_font).family() != "Caveat"
+for widget in (*labels.values(), *controls):
+    widget.setFont(system_font)
+for widget in (controls[0], controls[1], table, rail, combo, controls[-2], controls[-1]):
+    layout.addWidget(widget)
+apply_theme(app)
+root.show()
+app.processEvents()
+assert all(
+    QFontInfo(widget.font()).family() == "Caveat"
+    for widget in (*labels.values(), *controls)
+)
+assert {role: label.font().pointSize() for role, label in labels.items()} == {
+    "brand": TOKENS.brand_pt, "title": TOKENS.title_pt, "caption": TOKENS.caption_pt,
+    "section": TOKENS.section_pt, "headline": TOKENS.headline_pt, "muted": TOKENS.body_pt,
+}
+assert labels["brand"].font().weight() == 600
+assert labels["headline"].font().weight() == 700
+assert controls[0].font().pointSize() == TOKENS.body_pt
+assert rail.font().pixelSize() == TOKENS.rail_label_px
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_actual_window_settings_and_analytics_without_daemon(application, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
@@ -47,6 +107,16 @@ def test_actual_window_settings_and_analytics_without_daemon(application, tmp_pa
         window.show()
         wait_for(application, lambda: window.document is not None and window.analytics_loaded)
         assert window.navigation.count() == 5
+        rail = window.findChild(QWidget, "railFrame")
+        quill = window.findChild(QLabel, "quill")
+        assert rail.width() == 96
+        assert window.navigation.width() == 96
+        assert window.navigation.gridSize().width() == 96
+        assert window.navigation.gridSize().height() == 56
+        assert window.navigation.iconSize().width() == 20
+        assert quill.pixmap().deviceIndependentSize().width() == 60
+        assert quill.pixmap().deviceIndependentSize().height() == 60
+        assert quill.alignment() == Qt.AlignmentFlag.AlignCenter
         assert "analytics.enabled" in window.editors
         assert "analytics.resource_profiling" in window.editors
         window.navigation.setCurrentRow(2)

@@ -31,10 +31,6 @@ def test_stylesheet_braces_balanced():
     assert opened > 0
 
 
-def test_stylesheet_never_names_a_font_family():
-    assert "font-family" not in stylesheet()
-
-
 def test_navigation_icons_are_stroke_svgs():
     assert NAVIGATION == ("Overview", "Analytics", "Settings", "Service", "Diagnostics")
     for name in NAVIGATION:

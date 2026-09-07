@@ -106,11 +106,13 @@ SQLite numeric history, `stats` reporting/export/deletion, a separate
 The normal native installation includes both executables; the headless extra-free
 installation/build remains available without Qt. Core and CLI never import the
 desktop package, and the desktop never imports CLI handlers. The desktop renders
-every widget in the bundled Caveat face (the pill's label font), set once as the
-application font; no system typeface appears anywhere in its window. Its
+every app-owned widget in the bundled Caveat face (the pill's label font), set by
+the one application stylesheet; no system typeface appears anywhere in its
+window. Native system dialogs retain their host font and rendering. Its
 colours are a fixed dark theme built on the pill's `#18181B` ground (Fusion
 style, one palette and one stylesheet in `stenographer_desktop/theme.py`); it
-never follows the system light/dark theme. Shared preservation and calibration
+never follows the system light/dark theme. The navigation rail is 96 logical px
+wide with a centred 60 logical px quill. Shared preservation and calibration
 now live in `settings.py` and `calibration.py`; CLI paths are compatibility
 exports. The desktop owns `desktop.log`.
 
@@ -160,6 +162,11 @@ Quick verification loop before every commit: ruff check + format, unit suite,
 or sandboxes. CI runs the unit suite on `ubuntu-latest` and `windows-latest`
 (`unit-windows`: install, pure suites, `--help`; `tests/platform/linux/` is not
 collected there).
+
+After implementation and verification, offer to run `scripts/reinstall.sh` so
+the installed app includes the verified changes. If reinstalling was already
+authorized in the conversation, run it without asking again; otherwise wait for
+the user to accept the offer. Report the result whenever the reinstall is run.
 
 ## Platform boundary (binding)
 
