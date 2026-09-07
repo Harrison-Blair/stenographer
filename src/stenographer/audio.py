@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Audio capture: the ``Recorder`` and the pure energy gate.
 
-The PortAudio callback only copies each block — never analysis. ``sounddevice``
+The PortAudio callback copies blocks and scalar clock metadata — never analysis. ``sounddevice``
 is imported lazily inside ``Recorder.prepare`` so the pure helpers (the RMS gate
 and the resampler) import without PortAudio present. Sample-rate and channel
 fallback polyphase-resample the capture to the fixed ASR rate.
@@ -13,6 +13,7 @@ import contextlib
 import logging
 import math
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -20,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from stenographer.capture_metrics import elapsed_ms, reduce_clock
 from stenographer.constants import SAMPLE_RATE
 from stenographer.utils.logging_setup import fmt_event, log_failure
 
@@ -56,9 +58,9 @@ class GateStats:
 class CaptureStats:
     """What one completed capture cost, for the utterance summary line.
 
-    Rate and channel count are deliberately absent: they are properties of the
-    negotiated stream, not of one capture, and ``recorder: prepared`` already
-    reports them once per negotiation.
+    Negotiated rate, channels and microphone name travel with each capture so
+    analytics comparisons survive stream recovery and configuration changes.
+    Signal and ADC-clock reductions occur only after callbacks quiesce.
     """
 
     activate_ms: float
@@ -67,6 +69,19 @@ class CaptureStats:
     output_frames: int
     overflow: bool
     capped: bool
+    first_callback_at: float | None = None
+    activation_to_callback_ms: float | None = None
+    max_adc_gap_ms: float | None = None
+    adc_discontinuities: int = 0
+    device_name: str | None = None
+    input_rate: int = SAMPLE_RATE
+    channels: int = 1
+    finalize_ms: float | None = None
+    callback_timing_count: int = 0
+    callback_count: int = 0
+    callback_metadata_dropped: int = 0
+    overflow_count: int = 0
+    recovered: bool = False
 
 
 def speech_gate_stats(samples: np.ndarray, sample_rate: int, min_rms: float) -> GateStats:
@@ -163,6 +178,7 @@ class Recorder:
             normalized_device = int(normalized_device)
         self._configured_device = normalized_device
         self._selected_device: str | int | None = self._configured_device
+        self._device_name: str | None = None
         self._max_seconds = max_seconds
         self._on_block = on_block
         self._stream: Any = None
@@ -176,6 +192,12 @@ class Recorder:
         self._overflow = False
         self._capture_started_at: float | None = None
         self._activation_ms = 0.0
+        self._activation_started_at = 0.0
+        self._clock_metadata: deque[tuple[float, float, int]] = deque(maxlen=8192)
+        self._first_callback_at: float | None = None
+        self._callback_count = 0
+        self._overflow_count = 0
+        self._recovered = False
         # One utterance at a time (a daemon invariant), so the last completed
         # capture is unambiguously the one the pipeline thread is about to run.
         self._last_capture: CaptureStats | None = None
@@ -237,6 +259,13 @@ class Recorder:
                     rejected = exc
                 else:
                     self._stream = stream
+                    self._device_name = None
+                    with contextlib.suppress(Exception):
+                        name = sounddevice.query_devices(self._selected_device, kind="input")[
+                            "name"
+                        ]
+                        if isinstance(name, str):
+                            self._device_name = name
                     self._stream_epoch += 1
                     self._device_rate = rate
                     self._channels = channels
@@ -301,6 +330,18 @@ class Recorder:
         if self._stream is None or self._state is not RecorderState.PREPARED:
             raise RuntimeError("recorder has no prepared stream")
         started_at = time.perf_counter()
+        # Reset before start: callbacks may arrive before stream.start returns.
+        # Recovery gets its own clock and samples, never a partial first attempt.
+        self._blocks = []
+        self._frames = 0
+        self._overflow = False
+        self._capped = False
+        self._clock_metadata.clear()
+        self._first_callback_at = None
+        self._callback_count = 0
+        self._overflow_count = 0
+        self._recovered = recovery != "none"
+        self._activation_started_at = started_at
         self._stream.start()
         activation_ms = (time.perf_counter() - started_at) * 1000.0
         self._capture_started_at = time.perf_counter()
@@ -323,8 +364,16 @@ class Recorder:
     def _on_audio(self, indata: np.ndarray, frames: int, time_info: Any, status: Any) -> None:
         if status is not None and getattr(status, "input_overflow", False):
             self._overflow = True
+            self._overflow_count += 1
         if self._capped:
             return
+        callback_at = time.perf_counter()
+        if self._first_callback_at is None:
+            self._first_callback_at = callback_at
+        self._callback_count += 1
+        self._clock_metadata.append(
+            (callback_at, getattr(time_info, "inputBufferAdcTime", 0.0), frames)
+        )
         block = indata[:, 0].copy() if indata.ndim == 2 else indata.copy()
         self._blocks.append(block)
         if self._on_block is not None:
@@ -346,6 +395,7 @@ class Recorder:
         if self._state is not RecorderState.CAPTURING:
             self._discard_samples()
             return np.empty(0, dtype=np.float32)
+        finalize_started_at = time.perf_counter()
         stream = self._stream
         phase = "stop"
         try:
@@ -359,6 +409,11 @@ class Recorder:
             input_frames = self._frames
             overflow = self._overflow
             capped = self._capped
+            callback_clock = reduce_clock(
+                self._clock_metadata,
+                rate=self._device_rate,
+                first_callback_at=self._first_callback_at,
+            )
             self._state = RecorderState.PREPARED
             audio = np.concatenate(self._blocks) if self._blocks else np.empty(0, dtype=np.float32)
             if self._device_rate != SAMPLE_RATE:
@@ -390,6 +445,21 @@ class Recorder:
             output_frames=int(audio.size),
             overflow=overflow,
             capped=capped,
+            first_callback_at=callback_clock.first_callback_at,
+            activation_to_callback_ms=elapsed_ms(
+                self._activation_started_at, callback_clock.first_callback_at
+            ),
+            max_adc_gap_ms=callback_clock.max_adc_gap_ms,
+            adc_discontinuities=callback_clock.adc_discontinuities,
+            input_rate=self._device_rate,
+            device_name=self._device_name,
+            channels=self._channels,
+            finalize_ms=(time.perf_counter() - finalize_started_at) * 1000,
+            callback_count=self._callback_count,
+            callback_timing_count=callback_clock.timing_count,
+            callback_metadata_dropped=max(0, self._callback_count - len(self._clock_metadata)),
+            overflow_count=self._overflow_count,
+            recovered=self._recovered,
         )
         logger.debug(
             fmt_event(

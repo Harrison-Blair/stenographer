@@ -51,6 +51,10 @@ class UtteranceRecord:
     mode: str | None = None
     outcome: str | None = None
     activate_ms: float | None = None
+    press_to_callback_ms: float | None = None
+    activation_to_callback_ms: float | None = None
+    max_adc_gap_ms: float | None = None
+    adc_discontinuities: int | None = None
     capture_s: float | None = None
     in_frames: int | None = None
     out_frames: int | None = None
@@ -72,6 +76,44 @@ class UtteranceRecord:
     release_wait_ms: float | None = None
     release_timeout: bool | None = None
     total_ms: float | None = None
+    analytics_id: str | None = None
+    device_name: str | None = None
+    stopped_at: float | None = None
+    recognized_words: int | None = None
+    final_words: int | None = None
+    copied_words: int | None = None
+    chord_words: int | None = None
+    asr_audio_s: float | None = None
+    vad_s: float | None = None
+    format_ms: float | None = None
+    round_trip_ms: float | None = None
+    finalize_ms: float | None = None
+    stop_to_ready_ms: float | None = None
+    stop_to_chord_ms: float | None = None
+    input_rate: int | None = None
+    channels: int | None = None
+    callback_timing_count: int | None = None
+    callback_count: int | None = None
+    callback_metadata_dropped: int | None = None
+    overflow_count: int | None = None
+    recovered: bool | None = None
+    mean_rms: float | None = None
+    clipping_fraction: float | None = None
+    ignored_busy_presses: int = 0
+    failure: str | None = None
+
+
+def analytics_metrics(record: UtteranceRecord) -> dict[str, int | float | bool]:
+    """Only measurements cross the durable-history boundary; never strings or IDs."""
+    from dataclasses import fields
+
+    excluded = {"utt", "started_at", "stopped_at"}
+    return {
+        field.name: value
+        for field in fields(record)
+        if field.name not in excluded
+        and isinstance(value := getattr(record, field.name), (int, float, bool))
+    }
 
 
 def summary_fields(record: UtteranceRecord) -> dict[str, object]:
@@ -88,6 +130,10 @@ def summary_fields(record: UtteranceRecord) -> dict[str, object]:
         "mode": record.mode,
         "outcome": record.outcome,
         "activate_ms": _ms(record.activate_ms),
+        "press_to_callback_ms": _ms(record.press_to_callback_ms),
+        "activation_to_callback_ms": _ms(record.activation_to_callback_ms),
+        "max_adc_gap_ms": _ms(record.max_adc_gap_ms),
+        "adc_discontinuities": record.adc_discontinuities,
         "capture_s": _seconds(record.capture_s),
         "in_frames": record.in_frames,
         "out_frames": record.out_frames,

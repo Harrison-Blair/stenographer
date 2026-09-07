@@ -8,7 +8,7 @@ _stenographer() {
 
     if ((COMP_CWORD == 1)); then
         mapfile -t COMPREPLY < <(
-            compgen -W 'run transcribe model doctor devices setup sounds completion -h --help --version' -- "${cur}"
+            compgen -W 'run transcribe model doctor devices setup sounds stats completion -h --help --version' -- "${cur}"
         )
         return
     fi
@@ -16,6 +16,9 @@ _stenographer() {
     case "${command}" in
         run|doctor|devices)
             mapfile -t COMPREPLY < <(compgen -W '-h --help' -- "${cur}")
+            ;;
+        stats)
+            mapfile -t COMPREPLY < <(compgen -W 'summary export delete reset --source --since --until --model --app-version --device --outcome --format --output --yes --help -h' -- "${cur}")
             ;;
         setup)
             mapfile -t COMPREPLY < <(compgen -W '-h --help --quick --default' -- "${cur}")

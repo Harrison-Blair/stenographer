@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: desktop native checks
+
+on:
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: desktop (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x86_64
+            python: .venv/bin/python
+            pip: .venv/bin/pip
+            exe: ''
+          - runner: windows-latest
+            target: windows-x86_64
+            python: .venv/Scripts/python.exe
+            pip: .venv/Scripts/pip.exe
+            exe: .exe
+          - runner: macos-15-intel
+            target: macos-x86_64
+            python: .venv/bin/python
+            pip: .venv/bin/pip
+            exe: ''
+          - runner: macos-15
+            target: macos-arm64
+            python: .venv/bin/python
+            pip: .venv/bin/pip
+            exe: ''
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      QT_QPA_PLATFORM: offscreen
+      STENOGRAPHER_DESKTOP_TEST: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Linux native libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libportaudio2 libwayland-dev libffi-dev pkg-config libegl1 libxkbcommon0
+      - name: Install one environment with headless and desktop packages
+        run: |
+          python -m venv .venv
+          "${{ matrix.pip }}" install -e ".[dev,build,desktop]"
+      - name: Pure, persistence, native transport, and desktop tests
+        run: '"${{ matrix.python }}" -m pytest -m "not integration"'
+      - name: Independent desktop startup with no daemon
+        run: '"${{ matrix.python }}" -m stenographer_desktop --smoke-test'
+      - name: Build both independent executables
+        run: '"${{ matrix.python }}" -m PyInstaller --noconfirm --clean packaging/stenographer.spec'
+      - name: Frozen startup
+        run: |
+          dist/stenographer/stenographer${{ matrix.exe }} --help
+          dist/stenographer/stenographer-ui${{ matrix.exe }} --smoke-test
+      - name: Include installer and acceptance status
+        run: |
+          cp scripts/install-native.py dist/stenographer/
+          cp LICENSE dist/stenographer/
+          cp packaging/NATIVE-ACCEPTANCE.md dist/stenographer/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stenographer-desktop-${{ matrix.target }}-unsigned-unaccepted
+          path: dist/stenographer/
+          if-no-files-found: error
+          retention-days: 14

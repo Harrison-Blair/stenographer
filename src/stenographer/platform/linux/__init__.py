@@ -10,6 +10,8 @@ from __future__ import annotations
 import signal
 from typing import TYPE_CHECKING
 
+from stenographer.platform.desktop import DesktopHostMixin
+
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Mapping, Sequence
@@ -45,7 +47,7 @@ def signal_reason(signum: int) -> str:
         return f"signal {signum}"
 
 
-class LinuxPlatform:
+class LinuxPlatform(DesktopHostMixin):
     name = "linux"
 
     # --- user directories ---
@@ -155,6 +157,21 @@ class LinuxPlatform:
         from stenographer.platform.linux.guidance import guidance
 
         return guidance()
+
+    def service_status(self):
+        from stenographer.platform.linux.service import service_status
+
+        return service_status()
+
+    def service_action(self, action: str) -> tuple[bool, str]:
+        from stenographer.platform.linux.service import service_action
+
+        return service_action(action)
+
+    def restart_running_service(self) -> tuple[bool, str]:
+        from stenographer.platform.linux.service import restart_running_service
+
+        return restart_running_service()
 
     def restart_service(self) -> tuple[bool, str]:
         from stenographer.platform.linux.probe import restart_service

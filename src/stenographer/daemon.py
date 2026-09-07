@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Literal
 
 from stenographer.audio import Recorder, speech_gate_stats
 from stenographer.constants import SAMPLE_RATE
+from stenographer.control import Maintenance, config_fingerprint, valid_request
 from stenographer.delivery.deliver import Deliverer
 from stenographer.delivery.feedback import Feedback
 from stenographer.platform import current_platform
@@ -43,6 +44,7 @@ from stenographer.platform.base import SingleInstanceLockError
 from stenographer.status import NullStatusSink, OverlayState, StatusSink, should_publish_state
 from stenographer.transcribe.pipeline import (
     UtteranceRecord,
+    analytics_metrics,
     log_gate,
     log_summary,
     transcript_text,
@@ -246,6 +248,13 @@ class Daemon:
         self._pipeline_thread: threading.Thread | None = None
         self._listener = None
         self._deliverer: Deliverer | None = None
+        self._platform: Platform | None = None
+        self._analytics = None
+        self._control_server = None
+        self._maintenance = Maintenance()
+        self._capture_lock = threading.Lock()
+        self._model_load_started_at: float | None = None
+        self._model_load_utterance: int | None = None
 
     @classmethod
     def build(
@@ -308,13 +317,14 @@ class Daemon:
             device=cfg.hotkey.device,
             on_start=on_start,
             on_stop=on_stop,
-            lock=daemon._lock,
+            lock=threading.RLock(),
         )
         deliverer = Deliverer(
             keyboard=plat.key_injector(),
             wait_released=listener.wait_binding_released,
             copy=plat.clipboard_writer(clipboard_backend),
         )
+        daemon._platform = plat
         daemon._listener = listener
         daemon._deliverer = deliverer
         return daemon
@@ -343,11 +353,21 @@ class Daemon:
         with self._lock:
             if self._stop_event.is_set():
                 return
+            self._model_load_started_at = time.perf_counter()
+            self._model_load_utterance = self._utterance_id
             _publish_loading_activity(self._status, True)
 
     def _on_model_loading_finished(self) -> None:
         """Remove display activity after either model-ready or load failure."""
         with self._lock:
+            if (
+                self._record is not None
+                and self._record.utt == self._model_load_utterance
+                and self._model_load_started_at is not None
+            ):
+                self._record.load_ms = (time.perf_counter() - self._model_load_started_at) * 1000
+            self._model_load_started_at = None
+            self._model_load_utterance = None
             _publish_loading_activity(self._status, False)
 
     def _warm_model(self, utterance: int) -> None:
@@ -382,20 +402,12 @@ class Daemon:
                 busy=self._busy,
                 stopping=self._stop_event.is_set(),
             )
-            if action == "start":
-                self.on_key_down()
-            elif action == "stop":
-                self.on_key_up()
-            else:
-                log.debug(
-                    fmt_event(
-                        "hotkey",
-                        "toggle_press_ignored",
-                        reason=ignored_edge_reason(
-                            self._recording, self._busy, self._stop_event.is_set()
-                        ),
-                    )
-                )
+            if action is None and self._busy and self._record is not None:
+                self._record.ignored_busy_presses += 1
+        if action == "start":
+            self.on_key_down()
+        elif action == "stop":
+            self.on_key_up()
 
     def on_hybrid_release(self) -> None:
         """Hybrid mode: a tap latches the recording, a held press ends it.
@@ -420,10 +432,11 @@ class Daemon:
             log.debug(
                 fmt_event("hotkey", "hybrid_release", action=action, held_ms=round(held * 1000))
             )
-            if action == "stop":
-                self.on_key_up()
-            else:
+            generation = self._utterance_id
+            if action != "stop":
                 self._arm_max_timer(record.started_at)
+        if action == "stop":
+            self.on_key_up(generation=generation)
 
     def _on_max_duration(self, generation: int) -> None:
         """Timer thread: end a toggle or latched-hybrid recording exactly as a
@@ -436,7 +449,7 @@ class Daemon:
                 "recorder: max_duration_stop seconds=%d",
                 self._cfg.audio.max_recording_seconds,
             )
-            self.on_key_up()
+        self.on_key_up(generation=generation)
 
     def _arm_max_timer(self, started_at: float) -> None:
         """Arm the cap timer for what is left of this utterance's window.
@@ -463,63 +476,103 @@ class Daemon:
             timer.cancel()
             self._max_timer = None
 
+    def _checkpoint(self, record: UtteranceRecord | None, phase: str) -> None:
+        if record is None or self._analytics is None or record.analytics_id is None:
+            return
+        try:
+            context = {}
+            if phase == "secured_capture":
+                context = {"sample_rate": record.input_rate, "channels": record.channels}
+                name = record.device_name
+                if name and not any(ord(char) < 32 for char in name):
+                    context["device"] = name[:256]
+            self._analytics.checkpoint(
+                record.analytics_id,
+                phase,
+                metrics=analytics_metrics(record),
+                context=context,
+            )
+        except Exception as exc:
+            log_failure(log, logging.DEBUG, "analytics: checkpoint_failed", exc, safe=False)
+
     def on_key_down(self) -> None:
         with self._lock:
-            if not can_start(self._recording, self._busy, self._stop_event.is_set()):
-                log.debug(
-                    fmt_event(
-                        "hotkey",
-                        "key_down_ignored",
-                        reason=ignored_edge_reason(
-                            self._recording, self._busy, self._stop_event.is_set()
-                        ),
-                    )
-                )
+            if (
+                not can_start(self._recording, self._busy, self._stop_event.is_set())
+                or self._maintenance.occupied
+            ):
+                if self._busy and self._record is not None:
+                    self._record.ignored_busy_presses += 1
+                log.debug(fmt_event("hotkey", "key_down_ignored", reason="unavailable"))
                 return
-            self._worker.hold_model()
+            self._utterance_id += 1
+            set_utterance(self._utterance_id)
             started_at = time.perf_counter()
+            self._record = UtteranceRecord(
+                utt=self._utterance_id,
+                started_at=started_at,
+                mode=self._cfg.hotkey.mode,
+                source="hotkey",
+            )
+            if self._analytics is not None:
+                try:
+                    self._record.analytics_id = self._analytics.start(self._utterance_id)
+                except Exception as exc:
+                    log_failure(log, logging.DEBUG, "analytics: start_failed", exc, safe=False)
+            self._worker.hold_model()
             try:
                 self._recorder.start()
             except Exception as exc:
                 log_failure(log, logging.ERROR, "recorder: failed", exc, safe=True, phase="start")
                 self._recorder.close()
                 self._worker.release_model()
+                self._record.failure = "start_failed"
+                self._emit_summary(self._take_record(Outcome.ERROR.name))
                 self._fail("could not start recording")
-                self._recording = False
                 return
             self._recording = True
-            self._utterance_id += 1
-            set_utterance(self._utterance_id)
-            self._record = UtteranceRecord(
-                utt=self._utterance_id, started_at=started_at, mode=self._cfg.hotkey.mode
-            )
             if self._cfg.hotkey.mode == "toggle":
                 self._arm_max_timer(started_at)
             self._publish_state(OverlayState.RECORDING)
             _play_cue(self._feedback, "record_start")
             self._start_model_warmup(self._utterance_id)
 
-    def on_key_up(self) -> None:
+    def on_key_up(self, *, generation: int | None = None) -> None:
         with self._lock:
+            if generation is not None and generation != self._utterance_id:
+                return
             if not self._recording:
                 log.debug(fmt_event("hotkey", "key_up_ignored", reason="not_recording"))
                 return
             self._recording = False
+            self._busy = True
+            if self._record is not None:
+                self._record.stopped_at = time.perf_counter()
             self._cancel_max_timer()
-            # Deactivate visualization before waiting for PortAudio to quiesce,
-            # so no recording frame can survive into later lifecycle states.
             self._publish_state(OverlayState.HIDDEN)
+        # Callback-clock reduction and sample finalization are outside lifecycle locks.
+        with self._capture_lock:
             try:
                 samples = self._recorder.stop()
             except Exception as exc:
                 log_failure(log, logging.ERROR, "recorder: failed", exc, safe=True, phase="stop")
                 self._recorder.close()
-                self._fail("recording failed; audio was discarded")
-                self._worker.release_model()
-                self._emit_summary(self._take_record(Outcome.ERROR.name))
-            else:
+                with self._lock:
+                    self._busy = False
+                    if self._record is not None:
+                        self._record.failure = "stop_failed"
+                    self._fail("recording failed; audio was discarded")
+                    self._worker.release_model()
+                    self._emit_summary(self._take_record(Outcome.ERROR.name))
+                return
+            with self._lock:
                 self._apply_capture(self._recorder.last_capture)
-                self._busy = True
+                self._checkpoint(self._record, "secured_capture")
+                if self._stop_event.is_set():
+                    self._busy = False
+                    self._worker.release_model()
+                    self._emit_summary(self._take_record("CANCELLED"))
+                    return
                 _play_cue(self._feedback, "record_stop")
                 thread = threading.Thread(
                     target=self._run_pipeline,
@@ -536,7 +589,21 @@ class Daemon:
         if record is None or stats is None:
             return
         record.activate_ms = stats.activate_ms
-        record.capture_s = stats.capture_seconds
+        if stats.first_callback_at is not None:
+            record.press_to_callback_ms = (stats.first_callback_at - record.started_at) * 1000
+        record.activation_to_callback_ms = stats.activation_to_callback_ms
+        record.max_adc_gap_ms = stats.max_adc_gap_ms
+        record.adc_discontinuities = stats.adc_discontinuities
+        record.capture_s = stats.input_frames / stats.input_rate
+        record.device_name = stats.device_name
+        record.input_rate = stats.input_rate
+        record.channels = stats.channels
+        record.finalize_ms = stats.finalize_ms
+        record.callback_timing_count = stats.callback_timing_count
+        record.callback_count = stats.callback_count
+        record.callback_metadata_dropped = stats.callback_metadata_dropped
+        record.overflow_count = stats.overflow_count
+        record.recovered = stats.recovered
         record.in_frames = stats.input_frames
         record.out_frames = stats.output_frames
         record.overflow = stats.overflow
@@ -560,6 +627,17 @@ class Daemon:
         if record is None:
             return
         record.total_ms = (time.perf_counter() - record.started_at) * 1000.0
+        if record.stopped_at is not None:
+            record.stop_to_ready_ms = (time.perf_counter() - record.stopped_at) * 1000
+        if self._analytics is not None and record.analytics_id is not None:
+            try:
+                self._analytics.finish(
+                    record.analytics_id,
+                    record.failure or record.outcome.lower(),
+                    metrics=analytics_metrics(record),
+                )
+            except Exception as exc:
+                log_failure(log, logging.DEBUG, "analytics: finish_failed", exc, safe=False)
         log_summary(record)
         set_utterance(None)
 
@@ -575,7 +653,15 @@ class Daemon:
                 record.gate = "pass" if stats.passed else "fail"
                 record.peak_rms = stats.peak_rms
                 record.frames_above = stats.frames_above
+                record.mean_rms = stats.mean_rms
+                import numpy as np
+
+                record.clipping_fraction = (
+                    float(np.mean(np.abs(samples) >= 0.999)) if samples.size else 0.0
+                )
             if not stats.passed:
+                if record is not None:
+                    record.failure = "gate_rejected"
                 outcome_name = Outcome.SILENT.name
                 self._publish_state(OverlayState.HIDDEN)
                 return
@@ -587,6 +673,7 @@ class Daemon:
             try:
                 result = self._worker.transcribe(samples, self._utterance_id)
             except WorkerError as exc:
+                self._apply_worker_timings(record)
                 if self._stop_event.is_set():
                     outcome_name = "CANCELLED"
                     self._publish_state(OverlayState.HIDDEN)
@@ -603,25 +690,68 @@ class Daemon:
                     exc,
                     safe=isinstance(exc, WorkerPathologicalError),
                 )
+                if record is not None:
+                    from stenographer.transcribe.worker import (
+                        WorkerCrashedError,
+                        WorkerModelError,
+                        WorkerTimeoutError,
+                    )
+
+                    record.failure = (
+                        "pathological"
+                        if isinstance(exc, WorkerPathologicalError)
+                        else "timeout"
+                        if isinstance(exc, WorkerTimeoutError)
+                        else "crashed"
+                        if isinstance(exc, WorkerCrashedError)
+                        else "model_failed"
+                        if isinstance(exc, WorkerModelError)
+                        else "decode_failed"
+                    )
                 self._fail("transcription failed")
                 return
             self._apply_decode(record, result)
+            self._checkpoint(record, "accepted_recognition")
             if self._stop_event.is_set():
                 outcome_name = "CANCELLED"
                 self._publish_state(OverlayState.HIDDEN)
                 return
             transcript_nonempty = bool(result.text.strip())
+            format_started_at = time.perf_counter()
             text = transcript_text(result)
             if record is not None:
+                from stenographer.analytics import count_words
+
                 record.chars_out = len(text)
+                record.final_words = count_words(text)
+                record.format_ms = (time.perf_counter() - format_started_at) * 1000
+                if not transcript_nonempty:
+                    record.failure = "empty"
             if not transcript_nonempty:
                 self._publish_state(OverlayState.HIDDEN)
             else:
                 self._publish_state(OverlayState.DELIVERING)
             try:
-                deliver_result = self._deliverer.deliver(text) if transcript_nonempty else None
+                deliver_result = (
+                    self._deliverer.deliver(
+                        text,
+                        on_copied=lambda: self._clipboard_checkpoint(record),
+                        cancelled=self._stop_event.is_set,
+                    )
+                    if transcript_nonempty
+                    else None
+                )
             except Exception as exc:
-                log_failure(log, logging.WARNING, "pipeline: delivery_failed", exc, safe=True)
+                self._apply_delivery(record, attempted=transcript_nonempty)
+                if self._stop_event.is_set():
+                    outcome_name = "CANCELLED"
+                    self._publish_state(OverlayState.HIDDEN)
+                    return
+                log_failure(log, logging.WARNING, "pipeline: delivery_failed", exc, safe=False)
+                if record is not None:
+                    record.failure = (
+                        "chord_failed" if record.copied_words is not None else "copy_failed"
+                    )
                 self._fail("delivery failed")
                 return
             self._apply_delivery(record, attempted=transcript_nonempty)
@@ -631,11 +761,24 @@ class Daemon:
                 deliver_result=deliver_result,
             )
             outcome_name = outcome.name
+            if self._stop_event.is_set() and not deliver_result:
+                outcome_name = "CANCELLED"
+                if record is not None:
+                    record.failure = None
+                self._publish_state(OverlayState.HIDDEN)
+                return
+            elif outcome is Outcome.ERROR and record is not None:
+                record.failure = "copy_failed"
             if outcome is Outcome.DELIVERED:
                 self._publish_state(OverlayState.HIDDEN)
                 _play_cue(self._feedback, "delivered")
             elif outcome is Outcome.ERROR:
                 self._fail(message or "delivery failed")
+        except Exception as exc:
+            if record is not None:
+                record.failure = "error"
+            log_failure(log, logging.WARNING, "pipeline: failed", exc, safe=False)
+            self._fail("transcription pipeline failed")
         finally:
             with self._lock:
                 self._worker.release_model()
@@ -646,15 +789,31 @@ class Daemon:
         """Fold the worker's timings and the decode's shape into the record."""
         if record is None:
             return
-        timings = self._worker.last_timings
-        if timings is not None:
-            record.lock_wait_ms = timings.lock_wait_ms
-            record.load_ms = timings.load_ms
-            record.decode_ms = timings.decode_ms
+        self._apply_worker_timings(record)
         record.vad_frames = round(result.vad_seconds * SAMPLE_RATE)
         record.segments = len(result.segments)
         record.words = sum(len(segment.words) for segment in result.segments)
         record.chars_raw = len(result.text)
+        from stenographer.analytics import count_words
+
+        record.recognized_words = count_words(result.text)
+        record.asr_audio_s = record.capture_s
+        record.vad_s = result.vad_seconds
+
+    def _apply_worker_timings(self, record: UtteranceRecord | None) -> None:
+        if record is None:
+            return
+        timings = self._worker.last_timings
+        if timings is not None:
+            record.lock_wait_ms = timings.lock_wait_ms
+            if timings.load_ms is not None:
+                record.load_ms = timings.load_ms
+            record.decode_ms = timings.decode_ms
+            record.round_trip_ms = timings.round_trip_ms
+
+    def _clipboard_checkpoint(self, record: UtteranceRecord | None) -> None:
+        self._apply_delivery(record, attempted=True)
+        self._checkpoint(record, "clipboard_confirmed")
 
     def _apply_delivery(self, record: UtteranceRecord | None, *, attempted: bool) -> None:
         """Fold the delivery's cost in — ``attempted`` says a copy was tried at all."""
@@ -666,11 +825,122 @@ class Daemon:
         record.copy_ms = timings.copy_ms
         record.release_wait_ms = timings.release_wait_ms
         record.release_timeout = timings.release_timeout
+        if timings.copied:
+            record.copied_words = record.final_words
+        if timings.chord_sent:
+            record.chord_words = record.final_words
+            if record.stopped_at is not None:
+                record.stop_to_chord_ms = (time.perf_counter() - record.stopped_at) * 1000
+
+    def _start_diagnostics(self) -> None:
+        if self._platform is None:
+            return
+        try:
+            from stenographer.diagnostics import create_session
+
+            self._analytics = create_session(
+                self._cfg,
+                self._platform,
+                pids=lambda: self._worker.process_ids,
+            )
+        except Exception as exc:
+            log_failure(log, logging.WARNING, "analytics: unavailable", exc, safe=False)
+        try:
+            self._control_server = self._platform.control_transport().serve(
+                self._control_request,
+                self._control_disconnected,
+            )
+        except Exception as exc:
+            log_failure(log, logging.WARNING, "control: unavailable", exc, safe=False)
+
+    def _control_disconnected(self, owner: str) -> None:
+        with self._lock:
+            self._maintenance.release(owner)
+
+    def _control_request(self, message: dict, owner: str) -> dict:
+        from stenographer.control import VERSION
+
+        response = {"version": VERSION, "id": message.get("id"), "ok": False}
+        if not valid_request(message):
+            return {**response, "reason": "invalid_request"}
+        action = message["action"]
+        if action == "maintenance_begin":
+            kind = message["payload"]["kind"]
+            with self._lock:
+                busy = self._recording or self._busy or self._stop_event.is_set()
+                accepted = self._maintenance.begin(owner, kind, busy=busy)
+            if accepted and kind == "calibration":
+                try:
+                    # Even an inactive pre-negotiated stream can hold exclusive
+                    # microphone access. The lease prevents starts; reopen lazily.
+                    with self._capture_lock:
+                        self._recorder.close()
+                except Exception:
+                    self._control_disconnected(owner)
+                    return {**response, "reason": "microphone_release_failed"}
+            return {**response, "ok": accepted, "reason": "accepted" if accepted else "busy"}
+        with self._lock:
+            busy = self._recording or self._busy or self._stop_event.is_set()
+            if action == "status":
+                lifecycle = (
+                    "stopping"
+                    if self._stop_event.is_set()
+                    else "recording"
+                    if self._recording
+                    else "busy"
+                    if self._busy
+                    else "maintenance"
+                    if self._maintenance.occupied
+                    else "idle"
+                )
+                return {
+                    **response,
+                    "ok": True,
+                    "status": {
+                        "lifecycle": lifecycle,
+                        "running_config": config_fingerprint(self._cfg),
+                        "analytics": self._analytics.health
+                        if self._analytics is not None
+                        else {
+                            "enabled": self._cfg.analytics.enabled,
+                            "degraded": True,
+                        },
+                    },
+                }
+            if action == "maintenance_end":
+                accepted = self._maintenance.release(owner)
+                return {
+                    **response,
+                    "ok": accepted,
+                    "reason": "released" if accepted else "not_owner",
+                }
+            if not self._maintenance.reserve(action, busy=busy):
+                return {**response, "reason": "busy"}
+        # Once reserved, disconnect cannot revoke this action. Native service
+        # managers own accepted jobs. No native operation runs under the lock.
+        try:
+            if action == "stop":
+                self.request_stop()
+                return {**response, "ok": True}
+            if action == "apply":
+                from stenographer.config import Config, resolve_config_path
+
+                Config.load(resolve_config_path(create_parent=False))
+            accepted, reason = self._platform.restart_running_service()
+            if not accepted:
+                with self._lock:
+                    self._maintenance.action = None
+            return {**response, "ok": accepted, "reason": reason}
+        except Exception:
+            with self._lock:
+                self._maintenance.action = None
+            return {**response, "reason": "settings_invalid_or_service_unavailable"}
 
     def run(self) -> None:
         """Start the listener and block until stopped."""
         if self._listener is None:
             raise RuntimeError("daemon.run() before build()")
+        self._start_diagnostics()
         self._listener.start()
         log.info("daemon: running pid=%d", os.getpid())
         self._stop_event.wait()
@@ -685,6 +955,25 @@ class Daemon:
         if self._listener is not None:
             with contextlib.suppress(Exception):
                 self._listener.stop()
+        with self._capture_lock:
+            with self._lock:
+                was_recording = self._recording
+                self._recording = False
+                self._cancel_max_timer()
+                if was_recording and self._record is not None:
+                    self._record.stopped_at = time.perf_counter()
+            if was_recording:
+                try:
+                    self._recorder.stop()
+                except Exception as exc:
+                    log_failure(
+                        log, logging.DEBUG, "recorder: cancel_finalize_failed", exc, safe=True
+                    )
+                else:
+                    with self._lock:
+                        self._apply_capture(self._recorder.last_capture)
+                        self._checkpoint(self._record, "secured_capture")
+            self._recorder.close()
         with contextlib.suppress(Exception):
             self._worker.shutdown()
         warmup = self._warmup_thread
@@ -699,13 +988,16 @@ class Daemon:
         with contextlib.suppress(Exception):
             self._feedback.close()
         with self._lock:
-            self._cancel_max_timer()
-            self._recorder.close()
-            self._recording = False
             # A recording torn down mid-flight still owes the log its one line;
             # without this a press-then-stop leaves an utterance unaccounted for.
             self._emit_summary(self._take_record("CANCELLED"))
         self._publish_state(OverlayState.HIDDEN)
+        if self._control_server is not None:
+            self._control_server.close()
+            self._control_server = None
+        if self._analytics is not None:
+            self._analytics.close()
+            self._analytics = None
         set_utterance(None)
 
 
@@ -813,6 +1105,14 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             spectrum_floor_dbfs=_shown(feedback.spectrum_floor_dbfs),
             sound_pack=feedback.sound_pack,
             log_level=feedback.log_level,
+        )
+    )
+    log.info(
+        fmt_event(
+            "banner",
+            "config_analytics",
+            enabled=int(cfg.analytics.enabled),
+            resource_profiling=int(cfg.analytics.resource_profiling),
         )
     )
 

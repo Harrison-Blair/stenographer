@@ -214,7 +214,7 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m venv .venv
-          .venv/bin/pip install -e ".[build]"
+          .venv/bin/pip install -e ".[build,desktop]"
       - name: Build and inspect native standalone bundle
         env:
           FILE_PATTERN: ${{ matrix.file_pattern }}

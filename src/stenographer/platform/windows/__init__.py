@@ -22,6 +22,7 @@ from stenographer.platform.base import (
     NullNotifier,
     UnsupportedPlatformError,
 )
+from stenographer.platform.desktop import DesktopHostMixin
 
 if TYPE_CHECKING:
     import threading
@@ -65,7 +66,7 @@ def signal_reason(signum: int) -> str:
         return f"signal {signum}"
 
 
-class WindowsPlatform:
+class WindowsPlatform(DesktopHostMixin):
     name = "windows"
 
     # --- user directories ---
@@ -126,7 +127,9 @@ class WindowsPlatform:
         return NullNotifier()
 
     def cue_player(self) -> CuePlayer | None:
-        return None
+        from stenographer.platform.preview_audio import PortAudioCuePlayer
+
+        return PortAudioCuePlayer()
 
     # --- process / lifecycle ---
     def helper_transport(self) -> HelperTransport:

@@ -93,8 +93,10 @@ class CuePlayer(Protocol):
 
     def play(self, path: Path, volume: float) -> None: ...
 
-    def preview(self, path: Path, volume: float) -> None:
-        """Play one cue to completion, raising when playback fails."""
+    def preview(
+        self, path: Path, volume: float, *, cancellation: threading.Event | None = None
+    ) -> None:
+        """Play one cue; cancellation stops native playback and raises."""
         ...
 
 
@@ -252,11 +254,65 @@ class HostProbe:
     service_active: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ServiceStatus:
+    """Native service availability; unsupported is distinct from stopped."""
+
+    available: bool
+    active: str | None = None
+    enabled: str | None = None
+    detail: str = ""
+
+
+class ControlClient(Protocol):
+    def request(self, message: dict) -> dict: ...
+
+    def close(self) -> None: ...
+
+
+class ControlServer(Protocol):
+    def close(self) -> None: ...
+
+
+class ControlTransport(Protocol):
+    """Authenticated bounded JSON requests over a persistent local connection."""
+
+    def serve(
+        self,
+        handler: Callable[[dict, str], dict],
+        disconnected: Callable[[str], None],
+    ) -> ControlServer: ...
+
+    def connect(self, timeout: float = 2.0) -> ControlClient: ...
+
+
 @runtime_checkable
 class Platform(Protocol):
     """Everything the core needs from the host, in one provider."""
 
     name: str
+
+    def control_transport(self) -> ControlTransport: ...
+
+    def resource_probe(self) -> Callable[..., dict]: ...
+
+    def process_identity(self) -> tuple[int, float]: ...
+
+    def process_alive(self, pid: int, started_epoch: float) -> bool | None: ...
+
+    def runtime_context(self) -> dict[str, str]: ...
+
+    def service_status(self) -> ServiceStatus: ...
+
+    def service_action(self, action: str) -> tuple[bool, str]: ...
+
+    def restart_running_service(self) -> tuple[bool, str]:
+        """Restart only if the manager identifies this process as its running service."""
+        ...
+
+    def focused_key_name(
+        self, key: int, native_virtual_key: int = 0, native_scan_code: int = 0
+    ) -> str | None: ...
 
     # --- user directories (STENOGRAPHER_CONFIG override stays in config.py) ---
     def config_path(self, env: Mapping[str, str], home: Path) -> Path: ...

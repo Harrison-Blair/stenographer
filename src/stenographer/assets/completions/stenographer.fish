@@ -46,7 +46,7 @@ complete -c stenographer -n __stenographer_needs_command -f -s h -l help \
 complete -c stenographer -n __stenographer_needs_command -f -l version \
     -d 'Show version'
 
-for command in run transcribe model doctor devices setup sounds completion
+for command in run transcribe model doctor devices setup sounds stats completion
     complete -c stenographer -n "__stenographer_command_is $command" -f -s h -l help \
         -d 'Show help'
 end
@@ -71,3 +71,16 @@ complete -c stenographer -n '__stenographer_nested_command_needed model' -f -a d
 
 complete -c stenographer -n '__stenographer_nested_command_needed completion' -f \
     -a 'bash zsh fish'
+
+complete -c stenographer -n __stenographer_needs_command -f -a stats -d 'Personal analytics'
+complete -c stenographer -n '__stenographer_command_is stats' -f -a 'summary export delete reset'
+complete -c stenographer -n '__stenographer_command_is stats' -f -l source
+complete -c stenographer -n '__stenographer_command_is stats' -f -l since
+complete -c stenographer -n '__stenographer_command_is stats' -f -l until
+complete -c stenographer -n '__stenographer_command_is stats' -f -l model
+complete -c stenographer -n '__stenographer_command_is stats' -f -l app-version
+complete -c stenographer -n '__stenographer_command_is stats' -f -l device
+complete -c stenographer -n '__stenographer_command_is stats' -f -l outcome
+complete -c stenographer -n '__stenographer_command_is stats' -f -l format
+complete -c stenographer -n '__stenographer_command_is stats' -f -l output
+complete -c stenographer -n '__stenographer_command_is stats' -f -l yes

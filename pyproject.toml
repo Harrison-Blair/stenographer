@@ -19,9 +19,11 @@ dependencies = [
     "pywayland==0.4.18; sys_platform == 'linux'",
     "python-xlib==0.33; sys_platform == 'linux'",
     "tomlkit>=0.13",
+    "psutil>=6.0",
 ]
 
 [project.optional-dependencies]
+desktop = ["PySide6>=6.8,<7"]
 dev = [
     "ruff>=0.5",
     "pytest>=8",
@@ -32,6 +34,7 @@ build = [
 
 [project.scripts]
 stenographer = "stenographer.cli:main"
+stenographer-ui = "stenographer_desktop:main"
 
 [project.urls]
 Homepage = "https://github.com/Harrison-Blair/stenographer"
@@ -44,7 +47,7 @@ build-backend = "hatchling.build"
 path = "src/stenographer/_version.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/stenographer"]
+packages = ["src/stenographer", "src/stenographer_desktop"]
 include = [
     "src/stenographer/assets/fonts/*.ttf",
     "src/stenographer/assets/fonts/*.txt",

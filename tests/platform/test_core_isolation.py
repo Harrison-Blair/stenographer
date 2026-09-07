@@ -46,6 +46,8 @@ RAW_FD_IO = re.compile(r"\bos\.(?:read|write|kill|waitpid|pipe)\(")
 TRANSPORT_FREE = ("overlay/supervisor.py", "audio.py", "hotkey.py", "daemon.py")
 
 BLOCKED = (
+    "PySide6",
+    "stenographer_desktop",
     "evdev",
     "fcntl",
     "termios",
@@ -57,10 +59,20 @@ BLOCKED = (
 )
 
 CORE = (
+    "stenographer.analytics",
+    "stenographer.control",
+    "stenographer.diagnostics",
+    "stenographer.settings",
+    "stenographer.calibration",
+    "stenographer.platform.macos",
     "stenographer.status",
     "stenographer.keycodes",
     "stenographer.config",
     "stenographer.audio",
+    "stenographer.capture_metrics",
+    "stenographer.inference",
+    "stenographer.cleanup",
+    "stenographer.evaluation",
     "stenographer.hotkey",
     "stenographer.audio_probe",
     "stenographer.capabilities",
@@ -92,6 +104,7 @@ CORE = (
     "stenographer.overlay.spectrum",
     "stenographer.transcribe.worker",
     "stenographer.transcribe.model",
+    "stenographer.transcribe.reconcile",
     "stenographer.transcribe.format",
     "stenographer.transcribe.pipeline",
     "stenographer.utils.logging_setup",

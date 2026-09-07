@@ -1,4 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# PyInstaller hook: prevent bundling of build-machine audio libraries.
-# The target system MUST provide these at runtime (see BUILD.md).
-excludedbinaries = ["libportaudio*", "libpipewire*", "libpulse*"]
+"""Use system audio on Linux; retain wheel-provided PortAudio on other hosts."""
+
+import sys
+
+from PyInstaller.utils.hooks import collect_data_files
+
+if sys.platform == "linux":
+    excludedbinaries = ["libportaudio*", "libpipewire*", "libpulse*"]
+else:
+    datas = collect_data_files("_sounddevice_data")

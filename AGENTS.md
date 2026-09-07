@@ -16,10 +16,58 @@ a longer hold stops on release; `"hold"` is push-to-talk and `"toggle"` presses
 once to start and again to stop. Offline, English-only,
 GPL-3.0-or-later, Python ≥ 3.12.
 
-**Target platforms: Linux (Wayland, any compositor) and Windows.** Linux is
+**Target platforms: Linux (Wayland and X11), Windows, and macOS (Intel and
+Apple Silicon).** Linux is
 the shipping backend; Windows currently has a stdlib-only stub provider and a
 CI portability job, with the real backend scoped in `docs/windows/SCOPE.md`.
-Every change must keep both targets viable — see *Platform boundary* below.
+macOS has a desktop/setup provider; its dictation provider remains a roadmap target. Every change must keep
+these targets viable — see *Platform boundary* below. Native acceptance requirements
+live in `packaging/NATIVE-ACCEPTANCE.md`;
+an untested target must never be advertised as supported.
+
+### Experiment-led expansion (authorized September 2026)
+
+The owner authorized private incremental
+ASR experiments, a separate optional LLM cleanup stage, and a separate Qt/PySide6
+settings process. These supersede the cut-feature restriction only for private
+inference, never live transcript preview. Production defaults remain unchanged
+until measured comparisons and the owner's selection. Repository-only study
+runners are authorized; no new `bench` application command is introduced.
+
+Capture diagnostics may copy scalar callback clock metadata in addition to
+blocks. No signal analysis, logging, I/O, or slow-consumer locks in callbacks.
+The first callback is measured against accepted press and stream activation;
+ADC clock discontinuities are diagnostics, not proof that speech was lost.
+
+Shared experimental contracts live in `inference.py`; cleanup validation and
+evaluation math remain pure. Private chunks retain the full utterance, bound
+pending work, and fall back to whole-utterance ASR on uncertain reconciliation.
+Exactly one final delivery remains the daemon's responsibility. Native APIs,
+inference process management, and any future native settings integration stay
+behind `platform/`. No platform is implemented by pretending its native calls
+passed mocked tests.
+
+Cleanup is off until explicitly enabled, local by default, tool-free, and gets
+only the final transcript. It preserves paragraphs/lists and substantive content.
+Failed, empty, malformed, truncated, over-context, or timed-out cleanup selects
+the original formatted transcript with a visible cleanup-skipped state. A
+cancelled utterance is never pasted. Structural edit validation is not semantic
+fidelity certification. An explicitly configured self-hosted endpoint may receive
+transcript text only, with authenticated transport and no remote fallback; this
+is an authorized future exception to the network invariant, not an active path.
+Model downloads remain explicit. No transcript, audio, prompt, response, or
+credential may enter logs or automatic history.
+
+Configuration/protocol extensions necessary for these features are authorized
+but must be documented with their implementation. Existing 23-key files stay
+readable without automatic rewriting; graphical saves use the preservation
+layer. Settings apply restart-requiring changes only through an explicit idle
+action. The pill remains isolated, click-through and transcript-free; new
+duration/cleaning/delivery/fallback metadata requires a versioned wire change.
+Two visual concepts precede selection of the finished interface. No physical
+microphone reproduction without explicit consent. Real-platform acceptance is
+required per release target, including macOS signing/notarization and Windows
+installation/signing checks before packaging is called ready.
 
 Do not reintroduce cut features (old GTK HUD / transcript preview, cancel
 binding, `dictate`, `bench`, per-character typing / wtype, live preview /
@@ -49,6 +97,38 @@ owning the stderr sink and the always-DEBUG rotating file, `subsystem: event
 key=value` lines, `utt=N` correlation, and `feedback.log_level`) with the
 overlay helper's own `overlay-helper.log` beside it in the state directory,
 and static Bash/Zsh/Fish completions.
+
+### Durable diagnostics and desktop (authorized September 2026)
+
+The comprehensive diagnostics/desktop plan authorizes a schema-versioned local
+SQLite numeric history, `stats` reporting/export/deletion, a separate
+`stenographer_desktop` PySide6 Widgets package and `stenographer-ui` process.
+The normal native installation includes both executables; the headless extra-free
+installation/build remains available without Qt. Core and CLI never import the
+desktop package, and the desktop never imports CLI handlers. Shared preservation
+and calibration now live in `settings.py` and `calibration.py`; CLI paths are
+compatibility exports. The desktop owns `desktop.log`.
+
+The fixed config is now 25 keys in five sections: the two default-true
+`analytics.enabled` and `analytics.resource_profiling` fields extend the existing
+23-key files without rewriting them. Numeric analytics are an explicit exception
+to the no-history restriction, never transcript/audio/prompt/hotword/path history.
+Records persist until explicit deletion; revision guards and deletion suppression
+prevent retries or delayed checkpoints from resurrecting activity. Collection is
+asynchronous and bounded, fail-open for dictation, with visible degradation and
+missing data. Resource sampling is every 500 ms plus boundaries and retains only
+summaries/coverage. Headline words count usable recognition before delivery;
+headline audio sums sample-based input duration of accepted ASR results.
+
+Local control protocol v1 is independent of pill protocol v4. The daemon owns
+idle-only maintenance and disruptive-action admission; disconnect releases only
+its temporary lease. Native transport, endpoint security, resource probes,
+focused key mapping and service jobs remain behind platform contracts. Saved
+settings apply only through explicit idle restart. Windows/macOS desktop/setup
+providers exist; their dictation and service integrations remain unavailable.
+Native CI artifacts are development artifacts pending interactive acceptance and
+signing. Packaging and acceptance requirements live in `BUILD.md` and
+`packaging/NATIVE-ACCEPTANCE.md`; metric definitions live in `analytics/metrics.py`.
 
 ## Commands
 
@@ -210,15 +290,15 @@ The rule is structural, not stylistic, and it is enforced by a test.
    - An empty transcript or failed speech gate is success-shaped: no paste,
      no error cue.
    - The ASR path never touches the network (`local_files_only`), and
-     `stenographer model download` is the only command that may download
-     anything. The daemon's sole other network access is the update notice's
+     `stenographer model download` and the desktop
+     explicit model-download action are the only model-download entry points. The daemon's sole other network access is the update notice's
      single metadata request: a background daemon thread that is never joined,
      off the hot path, 5 s timeout, at most one request per 24 h, successful or
      not, via the record in the state directory, every failure DEBUG-logged and
      otherwise silent, disabled by `feedback.update_check = false`, and sending
      nothing but the request itself.
-   - The PortAudio callback only copies blocks (no analysis, allocation-heavy
-     work, or slow-consumer locks).
+   - The PortAudio callback only copies blocks and scalar timing metadata (no
+     analysis, allocation-heavy work, or slow-consumer locks).
    - One utterance at a time; a start press during transcription neither
      starts nor queues.
    - Capture starts before the `record_start` cue and stops/secures samples
@@ -295,8 +375,8 @@ The rule is structural, not stylistic, and it is enforced by a test.
    `<active-config-directory>/sounds/<pack>/`, local-only, and must pass the
    four-cue WAV validation; invalid selection warns once and falls back to
    `minimal-ui`. Static completions expose only the four bundled names.
-9. **Config is fixed** — exactly 23 keys in 4 sections (`hotkey`, `audio`,
-   `asr`, `feedback`), frozen dataclasses, key-scoped `ConfigError` → exit 78,
+9. **Config is fixed** — exactly 25 keys in 5 sections (`hotkey`, `audio`,
+   `asr`, `feedback`, `analytics`), frozen dataclasses, key-scoped `ConfigError` → exit 78,
    no migrations, no setup-only keys. Setup/sounds save through the tomlkit
    preservation layer (comments, ordering, unknown content, symlinks, mode;
    timestamped backup; unchanged bytes not written). `setup --default` is the

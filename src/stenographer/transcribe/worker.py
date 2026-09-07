@@ -21,7 +21,7 @@ import multiprocessing
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
@@ -60,7 +60,19 @@ class WorkerProtocolError(WorkerError):
     """The child sent a malformed or out-of-order protocol response."""
 
 
-class _WorkerTimeoutError(WorkerError):
+class WorkerCrashedError(WorkerError):
+    """The registered inference process exited before completing its response."""
+
+
+class WorkerModelError(WorkerError):
+    """Model loading failed before inference could begin."""
+
+
+class WorkerTimeoutError(WorkerError):
+    """A fixed inference or model-loading deadline expired."""
+
+
+class _WorkerTimeoutError(WorkerTimeoutError):
     """An internal phase deadline expired while the child remained alive."""
 
 
@@ -68,13 +80,16 @@ class _WorkerTimeoutError(WorkerError):
 class WorkerTimings:
     """How one ``transcribe`` call spent its wall clock, in milliseconds.
 
-    ``load_ms`` is ``None`` on a warm model, which is exactly the ``cold=0``
-    case the utterance summary reports.
+    ``decode_ms`` is measured inside the child around inference; ``round_trip_ms``
+    includes request/response transport. Failed phases retain elapsed boundaries
+    while unobserved inference remains unknown. ``load_ms`` is absent on a warm
+    model; concurrent press-lazy warm-up is measured separately by the daemon.
     """
 
     lock_wait_ms: float
     load_ms: float | None
-    decode_ms: float
+    decode_ms: float | None
+    round_trip_ms: float | None = None
 
 
 class WorkerEvent(Enum):
@@ -232,7 +247,11 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
             if model is None:
                 raise RuntimeError("decode requested before model load")
             samples = message[1]
+            inference_started_at = time.perf_counter()
             result = model.transcribe(samples)
+            result = replace(
+                result, inference_ms=(time.perf_counter() - inference_started_at) * 1000
+            )
         except Exception as exc:
             # Report and stay alive; native segfaults are handled by the parent
             # liveness poll, not here.
@@ -336,17 +355,24 @@ class Worker:
 
     def transcribe(self, samples: np.ndarray, utterance: int | None = None) -> TranscriptionResult:
         requested_at = time.perf_counter()
+        self.last_timings = None
         with self._lock:
             # Measured inside the lock so it counts the wait a concurrent
             # warm-up imposed, which is the delay the caller actually felt.
             lock_wait_ms = (time.perf_counter() - requested_at) * 1000.0
+            self.last_timings = WorkerTimings(lock_wait_ms, None, None)
             self._begin_request()
             load_started_at = time.perf_counter()
             try:
                 loaded = self._ensure_model_loaded(utterance)
             except WorkerError as exc:
+                self.last_timings = WorkerTimings(
+                    lock_wait_ms, (time.perf_counter() - load_started_at) * 1000, None
+                )
                 self._finish_response_error(exc)
-                raise
+                if isinstance(exc, (WorkerTimeoutError, WorkerCrashedError)):
+                    raise
+                raise WorkerModelError("model loading failed") from exc
             load_ms = (time.perf_counter() - load_started_at) * 1000.0 if loaded else None
             self._abort_if_shutdown_requested("transcribe")
             self._emit_lifecycle((WorkerLifecycle.TRANSCRIBING,))
@@ -364,12 +390,19 @@ class Worker:
                 if isinstance(interpreted, WorkerEvent):
                     raise WorkerProtocolError("unexpected model-ready event during transcription")
             except WorkerError as exc:
+                self.last_timings = WorkerTimings(
+                    lock_wait_ms,
+                    load_ms,
+                    None,
+                    round_trip_ms=(time.perf_counter() - decode_started_at) * 1000,
+                )
                 self._finish_response_error(exc)
                 raise
             self.last_timings = WorkerTimings(
                 lock_wait_ms=lock_wait_ms,
                 load_ms=load_ms,
-                decode_ms=(time.perf_counter() - decode_started_at) * 1000.0,
+                decode_ms=interpreted.inference_ms,
+                round_trip_ms=(time.perf_counter() - decode_started_at) * 1000.0,
             )
             self._restart_idle_timer()
             return interpreted
@@ -415,7 +448,7 @@ class Worker:
                     self._process.exitcode,
                 )
                 self._teardown()
-                raise WorkerError(f"ASR child exited during {phase}")
+                raise WorkerCrashedError(f"ASR child exited during {phase}")
             poll_timeout = response_poll_timeout(
                 now=time.monotonic(), deadline=deadline, poll_seconds=_POLL_SECONDS
             )
@@ -479,6 +512,12 @@ class Worker:
         """Return whether the current live child has confirmed model readiness."""
         proc = self._process
         return self._model_ready.is_set() and proc is not None and proc.is_alive()
+
+    @property
+    def process_ids(self) -> tuple[int, ...]:
+        """Registered application children only; resource sampling never scans process names."""
+        process = self._process
+        return (process.pid,) if process is not None and process.pid is not None else ()
 
     def shutdown(self) -> None:
         """Idempotent, never raises. Ask the child to stop, then escalate."""

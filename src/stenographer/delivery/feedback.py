@@ -15,6 +15,8 @@ from stenographer.config import DEFAULT_SOUND_PACK, SOUND_PACK_PATTERN
 from stenographer.utils.logging_setup import fmt_event, log_failure
 
 if TYPE_CHECKING:
+    import threading
+
     from stenographer.config import FeedbackConfig
     from stenographer.platform.base import CuePlayer
 
@@ -323,15 +325,24 @@ def preview_sound_pack(
     volume: float,
     *,
     pause_seconds: float = PREVIEW_PAUSE_SECONDS,
+    cancellation: threading.Event | None = None,
 ) -> None:
     """Play all lifecycle cues in order with silence between them."""
     if not pack.complete:
         raise ValueError(f"sound pack {pack.name!r} is incomplete")
     for index, path in enumerate(pack.cue_paths):
         assert path is not None  # narrowed by ``complete`` above
-        player.preview(path, volume)
+        if cancellation is None:
+            player.preview(path, volume)
+        else:
+            if cancellation.is_set():
+                raise RuntimeError("Sound preview cancelled")
+            player.preview(path, volume, cancellation=cancellation)
         if index + 1 < len(pack.cue_paths):
-            time.sleep(pause_seconds)
+            if cancellation is None:
+                time.sleep(pause_seconds)
+            elif cancellation.wait(pause_seconds):
+                raise RuntimeError("Sound preview cancelled")
 
 
 class Feedback:

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""TOML config: four frozen sections, key-scoped validation, default writer.
+"""TOML config: frozen sections, key-scoped validation, default writer.
 
 One flat module (the old five-file config package collapsed). ``""`` is the
 documented "unset" for optional string keys — there is no ``null`` rewrite.
@@ -76,6 +76,12 @@ class FeedbackConfig:
     spectrum_floor_dbfs: SpectrumFloor = -45.0
     sound_pack: str = DEFAULT_SOUND_PACK
     log_level: str = "info"
+
+
+@dataclass(frozen=True)
+class AnalyticsConfig:
+    enabled: bool = True
+    resource_profiling: bool = True
 
 
 @dataclass(frozen=True)
@@ -268,6 +274,10 @@ update_check = true            # daily HTTPS check for a newer release; a notice
 spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
 sound_pack = "{sound_pack}"      # bundled pack name or valid pack under sounds/
 log_level = "info"             # debug | info | warning | error; the file keeps debug
+
+[stenographer.analytics]
+enabled = true                # local numeric history; no audio or transcript text
+resource_profiling = true     # sample application/host resources during utterances
 """
 
 
@@ -293,6 +303,7 @@ class Config:
     audio: AudioConfig
     asr: AsrConfig
     feedback: FeedbackConfig
+    analytics: AnalyticsConfig = AnalyticsConfig()
 
     @classmethod
     def defaults(cls) -> Config:
@@ -349,7 +360,7 @@ class Config:
         if not isinstance(table, dict):
             raise ConfigError(path, "stenographer", f"must be a table, got {type(table).__name__}")
         merged = _merge(asdict(cls.defaults()), table)
-        for name in ("hotkey", "audio", "asr", "feedback"):
+        for name in ("hotkey", "audio", "asr", "feedback", "analytics"):
             if not isinstance(merged[name], dict):
                 raise ConfigError(path, name, f"must be a table, got {type(merged[name]).__name__}")
         return cls(
@@ -357,6 +368,12 @@ class Config:
             audio=_build_audio(merged["audio"], path),
             asr=_build_asr(merged["asr"], path),
             feedback=_build_feedback(merged["feedback"], path),
+            analytics=AnalyticsConfig(
+                enabled=_Reader(merged["analytics"], path, "analytics").bool("enabled"),
+                resource_profiling=_Reader(merged["analytics"], path, "analytics").bool(
+                    "resource_profiling"
+                ),
+            ),
         )
 
     @classmethod

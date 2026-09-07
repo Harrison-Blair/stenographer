@@ -73,6 +73,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     completion.add_argument("shell", choices=SUPPORTED_SHELLS)
 
+    stats = subparsers.add_parser("stats", help="Report durable personal dictation analytics.")
+    stats.add_argument(
+        "stats_command",
+        nargs="?",
+        default="summary",
+        choices=("summary", "export", "delete", "reset"),
+    )
+    stats.add_argument("--source", choices=("hotkey", "file", "all"), default="hotkey")
+    stats.add_argument("--since", metavar="YYYY-MM-DD", help="First local calendar day, inclusive.")
+    stats.add_argument("--until", metavar="YYYY-MM-DD", help="Last local calendar day, inclusive.")
+    stats.add_argument("--model", help="Exact model identifier.")
+    stats.add_argument("--app-version", help="Exact application version.")
+    stats.add_argument("--device", help="Exact microphone name.")
+    stats.add_argument("--outcome", help="Exact terminal outcome.")
+    stats.add_argument("--format", choices=("json", "csv"), default="json")
+    stats.add_argument("--output", help="Write export to this file instead of standard output.")
+    stats.add_argument(
+        "--yes", action="store_true", help="Confirm deletion after showing its count."
+    )
     return parser
 
 
@@ -114,6 +133,10 @@ def dispatch(argv: Sequence[str] | None = None) -> int:
         from stenographer.cli.commands.devices import cmd_devices
 
         return cmd_devices(args)
+    if args.command == "stats":
+        from stenographer.cli.commands.stats import cmd_stats
+
+        return cmd_stats(args)
     if args.command == "completion":
         from stenographer.cli.commands.completion import cmd_completion
 

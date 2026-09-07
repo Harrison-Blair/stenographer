@@ -380,7 +380,7 @@ class _Deliverer:
         self.delivered: list[str] = []
         self.last_timings: DeliveryTimings | None = None
 
-    def deliver(self, text: str) -> bool:
+    def deliver(self, text: str, *, on_copied=None, cancelled=None) -> bool:
         self.delivered.append(text)
         self.last_timings = DeliveryTimings(
             copy_ms=8.0, release_wait_ms=30.0, release_timeout=False
@@ -467,7 +467,7 @@ def test_delivered_utterance_logs_metrics_and_never_the_transcript(daemon_logs):
     assert "outcome=DELIVERED" in line
     assert f"chars_out={len(expected)}" in line
     assert f"chars_raw={len(result.text)}" in line
-    assert "utt=1 mode=hold" in line
+    assert "utt=1 source=hotkey mode=hold" in line
     assert "gate=pass" in line
     assert "decode_ms=1500" in line
     assert "copy_ms=8" in line

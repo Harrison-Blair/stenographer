@@ -60,7 +60,7 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m venv .venv
-          .venv/bin/pip install -e ".[build]"
+          .venv/bin/pip install -e ".[build,desktop]"
       - name: Build and inspect standalone bundle
         run: |
           scripts/build.sh --verbose
@@ -93,7 +93,7 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m venv .venv
-          .venv/bin/pip install -e ".[build]"
+          .venv/bin/pip install -e ".[build,desktop]"
       - name: Build and inspect standalone bundle
         run: |
           scripts/build.sh --verbose
