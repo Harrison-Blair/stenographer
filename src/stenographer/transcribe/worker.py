@@ -500,7 +500,7 @@ class Worker:
                 "worker: lifecycle_callback_failed",
                 exc,
                 safe=True,
-                event=event,
+                lifecycle_event=event,
             )
 
     def is_alive(self) -> bool:

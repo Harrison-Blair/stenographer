@@ -420,7 +420,7 @@ class Window(QMainWindow):
         self.compare_group.addItems(["model", "app_version", "device", "compute_type"])
         self.compare_metric = QComboBox()
         self.compare_metric.addItems(
-            ["stop_to_ready_ms", "inference_ms", "capture_s", "recognized_words"]
+            ["stop_to_ready_ms", "decode_ms", "capture_s", "recognized_words"]
         )
         comparison_page = QWidget()
         compare_layout = QVBoxLayout(comparison_page)

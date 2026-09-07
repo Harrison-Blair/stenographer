@@ -16,7 +16,9 @@ pytest.importorskip("PySide6")
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from stenographer.analytics import AnalyticsSession
 from stenographer.config import Config
+from stenographer.transcribe.pipeline import UtteranceRecord, analytics_metrics
 from stenographer_desktop.app import Window
 from stenographer_desktop.services import DesktopServices
 
@@ -77,6 +79,54 @@ def test_malformed_settings_do_not_prevent_historical_analytics(application, tmp
         assert not window.save_button.isEnabled()
         assert window.document is None
         assert config_path.read_text() == "this is not valid TOML"
+    finally:
+        window.close()
+        application.processEvents()
+
+
+def test_decode_comparisons_use_persisted_utterance_measurements(
+    application, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    path = tmp_path / "analytics.sqlite3"
+    session = AnalyticsSession(path)
+    try:
+        for index, (model, duration) in enumerate(
+            [("one", 10.0), ("one", 30.0), ("one", None), ("two", None)]
+        ):
+            record = UtteranceRecord(utt=index, decode_ms=duration)
+            identity = session.start(record.utt, context={"model": model})
+            session.finish(identity, "success", analytics_metrics(record))
+    finally:
+        assert session.close()
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("")
+    window = Window(DesktopServices(config_path, path))
+    try:
+        wait_for(application, lambda: window.analytics_loaded)
+        window.compare_metric.setCurrentText("decode_ms")
+        assert window.compare_metric.currentText() == "decode_ms"
+        assert window.compare_metric.findText("inference_ms") == -1
+        assert len(window.rows) == 4
+
+        def cells(table):
+            return [
+                [table.item(row, column).text() for column in range(table.columnCount())]
+                for row in range(table.rowCount())
+            ]
+
+        assert cells(window.comparisons) == [
+            ["one", "2", "1", "20.0", "30.0", "30.0"],
+            ["two", "0", "1", "Unavailable", "Unavailable", "Unavailable"],
+        ]
+        assert sum(int(row[1]) for row in cells(window.histogram)) == 2
+        window.rows = [row for row in window.rows if "decode_ms" not in row["metrics"]]
+        window.refresh_comparison()
+        assert window.histogram.rowCount() == 0
+        assert all(row[1:3] == ["0", "1"] for row in cells(window.comparisons))
     finally:
         window.close()
         application.processEvents()

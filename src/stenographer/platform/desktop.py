@@ -62,11 +62,19 @@ class DesktopHostMixin:
     def focused_key_name(
         self, key: int, native_virtual_key: int = 0, native_scan_code: int = 0
     ) -> str | None:
-        """Qt logical key values to shared binding names; imports no Qt.
+        """Qt key metadata to shared binding names; imports no Qt.
 
-        Logical values are stable Qt public constants. Left modifiers are the
-        default where a window system does not provide side information.
+        Linux native scan codes use XKB's evdev offset on X11 and Wayland,
+        preserving physical keys regardless of layout or shifted symbols.
+        Logical values are stable Qt public constants used as a fallback. Left
+        modifiers are the default without native side information.
         """
+        if self.name == "linux" and native_scan_code > 8:
+            from stenographer.keycodes import CODE_NAMES
+
+            name = CODE_NAMES.get(native_scan_code - 8)
+            if name is not None:
+                return name
         if 65 <= key <= 90 or 48 <= key <= 57:
             return f"KEY_{chr(key)}"
         if 0x01000030 <= key <= 0x01000047:

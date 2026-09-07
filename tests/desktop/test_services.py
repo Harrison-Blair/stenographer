@@ -26,16 +26,16 @@ def test_form_validation_preserves_unknown_content_and_rejects_invalid_values():
 
 def test_comparison_uses_raw_measurements_and_preserves_missing():
     records = [
-        {"context": {"model": "one"}, "metrics": {"inference_ms": 10}},
-        {"context": {"model": "one"}, "metrics": {"inference_ms": 30}},
+        {"context": {"model": "one"}, "metrics": {"decode_ms": 10}},
+        {"context": {"model": "one"}, "metrics": {"decode_ms": 30}},
         {"context": {"model": "one"}, "metrics": {}},
         {"context": {"model": "two"}, "metrics": {}},
     ]
-    assert comparison_rows(records, "model", "inference_ms") == [
+    assert comparison_rows(records, "model", "decode_ms") == [
         ("one", 2, 1, 20, 30, 30),
         ("two", 0, 1, None, None, None),
     ]
-    assert sum(count for _, count in histogram_rows(records, "inference_ms")) == 2
+    assert sum(count for _, count in histogram_rows(records, "decode_ms")) == 2
     assert histogram_rows(records, "capture_s") == []
-    assert histogram_rows(records[:1], "inference_ms") == [("10", 1)]
+    assert histogram_rows(records[:1], "decode_ms") == [("10", 1)]
     assert flatten({"unknown": None, "zero": 0}) == [("unknown", "Unavailable"), ("zero", "0")]

@@ -28,6 +28,10 @@ def test_focused_keys_share_portable_vocabulary():
     assert platform.focused_key_name(0x01000021, 0xA3) == "KEY_RIGHTCTRL"
     assert platform.focused_key_name(0x01000030) == "KEY_F1"
     assert platform.focused_key_name(-1) is None
+    # Linux's XKB offset must not reinterpret other providers' native scan codes.
+    for provider, right_ctrl in ((platform, 0xA3), (MacOSPlatform(), 62)):
+        assert provider.focused_key_name(ord("Z"), 0, 29) == "KEY_Z"
+        assert provider.focused_key_name(0x01000021, right_ctrl, 62) == "KEY_RIGHTCTRL"
 
 
 def test_native_resources_have_real_process_identity():

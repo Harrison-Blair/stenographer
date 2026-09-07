@@ -8,11 +8,15 @@ smoke suite in test_worker_smoke.py.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
+from stenographer.config import Config
 from stenographer.transcribe.model import PathologicalOutputError, TranscriptionResult
 from stenographer.transcribe.worker import (
     _MODEL_LOAD_TIMEOUT_SECONDS,
+    Worker,
     WorkerError,
     WorkerEvent,
     WorkerLifecycle,
@@ -28,6 +32,27 @@ from stenographer.transcribe.worker import (
     should_arm_idle_timer,
     should_teardown_for_response_error,
 )
+
+
+def test_lifecycle_observer_failure_is_logged_and_suppressed(caplog):
+    observed = []
+
+    def raising_observer():
+        raise RuntimeError("observer failed")
+
+    worker = Worker(
+        Config.loads("").asr,
+        on_model_loading=raising_observer,
+        on_model_ready=lambda: observed.append("ready"),
+    )
+    with caplog.at_level(logging.WARNING, logger="stenographer.transcribe.worker"):
+        worker._emit_lifecycle((WorkerLifecycle.MODEL_LOADING, WorkerLifecycle.MODEL_READY))
+    assert observed == ["ready"]
+    messages = [record.getMessage() for record in caplog.records]
+    assert len(messages) == 1
+    assert "worker: lifecycle_callback_failed" in messages[0]
+    assert "lifecycle_event=model_loading" in messages[0]
+    assert 'error=RuntimeError detail="observer failed"' in messages[0]
 
 
 def test_interpret_response_returns_ok_result():
