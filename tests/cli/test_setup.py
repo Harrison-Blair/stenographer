@@ -444,7 +444,9 @@ def test_write_default_leaves_an_identical_file_untouched(tmp_path, monkeypatch)
     """
     (tmp_path / "sub").mkdir()
     path = tmp_path / "sub" / ".." / "config.toml"
-    path.write_text(default_toml(), encoding="utf-8")
+    # Bytes, not text mode: Windows would rewrite the template's newlines as CRLF,
+    # and the preservation layer compares bytes.
+    path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
     before = path.stat().st_mtime_ns
     out = io.StringIO()

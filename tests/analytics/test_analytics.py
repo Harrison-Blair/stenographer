@@ -543,3 +543,15 @@ def test_first_host_cpu_percentage_cannot_include_the_previous_idle_interval():
     summary.observe({"host_cpu_percent": 40}, observed_at=11.1)
     assert summary.metrics(11.1)["host_cpu_percent_avg"] == 30
     assert summary.metrics(11.1)["host_cpu_samples"] == 2
+
+
+def test_observation_in_the_same_clock_tick_as_terminal_is_not_attributed():
+    """Seen to FAIL against the strict ``observed_at > ended_at`` guard.
+
+    A 15.6 ms ``time.monotonic()`` (Windows, Python 3.12) stamps the terminal
+    checkpoint and a probe that returned after it with the same value.
+    """
+    summary = ResourceSummary(10)
+    summary.ended_at = 12
+    assert not summary.observe({"cpu_seconds": 1, "resident_bytes": 1}, observed_at=12)
+    assert summary.observations == 0

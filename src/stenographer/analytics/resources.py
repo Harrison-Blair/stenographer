@@ -25,9 +25,11 @@ class ResourceSummary:
 
     def observe(self, observation: Mapping[str, object], *, observed_at: float) -> bool:
         # A probe can begin while active and finish after terminal acceptance.
-        # Never attribute that later observation to the completed utterance.
+        # Never attribute that later observation to the completed utterance. The
+        # bound is inclusive: a coarse monotonic clock (15.6 ms on Windows before
+        # Python 3.13) can stamp the terminal and the late observation identically.
         if observed_at < self.started_at or (
-            self.ended_at is not None and observed_at > self.ended_at
+            self.ended_at is not None and observed_at >= self.ended_at
         ):
             return False
         self.observations += 1

@@ -102,6 +102,31 @@ def _private_directory(path: Path) -> None:
         path.chmod(0o700)
 
 
+def _canonical_sddl(parse, convert, free, text: str) -> str | None:
+    """Render *text* the way Windows renders a descriptor read back from disk.
+
+    The renderer abbreviates well-known accounts to SDDL aliases (the RID-500
+    local administrator comes back as ``LA``, never as its ``S-1-5-21-…-500``
+    form), so an expected string built from a raw SID only compares equal to
+    the observed one after it has been through the same renderer.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    descriptor = ctypes.c_void_p()
+    if not parse(text, 1, ctypes.byref(descriptor), None):
+        return None
+    rendered = wintypes.LPWSTR()
+    try:
+        if not convert(descriptor, 1, 4, ctypes.byref(rendered), None):
+            return None
+        return rendered.value
+    finally:
+        if rendered:
+            free(ctypes.cast(rendered, ctypes.c_void_p))
+        free(descriptor)
+
+
 def _windows_private_acl(path: Path) -> bool:
     """Validate the exact protected, single-user ACL created by the server."""
     import ctypes
@@ -110,6 +135,14 @@ def _windows_private_acl(path: Path) -> bool:
     advapi = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     descriptor, acl = ctypes.c_void_p(), ctypes.c_void_p()
+    parse = advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW
+    parse.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,
+    ]
+    parse.restype = wintypes.BOOL
     get_info = advapi.GetNamedSecurityInfoW
     get_info.argtypes = [
         wintypes.LPWSTR,
@@ -153,7 +186,12 @@ def _windows_private_acl(path: Path) -> bool:
         )
         # Windows may add the auto-inheritance metadata flag; permissions and
         # sole permitted SID must still match exactly, with inheritance blocked.
-        return rendered.value in {f"D:P(A;OICI;FA;;;{identity})", f"D:PAI(A;OICI;FA;;;{identity})"}
+        expected = {
+            _canonical_sddl(parse, convert, kernel.LocalFree, f"D:{flags}(A;OICI;FA;;;{identity})")
+            for flags in ("P", "PAI")
+        }
+        expected.discard(None)
+        return bool(expected) and rendered.value in expected
     finally:
         if rendered:
             kernel.LocalFree(ctypes.cast(rendered, ctypes.c_void_p))
