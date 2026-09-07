@@ -32,11 +32,29 @@ class WordTrend(QWidget):
                 self.rect(), Qt.AlignmentFlag.AlignCenter, "No dictation in this period"
             )
             return
-        area = QRectF(16, 28, self.width() - 32, self.height() - 58)
+        metrics = painter.fontMetrics()
+        text_height = metrics.height()
+        inset = 16
+        text_gap = 8
+        title_top = 8
+        title_baseline = title_top + metrics.ascent()
+        labels = QRectF(
+            inset,
+            self.height() - text_gap - text_height,
+            self.width() - 2 * inset,
+            text_height,
+        )
+        plot_top = title_top + text_height + text_gap
+        area = QRectF(
+            inset,
+            plot_top,
+            self.width() - 2 * inset,
+            labels.top() - text_gap - plot_top,
+        )
         maximum = max(1, *(point["recognized_words"] for point in self.points))
         width = area.width() / len(self.points)
         accent = QColor(TOKENS.accent)
-        painter.drawText(16, 18, f"Words per active day  ·  maximum {maximum:,}")
+        painter.drawText(inset, title_baseline, f"Words per active day  ·  maximum {maximum:,}")
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(accent)
         for index, point in enumerate(self.points):
@@ -49,10 +67,10 @@ class WordTrend(QWidget):
                 2,
             )
         painter.setPen(self.palette().text().color())
-        painter.drawText(16, self.height() - 8, self.points[0]["date"])
+        painter.drawText(labels, Qt.AlignmentFlag.AlignLeft, self.points[0]["date"])
         if len(self.points) > 1:
             painter.drawText(
-                QRectF(16, self.height() - 24, self.width() - 32, 20),
+                labels,
                 Qt.AlignmentFlag.AlignRight,
                 self.points[-1]["date"],
             )

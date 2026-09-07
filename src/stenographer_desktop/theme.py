@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 BRAND_FONT_FILE = "Caveat-wght.ttf"
 BRAND_FONT_FAMILY = "Caveat"
-BODY_POINT_SIZE = 13
+BODY_POINT_SIZE = 16
 _THEME_PROPERTY = "stenographerTheme"
 
 
@@ -40,16 +40,17 @@ class Tokens:
     rail_item_radius: int = 12
     control_height: int = 36
     rail_width: int = 96
-    rail_item: int = 56
+    rail_item: int = 64
     icon_px: int = 20
     quill_px: int = 60
+    table_row_height: int = 38
     body_pt: int = BODY_POINT_SIZE
-    caption_pt: int = 12
-    section_pt: int = 15
-    title_pt: int = 20
-    brand_pt: int = 26
-    headline_pt: int = 36
-    rail_label_px: int = 14
+    caption_pt: int = 15
+    section_pt: int = 19
+    title_pt: int = 25
+    brand_pt: int = 33
+    headline_pt: int = 45
+    rail_label_px: int = 18
 
     def colours(self) -> tuple[str, ...]:
         return (

@@ -108,13 +108,25 @@ installation/build remains available without Qt. Core and CLI never import the
 desktop package, and the desktop never imports CLI handlers. The desktop renders
 every app-owned widget in the bundled Caveat face (the pill's label font), set by
 the one application stylesheet; no system typeface appears anywhere in its
-window. Native system dialogs retain their host font and rendering. Its
+window. The readable type scale is 16 pt body, 15 pt caption, 19 pt section,
+25 pt title, 33 pt brand, 45 pt headline, and 18 px navigation labels; table
+rows and painted chart text provide matching clearance. Native system dialogs
+retain their host font and rendering. Its
 colours are a fixed dark theme built on the pill's `#18181B` ground (Fusion
 style, one palette and one stylesheet in `stenographer_desktop/theme.py`); it
 never follows the system light/dark theme. The navigation rail is 96 logical px
-wide with a centred 60 logical px quill. Shared preservation and calibration
+wide with a centred 60 logical px quill. Every desktop table divides spare
+viewport width among all columns in proportion to their natural header/content
+widths; when those natural widths do not fit, it retains them and scrolls
+horizontally. Tables refit after content, visibility, font/display, viewport,
+and scrollbar geometry changes. Shared preservation and calibration
 now live in `settings.py` and `calibration.py`; CLI paths are compatibility
-exports. The desktop owns `desktop.log`.
+exports. The settings sound-pack editor is a dropdown of complete bundled and
+custom packs discovered on a worker; an unavailable configured slug remains a
+selectable annotated entry and saves as its raw slug. Tables reserve space for
+their header and at least two complete rows, including horizontal-scrollbar
+clearance. The dense Overview and Analytics pages scroll vertically when the
+readable type does not fit the window. The desktop owns `desktop.log`.
 
 The fixed config is now 25 keys in five sections: the two default-true
 `analytics.enabled` and `analytics.resource_profiling` fields extend the existing

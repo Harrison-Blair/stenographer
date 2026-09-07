@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -15,7 +17,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QScrollArea, QWidget
 
 from stenographer.analytics import AnalyticsSession
 from stenographer.config import Config
@@ -37,14 +39,36 @@ def wait_for(application, predicate, timeout=5):
     assert predicate()
 
 
+def test_shared_table_fill_uses_the_visible_viewport(application):
+    table = Window._table(None, ["Long descriptive heading", "Count", "Kind", "Duration"])
+    try:
+        table.resize(920, 220)
+        table.show()
+        Window._fill(
+            None,
+            table,
+            [("A substantially longer value", "12", "ok", "2.4 s")],
+        )
+        application.processEvents()
+
+        widths = [table.columnWidth(column) for column in range(table.columnCount())]
+        assert sum(widths) == table.viewport().width()
+        assert widths[0] > widths[1] > 0
+        assert widths[2] > 0 and widths[3] > 0
+    finally:
+        table.close()
+        application.processEvents()
+
+
 def test_theme_overrides_widget_fonts_and_preserves_text_roles():
     script = """
 from PySide6.QtGui import QFontDatabase, QFontInfo
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QLabel, QLineEdit, QListWidget, QPushButton,
-    QStatusBar, QTableWidget, QVBoxLayout, QWidget,
+    QStatusBar, QVBoxLayout, QWidget,
 )
 from stenographer_desktop.charts import WordTrend
+from stenographer_desktop.tables import ContentWidthTable
 from stenographer_desktop.theme import TOKENS, apply_theme
 
 app = QApplication([])
@@ -55,7 +79,8 @@ for role in ("brand", "title", "caption", "section", "headline", "muted"):
     labels[role] = QLabel(role)
     labels[role].setProperty("role", role)
     layout.addWidget(labels[role])
-table = QTableWidget(1, 1)
+table = ContentWidthTable(["Value"])
+table.set_rows([["Example"]])
 combo = QComboBox()
 combo.addItem("Choice")
 rail = QListWidget()
@@ -85,6 +110,7 @@ assert labels["brand"].font().weight() == 600
 assert labels["headline"].font().weight() == 700
 assert controls[0].font().pointSize() == TOKENS.body_pt
 assert rail.font().pixelSize() == TOKENS.rail_label_px
+assert table.rowHeight(0) >= table.fontMetrics().height() + 8
 """
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -112,11 +138,29 @@ def test_actual_window_settings_and_analytics_without_daemon(application, tmp_pa
         assert rail.width() == 96
         assert window.navigation.width() == 96
         assert window.navigation.gridSize().width() == 96
-        assert window.navigation.gridSize().height() == 56
+        assert window.navigation.gridSize().height() == 64
         assert window.navigation.iconSize().width() == 20
         assert quill.pixmap().deviceIndependentSize().width() == 60
         assert quill.pixmap().deviceIndependentSize().height() == 60
         assert quill.alignment() == Qt.AlignmentFlag.AlignCenter
+        assert window.height() == 760
+        window._fill(
+            window.trend,
+            [
+                ("2026-09-01", 8, 221, 194),
+                ("2026-09-03", 12, 487, 366),
+                ("2026-09-06", 6, 173, 142),
+            ],
+        )
+        wait_for(
+            application,
+            lambda: window.trend.viewport().height() >= 2 * window.trend.rowHeight(0),
+        )
+        overview_scroll = window.pages.currentWidget().findChild(QScrollArea, "overviewScroll")
+        assert overview_scroll.verticalScrollBar().maximum() > 0
+        window.navigation.setCurrentRow(1)
+        analytics_scroll = window.pages.currentWidget().findChild(QScrollArea, "analyticsScroll")
+        assert analytics_scroll.verticalScrollBar().maximum() > 0
         assert "analytics.enabled" in window.editors
         assert "analytics.resource_profiling" in window.editors
         window.navigation.setCurrentRow(2)
@@ -132,6 +176,62 @@ def test_actual_window_settings_and_analytics_without_daemon(application, tmp_pa
         window.save_settings()
         assert "audio.max_recording_seconds" in window.saved_state.text()
         assert Config.load(config_path).audio.max_recording_seconds != -1
+    finally:
+        window.close()
+        application.processEvents()
+
+
+def test_sound_pack_editor_discovers_choices_and_preserves_raw_slugs(
+    application, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[stenographer.feedback]\nsound_pack = "missing-pack"\nmute = false\n')
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "stenographer"
+        / "assets"
+        / "sounds"
+        / "minimal-ui"
+    )
+    shutil.copytree(source, tmp_path / "sounds" / "my-pack")
+    window = Window(DesktopServices(config_path, tmp_path / "analytics.sqlite3"))
+    try:
+        window.show()
+        wait_for(
+            application,
+            lambda: isinstance(window.editors.get("feedback.sound_pack"), QComboBox),
+        )
+        editor = window.editors["feedback.sound_pack"]
+        wait_for(application, lambda: editor.findData("my-pack") >= 0)
+        assert [editor.itemData(index) for index in range(editor.count())] == [
+            "legacy",
+            "warm-desk",
+            "soft-electronic",
+            "minimal-ui",
+            "my-pack",
+            "missing-pack",
+        ]
+        assert editor.currentData() == "missing-pack"
+        assert editor.currentText() == "missing-pack (unavailable)"
+        window.navigation.setCurrentRow(2)
+        QTest.mouseClick(editor, Qt.MouseButton.LeftButton, pos=editor.rect().center())
+        wait_for(application, editor.view().isVisible)
+        assert editor.view().model().rowCount() == 6
+        QTest.keyClick(editor, Qt.Key.Key_Escape)
+
+        window.editors["feedback.mute"].setChecked(True)
+        window.save_settings()
+        wait_for(application, lambda: window.save_button.isEnabled())
+        assert Config.load(config_path).feedback.sound_pack == "missing-pack"
+
+        editor.setCurrentIndex(editor.findData("my-pack"))
+        window.save_settings()
+        wait_for(application, lambda: window.save_button.isEnabled())
+        assert Config.load(config_path).feedback.sound_pack == "my-pack"
     finally:
         window.close()
         application.processEvents()

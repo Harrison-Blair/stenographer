@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStackedWidget,
     QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -52,6 +51,7 @@ from stenographer_desktop.services import (
     flatten,
     histogram_rows,
 )
+from stenographer_desktop.tables import ContentWidthTable
 from stenographer_desktop.theme import TOKENS, apply_theme, navigation_icon
 
 logger = logging.getLogger(__name__)
@@ -228,9 +228,7 @@ class Window(QMainWindow):
         self.navigation.setCurrentRow(0)
         self.statusBar().setSizeGripEnabled(False)
         self.statusBar().showMessage("Loading local settings and analytics…")
-        self.tasks.submit(
-            "settings_load", lambda: ConfigDocument.load(services.config_path), self._loaded
-        )
+        self.tasks.submit("settings_load", services.load_settings, self._loaded)
         self.refresh_analytics()
         self.refresh_status()
         self.timer = QTimer(self)
@@ -324,30 +322,37 @@ class Window(QMainWindow):
         self.pages.addWidget(page)
         return layout
 
+    def _scroll_page(self, title: str) -> QVBoxLayout:
+        page = self._page(title)
+        scroll = QScrollArea()
+        scroll.setObjectName(f"{title.lower()}Scroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(body)
+        page.addWidget(scroll)
+        return layout
+
     def _button(self, layout, text: str, callback) -> QPushButton:
         button = QPushButton(text)
         button.clicked.connect(callback)
         layout.addWidget(button)
         return button
 
-    def _table(self, headings: list[str]) -> QTableWidget:
-        table = QTableWidget(0, len(headings))
-        table.setHorizontalHeaderLabels(headings)
+    def _table(self, headings: list[str]) -> ContentWidthTable:
+        table = ContentWidthTable(headings)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setAlternatingRowColors(False)
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setStretchLastSection(True)
         return table
 
-    def _fill(self, table: QTableWidget, rows) -> None:
-        table.setRowCount(len(rows))
-        for row, values in enumerate(rows):
-            for column, value in enumerate(values):
-                table.setItem(row, column, QTableWidgetItem(str(value)))
-        table.resizeColumnsToContents()
+    def _fill(self, table: ContentWidthTable, rows) -> None:
+        table.set_rows(rows)
 
     def _overview_page(self) -> None:
-        layout = self._page("Overview")
+        layout = self._scroll_page("Overview")
         layout.addWidget(self._caption("Lifetime dictation totals"))
         self.headline = QLabel("0 recognized words   ·   00:00:00 recognized audio")
         self.headline.setProperty("role", "headline")
@@ -374,7 +379,7 @@ class Window(QMainWindow):
         layout.addWidget(self.collection_health)
 
     def _analytics_page(self) -> None:
-        layout = self._page("Analytics")
+        layout = self._scroll_page("Analytics")
         filter_form = QFormLayout()
         self.filters: dict[str, QLineEdit | QComboBox] = {}
         source = QComboBox()
@@ -463,7 +468,7 @@ class Window(QMainWindow):
             "Reload saved",
             lambda: self.tasks.submit(
                 "settings_load",
-                lambda: ConfigDocument.load(self.services.config_path),
+                self.services.load_settings,
                 self._loaded,
             ),
         )
@@ -516,11 +521,13 @@ class Window(QMainWindow):
     def _result(self, result, error) -> None:
         self._message(str(error) if error else str(result))
 
-    def _loaded(self, document, error) -> None:
+    def _loaded(self, loaded, error) -> None:
         if error:
             self.saved_state.setText(f"Cannot load settings: {error}. Correct the file and reload.")
             self.save_button.setEnabled(False)
             return
+        document, sound_packs = loaded
+        sound_pack_discovery_failed = sound_packs is None
         self.document = document
         while self.form.rowCount():
             self.form.removeRow(0)
@@ -540,6 +547,16 @@ class Window(QMainWindow):
                     editor = QCheckBox()
                     editor.setChecked(value)
                     editor.toggled.connect(self._dirty)
+                elif dotted == "feedback.sound_pack":
+                    editor = QComboBox()
+                    for pack in sound_packs or ():
+                        editor.addItem(pack, pack)
+                    if sound_pack_discovery_failed:
+                        editor.addItem(f"{value} (availability unknown)", value)
+                    elif value not in sound_packs:
+                        editor.addItem(f"{value} (unavailable)", value)
+                    editor.setCurrentIndex(editor.findData(value))
+                    editor.currentIndexChanged.connect(self._dirty)
                 elif dotted in enums:
                     editor = QComboBox()
                     editor.addItems(enums[dotted])
@@ -560,10 +577,13 @@ class Window(QMainWindow):
                 self.editors[dotted] = editor
                 self.form.addRow(key.replace("_", " ").capitalize(), editor)
         self.save_button.setEnabled(True)
-        self.saved_state.setText(
+        state = (
             "Saved configuration loaded. Save writes the file. "
             "Apply while idle restarts the daemon."
         )
+        if sound_pack_discovery_failed:
+            state += " Sound-pack choices are temporarily unavailable."
+        self.saved_state.setText(state)
 
     def _dirty(self, *_args) -> None:
         self.saved_state.setText(
@@ -578,6 +598,8 @@ class Window(QMainWindow):
             values[key] = (
                 editor.isChecked()
                 if isinstance(editor, QCheckBox)
+                else editor.currentData()
+                if key == "feedback.sound_pack" and isinstance(editor, QComboBox)
                 else editor.currentText()
                 if isinstance(editor, QComboBox)
                 else editor.text()

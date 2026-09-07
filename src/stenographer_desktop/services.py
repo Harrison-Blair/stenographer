@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import logging
 import threading
 import tomllib
 from collections.abc import Iterator, Mapping
@@ -14,6 +15,9 @@ from typing import Any
 from stenographer.config import Config, ConfigError
 from stenographer.platform import current_platform
 from stenographer.settings import ConfigDocument
+from stenographer.utils.logging_setup import log_failure
+
+logger = logging.getLogger(__name__)
 
 
 def edited_config(document: ConfigDocument, edits: Mapping[str, object]) -> Config:
@@ -106,6 +110,24 @@ class DesktopServices:
         from stenographer.analytics import Store, database_path
 
         return Store(self.database_path or database_path())
+
+    def load_settings(self) -> tuple[ConfigDocument, tuple[str, ...] | None]:
+        """Load settings and validate sound-pack choices together on one worker."""
+        from stenographer.delivery.feedback import discover_sound_packs
+
+        document = ConfigDocument.load(self.config_path)
+        try:
+            packs = discover_sound_packs(self.config_path.parent)
+        except Exception as exc:
+            log_failure(
+                logger,
+                logging.ERROR,
+                "desktop: sound_pack_discovery_failed",
+                exc,
+                safe=False,
+            )
+            packs = None
+        return document, packs
 
     def report(self, filters=None) -> dict:
         from stenographer.analytics import Filters
