@@ -12,8 +12,8 @@ import threading
 from importlib.resources import files
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase, QIcon
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -43,6 +44,7 @@ from PySide6.QtWidgets import (
 from stenographer.config import Config
 from stenographer.settings import ConfigDocument
 from stenographer_desktop.charts import WordTrend
+from stenographer_desktop.icons import NAVIGATION
 from stenographer_desktop.services import (
     DesktopServices,
     comparison_rows,
@@ -50,6 +52,7 @@ from stenographer_desktop.services import (
     flatten,
     histogram_rows,
 )
+from stenographer_desktop.theme import TOKENS, apply_theme, navigation_icon
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +181,9 @@ class Window(QMainWindow):
 
     def __init__(self, services: DesktopServices) -> None:
         super().__init__()
+        # Tests build the window directly, so the theme is applied here as well
+        # as in run(); the guard makes the second call a no-op.
+        apply_theme(QApplication.instance())
         self.services = services
         self.tasks = Tasks(self)
         self.tasks.progress.connect(self._message)
@@ -190,33 +196,37 @@ class Window(QMainWindow):
         self.setWindowTitle("Stenographer")
         self.resize(1080, 760)
         asset_root = files("stenographer") / "assets"
-        self.setWindowIcon(QIcon(str(asset_root / "icons" / "stenographer.png")))
-        font_id = QFontDatabase.addApplicationFont(str(asset_root / "fonts" / "Caveat-wght.ttf"))
-        families = QFontDatabase.applicationFontFamilies(font_id)
-        self.brand_font = QFont(families[0], 28) if families else QFont()
+        icon = QIcon(str(asset_root / "icons" / "stenographer.png"))
+        self.setWindowIcon(icon)
         root = QWidget()
         self.setCentralWidget(root)
         horizontal = QHBoxLayout(root)
-        sidebar = QVBoxLayout()
-        brand = QLabel("Stenographer")
-        brand.setFont(self.brand_font)
-        sidebar.addWidget(brand)
-        self.navigation = QListWidget()
-        self.navigation.addItems(["Overview", "Analytics", "Settings", "Service", "Diagnostics"])
-        self.navigation.setAccessibleName("Navigation")
-        self.navigation.setMaximumWidth(200)
-        self.navigation.setSpacing(5)
-        sidebar.addWidget(self.navigation)
-        horizontal.addLayout(sidebar)
+        horizontal.setContentsMargins(0, 0, 0, 0)
+        horizontal.setSpacing(0)
+        horizontal.addWidget(self._rail(icon))
+        rail_line = QFrame()
+        rail_line.setObjectName("railLine")
+        rail_line.setFixedWidth(1)
+        horizontal.addWidget(rail_line)
+        content = QVBoxLayout()
+        content.setContentsMargins(32, 20, 32, 20)
+        content.setSpacing(12)
+        content.addLayout(self._header())
+        rule = QFrame()
+        rule.setObjectName("rule")
+        rule.setFixedHeight(1)
+        content.addWidget(rule)
         self.pages = QStackedWidget()
-        horizontal.addWidget(self.pages, 1)
-        self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
+        content.addWidget(self.pages, 1)
+        horizontal.addLayout(content, 1)
+        self.navigation.currentRowChanged.connect(self._navigate)
         self._overview_page()
         self._analytics_page()
         self._settings_page()
         self._service_page()
         self._diagnostics_page()
         self.navigation.setCurrentRow(0)
+        self.statusBar().setSizeGripEnabled(False)
         self.statusBar().showMessage("Loading local settings and analytics…")
         self.tasks.submit(
             "settings_load", lambda: ConfigDocument.load(services.config_path), self._loaded
@@ -228,12 +238,89 @@ class Window(QMainWindow):
         self.timer.timeout.connect(self.refresh_status)
         self.timer.start()
 
+    def _rail(self, icon: QIcon) -> QWidget:
+        """The 64 px icon rail: quill on top, one icon-and-label item per page."""
+        rail = QWidget()
+        rail.setObjectName("railFrame")
+        rail.setFixedWidth(TOKENS.rail_width)
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(0, 12, 0, 12)
+        layout.setSpacing(8)
+        quill = QLabel()
+        quill.setObjectName("quill")
+        quill.setPixmap(icon.pixmap(QSize(TOKENS.quill_px, TOKENS.quill_px)))
+        quill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(quill)
+        item_size = QSize(TOKENS.rail_width, TOKENS.rail_item)
+        self.navigation = QListWidget()
+        self.navigation.setObjectName("rail")
+        self.navigation.setAccessibleName("Navigation")
+        # IconMode draws the icon above a centred label; without the grid,
+        # uniform sizes and top-to-bottom flow the items would flow sideways.
+        self.navigation.setViewMode(QListWidget.ViewMode.IconMode)
+        self.navigation.setFlow(QListWidget.Flow.TopToBottom)
+        self.navigation.setWrapping(False)
+        self.navigation.setMovement(QListWidget.Movement.Static)
+        self.navigation.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.navigation.setUniformItemSizes(True)
+        self.navigation.setGridSize(item_size)
+        self.navigation.setIconSize(QSize(TOKENS.icon_px, TOKENS.icon_px))
+        self.navigation.setSpacing(0)
+        self.navigation.setFixedWidth(TOKENS.rail_width)
+        self.navigation.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.navigation.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.navigation.addItems(NAVIGATION)
+        for row, name in enumerate(NAVIGATION):
+            item = self.navigation.item(row)
+            item.setIcon(navigation_icon(name))
+            item.setSizeHint(item_size)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.navigation, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch()
+        return rail
+
+    def _header(self) -> QHBoxLayout:
+        """Brand and page title on the left, the daemon status dot and text on the right."""
+        header = QHBoxLayout()
+        header.setSpacing(12)
+        brand = QLabel("Stenographer")
+        brand.setProperty("role", "brand")
+        header.addWidget(brand, 0, Qt.AlignmentFlag.AlignBaseline)
+        self.page_title = QLabel(NAVIGATION[0])
+        self.page_title.setProperty("role", "title")
+        header.addWidget(self.page_title, 0, Qt.AlignmentFlag.AlignBaseline)
+        header.addStretch()
+        self.status_dot = QLabel()
+        self.status_dot.setProperty("role", "dot")
+        self.status_dot.setAccessibleName("Daemon status indicator")
+        header.addWidget(self.status_dot, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.daemon_status = QLabel("Checking daemon status…")
+        self.daemon_status.setProperty("role", "muted")
+        header.addWidget(self.daemon_status, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._set_dot(False)
+        return header
+
+    def _navigate(self, row: int) -> None:
+        self.pages.setCurrentIndex(row)
+        self.page_title.setText(NAVIGATION[row])
+
+    def _set_dot(self, on: bool) -> None:
+        """Re-polish so a property change after show() repaints the dot."""
+        self.status_dot.setProperty("state", "" if on else "off")
+        self.status_dot.style().unpolish(self.status_dot)
+        self.status_dot.style().polish(self.status_dot)
+
+    def _caption(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setProperty("role", "caption")
+        label.setWordWrap(True)
+        return label
+
     def _page(self, title: str) -> QVBoxLayout:
         page = QWidget()
         layout = QVBoxLayout(page)
-        heading = QLabel(title)
-        heading.setFont(QFont(self.font().family(), 20))
-        layout.addWidget(heading)
+        layout.setContentsMargins(0, 8, 0, 0)
         self.pages.addWidget(page)
         return layout
 
@@ -247,7 +334,8 @@ class Window(QMainWindow):
         table = QTableWidget(0, len(headings))
         table.setHorizontalHeaderLabels(headings)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setAlternatingRowColors(True)
+        table.setAlternatingRowColors(False)
+        table.verticalHeader().setVisible(False)
         table.horizontalHeader().setStretchLastSection(True)
         return table
 
@@ -260,11 +348,9 @@ class Window(QMainWindow):
 
     def _overview_page(self) -> None:
         layout = self._page("Overview")
-        self.daemon_status = QLabel("Checking daemon status…")
-        layout.addWidget(self.daemon_status)
-        layout.addWidget(QLabel("Lifetime dictation totals"))
+        layout.addWidget(self._caption("Lifetime dictation totals"))
         self.headline = QLabel("0 recognized words   ·   00:00:00 recognized audio")
-        self.headline.setFont(QFont(self.font().family(), 18))
+        self.headline.setProperty("role", "headline")
         self.headline.setWordWrap(True)
         layout.addWidget(self.headline)
         self.totals = self._table(["Measurement", "Value"])
@@ -338,7 +424,9 @@ class Window(QMainWindow):
         )
         comparison_page = QWidget()
         compare_layout = QVBoxLayout(comparison_page)
-        compare_layout.addWidget(QLabel("Compare matching utterances by context and measurement"))
+        compare_layout.addWidget(
+            self._caption("Compare matching utterances by context and measurement")
+        )
         compare_layout.addWidget(self.compare_group)
         compare_layout.addWidget(self.compare_metric)
         self.comparisons = self._table(["Group", "Samples", "Missing", "Average", "p95", "p99"])
@@ -350,7 +438,7 @@ class Window(QMainWindow):
         self.compare_metric.currentTextChanged.connect(self.refresh_comparison)
         layout.addWidget(tabs)
         layout.addWidget(
-            QLabel("Percentiles use matching utterances. Unavailable values remain unknown.")
+            self._caption("Percentiles use matching utterances. Unavailable values remain unknown.")
         )
 
     def _settings_page(self) -> None:
@@ -417,7 +505,9 @@ class Window(QMainWindow):
         layout.addWidget(self.diagnostics)
         self._button(layout, "Open diagnostic log folder", self.open_logs)
         layout.addWidget(
-            QLabel("Logs contain technical diagnostics. Analytics retain no transcript or audio.")
+            self._caption(
+                "Logs contain technical diagnostics. Analytics retain no transcript or audio."
+            )
         )
 
     def _message(self, message: str) -> None:
@@ -441,7 +531,9 @@ class Window(QMainWindow):
             "feedback.log_level": ["debug", "info", "warning", "error"],
         }
         for section, values in dataclasses.asdict(document.config).items():
-            self.form.addRow(QLabel(section.capitalize()))
+            section_label = QLabel(section.capitalize())
+            section_label.setProperty("role", "section")
+            self.form.addRow(section_label)
             for key, value in values.items():
                 dotted = f"{section}.{key}"
                 if isinstance(value, bool):
@@ -637,9 +729,11 @@ class Window(QMainWindow):
         self._status_pending = False
         if error:
             self.daemon_status.setText("Daemon status unavailable")
+            self._set_dot(False)
             return
         status = result.get("status", {})
         self.daemon_status.setText(f"Daemon: {status.get('lifecycle', 'unavailable')}")
+        self._set_dot(True)
         if self.document and status.get("running_config"):
             from stenographer.control import config_fingerprint
 
@@ -929,6 +1023,7 @@ def run(config_path: Path, database_path: Path | None = None, *, smoke: bool = F
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("Stenographer")
     app.setOrganizationName("Stenographer")
+    apply_theme(app)
     window = Window(DesktopServices(config_path, database_path))
     window.show()
     if smoke:

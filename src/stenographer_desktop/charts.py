@@ -5,6 +5,8 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget
 
+from stenographer_desktop.theme import TOKENS
+
 
 class WordTrend(QWidget):
     def __init__(self, parent=None):
@@ -33,8 +35,7 @@ class WordTrend(QWidget):
         area = QRectF(16, 28, self.width() - 32, self.height() - 58)
         maximum = max(1, *(point["recognized_words"] for point in self.points))
         width = area.width() / len(self.points)
-        dark = self.palette().window().color().lightness() < 128
-        accent = QColor("#b3c4ff" if dark else "#246048")
+        accent = QColor(TOKENS.accent)
         painter.drawText(16, 18, f"Words per active day  ·  maximum {maximum:,}")
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(accent)

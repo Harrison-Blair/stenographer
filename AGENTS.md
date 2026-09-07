@@ -105,9 +105,14 @@ SQLite numeric history, `stats` reporting/export/deletion, a separate
 `stenographer_desktop` PySide6 Widgets package and `stenographer-ui` process.
 The normal native installation includes both executables; the headless extra-free
 installation/build remains available without Qt. Core and CLI never import the
-desktop package, and the desktop never imports CLI handlers. Shared preservation
-and calibration now live in `settings.py` and `calibration.py`; CLI paths are
-compatibility exports. The desktop owns `desktop.log`.
+desktop package, and the desktop never imports CLI handlers. The desktop renders
+every widget in the bundled Caveat face (the pill's label font), set once as the
+application font; no system typeface appears anywhere in its window. Its
+colours are a fixed dark theme built on the pill's `#18181B` ground (Fusion
+style, one palette and one stylesheet in `stenographer_desktop/theme.py`); it
+never follows the system light/dark theme. Shared preservation and calibration
+now live in `settings.py` and `calibration.py`; CLI paths are compatibility
+exports. The desktop owns `desktop.log`.
 
 The fixed config is now 25 keys in five sections: the two default-true
 `analytics.enabled` and `analytics.resource_profiling` fields extend the existing
