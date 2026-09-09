@@ -549,7 +549,11 @@ class Daemon:
             if self._record is not None:
                 self._record.stopped_at = time.perf_counter()
             self._cancel_max_timer()
-            self._publish_state(OverlayState.HIDDEN)
+            # The pill stays up across the release: it is the only sign that
+            # the tool is still working until the paste lands, so the release
+            # moves it to TRANSCRIBING rather than hiding it. Every exit from
+            # the pipeline below publishes HIDDEN or ERROR itself.
+            self._publish_state(OverlayState.TRANSCRIBING)
         # Callback-clock reduction and sample finalization are outside lifecycle locks.
         with self._capture_lock:
             try:
@@ -665,11 +669,8 @@ class Daemon:
                 outcome_name = Outcome.SILENT.name
                 self._publish_state(OverlayState.HIDDEN)
                 return
-            cold = not self._worker.is_model_ready
             if record is not None:
-                record.cold = cold
-            if cold:
-                self._publish_state(OverlayState.TRANSCRIBING)
+                record.cold = not self._worker.is_model_ready
             try:
                 result = self._worker.transcribe(samples, self._utterance_id)
             except WorkerError as exc:

@@ -418,8 +418,11 @@ The rule is structural, not stylistic, and it is enforced by a test.
   a tap latches until the next press, a hold past the threshold stops on
   release, and a latched recording still ends `audio.max_recording_seconds`
   after the press.
-- After overlay-affecting changes: the pill appears on recording start and
-  disappears on stop, the amber border breathes only during a cold load, and
+- After overlay-affecting changes: the pill appears on recording start, reads
+  Transcribing from the release onward (warm or cold model) and Delivering
+  once the transcript is ready, and disappears only after the paste lands (or
+  at once for silence / an empty transcript); the amber border breathes only
+  during a cold load; and
   killing the helper never affects dictation.
 - After capture/logging-affecting changes: a cold-start dictation retains its
   opening words, and an inspection of `stenographer.log` + the journal shows

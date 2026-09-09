@@ -779,3 +779,60 @@ def test_stop_closes_a_latched_hybrid_recording_as_cancelled(daemon_logs):
     assert "outcome=CANCELLED" in line
     assert "mode=hybrid" in line
     assert _current_stamp() == ""
+
+
+class _Status:
+    """Records every lifecycle state the daemon hands to the pill, in order."""
+
+    def __init__(self) -> None:
+        self.states: list[OverlayState] = []
+
+    def publish(self, state: OverlayState) -> int:
+        self.states.append(state)
+        return len(self.states)
+
+    def loading_activity(self, active: bool) -> None: ...
+
+
+def _daemon_with_status(*, result=None, samples=_SPEECH, warm=True) -> tuple[Daemon, _Status]:
+    daemon = _daemon(result=result, samples=samples)
+    daemon._worker.is_model_ready = warm
+    status = _Status()
+    daemon._status = status
+    return daemon, status
+
+
+def test_the_pill_stays_up_from_release_until_the_paste_lands():
+    # The pill is the only sign the tool is still working after release. It
+    # must run recording -> transcribing -> delivering -> hidden with no hidden
+    # gap, even when the model is already warm. Seen to FAIL against a key-up
+    # that published HIDDEN and only a cold load published TRANSCRIBING: the
+    # sequence read [RECORDING, HIDDEN, DELIVERING, HIDDEN].
+    daemon, status = _daemon_with_status(
+        result=TranscriptionResult(text="one", duration_seconds=1.0), warm=True
+    )
+    try:
+        _run_utterance(daemon)
+    finally:
+        daemon.stop()
+
+    assert status.states == [
+        OverlayState.RECORDING,
+        OverlayState.TRANSCRIBING,
+        OverlayState.DELIVERING,
+        OverlayState.HIDDEN,
+    ]
+
+
+def test_a_gate_rejection_still_takes_the_pill_down():
+    # Silence is success-shaped: the pill goes away without an error state.
+    daemon, status = _daemon_with_status(samples=_SILENCE)
+    try:
+        _run_utterance(daemon)
+    finally:
+        daemon.stop()
+
+    assert status.states[0] is OverlayState.RECORDING
+    assert status.states[-1] is OverlayState.HIDDEN
+    assert OverlayState.ERROR not in status.states
+    assert OverlayState.DELIVERING not in status.states
