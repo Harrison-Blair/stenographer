@@ -8,6 +8,7 @@ import io
 import json
 import sqlite3
 import time
+from contextlib import closing
 from datetime import UTC, datetime
 
 import pytest
@@ -15,6 +16,24 @@ import pytest
 from stenographer.analytics import AnalyticsSession, Filters, Store, count_words, distribution
 from stenographer.analytics.metrics import clean_context, clean_metrics, local_date_bound, summarize
 from stenographer.analytics.resources import ResourceSummary
+
+# Persistence assertions must tolerate slow CI disks independently of the
+# daemon's two-second shutdown budget. A timeout still fails with writer health.
+_DRAIN_TIMEOUT_SECONDS = 15
+
+
+def drain(session):
+    assert session.close(timeout=_DRAIN_TIMEOUT_SECONDS), session.health
+
+
+@pytest.fixture
+def analytics_session(request):
+    def create(path, **kwargs):
+        session = AnalyticsSession(path, **kwargs)
+        request.addfinalizer(lambda: drain(session))
+        return session
+
+    return create
 
 
 def checkpoint(identity="run:1", revision=0, phase="accepted_start", **metrics):
@@ -175,14 +194,16 @@ def test_reading_an_absent_database_does_not_create_it(tmp_path):
     assert not path.exists()
 
 
-def test_async_writer_persists_cumulative_accepted_recognition_on_cancel(tmp_path):
+def test_async_writer_persists_cumulative_accepted_recognition_on_cancel(
+    tmp_path, analytics_session
+):
     path = tmp_path / "analytics.db"
-    session = AnalyticsSession(path)
+    session = analytics_session(path)
     identity = session.start(1)
     session.checkpoint(identity, "secured_capture", {"capture_s": 5})
     session.checkpoint(identity, "accepted_recognition", {"recognized_words": 9, "asr_audio_s": 5})
     session.finish(identity, "cancelled")
-    assert session.close()
+    drain(session)
     record = Store(path).records()[0]
     assert record["metrics"]["recognized_words"] == 9
     assert record["metrics"]["capture_s"] == 5
@@ -191,38 +212,36 @@ def test_async_writer_persists_cumulative_accepted_recognition_on_cancel(tmp_pat
     assert not session.health["degraded"]
 
 
-def test_real_sqlite_contention_retries_without_double_counting(tmp_path):
+def test_real_sqlite_contention_retries_without_double_counting(tmp_path, analytics_session):
     path = tmp_path / "analytics.db"
     store = Store(path)
     store.register_run("seed", {})
-    connection = sqlite3.connect(path)
-    connection.execute("BEGIN IMMEDIATE")
-    session = AnalyticsSession(path, retries=5)
-    identity = session.start(1)
-    session.finish(identity, "success", {"recognized_words": 8})
-    time.sleep(0.15)
-    connection.rollback()
-    connection.close()
-    assert session.close(timeout=3)
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        session = analytics_session(path, retries=5)
+        identity = session.start(1)
+        session.finish(identity, "success", {"recognized_words": 8})
+        time.sleep(0.15)
+        # A bounded close reports unfinished work while the real lock is held.
+        assert not session.close(timeout=0), session.health
+    drain(session)
     assert store.report()["totals"]["recognized_words"] == 8
     assert len(store.timeline(identity)) == 2
 
 
-def test_bounded_queue_and_persistent_contention_report_loss(tmp_path):
+def test_bounded_queue_and_persistent_contention_report_loss(tmp_path, analytics_session):
     path = tmp_path / "analytics.db"
     Store(path).register_run("seed", {})
-    connection = sqlite3.connect(path)
-    connection.execute("BEGIN IMMEDIATE")
-    session = AnalyticsSession(path, queue_size=1, retries=0)
-    started = time.monotonic()
-    for identity in range(30):
-        session.start(identity)
-        session.finish(identity, "success")
-    assert time.monotonic() - started < 0.5
-    assert session.health["dropped_checkpoints"] > 0
-    connection.rollback()
-    connection.close()
-    assert session.close(timeout=3)
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        session = analytics_session(path, queue_size=1, retries=0)
+        started = time.monotonic()
+        for identity in range(30):
+            session.start(identity)
+            session.finish(identity, "success")
+        assert time.monotonic() - started < 0.5
+        assert session.health["dropped_checkpoints"] > 0
+    drain(session)
     assert session.health["degraded"]
 
 
@@ -309,12 +328,12 @@ def test_privacy_rejection_also_applies_to_direct_database_writes(tmp_path):
 
 @pytest.mark.parametrize("outcome", ["cancelled", "copy_failed", "chord_failed"])
 def test_numeric_pipeline_checkpoints_preserve_accepted_words_on_delivery_failure(
-    tmp_path, outcome
+    tmp_path, outcome, analytics_session
 ):
     from stenographer.transcribe.pipeline import UtteranceRecord, analytics_metrics
 
     path = tmp_path / "analytics.db"
-    session = AnalyticsSession(path, resource_probe=None)
+    session = analytics_session(path, resource_probe=None)
     record = UtteranceRecord(utt=1, started_at=123.5, source="hotkey")
     record.analytics_id = session.start(record.utt)
     record.capture_s = 3.0
@@ -329,7 +348,7 @@ def test_numeric_pipeline_checkpoints_preserve_accepted_words_on_delivery_failur
         session.checkpoint(record.analytics_id, "clipboard_confirmed", analytics_metrics(record))
     record.failure = outcome
     session.finish(record.analytics_id, outcome, analytics_metrics(record))
-    assert session.close()
+    drain(session)
     report = Store(path).report()
     assert report["totals"]["recognized_words"] == 4
     assert report["totals"]["asr_audio_s"] == 3
@@ -359,30 +378,30 @@ def test_pipeline_metric_boundary_accepts_only_whitelisted_numeric_fields():
     assert set(metrics) <= METRICS
 
 
-def test_run_registration_recovers_after_initial_storage_failure(tmp_path):
+def test_run_registration_recovers_after_initial_storage_failure(tmp_path, analytics_session):
     path = tmp_path / "analytics.db"
     Store(path).register_run("seed", {})
-    connection = sqlite3.connect(path)
-    connection.execute("BEGIN IMMEDIATE")
-    session = AnalyticsSession(path, retries=0)
-    deadline = time.monotonic() + 2
-    while not session.health["write_failures"] and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert session.health["write_failures"] == 1
-    connection.rollback()
-    connection.close()
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        session = analytics_session(path, retries=0)
+        deadline = time.monotonic() + 2
+        while not session.health["write_failures"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert session.health["write_failures"] == 1
     session.start(1)
     session.finish(1, "success", {"recognized_words": 5})
-    assert session.close()
+    drain(session)
     health = Store(path).health()
     assert health["runs"] == 2
     assert health["degraded"]
     assert Store(path).report()["totals"]["recognized_words"] == 5
 
 
-def test_negotiated_capture_context_replaces_configured_device_and_survives_finish(tmp_path):
+def test_negotiated_capture_context_replaces_configured_device_and_survives_finish(
+    tmp_path, analytics_session
+):
     path = tmp_path / "analytics.db"
-    session = AnalyticsSession(path, context={"model": "medium.en", "device": "default"})
+    session = analytics_session(path, context={"model": "medium.en", "device": "default"})
     identity = session.start(1)
     session.checkpoint(
         identity,
@@ -395,7 +414,7 @@ def test_negotiated_capture_context_replaces_configured_device_and_survives_fini
         },
     )
     session.finish(identity, "success", {"recognized_words": 4})
-    assert session.close()
+    drain(session)
     store = Store(path)
     record = store.records(Filters(device="USB mic"))[0]
     assert record["context"] == {
@@ -409,14 +428,16 @@ def test_negotiated_capture_context_replaces_configured_device_and_survives_fini
     assert record["metrics"]["capture_s"] == 3
 
 
-def test_checkpoint_context_rejects_private_fields_before_mutating_snapshot(tmp_path):
+def test_checkpoint_context_rejects_private_fields_before_mutating_snapshot(
+    tmp_path, analytics_session
+):
     path = tmp_path / "analytics.db"
-    session = AnalyticsSession(path)
+    session = analytics_session(path)
     identity = session.start(1)
     with pytest.raises(ValueError, match="context"):
         session.checkpoint(identity, "secured_capture", context={"transcript": "private"})
     session.finish(identity, "cancelled")
-    assert session.close()
+    drain(session)
     record = Store(path).records()[0]
     assert record["context"] == {}
     assert record["revision"] == 1
@@ -454,24 +475,22 @@ def test_completed_resource_window_discards_late_observations_and_caps_coverage(
     assert metrics["app_rss_bytes_max"] == 200
 
 
-def test_queued_completed_utterance_never_profiles_writer_drain(tmp_path):
+def test_queued_completed_utterance_never_profiles_writer_drain(tmp_path, analytics_session):
     path = tmp_path / "analytics.db"
     Store(path).register_run("seed", {})
-    connection = sqlite3.connect(path)
-    connection.execute("BEGIN IMMEDIATE")
     observations = []
 
     def probe():
         observations.append(1)
         return {"cpu_seconds": 10, "resident_bytes": 500}
 
-    session = AnalyticsSession(path, retries=5, resource_probe=probe)
-    identity = session.start(1)
-    session.finish(identity, "success")
-    time.sleep(0.55)
-    connection.rollback()
-    connection.close()
-    assert session.close(timeout=3)
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        session = analytics_session(path, retries=5, resource_probe=probe)
+        identity = session.start(1)
+        session.finish(identity, "success")
+        time.sleep(0.55)
+    drain(session)
     assert observations == []
     record = Store(path).records()[0]
     metrics = record["metrics"]
@@ -484,7 +503,7 @@ def test_queued_completed_utterance_never_profiles_writer_drain(tmp_path):
     assert record["context"]["resource_availability"] == "sampling:no_timely_samples"
 
 
-def test_probe_completing_after_terminal_is_not_attributed(tmp_path):
+def test_probe_completing_after_terminal_is_not_attributed(tmp_path, analytics_session):
     import threading
 
     entered = threading.Event()
@@ -496,12 +515,14 @@ def test_probe_completing_after_terminal_is_not_attributed(tmp_path):
         return {"cpu_seconds": 99, "resident_bytes": 999}
 
     path = tmp_path / "analytics.db"
-    session = AnalyticsSession(path, resource_probe=probe)
-    identity = session.start(1)
-    assert entered.wait(timeout=2)
-    session.finish(identity, "success")
-    release.set()
-    assert session.close()
+    session = analytics_session(path, resource_probe=probe)
+    try:
+        identity = session.start(1)
+        assert entered.wait(timeout=2)
+        session.finish(identity, "success")
+    finally:
+        release.set()
+    drain(session)
     metrics = Store(path).records()[0]["metrics"]
     assert metrics["resource_samples"] == 0
     assert metrics["resource_boundary_missing"] == 2

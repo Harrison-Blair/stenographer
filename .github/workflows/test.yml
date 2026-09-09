@@ -52,6 +52,6 @@ jobs:
           python -m venv .venv
           .venv\Scripts\pip install -e ".[dev]"
       - name: Run unit tests
-        run: .venv\Scripts\pytest -m "not integration"
+        run: .venv\Scripts\pytest -m "not integration" --durations=15
       - name: Check CLI help
         run: .venv\Scripts\stenographer --help
