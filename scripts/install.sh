@@ -27,17 +27,18 @@ VERBOSE=0
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--no-enable] [--no-start] [--install-dir DIR] [--verbose]
+Usage: $(basename "$0") [--headless] [--no-enable] [--no-start] [--install-dir DIR] [--verbose]
 
 Install stenographer from the local build tree:
   1. Build the onedir bundle (if not already built)
   2. Copy dist/stenographer/ to INSTALL_DIR (default ~/.local/share/stenographer/)
-  3. Symlink the launcher into ~/.local/bin/stenographer
+  3. Link stenographer into ~/.local/bin/ and remove this installation's old GUI launchers
   4. Cache Bash, Zsh, and Fish completion definitions under XDG_DATA_HOME
   5. Install the systemd user unit
   6. Enable and start the service (unless told not to)
 
 Options:
+  --headless     Compatibility option; all installations contain only the CLI and daemon
   --no-enable    Install the unit but do not enable or start it
   --no-start     Enable the unit but do not start it now
   --install-dir  Override install directory (default ~/.local/share/stenographer)
@@ -48,6 +49,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --headless) : ;;
         --no-enable) DO_ENABLE=0; DO_START=0 ;;
         --no-start)  DO_START=0 ;;
         --install-dir)
@@ -109,12 +111,13 @@ install_completion() {
 # Step 1 — Build the onedir bundle if needed (before the install
 # bar starts, so the build bar and install bar never interleave)
 # ────────────────────────────────────────────────────────────────
-if [[ ! -x "dist/stenographer/stenographer" ]]; then
-    if [[ "${VERBOSE}" -eq 1 ]]; then
-        scripts/build.sh --verbose
-    else
-        scripts/build.sh
-    fi
+build_options=()
+[[ "${VERBOSE}" -eq 1 ]] && build_options+=(--verbose)
+if [[ ! -x "dist/stenographer/stenographer" ]] ||
+   [[ -e "dist/stenographer/stenographer-ui" ]] ||
+   [[ -d "dist/stenographer/_internal/PySide6" ]]; then
+    # Old GUI bundles must be rebuilt so no Qt payload reaches the installation.
+    scripts/build.sh "${build_options[@]}"
     echo
 fi
 
@@ -143,7 +146,10 @@ fi
 # ────────────────────────────────────────────────────────────────
 step "copying bundle"
 mkdir -p "${INSTALL_DIR}"
-rm -rf "${INSTALL_DIR:?}"/*
+# Replace bundle-owned files only. Configuration, history, models, and old
+# logs (including desktop.log) are user data and must survive the GUI withdrawal.
+rm -rf "${INSTALL_DIR:?}/_internal"
+rm -f "${INSTALL_DIR}/stenographer" "${INSTALL_DIR}/stenographer-ui"
 run_logged cp -a dist/stenographer/. "${INSTALL_DIR}/"
 
 step "linking launcher"
@@ -152,6 +158,32 @@ if [[ -e "${SYMLINK_PATH}" && ! -L "${SYMLINK_PATH}" ]]; then
     NOTES+=("WARNING: ${SYMLINK_PATH} exists and is not a symlink — leaving it alone.")
 else
     ln -sfn "${BINARY_PATH}" "${SYMLINK_PATH}"
+fi
+
+# The menu entry and symlink have independent ownership. An unrelated launcher
+# must survive even when the other launcher still belongs to this installation.
+UI_SYMLINK="${BIN_DIR}/stenographer-ui"
+if [[ -L "${UI_SYMLINK}" ]] &&
+   [[ "$(readlink -m "${UI_SYMLINK}")" == "$(readlink -m "${INSTALL_DIR}/stenographer-ui")" ]]; then
+    rm "${UI_SYMLINK}"
+fi
+MENU_ENTRY="${DATA_HOME}/applications/stenographer.desktop"
+if [[ -f "${MENU_ENTRY}" ]]; then
+    menu_section=""
+    while IFS= read -r menu_line || [[ -n "${menu_line}" ]]; do
+        case "${menu_line}" in
+            \[*\]) menu_section="${menu_line}" ;;
+            Exec=*)
+                if [[ "${menu_section}" == '[Desktop Entry]' ]] &&
+                   { [[ "${menu_line}" == "Exec=\"${INSTALL_DIR}/stenographer-ui\"" ]] ||
+                     { [[ "${INSTALL_DIR}" != *[[:space:]]* ]] &&
+                       [[ "${menu_line}" == "Exec=${INSTALL_DIR}/stenographer-ui" ]]; }; }; then
+                    rm "${MENU_ENTRY}"
+                    break
+                fi
+                ;;
+        esac
+    done < "${MENU_ENTRY}"
 fi
 
 # ────────────────────────────────────────────────────────────────

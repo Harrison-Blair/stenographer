@@ -21,9 +21,11 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Mapping, Sequence
+    from logging import LogRecord
     from pathlib import Path
     from typing import BinaryIO, TextIO
 
+    from stenographer.config import AsrConfig
     from stenographer.status import Backend, UnavailableReason
 
 
@@ -33,6 +35,38 @@ class UnsupportedPlatformError(RuntimeError):
 
 class SingleInstanceLockError(OSError):
     """Lock I/O failed while acquiring the single-instance lock — not contention."""
+
+
+class AsrProcess(Protocol):
+    """One native ASR child. The caller owns policy; this handle owns resources."""
+
+    @property
+    def pid(self) -> int | None: ...
+
+    @property
+    def exit_code(self) -> int | None: ...
+
+    def is_running(self) -> bool: ...
+
+    def send(self, message: tuple[object, ...]) -> None: ...
+
+    def receive(self, timeout: float) -> object:
+        """Receive one tuple message; poll expiry raises TimeoutError."""
+        ...
+
+    def close(self, graceful: bool = False) -> None:
+        """Idempotently reap and release resources, draining child logs.
+
+        Graceful close sends the existing stop tuple and grants two seconds,
+        then uses the same termination/kill escalation as forced close.
+        """
+        ...
+
+
+class AsrTransport(Protocol):
+    def spawn(self, config: AsrConfig, *, on_log: Callable[[LogRecord], None]) -> AsrProcess:
+        """Spawn a child with the frozen configuration and a prepared-log receiver."""
+        ...
 
 
 class KeyTable(Protocol):
@@ -93,8 +127,10 @@ class CuePlayer(Protocol):
 
     def play(self, path: Path, volume: float) -> None: ...
 
-    def preview(self, path: Path, volume: float) -> None:
-        """Play one cue to completion, raising when playback fails."""
+    def preview(
+        self, path: Path, volume: float, *, cancellation: threading.Event | None = None
+    ) -> None:
+        """Play one cue; cancellation stops native playback and raises."""
         ...
 
 
@@ -158,8 +194,13 @@ class HelperProcess(Protocol):
 class HelperTransport(Protocol):
     """Spawns overlay helper processes with the pipe layout the supervisor needs."""
 
-    def spawn(self, command: Sequence[str]) -> HelperProcess:
-        """Start *command*; raises ``OSError``/``ValueError`` when it cannot start."""
+    def spawn(self, command: Sequence[str], *, stderr_path: Path | None = None) -> HelperProcess:
+        """Start *command*; raises ``OSError``/``ValueError`` when it cannot start.
+
+        *stderr_path* is the file the child's stderr appends to, so a display
+        library's own chatter is captured beside the helper's records instead of
+        filling a pipe nobody drains. ``None`` discards it.
+        """
         ...
 
 
@@ -253,6 +294,14 @@ class Platform(Protocol):
 
     name: str
 
+    def resource_probe(self) -> Callable[..., dict]: ...
+
+    def process_identity(self) -> tuple[int, float]: ...
+
+    def process_alive(self, pid: int, started_epoch: float) -> bool | None: ...
+
+    def runtime_context(self) -> dict[str, str]: ...
+
     # --- user directories (STENOGRAPHER_CONFIG override stays in config.py) ---
     def config_path(self, env: Mapping[str, str], home: Path) -> Path: ...
 
@@ -289,6 +338,10 @@ class Platform(Protocol):
     def cue_player(self) -> CuePlayer | None: ...
 
     # --- process / lifecycle ---
+    def asr_transport(self) -> AsrTransport:
+        """The shared native ASR transport, resolved lazily by each provider."""
+        ...
+
     def helper_transport(self) -> HelperTransport:
         """Transport for the overlay helper child; raises when the host has none."""
         ...
@@ -315,6 +368,15 @@ class Platform(Protocol):
         Hyperthread siblings count once; a host that cannot see its own
         topology says so rather than guessing, so the core can apply its
         documented fallback instead of an inflated logical-CPU number.
+        """
+        ...
+
+    def journal_attached(self, env: Mapping[str, str]) -> bool:
+        """True when stderr is already a system log that stamps its own timestamps.
+
+        Purely an output-formatting question — the core asks so it can drop the
+        ``asctime`` column from the stderr formatter rather than print a second
+        timestamp beside the host's.
         """
         ...
 

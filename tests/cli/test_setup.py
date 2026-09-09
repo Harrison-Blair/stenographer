@@ -29,7 +29,7 @@ from stenographer.cli.setup import (
     restart_eligible,
     review_lines,
 )
-from stenographer.config import Config
+from stenographer.config import Config, default_toml
 from stenographer.platform.base import HostGuidance
 
 _CONFIG_PATH = pathlib.PurePosixPath("/tmp/custom.toml")
@@ -73,10 +73,11 @@ def test_optional_string_retains_clears_and_replaces():
 
 
 def test_choice_retains_and_is_case_insensitive():
-    assert parse_choice("", "hold", ("hold", "toggle")) == "hold"
-    assert parse_choice("TOGGLE", "hold", ("hold", "toggle")) == "toggle"
+    assert parse_choice("", "hold", ("hold", "toggle", "hybrid")) == "hold"
+    assert parse_choice("TOGGLE", "hold", ("hold", "toggle", "hybrid")) == "toggle"
+    assert parse_choice("HYBRID", "hold", ("hold", "toggle", "hybrid")) == "hybrid"
     with pytest.raises(ValueError, match="choose one of"):
-        parse_choice("hybrid", "hold", ("hold", "toggle"))
+        parse_choice("latch", "hold", ("hold", "toggle", "hybrid"))
 
 
 @pytest.mark.parametrize(("answer", "expected"), [("yes", True), ("N", False), ("", True)])
@@ -212,7 +213,8 @@ def test_tryout_falls_back_to_a_foreground_run_when_the_state_is_unknown():
 
 
 def test_tryout_describes_a_hold_binding_as_held_and_logs_the_service():
-    config = Config.defaults()
+    defaults = Config.defaults()
+    config = dataclasses.replace(defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hold"))
     lines = _tryout(config=config)
 
     assert lines[-2] == "Focus a text field, hold KEY_RIGHTCTRL, speak, then release it."
@@ -230,6 +232,18 @@ def test_tryout_describes_a_toggle_binding_as_pressed_twice():
     )
 
 
+def test_tryout_describes_a_hybrid_binding_as_tapped_or_held():
+    defaults = Config.defaults()
+    config = dataclasses.replace(
+        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hybrid", binding="KEY_F9")
+    )
+
+    assert _tryout(config=config)[-2] == (
+        "Focus a text field, tap KEY_F9 to latch (tap again to stop), "
+        "or hold it, speak, and release."
+    )
+
+
 def test_field_display_names_unset_values_and_calibrated_profiles():
     assert field_display(None, "device") == "automatic/unset"
     assert field_display(-45.0, "spectrum_floor_dbfs") == "-45.0"
@@ -243,7 +257,8 @@ def test_full_review_lists_every_section_and_field():
         "[hotkey]",
         "  binding = KEY_RIGHTCTRL",
         "  device = automatic/unset",
-        "  mode = hold",
+        "  mode = hybrid",
+        "  hybrid_threshold_seconds = 0.5",
         "[audio]",
         "  input_device = automatic/unset",
         "  min_speech_rms = 0.0005",
@@ -265,6 +280,7 @@ def test_full_review_lists_every_section_and_field():
         "  update_check = True",
         "  spectrum_floor_dbfs = -45.0",
         "  sound_pack = minimal-ui",
+        "  log_level = info",
     ]
 
 
@@ -285,7 +301,7 @@ def test_quick_review_lists_only_the_keys_the_quick_wizard_edits():
         "\nQuick setup review",
         "  hotkey.device = automatic/unset",
         "  hotkey.binding = KEY_RIGHTCTRL",
-        "  hotkey.mode = hold",
+        "  hotkey.mode = hybrid",
         "  audio.input_device = automatic/unset",
         "  feedback.volume = 0.6",
         "  feedback.mute = False",
@@ -313,3 +329,163 @@ def test_setup_requires_an_interactive_terminal():
     stderr = io.StringIO()
     assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=stderr) == 2
     assert "requires an interactive terminal" in stderr.getvalue()
+
+
+def test_setup_applies_loaded_then_reviewed_log_levels_before_followup_work(monkeypatch, tmp_path):
+    from stenographer.cli.setup_config import SaveResult
+    from stenographer.utils import logging_setup
+
+    events: list[str] = []
+    defaults = Config.defaults()
+    loaded = dataclasses.replace(
+        defaults,
+        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
+    )
+    reviewed = dataclasses.replace(
+        loaded,
+        feedback=dataclasses.replace(loaded.feedback, log_level="debug"),
+    )
+
+    class Document:
+        path = tmp_path / "config.toml"
+        config = loaded
+
+        def save(self, config):
+            assert config is reviewed
+            events.append("save")
+            return SaveResult(False, self.path)
+
+    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
+    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: Document())
+    monkeypatch.setattr(
+        setup,
+        "_wizard",
+        lambda *args, **kwargs: events.append("wizard") or reviewed,
+    )
+    monkeypatch.setattr(
+        setup,
+        "_guided_setup",
+        lambda *args, **kwargs: events.append("guided") or 0,
+    )
+    monkeypatch.setattr(
+        logging_setup,
+        "apply_stderr_level",
+        lambda level: events.append(f"level:{level}"),
+    )
+
+    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 0
+    assert events == ["level:warning", "wizard", "save", "level:debug", "guided"]
+
+
+def test_setup_does_not_apply_a_level_when_loading_fails(monkeypatch):
+    from stenographer.utils import logging_setup
+
+    levels: list[str] = []
+    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
+    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: 78)
+    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
+
+    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 78
+    assert levels == []
+
+
+def test_setup_save_failure_keeps_the_loaded_level(monkeypatch, tmp_path):
+    from stenographer.cli.setup_config import ConfigPersistenceError
+    from stenographer.utils import logging_setup
+
+    levels: list[str] = []
+    defaults = Config.defaults()
+    loaded = dataclasses.replace(
+        defaults,
+        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
+    )
+    reviewed = dataclasses.replace(
+        loaded,
+        feedback=dataclasses.replace(loaded.feedback, log_level="debug"),
+    )
+
+    class Document:
+        path = tmp_path / "config.toml"
+        config = loaded
+
+        def save(self, config):
+            assert config is reviewed
+            raise ConfigPersistenceError("save failed")
+
+    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
+    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: Document())
+    monkeypatch.setattr(setup, "_wizard", lambda *args, **kwargs: reviewed)
+    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
+
+    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 1
+    assert levels == ["warning"]
+
+
+def test_write_default_creates_the_annotated_template(tmp_path, monkeypatch):
+    """Seen to FAIL against a ``write_default`` with its ``report_save`` call
+    dropped (the file appeared but nothing was printed)."""
+    path = tmp_path / "nested" / "config.toml"
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
+    out, err = io.StringIO(), io.StringIO()
+
+    assert setup.write_default(stdout=out, stderr=err) == 0
+
+    assert path.read_text(encoding="utf-8") == default_toml()
+    assert f"Wrote the default configuration to {path.resolve()}" in out.getvalue()
+    assert err.getvalue() == ""
+
+
+def test_write_default_leaves_an_identical_file_untouched(tmp_path, monkeypatch):
+    """Seen to FAIL against a writer calling ``Config.write_default`` directly
+    (identical bytes were rewritten).
+
+    The configured path is deliberately un-normalized, so the report line is
+    only correct if it names the resolved target the save actually inspected.
+    """
+    (tmp_path / "sub").mkdir()
+    path = tmp_path / "sub" / ".." / "config.toml"
+    # Bytes, not text mode: Windows would rewrite the template's newlines as CRLF,
+    # and the preservation layer compares bytes.
+    path.write_bytes(default_toml().encode("utf-8"))
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
+    before = path.stat().st_mtime_ns
+    out = io.StringIO()
+
+    assert setup.write_default(stdout=out, stderr=io.StringIO()) == 0
+
+    assert path.stat().st_mtime_ns == before
+    assert list(tmp_path.glob("config.toml.bak-*")) == []
+    assert f"{path.resolve()} already matches the defaults" in out.getvalue()
+
+
+def test_write_default_backs_up_a_customized_config_and_reports_it(tmp_path, monkeypatch):
+    """Seen to FAIL against a writer that bypassed the preservation layer (the
+    previous configuration was replaced with no backup and no report line)."""
+    path = tmp_path / "config.toml"
+    original = '# mine\n[stenographer.hotkey]\nmode = "toggle"\n'
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
+    out = io.StringIO()
+
+    assert setup.write_default(stdout=out, stderr=io.StringIO()) == 0
+
+    backups = list(tmp_path.glob("config.toml.bak-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+    assert f"Backup: {backups[0]}" in out.getvalue()
+    assert path.read_text(encoding="utf-8") == default_toml()
+
+
+def test_write_default_replaces_a_config_too_broken_to_load(tmp_path, monkeypatch):
+    """The repair path parses none of the current bytes.
+
+    Seen to FAIL against a writer built on ``load_document`` (it reported
+    ``<toml>: malformed TOML`` and exited 78 without writing anything)."""
+    path = tmp_path / "config.toml"
+    path.write_bytes(b"[stenographer.hotkey\nbinding = \n")
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
+
+    assert setup.write_default(stdout=io.StringIO(), stderr=io.StringIO()) == 0
+
+    assert path.read_text(encoding="utf-8") == default_toml()
+    assert len(list(tmp_path.glob("config.toml.bak-*"))) == 1

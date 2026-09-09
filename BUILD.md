@@ -114,8 +114,40 @@ The target system must provide:
 - **`/dev/uinput` write access** and membership in the **`input` group** —
   paste chord and hotkey capture.
 - **The ASR model** (~1.5 GB) — never bundled. Fetch it once with
-  `dist/stenographer/stenographer model download` (the only network path;
-  `certifi` is bundled for exactly this).
+  `dist/stenographer/stenographer model download`. `certifi` supplies HTTPS
+  trust for explicit downloads and the metadata-only update notice.
 
 `dist/stenographer/stenographer doctor` reports exactly what is missing
 (exit 78 when a required capability is absent).
+
+## Native development builds
+
+All installations contain the `stenographer` CLI/daemon and its existing
+helpers. Qt and the settings GUI are no longer packaged. Install dependencies
+with `.venv/bin/pip install -e '.[dev,build]'`, then run `scripts/build.sh`.
+`--headless` remains accepted by `build.sh`, `install.sh`, and `reinstall.sh`
+as a compatibility no-op.
+
+The Linux installer rebuilds an existing bundle containing the old GUI before
+installing. It removes an obsolete `stenographer-ui` symlink only when it points
+to this installation, and separately removes the old menu entry only when its
+launch command points to this installation's GUI. Existing configuration,
+analytics history, models, and logs (including `desktop.log`) are preserved.
+Use `stenographer setup` and `stenographer sounds` for configuration and
+`stenographer stats` for numeric diagnostics; restart the daemon explicitly to
+apply saved settings.
+
+The native CI workflow builds relocatable development bundles for Linux x86_64,
+Windows x86_64, macOS Intel, and macOS Apple Silicon. It runs the non-integration
+suite and frozen CLI checks. Each artifact includes `LICENSE` and
+`NATIVE-ACCEPTANCE.md`. Copy and run the complete bundle directory; there is no
+Windows/macOS installer or GUI launcher. Linux release bundles continue through
+their source distribution's installer.
+
+Windows/macOS artifacts are **unsigned development builds, not accepted release
+packages**. Their dictation and service integrations remain unavailable.
+Interactive installation, audio, keyboard, clipboard, service, and helper
+isolation checks remain separate gates. macOS signing/notarization and Windows
+signing/installation checks must pass before release readiness is claimed.
+Automated checks do not capture microphone audio. See
+[native acceptance requirements](packaging/NATIVE-ACCEPTANCE.md).

@@ -2,7 +2,9 @@
 """Interactive configuration review and guided machine setup.
 
 The prompt and policy helpers are pure. Hardware, network, and systemd work is
-kept in the command path and is imported only after CLI dispatch.
+kept in the command path and is imported only after CLI dispatch. ``--default``
+is the one non-interactive path: it stages the annotated template over the
+current bytes and saves it through the same preservation layer.
 """
 
 from __future__ import annotations
@@ -24,8 +26,8 @@ from stenographer.cli.console import (
     require_interactive,
     restart_service,
 )
-from stenographer.cli.setup_config import ConfigPersistenceError
-from stenographer.config import ALLOWED_COMPUTE_TYPES, Config, ConfigError
+from stenographer.cli.setup_config import ConfigDocument, ConfigPersistenceError
+from stenographer.config import ALLOWED_COMPUTE_TYPES, ALLOWED_LOG_LEVELS, Config, ConfigError
 
 if TYPE_CHECKING:
     from stenographer.platform.base import HostGuidance
@@ -244,6 +246,11 @@ def quick_tryout_lines(
         lines.append(
             f"Focus a text field, press {config.hotkey.binding}, speak, then press it again."
         )
+    elif config.hotkey.mode == "hybrid":
+        lines.append(
+            f"Focus a text field, tap {config.hotkey.binding} to latch (tap again to stop), "
+            "or hold it, speak, and release."
+        )
     else:
         lines.append(f"Focus a text field, hold {config.hotkey.binding}, speak, then release it.")
     if custom_config:
@@ -388,7 +395,7 @@ def _edit_hotkey(console: Console, config: Config) -> Config:
     console.write("\nHotkey")
     console.write(
         "Binding uses key names (the evdev KEY_* vocabulary) joined with '+'. "
-        "Mode is hold or toggle only."
+        "Mode is hold, toggle, or hybrid; the hybrid threshold splits a tap from a hold."
     )
 
     hotkey = dataclasses.replace(
@@ -398,7 +405,10 @@ def _edit_hotkey(console: Console, config: Config) -> Config:
     hotkey = dataclasses.replace(
         hotkey,
         device=_prompt_device(console, "Hotkey", hotkey.device, _hotkey_devices()),
-        mode=_prompt_choice(console, "Trigger mode", hotkey.mode, ("hold", "toggle")),
+        mode=_prompt_choice(console, "Trigger mode", hotkey.mode, ("hold", "toggle", "hybrid")),
+        hybrid_threshold_seconds=_prompt_number(
+            console, "Hybrid tap threshold (s)", hotkey.hybrid_threshold_seconds, 0.05, 5.0
+        ),
     )
     return dataclasses.replace(config, hotkey=hotkey)
 
@@ -546,11 +556,13 @@ def _edit_feedback_section(
     *,
     notice: Sequence[str],
     skip_floor_without_overlay: bool,
+    ask_log_level: bool,
 ) -> Config:
     """Prompt the feedback keys both wizards share, then the spectrum response.
 
-    The wizards differ only in *notice* (their calibration disclaimer) and in
-    whether a disabled overlay skips the spectrum question entirely.
+    The wizards differ only in *notice* (their calibration disclaimer), in
+    whether a disabled overlay skips the spectrum question entirely, and in
+    whether the log threshold is asked at all — it is not an essential.
     """
 
     console.write("\nFeedback")
@@ -564,6 +576,16 @@ def _edit_feedback_section(
         ),
         sound_pack=_prompt_sound_pack(console, config.feedback.sound_pack, config_dir),
     )
+    if ask_log_level:
+        feedback = dataclasses.replace(
+            feedback,
+            log_level=_prompt_choice(
+                console,
+                "Log level",
+                config.feedback.log_level,
+                tuple(sorted(ALLOWED_LOG_LEVELS)),
+            ),
+        )
     console.write()
     for line in notice:
         console.write(line)
@@ -589,6 +611,7 @@ def _edit_feedback(console: Console, config: Config, *, config_dir: pathlib.Path
             "It never changes capture, min_speech_rms, speech gating, or transcription.",
         ),
         skip_floor_without_overlay=False,
+        ask_log_level=True,
     )
 
 
@@ -680,7 +703,7 @@ def _quick_wizard(
         device,
         new_config=new_config,
     )
-    mode = _prompt_choice(console, "Trigger mode", config.hotkey.mode, ("hold", "toggle"))
+    mode = _prompt_choice(console, "Trigger mode", config.hotkey.mode, ("hold", "toggle", "hybrid"))
     config = dataclasses.replace(
         config,
         hotkey=dataclasses.replace(config.hotkey, device=device, binding=binding, mode=mode),
@@ -707,6 +730,7 @@ def _quick_wizard(
             "It does not affect capture, speech detection, audio gates, ASR, or transcription.",
         ),
         skip_floor_without_overlay=True,
+        ask_log_level=False,
     )
 
     for line in quick_review_lines(config):
@@ -855,6 +879,9 @@ def run(
         return loaded
     document = loaded
     path = document.path
+    from stenographer.utils.logging_setup import apply_stderr_level
+
+    apply_stderr_level(document.config.feedback.log_level)
 
     console.write("Stenographer quick setup" if quick else "Stenographer setup")
     console.write(f"Configuration: {path}")
@@ -891,6 +918,7 @@ def run(
         saved_prefix="Saved",
         unchanged_message="Configuration is unchanged; no file was written.",
     )
+    apply_stderr_level(reviewed.feedback.log_level)
 
     try:
         return _guided_setup(
@@ -905,3 +933,33 @@ def run(
         console.write()
         console.error("setup interrupted; saved configuration was not rolled back")
         return 130
+
+
+def write_default(
+    *,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    """Write the annotated default configuration, prompting for nothing.
+
+    No terminal gate: nothing is asked. An existing file is replaced through
+    the same preservation layer the wizard saves with, so it is backed up
+    first and identical bytes are never rewritten.
+    """
+
+    from stenographer.config import resolve_config_path
+
+    console = open_console(None, stdout, stderr)
+    path = resolve_config_path(create_parent=False)
+    try:
+        result = ConfigDocument.defaults(path).save(Config.defaults())
+    except ConfigPersistenceError as exc:
+        console.error(str(exc))
+        return 1
+    report_save(
+        console,
+        result,
+        saved_prefix="Wrote the default configuration to",
+        unchanged_message=f"{result.path} already matches the defaults; no file was written.",
+    )
+    return 0

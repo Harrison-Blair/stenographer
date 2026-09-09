@@ -6,7 +6,7 @@ through a load-only warm-up and decodes a bundled 16 kHz WAV. Covers warm-up
 ordering, transcribe-through-child (word timestamps survive IPC), recording-held
 idle eviction, idle-kill + transparent restart, and restart after an unexpected
 child death. Nothing is mocked — the child is a real process doing real IPC; the
-idle/crash tests read the private ``worker._process`` handle only to observe or
+idle/crash tests read the private ``worker._process`` platform handle only to observe or
 kill the real child, an honest in-repo stand-in for external death, not a
 subprocess mock. Shutdown cancellation suspends a real child to prove a stalled
 decode cannot hold the daemon open indefinitely.
@@ -45,6 +45,7 @@ if try_to_load_from_cache(_MODEL_ID, "config.json") is None:
 import soundfile  # noqa: E402
 
 from stenographer.config import Config  # noqa: E402
+from stenographer.platform import asr as transport_module  # noqa: E402
 from stenographer.transcribe import worker as worker_module  # noqa: E402
 from stenographer.transcribe.worker import Worker, WorkerError  # noqa: E402
 from stenographer.utils.logging_setup import setup_logging, shutdown_logging  # noqa: E402
@@ -171,8 +172,8 @@ def test_restart_after_forced_child_death():
         assert worker.is_alive()
 
         # Simulate an unexpected native crash by killing the real child.
-        worker._process.kill()
-        worker._process.join()
+        worker._process._process.kill()
+        worker._process._process.join()
         assert not worker.is_alive()
 
         # restart-if-dead: the next request respawns and succeeds; the daemon
@@ -184,20 +185,21 @@ def test_restart_after_forced_child_death():
         worker.shutdown()
 
 
+@pytest.mark.skipif(not hasattr(signal, "SIGSTOP"), reason="requires native process suspension")
 def test_decode_timeout_reaps_suspended_child_then_respawns(monkeypatch):
     samples = _read(_CLIP)
     worker = Worker(Config.defaults().asr)
     try:
         worker.warmup()
         proc = worker._process
-        assert proc is not None and proc.is_alive()
+        assert proc is not None and proc.is_running()
         os.kill(proc.pid, signal.SIGSTOP)
 
         # Exercise the production deadline/teardown path against a real child
         # without waiting for the fixed 60-second floor or two-second join.
         with monkeypatch.context() as shortened:
             shortened.setattr(worker_module, "_POLL_SECONDS", 0.01)
-            shortened.setattr(worker_module, "_JOIN_SECONDS", 0.25)
+            shortened.setattr(transport_module, "_JOIN_SECONDS", 0.25)
             shortened.setattr(worker_module, "_DECODE_MIN_TIMEOUT_SECONDS", 0.25)
             shortened.setattr(worker_module, "_DECODE_REALTIME_MULTIPLIER", 0.0)
             with pytest.raises(WorkerError, match="timed out during transcribe"):
@@ -205,10 +207,10 @@ def test_decode_timeout_reaps_suspended_child_then_respawns(monkeypatch):
 
         assert not worker.is_alive()
         assert worker._process is None
-        assert worker._request_q is None
-        assert worker._response_q is None
-        assert worker._log_q is None
-        assert worker._log_listener is None
+        assert proc._request_q is None
+        assert proc._response_q is None
+        assert proc._log_q is None
+        assert proc._drain_logs is None
         assert not worker.is_model_ready
 
         # A timeout poisons only that child's protocol. The next request uses a
@@ -221,6 +223,7 @@ def test_decode_timeout_reaps_suspended_child_then_respawns(monkeypatch):
         worker.shutdown()
 
 
+@pytest.mark.skipif(not hasattr(signal, "SIGSTOP"), reason="requires native process suspension")
 def test_shutdown_terminates_suspended_inflight_decode():
     samples = _read(_CLIP)
     worker = Worker(Config.defaults().asr)
@@ -237,11 +240,11 @@ def test_shutdown_terminates_suspended_inflight_decode():
     try:
         deadline = time.monotonic() + 10.0
         while (
-            worker._process is None or not worker._process.is_alive()
+            worker._process is None or not worker._process.is_running()
         ) and time.monotonic() < deadline:
             time.sleep(0.01)
         proc = worker._process
-        assert proc is not None and proc.is_alive()
+        assert proc is not None and proc.is_running()
 
         # Suspend the real child so native inference cannot complete and only
         # the shutdown cancellation path can release the transcription thread.
@@ -279,8 +282,8 @@ def test_spawned_worker_forwards_private_safe_decode_metrics(tmp_path):
         shutdown_logging()
 
     records = stderr.getvalue()
-    assert "asr: model loaded elapsed_ms=" in records
-    assert "asr: decode complete elapsed_ms=" in records
+    assert "asr: model_loaded elapsed_ms=" in records
+    assert "asr: decode_complete elapsed_ms=" in records
     assert f"transcript_chars={len(result.text)}" in records
     assert result.text.strip()
     assert result.text.strip() not in records

@@ -21,6 +21,7 @@ import evdev
 
 from stenographer.hotkey import ChordTracker, chord_active
 from stenographer.keycodes import CODE_NAMES, KEY_CODES
+from stenographer.utils.logging_setup import fmt_event, log_failure
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -86,7 +87,8 @@ def auto_detect_paths() -> list[str]:
     for path in _glob_event_nodes():
         try:
             device = evdev.InputDevice(path)
-        except OSError:
+        except OSError as exc:
+            log_failure(logger, logging.DEBUG, "hotkey: device_skipped", exc, safe=True, path=path)
             continue
         try:
             keys = device.capabilities().get(evdev.ecodes.EV_KEY, ())
@@ -103,17 +105,28 @@ def list_hotkey_devices() -> list[tuple[str, str]]:
     devices: list[tuple[str, str]] = []
     try:
         paths = evdev.list_devices()
-    except OSError:
+    except OSError as exc:
+        # WARNING: this is why setup and doctor show an empty device list.
+        log_failure(logger, logging.WARNING, "hotkey: enumerate_failed", exc, safe=True)
         return devices
     for path in paths:
         try:
             device = evdev.InputDevice(path)
-        except OSError:
+        except OSError as exc:
+            log_failure(logger, logging.DEBUG, "hotkey: device_skipped", exc, safe=True, path=path)
             continue
         try:
             try:
                 has_keys = evdev.ecodes.EV_KEY in device.capabilities()
-            except OSError:
+            except OSError as exc:
+                log_failure(
+                    logger,
+                    logging.DEBUG,
+                    "hotkey: capabilities_unreadable",
+                    exc,
+                    safe=True,
+                    path=path,
+                )
                 continue
             if has_keys:
                 devices.append((path, f"{path}: {device.name}"))
@@ -187,7 +200,9 @@ class EvdevHotkeyListener(ChordTracker):
                     devices.append(evdev.InputDevice(path))
             if devices:
                 for device in devices:
-                    logger.info("hotkey: listening on %s (%s)", device.path, device.name)
+                    logger.info(
+                        fmt_event("hotkey", "listening", device=device.path, name=device.name)
+                    )
                 with self._held_lock:
                     self._held.clear()
                     self._held_by_device = {id(device): set() for device in devices}
@@ -199,7 +214,7 @@ class EvdevHotkeyListener(ChordTracker):
                     t.join(timeout=0.5)
                 if self._stop_event.is_set():
                     return
-                logger.warning("hotkey: all keyboard devices lost; re-detecting")
+                logger.warning("hotkey: devices_lost action=redetect")
             else:
                 # No target device is currently openable (unplugged, stale
                 # explicit path, or a permissions gap). Back off before retrying
@@ -207,13 +222,13 @@ class EvdevHotkeyListener(ChordTracker):
                 # hotkey.device, _resolve_paths always yields that path, so
                 # _reacquire returns instantly and never blocks.
                 logger.debug(
-                    "hotkey: no openable keyboard device; retrying in %ss",
+                    "hotkey: no_openable_device retry_seconds=%s",
                     _REACQUIRE_INTERVAL_SECONDS,
                 )
                 self._stop_event.wait(_REACQUIRE_INTERVAL_SECONDS)
             paths = self._reacquire()
             if not paths:
-                logger.error("hotkey: no readable keyboard device; listener exiting")
+                logger.error("hotkey: no_readable_device action=listener_exit")
                 return
 
     def _reacquire(self) -> list[str]:
@@ -247,9 +262,12 @@ class EvdevHotkeyListener(ChordTracker):
                 continue
             try:
                 device = evdev.InputDevice(path)
-            except OSError:
+            except OSError as exc:
+                log_failure(
+                    logger, logging.DEBUG, "hotkey: device_skipped", exc, safe=True, path=path
+                )
                 continue
-            logger.info("hotkey: hotplug — now listening on %s (%s)", path, device.name)
+            logger.info(fmt_event("hotkey", "hotplug", device=path, name=device.name))
             with self._held_lock:
                 if self._stop_event.is_set():
                     device.close()
@@ -282,7 +300,14 @@ class EvdevHotkeyListener(ChordTracker):
                     return
         except OSError as exc:
             if not self._stop_event.is_set():
-                logger.warning("hotkey: device %s lost: %s", device.path, exc)
+                log_failure(
+                    logger,
+                    logging.WARNING,
+                    "hotkey: device_lost",
+                    exc,
+                    safe=True,
+                    device=device.path,
+                )
         finally:
             self._device_lost(device)
 

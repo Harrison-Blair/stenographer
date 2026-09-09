@@ -10,6 +10,8 @@ from __future__ import annotations
 import signal
 from typing import TYPE_CHECKING
 
+from stenographer.platform.diagnostics import DiagnosticsHostMixin
+
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Mapping, Sequence
@@ -17,6 +19,7 @@ if TYPE_CHECKING:
     from typing import TextIO
 
     from stenographer.platform.base import (
+        AsrTransport,
         CuePlayer,
         HelperTransport,
         HostGuidance,
@@ -45,7 +48,7 @@ def signal_reason(signum: int) -> str:
         return f"signal {signum}"
 
 
-class LinuxPlatform:
+class LinuxPlatform(DiagnosticsHostMixin):
     name = "linux"
 
     # --- user directories ---
@@ -118,6 +121,11 @@ class LinuxPlatform:
         return LinuxCuePlayer(player) if player is not None else None
 
     # --- process / lifecycle ---
+    def asr_transport(self) -> AsrTransport:
+        from stenographer.platform.asr import MultiprocessingAsrTransport
+
+        return MultiprocessingAsrTransport()
+
     def helper_transport(self) -> HelperTransport:
         from stenographer.platform.linux.helper import LinuxHelperTransport
 
@@ -140,6 +148,11 @@ class LinuxPlatform:
         from stenographer.platform.linux.cpu import physical_core_count
 
         return physical_core_count()
+
+    def journal_attached(self, env: Mapping[str, str]) -> bool:
+        from stenographer.platform.linux.dirs import journal_attached
+
+        return journal_attached(env)
 
     def probe_host(self) -> HostProbe:
         from stenographer.platform.linux.probe import probe_host

@@ -12,8 +12,11 @@ from importlib.resources import files
 from typing import TYPE_CHECKING
 
 from stenographer.config import DEFAULT_SOUND_PACK, SOUND_PACK_PATTERN
+from stenographer.utils.logging_setup import fmt_event, log_failure
 
 if TYPE_CHECKING:
+    import threading
+
     from stenographer.config import FeedbackConfig
     from stenographer.platform.base import CuePlayer
 
@@ -112,10 +115,27 @@ def _valid_wav(path: pathlib.Path) -> bool:
             if not _wav_header_ok(channels, sample_width, sample_rate, frame_count, compression):
                 return False
             frames = wav.readframes(frame_count)
-    except (EOFError, MemoryError, OSError, wave.Error):
+    except (EOFError, MemoryError, OSError, wave.Error) as exc:
+        # A cue that silently fails validation is indistinguishable from a
+        # muted daemon, so name the file and the reason it was rejected.
+        log_failure(logger, logging.WARNING, "feedback: cue_invalid", exc, safe=True, path=path)
         return False
 
-    return _wav_payload_ok(len(frames), frame_count, channels, sample_width)
+    if not _wav_payload_ok(len(frames), frame_count, channels, sample_width):
+        logger.warning(
+            fmt_event(
+                "feedback",
+                "cue_invalid",
+                path=path,
+                reason="truncated_payload",
+                frame_bytes=len(frames),
+                frame_count=frame_count,
+                channels=channels,
+                sample_width=sample_width,
+            )
+        )
+        return False
+    return True
 
 
 def cue_audible(mute: bool, volume: float, *, has_player: bool) -> bool:
@@ -265,10 +285,10 @@ def resolve_sound_pack(
     assets = bundled_root if bundled_root is not None else bundled_sound_root()
     pack, depth = _resolve_sound_pack_quietly(name, config_dir, assets)
     if depth >= 1:
-        logger.warning("sound pack unavailable or invalid; using bundled %s", DEFAULT_SOUND_PACK)
+        logger.warning("feedback: sound_pack_unavailable fallback=%s", DEFAULT_SOUND_PACK)
     if depth >= 2:
         logger.warning(
-            "bundled %s sound pack is incomplete; unavailable cues are disabled",
+            "feedback: bundled_pack_incomplete pack=%s detail=unavailable_cues_disabled",
             DEFAULT_SOUND_PACK,
         )
     return pack
@@ -305,15 +325,24 @@ def preview_sound_pack(
     volume: float,
     *,
     pause_seconds: float = PREVIEW_PAUSE_SECONDS,
+    cancellation: threading.Event | None = None,
 ) -> None:
     """Play all lifecycle cues in order with silence between them."""
     if not pack.complete:
         raise ValueError(f"sound pack {pack.name!r} is incomplete")
     for index, path in enumerate(pack.cue_paths):
         assert path is not None  # narrowed by ``complete`` above
-        player.preview(path, volume)
+        if cancellation is None:
+            player.preview(path, volume)
+        else:
+            if cancellation.is_set():
+                raise RuntimeError("Sound preview cancelled")
+            player.preview(path, volume, cancellation=cancellation)
         if index + 1 < len(pack.cue_paths):
-            time.sleep(pause_seconds)
+            if cancellation is None:
+                time.sleep(pause_seconds)
+            elif cancellation.wait(pause_seconds):
+                raise RuntimeError("Sound preview cancelled")
 
 
 class Feedback:

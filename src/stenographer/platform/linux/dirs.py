@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""XDG user directories for configuration, state, and the runtime lock."""
+"""Environment-derived host facts: XDG user directories and journal detection."""
 
 from __future__ import annotations
 
@@ -29,3 +29,12 @@ def state_dir(env: Mapping[str, str], home: Path) -> Path:
 def runtime_dir(env: Mapping[str, str]) -> Path:
     """``$XDG_RUNTIME_DIR`` (``/run/user/<uid>`` fallback)."""
     return Path(env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+
+
+def journal_attached(env: Mapping[str, str]) -> bool:
+    """True when systemd handed this process a journal stream for stderr.
+
+    ``JOURNAL_STREAM`` is set by systemd for a unit whose output goes to the
+    journal, which stamps every entry itself.
+    """
+    return "JOURNAL_STREAM" in env

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import logging
 import mmap
 import os
 import selectors
@@ -44,6 +45,9 @@ from stenographer.platform.linux.overlay_backends.protocols.wlr_layer_shell_unst
     ZwlrLayerSurfaceV1,
 )
 from stenographer.status import Backend, OverlayState, UnavailableReason
+from stenographer.utils.logging_setup import fmt_event, log_failure
+
+log = logging.getLogger(__name__)
 
 REQUIRED_GLOBALS = ("wl_compositor", "wl_shm", "zwlr_layer_shell_v1")
 _OPTIONAL_GLOBALS = ("wp_fractional_scale_manager_v1", "wp_viewporter")
@@ -176,7 +180,9 @@ class LayerShellBackend(HelperBackend):
         self._display = Display()
         try:
             self._display.connect()
-        except Exception:
+        except Exception as exc:
+            # ``from None`` on the wire: the parent gets the fixed reason only.
+            log_failure(log, logging.INFO, "overlay_helper: wayland_connect_failed", exc, safe=True)
             raise BackendUnavailableError(UnavailableReason.WAYLAND_CONNECT_FAILED) from None
 
         self._inventory = RegistryInventory()
@@ -208,7 +214,13 @@ class LayerShellBackend(HelperBackend):
 
         try:
             self._roundtrip()
-            if self._inventory.missing_required():
+            missing = self._inventory.missing_required()
+            if missing:
+                log.info(
+                    fmt_event(
+                        "overlay_helper", "wayland_globals_missing", missing="|".join(missing)
+                    )
+                )
                 raise BackendUnavailableError(UnavailableReason.REQUIRED_GLOBALS_MISSING)
             self._bind_globals()
             self._initialized = True
@@ -216,8 +228,9 @@ class LayerShellBackend(HelperBackend):
         except BackendUnavailableError:
             self.close()
             raise
-        except Exception:
+        except Exception as exc:
             self.close()
+            log_failure(log, logging.INFO, "overlay_helper: wayland_setup_failed", exc, safe=True)
             raise BackendUnavailableError(UnavailableReason.WAYLAND_CONNECT_FAILED) from None
 
     def _on_global(self, _registry, name: int, interface: str, version: int) -> None:
@@ -229,6 +242,7 @@ class LayerShellBackend(HelperBackend):
         item = self._inventory.remove(name)
         removal = classify_global_removal(None if item is None else item.interface)
         if removal is GlobalRemoval.LOST:
+            log.info(fmt_event("overlay_helper", "display_lost", at="global_remove"))
             self._lost = True
             return
         if removal is not GlobalRemoval.OUTPUT:
@@ -247,8 +261,8 @@ class LayerShellBackend(HelperBackend):
                 state = self._state
                 self._destroy_surface()
                 self._create_surface(state)
-            except Exception:
-                self._lost = True
+            except Exception as exc:
+                self._display_lost(exc, "output_removed")
 
     def _bind_globals(self) -> None:
         compositor = self._inventory.get("wl_compositor")
@@ -298,8 +312,8 @@ class LayerShellBackend(HelperBackend):
             self._output_scales[output] = max(1, factor)
             if output in self._entered_outputs and self._integer_scale() != old_scale:
                 self._present_if_configured()
-        except Exception:
-            self._lost = True
+        except Exception as exc:
+            self._display_lost(exc, "output_scale")
 
     def _on_surface_enter(self, _surface, output) -> None:
         if not callback_is_current(_surface, self._surface) or output not in self._output_scales:
@@ -309,8 +323,8 @@ class LayerShellBackend(HelperBackend):
             self._entered_outputs.add(output)
             if self._integer_scale() != old_scale:
                 self._present_if_configured()
-        except Exception:
-            self._lost = True
+        except Exception as exc:
+            self._display_lost(exc, "surface_enter")
 
     def _on_surface_leave(self, _surface, output) -> None:
         if not callback_is_current(_surface, self._surface) or output not in self._output_scales:
@@ -320,8 +334,18 @@ class LayerShellBackend(HelperBackend):
             self._entered_outputs.discard(output)
             if self._integer_scale() != old_scale:
                 self._present_if_configured()
-        except Exception:
-            self._lost = True
+        except Exception as exc:
+            self._display_lost(exc, "surface_leave")
+
+    def _display_lost(self, exc: Exception, where: str) -> None:
+        """Mark the connection unusable and say which callback found it out.
+
+        Every one of these fires from a Wayland dispatcher, where raising would
+        unwind through the C event loop; the loop checks ``_lost`` on its next
+        turn instead. Logging is what keeps that from being a silent death.
+        """
+        self._lost = True
+        log_failure(log, logging.WARNING, "overlay_helper: display_lost", exc, safe=True, at=where)
 
     def _integer_scale(self) -> int:
         return max(
@@ -337,8 +361,8 @@ class LayerShellBackend(HelperBackend):
         try:
             self._preferred_scale_120 = scale
             self._present_if_configured()
-        except Exception:
-            self._lost = True
+        except Exception as exc:
+            self._display_lost(exc, "fractional_scale")
 
     def _on_configure(self, layer_surface, serial: int, _width: int, _height: int) -> None:
         if not callback_is_current(layer_surface, self._layer_surface):
@@ -347,11 +371,12 @@ class LayerShellBackend(HelperBackend):
             layer_surface.ack_configure(serial)
             self._configured = True
             self._present_if_configured()
-        except Exception:
-            self._lost = True
+        except Exception as exc:
+            self._display_lost(exc, "configure")
 
     def _on_layer_closed(self, _layer_surface) -> None:
         if callback_is_current(_layer_surface, self._layer_surface):
+            log.info(fmt_event("overlay_helper", "display_lost", at="layer_closed"))
             self._lost = True
 
     def _draw(self) -> None:
@@ -474,8 +499,8 @@ class LayerShellBackend(HelperBackend):
         if self._render_pending:
             try:
                 self._present_if_configured()
-            except Exception:
-                self._lost = True
+            except Exception as exc:
+                self._display_lost(exc, "buffer_release")
 
     def _drop_buffers(self) -> None:
         buffers, self._buffers = self._buffers, {}

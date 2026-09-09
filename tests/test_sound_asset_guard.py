@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from sound_asset_guard import EXPECTED_PATHS, SoundAssetGuardError, check_sound_assets
+from verify_distributions import COMPLETIONS, verify_distributions
 
 _LEGACY_SHA256 = {
     "delivered.wav": "3cdd176f8914da7c3d9d298ea2c4793d4d43bf3ce3e7c6cdf1bbe749a0f2f5c9",
@@ -113,3 +114,35 @@ def test_wheel_guard_rejects_symlinked_expected_sound_entry(tmp_path: Path) -> N
 
     with pytest.raises(SoundAssetGuardError, match="must not be symlinks"):
         check_sound_assets(wheel, prefix)
+
+
+@pytest.mark.parametrize(
+    "missing", [None, "wheel_completion", "sdist_completion", "license", "sound", "archive"]
+)
+def test_distribution_contract(tmp_path: Path, missing: str | None) -> None:
+    version = "1.2.3"
+    wheel_names = [f"stenographer/assets/completions/{name}" for name in COMPLETIONS]
+    wheel_names += [f"stenographer/assets/sounds/{name}" for name in EXPECTED_PATHS]
+    sdist_names = [f"stenographer-{version}/src/{name}" for name in wheel_names]
+    sdist_names.append(f"stenographer-{version}/LICENSE")
+    if missing == "wheel_completion":
+        wheel_names.pop(0)
+    elif missing == "sdist_completion":
+        sdist_names.pop(0)
+    elif missing == "license":
+        sdist_names.pop()
+    elif missing == "sound":
+        wheel_names.pop()
+    with zipfile.ZipFile(tmp_path / f"stenographer-{version}-py3-none-any.whl", "w") as archive:
+        for name in wheel_names:
+            archive.writestr(name, b"fixture")
+    with tarfile.open(tmp_path / f"stenographer-{version}.tar.gz", "w:gz") as archive:
+        for name in sdist_names:
+            info = tarfile.TarInfo(name)
+            info.size = 7
+            archive.addfile(info, io.BytesIO(b"fixture"))
+    if missing is None:
+        verify_distributions(tmp_path, version)
+    else:
+        with pytest.raises((ValueError, OSError)):
+            verify_distributions(tmp_path, "9.9.9" if missing == "archive" else version)

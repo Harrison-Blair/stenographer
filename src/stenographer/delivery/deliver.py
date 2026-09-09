@@ -11,7 +11,11 @@ the transcript as recovery.
 from __future__ import annotations
 
 import logging
+import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from stenographer.utils.logging_setup import fmt_event
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,6 +23,17 @@ if TYPE_CHECKING:
     from stenographer.platform.base import ClipboardWriter, KeyInjector
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DeliveryTimings:
+    """What one delivery attempt cost, for the utterance summary line."""
+
+    copy_ms: float
+    release_wait_ms: float | None
+    release_timeout: bool | None
+    copied: bool = False
+    chord_sent: bool = False
 
 
 class Deliverer:
@@ -39,8 +54,16 @@ class Deliverer:
         self._keyboard = keyboard
         self._wait_released = wait_released
         self._copy = copy
+        # One utterance at a time, so the last attempt is the caller's own.
+        self.last_timings: DeliveryTimings | None = None
 
-    def deliver(self, text: str) -> bool:
+    def deliver(
+        self,
+        text: str,
+        *,
+        on_copied: Callable[[], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> bool:
         """Deliver *text* at the cursor. Return True once the chord is sent.
 
         Empty text is success-shaped upstream: return False, no side effects.
@@ -49,16 +72,59 @@ class Deliverer:
         stale clipboard content. On a release-wait timeout, proceed anyway: the
         clipboard already holds the transcript as recovery.
         """
-        if not text:
+        self.last_timings = None
+        if not text or (cancelled is not None and cancelled()):
             return False
-        if not self._copy(text):
+        copy_started_at = time.perf_counter()
+        copied = False
+        try:
+            copied = self._copy(text)
+        finally:
+            copy_ms = (time.perf_counter() - copy_started_at) * 1000.0
+            self.last_timings = DeliveryTimings(copy_ms, None, None, copied=copied)
+        if not copied:
+            self.last_timings = DeliveryTimings(copy_ms, None, None)
             return False
-        if self._wait_released is not None and not self._wait_released():
-            log.warning(
-                "deliver: binding still held after wait; proceeding "
-                "(clipboard already holds the transcript)"
-            )
+        self.last_timings = DeliveryTimings(copy_ms, None, None, copied=True)
+        if on_copied is not None:
+            on_copied()
+        release_wait_ms: float | None = None
+        released: bool | None = None
+        if self._wait_released is not None:
+            release_started_at = time.perf_counter()
+            try:
+                released = self._wait_released()
+            finally:
+                release_wait_ms = (time.perf_counter() - release_started_at) * 1000.0
+                self.last_timings = DeliveryTimings(
+                    copy_ms,
+                    release_wait_ms,
+                    None if released is None else not released,
+                    copied=True,
+                )
+            if not released:
+                log.warning(
+                    fmt_event(
+                        "deliver",
+                        "binding_still_held",
+                        action="proceed",
+                        waited_ms=round(release_wait_ms, 1),
+                        reason="clipboard_already_holds_transcript",
+                    )
+                )
+        self.last_timings = DeliveryTimings(
+            copy_ms, release_wait_ms, None if released is None else not released, copied=True
+        )
+        if cancelled is not None and cancelled():
+            return False
         self._keyboard.send_chord()
+        self.last_timings = DeliveryTimings(
+            copy_ms,
+            release_wait_ms,
+            None if released is None else not released,
+            copied=True,
+            chord_sent=True,
+        )
         return True
 
     def close(self) -> None:

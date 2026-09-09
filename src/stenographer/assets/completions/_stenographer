@@ -13,6 +13,7 @@ _stenographer_impl() {
             'devices[list audio input devices]' \
             'setup[interactively configure stenographer]' \
             'sounds[list, preview, or select a sound pack]' \
+            'stats[report personal dictation analytics]' \
             'completion[emit a native shell completion definition]' \
             '-h[show help]' '--help[show help]' '--version[show version]'
         return
@@ -23,9 +24,14 @@ _stenographer_impl() {
         run|doctor|devices)
             _values 'option' '-h[show help]' '--help[show help]'
             ;;
+        stats)
+            _values 'action or option' summary export delete reset --source --since --until \
+                --model --app-version --device --outcome --format --output --yes --help -h
+            ;;
         setup)
             _values 'option' '-h[show help]' '--help[show help]' \
-                '--quick[configure essentials only]'
+                '--quick[configure essentials only]' \
+                '--default[write the annotated default configuration]'
             ;;
         sounds)
             if [[ "${PREFIX}" == -* ]]; then

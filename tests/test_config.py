@@ -7,7 +7,7 @@ import pathlib
 
 import pytest
 
-from stenographer.config import Config, ConfigError, default_toml, load_or_default
+from stenographer.config import AnalyticsConfig, Config, ConfigError, default_toml, load_or_default
 
 
 def test_config_error_message():
@@ -23,7 +23,8 @@ def test_defaults_match_spec():
     d = Config.defaults()
     assert d.hotkey.binding == "KEY_RIGHTCTRL"
     assert d.hotkey.device is None
-    assert d.hotkey.mode == "hold"
+    assert d.hotkey.mode == "hybrid"
+    assert d.hotkey.hybrid_threshold_seconds == 0.5
     assert d.audio.input_device is None
     assert d.audio.min_speech_rms == 0.0005
     assert d.audio.max_recording_seconds == 600
@@ -42,6 +43,7 @@ def test_defaults_match_spec():
     assert d.feedback.update_check is True
     assert d.feedback.spectrum_floor_dbfs == -45.0
     assert d.feedback.sound_pack == "minimal-ui"
+    assert d.feedback.log_level == "info"
 
 
 def test_write_default_round_trips(tmp_path):
@@ -66,6 +68,19 @@ def test_default_template_takes_its_hotkey_device_comment_from_the_platform():
     assert rendered.count("                    # ") == 1
     # Still valid, still the documented defaults.
     assert Config.loads(rendered) == Config.defaults()
+
+
+def test_default_template_ships_the_default_mode_at_the_fixed_comment_column():
+    """The written template must agree with the dataclass default and stay aligned.
+
+    Seen to FAIL twice: with only ``HotkeyConfig.mode``/``Config.defaults``
+    changed (the template still said ``mode = "hold"``), and with the template
+    edited but not re-padded (the ``#`` moved off column 31).
+    """
+
+    line = next(text for text in default_toml().splitlines() if text.startswith("mode = "))
+    assert line.startswith(f'mode = "{Config.defaults().hotkey.mode}"')
+    assert line.index("#") == 31
 
 
 def test_loads_validates_without_a_file():
@@ -180,6 +195,18 @@ def test_toggle_mode_without_restating_hotkey_defaults(tmp_path):
     assert cfg.hotkey.device == Config.defaults().hotkey.device
 
 
+def test_hybrid_mode_with_its_threshold_without_restating_hotkey_defaults(tmp_path):
+    # Seen to FAIL against the pre-change loader (hotkey.mode: must be one of
+    # hold, toggle -- got 'hybrid').
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer.hotkey]\nmode = "hybrid"\nhybrid_threshold_seconds = 1.25\n')
+    cfg = Config.load(p)
+    assert cfg.hotkey.mode == "hybrid"
+    assert cfg.hotkey.hybrid_threshold_seconds == 1.25
+    assert cfg.hotkey.binding == Config.defaults().hotkey.binding
+    assert cfg.hotkey.device == Config.defaults().hotkey.device
+
+
 def test_empty_string_is_unset(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text(
@@ -212,6 +239,8 @@ def test_unknown_keys_ignored(tmp_path):
         ('[stenographer.feedback]\nmute = "no"\n', "feedback.mute"),
         ('[stenographer.feedback]\noverlay = "yes"\n', "feedback.overlay"),
         ('[stenographer.feedback]\nupdate_check = "yes"\n', "feedback.update_check"),
+        ('[stenographer.feedback]\nlog_level = "verbose"\n', "feedback.log_level"),
+        ("[stenographer.feedback]\nlog_level = 10\n", "feedback.log_level"),
         ('[stenographer.feedback]\nsound_pack = "Minimal UI"\n', "feedback.sound_pack"),
         ('[stenographer.feedback]\nsound_pack = "-minimal"\n', "feedback.sound_pack"),
         ('[stenographer.feedback]\nsound_pack = "a_thing"\n', "feedback.sound_pack"),
@@ -233,7 +262,19 @@ def test_unknown_keys_ignored(tmp_path):
             "feedback.spectrum_floor_dbfs",
         ),
         ('[stenographer.hotkey]\nbinding = ""\n', "hotkey.binding"),
-        ('[stenographer.hotkey]\nmode = "hybrid"\n', "hotkey.mode"),
+        ('[stenographer.hotkey]\nmode = "latch"\n', "hotkey.mode"),
+        (
+            "[stenographer.hotkey]\nhybrid_threshold_seconds = 0\n",
+            "hotkey.hybrid_threshold_seconds",
+        ),
+        (
+            "[stenographer.hotkey]\nhybrid_threshold_seconds = 5.5\n",
+            "hotkey.hybrid_threshold_seconds",
+        ),
+        (
+            '[stenographer.hotkey]\nhybrid_threshold_seconds = "0.5"\n',
+            "hotkey.hybrid_threshold_seconds",
+        ),
         ("[stenographer.audio]\nmax_recording_seconds = 0\n", "audio.max_recording_seconds"),
     ],
 )
@@ -268,3 +309,30 @@ def test_malformed_toml_raises(tmp_path):
     with pytest.raises(ConfigError) as exc:
         Config.load(p)
     assert exc.value.key == "<toml>"
+
+
+@pytest.mark.parametrize("written", ["debug", "DEBUG", "Debug"])
+def test_log_level_is_case_insensitive_and_stored_folded(tmp_path, written):
+    """The threshold is a level name, not a token: spelling it loudly still works.
+
+    Seen to FAIL against a plain ``choice`` validator (``"DEBUG"`` raised a
+    key-scoped ConfigError instead of loading).
+    """
+
+    p = tmp_path / "config.toml"
+    p.write_text(f'[stenographer.feedback]\nlog_level = "{written}"\n')
+
+    assert Config.load(p).feedback.log_level == "debug"
+
+
+def test_analytics_settings_default_without_rewriting_old_files(tmp_path):
+    path = tmp_path / "config.toml"
+    content = "[stenographer.feedback]\nmute = true # preserved\n"
+    path.write_text(content)
+    cfg = Config.load(path)
+    assert cfg.analytics == AnalyticsConfig(True, True)
+    assert path.read_text() == content
+    for key in ("enabled", "resource_profiling"):
+        with pytest.raises(ConfigError) as error:
+            Config.loads(f'[stenographer.analytics]\n{key} = "true"')
+        assert error.value.key == f"analytics.{key}"

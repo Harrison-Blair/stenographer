@@ -8,19 +8,23 @@ window. It cannot be asserted programmatically.
     MANUAL ACCEPTANCE PROCEDURE
     1. Ensure the model is cached (`stenographer model download`) and you are
        in the `input` group with write access to /dev/uinput.
-    2. On THREE consecutive cold service starts, focus a text field, press and
-       hold KEY_RIGHTCTRL, and say "Opening words must remain in this
-       transcription" immediately when the start cue sounds. Release the key;
-       each pasted result must retain at least "Opening words must remain".
+    2. Set hotkey.mode = "hold". On THREE consecutive cold service starts,
+       focus a text field, press and hold KEY_RIGHTCTRL, and say "Opening words
+       must remain in this transcription" immediately when the start cue
+       sounds. Release the key; each pasted result must retain at least
+       "Opening words must remain".
     3. Repeat the cold-start check once with feedback.mute=true.
     4. Set a short asr.idle_unload_seconds, complete one dictation, wait for the
        worker to unload, and repeat the immediate-speech check.
     5. Disconnect/reconnect the microphone or restart PipeWire, then confirm a
        later press renegotiates capture and succeeds. A failed capture must play
        the error cue/notification and must NEVER paste partial text.
-    6. Inspect the journal, the current stenographer.log, and rotated logs for
-       preparation/activation/capture/recovery timing records. The dictated
-       canary phrase above must not appear anywhere in those logs.
+    6. Run `test_dictation_log_reports_metrics_without_the_transcript` below
+       immediately after step 2's dictations (it reads the same
+       stenographer.log): it asserts the `pipeline: utterance` summary line is
+       there and the canary phrase is not. Then eyeball the journal and the
+       rotated logs for the same property, and confirm the startup banner named
+       your configuration and the summary's timings look sane.
     7. Confirm the record_start and record_stop cues, paste at the cursor,
        delivered cue, and matching clipboard (`wl-paste`; `xclip -o` where the
        daemon logged clipboard_backend=x11) on both Hyprland (wlroots) and
@@ -43,7 +47,15 @@ window. It cannot be asserted programmatically.
        (e.g. 5), start a recording and keep talking past the cap: the stop cue
        must fire at the cap and the transcript up to it must be delivered. A
        press during transcription must do nothing.
-    10. Run the complete opt-in integration suite. All of these checks are the
+    10. Set hotkey.mode = "hybrid" (the default). Tap KEY_RIGHTCTRL well inside
+       hotkey.hybrid_threshold_seconds: the pill must stay up with the key
+       released. Speak, tap again, and confirm the paste. Then press and hold
+       past the threshold, speak, and release — it must stop on release exactly
+       like hold mode. With a short audio.max_recording_seconds, confirm a
+       latched recording stops that many seconds after the PRESS (not after the
+       release), while a hold longer than the cap ends only on release and
+       reports capped=1 in its summary.
+    11. Run the complete opt-in integration suite. All of these checks are the
        real-machine merge gate; the sandbox-safe unit suite is not a substitute.
 
 The automated tests below use the real default PortAudio input and actual lock
@@ -53,6 +65,7 @@ path. They are collected only with STENOGRAPHER_INTEGRATION=1.
 from __future__ import annotations
 
 import os
+import pathlib
 import time
 
 import numpy as np
@@ -60,12 +73,16 @@ import pytest
 import sounddevice
 
 from stenographer.audio import Recorder
+from stenographer.platform import current_platform
 from stenographer.platform.linux.lock import (
     LOCK_PATH,
     acquire_single_instance_lock,
 )
 
 pytestmark = pytest.mark.integration
+
+#: The phrase step 2 of the manual procedure dictates, lowercased for matching.
+_CANARY = "opening words must remain"
 
 
 def _recorder() -> Recorder:
@@ -173,3 +190,25 @@ def test_real_lock_path_mutual_exclusion():
         assert acquire_single_instance_lock() == -1
     finally:
         os.close(next_fd)
+
+
+def test_dictation_log_reports_metrics_without_the_transcript():
+    """Step 6, automated: the log after a real dictation carries no transcript.
+
+    Reads the daemon's actual ``stenographer.log`` rather than a captured
+    logger, because rule 6 is a property of the file that gets attached to a
+    report — not of the call sites in isolation. Run it right after step 2.
+    """
+    log_path = current_platform().state_dir(os.environ, pathlib.Path.home()) / "stenographer.log"
+    if not log_path.exists():
+        pytest.skip(f"no daemon log yet: {log_path}")
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+
+    summaries = [line for line in text.splitlines() if "pipeline: utterance " in line]
+    if not summaries:
+        pytest.skip("no dictation recorded in the current log; run step 2 first")
+
+    assert _CANARY not in text.lower()
+    last = summaries[-1]
+    for field in ("utt=", "outcome=", "gate=", "peak_rms=", "total_ms="):
+        assert field in last, last

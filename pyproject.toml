@@ -19,6 +19,7 @@ dependencies = [
     "pywayland==0.4.18; sys_platform == 'linux'",
     "python-xlib==0.33; sys_platform == 'linux'",
     "tomlkit>=0.13",
+    "psutil>=6.0",
 ]
 
 [project.optional-dependencies]

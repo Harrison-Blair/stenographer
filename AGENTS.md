@@ -9,34 +9,138 @@ one means editing this file in the same commit as the code that changes it.
 
 `stenographer` is a local-only push-to-talk dictation daemon. Hold a global
 hotkey, speak, release: the recognized text is copied to the clipboard and
-pasted at the cursor with a synthesized paste chord. `hotkey.mode = "toggle"`
-presses once to start and again to stop. Offline, English-only,
+pasted at the cursor with a synthesized paste chord. The default
+`hotkey.mode = "hybrid"` lets the release decide — a tap shorter than
+`hotkey.hybrid_threshold_seconds` latches the recording until the next press,
+a longer hold stops on release; `"hold"` is push-to-talk and `"toggle"` presses
+once to start and again to stop. Offline, English-only,
 GPL-3.0-or-later, Python ≥ 3.12.
 
-**Target platforms: Linux (Wayland, any compositor) and Windows.** Linux is
+**Target platforms: Linux (Wayland and X11), Windows, and macOS (Intel and
+Apple Silicon).** Linux is
 the shipping backend; Windows currently has a stdlib-only stub provider and a
 CI portability job, with the real backend scoped in `docs/windows/SCOPE.md`.
-Every change must keep both targets viable — see *Platform boundary* below.
+macOS has a setup/diagnostics provider; its dictation provider remains a roadmap
+target. Every change must keep these targets viable — see *Platform boundary*
+below. Native acceptance requirements
+live in `packaging/NATIVE-ACCEPTANCE.md`;
+an untested target must never be advertised as supported.
 
-Do not reintroduce cut features (old GTK HUD / transcript preview, hybrid
-trigger mode, cancel binding, `dictate`, `bench`, per-character typing / wtype,
-live preview / incremental decoding, self-update, sound downloads, per-cue
-overrides, config migrations, multi-distro installers) without recording the
-decision in this file first. Already authorized: toggle mode, the isolated
-lifecycle pill (exactly 18 locally analyzed spectrum bars while recording, a
-helper-local amber border pulse only while the model loads, fixed state
-interiors — never transcript preview, controls, GTK, or raw-audio IPC), the
-local PyInstaller onedir build + per-user installer + `main`-only draft
-release workflow (with a read-only release-preflight rehearsal — version/tag
-guard plus wheel/sdist verification — on PRs into `main`), the curl-piped
-`scripts/quick-install.sh` bootstrap (installs the latest *published*
-release's native bundle by handing it to that release's own sdist
-`install.sh` after `SHA256SUMS` verification — an install path, never
-self-update), the daemon-start update *notice* (at most one metadata-only
-HTTPS request per 24 h for the latest published GitHub release tag, a desktop
-notification pointing at the README quick-install command, opt out with
-`feedback.update_check = false` — it never downloads and never updates
-anything), and static Bash/Zsh/Fish completions.
+### Experiment-led expansion (authorized September 2026)
+
+The owner authorized private incremental
+ASR experiments and a separate optional LLM cleanup stage. The previously
+authorized Qt/PySide6 settings process was withdrawn below. The inference
+experiments supersede the cut-feature restriction only for private inference,
+never live transcript preview. Production defaults remain unchanged
+until measured comparisons and the owner's selection. Repository-only study
+runners are authorized; no new `bench` application command is introduced.
+
+Capture diagnostics may copy scalar callback clock metadata in addition to
+blocks. No signal analysis, logging, I/O, or slow-consumer locks in callbacks.
+The first callback is measured against accepted press and stream activation;
+ADC clock discontinuities are diagnostics, not proof that speech was lost.
+
+Shared experimental contracts live in `inference.py`; cleanup validation and
+evaluation math remain pure. Private chunks retain the full utterance, bound
+pending work, and fall back to whole-utterance ASR on uncertain reconciliation.
+Exactly one final delivery remains the daemon's responsibility. Native APIs,
+inference process management, and any future native settings integration stay
+behind `platform/`. No platform is implemented by pretending its native calls
+passed mocked tests.
+
+Cleanup is off until explicitly enabled, local by default, tool-free, and gets
+only the final transcript. It preserves paragraphs/lists and substantive content.
+Failed, empty, malformed, truncated, over-context, or timed-out cleanup selects
+the original formatted transcript with a visible cleanup-skipped state. A
+cancelled utterance is never pasted. Structural edit validation is not semantic
+fidelity certification. An explicitly configured self-hosted endpoint may receive
+transcript text only, with authenticated transport and no remote fallback; this
+is an authorized future exception to the network invariant, not an active path.
+Model downloads remain explicit. No transcript, audio, prompt, response, or
+credential may enter logs or automatic history.
+
+Configuration/protocol extensions necessary for these features are authorized
+but must be documented with their implementation. Existing 23-key files stay
+readable without automatic rewriting; CLI saves use the preservation layer.
+Saved settings take effect after an explicit daemon restart. The pill remains
+isolated, click-through and transcript-free; new
+duration/cleaning/delivery/fallback metadata requires a versioned wire change.
+No physical microphone reproduction without explicit consent. Real-platform
+acceptance is required per release target, including macOS signing/notarization and Windows
+installation/signing checks before packaging is called ready.
+
+Do not reintroduce cut features (old GTK HUD / transcript preview, cancel
+binding, `dictate`, `bench`, per-character typing / wtype, live preview /
+incremental decoding, self-update, sound downloads, per-cue overrides, config
+migrations, multi-distro installers) without recording the decision in this
+file first. Already authorized: toggle mode, the default hybrid mode (every
+press starts; a release before `hotkey.hybrid_threshold_seconds` latches the
+recording for the next press to stop, a release at or after it stops
+immediately; the max-duration timer is armed at that latching release rather
+than at the press, for the window's remainder, so the cap is always measured
+from the press in every mode; no double-tap, no cancel binding, and no
+lifecycle state outside the daemon), the isolated lifecycle pill (exactly 18
+locally analyzed spectrum bars while recording, a helper-local amber border
+pulse only while the model loads, fixed state interiors — never transcript
+preview, controls, GTK, or raw-audio IPC), the local PyInstaller onedir build
++ per-user installer + `main`-only draft release workflow (with a read-only
+release-preflight rehearsal — version/tag guard plus wheel/sdist verification
+— on PRs into `main`), the curl-piped `scripts/quick-install.sh` bootstrap
+(installs the latest *published* release's native bundle by handing it to that
+release's own sdist `install.sh` after `SHA256SUMS` verification — an install
+path, never self-update), the daemon-start update *notice* (at most one
+metadata-only HTTPS request per 24 h for the latest published GitHub release
+tag, a desktop notification pointing at the README quick-install command, opt
+out with `feedback.update_check = false` — it never downloads and never
+updates anything), the queue-backed logging pipeline (one listener thread
+owning the stderr sink and the always-DEBUG rotating file, `subsystem: event
+key=value` lines, `utt=N` correlation, and `feedback.log_level`) with the
+overlay helper's own `overlay-helper.log` beside it in the state directory,
+and static Bash/Zsh/Fish completions.
+
+### Durable diagnostics and GUI withdrawal (authorized September 2026)
+
+The schema-versioned local SQLite numeric history, `stats` reporting/export/deletion,
+resource profiling, capture timings, and daemon/worker/helper logging remain.
+The settings GUI, graphical analytics, `stenographer_desktop`, `stenographer-ui`,
+Qt dependency, dedicated control protocol v1, maintenance leases, restart/apply
+handlers, GUI key mapping, service adapters, launchers, and menu integration are
+withdrawn. A replacement interface requires a separate recorded design decision.
+The isolated lifecycle pill and its protocol v4 remain unchanged.
+
+Configuration and reporting use the CLI: `setup`, `sounds`, and `stats`.
+Shared preservation and calibration remain in `settings.py` and `calibration.py`;
+CLI paths are compatibility exports. `platform/diagnostics.py` retains resource
+sampling, process identity/liveness, and runtime context behind platform contracts.
+Native bundles contain the CLI/daemon and its existing helpers, without Qt.
+`--headless` remains a compatibility no-op in build/install/reinstall scripts.
+Installation rebuilds stale GUI-containing bundles and removes obsolete GUI
+launchers/menu entries only when they belong to this installation. Configuration,
+analytics history, models, and existing logs (including old `desktop.log`) remain.
+
+The fixed config is now 25 keys in five sections: the two default-true
+`analytics.enabled` and `analytics.resource_profiling` fields extend the existing
+23-key files without rewriting them. Numeric analytics are an explicit exception
+to the no-history restriction, never transcript/audio/prompt/hotword/path history.
+Records persist until explicit deletion; revision guards and deletion suppression
+prevent retries or delayed checkpoints from resurrecting activity. Collection is
+asynchronous and bounded, fail-open for dictation, with visible degradation and
+missing data. Resource sampling is every 500 ms plus boundaries and retains only
+summaries/coverage. Headline words count usable recognition before delivery;
+headline audio sums sample-based input duration of accepted ASR results.
+
+Windows/macOS setup and diagnostics providers exist; their dictation and
+service integrations remain unavailable. Native CI artifacts are relocatable
+development bundles pending interactive acceptance and signing. Packaging and
+acceptance requirements live in `BUILD.md` and `packaging/NATIVE-ACCEPTANCE.md`;
+metric definitions live in `analytics/metrics.py`.
+
+Utterance phase measurements are shared pure projections beside `UtteranceRecord`.
+Accepted recognition is measured before formatting. Prospectively, `stop_to_ready_ms`
+ends at successful formatting (including empty output), before delivery; failures
+before that boundary leave it unknown. Terminal completion never overwrites it.
+Existing history is preserved without recalculation or schema changes.
 
 ## Commands
 
@@ -52,12 +156,22 @@ STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest                  # + smoke (real mac
 .venv/bin/stenographer --help                                # CLI smoke
 ```
 
+`feedback.log_level` sets the stderr/journal threshold; `STENOGRAPHER_LOG_LEVEL`
+overrides it for a single process (it is resolved before any config is read, so
+it also wins over the daemon's re-apply). `stenographer.log` keeps DEBUG either
+way.
+
 Quick verification loop before every commit: ruff check + format, unit suite,
 `--help`. `integration`-marked tests touch the real clipboard / audio / uinput
 / model and need a real machine — never set `STENOGRAPHER_INTEGRATION` in CI
 or sandboxes. CI runs the unit suite on `ubuntu-latest` and `windows-latest`
 (`unit-windows`: install, pure suites, `--help`; `tests/platform/linux/` is not
 collected there).
+
+After implementation and verification, offer to run `scripts/reinstall.sh` so
+the installed app includes the verified changes. If reinstalling was already
+authorized in the conversation, run it without asking again; otherwise wait for
+the user to accept the offer. Report the result whenever the reinstall is run.
 
 ## Platform boundary (binding)
 
@@ -71,6 +185,7 @@ The rule is structural, not stylistic, and it is enforced by a test.
   defines the contract as `typing.Protocol`s: `Platform`, `KeyTable`,
   `HotkeyListener`, `KeyInjector`, `ClipboardWriter`, `Notifier`, `CuePlayer`,
   `SingleInstanceLock`, `HelperTransport` / `HelperProcess`,
+  `AsrTransport` / `AsrProcess`,
   `OverlayBackendSpec`, `HostProbe`, `HostGuidance`, plus
   `UnsupportedPlatformError`, `SingleInstanceLockError`, `NullNotifier`.
   `platform/linux/` is `LinuxPlatform` (XDG dirs, child env, flock, evdev
@@ -101,9 +216,10 @@ The rule is structural, not stylistic, and it is enforced by a test.
   test_core_isolation.py` imports every core module in a fresh interpreter
   with those names blocked; a violation anywhere in the core fails it. Some
   stdlib modules import fine everywhere and only *behave* per-OS — a core
-  driver (`overlay/supervisor.py`, `audio.py`, `hotkey.py`, `daemon.py`)
+  driver (`overlay/supervisor.py`, `audio.py`, `hotkey.py`, `daemon.py`,
+  `transcribe/worker.py`)
   therefore never reaches for `subprocess`, `selectors`, `fcntl`, `signal`,
-  `msvcrt`, or raw `os.read`/`os.kill` either; the same test greps their
+  `msvcrt`, `multiprocessing`, or raw `os.read`/`os.kill` either; the same test greps their
   source for it.
 - **Provider modules are lazy.** Each `LinuxPlatform` / `WindowsPlatform`
   method lazy-imports its sibling backend so `stenographer --help` never
@@ -193,15 +309,14 @@ The rule is structural, not stylistic, and it is enforced by a test.
    - An empty transcript or failed speech gate is success-shaped: no paste,
      no error cue.
    - The ASR path never touches the network (`local_files_only`), and
-     `stenographer model download` is the only command that may download
-     anything. The daemon's sole other network access is the update notice's
+     `stenographer model download` is the only model-download entry point. The daemon's sole other network access is the update notice's
      single metadata request: a background daemon thread that is never joined,
      off the hot path, 5 s timeout, at most one request per 24 h, successful or
      not, via the record in the state directory, every failure DEBUG-logged and
      otherwise silent, disabled by `feedback.update_check = false`, and sending
      nothing but the request itself.
-   - The PortAudio callback only copies blocks (no analysis, allocation-heavy
-     work, or slow-consumer locks).
+   - The PortAudio callback only copies blocks and scalar timing metadata (no
+     analysis, allocation-heavy work, or slow-consumer locks).
    - One utterance at a time; a start press during transcription neither
      starts nor queues.
    - Capture starts before the `record_start` cue and stops/secures samples
@@ -220,6 +335,38 @@ The rule is structural, not stylistic, and it is enforced by a test.
      requires a full model (why the default is `faster-whisper-medium.en`).
 6. **Privacy in logs** — numeric/structural metrics and transcript *lengths*
    only; never transcript text, audio, samples, or result representations.
+   Every line is `subsystem: event key=value ...` (`fmt_event`; a test parses
+   every template under `src/`). A value carrying whitespace or a `"` — an
+   argv, a PortAudio device name, a user path, an OS error's own `[Errno 13]
+   Permission denied` — is rendered as one double-quoted token with `"` and
+   `\` escaped; a Unicode control character additionally selects JSON ASCII
+   escaping, so `key=value` survives a runtime value it never saw; every other
+   value stays bare. The rotating `stenographer.log` sink is
+   unconditionally DEBUG — only the stderr/journal threshold is tunable, so a
+   report never depends on a threshold set before the failure. Exceptions are
+   logged through `log_failure(log, level, event, exc, *, safe=)`: `safe=True`
+   renders `str(exc)` at *level* and the full traceback at DEBUG; `safe=False`
+   renders the class name and the traceback's `file:line:function` frames only
+   — the message is never formatted at any level. The text-capable lineages
+   are the ASR child's `classify_error` inference branch (its detail becomes
+   the `WorkerError` text) and the xclip clipboard read-back; neither may log
+   a `CalledProcessError`'s `.output`, `.stdout`, or `.stderr` capture. The
+   one carve-out inside those lineages is `PathologicalOutputError` /
+   `WorkerPathologicalError`, whose message is audited counts-only and is the
+   only account of a decode the daemon discarded: it is logged `safe=True`,
+   caught before the plain `WorkerError` arm. The xclip write is a separate
+   `try` from its read-back for the same reason — the write discards both
+   streams, so its own complaint is host vocabulary.
+   The overlay helper never opens `stenographer.log` — the daemon owns that
+   file and its rotation. It writes its own DEBUG `overlay-helper.log`
+   (`setup_helper_logging`, 1 MiB plus one `.1` backup) in the same state
+   directory, and the transport points the child's stderr at that same file so
+   a display library's own chatter lands beside the records. Two append-mode
+   descriptors share it, so it is a plain `FileHandler` rolled aside at most
+   once per start (`cap_helper_log`, run by the parent before it opens the
+   descriptor and by the child before it opens the handler) — never a
+   `RotatingFileHandler`, which would rotate the inode out from under the
+   other writer.
 7. **Overlay isolation** — the optional helper receives only fixed lifecycle
    metadata, a model-loading boolean, and 18 quantized spectrum levels over
    the versioned NDJSON protocol (v4); pulse timing is helper-local; raw
@@ -233,18 +380,27 @@ The rule is structural, not stylistic, and it is enforced by a test.
    error auto-hide — it queues the guarded hide (`status.error_timeout_applies`)
    like any other state. A backend must never run its own error timer: a
    supervisor that has stopped sends no further states *and* closes the
-   helper's stdin, which ends the helper anyway.
+   helper's stdin, which ends the helper anyway. `UnavailableReason` is fixed
+   vocabulary, and the helper forwards the *specific* reason its last backend
+   refused with (`selected_unavailable_reason`; `BACKENDS_UNAVAILABLE` is left
+   for the genuinely unknown case) rather than a generic one — a reason value
+   is data, not framing, so adding one (`backend_dependency_missing`, for a
+   backend whose imports failed) extends v4 rather than bumping it. Detail
+   beyond that fixed reason stays in `overlay-helper.log`.
 8. **Sound-pack boundary** — selection is global and whole-pack only. Bundled
    packs: `legacy`, `warm-desk`, `soft-electronic`, `minimal-ui` (reserved
    names, win collisions, listed only when complete). Custom packs live under
    `<active-config-directory>/sounds/<pack>/`, local-only, and must pass the
    four-cue WAV validation; invalid selection warns once and falls back to
    `minimal-ui`. Static completions expose only the four bundled names.
-9. **Config is fixed** — exactly 21 keys in 4 sections (`hotkey`, `audio`,
-   `asr`, `feedback`), frozen dataclasses, key-scoped `ConfigError` → exit 78,
+9. **Config is fixed** — exactly 25 keys in 5 sections (`hotkey`, `audio`,
+   `asr`, `feedback`, `analytics`), frozen dataclasses, key-scoped `ConfigError` → exit 78,
    no migrations, no setup-only keys. Setup/sounds save through the tomlkit
    preservation layer (comments, ordering, unknown content, symlinks, mode;
-   timestamped backup; unchanged bytes not written).
+   timestamped backup; unchanged bytes not written). `setup --default` is the
+   one non-interactive write: it stages the annotated template over the current
+   bytes (parsing none of them, so it repairs an unloadable file) and saves it
+   through that same layer.
 10. **Branch model** — develop on `dev`; merge to `main` only after the
     acceptance gates below pass on a real machine. Commits are conventional
     (`feat:`, `fix:`, `chore:`) with no attribution trailers.
@@ -252,9 +408,15 @@ The rule is structural, not stylistic, and it is enforced by a test.
 ## Acceptance gates (real machine, before dev → main)
 
 - `STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest` green.
-- Real dictation end-to-end in both `hold` and `toggle` modes.
-- After overlay-affecting changes: the pill appears on recording start and
-  disappears on stop, the amber border breathes only during a cold load, and
+- Real dictation end-to-end in `hold`, `toggle`, and `hybrid` modes. In hybrid:
+  a tap latches until the next press, a hold past the threshold stops on
+  release, and a latched recording still ends `audio.max_recording_seconds`
+  after the press.
+- After overlay-affecting changes: the pill appears on recording start, reads
+  Transcribing from the release onward (warm or cold model) and Delivering
+  once the transcript is ready, and disappears only after the paste lands (or
+  at once for silence / an empty transcript); the amber border breathes only
+  during a cold load; and
   killing the helper never affects dictation.
 - After capture/logging-affecting changes: a cold-start dictation retains its
   opening words, and an inspection of `stenographer.log` + the journal shows
@@ -262,6 +424,15 @@ The rule is structural, not stylistic, and it is enforced by a test.
 - After update-notice changes: a build whose `_version.py` is temporarily
   lowered pops the notification on daemon start with dictation unaffected, and
   `feedback.update_check = false` makes no request at all.
+- After logging changes: `stenographer.log` opens with one `banner:` block
+  naming the effective configuration (every key,
+  `hotkey.hybrid_threshold_seconds` included), every dictation leaves exactly
+  one `pipeline: utterance` line whose phases match what happened, and
+  `tests/test_daemon_smoke.py::test_dictation_log_reports_metrics_without_the_transcript`
+  passes against that real log.
+- `feedback.log_level = "debug"` changes what reaches the journal while
+  `stenographer.log` is unchanged, and `STENOGRAPHER_LOG_LEVEL` still outranks
+  it for one process.
 
 ## Architecture map
 
@@ -272,24 +443,25 @@ authoritative when editing.
 
 | Module | Role |
 |---|---|
-| `daemon.py` | Orchestrator: hotkey → record → transcribe → deliver. `Daemon.build(cfg, clipboard_backend=, status=, platform=)`; `run()` takes the platform single-instance lock, installs stop handlers, prepares audio, starts the listener, and — when `feedback.update_check` is on — starts the update-notice thread. Warms a cold model in the background once capture starts; toggle mode ends at `audio.max_recording_seconds` through the same stop path. |
+| `daemon.py` | Orchestrator: hotkey → record → transcribe → deliver. `Daemon.build(cfg, clipboard_backend=, status=, platform=)`; `run()` logs the startup banner (version, Python, platform, chosen backends, config path, every effective key in section order, resolved cpu_threads) before the capability gate can refuse, then takes the platform single-instance lock, installs stop handlers, prepares audio, starts the listener, and — when `feedback.update_check` is on — starts the update-notice thread. Warms a cold model in the background once capture starts; toggle mode — and a hybrid tap that latched — ends at `audio.max_recording_seconds` through the same stop path (hybrid arms that timer at the latching release, never at the press, for the window's remainder, so the cap always runs from the press and coincides with the recorder's own sample cap); the falling edge in hybrid runs `hybrid_release_action`. Each accepted start allocates the next `utt=N` (also the stale-max-duration-timer generation) and opens an `UtteranceRecord`; every phase fills it under the state lock, and the one `pipeline: utterance` INFO line is rendered from that record — still holding the lock, because it reads the record's own `started_at` and then clears the process-global `utt` stamp, and a re-press accepted in between would take both from it. Logging is a queue put, not process I/O. `stop()` closes an in-flight recording the same way, as `CANCELLED`. |
 | `hotkey.py` | Platform-neutral `parse_binding` (via `KeyTable`), `chord_active`/`edge`, `ChordTracker` (held-key union across devices, stuck-key synthesis, `wait_binding_released`). Providers subclass it and feed `_key_event(device_id, code, value)`. |
 | `keycodes.py` | Generated pure `KEY_*`/`BTN_*` name→code table (`scripts/gen_keycodes.py`); drift test on Linux. |
 | `binding_capture.py` | Core capture vocabulary shared by `cli/` and every provider: `BindingCaptureError`, `CaptureState`, `KeyEvent`, pure `reduce_capture`, `serialize_capture` (validated canonical `KEY_*` names). No host imports. |
 | `capabilities.py` | The shared capability gate (core, so the daemon never imports `cli/`): `Capabilities` / `OverlayCapability` with names identical to `HostProbe`'s, `REQUIRED`, pure `missing_required` (→ exit 78 / startup refusal), and the read-only `probe` / `probe_overlay` (host half from `probe_host()`, plus mic and model cache). Labels, fix hints, and rendering live in `cli/doctor.py`. |
 | `audio_probe.py` | The one PortAudio input-device enumeration (`query_devices`, never raises) plus its pure adapters, shared by the capability gate, `setup`, and `devices`. |
 | `update_check.py` | The daemon-start update notice (core, stdlib-only apart from an optional `certifi` CA bundle): pure `evaluate` (installed vs. latest tag, 1 h re-notify floor, never notifies for a local build ahead of the release), pure `build_request` and `tag_from_location` (the redirect target must sit under the repository's `releases/tag/` prefix, and the message renders from the parsed tag, never the URL), the cached record, and the thin edge — `fetch_latest_tag` (one metadata-only `HEAD` for the latest GitHub release, `User-Agent: stenographer-update-check`), `start_background_check`, and `run_check` (stamps the 24 h window on every attempt, fetches only when it has lapsed), which notifies through the platform `Notifier.info`. |
-| `audio.py` | PortAudio recorder: retained pre-negotiated stream, block-copy callback with latest-only handoff to the overlay supervisor, RMS speech gate, sample-rate fallback + resample, one stale-stream recovery. |
+| `audio.py` | PortAudio recorder: retained pre-negotiated stream, block-copy callback with latest-only handoff to the overlay supervisor, sample-rate fallback + resample, one stale-stream recovery, and a `CaptureStats` for the completed capture. `speech_gate_stats` is the RMS gate and the only one: one framing produces both the verdict and the numbers reported beside it, so a stats line cannot disagree with the decision it explains. |
 | `config.py` | TOML → frozen dataclasses; missing file written with annotated defaults (`default_toml()` renders the template at write time so the `hotkey.device` comment comes from `HostGuidance`); in-memory load path for validating setup output. |
 | `status.py` | Lifecycle states + strict protocol-v4 NDJSON contract + pure generation/coalescing policy. |
-| `transcribe/` | `worker.py` (crash-isolated ASR child: one job at a time, load-only warm-up, idle unload after `asr.idle_unload_seconds`, fixed load/decode deadlines, logs via queue), `model.py` (faster-whisper, anti-hallucination stack, `PathologicalOutputError`, `local_files_only`), `format.py` (zero-knob formatter). |
-| `delivery/` | `deliver.py` (`Deliverer` policy: confirmed copy → wait for release → `KeyInjector` chord), `feedback.py` (resolve one sound pack at startup, mute/volume policy, `CuePlayer`; no player → no-op). |
-| `overlay/` | Core-side only: `spectrum.py` (pure 32 ms Hann FFT, 18 bands, fixed floors, 18-level quantization), `supervisor.py` (mailbox, NDJSON framing, readiness deadline, restart budget, the 2.5 s error auto-hide, and shutdown policy — the child itself is spawned, polled, read, and killed through `HelperTransport` / `HelperProcess`), `reducer.py` (the pure message→intent state machine every helper backend runs: command rejection, loading-edge dedupe, spectrum apply, state transitions with the recording level reset, teardown and pulse re-arm decisions), `render.py` (pure Pillow frame plus both placement policies, `overlay_position` / `layer_margin_bottom`), `entry.py`. The OS-specific helper backends live in `platform/linux/overlay_backends/` (shared `base.py`, `wayland.py` / `x11.py`, vendored `protocols/`) and are reached only via `overlay_backends()`. |
-| `cli/` | argparse surface + lazy dispatch (`stenographer.cli:main`; `python -m stenographer.cli` for helper re-exec); `commands/` thin handlers for `run`, `transcribe`, `model download`, `doctor`, `devices`, `setup`, `sounds`, `completion {bash,zsh,fish}`. Heavy imports stay inside handlers. Engines: `console.py` (the shared interactive frame both `setup` and `sounds` build on: `Console`, stream defaulting, the TTY gate, the config-document load ladder, save reporting, yes/no and service-restart prompts), `setup.py` (TTY-only full / `--quick`), `setup_config.py` (preservation layer), `binding_capture.py` (thin `current_platform().capture_binding` delegator; the pure reducer is core `stenographer.binding_capture`), `calibration.py` (one-shot 18-band floor estimator for `feedback.spectrum_floor_dbfs` only), `doctor.py` (report layout: pure `render`/`format_service_status` taking a `HostGuidance`, plus `run`; the gate itself is core `stenographer.capabilities` and every host word is the platform's), `sounds.py`. Completion is static — no device/model/config/audio/network discovery. |
-| `platform/` | The host boundary — see above. |
-| `utils/logging_setup.py` | Idempotent stderr + rotating state-file logging (5 MiB × 3), `STENOGRAPHER_LOG_LEVEL`, privacy-safe worker forwarding. |
+| `transcribe/` | `worker.py` (ASR policy over an injected `AsrTransport`: one job at a time, load-only warm-up, idle unload after `asr.idle_unload_seconds`, fixed load/decode deadlines, logs via queue; every request carries the parent's `utt` so the child stamps its own lines, and a decode reports `WorkerTimings`), `model.py` (faster-whisper, anti-hallucination stack, `PathologicalOutputError`, `local_files_only`), `format.py` (zero-knob formatter), `pipeline.py` (the gate → decode → format core the daemon and `stenographer transcribe` share: the pure `UtteranceRecord`/phase measurements/`summary_fields`, the channel-0 `downmix`, the single `transcript_text` formatter call, and the two `log_*` emitters). |
+| `delivery/` | `deliver.py` (`Deliverer` policy: confirmed copy → wait for release → `KeyInjector` chord, reporting `DeliveryTimings` for the summary), `feedback.py` (resolve one sound pack at startup, mute/volume policy, `CuePlayer`; no player → no-op). |
+| `overlay/` | Core-side only: `spectrum.py` (pure 32 ms Hann FFT, 18 bands, fixed floors, 18-level quantization), `control.py` (immutable helper handshake state and pure message-order reducer), `supervisor.py` (mailbox, NDJSON framing, readiness deadline, restart budget, the 2.5 s error auto-hide, and shutdown policy — the child itself is spawned, polled, read, and killed through `HelperTransport` / `HelperProcess`), `reducer.py` (the pure message→intent state machine every helper backend runs: command rejection, loading-edge dedupe, spectrum apply, state transitions with the recording level reset, teardown and pulse re-arm decisions), `render.py` (pure Pillow frame plus both placement policies, `overlay_position` / `layer_margin_bottom`), `entry.py`. The OS-specific helper backends live in `platform/linux/overlay_backends/` (shared `base.py`, `wayland.py` / `x11.py`, vendored `protocols/`) and are reached only via `overlay_backends()`. |
+| `cli/` | argparse surface + lazy dispatch (`stenographer.cli:main`; `python -m stenographer.cli` for helper re-exec); `commands/` thin handlers for `run`, `transcribe` (the same downmix, gate, formatter call and summary line as the daemon, via `transcribe/pipeline.py`, logged as `utt=0 source=file`), `model download`, `doctor`, `devices`, `setup`, `sounds`, `stats` (numeric reporting/export/deletion), `completion {bash,zsh,fish}`. Heavy imports stay inside handlers. Engines: `console.py` (the shared interactive frame both `setup` and `sounds` build on: `Console`, stream defaulting, the TTY gate, the config-document load ladder, save reporting, yes/no and service-restart prompts), `setup.py` (TTY-only full / `--quick`, plus the non-interactive `--default` writer), `setup_config.py` (compatibility export of `settings.py`; `ConfigDocument.defaults` stages the template over the current bytes), `binding_capture.py` (thin `current_platform().capture_binding` delegator; the pure reducer is core `stenographer.binding_capture`), `calibration.py` (one-shot 18-band floor estimator for `feedback.spectrum_floor_dbfs` only), `doctor.py` (report layout: pure `render`/`format_service_status` taking a `HostGuidance` and the gathered `LogStatus` per log file, plus the "Logs" section's pure half — `tail_errors` (last 10 timestamped records whose *level column* is WARNING or worse) and `decode_tail` — and `run`, which reads only the final 256 KiB of each log and prints absent and unreadable as the distinct facts they are, never a failure; the gate itself is core `stenographer.capabilities` and every host word is the platform's), `sounds.py`. Completion is static — no device/model/config/audio/network discovery. |
+| `analytics/` | Schema-versioned SQLite numeric history, bounded asynchronous collection with immutable `Checkpoint` snapshots and `QueuedCheckpoint` records sharing a terminal-bounded `ResourceSummary`, resource summaries, reporting/export/deletion, and pure metric definitions. No transcript/audio history. |
+| `platform/` | The host boundary — see above. `diagnostics.py` provides resource probes, process identity/liveness, and runtime context for all three providers. `asr.py` owns the shared multiprocessing transport and picklable child entry point, resolved lazily by every provider via `asr_transport()`. `AsrProcess` exposes PID/exit code/running status, tuple send/receive (poll expiry raises `TimeoutError`), and idempotent close; graceful close requests stop and waits two seconds before terminate/kill escalation. Worker policy retains overall deadlines. `Daemon.build` supplies its injected provider; direct `Worker` callers resolve the default lazily. `HelperTransport.spawn(command, stderr_path=)` takes the file the helper's stderr appends to; `linux/overlay.py` classifies a backend's `ImportError` as `backend_dependency_missing` and never raises out of a probe. |
+| `utils/logging_setup.py` | The logging pipeline: a `QueueHandler` on the `stenographer` logger and one `QueueListener` thread owning both sinks — stderr (threshold from `STENOGRAPHER_LOG_LEVEL`, else `feedback.log_level`, re-applied after config loading by `with_config`, setup, and sounds through `apply_stderr_level`; no `asctime` when `Platform.journal_attached`) and the unconditionally DEBUG rotating state file (5 MiB × 3). Pure `fmt_event` (quoting values that would otherwise break `key=value` and ASCII-escaping Unicode controls) / `stderr_format`, the `utt=N` filter on the queue handler (`set_utterance`), tiered `log_failure`, privacy-safe worker forwarding (`forward_worker_record` queues prepared child records without re-stamping; registered child relays drain before the sole sink listener stops), `log_paths()` (the daemon and helper log paths derived from `current_platform().state_dir` without opening the pipeline), the helper's own `setup_helper_logging` / `cap_helper_log` (a plain append-mode `overlay-helper.log` shared with the helper's stderr, capped once at start and never rotated while open), and a `shutdown_logging` that stops the listener so the tail is never lost (`cli.main` runs it in a `finally`). |
 | `assets/` | Sound packs (`sounds/<pack>/`), icon, font, static completions. |
-| `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `quick-install.sh` (release bootstrap behind the README one-liner), `gen_keycodes.py`, `cue_audition.py`, `sound_asset_guard.py`. |
+| `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `quick-install.sh` (release bootstrap behind the README one-liner), `gen_keycodes.py`, `cue_audition.py`, `sound_asset_guard.py`, and `verify_distributions.py` (the shared release/preflight archive validator). |
 | `docs/` | `windows/SCOPE.md` (Windows backend scope), `code-smells.md` / `refactoring-techniques.md` (review/refactor references), `cue-audition.md`. |
 
 The ASR model (~1.5 GB) is never bundled — `stenographer model download`

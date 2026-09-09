@@ -11,7 +11,13 @@ cd "$(dirname "$0")/.."
 source scripts/progress.sh
 
 VERBOSE=0
-[[ "${1-}" == "--verbose" ]] && VERBOSE=1
+for build_option in "$@"; do
+    case "${build_option}" in
+        --verbose) VERBOSE=1 ;;
+        --headless) : ;; # Compatibility: all builds now contain only the CLI/daemon.
+        *) echo "error: unknown build option: ${build_option}" >&2; exit 64 ;;
+    esac
+done
 
 if [ ! -x .venv/bin/pyinstaller ]; then
     echo "error: .venv/bin/pyinstaller not found — run: .venv/bin/pip install -e '.[dev,build]'" >&2

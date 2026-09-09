@@ -28,4 +28,8 @@ def current_platform() -> Platform:
         from stenographer.platform.windows import WindowsPlatform
 
         return WindowsPlatform()
+    if sys.platform == "darwin":
+        from stenographer.platform.macos import MacOSPlatform
+
+        return MacOSPlatform()
     raise UnsupportedPlatformError(f"unsupported platform: {sys.platform}")

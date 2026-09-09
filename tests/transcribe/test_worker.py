@@ -8,11 +8,15 @@ smoke suite in test_worker_smoke.py.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
+from stenographer.config import Config
 from stenographer.transcribe.model import PathologicalOutputError, TranscriptionResult
 from stenographer.transcribe.worker import (
     _MODEL_LOAD_TIMEOUT_SECONDS,
+    Worker,
     WorkerError,
     WorkerEvent,
     WorkerLifecycle,
@@ -21,12 +25,34 @@ from stenographer.transcribe.worker import (
     _WorkerTimeoutError,
     classify_error,
     decode_timeout_seconds,
+    error_is_safe_to_render,
     interpret_response,
     lifecycle_transition,
     response_poll_timeout,
     should_arm_idle_timer,
     should_teardown_for_response_error,
 )
+
+
+def test_lifecycle_observer_failure_is_logged_and_suppressed(caplog):
+    observed = []
+
+    def raising_observer():
+        raise RuntimeError("observer failed")
+
+    worker = Worker(
+        Config.loads("").asr,
+        on_model_loading=raising_observer,
+        on_model_ready=lambda: observed.append("ready"),
+    )
+    with caplog.at_level(logging.WARNING, logger="stenographer.transcribe.worker"):
+        worker._emit_lifecycle((WorkerLifecycle.MODEL_LOADING, WorkerLifecycle.MODEL_READY))
+    assert observed == ["ready"]
+    messages = [record.getMessage() for record in caplog.records]
+    assert len(messages) == 1
+    assert "worker: lifecycle_callback_failed" in messages[0]
+    assert "lifecycle_event=model_loading" in messages[0]
+    assert 'error=RuntimeError detail="observer failed"' in messages[0]
 
 
 def test_interpret_response_returns_ok_result():
@@ -161,6 +187,19 @@ def test_should_arm_idle_timer_each_gate_blocks(override):
     assert should_arm_idle_timer(**kwargs) is False
 
 
+def test_only_the_pathological_decode_failure_may_render_its_own_message():
+    """The child's log tier, as the pure decision the child loop asks for.
+
+    Seen to FAIL against ``safe=False`` for every decode failure, which threw
+    away the counts-only rejection reason that is the sole account of a
+    discarded decode — and against ``safe=True`` for every one, which would let
+    the inference stack quote audio-derived text into the log.
+    """
+    assert error_is_safe_to_render(PathologicalOutputError("word density 312 > 40")) is True
+    assert error_is_safe_to_render(RuntimeError("decoded: hello there")) is False
+    assert error_is_safe_to_render(ValueError("cannot reshape")) is False
+
+
 def test_classify_error_pathological():
     assert classify_error(PathologicalOutputError("invalid decoder timestamp")) == (
         "pathological",
@@ -180,3 +219,19 @@ def test_classify_error_detail_is_leak_free():
     assert kind == "inference"
     assert transcript not in detail
     assert detail == "RuntimeError: decode failed"
+
+
+@pytest.mark.parametrize(
+    "kind, expected",
+    [
+        ("WorkerPathologicalError", "pathological"),
+        ("WorkerTimeoutError", "timeout"),
+        ("WorkerCrashedError", "crashed"),
+        ("WorkerModelError", "model_failed"),
+        ("WorkerError", "decode_failed"),
+    ],
+)
+def test_failure_measurement_classification(kind, expected):
+    from stenographer.transcribe import worker
+
+    assert worker.classify_worker_failure(getattr(worker, kind)("private")) == expected

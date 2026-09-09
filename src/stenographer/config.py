@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""TOML config: four frozen sections, key-scoped validation, default writer.
+"""TOML config: frozen sections, key-scoped validation, default writer.
 
 One flat module (the old five-file config package collapsed). ``""`` is the
 documented "unset" for optional string keys — there is no ``null`` rewrite.
@@ -19,7 +19,8 @@ ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
     {"int8", "int8_float16", "float16", "float32", "default"}
 )
 
-ALLOWED_HOTKEY_MODES: frozenset[str] = frozenset({"hold", "toggle"})
+ALLOWED_HOTKEY_MODES: frozenset[str] = frozenset({"hold", "toggle", "hybrid"})
+ALLOWED_LOG_LEVELS: frozenset[str] = frozenset({"debug", "info", "warning", "error"})
 MIN_SPECTRUM_FLOOR_DBFS = -96.0
 MAX_SPECTRUM_FLOOR_DBFS = -13.0
 SOUND_PACK_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
@@ -42,7 +43,8 @@ class ConfigError(Exception):
 class HotkeyConfig:
     binding: str
     device: str | None
-    mode: str = "hold"
+    mode: str = "hybrid"
+    hybrid_threshold_seconds: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,13 @@ class FeedbackConfig:
     update_check: bool = True
     spectrum_floor_dbfs: SpectrumFloor = -45.0
     sound_pack: str = DEFAULT_SOUND_PACK
+    log_level: str = "info"
+
+
+@dataclass(frozen=True)
+class AnalyticsConfig:
+    enabled: bool = True
+    resource_profiling: bool = True
 
 
 @dataclass(frozen=True)
@@ -130,6 +139,14 @@ class _Reader:
             raise self._err(key, f"must be one of {sorted(allowed)}, got {value!r}")
         return value
 
+    def folded_choice(self, key: str, allowed: frozenset[str]) -> str:
+        """A choice matched case-insensitively; the canonical lower-case name is kept."""
+        raw = self.str(key)
+        value = raw.casefold()
+        if value not in allowed:
+            raise self._err(key, f"must be one of {sorted(allowed)}, got {raw!r}")
+        return value
+
     def spectrum_floor(self, key: str) -> SpectrumFloor:
         value = self.table.get(key)
         if isinstance(value, int | float) and not isinstance(value, bool):
@@ -162,7 +179,12 @@ def _build_hotkey(table: dict, path: pathlib.Path) -> HotkeyConfig:
     binding = r.str("binding")
     if not binding:
         raise ConfigError(path, "hotkey.binding", "must be non-empty")
-    return HotkeyConfig(binding, r.optional_str("device"), r.choice("mode", ALLOWED_HOTKEY_MODES))
+    return HotkeyConfig(
+        binding,
+        r.optional_str("device"),
+        r.choice("mode", ALLOWED_HOTKEY_MODES),
+        r.ranged_number("hybrid_threshold_seconds", 0.05, 5.0),
+    )
 
 
 def _build_audio(table: dict, path: pathlib.Path) -> AudioConfig:
@@ -205,6 +227,7 @@ def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
         update_check=r.bool("update_check"),
         spectrum_floor_dbfs=r.spectrum_floor("spectrum_floor_dbfs"),
         sound_pack=sound_pack,
+        log_level=r.folded_choice("log_level", ALLOWED_LOG_LEVELS),
     )
 
 
@@ -224,7 +247,8 @@ _DEFAULT_TOML_TEMPLATE = """\
 [stenographer.hotkey]
 binding = "KEY_RIGHTCTRL"
 device = ""                    # {hotkey_device_comment}
-mode = "hold"                  # hold = push-to-talk; toggle = press to start, press again to stop
+mode = "hybrid"                # hold = push-to-talk; toggle = press/press; hybrid = tap or hold
+hybrid_threshold_seconds = 0.5 # hybrid only: a press held this long stops on release
 
 [stenographer.audio]
 input_device = ""              # PortAudio device name/index; "" = system default
@@ -249,6 +273,11 @@ overlay = true                 # best-effort lifecycle pill; dictation is indepe
 update_check = true            # daily HTTPS check for a newer release; a notice, never self-update
 spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
 sound_pack = "{sound_pack}"      # bundled pack name or valid pack under sounds/
+log_level = "info"             # debug | info | warning | error; the file keeps debug
+
+[stenographer.analytics]
+enabled = true                # local numeric history; no audio or transcript text
+resource_profiling = true     # sample application/host resources during utterances
 """
 
 
@@ -274,11 +303,17 @@ class Config:
     audio: AudioConfig
     asr: AsrConfig
     feedback: FeedbackConfig
+    analytics: AnalyticsConfig = AnalyticsConfig()
 
     @classmethod
     def defaults(cls) -> Config:
         return cls(
-            hotkey=HotkeyConfig(binding="KEY_RIGHTCTRL", device=None, mode="hold"),
+            hotkey=HotkeyConfig(
+                binding="KEY_RIGHTCTRL",
+                device=None,
+                mode="hybrid",
+                hybrid_threshold_seconds=0.5,
+            ),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
             asr=AsrConfig(
                 model="Systran/faster-whisper-medium.en",
@@ -298,6 +333,7 @@ class Config:
                 update_check=True,
                 spectrum_floor_dbfs=-45.0,
                 sound_pack=DEFAULT_SOUND_PACK,
+                log_level="info",
             ),
         )
 
@@ -324,7 +360,7 @@ class Config:
         if not isinstance(table, dict):
             raise ConfigError(path, "stenographer", f"must be a table, got {type(table).__name__}")
         merged = _merge(asdict(cls.defaults()), table)
-        for name in ("hotkey", "audio", "asr", "feedback"):
+        for name in ("hotkey", "audio", "asr", "feedback", "analytics"):
             if not isinstance(merged[name], dict):
                 raise ConfigError(path, name, f"must be a table, got {type(merged[name]).__name__}")
         return cls(
@@ -332,6 +368,12 @@ class Config:
             audio=_build_audio(merged["audio"], path),
             asr=_build_asr(merged["asr"], path),
             feedback=_build_feedback(merged["feedback"], path),
+            analytics=AnalyticsConfig(
+                enabled=_Reader(merged["analytics"], path, "analytics").bool("enabled"),
+                resource_profiling=_Reader(merged["analytics"], path, "analytics").bool(
+                    "resource_profiling"
+                ),
+            ),
         )
 
     @classmethod

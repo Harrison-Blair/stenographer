@@ -81,26 +81,4 @@ jobs:
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          test -f "dist/stenographer-${VERSION}-py3-none-any.whl"
-          test -f "dist/stenographer-${VERSION}.tar.gz"
-          .venv/bin/python -m zipfile --list \
-            "dist/stenographer-${VERSION}-py3-none-any.whl" \
-            > "${RUNNER_TEMP}/wheel-files.txt"
-          for completion in stenographer.bash _stenographer stenographer.fish; do
-            grep -F "stenographer/assets/completions/${completion}" \
-              "${RUNNER_TEMP}/wheel-files.txt"
-          done
-          .venv/bin/python scripts/sound_asset_guard.py \
-            "dist/stenographer-${VERSION}-py3-none-any.whl" \
-            --prefix stenographer/assets/sounds
-          tar -tzf "dist/stenographer-${VERSION}.tar.gz" \
-            > "${RUNNER_TEMP}/sdist-files.txt"
-          grep -Fx "stenographer-${VERSION}/LICENSE" "${RUNNER_TEMP}/sdist-files.txt"
-          for completion in stenographer.bash _stenographer stenographer.fish; do
-            grep -Fx \
-              "stenographer-${VERSION}/src/stenographer/assets/completions/${completion}" \
-              "${RUNNER_TEMP}/sdist-files.txt"
-          done
-          .venv/bin/python scripts/sound_asset_guard.py \
-            "dist/stenographer-${VERSION}.tar.gz" \
-            --prefix "stenographer-${VERSION}/src/stenographer/assets/sounds"
+          .venv/bin/python scripts/verify_distributions.py dist "$VERSION"

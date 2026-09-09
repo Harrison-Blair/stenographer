@@ -339,6 +339,9 @@ def run(
     if isinstance(loaded, int):
         return loaded
     document = loaded
+    from stenographer.utils.logging_setup import apply_stderr_level
+
+    apply_stderr_level(document.config.feedback.log_level)
 
     config_dir = document.path.parent
     api = _sound_pack_api()

@@ -34,18 +34,25 @@ LINUX_WORDS = re.compile(
 # signalling, and raw-fd I/O are where portable-looking stdlib calls stop
 # being portable (SelectSelector takes only sockets on Windows; terminate()
 # there is already a kill; a console-control code fed to signal.Signals
-# raises). ``transcribe/worker.py`` and the overlay *helper* backends are
-# deliberately absent: the worker child and the helper process are their own
-# processes, not the daemon's portable core.
+# raises). The ASR worker also delegates to a platform transport; only helper
+# backends and the native ASR implementation own process primitives.
 PROCESS_MODULES = re.compile(
-    r"^\s*(?:import|from)\s+(subprocess|selectors|fcntl|signal|msvcrt)\b", re.M
+    r"^\s*(?:import|from)\s+(subprocess|selectors|fcntl|signal|msvcrt|multiprocessing)\b", re.M
 )
 
 RAW_FD_IO = re.compile(r"\bos\.(?:read|write|kill|waitpid|pipe)\(")
 
-TRANSPORT_FREE = ("overlay/supervisor.py", "audio.py", "hotkey.py", "daemon.py")
+TRANSPORT_FREE = (
+    "overlay/supervisor.py",
+    "audio.py",
+    "hotkey.py",
+    "daemon.py",
+    "transcribe/worker.py",
+)
 
 BLOCKED = (
+    "PySide6",
+    "stenographer_desktop",
     "evdev",
     "fcntl",
     "termios",
@@ -57,10 +64,20 @@ BLOCKED = (
 )
 
 CORE = (
+    "stenographer.analytics",
+    "stenographer.analytics.checkpoints",
+    "stenographer.diagnostics",
+    "stenographer.settings",
+    "stenographer.calibration",
+    "stenographer.platform.macos",
     "stenographer.status",
     "stenographer.keycodes",
     "stenographer.config",
     "stenographer.audio",
+    "stenographer.capture_metrics",
+    "stenographer.inference",
+    "stenographer.cleanup",
+    "stenographer.evaluation",
     "stenographer.hotkey",
     "stenographer.audio_probe",
     "stenographer.capabilities",
@@ -88,11 +105,14 @@ CORE = (
     "stenographer.overlay",
     "stenographer.overlay.supervisor",
     "stenographer.overlay.reducer",
+    "stenographer.overlay.control",
     "stenographer.overlay.render",
     "stenographer.overlay.spectrum",
     "stenographer.transcribe.worker",
     "stenographer.transcribe.model",
+    "stenographer.transcribe.reconcile",
     "stenographer.transcribe.format",
+    "stenographer.transcribe.pipeline",
     "stenographer.utils.logging_setup",
     "stenographer.platform",
     "stenographer.platform.base",

@@ -13,16 +13,16 @@
 
 [![release](https://img.shields.io/github/v/release/Harrison-Blair/stenographer?color=brightgreen)](https://github.com/Harrison-Blair/stenographer/releases)
 
-Local, offline, Wayland push-to-talk / toggle dictation daemon. Press a
-configurable hotkey, speak, get the text at your cursor and in your
+Local, offline, Wayland push-to-talk, toggle, or hybrid dictation daemon.
+Press a configurable hotkey, speak, get the text at your cursor and in your
 clipboard. See [BUILD.md](BUILD.md) for the standalone-binary build
 instructions.
 
 > [!NOTE]
 > This `README.md` was generated with AI, but reviewed for accuracy by a human
 
-Default hotkey: Right Ctrl in hold-to-talk mode. Hold it, speak, and release;
-toggle mode is optional.
+Default hotkey: Right Ctrl in hybrid mode. Tap it to latch, or hold it, speak,
+and release; plain hold-to-talk and toggle modes are optional.
 
 
 <!--
@@ -100,17 +100,24 @@ wizards offer the bundled and valid custom sound packs, then offer the separate,
 approximately 1.5 GB model download and check the microphone, clipboard, model,
 and input permissions.
 
-Configuration lives at `~/.config/stenographer/config.toml`. Hold-to-talk is
-the default. To use toggle mode and hide visual feedback, set:
+Configuration lives at `~/.config/stenographer/config.toml`. Hybrid mode is the
+default: a tap released inside `hybrid_threshold_seconds` (default `0.5`)
+latches the recording until the next press, and a press held past it stops on
+release. To use plain hold-to-talk or toggle mode and hide visual feedback,
+set:
 
 ```toml
-[hotkey]
-mode = "toggle"
+[stenographer.hotkey]
+mode = "toggle"  # or "hold"
 
-[feedback]
+[stenographer.feedback]
 overlay = false
 sound_pack = "minimal-ui"
 ```
+
+`stenographer setup --default` rewrites `config.toml` with the annotated
+defaults without prompting. Any previous file is backed up first and the
+backup path is printed.
 
 ### 4. Start and dictate
 
@@ -119,9 +126,10 @@ systemctl --user start stenographer.service
 systemctl --user status stenographer.service --no-pager
 ```
 
-Hold Right Ctrl, speak, then release. The transcript is pasted at the cursor
-and remains on the clipboard. In toggle mode, press once to start and again to
-stop.
+Hold Right Ctrl, speak, then release — or tap it to latch, speak, and tap again
+to stop. The transcript is pasted at the cursor and remains on the clipboard.
+In `hold` mode only the held press works; in `toggle` mode press once to start
+and again to stop.
 
 ## CLI
 
@@ -132,7 +140,7 @@ stop.
 | `stenographer model download` | Download the configured ASR model into the local cache. |
 | `stenographer doctor` | Check required capabilities and print fixes. |
 | `stenographer devices` | List audio input devices. |
-| `stenographer setup [--quick]` | Configure everything, or only the common settings. |
+| `stenographer setup [--quick \| --default]` | Configure everything, only the common settings, or write the annotated defaults without prompting. |
 | `stenographer sounds [PACK]` | List, preview, or select a whole sound pack. |
 | `stenographer completion {bash,zsh,fish}` | Print a native shell completion definition. |
 
@@ -237,6 +245,36 @@ real graphical session, not CI or a sandbox. `tests/platform/test_core_isolation
 guards the boundary: it imports the whole core with evdev, fcntl, termios, and the
 Wayland/X11 libraries blocked, so a Linux-only import leaking into the core fails
 on any machine. CI also runs the unit suite on Windows as a portability check.
+
+## CLI settings and private analytics
+
+Use `stenographer setup` to configure dictation and `stenographer sounds` to
+select a complete sound pack. CLI saves preserve comments and unknown settings;
+restart the daemon explicitly to apply changes. The settings GUI and its daemon
+control endpoint have been removed. Native bundles contain the CLI/daemon and
+its helpers; the lifecycle pill, spectrum bars, and loading animation remain.
+See [native builds and acceptance](BUILD.md#native-development-builds) for
+Windows/macOS limitations.
+
+Run `stenographer stats` for lifetime dictation totals.
+`stenographer stats export --format json` and
+`stenographer stats export --format csv` export numeric records.
+`stenographer stats delete --since 2026-09-01 --until 2026-09-07` previews a
+local-date deletion, and `--yes` confirms it. `stenographer stats reset` previews
+removal of all sources. Recognized words count even
+if delivery fails; completed ASR audio counts input samples, including pauses.
+No audio, transcript, prompt or hotword text is retained in analytics.
+In the `[stenographer.analytics]` section, set
+`enabled = false` to disable collection, or `resource_profiling = false` to retain
+ordinary analytics without host sampling.
+Word counts use Unicode alphanumeric runs with internal apostrophes; hyphenated
+words count separately. Reports calculate nearest-rank p95/p99 from matching
+utterances and keep missing measurements unknown. Collection is asynchronous:
+storage failures do not block dictation, and uncommitted measurements can be lost
+in a crash. See [native acceptance requirements](packaging/NATIVE-ACCEPTANCE.md).
+
+Removing the GUI preserves existing configuration, analytics history, models,
+and logs. Analytics persist until explicitly deleted.
 
 ## License
 

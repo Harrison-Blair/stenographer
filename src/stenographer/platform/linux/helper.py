@@ -16,10 +16,11 @@ import contextlib
 import os
 import selectors
 import subprocess
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
 _SPAWN_CLEANUP_SECONDS = 0.75
 
@@ -97,22 +98,36 @@ class LinuxHelperProcess:
 
 
 class LinuxHelperTransport:
-    """Spawns the helper with piped stdin/stdout, a discarded stderr, and no buffering.
+    """Spawns the helper with piped stdin/stdout, a captured stderr, and no buffering.
 
-    stderr goes to ``DEVNULL`` so a backend's library chatter can never fill a
-    pipe nobody drains, and ``bufsize=0`` keeps every protocol record on the
-    wire as soon as it is written. Linux needs no extra ``Popen`` flags (a
-    Windows transport will want ``CREATE_NO_WINDOW``).
+    stderr is never a pipe — nobody drains it, and a chatty backend library
+    would eventually block the child — so it is either the caller's file, opened
+    append-only so it can share the helper's own log with the child's handler,
+    or ``DEVNULL``. ``bufsize=0`` keeps every protocol record on the wire as
+    soon as it is written. Linux needs no extra ``Popen`` flags (a Windows
+    transport will want ``CREATE_NO_WINDOW``).
     """
 
-    def spawn(self, command: Sequence[str]) -> LinuxHelperProcess:
-        process = subprocess.Popen(
-            tuple(command),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=0,
-        )
+    def spawn(
+        self, command: Sequence[str], *, stderr_path: Path | None = None
+    ) -> LinuxHelperProcess:
+        stderr: IO[bytes] | int = subprocess.DEVNULL
+        if stderr_path is not None:
+            with contextlib.suppress(OSError):
+                stderr = open(stderr_path, "ab", buffering=0)  # noqa: SIM115
+        try:
+            process = subprocess.Popen(
+                tuple(command),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=stderr,
+                bufsize=0,
+            )
+        finally:
+            # The child holds its own duplicate of the descriptor from here on.
+            if not isinstance(stderr, int):
+                with contextlib.suppress(OSError):
+                    stderr.close()
         try:
             return LinuxHelperProcess(process)
         except BaseException:

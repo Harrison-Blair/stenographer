@@ -3,7 +3,7 @@
 
 ``stenographer.keycodes`` is emitted by ``scripts/gen_keycodes.py`` from
 ``evdev.ecodes`` so every provider speaks one ``KEY_*`` vocabulary. This proves
-the checked-in data has not drifted from the source it was generated against,
+the checked-in codes agree with names available in the installed kernel headers,
 and that the Linux table's evdev-first lookup agrees with it entry for entry.
 
 Linux-only: the directory conftest ignores it elsewhere.
@@ -18,10 +18,12 @@ from stenographer.platform.linux.hotkey import EvdevKeyTable
 
 
 def test_generated_codes_match_evdev():
+    # Older host headers can lack newer names; the pure cross-platform table
+    # intentionally remains a superset. Existing names must never be renumbered.
     mismatched = {
         name: (code, evdev.ecodes.ecodes.get(name))
         for name, code in KEY_CODES.items()
-        if evdev.ecodes.ecodes.get(name) != code
+        if name in evdev.ecodes.ecodes and evdev.ecodes.ecodes[name] != code
     }
     assert mismatched == {}
 

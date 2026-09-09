@@ -12,6 +12,7 @@ placement and parsing policy independently testable.
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import os
 import re
@@ -30,6 +31,9 @@ from stenographer.platform.linux.overlay_backends.base import (
     HelperBackend,
 )
 from stenographer.status import Backend, OverlayState, UnavailableReason
+from stenographer.utils.logging_setup import fmt_event, log_failure
+
+log = logging.getLogger(__name__)
 
 _ARGB_DEPTH = 32
 _BYTES_PER_PIXEL = 4
@@ -358,6 +362,9 @@ class X11OverlayBackend(HelperBackend):
         self._gc = None
         self._colormap = None
         self._placement: Placement | None = None
+        self._compositor_translation = (0, 0)
+        self._target_position: tuple[int, int] | None = None
+        self._requested_position: tuple[int, int] | None = None
         self._window_epoch = 0
         self._stacking_reassert: StackingReassertPlan | None = None
 
@@ -365,13 +372,20 @@ class X11OverlayBackend(HelperBackend):
             raise BackendUnavailableError(UnavailableReason.NO_X_DISPLAY)
         try:
             self._display = xdisplay.Display()
-        except Exception:
+        except Exception as exc:
+            # ``from None`` on the wire: the parent gets the fixed reason only.
+            log_failure(log, logging.INFO, "overlay_helper: x_connect_failed", exc, safe=True)
             raise BackendUnavailableError(UnavailableReason.X_CONNECT_FAILED) from None
         try:
-            if not (
-                self._display.has_extension(shape.extname)
-                and self._display.has_extension(randr.extname)
-            ):
+            missing = tuple(
+                name
+                for name in (shape.extname, randr.extname)
+                if not self._display.has_extension(name)
+            )
+            if missing:
+                log.info(
+                    fmt_event("overlay_helper", "x_extensions_missing", missing="|".join(missing))
+                )
                 raise BackendUnavailableError(UnavailableReason.X_EXTENSIONS_UNAVAILABLE)
             self._screen = self._display.screen()
             render_formats = _render_formats(self._display)
@@ -398,8 +412,9 @@ class X11OverlayBackend(HelperBackend):
         except BackendUnavailableError:
             self.close()
             raise
-        except Exception:
+        except Exception as exc:
             self.close()
+            log_failure(log, logging.INFO, "overlay_helper: x_setup_failed", exc, safe=True)
             raise BackendUnavailableError(UnavailableReason.X_EXTENSIONS_UNAVAILABLE) from None
 
     def _root_monitor(self) -> Monitor:
@@ -509,14 +524,18 @@ class X11OverlayBackend(HelperBackend):
         placement = self._placement
         frame = self._frame(state, scale=placement.scale)
         x, y = overlay_position(placement.monitor.rect, frame)
+        self._target_position = (x, y)
+        requested_x = x - self._compositor_translation[0]
+        requested_y = y - self._compositor_translation[1]
+        self._requested_position = (requested_x, requested_y)
 
         created = self._window is None
         if created:
             self._window_epoch += 1
             self._colormap = self._screen.root.create_colormap(self._visual.visual_id, X.AllocNone)
             self._window = self._screen.root.create_window(
-                x,
-                y,
+                requested_x,
+                requested_y,
                 frame.width,
                 frame.height,
                 0,
@@ -532,7 +551,12 @@ class X11OverlayBackend(HelperBackend):
             self._gc = self._window.create_gc()
             self._set_properties(self._window)
         else:
-            self._window.configure(x=x, y=y, width=frame.width, height=frame.height)
+            self._window.configure(
+                x=requested_x,
+                y=requested_y,
+                width=frame.width,
+                height=frame.height,
+            )
 
         self._upload(frame)
         self._window.map()
@@ -592,6 +616,8 @@ class X11OverlayBackend(HelperBackend):
             with contextlib.suppress(Exception):
                 colormap.free()
         self._placement = None
+        self._target_position = None
+        self._requested_position = None
         self._pulse.disarm_frames()
         if self._display is not None:
             with contextlib.suppress(Exception):
@@ -616,6 +642,24 @@ class X11OverlayBackend(HelperBackend):
             return
         self._set_stacking_properties(self._window)
         self._window.configure(stack_mode=X.Above)
+        if self._target_position is not None and self._requested_position is not None:
+            # Some XWayland compositors translate override-redirect positions
+            # after map when their native monitor layout has negative origins.
+            # RandR exposes only a normalized root, so learn the settled delta
+            # and compensate every later request without compositor-specific IPC.
+            geometry = self._window.get_geometry()
+            translation = (
+                geometry.x - self._requested_position[0],
+                geometry.y - self._requested_position[1],
+            )
+            self._compositor_translation = translation
+            requested_position = (
+                self._target_position[0] - translation[0],
+                self._target_position[1] - translation[1],
+            )
+            if requested_position != self._requested_position:
+                self._requested_position = requested_position
+                self._window.configure(x=requested_position[0], y=requested_position[1])
         self._display.flush()
 
     def _display_fd(self) -> int:
@@ -644,8 +688,10 @@ class X11OverlayBackend(HelperBackend):
     def _close(self) -> None:
         self._destroy_window()
         if self._display is not None:
-            with contextlib.suppress(Exception):
+            try:
                 self._display.close()
+            except Exception as exc:
+                log_failure(log, logging.DEBUG, "overlay_helper: x_close_failed", exc, safe=True)
             self._display = None
 
 

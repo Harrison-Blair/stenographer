@@ -151,8 +151,8 @@ Owner decision required (§9).
   up front.
 
 Explicitly **out of scope without an `AGENTS.md` revision**: PowerShell
-completions (the completion surface is fixed at Bash/Zsh/Fish), hybrid
-trigger mode, per-device hotkey selection.
+completions (the completion surface is fixed at Bash/Zsh/Fish), per-device
+hotkey selection.
 
 ## 6. Dependency verdict
 

@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 build_args=()
 for arg in "$@"; do
     case "${arg}" in
-        --verbose) build_args=(--verbose) ;;
+        --verbose|--headless) build_args+=("${arg}") ;;
         --help|-h)
             exec scripts/install.sh "${arg}"
             ;;

@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure XDG directory resolution for the Linux provider."""
+"""Pure environment resolution for the Linux provider: XDG dirs, journal."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from stenographer.platform.linux.dirs import config_path, runtime_dir, state_dir
+from stenographer.platform.linux.dirs import (
+    config_path,
+    journal_attached,
+    runtime_dir,
+    state_dir,
+)
 
 
 def test_config_path_prefers_xdg_config_home():
@@ -36,3 +41,15 @@ def test_runtime_dir_prefers_xdg_runtime_dir():
 
 def test_runtime_dir_falls_back_to_run_user_uid():
     assert runtime_dir({}).parent == Path("/run/user")
+
+
+def test_journal_attached_follows_the_systemd_variable():
+    """systemd sets JOURNAL_STREAM for a unit whose stderr is the journal.
+
+    Seen to FAIL against a probe keyed on ``INVOCATION_ID`` (true for any
+    systemd-started unit, journal or not).
+    """
+
+    assert journal_attached({"JOURNAL_STREAM": "8:123456"}) is True
+    assert journal_attached({"INVOCATION_ID": "abc"}) is False
+    assert journal_attached({}) is False

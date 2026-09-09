@@ -8,7 +8,7 @@ from dataclasses import replace
 import tomlkit
 
 from stenographer.cli.setup_config import ConfigDocument
-from stenographer.config import Config
+from stenographer.config import Config, default_toml
 
 PRESERVATION_FIXTURE = """\
 # hand-written preface
@@ -43,11 +43,11 @@ def test_render_preserves_comments_order_and_unknown_content():
     assert Config.loads(rendered) == reviewed
 
 
-def test_render_materializes_all_21_known_keys():
+def test_render_materializes_all_23_known_keys():
     rendered = ConfigDocument.loads("").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
 
-    assert list(root["hotkey"]) == ["binding", "device", "mode"]
+    assert list(root["hotkey"]) == ["binding", "device", "mode", "hybrid_threshold_seconds"]
     assert list(root["audio"]) == ["input_device", "min_speech_rms", "max_recording_seconds"]
     assert list(root["asr"]) == [
         "model",
@@ -67,8 +67,9 @@ def test_render_materializes_all_21_known_keys():
         "update_check",
         "spectrum_floor_dbfs",
         "sound_pack",
+        "log_level",
     ]
-    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 21
+    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 23
 
 
 def test_render_encodes_optional_strings_as_empty_strings():
@@ -138,3 +139,15 @@ def test_render_round_trips_calibrated_spectrum_profile_as_toml_array():
         profile
     )
     assert Config.loads(rendered) == reviewed
+
+
+def test_defaults_document_renders_the_annotated_template_verbatim(tmp_path):
+    """Seen to FAIL against a writer built on ``ConfigDocument.load`` (the
+    hand-written comment survived and none of the annotations appeared)."""
+    path = tmp_path / "config.toml"
+    path.write_text("[stenographer.asr]\nbeam_size = 3 # mine\n", encoding="utf-8")
+
+    rendered = ConfigDocument.defaults(path).render(Config.defaults())
+
+    assert rendered == default_toml()
+    assert "# mine" not in rendered

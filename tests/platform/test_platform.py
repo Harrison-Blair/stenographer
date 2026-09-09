@@ -29,7 +29,7 @@ _LINUX_ONLY_WORDS = (
 def test_current_platform_matches_host_and_is_cached():
     plat = current_platform()
     assert isinstance(plat, Platform)
-    expected = "linux" if sys.platform.startswith("linux") else "windows"
+    expected = {"linux": "linux", "win32": "windows", "darwin": "macos"}[sys.platform]
     assert plat.name == expected
     assert current_platform() is plat
 
@@ -51,10 +51,11 @@ def test_windows_stub_conforms_and_reports_everything_unavailable():
     assert not (probe.key_injector_ok or probe.hotkey_access_ok or probe.clipboard_ok)
     assert plat.overlay_backends() == ()
     assert plat.hotkey_devices() == []
-    assert plat.cue_player() is None
     # os.cpu_count() counts logical CPUs; the stub must not pass that off as a
     # physical-core count, so it says "cannot tell" and the core falls back.
     assert plat.physical_core_count() is None
+    # No journal to defer timestamps to, whatever the environment says.
+    assert plat.journal_attached({"JOURNAL_STREAM": "8:123456"}) is False
     # The KEY_* vocabulary is core data, so the stub speaks it even with no
     # backend: a binding must parse and render wherever config is read.
     assert plat.keys().code("KEY_RIGHTCTRL") == 97
