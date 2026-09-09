@@ -58,7 +58,7 @@ jobs:
           python -m venv .venv
           "${{ matrix.pip }}" install -e ".[dev,build]"
       - name: Pure logic, persistence, and platform tests
-        run: '"${{ matrix.python }}" -m pytest -m "not integration"'
+        run: '"${{ matrix.python }}" -m pytest -m "not integration" --durations=15'
       - name: Build native CLI bundle
         run: '"${{ matrix.python }}" -m PyInstaller --noconfirm --clean packaging/stenographer.spec'
       - name: Frozen startup

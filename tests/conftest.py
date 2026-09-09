@@ -12,6 +12,30 @@ from __future__ import annotations
 import os
 import pathlib
 
+import pytest
+
+
+@pytest.fixture
+def drain_analytics():
+    def drain(session):
+        # Verify persistence independently of the daemon's two-second shutdown
+        # budget, allowing for slow CI disks while retaining a bounded failure.
+        assert session.close(timeout=15), session.health
+
+    return drain
+
+
+@pytest.fixture
+def analytics_session(request, drain_analytics):
+    from stenographer.analytics import AnalyticsSession
+
+    def create(path, **kwargs):
+        session = AnalyticsSession(path, **kwargs)
+        request.addfinalizer(lambda: drain_analytics(session))
+        return session
+
+    return create
+
 
 def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
     if collection_path.name.endswith("_smoke.py"):

@@ -3,7 +3,7 @@
 
 from dataclasses import replace
 
-from stenographer.analytics import AnalyticsSession, Store
+from stenographer.analytics import Store
 from stenographer.config import Config
 from stenographer.diagnostics import Collection, technical_context
 
@@ -27,13 +27,15 @@ def test_technical_context_never_retains_user_paths_or_prompt():
     assert "secret" not in str(context)
 
 
-def test_bad_checkpoint_cannot_prevent_terminal_persistence(tmp_path):
+def test_bad_checkpoint_cannot_prevent_terminal_persistence(
+    tmp_path, analytics_session, drain_analytics
+):
     path = tmp_path / "analytics.sqlite3"
-    collection = Collection(enabled=True, session=AnalyticsSession(path))
+    collection = Collection(enabled=True, session=analytics_session(path))
     identity = collection.start(1)
     collection.checkpoint(identity, "secured_capture", {"transcript": "must not persist"})
     collection.finish(identity, "cancelled", {"capture_s": 0.5})
-    assert collection.close()
+    drain_analytics(collection)
     assert collection.health["degraded"]
     assert collection.health["dropped_checkpoints"] == 1
     (record,) = Store(path).records()
