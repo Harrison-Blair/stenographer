@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Shared host adapters for desktop status and profiling. No GUI imports."""
+"""Shared host adapters for resource profiling and process diagnostics."""
 
 from __future__ import annotations
 
@@ -11,16 +11,9 @@ import sys
 import time
 from pathlib import Path
 
-from stenographer.platform.base import ServiceStatus
 
-
-class DesktopHostMixin:
+class DiagnosticsHostMixin:
     """Host operations shared by providers; backend modules stay lazy."""
-
-    def control_transport(self):
-        from stenographer.platform.local_control import LocalControlTransport
-
-        return LocalControlTransport(self.state_dir(os.environ, Path.home()) / "control")
 
     def resource_probe(self):
         return ResourceProbe()
@@ -49,98 +42,6 @@ class DesktopHostMixin:
             "architecture": platform.machine(),
             "python_version": platform.python_version(),
         }
-
-    def service_status(self) -> ServiceStatus:
-        return ServiceStatus(False, detail=f"Service integration is unavailable on {self.name}.")
-
-    def service_action(self, action: str) -> tuple[bool, str]:
-        return False, self.service_status().detail
-
-    def restart_running_service(self) -> tuple[bool, str]:
-        return False, self.service_status().detail
-
-    def focused_key_name(
-        self, key: int, native_virtual_key: int = 0, native_scan_code: int = 0
-    ) -> str | None:
-        """Qt key metadata to shared binding names; imports no Qt.
-
-        Linux native scan codes use XKB's evdev offset on X11 and Wayland,
-        preserving physical keys regardless of layout or shifted symbols.
-        Logical values are stable Qt public constants used as a fallback. Left
-        modifiers are the default without native side information.
-        """
-        if self.name == "linux" and native_scan_code > 8:
-            from stenographer.keycodes import CODE_NAMES
-
-            name = CODE_NAMES.get(native_scan_code - 8)
-            if name is not None:
-                return name
-        if 65 <= key <= 90 or 48 <= key <= 57:
-            return f"KEY_{chr(key)}"
-        if 0x01000030 <= key <= 0x01000047:
-            return f"KEY_F{key - 0x01000030 + 1}"
-        names = {
-            0x20: "KEY_SPACE",
-            0x01000000: "KEY_ESC",
-            0x01000001: "KEY_TAB",
-            0x01000003: "KEY_BACKSPACE",
-            0x01000004: "KEY_ENTER",
-            0x01000005: "KEY_KPENTER",
-            0x01000006: "KEY_INSERT",
-            0x01000007: "KEY_DELETE",
-            0x01000010: "KEY_HOME",
-            0x01000011: "KEY_END",
-            0x01000012: "KEY_LEFT",
-            0x01000013: "KEY_UP",
-            0x01000014: "KEY_RIGHT",
-            0x01000015: "KEY_DOWN",
-            0x01000016: "KEY_PAGEUP",
-            0x01000017: "KEY_PAGEDOWN",
-            0x01000020: "KEY_LEFTSHIFT",
-            0x01000021: "KEY_LEFTCTRL",
-            0x01000022: "KEY_LEFTMETA",
-            0x01000023: "KEY_LEFTALT",
-            0x01000024: "KEY_CAPSLOCK",
-            0x01000025: "KEY_NUMLOCK",
-            0x01000026: "KEY_SCROLLLOCK",
-            0x2D: "KEY_MINUS",
-            0x3D: "KEY_EQUAL",
-            0x5B: "KEY_LEFTBRACE",
-            0x5D: "KEY_RIGHTBRACE",
-            0x5C: "KEY_BACKSLASH",
-            0x3B: "KEY_SEMICOLON",
-            0x27: "KEY_APOSTROPHE",
-            0x60: "KEY_GRAVE",
-            0x2C: "KEY_COMMA",
-            0x2E: "KEY_DOT",
-            0x2F: "KEY_SLASH",
-        }
-        right = {
-            "windows": {
-                0xA1: "KEY_RIGHTSHIFT",
-                0xA3: "KEY_RIGHTCTRL",
-                0xA5: "KEY_RIGHTALT",
-                0x5C: "KEY_RIGHTMETA",
-            },
-            "linux": {
-                0xFFE2: "KEY_RIGHTSHIFT",
-                0xFFE4: "KEY_RIGHTCTRL",
-                0xFFEA: "KEY_RIGHTALT",
-                0xFE03: "KEY_RIGHTALT",
-                0xFFEC: "KEY_RIGHTMETA",
-            },
-            "macos": {
-                55: "KEY_LEFTMETA",
-                59: "KEY_LEFTCTRL",
-                56: "KEY_LEFTSHIFT",
-                58: "KEY_LEFTALT",
-                60: "KEY_RIGHTSHIFT",
-                62: "KEY_RIGHTCTRL",
-                61: "KEY_RIGHTALT",
-                54: "KEY_RIGHTMETA",
-            },
-        }
-        return right.get(self.name, {}).get(native_virtual_key, names.get(key))
 
 
 class ResourceProbe:

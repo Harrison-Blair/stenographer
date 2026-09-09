@@ -22,9 +22,10 @@ import logging.handlers
 import os
 import queue
 import sys
+import threading
 import traceback
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
@@ -51,6 +52,8 @@ _listener: logging.handlers.QueueListener | None = None
 #: STENOGRAPHER_LOG_LEVEL is per-process and outranks the config value.
 _stderr_level_pinned = False
 _utterance: int | None = None
+_forward_lock = threading.Lock()
+_worker_drains: set[Callable[[], None]] = set()
 
 
 def log_paths(
@@ -328,8 +331,8 @@ def apply_stderr_level(level: str) -> None:
 def owned_handlers(logger: logging.Logger | None = None) -> tuple[logging.Handler, ...]:
     """Return the real sinks this module owns, never the queue forwarder.
 
-    In the daemon they live on the listener thread, which is also where the ASR
-    child's forwarded records must land — one queue hop, one write each.
+    Used internally for sink configuration and inspection. Child relays receive
+    only ``forward_worker_record`` and cannot write through these handlers.
     """
     target = logging.getLogger(_LOGGER_NAME) if logger is None else logger
     attached = tuple(
@@ -340,6 +343,51 @@ def owned_handlers(logger: logging.Logger | None = None) -> tuple[logging.Handle
     )
     listener = _listener
     return attached + (tuple(listener.handlers) if listener is not None else ())
+
+
+def forward_worker_record(record: logging.LogRecord) -> None:
+    """Enqueue a prepared child record, preserving its child-time utterance stamp.
+
+    Never pass through the parent's QueueHandler: its filter would stamp the
+    parent's current utterance over the child's. Without logging setup there
+    are no owned parent sinks, so forwarding is a no-op as before.
+    """
+    with _forward_lock:
+        if _listener is not None:
+            _listener.queue.put_nowait(record)
+
+
+def start_worker_log_relay(
+    log_queue: Queue, *, on_log: Callable[[logging.LogRecord], None]
+) -> Callable[[], None]:
+    """Start a child-record relay with no sink access; return an idempotent drain.
+
+    Logging tracks drains so all child relays stop before the parent listener's
+    sentinel is queued, even if an embedding caller shuts logging down first.
+    """
+
+    class Relay(logging.handlers.QueueListener):
+        def handle(self, record: logging.LogRecord) -> None:
+            on_log(record)
+
+    relay = Relay(log_queue)
+    drain_lock = threading.Lock()
+    stopped = False
+
+    def drain() -> None:
+        nonlocal stopped
+        with drain_lock:
+            if stopped:
+                return
+            relay.stop()
+            stopped = True
+            with _forward_lock:
+                _worker_drains.discard(drain)
+
+    relay.start()
+    with _forward_lock:
+        _worker_drains.add(drain)
+    return drain
 
 
 def configure_worker_logging(log_queue: Queue, level: int) -> None:
@@ -362,13 +410,18 @@ def configure_worker_logging(log_queue: Queue, level: int) -> None:
 def shutdown_logging() -> None:
     """Stop the listener so the queued tail is written, then close owned sinks."""
     global _listener
+    with _forward_lock:
+        drains = tuple(_worker_drains)
+    for drain in drains:
+        drain()
     logger = logging.getLogger(_LOGGER_NAME)
     # Detach before stopping: nothing may enqueue behind the listener's sentinel.
     for handler in tuple(logger.handlers):
         if getattr(handler, _HANDLER_MARKER, False):
             logger.removeHandler(handler)
             handler.close()
-    listener, _listener = _listener, None
+    with _forward_lock:
+        listener, _listener = _listener, None
     if listener is not None:
         listener.stop()
         for handler in listener.handlers:

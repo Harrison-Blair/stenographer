@@ -15,7 +15,6 @@
 # which the daemon-start update notice's metadata request also uses when present).
 
 # -*- mode: python ; coding: utf-8 -*-
-import os
 import sys
 from importlib.util import find_spec
 from pathlib import Path
@@ -26,7 +25,6 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 ASSET_SRC = PROJECT_ROOT / "src" / "stenographer" / "assets"
-DESKTOP = os.environ.get("STENOGRAPHER_BUILD_HEADLESS") != "1"
 NATIVE_BINARIES = []
 NATIVE_IMPORTS = []
 if sys.platform == "linux":
@@ -84,32 +82,7 @@ exe = EXE(
     console=True,
 )
 
-executables = [exe]
-binaries = list(a.binaries)
-zipfiles = list(a.zipfiles)
-datas = list(a.datas)
-if DESKTOP:
-    desktop = Analysis(
-        [str(PROJECT_ROOT / "packaging" / "desktop_entry.py")],
-        pathex=[str(PROJECT_ROOT / "src")],
-        binaries=[],
-        datas=[(str(ASSET_SRC), "stenographer/assets")],
-        hiddenimports=collect_submodules("stenographer_desktop"),
-        hookspath=[str(PROJECT_ROOT / "packaging")],
-        excludes=[],
-        noarchive=False,
-    )
-    desktop_pyz = PYZ(desktop.pure, desktop.zipped_data)
-    desktop_exe = EXE(
-        desktop_pyz, desktop.scripts, [], exclude_binaries=True,
-        name="stenographer-ui", debug=False, strip=False, upx=False, console=False,
-    )
-    executables.append(desktop_exe)
-    binaries.extend(desktop.binaries)
-    zipfiles.extend(desktop.zipfiles)
-    datas.extend(desktop.datas)
-
 coll = COLLECT(
-    *executables, binaries, zipfiles, datas,
+    exe, a.binaries, a.zipfiles, a.datas,
     strip=False, upx=False, name="stenographer",
 )

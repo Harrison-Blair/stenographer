@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Thin CLI over the same reporting API used by the desktop application."""
+"""CLI reporting, export, and deletion of local numeric analytics."""
 
 from __future__ import annotations
 

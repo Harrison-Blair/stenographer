@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Shared, GUI-independent analytics collection and reporting services."""
+"""Numeric analytics collection and reporting services."""
 
 from pathlib import Path
 

@@ -20,6 +20,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from stenographer.analytics.checkpoints import Checkpoint, QueuedCheckpoint, advance_checkpoint
 from stenographer.analytics.metrics import OUTCOMES, PHASES, clean_context, clean_metrics, utc_now
 from stenographer.analytics.resources import ResourceSummary
 from stenographer.analytics.store import Store
@@ -46,9 +47,9 @@ class AnalyticsSession:
         self._process_identity = process_identity
         self._process_alive = process_alive
         self._retries = max(0, retries)
-        self._queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=max(1, queue_size))
+        self._queue: queue.Queue[QueuedCheckpoint] = queue.Queue(maxsize=max(1, queue_size))
         self._lock = threading.Lock()
-        self._records: dict[str, dict[str, Any]] = {}
+        self._records: dict[str, QueuedCheckpoint] = {}
         self._terminal_queued: set[str] = set()
         self._health = {"degraded": False, "dropped_checkpoints": 0, "write_failures": 0}
         self._closing = threading.Event()
@@ -75,21 +76,19 @@ class AnalyticsSession:
         if source not in ("hotkey", "file"):
             raise ValueError("Only personal hotkey and file transcription are collected")
         timestamp = utc_now()
-        record = {
-            "id": identity,
-            "run_id": self.run_id,
-            "source": source,
-            "started_at": timestamp,
-            "updated_at": timestamp,
-            "revision": 0,
-            "phase": "accepted_start",
-            "outcome": None,
-            "context": {**self.context, **clean_context(context or {})},
-            "metrics": {},
-            "monotonic_started": time.monotonic(),
-        }
-        if self._probe is not None:
-            record["_resource"] = ResourceSummary(record["monotonic_started"])
+        checkpoint = Checkpoint(
+            id=identity,
+            run_id=self.run_id,
+            source=source,
+            started_at=timestamp,
+            updated_at=timestamp,
+            context={**self.context, **clean_context(context or {})},
+            monotonic_started=time.monotonic(),
+        )
+        record = QueuedCheckpoint(
+            checkpoint,
+            ResourceSummary(checkpoint.monotonic_started) if self._probe is not None else None,
+        )
         with self._lock:
             if self._closing.is_set():
                 return identity
@@ -123,21 +122,18 @@ class AnalyticsSession:
             old = self._records.get(identity)
             if old is None or self._closing.is_set():
                 return
-            if PHASES.index(phase) < PHASES.index(old["phase"]):
-                raise ValueError("Checkpoint phase cannot regress")
-            record = {
-                **old,
-                "updated_at": utc_now(),
-                "revision": old["revision"] + 1,
-                "phase": phase,
-                "outcome": outcome or old["outcome"],
-                "metrics": {**old["metrics"], **measurements},
-                "context": {**old["context"], **technical},
-            }
-            if phase == "terminal":
-                record["monotonic_finished"] = time.monotonic()
-                if "_resource" in record:
-                    record["_resource"].ended_at = record["monotonic_finished"]
+            checkpoint = advance_checkpoint(
+                old.checkpoint,
+                phase,
+                updated_at=utc_now(),
+                monotonic_now=time.monotonic(),
+                metrics=measurements,
+                context=technical,
+                outcome=outcome,
+            )
+            record = QueuedCheckpoint(checkpoint, old.resource)
+            if phase == "terminal" and record.resource is not None:
+                record.resource.ended_at = checkpoint.monotonic_finished
             self._records[identity] = record
             queued = self._enqueue(record)
             if phase == "terminal":
@@ -153,7 +149,7 @@ class AnalyticsSession:
     ) -> None:
         self.checkpoint(utterance_id, "terminal", metrics, outcome=outcome)
 
-    def _enqueue(self, record: dict[str, Any]) -> bool:
+    def _enqueue(self, record: QueuedCheckpoint) -> bool:
         try:
             self._queue.put_nowait(record)
             return True
@@ -224,25 +220,20 @@ class AnalyticsSession:
                         self._process_identity,
                     )
                 )
-            if self._probe is not None:
-                summary = active.setdefault(
-                    record["id"],
-                    record["_resource"],
-                )
+            payload = record.checkpoint.to_store()
+            if record.resource is not None:
+                summary = active.setdefault(record.checkpoint.id, record.resource)
                 summary.boundary_requests += 1
                 summary.boundary_samples += int(self._observe(summary))
-                record = {
-                    **record,
-                    "metrics": {**record["metrics"], **summary.metrics(time.monotonic())},
-                    "context": {**record["context"], **summary.context()},
-                }
-            if not self._attempt(lambda record=record: self._store.write_checkpoint(record)):
+                payload["metrics"].update(summary.metrics(time.monotonic()))
+                payload["context"].update(summary.context())
+            if not self._attempt(lambda payload=payload: self._store.write_checkpoint(payload)):
                 with self._lock:
                     self._health["dropped_checkpoints"] += 1
-            if record["phase"] == "terminal":
-                active.pop(record["id"], None)
+            if record.checkpoint.phase == "terminal":
+                active.pop(record.checkpoint.id, None)
                 with self._lock:
-                    self._terminal_queued.discard(record["id"])
+                    self._terminal_queued.discard(record.checkpoint.id)
             self._queue.task_done()
             self._attempt(lambda: self._store.update_health(self.run_id, self.health))
         self._attempt(lambda: self._store.update_health(self.run_id, self.health, ended=True))
@@ -252,8 +243,8 @@ class AnalyticsSession:
         with self._lock:
             now = time.monotonic()
             for record in self._records.values():
-                if "_resource" in record:
-                    record["_resource"].ended_at = now
+                if record.resource is not None:
+                    record.resource.ended_at = now
             self._closing.set()
         if self._thread is None:
             return True

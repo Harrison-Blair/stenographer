@@ -114,45 +114,40 @@ The target system must provide:
 - **`/dev/uinput` write access** and membership in the **`input` group** —
   paste chord and hotkey capture.
 - **The ASR model** (~1.5 GB) — never bundled. Fetch it once with
-  `dist/stenographer/stenographer model download` (the only network path;
-  `certifi` is bundled for exactly this).
+  `dist/stenographer/stenographer model download`. `certifi` supplies HTTPS
+  trust for explicit downloads and the metadata-only update notice.
 
 `dist/stenographer/stenographer doctor` reports exactly what is missing
 (exit 78 when a required capability is absent).
 
-## Desktop and headless installations
+## Native development builds
 
-The normal native bundle now contains two independent executables:
-`stenographer` (CLI/daemon) and `stenographer-ui` (PySide6 Widgets). Install build
-dependencies with `.venv/bin/pip install -e '.[dev,build,desktop]'`, then run
-`scripts/build.sh`. Each executable has its own Python module archive; the CLI
-archive excludes Qt and the desktop package. Closing the desktop leaves the
-daemon running. Linux `scripts/install.sh` installs both launchers and a desktop
-menu entry. The desktop uses its own `desktop.log` in the application state
-directory.
+All installations contain the `stenographer` CLI/daemon and its existing
+helpers. Qt and the settings GUI are no longer packaged. Install dependencies
+with `.venv/bin/pip install -e '.[dev,build]'`, then run `scripts/build.sh`.
+`--headless` remains accepted by `build.sh`, `install.sh`, and `reinstall.sh`
+as a compatibility no-op.
 
-For a Qt-free installation, install the Python package without the `desktop`
-extra, or use `scripts/build.sh --headless` and `scripts/install.sh --headless`.
-`scripts/reinstall.sh --headless` forwards the choice to both steps.
-An existing desktop bundle is rebuilt for `--headless` so it does not retain Qt
-libraries. The desktop extra is optional on the Python distribution; one wheel
-contains both import-isolated packages and launchers.
+The Linux installer rebuilds an existing bundle containing the old GUI before
+installing. It removes an obsolete `stenographer-ui` symlink only when it points
+to this installation, and separately removes the old menu entry only when its
+launch command points to this installation's GUI. Existing configuration,
+analytics history, models, and logs (including `desktop.log`) are preserved.
+Use `stenographer setup` and `stenographer sounds` for configuration and
+`stenographer stats` for numeric diagnostics; restart the daemon explicitly to
+apply saved settings.
 
-`.github/workflows/desktop.yml` builds native development artifacts for Linux
-x86_64, Windows x86_64, macOS Intel, and macOS Apple Silicon, using the
-[documented native GitHub runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-It runs the pure/native
-transport/database suites, and launches the GUI offscreen without a daemon.
-The artifacts include `install-native.py`, a per-user Windows/macOS development
-installer, and `NATIVE-ACCEPTANCE.md`. Invoke that installer with a Python 3.12+
-environment and the unpacked bundle (or use `--bundle PATH`). It creates a
-Windows Start Menu shortcut or a macOS application bundle; it does not create
-unsupported dictation services. Linux release bundles continue through their
-source distribution's installer.
+The native CI workflow builds relocatable development bundles for Linux x86_64,
+Windows x86_64, macOS Intel, and macOS Apple Silicon. It runs the non-integration
+suite and frozen CLI checks. Each artifact includes `LICENSE` and
+`NATIVE-ACCEPTANCE.md`. Copy and run the complete bundle directory; there is no
+Windows/macOS installer or GUI launcher. Linux release bundles continue through
+their source distribution's installer.
 
-These Windows/macOS artifacts are **unsigned development builds, not accepted
-release packages**. Native dictation providers remain unavailable on those
-hosts. Interactive installation, accessibility, scaling, audio, keyboard,
-clipboard, and service checks remain separate gates. macOS signing/notarization
-and Windows signing/installation checks must pass before release readiness is
-claimed. Offscreen checks never capture microphone audio.
+Windows/macOS artifacts are **unsigned development builds, not accepted release
+packages**. Their dictation and service integrations remain unavailable.
+Interactive installation, audio, keyboard, clipboard, service, and helper
+isolation checks remain separate gates. macOS signing/notarization and Windows
+signing/installation checks must pass before release readiness is claimed.
+Automated checks do not capture microphone audio. See
+[native acceptance requirements](packaging/NATIVE-ACCEPTANCE.md).

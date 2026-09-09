@@ -398,3 +398,33 @@ def test_unopenable_log_file_is_reported_with_its_path_and_errno(tmp_path):
     # Windows reports the same collision as FileExistsError (17).
     assert re.search(r"error=(NotADirectoryError|FileExistsError) errno=(20|17) ", records)
     assert "fallback=stderr" in records
+
+
+def test_child_relay_preserves_stamp_and_drains_before_parent_listener(tmp_path):
+    from queue import Queue
+
+    from stenographer.utils.logging_setup import forward_worker_record, start_worker_log_relay
+
+    shutdown_logging()
+    stream = StringIO()
+    child_queue = Queue()
+    setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=stream)
+    stop_relay = start_worker_log_relay(child_queue, on_log=forward_worker_record)
+    try:
+        set_utterance(99)
+        record = logging.LogRecord(
+            "stenographer.asr", logging.INFO, "", 0, "asr: child_tail", (), None
+        )
+        record.utt_suffix = " utt=7"
+        child_queue.put(record)
+        shutdown_logging()
+        stop_relay()
+        assert stream.getvalue().count("utt=7 asr: child_tail") == 1
+        assert "utt=99" not in stream.getvalue()
+        # Uninitialized logging must not unexpectedly create a sink.
+        forward_worker_record(record)
+        assert stream.getvalue().count("asr: child_tail") == 1
+    finally:
+        set_utterance(None)
+        stop_relay()
+        shutdown_logging()

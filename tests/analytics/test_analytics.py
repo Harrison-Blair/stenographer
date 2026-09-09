@@ -555,3 +555,43 @@ def test_observation_in_the_same_clock_tick_as_terminal_is_not_attributed():
     summary.ended_at = 12
     assert not summary.observe({"cpu_seconds": 1, "resident_bytes": 1}, observed_at=12)
     assert summary.observations == 0
+
+
+def test_checkpoint_advancement_freezes_snapshots_and_shares_terminal_window():
+    from stenographer.analytics.checkpoints import Checkpoint, QueuedCheckpoint, advance_checkpoint
+
+    measurements = {"capture_s": 3}
+    first = Checkpoint("id", "run", "hotkey", "start", "start", 10, metrics=measurements)
+    measurements["capture_s"] = 99
+    window = ResourceSummary(first.monotonic_started)
+    queued = QueuedCheckpoint(first, window)
+    second = advance_checkpoint(
+        first,
+        "accepted_recognition",
+        updated_at="later",
+        monotonic_now=11,
+        metrics={"recognized_words": 4},
+        context={"sample_rate": 16000},
+    )
+    terminal = advance_checkpoint(
+        second,
+        "terminal",
+        updated_at="end",
+        monotonic_now=12,
+        outcome="success",
+    )
+    final = QueuedCheckpoint(terminal, queued.resource)
+    final.resource.ended_at = terminal.monotonic_finished
+    assert queued.resource.ended_at == 12
+    assert first.metrics == {"capture_s": 3} and first.revision == 0
+    assert second.metrics == {"capture_s": 3, "recognized_words": 4}
+    assert terminal.revision == 2 and terminal.outcome == "success"
+    assert terminal.context == {"sample_rate": 16000}
+    assert "decode_ms" not in terminal.to_store()["metrics"]
+    with pytest.raises(TypeError):
+        first.metrics["capture_s"] = 1
+    payload = terminal.to_store()
+    payload["metrics"]["capture_s"] = 100
+    assert terminal.metrics["capture_s"] == 3
+    with pytest.raises(ValueError, match="regress"):
+        advance_checkpoint(second, "secured_capture", updated_at="bad", monotonic_now=13)

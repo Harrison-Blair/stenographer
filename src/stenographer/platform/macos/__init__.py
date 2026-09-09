@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""macOS desktop/setup provider; native dictation remains unavailable.
+"""macOS setup and diagnostics provider; native dictation remains unavailable.
 
 Directory and settings access work independently of the daemon. A native
 hotkey/injection provider and signed interactive acceptance remain pending.
@@ -19,7 +19,7 @@ from stenographer.platform.base import (
     NullNotifier,
     UnsupportedPlatformError,
 )
-from stenographer.platform.desktop import DesktopHostMixin
+from stenographer.platform.diagnostics import DiagnosticsHostMixin
 
 if TYPE_CHECKING:
     import threading
@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from typing import TextIO
 
     from stenographer.platform.base import (
+        AsrTransport,
         CuePlayer,
         HelperTransport,
         HotkeyListener,
@@ -53,7 +54,7 @@ def signal_reason(signum: int) -> str:
         return f"signal {signum}"
 
 
-class MacOSPlatform(DesktopHostMixin):
+class MacOSPlatform(DiagnosticsHostMixin):
     name = "macos"
 
     def config_path(self, env: Mapping[str, str], home: Path) -> Path:
@@ -110,6 +111,11 @@ class MacOSPlatform(DesktopHostMixin):
         from stenographer.platform.preview_audio import PortAudioCuePlayer
 
         return PortAudioCuePlayer()
+
+    def asr_transport(self) -> AsrTransport:
+        from stenographer.platform.asr import MultiprocessingAsrTransport
+
+        return MultiprocessingAsrTransport()
 
     def helper_transport(self) -> HelperTransport:
         raise UnsupportedPlatformError("the overlay helper is not available on macOS yet")

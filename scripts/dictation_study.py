@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -281,17 +282,17 @@ def replay(model: Model, samples: np.ndarray) -> tuple[TranscriptionResult, dict
     )
 
 
-def run(args: argparse.Namespace) -> None:
+def load_fixtures(
+    manifest: Path, split: str, *, unlock_holdout: bool = False
+) -> tuple[bytes, list[dict[str, Any]], dict[str, np.ndarray]]:
+    """Validate the sealed corpus before opening any evidence output or model."""
     import soundfile as sf
-    from faster_whisper.vad import VadOptions, get_speech_timestamps
 
-    from stenographer.transcribe.model import _VAD_PARAMETERS
-
-    if args.split == "holdout" and not args.unlock_holdout:
+    if split == "holdout" and not unlock_holdout:
         raise ValueError("holdout requires explicit --unlock-holdout after candidate freeze")
-    raw_manifest = args.manifest.read_bytes()
+    raw_manifest = manifest.read_bytes()
     cases = json.loads(raw_manifest)
-    selected = [c for c in cases if c["split"] == args.split]
+    selected = [c for c in cases if c["split"] == split]
     if not selected or len({c["id"] for c in cases}) != len(cases):
         raise ValueError("empty split or duplicate case IDs")
     speakers = [{c["speaker"] for c in cases if c["split"] == split} for split in OFFSETS]
@@ -299,8 +300,8 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError("cross-split speaker overlap")
     fixtures = {}
     for case in selected:
-        path = (args.manifest.parent / case["audio"]).resolve()
-        if not path.is_relative_to(args.manifest.parent.resolve()):
+        path = (manifest.parent / case["audio"]).resolve()
+        if not path.is_relative_to(manifest.parent.resolve()):
             raise ValueError("audio path escapes corpus")
         if not case["license"] or digest(path.read_bytes()) != case["sha256"]:
             raise ValueError("unlicensed or changed fixture")
@@ -308,6 +309,94 @@ def run(args: argparse.Namespace) -> None:
         if rate != SAMPLE_RATE or audio.ndim != 1 or not np.isfinite(audio).all():
             raise ValueError("expected finite mono 16 kHz audio")
         fixtures[case["id"]] = audio
+    return raw_manifest, selected, fixtures
+
+
+def run_trial(
+    model: Model,
+    case: dict[str, Any],
+    audio: np.ndarray,
+    *,
+    profile: str,
+    variant: str,
+    repeat: int,
+) -> dict[str, Any]:
+    """Run one candidate and its separate VAD diagnostic; retain counts only."""
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    from stenographer.transcribe.model import _VAD_PARAMETERS
+
+    audio = waveform(audio, profile)
+    synthetic_frames = SAMPLE_RATE // 2 if variant == "prefix-500ms" else 0
+    samples = np.concatenate((np.zeros(synthetic_frames, dtype=np.float32), audio))
+    row = dict(
+        kind="trial",
+        case=case["id"],
+        profile=profile,
+        variant=variant,
+        repeat=repeat,
+        audio_s=len(audio) / SAMPLE_RATE,
+        synthetic_frames=synthetic_frames,
+        failure=None,
+    )
+    started = time.perf_counter()
+    try:
+        if variant == "replay":
+            result, replay_metrics = replay(model, samples)
+            row.update(replay_metrics)
+        else:
+            result = batched(model, samples) if variant == "batched" else model.transcribe(samples)
+        row["decode_ms"] = (time.perf_counter() - started) * 1000
+        if variant == "replay":
+            row["replay_wall_ms"] = row.pop("decode_ms")
+        formatted = transcript_text(result)
+        row.update(alignment(case["reference"], formatted))
+        row["vad_s"] = None if variant == "replay" else result.vad_seconds
+        # Separate diagnostic run, outside decode timing. These are NOT
+        # claimed as the batched decoder's effective boundary intervals.
+        vad_started = time.perf_counter()
+        intervals = get_speech_timestamps(samples, VadOptions(**_VAD_PARAMETERS))
+        row["vad_probe_ms"] = (time.perf_counter() - vad_started) * 1000
+        row["vad_probe_first_frame"] = intervals[0]["start"] if intervals else None
+        row["vad_probe_last_frame"] = intervals[-1]["end"] if intervals else None
+        row["vad_probe_intervals"] = len(intervals)
+    except Exception as exc:
+        row["decode_ms"] = (time.perf_counter() - started) * 1000
+        row["failure"] = type(exc).__name__
+    return row
+
+
+def summarize_trials(records: list[dict[str, Any]], variants: list[str]) -> list[dict[str, Any]]:
+    """Aggregate successful trials in requested order; absent timings stay absent. PURE."""
+    summaries = []
+    for variant in variants:
+        rows = [r for r in records if r["variant"] == variant]
+        successful = [r for r in rows if r["failure"] is None]
+        summaries.append(
+            dict(
+                kind="summary",
+                variant=variant,
+                trials=len(rows),
+                failures=len(rows) - len(successful),
+                decode_ms=distribution([r["decode_ms"] for r in successful if "decode_ms" in r]),
+                stop_to_ready_ms=distribution(
+                    [r["stop_to_ready_ms"] for r in successful if "stop_to_ready_ms" in r]
+                ),
+                fallbacks=sum(r.get("fallback", 0) for r in successful),
+                errors=sum(r["errors"] for r in successful),
+                reference_words=sum(r["reference_words"] for r in successful),
+                empty=sum(r["empty"] for r in successful),
+                tail_insertions=sum(r["tail_insertions"] for r in successful),
+                opening_exact=sum(r["opening_exact"] for r in successful),
+            )
+        )
+    return summaries
+
+
+def run(args: argparse.Namespace) -> None:
+    raw_manifest, selected, fixtures = load_fixtures(
+        args.manifest, args.split, unlock_holdout=args.unlock_holdout
+    )
     jobs = [
         (c, p, v, r)
         for c in selected
@@ -350,78 +439,21 @@ def run(args: argparse.Namespace) -> None:
         )
         try:
             for case, profile, variant, repeat in jobs:
-                audio = waveform(fixtures[case["id"]], profile)
-                synthetic_frames = SAMPLE_RATE // 2 if variant == "prefix-500ms" else 0
-                samples = np.concatenate((np.zeros(synthetic_frames, dtype=np.float32), audio))
-                row = dict(
-                    kind="trial",
-                    case=case["id"],
+                row = run_trial(
+                    model,
+                    case,
+                    fixtures[case["id"]],
                     profile=profile,
                     variant=variant,
                     repeat=repeat,
-                    audio_s=len(audio) / SAMPLE_RATE,
-                    synthetic_frames=synthetic_frames,
-                    failure=None,
                 )
-                started = time.perf_counter()
-                try:
-                    if variant == "replay":
-                        result, replay_metrics = replay(model, samples)
-                        row.update(replay_metrics)
-                    else:
-                        result = (
-                            batched(model, samples)
-                            if variant == "batched"
-                            else model.transcribe(samples)
-                        )
-                    row["decode_ms"] = (time.perf_counter() - started) * 1000
-                    if variant == "replay":
-                        row["replay_wall_ms"] = row.pop("decode_ms")
-                    formatted = transcript_text(result)
-                    row.update(alignment(case["reference"], formatted))
-                    row["vad_s"] = None if variant == "replay" else result.vad_seconds
-                    # Separate diagnostic run, outside decode timing. These are NOT
-                    # claimed as the batched decoder's effective boundary intervals.
-                    vad_started = time.perf_counter()
-                    intervals = get_speech_timestamps(samples, VadOptions(**_VAD_PARAMETERS))
-                    row["vad_probe_ms"] = (time.perf_counter() - vad_started) * 1000
-                    row["vad_probe_first_frame"] = intervals[0]["start"] if intervals else None
-                    row["vad_probe_last_frame"] = intervals[-1]["end"] if intervals else None
-                    row["vad_probe_intervals"] = len(intervals)
-                except Exception as exc:
-                    row["decode_ms"] = (time.perf_counter() - started) * 1000
-                    row["failure"] = type(exc).__name__
                 records.append(row)
                 output.write(json.dumps(row) + "\n")
                 output.flush()
         finally:
             model.close()
-        for variant in args.variants:
-            rows = [r for r in records if r["variant"] == variant]
-            successful = [r for r in rows if r["failure"] is None]
-            output.write(
-                json.dumps(
-                    dict(
-                        kind="summary",
-                        variant=variant,
-                        trials=len(rows),
-                        failures=len(rows) - len(successful),
-                        decode_ms=distribution(
-                            [r["decode_ms"] for r in successful if "decode_ms" in r]
-                        ),
-                        stop_to_ready_ms=distribution(
-                            [r["stop_to_ready_ms"] for r in successful if "stop_to_ready_ms" in r]
-                        ),
-                        fallbacks=sum(r.get("fallback", 0) for r in successful),
-                        errors=sum(r["errors"] for r in successful),
-                        reference_words=sum(r["reference_words"] for r in successful),
-                        empty=sum(r["empty"] for r in successful),
-                        tail_insertions=sum(r["tail_insertions"] for r in successful),
-                        opening_exact=sum(r["opening_exact"] for r in successful),
-                    )
-                )
-                + "\n"
-            )
+        for summary in summarize_trials(records, args.variants):
+            output.write(json.dumps(summary) + "\n")
 
 
 def main() -> int:

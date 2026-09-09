@@ -9,6 +9,7 @@ one formatter call the daemon and ``stenographer transcribe`` share.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from stenographer.transcribe.model import TranscriptionResult
 from stenographer.transcribe.pipeline import (
@@ -124,3 +125,38 @@ def test_the_shared_formatter_owns_the_dictation_trailing_space():
 
     assert transcript_text(result) == "Hello there "
     assert transcript_text(result, raw=True) == "hello there"
+
+
+@pytest.mark.parametrize("text", ["hello world", ""])
+def test_measurement_phases_preserve_recognition_and_readiness(text):
+    from stenographer.delivery.deliver import DeliveryTimings
+    from stenographer.transcribe.pipeline import (
+        analytics_metrics,
+        apply_delivery,
+        apply_formatting,
+        apply_recognition,
+        apply_worker_timings,
+    )
+    from stenographer.transcribe.worker import WorkerTimings
+
+    records = [
+        UtteranceRecord(utt=0, source=source, capture_s=2, stopped_at=10)
+        for source in ("file", "hotkey")
+    ]
+    result = TranscriptionResult(text=text, duration_seconds=2, vad_seconds=1)
+    for record in records:
+        apply_worker_timings(record, WorkerTimings(2, None, None))
+        assert record.load_ms is None and record.decode_ms is None
+        apply_recognition(record, result)
+        # This is also the retained snapshot when formatting raises.
+        assert record.chars_raw == len(text)
+        assert record.recognized_words == (2 if text else 0)
+        assert record.vad_frames == 16000 and record.asr_audio_s == 2
+        assert record.chars_out is None and record.stop_to_ready_ms is None
+        apply_formatting(record, text, started_at=11, ready_at=12)
+        assert record.format_ms == 1000 and record.stop_to_ready_ms == 2000
+    assert analytics_metrics(records[0]) == analytics_metrics(records[1])
+    record = records[1]
+    apply_delivery(record, DeliveryTimings(1, 2, False, True, True), attempted=True, observed_at=15)
+    assert record.stop_to_ready_ms == 2000 and record.stop_to_chord_ms == 5000
+    assert record.copied_words == record.final_words == record.chord_words

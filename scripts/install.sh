@@ -24,7 +24,6 @@ FISH_COMPLETION_DST="${DATA_HOME}/fish/vendor_completions.d/stenographer.fish"
 DO_ENABLE=1
 DO_START=1
 VERBOSE=0
-HEADLESS=0
 
 usage() {
     cat <<EOF
@@ -33,13 +32,13 @@ Usage: $(basename "$0") [--headless] [--no-enable] [--no-start] [--install-dir D
 Install stenographer from the local build tree:
   1. Build the onedir bundle (if not already built)
   2. Copy dist/stenographer/ to INSTALL_DIR (default ~/.local/share/stenographer/)
-  3. Link stenographer and stenographer-ui into ~/.local/bin/ (CLI only with --headless)
+  3. Link stenographer into ~/.local/bin/ and remove this installation's old GUI launchers
   4. Cache Bash, Zsh, and Fish completion definitions under XDG_DATA_HOME
   5. Install the systemd user unit
   6. Enable and start the service (unless told not to)
 
 Options:
-  --headless     Install only the CLI and daemon (no Qt)
+  --headless     Compatibility option; all installations contain only the CLI and daemon
   --no-enable    Install the unit but do not enable or start it
   --no-start     Enable the unit but do not start it now
   --install-dir  Override install directory (default ~/.local/share/stenographer)
@@ -50,7 +49,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --headless) HEADLESS=1 ;;
+        --headless) : ;;
         --no-enable) DO_ENABLE=0; DO_START=0 ;;
         --no-start)  DO_START=0 ;;
         --install-dir)
@@ -113,16 +112,13 @@ install_completion() {
 # bar starts, so the build bar and install bar never interleave)
 # ────────────────────────────────────────────────────────────────
 build_options=()
-[[ "${HEADLESS}" -eq 1 ]] && build_options+=(--headless)
 [[ "${VERBOSE}" -eq 1 ]] && build_options+=(--verbose)
 if [[ ! -x "dist/stenographer/stenographer" ]] ||
-   { [[ "${HEADLESS}" -eq 0 ]] && [[ ! -x "dist/stenographer/stenographer-ui" ]]; }; then
+   [[ -e "dist/stenographer/stenographer-ui" ]] ||
+   [[ -d "dist/stenographer/_internal/PySide6" ]]; then
+    # Old GUI bundles must be rebuilt so no Qt payload reaches the installation.
     scripts/build.sh "${build_options[@]}"
     echo
-fi
-if [[ "${HEADLESS}" -eq 1 ]] && [[ -x "dist/stenographer/stenographer-ui" ]]; then
-    # A genuine headless build excludes the GUI dependency graph, including Qt.
-    scripts/build.sh "${build_options[@]}"
 fi
 
 mkdir -p dist
@@ -150,7 +146,10 @@ fi
 # ────────────────────────────────────────────────────────────────
 step "copying bundle"
 mkdir -p "${INSTALL_DIR}"
-rm -rf "${INSTALL_DIR:?}"/*
+# Replace bundle-owned files only. Configuration, history, models, and old
+# logs (including desktop.log) are user data and must survive the GUI withdrawal.
+rm -rf "${INSTALL_DIR:?}/_internal"
+rm -f "${INSTALL_DIR}/stenographer" "${INSTALL_DIR}/stenographer-ui"
 run_logged cp -a dist/stenographer/. "${INSTALL_DIR}/"
 
 step "linking launcher"
@@ -161,30 +160,30 @@ else
     ln -sfn "${BINARY_PATH}" "${SYMLINK_PATH}"
 fi
 
-if [[ "${HEADLESS}" -eq 0 ]]; then
-    UI_SYMLINK="${BIN_DIR}/stenographer-ui"
-    if [[ ! -e "${UI_SYMLINK}" || -L "${UI_SYMLINK}" ]]; then
-        ln -sfn "${INSTALL_DIR}/stenographer-ui" "${UI_SYMLINK}"
-    else
-        NOTES+=("WARNING: ${UI_SYMLINK} is not a symlink; leaving it alone.")
-    fi
-    mkdir -p "${DATA_HOME}/applications"
-    cat > "${DATA_HOME}/applications/stenographer.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=Stenographer
-Comment=Dictation settings and private analytics
-Exec="${INSTALL_DIR}/stenographer-ui"
-Icon=${INSTALL_DIR}/_internal/stenographer/assets/icons/stenographer.png
-Terminal=false
-Categories=Utility;Accessibility;
-EOF
-else
-    if [[ -L "${BIN_DIR}/stenographer-ui" ]] &&
-       [[ "$(readlink "${BIN_DIR}/stenographer-ui")" == "${INSTALL_DIR}/stenographer-ui" ]]; then
-        rm "${BIN_DIR}/stenographer-ui"
-        rm -f "${DATA_HOME}/applications/stenographer.desktop"
-    fi
+# The menu entry and symlink have independent ownership. An unrelated launcher
+# must survive even when the other launcher still belongs to this installation.
+UI_SYMLINK="${BIN_DIR}/stenographer-ui"
+if [[ -L "${UI_SYMLINK}" ]] &&
+   [[ "$(readlink -m "${UI_SYMLINK}")" == "$(readlink -m "${INSTALL_DIR}/stenographer-ui")" ]]; then
+    rm "${UI_SYMLINK}"
+fi
+MENU_ENTRY="${DATA_HOME}/applications/stenographer.desktop"
+if [[ -f "${MENU_ENTRY}" ]]; then
+    menu_section=""
+    while IFS= read -r menu_line || [[ -n "${menu_line}" ]]; do
+        case "${menu_line}" in
+            \[*\]) menu_section="${menu_line}" ;;
+            Exec=*)
+                if [[ "${menu_section}" == '[Desktop Entry]' ]] &&
+                   { [[ "${menu_line}" == "Exec=\"${INSTALL_DIR}/stenographer-ui\"" ]] ||
+                     { [[ "${INSTALL_DIR}" != *[[:space:]]* ]] &&
+                       [[ "${menu_line}" == "Exec=${INSTALL_DIR}/stenographer-ui" ]]; }; }; then
+                    rm "${MENU_ENTRY}"
+                    break
+                fi
+                ;;
+        esac
+    done < "${MENU_ENTRY}"
 fi
 
 # ────────────────────────────────────────────────────────────────
@@ -275,9 +274,6 @@ fi
 echo "Done."
 echo "  bundle:   ${INSTALL_DIR}/"
 echo "  launcher: ${SYMLINK_PATH}"
-if [[ "${HEADLESS}" -eq 0 ]]; then
-    echo "  desktop:  ${BIN_DIR}/stenographer-ui (also in the applications menu)"
-fi
 echo "  unit:     ${SERVICE_DST}"
 echo "  status:   systemctl --user status stenographer.service"
 echo

@@ -95,8 +95,15 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
 
     if failure_phase:
         assert "outcome=ERROR" in summary
-        for absent in ("vad_frames=", "segments=", "words=", "chars_raw=", "chars_out="):
+        for absent in (
+            ("vad_frames=", "segments=", "words=", "chars_raw=", "chars_out=")
+            if failure_phase == "decode"
+            else ("chars_out=",)
+        ):
             assert absent not in summary
+        if failure_phase == "format":
+            assert "chars_raw=20" in summary
+            assert "vad_frames=1600" in summary
         assert capsys.readouterr().out == ""
     else:
         assert "outcome=OK" in summary

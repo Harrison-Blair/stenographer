@@ -21,9 +21,11 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Mapping, Sequence
+    from logging import LogRecord
     from pathlib import Path
     from typing import BinaryIO, TextIO
 
+    from stenographer.config import AsrConfig
     from stenographer.status import Backend, UnavailableReason
 
 
@@ -33,6 +35,38 @@ class UnsupportedPlatformError(RuntimeError):
 
 class SingleInstanceLockError(OSError):
     """Lock I/O failed while acquiring the single-instance lock — not contention."""
+
+
+class AsrProcess(Protocol):
+    """One native ASR child. The caller owns policy; this handle owns resources."""
+
+    @property
+    def pid(self) -> int | None: ...
+
+    @property
+    def exit_code(self) -> int | None: ...
+
+    def is_running(self) -> bool: ...
+
+    def send(self, message: tuple[object, ...]) -> None: ...
+
+    def receive(self, timeout: float) -> object:
+        """Receive one tuple message; poll expiry raises TimeoutError."""
+        ...
+
+    def close(self, graceful: bool = False) -> None:
+        """Idempotently reap and release resources, draining child logs.
+
+        Graceful close sends the existing stop tuple and grants two seconds,
+        then uses the same termination/kill escalation as forced close.
+        """
+        ...
+
+
+class AsrTransport(Protocol):
+    def spawn(self, config: AsrConfig, *, on_log: Callable[[LogRecord], None]) -> AsrProcess:
+        """Spawn a child with the frozen configuration and a prepared-log receiver."""
+        ...
 
 
 class KeyTable(Protocol):
@@ -254,45 +288,11 @@ class HostProbe:
     service_active: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class ServiceStatus:
-    """Native service availability; unsupported is distinct from stopped."""
-
-    available: bool
-    active: str | None = None
-    enabled: str | None = None
-    detail: str = ""
-
-
-class ControlClient(Protocol):
-    def request(self, message: dict) -> dict: ...
-
-    def close(self) -> None: ...
-
-
-class ControlServer(Protocol):
-    def close(self) -> None: ...
-
-
-class ControlTransport(Protocol):
-    """Authenticated bounded JSON requests over a persistent local connection."""
-
-    def serve(
-        self,
-        handler: Callable[[dict, str], dict],
-        disconnected: Callable[[str], None],
-    ) -> ControlServer: ...
-
-    def connect(self, timeout: float = 2.0) -> ControlClient: ...
-
-
 @runtime_checkable
 class Platform(Protocol):
     """Everything the core needs from the host, in one provider."""
 
     name: str
-
-    def control_transport(self) -> ControlTransport: ...
 
     def resource_probe(self) -> Callable[..., dict]: ...
 
@@ -301,18 +301,6 @@ class Platform(Protocol):
     def process_alive(self, pid: int, started_epoch: float) -> bool | None: ...
 
     def runtime_context(self) -> dict[str, str]: ...
-
-    def service_status(self) -> ServiceStatus: ...
-
-    def service_action(self, action: str) -> tuple[bool, str]: ...
-
-    def restart_running_service(self) -> tuple[bool, str]:
-        """Restart only if the manager identifies this process as its running service."""
-        ...
-
-    def focused_key_name(
-        self, key: int, native_virtual_key: int = 0, native_scan_code: int = 0
-    ) -> str | None: ...
 
     # --- user directories (STENOGRAPHER_CONFIG override stays in config.py) ---
     def config_path(self, env: Mapping[str, str], home: Path) -> Path: ...
@@ -350,6 +338,10 @@ class Platform(Protocol):
     def cue_player(self) -> CuePlayer | None: ...
 
     # --- process / lifecycle ---
+    def asr_transport(self) -> AsrTransport:
+        """The shared native ASR transport, resolved lazily by each provider."""
+        ...
+
     def helper_transport(self) -> HelperTransport:
         """Transport for the overlay helper child; raises when the host has none."""
         ...

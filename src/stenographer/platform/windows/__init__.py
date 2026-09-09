@@ -22,7 +22,7 @@ from stenographer.platform.base import (
     NullNotifier,
     UnsupportedPlatformError,
 )
-from stenographer.platform.desktop import DesktopHostMixin
+from stenographer.platform.diagnostics import DiagnosticsHostMixin
 
 if TYPE_CHECKING:
     import threading
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from typing import TextIO
 
     from stenographer.platform.base import (
+        AsrTransport,
         CuePlayer,
         HelperTransport,
         HotkeyListener,
@@ -66,7 +67,7 @@ def signal_reason(signum: int) -> str:
         return f"signal {signum}"
 
 
-class WindowsPlatform(DesktopHostMixin):
+class WindowsPlatform(DiagnosticsHostMixin):
     name = "windows"
 
     # --- user directories ---
@@ -132,6 +133,11 @@ class WindowsPlatform(DesktopHostMixin):
         return PortAudioCuePlayer()
 
     # --- process / lifecycle ---
+    def asr_transport(self) -> AsrTransport:
+        from stenographer.platform.asr import MultiprocessingAsrTransport
+
+        return MultiprocessingAsrTransport()
+
     def helper_transport(self) -> HelperTransport:
         # The overlay is disabled on Windows (``overlay_backends()`` is empty,
         # and no ``Backend`` wire value names a Windows surface yet), so the

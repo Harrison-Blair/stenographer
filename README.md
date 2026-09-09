@@ -246,26 +246,25 @@ guards the boundary: it imports the whole core with evdev, fcntl, termios, and t
 Wayland/X11 libraries blocked, so a Linux-only import leaking into the core fails
 on any machine. CI also runs the unit suite on Windows as a portability check.
 
-## License
+## CLI settings and private analytics
 
-GPL-3.0-or-later.
+Use `stenographer setup` to configure dictation and `stenographer sounds` to
+select a complete sound pack. CLI saves preserve comments and unknown settings;
+restart the daemon explicitly to apply changes. The settings GUI and its daemon
+control endpoint have been removed. Native bundles contain the CLI/daemon and
+its helpers; the lifecycle pill, spectrum bars, and loading animation remain.
+See [native builds and acceptance](BUILD.md#native-development-builds) for
+Windows/macOS limitations.
 
-### Desktop settings and private analytics
-
-The normal native installation includes `stenographer-ui`, an independent
-settings and analytics application. The CLI and daemon run without Qt or an
-open desktop window. Python installations can add the desktop with
-`.venv/bin/pip install -e '.[desktop]'`; omitting the extra retains the headless
-installation. See [desktop packaging and acceptance](BUILD.md#desktop-and-headless-installations)
-for native builds and the explicit Windows/macOS acceptance status.
-
-Run `stenographer stats` for lifetime dictation totals, or open `stenographer-ui`
-for settings, trends, comparisons and diagnostics. `stats export --format json`
-and `stats export --format csv` export numeric records; `stats delete --since
-2026-09-01 --until 2026-09-07` previews a local-date deletion, and `--yes` confirms
-it. `stats reset` previews removal of all sources. Recognized words count even
+Run `stenographer stats` for lifetime dictation totals.
+`stenographer stats export --format json` and
+`stenographer stats export --format csv` export numeric records.
+`stenographer stats delete --since 2026-09-01 --until 2026-09-07` previews a
+local-date deletion, and `--yes` confirms it. `stenographer stats reset` previews
+removal of all sources. Recognized words count even
 if delivery fails; completed ASR audio counts input samples, including pauses.
-No audio, transcript, prompt or hotword text is retained in analytics. In the `[stenographer.analytics]` section, set
+No audio, transcript, prompt or hotword text is retained in analytics.
+In the `[stenographer.analytics]` section, set
 `enabled = false` to disable collection, or `resource_profiling = false` to retain
 ordinary analytics without host sampling.
 Word counts use Unicode alphanumeric runs with internal apostrophes; hyphenated
@@ -273,3 +272,10 @@ words count separately. Reports calculate nearest-rank p95/p99 from matching
 utterances and keep missing measurements unknown. Collection is asynchronous:
 storage failures do not block dictation, and uncommitted measurements can be lost
 in a crash. See [native acceptance requirements](packaging/NATIVE-ACCEPTANCE.md).
+
+Removing the GUI preserves existing configuration, analytics history, models,
+and logs. Analytics persist until explicitly deleted.
+
+## License
+
+GPL-3.0-or-later.

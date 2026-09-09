@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""PortAudio output-only cue adapter for native desktop setup.
+"""PortAudio output-only cue adapter for native setup.
 
 Imports audio libraries only at explicit playback; construction neither probes
 nor opens a microphone. Native playback acceptance is a separate manual gate.

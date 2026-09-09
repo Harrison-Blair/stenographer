@@ -7,7 +7,7 @@ import pathlib
 
 import pytest
 
-from stenographer.config import Config, ConfigError, default_toml, load_or_default
+from stenographer.config import AnalyticsConfig, Config, ConfigError, default_toml, load_or_default
 
 
 def test_config_error_message():
@@ -323,3 +323,16 @@ def test_log_level_is_case_insensitive_and_stored_folded(tmp_path, written):
     p.write_text(f'[stenographer.feedback]\nlog_level = "{written}"\n')
 
     assert Config.load(p).feedback.log_level == "debug"
+
+
+def test_analytics_settings_default_without_rewriting_old_files(tmp_path):
+    path = tmp_path / "config.toml"
+    content = "[stenographer.feedback]\nmute = true # preserved\n"
+    path.write_text(content)
+    cfg = Config.load(path)
+    assert cfg.analytics == AnalyticsConfig(True, True)
+    assert path.read_text() == content
+    for key in ("enabled", "resource_profiling"):
+        with pytest.raises(ConfigError) as error:
+            Config.loads(f'[stenographer.analytics]\n{key} = "true"')
+        assert error.value.key == f"analytics.{key}"

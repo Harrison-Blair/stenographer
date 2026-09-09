@@ -20,14 +20,18 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from stenographer.analytics import count_words
+from stenographer.constants import SAMPLE_RATE
 from stenographer.transcribe.format import format_transcript
 from stenographer.utils.logging_setup import fmt_event
 
 if TYPE_CHECKING:
     import numpy as np
 
-    from stenographer.audio import GateStats
+    from stenographer.audio import CaptureStats, GateStats
+    from stenographer.delivery.deliver import DeliveryTimings
     from stenographer.transcribe.model import TranscriptionResult
+    from stenographer.transcribe.worker import WorkerTimings
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +105,103 @@ class UtteranceRecord:
     clipping_fraction: float | None = None
     ignored_busy_presses: int = 0
     failure: str | None = None
+
+
+def apply_capture(record: UtteranceRecord | None, stats: CaptureStats | None) -> None:
+    """Project secured recorder measurements without sampling a clock. PURE."""
+    if record is None or stats is None:
+        return
+    record.activate_ms = stats.activate_ms
+    if stats.first_callback_at is not None:
+        record.press_to_callback_ms = (stats.first_callback_at - record.started_at) * 1000
+    record.activation_to_callback_ms = stats.activation_to_callback_ms
+    record.max_adc_gap_ms = stats.max_adc_gap_ms
+    record.adc_discontinuities = stats.adc_discontinuities
+    record.capture_s = stats.input_frames / stats.input_rate
+    record.device_name = stats.device_name
+    record.input_rate = stats.input_rate
+    record.channels = stats.channels
+    record.finalize_ms = stats.finalize_ms
+    record.callback_timing_count = stats.callback_timing_count
+    record.callback_count = stats.callback_count
+    record.callback_metadata_dropped = stats.callback_metadata_dropped
+    record.overflow_count = stats.overflow_count
+    record.recovered = stats.recovered
+    record.in_frames = stats.input_frames
+    record.out_frames = stats.output_frames
+    record.overflow = stats.overflow
+    record.capped = stats.capped
+
+
+def apply_gate(record: UtteranceRecord | None, stats: GateStats, samples: np.ndarray) -> None:
+    """Project one gate verdict and its diagnostic measurements. PURE."""
+    if record is None:
+        return
+    import numpy as np
+
+    record.gate = "pass" if stats.passed else "fail"
+    record.peak_rms = stats.peak_rms
+    record.frames_above = stats.frames_above
+    record.mean_rms = stats.mean_rms
+    record.clipping_fraction = float(np.mean(np.abs(samples) >= 0.999)) if samples.size else 0.0
+
+
+def apply_recognition(record: UtteranceRecord | None, result: TranscriptionResult) -> None:
+    """Keep accepted recognition even when a subsequent phase fails. PURE."""
+    if record is None:
+        return
+    record.vad_frames = round(result.vad_seconds * SAMPLE_RATE)
+    record.segments = len(result.segments)
+    record.words = sum(len(segment.words) for segment in result.segments)
+    record.chars_raw = len(result.text)
+    record.recognized_words = count_words(result.text)
+    record.asr_audio_s = record.capture_s
+    record.vad_s = result.vad_seconds
+
+
+def apply_formatting(
+    record: UtteranceRecord | None, text: str, *, started_at: float, ready_at: float
+) -> None:
+    """Record successful formatting, including empty output, before delivery. PURE."""
+    if record is None:
+        return
+    record.chars_out = len(text)
+    record.final_words = count_words(text)
+    record.format_ms = (ready_at - started_at) * 1000
+    if record.stopped_at is not None:
+        record.stop_to_ready_ms = (ready_at - record.stopped_at) * 1000
+
+
+def apply_worker_timings(record: UtteranceRecord | None, timings: WorkerTimings | None) -> None:
+    """Absent phase measurements remain unknown; warm-up load timing survives. PURE."""
+    if record is None or timings is None:
+        return
+    record.lock_wait_ms = timings.lock_wait_ms
+    if timings.load_ms is not None:
+        record.load_ms = timings.load_ms
+    record.decode_ms = timings.decode_ms
+    record.round_trip_ms = timings.round_trip_ms
+
+
+def apply_delivery(
+    record: UtteranceRecord | None,
+    timings: DeliveryTimings | None,
+    *,
+    attempted: bool,
+    observed_at: float,
+) -> None:
+    """Project confirmed delivery boundaries without changing readiness. PURE."""
+    if record is None or not attempted or timings is None:
+        return
+    record.copy_ms = timings.copy_ms
+    record.release_wait_ms = timings.release_wait_ms
+    record.release_timeout = timings.release_timeout
+    if timings.copied:
+        record.copied_words = record.final_words
+    if timings.chord_sent:
+        record.chord_words = record.final_words
+        if record.stopped_at is not None:
+            record.stop_to_chord_ms = (observed_at - record.stopped_at) * 1000
 
 
 def analytics_metrics(record: UtteranceRecord) -> dict[str, int | float | bool]:

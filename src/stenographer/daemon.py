@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Literal
 
 from stenographer.audio import Recorder, speech_gate_stats
 from stenographer.constants import SAMPLE_RATE
-from stenographer.control import Maintenance, config_fingerprint, valid_request
 from stenographer.delivery.deliver import Deliverer
 from stenographer.delivery.feedback import Feedback
 from stenographer.platform import current_platform
@@ -45,11 +44,22 @@ from stenographer.status import NullStatusSink, OverlayState, StatusSink, should
 from stenographer.transcribe.pipeline import (
     UtteranceRecord,
     analytics_metrics,
+    apply_capture,
+    apply_delivery,
+    apply_formatting,
+    apply_gate,
+    apply_recognition,
+    apply_worker_timings,
     log_gate,
     log_summary,
     transcript_text,
 )
-from stenographer.transcribe.worker import Worker, WorkerError, WorkerPathologicalError
+from stenographer.transcribe.worker import (
+    Worker,
+    WorkerError,
+    WorkerPathologicalError,
+    classify_worker_failure,
+)
 from stenographer.utils.logging_setup import fmt_event, log_failure, set_utterance
 
 if TYPE_CHECKING:
@@ -61,7 +71,6 @@ if TYPE_CHECKING:
     from stenographer.capabilities import Capabilities, OverlayCapability
     from stenographer.config import Config
     from stenographer.platform.base import Notifier, Platform
-    from stenographer.transcribe.model import TranscriptionResult
 
 log = logging.getLogger(__name__)
 
@@ -250,8 +259,6 @@ class Daemon:
         self._deliverer: Deliverer | None = None
         self._platform: Platform | None = None
         self._analytics = None
-        self._control_server = None
-        self._maintenance = Maintenance()
         self._capture_lock = threading.Lock()
         self._model_load_started_at: float | None = None
         self._model_load_utterance: int | None = None
@@ -292,6 +299,7 @@ class Daemon:
 
         worker = Worker(
             cfg.asr,
+            transport=plat.asr_transport(),
             on_model_loading=on_model_loading,
             on_model_loading_finished=on_model_loading_finished,
             on_transcribing=on_transcribing,
@@ -497,13 +505,18 @@ class Daemon:
 
     def on_key_down(self) -> None:
         with self._lock:
-            if (
-                not can_start(self._recording, self._busy, self._stop_event.is_set())
-                or self._maintenance.occupied
-            ):
+            if not can_start(self._recording, self._busy, self._stop_event.is_set()):
                 if self._busy and self._record is not None:
                     self._record.ignored_busy_presses += 1
-                log.debug(fmt_event("hotkey", "key_down_ignored", reason="unavailable"))
+                log.debug(
+                    fmt_event(
+                        "hotkey",
+                        "key_down_ignored",
+                        reason=ignored_edge_reason(
+                            self._recording, self._busy, self._stop_event.is_set()
+                        ),
+                    )
+                )
                 return
             self._utterance_id += 1
             set_utterance(self._utterance_id)
@@ -589,29 +602,7 @@ class Daemon:
 
     def _apply_capture(self, stats: CaptureStats | None) -> None:
         """Fold the recorder's own numbers into the utterance record."""
-        record = self._record
-        if record is None or stats is None:
-            return
-        record.activate_ms = stats.activate_ms
-        if stats.first_callback_at is not None:
-            record.press_to_callback_ms = (stats.first_callback_at - record.started_at) * 1000
-        record.activation_to_callback_ms = stats.activation_to_callback_ms
-        record.max_adc_gap_ms = stats.max_adc_gap_ms
-        record.adc_discontinuities = stats.adc_discontinuities
-        record.capture_s = stats.input_frames / stats.input_rate
-        record.device_name = stats.device_name
-        record.input_rate = stats.input_rate
-        record.channels = stats.channels
-        record.finalize_ms = stats.finalize_ms
-        record.callback_timing_count = stats.callback_timing_count
-        record.callback_count = stats.callback_count
-        record.callback_metadata_dropped = stats.callback_metadata_dropped
-        record.overflow_count = stats.overflow_count
-        record.recovered = stats.recovered
-        record.in_frames = stats.input_frames
-        record.out_frames = stats.output_frames
-        record.overflow = stats.overflow
-        record.capped = stats.capped
+        apply_capture(self._record, stats)
 
     def _take_record(self, outcome: str) -> UtteranceRecord | None:
         """Detach the in-flight record and stamp its outcome."""
@@ -631,8 +622,6 @@ class Daemon:
         if record is None:
             return
         record.total_ms = (time.perf_counter() - record.started_at) * 1000.0
-        if record.stopped_at is not None:
-            record.stop_to_ready_ms = (time.perf_counter() - record.stopped_at) * 1000
         if self._analytics is not None and record.analytics_id is not None:
             try:
                 self._analytics.finish(
@@ -653,16 +642,7 @@ class Daemon:
             # PortAudio callback or under the state lock.
             stats = speech_gate_stats(samples, SAMPLE_RATE, self._cfg.audio.min_speech_rms)
             log_gate(stats)
-            if record is not None:
-                record.gate = "pass" if stats.passed else "fail"
-                record.peak_rms = stats.peak_rms
-                record.frames_above = stats.frames_above
-                record.mean_rms = stats.mean_rms
-                import numpy as np
-
-                record.clipping_fraction = (
-                    float(np.mean(np.abs(samples) >= 0.999)) if samples.size else 0.0
-                )
+            apply_gate(record, stats, samples)
             if not stats.passed:
                 if record is not None:
                     record.failure = "gate_rejected"
@@ -692,26 +672,11 @@ class Daemon:
                     safe=isinstance(exc, WorkerPathologicalError),
                 )
                 if record is not None:
-                    from stenographer.transcribe.worker import (
-                        WorkerCrashedError,
-                        WorkerModelError,
-                        WorkerTimeoutError,
-                    )
-
-                    record.failure = (
-                        "pathological"
-                        if isinstance(exc, WorkerPathologicalError)
-                        else "timeout"
-                        if isinstance(exc, WorkerTimeoutError)
-                        else "crashed"
-                        if isinstance(exc, WorkerCrashedError)
-                        else "model_failed"
-                        if isinstance(exc, WorkerModelError)
-                        else "decode_failed"
-                    )
+                    record.failure = classify_worker_failure(exc)
                 self._fail("transcription failed")
                 return
-            self._apply_decode(record, result)
+            self._apply_worker_timings(record)
+            apply_recognition(record, result)
             self._checkpoint(record, "accepted_recognition")
             if self._stop_event.is_set():
                 outcome_name = "CANCELLED"
@@ -720,14 +685,11 @@ class Daemon:
             transcript_nonempty = bool(result.text.strip())
             format_started_at = time.perf_counter()
             text = transcript_text(result)
-            if record is not None:
-                from stenographer.analytics import count_words
-
-                record.chars_out = len(text)
-                record.final_words = count_words(text)
-                record.format_ms = (time.perf_counter() - format_started_at) * 1000
-                if not transcript_nonempty:
-                    record.failure = "empty"
+            apply_formatting(
+                record, text, started_at=format_started_at, ready_at=time.perf_counter()
+            )
+            if record is not None and not transcript_nonempty:
+                record.failure = "empty"
             if not transcript_nonempty:
                 self._publish_state(OverlayState.HIDDEN)
             else:
@@ -786,52 +748,20 @@ class Daemon:
                 self._busy = False
                 self._emit_summary(self._take_record(outcome_name))
 
-    def _apply_decode(self, record: UtteranceRecord | None, result: TranscriptionResult) -> None:
-        """Fold the worker's timings and the decode's shape into the record."""
-        if record is None:
-            return
-        self._apply_worker_timings(record)
-        record.vad_frames = round(result.vad_seconds * SAMPLE_RATE)
-        record.segments = len(result.segments)
-        record.words = sum(len(segment.words) for segment in result.segments)
-        record.chars_raw = len(result.text)
-        from stenographer.analytics import count_words
-
-        record.recognized_words = count_words(result.text)
-        record.asr_audio_s = record.capture_s
-        record.vad_s = result.vad_seconds
-
     def _apply_worker_timings(self, record: UtteranceRecord | None) -> None:
-        if record is None:
-            return
-        timings = self._worker.last_timings
-        if timings is not None:
-            record.lock_wait_ms = timings.lock_wait_ms
-            if timings.load_ms is not None:
-                record.load_ms = timings.load_ms
-            record.decode_ms = timings.decode_ms
-            record.round_trip_ms = timings.round_trip_ms
+        apply_worker_timings(record, self._worker.last_timings)
 
     def _clipboard_checkpoint(self, record: UtteranceRecord | None) -> None:
         self._apply_delivery(record, attempted=True)
         self._checkpoint(record, "clipboard_confirmed")
 
     def _apply_delivery(self, record: UtteranceRecord | None, *, attempted: bool) -> None:
-        """Fold the delivery's cost in — ``attempted`` says a copy was tried at all."""
-        if record is None or not attempted:
-            return
-        timings = self._deliverer.last_timings
-        if timings is None:
-            return
-        record.copy_ms = timings.copy_ms
-        record.release_wait_ms = timings.release_wait_ms
-        record.release_timeout = timings.release_timeout
-        if timings.copied:
-            record.copied_words = record.final_words
-        if timings.chord_sent:
-            record.chord_words = record.final_words
-            if record.stopped_at is not None:
-                record.stop_to_chord_ms = (time.perf_counter() - record.stopped_at) * 1000
+        apply_delivery(
+            record,
+            self._deliverer.last_timings,
+            attempted=attempted,
+            observed_at=time.perf_counter(),
+        )
 
     def _start_diagnostics(self) -> None:
         if self._platform is None:
@@ -846,96 +776,6 @@ class Daemon:
             )
         except Exception as exc:
             log_failure(log, logging.WARNING, "analytics: unavailable", exc, safe=False)
-        try:
-            self._control_server = self._platform.control_transport().serve(
-                self._control_request,
-                self._control_disconnected,
-            )
-        except Exception as exc:
-            log_failure(log, logging.WARNING, "control: unavailable", exc, safe=False)
-
-    def _control_disconnected(self, owner: str) -> None:
-        with self._lock:
-            self._maintenance.release(owner)
-
-    def _control_request(self, message: dict, owner: str) -> dict:
-        from stenographer.control import VERSION
-
-        response = {"version": VERSION, "id": message.get("id"), "ok": False}
-        if not valid_request(message):
-            return {**response, "reason": "invalid_request"}
-        action = message["action"]
-        if action == "maintenance_begin":
-            kind = message["payload"]["kind"]
-            with self._lock:
-                busy = self._recording or self._busy or self._stop_event.is_set()
-                accepted = self._maintenance.begin(owner, kind, busy=busy)
-            if accepted and kind == "calibration":
-                try:
-                    # Even an inactive pre-negotiated stream can hold exclusive
-                    # microphone access. The lease prevents starts; reopen lazily.
-                    with self._capture_lock:
-                        self._recorder.close()
-                except Exception:
-                    self._control_disconnected(owner)
-                    return {**response, "reason": "microphone_release_failed"}
-            return {**response, "ok": accepted, "reason": "accepted" if accepted else "busy"}
-        with self._lock:
-            busy = self._recording or self._busy or self._stop_event.is_set()
-            if action == "status":
-                lifecycle = (
-                    "stopping"
-                    if self._stop_event.is_set()
-                    else "recording"
-                    if self._recording
-                    else "busy"
-                    if self._busy
-                    else "maintenance"
-                    if self._maintenance.occupied
-                    else "idle"
-                )
-                return {
-                    **response,
-                    "ok": True,
-                    "status": {
-                        "lifecycle": lifecycle,
-                        "running_config": config_fingerprint(self._cfg),
-                        "analytics": self._analytics.health
-                        if self._analytics is not None
-                        else {
-                            "enabled": self._cfg.analytics.enabled,
-                            "degraded": True,
-                        },
-                    },
-                }
-            if action == "maintenance_end":
-                accepted = self._maintenance.release(owner)
-                return {
-                    **response,
-                    "ok": accepted,
-                    "reason": "released" if accepted else "not_owner",
-                }
-            if not self._maintenance.reserve(action, busy=busy):
-                return {**response, "reason": "busy"}
-        # Once reserved, disconnect cannot revoke this action. Native service
-        # managers own accepted jobs. No native operation runs under the lock.
-        try:
-            if action == "stop":
-                self.request_stop()
-                return {**response, "ok": True}
-            if action == "apply":
-                from stenographer.config import Config, resolve_config_path
-
-                Config.load(resolve_config_path(create_parent=False))
-            accepted, reason = self._platform.restart_running_service()
-            if not accepted:
-                with self._lock:
-                    self._maintenance.action = None
-            return {**response, "ok": accepted, "reason": reason}
-        except Exception:
-            with self._lock:
-                self._maintenance.action = None
-            return {**response, "reason": "settings_invalid_or_service_unavailable"}
 
     def run(self) -> None:
         """Start the listener and block until stopped."""
@@ -993,9 +833,6 @@ class Daemon:
             # without this a press-then-stop leaves an utterance unaccounted for.
             self._emit_summary(self._take_record("CANCELLED"))
         self._publish_state(OverlayState.HIDDEN)
-        if self._control_server is not None:
-            self._control_server.close()
-            self._control_server = None
         if self._analytics is not None:
             self._analytics.close()
             self._analytics = None

@@ -10,7 +10,7 @@ from __future__ import annotations
 import signal
 from typing import TYPE_CHECKING
 
-from stenographer.platform.desktop import DesktopHostMixin
+from stenographer.platform.diagnostics import DiagnosticsHostMixin
 
 if TYPE_CHECKING:
     import threading
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from typing import TextIO
 
     from stenographer.platform.base import (
+        AsrTransport,
         CuePlayer,
         HelperTransport,
         HostGuidance,
@@ -47,7 +48,7 @@ def signal_reason(signum: int) -> str:
         return f"signal {signum}"
 
 
-class LinuxPlatform(DesktopHostMixin):
+class LinuxPlatform(DiagnosticsHostMixin):
     name = "linux"
 
     # --- user directories ---
@@ -120,6 +121,11 @@ class LinuxPlatform(DesktopHostMixin):
         return LinuxCuePlayer(player) if player is not None else None
 
     # --- process / lifecycle ---
+    def asr_transport(self) -> AsrTransport:
+        from stenographer.platform.asr import MultiprocessingAsrTransport
+
+        return MultiprocessingAsrTransport()
+
     def helper_transport(self) -> HelperTransport:
         from stenographer.platform.linux.helper import LinuxHelperTransport
 
@@ -157,21 +163,6 @@ class LinuxPlatform(DesktopHostMixin):
         from stenographer.platform.linux.guidance import guidance
 
         return guidance()
-
-    def service_status(self):
-        from stenographer.platform.linux.service import service_status
-
-        return service_status()
-
-    def service_action(self, action: str) -> tuple[bool, str]:
-        from stenographer.platform.linux.service import service_action
-
-        return service_action(action)
-
-    def restart_running_service(self) -> tuple[bool, str]:
-        from stenographer.platform.linux.service import restart_running_service
-
-        return restart_running_service()
 
     def restart_service(self) -> tuple[bool, str]:
         from stenographer.platform.linux.probe import restart_service

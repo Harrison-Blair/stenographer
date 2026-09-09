@@ -14,21 +14,14 @@ VERBOSE=0
 for build_option in "$@"; do
     case "${build_option}" in
         --verbose) VERBOSE=1 ;;
-        --headless) export STENOGRAPHER_BUILD_HEADLESS=1 ;;
+        --headless) : ;; # Compatibility: all builds now contain only the CLI/daemon.
         *) echo "error: unknown build option: ${build_option}" >&2; exit 64 ;;
     esac
 done
 
 if [ ! -x .venv/bin/pyinstaller ]; then
-    echo "error: .venv/bin/pyinstaller not found — run: .venv/bin/pip install -e '.[dev,build,desktop]'" >&2
+    echo "error: .venv/bin/pyinstaller not found — run: .venv/bin/pip install -e '.[dev,build]'" >&2
     exit 1
-fi
-
-if [[ "${STENOGRAPHER_BUILD_HEADLESS:-0}" != 1 ]]; then
-    .venv/bin/python -c 'import PySide6' || {
-        echo "error: desktop dependency missing; install .[desktop] or pass --headless" >&2
-        exit 1
-    }
 fi
 
 .venv/bin/python scripts/sound_asset_guard.py src/stenographer/assets/sounds

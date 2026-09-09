@@ -6,10 +6,9 @@ from pathlib import Path
 from stenographer.platform import current_platform
 from stenographer.platform.base import Platform
 from stenographer.platform.macos import MacOSPlatform
-from stenographer.platform.windows import WindowsPlatform
 
 
-def test_macos_paths_and_unavailable_service():
+def test_macos_paths_and_platform_contract():
     platform = MacOSPlatform()
     home = Path("home")
     assert (
@@ -17,21 +16,7 @@ def test_macos_paths_and_unavailable_service():
         == home / "Library/Application Support/stenographer/config.toml"
     )
     assert platform.state_dir({"XDG_STATE_HOME": "state"}, home) == Path("state/stenographer")
-    assert not platform.service_status().available
-    assert not platform.service_action("start")[0]
     assert isinstance(platform, Platform)
-
-
-def test_focused_keys_share_portable_vocabulary():
-    platform = WindowsPlatform()
-    assert platform.focused_key_name(ord("A")) == "KEY_A"
-    assert platform.focused_key_name(0x01000021, 0xA3) == "KEY_RIGHTCTRL"
-    assert platform.focused_key_name(0x01000030) == "KEY_F1"
-    assert platform.focused_key_name(-1) is None
-    # Linux's XKB offset must not reinterpret other providers' native scan codes.
-    for provider, right_ctrl in ((platform, 0xA3), (MacOSPlatform(), 62)):
-        assert provider.focused_key_name(ord("Z"), 0, 29) == "KEY_Z"
-        assert provider.focused_key_name(0x01000021, right_ctrl, 62) == "KEY_RIGHTCTRL"
 
 
 def test_native_resources_have_real_process_identity():

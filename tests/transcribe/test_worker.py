@@ -219,3 +219,19 @@ def test_classify_error_detail_is_leak_free():
     assert kind == "inference"
     assert transcript not in detail
     assert detail == "RuntimeError: decode failed"
+
+
+@pytest.mark.parametrize(
+    "kind, expected",
+    [
+        ("WorkerPathologicalError", "pathological"),
+        ("WorkerTimeoutError", "timeout"),
+        ("WorkerCrashedError", "crashed"),
+        ("WorkerModelError", "model_failed"),
+        ("WorkerError", "decode_failed"),
+    ],
+)
+def test_failure_measurement_classification(kind, expected):
+    from stenographer.transcribe import worker
+
+    assert worker.classify_worker_failure(getattr(worker, kind)("private")) == expected

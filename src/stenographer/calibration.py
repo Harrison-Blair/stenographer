@@ -44,15 +44,15 @@ class CalibrationError(ValueError):
 
 
 class CalibrationCancelledError(CalibrationError):
-    """The setup owner disconnected or cancelled its temporary maintenance."""
+    """The caller cancelled an in-progress calibration."""
 
 
 def wait_for_capture(seconds: float, cancellation: threading.Event | None = None) -> None:
-    """Interrupt a calibration delay immediately when its maintenance lease is lost."""
+    """Interrupt a calibration delay immediately when the caller cancels."""
     if cancellation is None:
         time.sleep(seconds)
     elif cancellation.wait(seconds):
-        raise CalibrationCancelledError("Calibration cancelled because maintenance ended")
+        raise CalibrationCancelledError("Calibration cancelled")
 
 
 def _validate_sample_rate(sample_rate: int) -> None:

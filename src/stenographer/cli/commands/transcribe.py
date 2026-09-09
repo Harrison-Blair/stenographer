@@ -33,6 +33,9 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.audio import speech_gate_stats
     from stenographer.transcribe.pipeline import (
         UtteranceRecord,
+        apply_formatting,
+        apply_gate,
+        apply_recognition,
         downmix,
         log_gate,
         log_summary,
@@ -57,7 +60,6 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
         print(f"stenographer: cannot read {path}: {exc}", file=sys.stderr)
         return 2
 
-    from stenographer.analytics import count_words
     from stenographer.audio import _resample_poly
     from stenographer.diagnostics import create_session
     from stenographer.platform import current_platform
@@ -82,10 +84,7 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
         record.stopped_at = time.perf_counter()
         stats = speech_gate_stats(samples, SAMPLE_RATE, cfg.audio.min_speech_rms)
         log_gate(stats)
-        record.gate = "pass" if stats.passed else "fail"
-        record.peak_rms = stats.peak_rms
-        record.frames_above = stats.frames_above
-        record.mean_rms = stats.mean_rms
+        apply_gate(record, stats, samples)
         record.outcome = "OK" if stats.passed else "SILENT"
 
         load_started_at = time.perf_counter()
@@ -101,28 +100,17 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
             result = m.transcribe(samples)
         finally:
             record.decode_ms = (time.perf_counter() - decode_started_at) * 1000
-        record.recognized_words = count_words(result.text)
-        record.asr_audio_s = record.capture_s
-        record.vad_s = result.vad_seconds
+        apply_recognition(record, result)
         session.checkpoint(record.analytics_id, "accepted_recognition", analytics_metrics(record))
         terminal = "error"
         format_started_at = time.perf_counter()
         text = transcript_text(result, raw=args.raw)
-        record.format_ms = (time.perf_counter() - format_started_at) * 1000
-        record.vad_frames = round(result.vad_seconds * SAMPLE_RATE)
-        record.segments = len(result.segments)
-        record.words = sum(len(segment.words) for segment in result.segments)
-        record.chars_raw = len(result.text)
-        record.chars_out = len(text)
-        record.final_words = count_words(text)
+        apply_formatting(record, text, started_at=format_started_at, ready_at=time.perf_counter())
         terminal = "success" if result.text.strip() else "empty"
     except Exception:
         record.outcome = "ERROR"
         raise
     finally:
-        # Ready and inference boundaries deliberately precede model shutdown.
-        if record.stopped_at is not None:
-            record.stop_to_ready_ms = (time.perf_counter() - record.stopped_at) * 1000
         record.total_ms = (time.perf_counter() - record.started_at) * 1000
         session.finish(record.analytics_id, terminal, analytics_metrics(record))
         session.close()

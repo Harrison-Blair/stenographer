@@ -5,6 +5,8 @@ Words are Unicode alphanumeric runs, allowing internal apostrophes. Hyphenated
 words count separately; punctuation alone does not count. Headline audio is
 sample-based input duration attached to accepted ASR results (including empty
 results), never wall time or VAD speech estimates. Missing values stay unknown.
+New stop_to_ready_ms measurements end at successful formatting, before delivery;
+older persisted values retain their historical semantics without rewriting.
 """
 
 from __future__ import annotations

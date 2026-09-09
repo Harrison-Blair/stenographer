@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
+from stenographer.overlay.control import HelperControlState, reduce_helper_control
 from stenographer.overlay.entry import OVERLAY_ENTRY_ARG
 from stenographer.overlay.spectrum import (
     DEFAULT_SPECTRUM_FLOOR_DBFS,
@@ -448,10 +449,9 @@ class OverlaySupervisor:
 
     def _serve(self, helper: HelperProcess) -> _ProcessOutcome:
         reader = LineReader()
-        ready = False
+        control_state = HelperControlState()
         started_at = time.monotonic()
         expected_exit = False
-        unavailable = False
         next_spectrum_at: float | None = None
 
         # A restarted helper needs an atomic snapshot even when the original
@@ -466,7 +466,9 @@ class OverlaySupervisor:
             stream_failed = False
             while helper.is_running():
                 now = time.monotonic()
-                if helper_ready_timed_out(started_at=started_at, now=now, ready=ready):
+                if helper_ready_timed_out(
+                    started_at=started_at, now=now, ready=control_state.ready
+                ):
                     log.warning("overlay: helper_ready_timeout")
                     break
                 self._mailbox.expire_error()
@@ -503,29 +505,16 @@ class OverlaySupervisor:
                             records = reader.feed(chunk)
                             for record in records:
                                 control = decode_message(record)
-                                if (
-                                    isinstance(control, ReadyMessage)
-                                    and not ready
-                                    and not unavailable
-                                ):
-                                    ready = True
-                                    log.info("overlay: ready backend=%s", control.backend.value)
-                                elif isinstance(control, UnavailableMessage):
-                                    if ready:
-                                        log.warning(
-                                            "overlay: backend_lost reason=%s", control.reason.value
-                                        )
-                                        stream_failed = True
-                                    elif not unavailable:
-                                        unavailable = True
-                                        expected_exit = True
-                                        log.info(
-                                            "overlay: unavailable reason=%s", control.reason.value
-                                        )
-                                    else:
-                                        raise ProtocolError("duplicate helper terminal message")
+                                transition = reduce_helper_control(control_state, control)
+                                control_state = transition.state
+                                expected_exit |= control_state.expected_exit
+                                stream_failed |= transition.stop
+                                if transition.event == "ready":
+                                    log.info("overlay: ready backend=%s", transition.value)
+                                elif transition.event == "backend_lost":
+                                    log.warning("overlay: backend_lost reason=%s", transition.value)
                                 else:
-                                    raise ProtocolError("unexpected helper protocol message")
+                                    log.info("overlay: unavailable reason=%s", transition.value)
                         except ProtocolError as exc:
                             log_failure(
                                 log,
@@ -543,7 +532,7 @@ class OverlaySupervisor:
         finally:
             helper.close()
             self._reap(helper, expected=expected_exit)
-        return _ProcessOutcome(expected_exit, unavailable)
+        return _ProcessOutcome(expected_exit, control_state.unavailable)
 
     @staticmethod
     def _write(helper: HelperProcess, message: ProtocolMessage) -> bool:
