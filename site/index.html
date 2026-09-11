@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>stenographer</title>
+  <meta name="description" content="Local Wayland dictation. Press a hotkey, speak, and your words land at your cursor. Dictation stays on your machine.">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <a class="skip" href="#install">Skip to install</a>
+
+  <header class="top">
+    <a class="wordmark" href="#" aria-label="stenographer home">
+      <img src="assets/stenographer.png" alt="" width="26" height="26">
+      <span>stenographer</span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="#install">Install</a>
+      <a href="#how">How it works</a>
+      <a href="#cli">CLI</a>
+      <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">User guide</a>
+      <a href="https://github.com/Harrison-Blair/stenographer">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <h1>Dictation that stays on your machine.</h1>
+        <p class="lead">Press a hotkey, speak, and your words land at your cursor. Local transcription runs on your own hardware, with no account. Your audio and transcripts never leave your machine.</p>
+        <div class="cmd" id="quick-install">
+          <pre><code>curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start</code></pre>
+          <button type="button" id="copy" class="copy" aria-label="Copy the quick-install command">Copy</button>
+        </div>
+        <p class="fine">You need Linux on x86_64 or AArch64, a Wayland session, and a systemd user manager. The script downloads the latest release, verifies it against <code>SHA256SUMS</code>, and installs the user service for you. You do not need Python or build tools; the model download is a separate choice.</p>
+        <div class="cta">
+          <a class="btn" href="#install">Install</a>
+          <a class="btn ghost" href="https://github.com/Harrison-Blair/stenographer#readme">Read the README</a>
+          <a class="btn ghost" href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">User guide</a>
+        </div>
+      </div>
+
+      <div class="stage" id="stage" data-state="hidden" data-loading="0" aria-label="The lifecycle pill you will see on screen, cycling through its states">
+      <div class="hint">hold <kbd>Right Ctrl</kbd> and speak · <kbd>Escape</kbd> cancels</div>
+        <div class="pill">
+          <span class="ring"></span>
+          <span class="pi" role="img" aria-label="quill"></span>
+          <span class="lbl" id="lbl">Transcribing</span>
+          <span class="bars" id="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="dot"></span>
+        </div>
+        <div class="cap" id="cap" aria-live="polite">idle · nothing on screen</div>
+      </div>
+    </section>
+
+    <section class="states" id="states" aria-label="What the pill is telling you">
+      <div class="st" data-for="recording"><i class="sw rec"></i><b>Recording</b><p>You are holding or have latched the hotkey. 18 bars follow your microphone.</p></div>
+      <div class="st" data-for="transcribing"><i class="sw asr"></i><b>Transcribing</b><p>faster-whisper is turning your speech into English text, on your machine.</p></div>
+      <div class="st" data-for="delivering"><i class="sw deliver"></i><b>Delivering</b><p>Your clipboard has the text. A paste chord is landing at your cursor.</p></div>
+      <div class="st" data-for="loading"><i class="sw load"></i><b>Loading</b><p>An amber border breathes while your model warms up, over whatever else is showing.</p></div>
+      <div class="st" data-for="cancelled"><i class="sw cancel"></i><b>Cancelled</b><p>You pressed Escape. The audio and transcript are discarded; nothing is pasted.</p></div>
+      <div class="st" data-for="error"><i class="sw rec"></i><b>Error</b><p>Something failed. A desktop notification tells you what and why.</p></div>
+    </section>
+
+    <section id="how" class="block">
+      <h2>How it works</h2>
+      <ol class="pipe">
+        <li><b>Your hotkey</b><span>Right Ctrl by default. Tap it to latch, or hold it, speak, and release. Press Escape any time before delivery to cancel without pasting. If you prefer plain hold or toggle, each is one setting away.</span></li>
+        <li><b>Your microphone</b><span>Captured through PortAudio, with a quiet-audio gate so an accidental press does not paste noise into your work.</span></li>
+        <li><b>Local transcription</b><span>faster-whisper runs on your CPU or GPU. You download the model once, and only when you ask for it.</span></li>
+        <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key.</span></li>
+        <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. It stays on your clipboard too.</span></li>
+      </ol>
+
+      <div class="two">
+        <div>
+          <h3>What never leaves your machine</h3>
+          <ul class="never">
+            <li>Your audio, your transcripts, your configuration, and your device and model names.</li>
+            <li>Logs carry timings and counts, never what you said.</li>
+            <li>The optional pill never sees your transcript or your raw audio.</li>
+            <li>Your dictation statistics are local and numeric, yours to export or delete.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>The one network exception</h3>
+          <p>At most once every 24 hours, stenographer asks GitHub for the latest release tag. Metadata only, never a download, and silent if it fails. You get a desktop notification when a newer version exists. If you would rather it never asked, turn it off in your config:</p>
+          <pre><code>[stenographer.feedback]
+update_check = false</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="install" class="block">
+      <h2>Install</h2>
+      <ol class="steps">
+        <li>
+          <b>Check your essentials.</b>
+          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. Run <code>stenographer doctor</code> and it tells you what you are missing and how to fix it.</p>
+        </li>
+        <li>
+          <b>Run the quick install</b> above, or build it yourself using the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">build guide</a>.
+          <pre><code>git clone https://github.com/Harrison-Blair/stenographer.git
+cd stenographer
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev,build]"
+scripts/install.sh --no-start</code></pre>
+        </li>
+        <li>
+          <b>Configure it</b>, and download the model, about 1.5 GB, when the wizard offers.
+          <pre><code>~/.local/bin/stenographer setup --quick</code></pre>
+        </li>
+        <li>
+          <b>Start it and dictate.</b>
+          <pre><code>systemctl --user start stenographer.service</code></pre>
+          <p>Hold Right Ctrl, speak, and release. Or tap to latch, and tap again when you are done.</p>
+        </li>
+      </ol>
+      <p class="fine">Your configuration lives at <code>~/.config/stenographer/config.toml</code>. When you save through the CLI, your comments and any settings it does not know about are kept. Restart the service to apply your changes.</p>
+    </section>
+
+    <section id="cli" class="block">
+      <h2>CLI</h2>
+      <div class="tablewrap">
+        <table>
+          <tbody>
+            <tr><td><code>stenographer run</code></td><td>Run the daemon in your terminal, in the foreground.</td></tr>
+            <tr><td><code>stenographer transcribe FILE [--raw]</code></td><td>Transcribe one of your audio files; add <code>--raw</code> to skip formatting.</td></tr>
+            <tr><td><code>stenographer model download</code></td><td>Download the model you configured into your local cache.</td></tr>
+            <tr><td><code>stenographer doctor</code></td><td>Check what your system needs and print the fixes.</td></tr>
+            <tr><td><code>stenographer devices</code></td><td>List your audio input devices.</td></tr>
+            <tr><td><code>stenographer setup [--quick | --default]</code></td><td>Configure everything, only the common settings, or write the annotated defaults.</td></tr>
+            <tr><td><code>stenographer sounds [PACK]</code></td><td>List, preview, or pick a whole sound pack.</td></tr>
+            <tr><td><code>stenographer stats</code></td><td>See your lifetime dictation totals; export them as JSON or CSV.</td></tr>
+            <tr><td><code>stenographer completion {bash,zsh,fish}</code></td><td>Print a completion definition for your shell.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fine">Add <code>--help</code> to any command for its full usage. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">user guide</a> for configuration, sound packs, statistics, privacy, and troubleshooting.</p>
+    </section>
+  </main>
+
+  <footer>
+    <div>
+      <a href="https://github.com/Harrison-Blair/stenographer/releases/latest">Latest release __RELEASE_TAG__</a>
+      · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">User guide</a>
+      · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">Build guide</a>
+      · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/LICENSE">GPL-3.0-or-later</a>
+    </div>
+    <div class="fine">Linux and Wayland only for now, and English only. The wordmark and pill label are set in Caveat, used under the <a href="assets/Caveat-OFL.txt">SIL Open Font License</a>. Your browser loads nothing from third parties on this page.</div>
+  </footer>
+
+  <script src="pill.js"></script>
+</body>
+</html>

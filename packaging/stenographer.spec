@@ -6,7 +6,7 @@
 # Direct: .venv/bin/pyinstaller --noconfirm --clean packaging/stenographer.spec
 # Output: dist/stenographer/stenographer  (onedir bundle)
 #
-# Deliberately NOT bundled — the target system must provide (see BUILD.md):
+# Deliberately NOT bundled — the target system must provide (see docs/building.md):
 #   - libportaudio / pipewire / pulse libs (excluded by hook-sounddevice.py;
 #     found at runtime via rthooks/py_rth_portaudio.py)
 #   - wl-copy, canberra-gtk-play / pw-play / paplay CLIs; /dev/uinput access + `input` group

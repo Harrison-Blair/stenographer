@@ -15,9 +15,16 @@ clipboard, service behavior, and helper crash isolation for each release target.
 Verify dictation in hold, toggle, and hybrid modes, including the maximum-duration
 cap, and the pill's appearance, spectrum, loading animation, and disappearance.
 Inspect daemon and helper logs for numeric diagnostics without transcript or
-audio content. Follow all real-machine gates in `AGENTS.md`; automated checks
-never access the microphone. macOS Intel and Apple Silicon additionally require
-signing and notarization; Windows requires installation/signing verification.
+audio content. CI and sandbox checks never access the microphone; real-machine
+microphone checks require explicit consent. macOS Intel and Apple Silicon
+additionally require signing and notarization; Windows requires
+installation/signing verification.
+
+Before merging `dev` into `main`, run the integration suite on a real machine:
+
+```sh
+STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest
+```
 
 Development bundles are relocatable directories: copy the whole directory and
 run its `stenographer` executable (`stenographer.exe` on Windows). There is no

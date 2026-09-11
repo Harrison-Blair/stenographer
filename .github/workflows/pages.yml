@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "src/stenographer/assets/icons/stenographer.png"
+      - "src/stenographer/assets/fonts/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Assemble static site
+        run: |
+          rm -rf _site
+          mkdir -p _site/assets
+          cp -r site/. _site/
+          cp src/stenographer/assets/icons/stenographer.png _site/assets/stenographer.png
+          cp src/stenographer/assets/fonts/Caveat-wght.ttf _site/assets/Caveat-wght.ttf
+          cp src/stenographer/assets/fonts/Caveat-OFL.txt _site/assets/Caveat-OFL.txt
+      - name: Stamp the latest published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)
+          test -n "${tag}"
+          sed -i "s/__RELEASE_TAG__/${tag}/g" _site/index.html
+          if grep -q __RELEASE_TAG__ _site/index.html; then
+            echo "error: unreplaced release placeholder" >&2
+            exit 1
+          fi
+      - name: Verify every local reference resolves
+        run: scripts/check_site.sh _site
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    name: deploy to GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
