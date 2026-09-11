@@ -6,6 +6,25 @@ These notes cover every published stable release. They describe observable
 behavior and release packaging, with internal planning and generated commit
 lists left out.
 
+## [v0.13.0] - 2026-09-11
+
+This release adds an optional local cleanup stage that turns dictated speech
+into written text without leaving your machine.
+
+- Adds refine: an off-by-default stage that sends each dictation of ten or
+  more words to a local Ollama model, collapses self-corrections, removes
+  hesitation fillers, and renders spoken lists as lines. Meaning is preserved;
+  nothing is summarized, answered, or added. On any error or timeout the
+  original transcript is delivered unchanged.
+- Defaults to `gemma4:e2b` over loopback, chosen by the new
+  `scripts/refine_bench.py` benchmark. Any installed Ollama model can be
+  configured; a non-loopback host is reported in the daemon banner.
+- `stenographer model download` now offers to fetch both the ASR and refine
+  models; `--asr` and `--refine` select one. `stenographer transcribe` gains an
+  explicit `--refine` flag.
+- The overlay shows a Refining state, and local analytics record refine
+  timing and outcomes as numbers only.
+
 ## [v0.12.3] - 2026-09-11
 
 This maintenance release strengthens reliability and test coverage.
