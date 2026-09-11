@@ -344,7 +344,7 @@ def test_stop_handlers_really_register_and_name_the_reason_they_were_given():
         for provider, expected in (
             (WindowsPlatform(), (signal.SIGINT,)),  # console-control handler pending
             (MacOSPlatform(), both),
-            (current_platform(), both),
+            (current_platform(), (signal.SIGINT,) if sys.platform == "win32" else both),
         ):
             for sig in both:
                 signal.signal(sig, saved[sig])

@@ -225,28 +225,54 @@ def test_release_guard_stops_waiting_when_the_listener_stops():
     assert time.monotonic() - started_at < 1.0
 
 
+class _ObservedHeldLock:
+    """A real lock that reports when the guard has sampled the held keys."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.sampled = threading.Event()
+
+    def __enter__(self):
+        return self._lock.__enter__()
+
+    def __exit__(self, *exc):
+        result = self._lock.__exit__(*exc)
+        self.sampled.set()
+        return result
+
+
 def test_release_guard_polls_until_the_chord_key_actually_comes_up():
-    """The guard really waits: the key is released by another thread mid-poll.
+    """The guard must remain pending while the key is held, then observe release.
 
     Seen to FAIL against a guard that only sampled once (returns False while
     the key is still held, so the paste chord fires with a modifier down).
     """
     tracker, _ = _tracker(frozenset({100}), 1)
     tracker._key_event(1, 100, 1)
+    held_lock = _ObservedHeldLock()
+    tracker._held_lock = held_lock
+    finished = threading.Event()
+    results: list[bool] = []
 
-    def release_soon():
-        time.sleep(0.05)
-        tracker._key_event(1, 100, 0)
+    def wait_for_release():
+        try:
+            results.append(tracker.wait_binding_released(timeout=10.0, poll_interval=0.01))
+        finally:
+            finished.set()
 
-    releaser = threading.Thread(target=release_soon)
-    releaser.start()
+    waiter = threading.Thread(target=wait_for_release)
+    waiter.start()
     try:
-        started_at = time.monotonic()
-        assert tracker.wait_binding_released(timeout=5.0, poll_interval=0.01) is True
-        assert time.monotonic() - started_at >= 0.05
+        assert held_lock.sampled.wait(10), "the guard never sampled the held key"
+        assert not finished.wait(0.05), "the guard returned while the key was still held"
+        tracker._key_event(1, 100, 0)
+        assert finished.wait(10), "the guard never observed the key release"
+        assert results == [True]
         assert tracker._held == set()
     finally:
-        releaser.join(timeout=10)
+        tracker._stop_event.set()
+        waiter.join(timeout=10)
+    assert not waiter.is_alive()
 
 
 def test_an_edge_that_arrives_during_shutdown_is_not_dispatched():

@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The supervisor's own thread, driven through a real NDJSON pipe pair.
+"""The supervisor's own thread, driven through real NDJSON socket pairs.
 
 ``OverlaySupervisor`` is the daemon-side sink: it owns the helper's lifetime,
 the readiness deadline, the restart budget, and the framing in both directions.
 None of that is visible from a pure call, so each test here runs the real
-worker thread against a ``HelperProcess`` made of two real ``os.pipe`` pairs
-and asserts on the bytes that reached the helper's stdin.
+worker thread against a ``HelperProcess`` made of two real ``socket.socketpair`` pairs
+and asserts on the bytes that reached the helper's stdin. Sockets support
+selector waits on Windows as well as POSIX hosts.
 
 The one injected seam is ``current_platform``: the host is where a child
 process would come from, and this suite deliberately spawns none.
@@ -13,13 +14,13 @@ process would come from, and this suite deliberately spawns none.
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import logging
-import os
 import selectors
+import socket
 import threading
 import time
+from collections import deque
 
 import numpy as np
 import pytest
@@ -53,8 +54,8 @@ _JOIN_SECONDS = 5.0
 _LOG = "stenographer.overlay.supervision.constants"
 
 
-class _PipeHelper:
-    """A ``HelperProcess`` made of two real pipes instead of a child process.
+class _SocketHelper:
+    """A ``HelperProcess`` made of two real socket pairs instead of a child process.
 
     The supervisor writes protocol records into one and reads the helper's
     replies from the other, exactly as it would with a spawned helper; the test
@@ -62,11 +63,12 @@ class _PipeHelper:
     """
 
     def __init__(self) -> None:
-        self._stdin_read, self._stdin_write = os.pipe()
-        self._stdout_read, self._stdout_write = os.pipe()
+        self._stdin_read, self._stdin_write = socket.socketpair()
+        self._stdout_read, self._stdout_write = socket.socketpair()
         self._selector = selectors.DefaultSelector()
         self._selector.register(self._stdout_read, selectors.EVENT_READ)
         self._reader = LineReader()
+        self._records: deque[object] = deque()
         self._running = True
         self._stdin_open = True
         self._stdout_open = True
@@ -76,19 +78,19 @@ class _PipeHelper:
     # --- the protocol the supervisor drives --------------------------------
 
     def write(self, data: bytes) -> None:
-        os.write(self._stdin_write, data)
+        self._stdin_write.sendall(data)
 
     def close_input(self) -> None:
         if self._stdin_open:
             self._stdin_open = False
-            os.close(self._stdin_write)
+            self._stdin_write.shutdown(socket.SHUT_WR)
 
     def wait_readable(self, timeout: float) -> bool:
         return bool(self._selector.select(timeout))
 
     def read(self, size: int) -> bytes:
         try:
-            return os.read(self._stdout_read, size)
+            return self._stdout_read.recv(size)
         except OSError:
             return b""
 
@@ -109,16 +111,16 @@ class _PipeHelper:
     # --- the end of the wire the test holds --------------------------------
 
     def reply(self, message) -> None:
-        os.write(self._stdout_write, encode_message(message).encode("ascii"))
+        self._stdout_write.sendall(encode_message(message).encode("ascii"))
 
     def send_raw(self, payload: bytes) -> None:
-        os.write(self._stdout_write, payload)
+        self._stdout_write.sendall(payload)
 
     def close_output(self) -> None:
         """End the helper's stdout the way a dying child would."""
         if self._stdout_open:
             self._stdout_open = False
-            os.close(self._stdout_write)
+            self._stdout_write.shutdown(socket.SHUT_WR)
 
     def records(self, count: int, *, deadline: float = _DEADLINE) -> list[object]:
         """Return the next *count* records the supervisor wrote, in order."""
@@ -128,12 +130,15 @@ class _PipeHelper:
         end = time.monotonic() + deadline
         try:
             while len(collected) < count and time.monotonic() < end:
+                if self._records:
+                    collected.append(self._records.popleft())
+                    continue
                 if not selector.select(0.05):
                     continue
-                chunk = os.read(self._stdin_read, 4096)
+                chunk = self._stdin_read.recv(4096)
                 if not chunk:
                     break
-                collected.extend(decode_message(record) for record in self._reader.feed(chunk))
+                self._records.extend(decode_message(record) for record in self._reader.feed(chunk))
         finally:
             selector.close()
         assert len(collected) >= count, collected
@@ -152,9 +157,14 @@ class _PipeHelper:
     def dispose(self) -> None:
         self.close_input()
         self.close_output()
-        for fd in (self._stdin_read, self._stdout_read):
-            with contextlib.suppress(OSError):
-                os.close(fd)
+        self._selector.close()
+        for endpoint in (
+            self._stdin_read,
+            self._stdin_write,
+            self._stdout_read,
+            self._stdout_write,
+        ):
+            endpoint.close()
 
 
 class _Transport:
@@ -207,7 +217,7 @@ def host(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setattr(logging.getLogger("stenographer"), "propagate", True)
-    helpers: list[_PipeHelper] = []
+    helpers: list[_SocketHelper] = []
 
     def install(*, transport=None, error=None):
         monkeypatch.setattr(supervision, "current_platform", lambda: _Platform(transport, error))
@@ -260,7 +270,7 @@ def test_a_ready_helper_is_fed_state_then_spectrum_then_shutdown(host, superviso
     exactly one command before stdin is closed.
     """
     install, helpers = host
-    helper = _PipeHelper()
+    helper = _SocketHelper()
     helpers.append(helper)
     transport = _Transport([helper])
     install(transport=transport)
@@ -300,7 +310,7 @@ def test_the_spawned_helper_command_is_the_private_re_exec_with_a_log_file(
     host, supervisor
 ) -> None:
     install, helpers = host
-    helper = _PipeHelper()
+    helper = _SocketHelper()
     helpers.append(helper)
     transport = _Transport([helper])
     install(transport=transport)
@@ -323,7 +333,7 @@ def test_a_helper_that_never_announces_readiness_is_replaced_then_abandoned(
     """
     _short_ready_deadline(monkeypatch)
     install, helpers = host
-    first, second = _PipeHelper(), _PipeHelper()
+    first, second = _SocketHelper(), _SocketHelper()
     helpers.extend((first, second))
     transport = _Transport([first, second])
     install(transport=transport)
@@ -347,7 +357,7 @@ def test_a_malformed_helper_record_fails_the_stream_without_echoing_it(
     text into the daemon's log.
     """
     install, helpers = host
-    first, second = _PipeHelper(), _PipeHelper()
+    first, second = _SocketHelper(), _SocketHelper()
     helpers.extend((first, second))
     transport = _Transport([first, second])
     install(transport=transport)
@@ -376,7 +386,7 @@ def test_an_unavailable_helper_is_believed_rather_than_restarted(host, superviso
     budget: the second attempt would reach the same conclusion.
     """
     install, helpers = host
-    helper = _PipeHelper()
+    helper = _SocketHelper()
     helpers.append(helper)
     transport = _Transport([helper])
     install(transport=transport)
@@ -426,7 +436,7 @@ def test_a_helper_handle_that_breaks_the_serve_loop_is_still_reaped(
     keep its display surface up for the rest of the session.
     """
 
-    class _BrokenHelper(_PipeHelper):
+    class _BrokenHelper(_SocketHelper):
         def is_running(self) -> bool:
             raise RuntimeError("host handle went bad")
 
@@ -462,7 +472,7 @@ def test_a_restarted_helper_is_replayed_the_current_state_not_the_history(
     """
     _short_ready_deadline(monkeypatch)
     install, helpers = host
-    first, second = _PipeHelper(), _PipeHelper()
+    first, second = _SocketHelper(), _SocketHelper()
     helpers.extend((first, second))
     transport = _Transport([first, second])
     install(transport=transport)
@@ -494,7 +504,7 @@ def test_a_backend_lost_after_readiness_is_worth_one_fresh_helper(host, supervis
     and only the second failure ends the session.
     """
     install, helpers = host
-    helper = _PipeHelper()
+    helper = _SocketHelper()
     helpers.append(helper)
     transport = _Transport([helper])
     install(transport=transport)
@@ -520,7 +530,7 @@ def test_a_helper_that_dies_mid_record_is_reported_as_a_framing_failure(
     parent must notice at end of stream rather than wait for the rest forever.
     """
     install, helpers = host
-    first, second = _PipeHelper(), _PipeHelper()
+    first, second = _SocketHelper(), _SocketHelper()
     helpers.extend((first, second))
     transport = _Transport([first, second])
     install(transport=transport)
@@ -549,7 +559,7 @@ def test_a_helper_whose_stdin_is_gone_is_replaced_rather_than_written_to(host, s
     would lose the overlay on the one failure a restart actually fixes.
     """
 
-    class _DeafHelper(_PipeHelper):
+    class _DeafHelper(_SocketHelper):
         def write(self, data: bytes) -> None:
             raise BrokenPipeError("the helper is gone")
 

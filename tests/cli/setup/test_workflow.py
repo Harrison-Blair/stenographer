@@ -1401,5 +1401,10 @@ def test_write_default_reports_an_unusable_target_and_fails(tmp_path, monkeypatc
     assert write_default(stdout=out, stderr=err) == 1
 
     assert out.getvalue() == ""
-    assert err.getvalue().startswith("stenographer: cannot re-read ")
+    # POSIX refuses the read through a non-directory; Windows reports the
+    # target as absent and refuses creation of its parent instead.
+    assert err.getvalue().startswith(
+        ("stenographer: cannot re-read ", "stenographer: cannot create ")
+    )
+    assert str(blocker) in err.getvalue()
     assert blocker.read_text(encoding="utf-8") == "not a directory\n"

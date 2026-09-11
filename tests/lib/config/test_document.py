@@ -264,6 +264,7 @@ def test_save_refuses_a_symlink_repointed_since_it_was_loaded(tmp_path):
 @pytest.mark.skipif(
     getattr(os, "geteuid", lambda: 1)() == 0, reason="root ignores directory permissions"
 )
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory permissions only")
 def test_save_reports_a_parent_directory_it_cannot_create(tmp_path):
     blocked = tmp_path / "blocked"
     blocked.mkdir(mode=0o555)

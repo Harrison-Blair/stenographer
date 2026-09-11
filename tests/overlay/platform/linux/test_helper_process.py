@@ -24,6 +24,10 @@ import pytest
 from stenographer.overlay.platform.linux.linux_helper_process import LinuxHelperProcess
 from stenographer.overlay.platform.linux.linux_helper_transport import LinuxHelperTransport
 
+pytestmark = pytest.mark.skipif(
+    sys.platform != "linux", reason="Linux helper process and POSIX pipe semantics"
+)
+
 _ECHO = (
     "import sys\n"
     "for line in sys.stdin.buffer:\n"

@@ -229,6 +229,8 @@ class _Wire:
 @pytest.fixture
 def loop():
     """A backend wired to two real pipes: the parent stream and the display."""
+    if os.name != "posix":
+        pytest.skip("the Linux backend loop selects on POSIX pipe descriptors")
     wires: list[_Wire] = []
 
     def build(factory=_LoopBackend) -> _Wire:
