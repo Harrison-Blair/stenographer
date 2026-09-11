@@ -7,13 +7,14 @@ import multiprocessing
 import sys
 from collections.abc import Sequence
 
+from stenographer.cli.commands.registry import COMMANDS, resolve_command
 from stenographer.cli.parser import build_parser
 
 
 def dispatch(argv: Sequence[str] | None = None) -> int:
     """Parse ``argv`` and dispatch; startup boundaries belong in :func:`main`.
 
-    Handlers are imported lazily per branch so no subcommand pays for
+    Handlers are imported lazily per command so no subcommand pays for
     another's heavy dependencies.
     """
     parser = build_parser()
@@ -22,41 +23,7 @@ def dispatch(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
-    if args.command == "transcribe":
-        from stenographer.cli.transcribe.handler import cmd_transcribe
-
-        return cmd_transcribe(args)
-    if args.command == "model":
-        from stenographer.cli.model.download.handler import cmd_model_download
-
-        return cmd_model_download(args)
-    if args.command == "run":
-        from stenographer.cli.run.handler import cmd_run
-
-        return cmd_run(args)
-    if args.command == "doctor":
-        from stenographer.cli.doctor.handler import cmd_doctor
-
-        return cmd_doctor(args)
-    if args.command == "devices":
-        from stenographer.cli.devices.handler import cmd_devices
-
-        return cmd_devices(args)
-    if args.command == "stats":
-        from stenographer.cli.stats.handler import cmd_stats
-
-        return cmd_stats(args)
-    if args.command == "completion":
-        from stenographer.cli.completion.handler import cmd_completion
-
-        return cmd_completion(args)
-    if args.command == "sounds":
-        from stenographer.cli.sounds.handler import cmd_sounds
-
-        return cmd_sounds(args)
-    from stenographer.cli.setup.handler import cmd_setup
-
-    return cmd_setup(args)
+    return resolve_command(COMMANDS, args.command).load_handler()(args)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

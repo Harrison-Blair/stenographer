@@ -30,8 +30,11 @@ Functions are grouped by responsibility. Initializers remain small and import-sa
 
 `cli:main` remains the console entry point. `cli/entry.py` performs frozen-process
 bootstrap before argument parsing and recognizes the private `_overlay` entry.
-`cli/parser.py` assembles registrations owned by each command package. Command
-handlers load their dependencies lazily.
+`cli/commands/registry.py` is the ordered table of public subcommands; each
+`CommandSpec` names its handler and either an inline help string (argument-less
+commands) or a `parser.py` owned by the command package. `cli/parser.py` and
+`cli/entry.py` both iterate that table, so adding a command is one table entry.
+Handlers are resolved by import path only when their command runs.
 
 Commands own their prompts, terminal output, consent, and follow-up actions.
 `cli/run/` owns startup and its banner. `cli/setup/` owns quick/default setup and
