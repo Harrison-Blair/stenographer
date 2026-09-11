@@ -20,7 +20,7 @@ from stenographer.overlay.spectrum import (
     WINDOW_SECONDS,
     SpectrumAnalyzer,
     _band_analysis,
-    analyze_spectrum,
+    _band_dbfs,
     display_levels,
     fft_size_for_window,
     logarithmic_band_edges,
@@ -31,6 +31,11 @@ from stenographer.status import SPECTRUM_BANDS
 
 _RATE = 16000
 _FRAME_SECONDS = 1.0 / SPECTRUM_FPS
+
+
+def _levels(samples: object) -> np.ndarray:
+    """The analyzer's own unsmoothed path: band dBFS mapped onto display levels."""
+    return display_levels(_band_dbfs(samples, _RATE))
 
 
 def _tone(
@@ -50,7 +55,7 @@ def test_exactly_eighteen_logarithmic_bands_place_tones_by_frequency() -> None:
 
     for expected in range(SPECTRUM_BANDS):
         frequency = math.sqrt(edges[expected] * edges[expected + 1])
-        levels = analyze_spectrum(_tone(frequency, amplitude=0.02), _RATE)
+        levels = _levels(_tone(frequency, amplitude=0.02))
         assert int(np.argmax(levels)) == expected
 
 
@@ -59,7 +64,7 @@ def test_zero_padding_populates_the_lowest_narrow_band() -> None:
     assert window_size == 512
     assert fft_size_for_window(window_size) == FFT_MIN_SIZE == 4096
 
-    levels = analyze_spectrum(_tone(90.0, amplitude=0.02), _RATE)
+    levels = _levels(_tone(90.0, amplitude=0.02))
     assert levels[0] > 0
     assert int(np.argmax(levels)) == 0
 
@@ -147,26 +152,25 @@ def test_per_band_mapping_uses_a_fixed_thirty_db_visual_range() -> None:
 
 def test_display_response_is_monotonic_with_input_loudness() -> None:
     dominant_levels = [
-        float(np.max(analyze_spectrum(_tone(1000.0, amplitude), _RATE)))
-        for amplitude in (0.003, 0.01, 0.04)
+        float(np.max(_levels(_tone(1000.0, amplitude)))) for amplitude in (0.003, 0.01, 0.04)
     ]
     assert dominant_levels[0] < dominant_levels[1] < dominant_levels[2]
 
 
 def test_digital_silence_and_nonfinite_samples_produce_zero_levels() -> None:
-    assert np.array_equal(analyze_spectrum(np.zeros(512), _RATE), np.zeros(SPECTRUM_BANDS))
+    assert np.array_equal(_levels(np.zeros(512)), np.zeros(SPECTRUM_BANDS))
     invalid = np.full(512, np.nan)
     invalid[0] = np.inf
     invalid[1] = -np.inf
-    assert np.array_equal(analyze_spectrum(invalid, _RATE), np.zeros(SPECTRUM_BANDS))
-    assert np.array_equal(analyze_spectrum("not samples", _RATE), np.zeros(SPECTRUM_BANDS))
+    assert np.array_equal(_levels(invalid), np.zeros(SPECTRUM_BANDS))
+    assert np.array_equal(_levels("not samples"), np.zeros(SPECTRUM_BANDS))
 
 
 def test_first_frame_voice_response_is_immediate() -> None:
     analyzer = SpectrumAnalyzer(DEFAULT_SPECTRUM_FLOOR_DBFS)
     signal = _tone(1000.0, 0.01)
     first = analyzer.update(signal, _RATE, stream_epoch=1)
-    unsmoothed = quantize_spectrum(analyze_spectrum(signal, _RATE))
+    unsmoothed = quantize_spectrum(_levels(signal))
 
     assert max(first) > 0
     assert max(abs(actual - target) for actual, target in zip(first, unsmoothed, strict=True)) <= 1

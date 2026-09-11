@@ -205,26 +205,3 @@ def calibrate_spectrum_profile(
         recorder.close()
         quiet.fill(0.0)
         voice.fill(0.0)
-
-
-def calibrate_spectrum_floor(
-    device: str | int | None,
-    *,
-    on_countdown: Callable[[int], None],
-    cancellation: threading.Event | None = None,
-) -> float:
-    """Capture room noise from *device* and return its display-only floor.
-
-    The countdown contract is ``_record_room_noise``'s; the recorder and every
-    returned sample buffer are cleared on success, failure, or interruption.
-    """
-    recorder = Recorder(device=device, max_seconds=CAPTURE_SECONDS)
-    captured = np.empty(0, dtype=np.float32)
-    try:
-        captured = _record_room_noise(recorder, on_countdown, cancellation)
-        result = estimate_spectrum_floor(captured, 16000)
-        wait_for_capture(0, cancellation)
-        return result
-    finally:
-        recorder.close()
-        captured.fill(0.0)

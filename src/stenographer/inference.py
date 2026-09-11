@@ -10,12 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol
-
-if TYPE_CHECKING:
-    import numpy as np
-
-    from stenographer.transcribe.model import TranscriptionResult
+from typing import Protocol
 
 
 class Failure(StrEnum):
@@ -60,15 +55,3 @@ class Result[T]:
     def __post_init__(self) -> None:
         if (self.value is None) == (self.failure is None):
             raise ValueError("result requires exactly one value or failure")
-
-
-class ASR(Protocol):
-    def transcribe(self, samples: np.ndarray, request: Request) -> Result[TranscriptionResult]: ...
-
-    def close(self) -> None: ...
-
-
-class Cleanup(Protocol):
-    def clean(self, transcript: str, request: Request) -> Result[str]: ...
-
-    def close(self) -> None: ...

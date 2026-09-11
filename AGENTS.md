@@ -42,7 +42,10 @@ The first callback is measured against accepted press and stream activation;
 ADC clock discontinuities are diagnostics, not proof that speech was lost.
 
 Shared experimental contracts live in `inference.py`; cleanup validation and
-evaluation math remain pure. Private chunks retain the full utterance, bound
+evaluation math remain pure. The unimplemented `ASR`/`Cleanup` Protocols, the cleanup
+prompt constant, and the unreferenced `analytics_overhead.py` runner were
+removed on 2026-09-11; an adapter reintroduces its contract together with its
+implementation, never ahead of it. Private chunks retain the full utterance, bound
 pending work, and fall back to whole-utterance ASR on uncertain reconciliation.
 Exactly one final delivery remains the daemon's responsibility. Native APIs,
 inference process management, and any future native settings integration stay

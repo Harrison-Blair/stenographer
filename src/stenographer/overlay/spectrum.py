@@ -158,15 +158,6 @@ def display_levels(dbfs: object, floor_dbfs: object = DEFAULT_SPECTRUM_FLOOR_DBF
     return np.power(normalized, DISPLAY_GAMMA)
 
 
-def analyze_spectrum(
-    samples: object,
-    sample_rate: int,
-    floor_dbfs: object = DEFAULT_SPECTRUM_FLOOR_DBFS,
-) -> np.ndarray:
-    """Map a mono window to 18 display levels using a fixed dBFS range."""
-    return display_levels(_band_dbfs(samples, sample_rate), floor_dbfs)
-
-
 def smooth_spectrum(
     previous: object,
     target: object,
