@@ -5,6 +5,10 @@ from collections.abc import Iterable, Sequence
 
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.protocol.codec import decode_message
+from stenographer.overlay.protocol.constants import (
+    CANCELLED_DISPLAY_SECONDS,
+    ERROR_DISPLAY_SECONDS,
+)
 from stenographer.overlay.protocol.display_message_gate import DisplayMessageGate
 from stenographer.overlay.protocol.errors import ProtocolError
 from stenographer.overlay.protocol.line_reader import LineReader
@@ -84,6 +88,18 @@ def drain_display_stream(
     return coalesce_spectrum_messages(accepted)
 
 
-def error_timeout_applies(expected_generation: int, current: StateMessage) -> bool:
-    """Guard a delayed hide so it cannot erase a newer visible state."""
-    return current.generation == expected_generation and current.state is OverlayState.ERROR
+def transient_display_seconds(state: OverlayState) -> float | None:
+    """Return the self-expiry window for a transient state, if it has one. PURE."""
+    if state is OverlayState.ERROR:
+        return ERROR_DISPLAY_SECONDS
+    if state is OverlayState.CANCELLED:
+        return CANCELLED_DISPLAY_SECONDS
+    return None
+
+
+def transient_timeout_applies(expected_generation: int, current: StateMessage) -> bool:
+    """Guard a delayed hide so it cannot erase a newer visible state. PURE."""
+    return (
+        current.generation == expected_generation
+        and transient_display_seconds(current.state) is not None
+    )

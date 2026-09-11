@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import threading
 
 import numpy as np
 import pytest
@@ -20,6 +21,7 @@ from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.daemon import Daemon
 from stenographer.lib.daemon.feedback import _play_cue
 from stenographer.lib.daemon.pipeline import UtterancePipeline
+from stenographer.lib.daemon.policy import cancel_state
 from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.logging.utterance_filter import UtteranceFilter
 from stenographer.lib.platform.errors import UnsupportedPlatformError
@@ -100,6 +102,9 @@ class _Worker:
         self.last_timings: WorkerTimings | None = None
         self.utterances: list[int | None] = []
         self.is_model_ready = False
+        self.transcribe_started = threading.Event()
+        self.transcribe_release = threading.Event()
+        self.block_transcribe = False
 
     def hold_model(self) -> None: ...
 
@@ -111,6 +116,9 @@ class _Worker:
 
     def transcribe(self, samples: np.ndarray, utterance: int | None = None) -> TranscriptionResult:
         self.utterances.append(utterance)
+        self.transcribe_started.set()
+        if self.block_transcribe:
+            self.transcribe_release.wait(timeout=10.0)
         if self._error is not None:
             raise self._error
         self.last_timings = WorkerTimings(lock_wait_ms=0.5, load_ms=900.0, decode_ms=1500.0)
@@ -152,7 +160,8 @@ def _daemon(*, result=None, error=None, samples=_SPEECH, mode="hold") -> Daemon:
         publish_state=daemon._publish_state,
         fail=daemon._fail,
         play_cue=lambda name: _play_cue(daemon._feedback, name),
-        cancelled=daemon._stop_event.is_set,
+        cancelled=daemon._cancel_pending,
+        cancel_state=lambda: cancel_state(shutting_down=daemon._stop_event.is_set()),
     )
     return daemon
 

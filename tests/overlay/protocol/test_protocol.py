@@ -10,7 +10,11 @@ from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.codec import decode_message, encode_message
 from stenographer.overlay.protocol.command import Command
-from stenographer.overlay.protocol.constants import MAX_MESSAGE_BYTES
+from stenographer.overlay.protocol.constants import (
+    CANCELLED_DISPLAY_SECONDS,
+    ERROR_DISPLAY_SECONDS,
+    MAX_MESSAGE_BYTES,
+)
 from stenographer.overlay.protocol.display_message_gate import DisplayMessageGate
 from stenographer.overlay.protocol.errors import ProtocolError
 from stenographer.overlay.protocol.line_reader import LineReader
@@ -25,7 +29,8 @@ from stenographer.overlay.protocol.messages import (
 from stenographer.overlay.protocol.ordering import (
     coalesce_spectrum_messages,
     drain_display_stream,
-    error_timeout_applies,
+    transient_display_seconds,
+    transient_timeout_applies,
 )
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
@@ -34,6 +39,7 @@ from stenographer.overlay.protocol.unavailablereason import UnavailableReason
     "message",
     [
         StateMessage(generation=7, state=OverlayState.RECORDING),
+        StateMessage(generation=8, state=OverlayState.CANCELLED),
         SpectrumMessage(generation=7, sequence=4, levels=tuple(range(SPECTRUM_BANDS))),
         LoadingActivityMessage(active=True),
         LoadingActivityMessage(active=False),
@@ -269,8 +275,16 @@ def test_drain_display_stream_rejects_unexpected_parent_message_types():
         drain_display_stream(stream, reader, gate)
 
 
-def test_error_timeout_is_guarded_by_generation_and_state():
+def test_transient_timeout_is_guarded_by_generation_and_state():
     error = StateMessage(10, OverlayState.ERROR)
-    assert error_timeout_applies(10, error) is True
-    assert error_timeout_applies(9, error) is False
-    assert error_timeout_applies(10, StateMessage(10, OverlayState.RECORDING)) is False
+    cancelled = StateMessage(11, OverlayState.CANCELLED)
+    assert transient_timeout_applies(10, error) is True
+    assert transient_timeout_applies(9, error) is False
+    assert transient_timeout_applies(11, cancelled) is True
+    assert transient_timeout_applies(10, StateMessage(10, OverlayState.RECORDING)) is False
+
+
+def test_transient_display_windows_match_the_visual_contract():
+    assert transient_display_seconds(OverlayState.ERROR) == ERROR_DISPLAY_SECONDS
+    assert transient_display_seconds(OverlayState.CANCELLED) == CANCELLED_DISPLAY_SECONDS
+    assert transient_display_seconds(OverlayState.HIDDEN) is None

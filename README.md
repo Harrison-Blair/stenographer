@@ -22,7 +22,8 @@ instructions.
 > This `README.md` was generated with AI, but reviewed for accuracy by a human
 
 Default hotkey: Right Ctrl in hybrid mode. Tap it to latch, or hold it, speak,
-and release; plain hold-to-talk and toggle modes are optional.
+and release; plain hold-to-talk and toggle modes are optional. Press Escape at
+any point during an utterance to cancel it; nothing is transcribed or pasted.
 
 
 <!--
@@ -36,46 +37,36 @@ content. To change the project description, edit above this line.
 
 ## Quick install
 
-On Linux x86_64 or AArch64 with a Wayland session and a systemd user manager:
+On Linux x86_64 or AArch64 with Wayland and a systemd user manager:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start
 ```
 
-This downloads the latest release's prebuilt bundle, verifies it against the
-release's `SHA256SUMS`, installs `~/.local/bin/stenographer`, and installs and
-enables the systemd user service — no Python or build tools needed.
-`--no-start` leaves the service stopped until you have configured it and
-downloaded the model; drop it (and everything after `bash`) when upgrading an
-existing install. Any other `scripts/install.sh` option can be passed the same
-way. The bundle is built on Ubuntu 24.04, so it needs a comparably recent
-glibc; on older systems build from source instead (step 2 below).
+This verifies and installs the latest prebuilt bundle and user service. It
+leaves the service stopped so you can configure it and download the model. No
+Python or build tools are needed. For another architecture or a local build,
+see [docs/building.md](docs/building.md).
 
-After the quick install, check the permissions in step 1, skip step 2, and
-continue from step 3.
+## Requirements
 
-## Quick start
-
-### 1. Check the essentials
-
-You need Linux with a Wayland session and a systemd user manager, Python 3.12+
-and the build prerequisites described in [BUILD.md](BUILD.md). Dictation also
-requires:
+You need Linux, Wayland, a systemd user manager, and:
 
 - A PortAudio-backed microphone and the system PortAudio library.
 - Read access to `/dev/input/event*`, normally through the `input` group.
 - Write access to `/dev/uinput`, through a udev rule or `uinput` group.
-- `wl-copy` from `wl-clipboard`, or `xclip` plus XWayland on compositors without
-  the Wayland data-control protocol.
+- `wl-copy` from `wl-clipboard` (or `xclip` plus XWayland).
 
-For example, add yourself to the input group with
-`sudo usermod -aG input $USER`, then log out and back in. Permission setup and
-package names vary by distribution; `stenographer doctor` reports what is
-missing.
+Stenographer is English-focused. Run `stenographer doctor` for missing
+capabilities and fixes; for example, input access may require:
 
-### 2. Install the user service
+```sh
+sudo usermod -aG input "$USER"
+```
 
-Skip this step if you used the quick install above.
+## Install from source
+
+Use this when a prebuilt bundle is unavailable:
 
 ```sh
 git clone https://github.com/Harrison-Blair/stenographer.git
@@ -85,201 +76,78 @@ python3 -m venv .venv
 scripts/install.sh --no-start
 ```
 
-The installer builds the standalone bundle, installs
-`~/.local/bin/stenographer`, and installs and enables the systemd user service.
-`--no-start` leaves it stopped while you configure it.
-
-### 3. Configure
+## Configure and start
 
 ```sh
 ~/.local/bin/stenographer setup --quick
+systemctl --user start stenographer.service
 ```
 
-Use `setup --quick` for normal setup or `setup` to review every setting. Both
-wizards offer the bundled and valid custom sound packs, then offer the separate,
-approximately 1.5 GB model download and check the microphone, clipboard, model,
-and input permissions.
+The wizard checks your microphone, clipboard, model, and input permissions, and
+offers the separate model download (about 1.5 GB). Use plain `setup` to review
+every setting, or run `stenographer model download` later.
 
-Configuration lives at `~/.config/stenographer/config.toml`. Hybrid mode is the
-default: a tap released inside `hybrid_threshold_seconds` (default `0.5`)
-latches the recording until the next press, and a press held past it stops on
-release. To use plain hold-to-talk or toggle mode and hide visual feedback,
-set:
+Configuration lives at `~/.config/stenographer/config.toml`. For example:
 
 ```toml
 [stenographer.hotkey]
-mode = "toggle"  # or "hold"
+mode = "toggle"       # or "hold"
+cancel_binding = "KEY_ESC"  # "" disables cancellation
 
 [stenographer.feedback]
 overlay = false
 sound_pack = "minimal-ui"
 ```
 
-`stenographer setup --default` rewrites `config.toml` with the annotated
-defaults without prompting. Any previous file is backed up first and the
-backup path is printed.
+CLI saves preserve comments and settings they do not know about. Restart the
+service after editing it with `systemctl --user restart stenographer.service`.
 
-### 4. Start and dictate
+## Dictate
 
-```sh
-systemctl --user start stenographer.service
-systemctl --user status stenographer.service --no-pager
-```
+Right Ctrl is the default hybrid binding:
 
-Hold Right Ctrl, speak, then release — or tap it to latch, speak, and tap again
-to stop. The transcript is pasted at the cursor and remains on the clipboard.
-In `hold` mode only the held press works; in `toggle` mode press once to start
-and again to stop.
+- Hold it, speak, and release for push-to-talk.
+- Tap it, speak, and tap again to stop a latched recording.
+- Press Escape while recording or delivering to discard the audio and
+  transcript. Nothing is pasted.
 
-## CLI
+Otherwise the transcript is pasted at your cursor and remains on the clipboard.
+Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
 
-| Command | What it does |
-|---|---|
-| `stenographer run` | Run the daemon in the foreground. |
-| `stenographer transcribe FILE [--raw]` | Transcribe an audio file; optionally skip formatting. |
-| `stenographer model download` | Download the configured ASR model into the local cache. |
-| `stenographer doctor` | Check required capabilities and print fixes. |
-| `stenographer devices` | List audio input devices. |
-| `stenographer setup [--quick \| --default]` | Configure everything, only the common settings, or write the annotated defaults without prompting. |
-| `stenographer sounds [PACK]` | List, preview, or select a whole sound pack. |
-| `stenographer completion {bash,zsh,fish}` | Print a native shell completion definition. |
+## Common commands
 
-Add `--help` to any command for its full usage.
+- `stenographer doctor` — check capabilities and print fixes.
+- `stenographer devices` — list audio input devices.
+- `stenographer sounds [PACK]` — list, preview, or select sound feedback.
+- `stenographer stats` — view, export, or delete local numeric statistics.
+- `stenographer transcribe FILE [--raw]` — transcribe an audio file.
+- `stenographer run` — run the daemon in the foreground.
 
-## Sound packs
+Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
+for sound packs, statistics, and configuration examples.
 
-Four packs ship in a fixed order: `legacy` preserves the original cues,
-followed by `warm-desk`, `soft-electronic`, and the default `minimal-ui`. Use
-`stenographer sounds` for the TTY selector, `stenographer sounds --list` to see
-the effective selection, or preview without saving:
+## Troubleshooting
 
 ```sh
-stenographer sounds --preview warm-desk
-stenographer sounds soft-electronic
-```
-
-The selector always changes the complete four-cue pack; there are no per-cue
-overrides or downloads. A custom pack lives at
-`~/.config/stenographer/sounds/<pack>/` (or beside the active custom config) and
-contains `record_start.wav`, `record_stop.wav`, `delivered.wav`, and `error.wav`.
-Pack names use lowercase letters, digits, and hyphens. Each cue must be a
-readable, nonempty, uncompressed PCM WAV shorter than 300 ms, with one or two
-channels, an 8–192 kHz sample rate, and 8/16/24/32-bit samples. Other files are
-ignored, but an incomplete or invalid pack is unavailable as a unit. Restart the
-daemon after selecting or editing a custom pack.
-
-## How it works and privacy
-
-The flow is hotkey → microphone → local English transcription → clipboard →
-paste chord at the cursor. The paste chord fires only after a confirmed
-clipboard copy and physical hotkey release.
-
-Production code is organized into `lib/` for reusable engines, `cli/` for
-command workflows, and `overlay/` for the optional display helper. CLI workflows
-connect the engines and display services; library code imports neither frontend.
-See [the architecture guide](docs/architecture.md) for ownership and boundaries.
-
-The core pipeline is platform-neutral and reaches every host-specific surface
-through one boundary, `stenographer.lib.platform`: the hotkey listener, clipboard
-writer, paste injector, sound-cue player, notifier, single-instance lock, user
-directories, and capability probes. The Linux backend (`lib/platform/linux/`) is
-evdev for the hotkey, a `uinput` Shift+Insert chord for the paste, `wl-copy` or
-`xclip` for both clipboard selections, `canberra`/`pw-play`/`paplay` for cues,
-`notify-send`, an `flock` under `$XDG_RUNTIME_DIR`, and XDG paths. Hotkey
-bindings use evdev `KEY_*` names on every platform.
-
-The model download is explicit, and dictation is offline: audio, transcripts,
-configuration, and device or model names never leave the machine. The daemon's
-only network access is the update notice — at most one request per 24 hours,
-successful or not: a single metadata-only request for the latest GitHub release
-tag, showing a desktop notification when a newer version exists and pointing
-back at the quick-install command above. It never downloads anything; a failed
-check is silent, and the next attempt waits for the 24-hour window. Turn it off
-with `update_check = false` under `[feedback]`. Logs may contain timings and
-counts, but never transcript text or audio. See [AGENTS.md](AGENTS.md) for
-agent working instructions.
-
-## Service and troubleshooting
-
-```sh
-~/.local/bin/stenographer doctor
+stenographer doctor
 journalctl --user -u stenographer.service -f
 systemctl --user restart stenographer.service
-~/.local/bin/stenographer setup --quick
 ```
 
-Run plain `setup` when you need all settings. Use `stenographer sounds` when you
-want to audition cue packs. Sound cues and desktop error notifications are
-optional and become no-ops if no supported player or `notify-send` is available.
+## Privacy and more
 
-## Requirements and limitations
+The model download is explicit and dictation runs locally. Audio, transcripts,
+configuration, and device or model names stay on your machine. Logs never
+contain transcript text or audio. The only network request is an optional,
+metadata-only release check; disable it in `[stenographer.feedback]` with
+`update_check = false`.
 
-Required capabilities are a cached model, a working PortAudio input, readable
-evdev keyboard devices, writable `/dev/uinput`, and the clipboard command chosen
-for the current compositor. Stenographer is Wayland-focused and English-only.
-
-Only the Linux backend exists today. The core installs and imports on other
-platforms (the Linux-only dependencies carry `sys_platform` markers), but
-`stenographer doctor` reports every required capability as missing there and
-`stenographer run` refuses to start; a Windows backend would implement the same
-`platform` protocols without changing the core or the config schema.
-
-The optional, click-through lifecycle pill is failure-safe: if neither its
-native layer-shell backend nor its XWayland fallback works, dictation continues
-without it. It shows exactly 18 spectrum bars while recording and an amber
-breathing border while the model loads; it never receives transcript text or
-raw microphone audio.
+Read the [user guide](docs/usage.md) for privacy settings and more examples.
 
 ## Development
 
-See [BUILD.md](BUILD.md) for standalone builds. From the repository venv, run:
-
-```sh
-.venv/bin/ruff check . && .venv/bin/ruff format --check .
-.venv/bin/pytest -m "not integration"
-scripts/check-completions.sh
-.venv/bin/python scripts/cue_audition.py --verify-packaged
-.venv/bin/stenographer --help
-```
-
-The completion checker runs every supported shell available locally and reports
-missing shells as skipped; CI installs and checks Bash, Zsh, and Fish.
-
-The integration suite and real dictation are the release gate and must run in a
-real graphical session, not CI or a sandbox. `tests/lib/platform/test_core_isolation.py`
-guards the boundary: it imports the whole core with evdev, fcntl, termios, and the
-Wayland/X11 libraries blocked, so a Linux-only import leaking into the core fails
-on any machine. CI also runs the unit suite on Windows as a portability check.
-
-## CLI settings and private analytics
-
-Use `stenographer setup` to configure dictation and `stenographer sounds` to
-select a complete sound pack. CLI saves preserve comments and unknown settings;
-restart the daemon explicitly to apply changes. The settings GUI and its daemon
-control endpoint have been removed. Native bundles contain the CLI/daemon and
-its helpers; the lifecycle pill, spectrum bars, and loading animation remain.
-See [native builds and acceptance](BUILD.md#native-development-builds) for
-Windows/macOS limitations.
-
-Run `stenographer stats` for lifetime dictation totals.
-`stenographer stats export --format json` and
-`stenographer stats export --format csv` export numeric records.
-`stenographer stats delete --since 2026-09-01 --until 2026-09-07` previews a
-local-date deletion, and `--yes` confirms it. `stenographer stats reset` previews
-removal of all sources. Recognized words count even
-if delivery fails; completed ASR audio counts input samples, including pauses.
-No audio, transcript, prompt or hotword text is retained in analytics.
-In the `[stenographer.analytics]` section, set
-`enabled = false` to disable collection, or `resource_profiling = false` to retain
-ordinary analytics without host sampling.
-Word counts use Unicode alphanumeric runs with internal apostrophes; hyphenated
-words count separately. Reports calculate nearest-rank p95/p99 from matching
-utterances and keep missing measurements unknown. Collection is asynchronous:
-storage failures do not block dictation, and uncommitted measurements can be lost
-in a crash. See [native acceptance requirements](packaging/NATIVE-ACCEPTANCE.md).
-
-Removing the GUI preserves existing configuration, analytics history, models,
-and logs. Analytics persist until explicitly deleted.
+See [docs/building.md](docs/building.md) for standalone builds and contributor
+checks. See [docs/architecture.md](docs/architecture.md) for code boundaries.
 
 ## License
 

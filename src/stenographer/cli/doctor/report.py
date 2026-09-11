@@ -129,6 +129,7 @@ def render(
         f"config: {config_path}",
         f"model: {cfg.asr.model}",
         f"hotkey binding: {cfg.hotkey.binding}",
+        f"hotkey cancel binding: {cfg.hotkey.cancel_binding or '<disabled>'}",
         "",
     ]
     for name in REQUIRED:

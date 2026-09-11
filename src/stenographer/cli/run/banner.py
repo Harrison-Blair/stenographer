@@ -81,6 +81,7 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             "banner",
             "config_hotkey",
             binding=cfg.hotkey.binding,
+            cancel_binding=_shown(cfg.hotkey.cancel_binding),
             device=_shown(cfg.hotkey.device),
             mode=cfg.hotkey.mode,
             hybrid_threshold_seconds=cfg.hotkey.hybrid_threshold_seconds,

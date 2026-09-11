@@ -13,7 +13,8 @@ their existing paths in `assets/`.
 - `config/`: frozen models, defaults, validation, preservation, backups,
   conflict detection, and saving. No configuration migration is needed.
 - `audio/`, `hotkey/`, and `transcribe/`: recording and measurements, binding
-  vocabulary and chord tracking, ASR workers, formatting, and utterance records.
+  vocabulary, session/cancel chord tracking, ASR workers, formatting, and
+  utterance records.
 - `delivery/` and `sounds/`: confirmed clipboard delivery, release waiting,
   sound-pack validation, preview, and feedback policy.
 - `daemon/`: recording lifecycle, locking, publication order, pipeline execution,
@@ -68,6 +69,6 @@ clipboard confirmation, cue/capture ordering, logging privacy, and completion ru
 The wheel includes the unchanged assets and generated bindings at
 `overlay/platform/linux/backends/protocols/`. The frozen build collects the
 package recursively, including lazy imports and multiprocessing child entry code.
-See [BUILD.md](../BUILD.md) and [native acceptance](../packaging/NATIVE-ACCEPTANCE.md)
+See [building](building.md) and [native acceptance](../packaging/NATIVE-ACCEPTANCE.md)
 for packaging and real-machine release gates. Sandbox checks never access the
 microphone or run integration tests.

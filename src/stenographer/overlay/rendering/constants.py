@@ -141,6 +141,7 @@ STATE_LABELS: Mapping[OverlayState, str] = MappingProxyType(
     {
         OverlayState.TRANSCRIBING: "Transcribing",
         OverlayState.DELIVERING: "Delivering",
+        OverlayState.CANCELLED: "Cancelled",
         OverlayState.ERROR: "Error",
     }
 )
@@ -151,6 +152,7 @@ STATE_DOT_COLORS: Mapping[OverlayState, tuple[int, int, int, int]] = MappingProx
         OverlayState.RECORDING: (0xEF, 0x44, 0x44, 0xFF),
         OverlayState.TRANSCRIBING: (0x3B, 0x82, 0xF6, 0xFF),
         OverlayState.DELIVERING: (0x8B, 0x5C, 0xF6, 0xFF),
+        OverlayState.CANCELLED: (0xA1, 0xA1, 0xAA, 0xFF),
         OverlayState.ERROR: (0xEF, 0x44, 0x44, 0xFF),
     }
 )

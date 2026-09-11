@@ -20,6 +20,8 @@ from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.pipeline import UtterancePipeline
 from stenographer.lib.daemon.policy import (
     can_start,
+    cancel_action,
+    cancel_state,
     edge_handlers,
     hybrid_release_action,
     ignored_edge_reason,
@@ -81,6 +83,7 @@ class Daemon:
         # Also the stale-timer generation: a max-duration timer applies only to
         # the utterance it was armed for, and each accepted start is a new one.
         self._utterance_id = 0
+        self._cancelled_utterance: int | None = None
         self._record: UtteranceRecord | None = None
         self._max_timer: threading.Timer | None = None
         self._warmup_thread: threading.Thread | None = None
@@ -150,13 +153,21 @@ class Daemon:
         )
         daemon_ref = daemon
         on_start, on_stop = edge_handlers(daemon, cfg.hotkey.mode)
+        keys = plat.keys()
+        cancel = (
+            parse_binding(cfg.hotkey.cancel_binding, keys)
+            if cfg.hotkey.cancel_binding is not None
+            else frozenset()
+        )
         log.info("hotkey: configured mode=%s", cfg.hotkey.mode)
         listener = plat.hotkey_listener(
-            chord=parse_binding(cfg.hotkey.binding, plat.keys()),
+            chord=parse_binding(cfg.hotkey.binding, keys),
             device=cfg.hotkey.device,
             on_start=on_start,
             on_stop=on_stop,
             lock=threading.RLock(),
+            cancel=cancel,
+            on_cancel=daemon.on_cancel,
         )
         deliverer = Deliverer(
             keyboard=plat.key_injector(),
@@ -174,7 +185,8 @@ class Daemon:
             publish_state=daemon._publish_state,
             fail=daemon._fail,
             play_cue=lambda name: _play_cue(feedback, name),
-            cancelled=daemon._stop_event.is_set,
+            cancelled=daemon._cancel_pending,
+            cancel_state=lambda: cancel_state(shutting_down=daemon._stop_event.is_set()),
         )
         return daemon
 
@@ -196,6 +208,15 @@ class Daemon:
         self._publish_state(OverlayState.ERROR)
         _play_cue(self._feedback, "error")
         self._notifier.error(notify_msg)
+
+    def _publish_cancelled(self) -> None:
+        """Show an immediate cancellation result without treating it as a failure."""
+        self._publish_state(cancel_state(shutting_down=self._stop_event.is_set()))
+        _play_cue(self._feedback, "error")
+
+    def _cancel_pending(self) -> bool:
+        """Return whether the current utterance has been cancelled or shutdown began."""
+        return self._stop_event.is_set() or self._cancelled_utterance == self._utterance_id
 
     def _on_model_loading(self) -> None:
         """Publish cold-load activity without replacing the current pill."""
@@ -368,6 +389,42 @@ class Daemon:
             _play_cue(self._feedback, "record_start")
             self._start_model_warmup(self._utterance_id)
 
+    def on_cancel(self) -> None:
+        """Abandon the active recording or pipeline at the next safe boundary."""
+        with self._lock:
+            action = cancel_action(recording=self._recording, busy=self._busy)
+            if action is None:
+                log.debug(fmt_event("hotkey", "cancel_ignored"))
+                return
+            generation = self._utterance_id
+            self._cancelled_utterance = generation
+            if action == "pipeline":
+                self._publish_cancelled()
+        if action == "recording":
+            self._cancel_recording(generation)
+
+    def _cancel_recording(self, generation: int) -> None:
+        """Finalize a live capture as cancelled while retaining the recorder."""
+        with self._capture_lock:
+            with self._lock:
+                if generation != self._utterance_id or not self._recording:
+                    return
+                self._recording = False
+                self._busy = False
+                if self._record is not None:
+                    self._record.stopped_at = time.perf_counter()
+                self._cancel_max_timer()
+            try:
+                self._recorder.stop()
+            except Exception as exc:
+                log_failure(log, logging.DEBUG, "recorder: cancel_finalize_failed", exc, safe=True)
+            with self._lock:
+                self._apply_capture(self._recorder.last_capture)
+                self._telemetry.checkpoint(self._record, "secured_capture")
+                self._worker.release_model()
+                self._publish_cancelled()
+                self._emit_summary(self._take_record("CANCELLED"))
+
     def on_key_up(self, *, generation: int | None = None) -> None:
         with self._lock:
             if generation is not None and generation != self._utterance_id:
@@ -384,7 +441,8 @@ class Daemon:
             # the tool is still working until the paste lands, so the release
             # moves it to TRANSCRIBING rather than hiding it. Every exit from
             # the pipeline below publishes HIDDEN or ERROR itself.
-            self._publish_state(OverlayState.TRANSCRIBING)
+            if not self._cancel_pending():
+                self._publish_state(OverlayState.TRANSCRIBING)
         # Callback-clock reduction and sample finalization are outside lifecycle locks.
         with self._capture_lock:
             try:
@@ -403,9 +461,12 @@ class Daemon:
             with self._lock:
                 self._apply_capture(self._recorder.last_capture)
                 self._telemetry.checkpoint(self._record, "secured_capture")
-                if self._stop_event.is_set():
+                if self._cancel_pending():
                     self._busy = False
                     self._worker.release_model()
+                    expected_state = cancel_state(shutting_down=self._stop_event.is_set())
+                    if self._overlay_state is not expected_state:
+                        self._publish_cancelled()
                     self._emit_summary(self._take_record("CANCELLED"))
                     return
                 _play_cue(self._feedback, "record_stop")

@@ -8,8 +8,8 @@ dispatch, and ``wait_binding_released`` (the deliverer's modifier
 release-guard); it has no device I/O. A platform listener (the evdev one lives in
 ``stenographer.lib.platform.linux.hotkey``) subclasses it and feeds
 ``_key_event(device_id, code, value)`` from its reader threads. It owns no state
-machine beyond edges, no cancel binding, double-tap timer, or feedback
-wiring: the daemon maps edges to session actions per ``hotkey.mode``.
+machine beyond edges, double-tap timer, or feedback wiring: the daemon maps
+session and cancel edges to actions per ``hotkey.mode``.
 
 The pure helpers (parse_binding, chord_active, edge) and the tracker are the
 unit targets; the real read loop is exercised by the uinput loopback smoke."""

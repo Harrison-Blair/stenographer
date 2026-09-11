@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.outcome import Outcome
 
 if TYPE_CHECKING:
@@ -106,3 +107,17 @@ def max_duration_applies(armed_generation: int, current_generation: int, recordi
     recording it was armed for, and only while that recording is live.
     """
     return armed_generation == current_generation and recording
+
+
+def cancel_action(*, recording: bool, busy: bool) -> Literal["recording", "pipeline"] | None:
+    """Select the active utterance stage that a cancel edge should stop. PURE."""
+    if recording:
+        return "recording"
+    if busy:
+        return "pipeline"
+    return None
+
+
+def cancel_state(*, shutting_down: bool) -> OverlayState:
+    """Choose the terminal display state for a cancellation. PURE."""
+    return OverlayState.HIDDEN if shutting_down else OverlayState.CANCELLED

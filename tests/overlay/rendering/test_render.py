@@ -46,6 +46,7 @@ def test_lifecycle_visual_contract_has_no_loading_label_or_dot() -> None:
     assert STATE_LABELS == {
         OverlayState.TRANSCRIBING: "Transcribing",
         OverlayState.DELIVERING: "Delivering",
+        OverlayState.CANCELLED: "Cancelled",
         OverlayState.ERROR: "Error",
     }
     assert isinstance(STATE_DOT_COLORS, MappingProxyType)
@@ -53,6 +54,7 @@ def test_lifecycle_visual_contract_has_no_loading_label_or_dot() -> None:
         OverlayState.RECORDING: (0xEF, 0x44, 0x44, 0xFF),
         OverlayState.TRANSCRIBING: (0x3B, 0x82, 0xF6, 0xFF),
         OverlayState.DELIVERING: (0x8B, 0x5C, 0xF6, 0xFF),
+        OverlayState.CANCELLED: (0xA1, 0xA1, 0xAA, 0xFF),
         OverlayState.ERROR: (0xEF, 0x44, 0x44, 0xFF),
     }
     assert OverlayState.HIDDEN not in STATE_LABELS
@@ -78,6 +80,7 @@ def test_transparent_icon_padding_is_cropped_without_mutating_source() -> None:
         (OverlayState.RECORDING, (0xEF, 0x44, 0x44, 0xFF)),
         (OverlayState.TRANSCRIBING, (0x3B, 0x82, 0xF6, 0xFF)),
         (OverlayState.DELIVERING, (0x8B, 0x5C, 0xF6, 0xFF)),
+        (OverlayState.CANCELLED, (0xA1, 0xA1, 0xAA, 0xFF)),
         (OverlayState.ERROR, (0xEF, 0x44, 0x44, 0xFF)),
     ],
 )

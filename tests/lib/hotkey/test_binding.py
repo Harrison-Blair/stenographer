@@ -23,7 +23,13 @@ from stenographer.lib.hotkey.binding import chord_active, edge, parse_binding
 from stenographer.lib.hotkey.chord_tracker import ChordTracker
 from stenographer.lib.hotkey.errors import BindingError
 
-_TABLE = {"KEY_A": 30, "KEY_LEFTCTRL": 29, "KEY_RIGHTALT": 100, "KEY_RIGHTCTRL": 97}
+_TABLE = {
+    "KEY_A": 30,
+    "KEY_ESC": 1,
+    "KEY_LEFTCTRL": 29,
+    "KEY_RIGHTALT": 100,
+    "KEY_RIGHTCTRL": 97,
+}
 
 
 class _Keys:
@@ -138,3 +144,46 @@ def test_tracker_rejects_unregistered_device():
     tracker, events = _tracker(frozenset({100}), 1)
     assert tracker._key_event(7, 100, 1) is False
     assert events == []
+
+
+def test_tracker_reports_cancel_only_on_the_rising_edge():
+    cancels: list[str] = []
+    tracker = ChordTracker(
+        chord=frozenset({100}),
+        on_start=lambda: None,
+        on_stop=lambda: None,
+        lock=threading.RLock(),
+        cancel=frozenset({1}),
+        on_cancel=lambda: cancels.append("cancel"),
+    )
+    tracker._held_by_device = {1: set()}
+
+    tracker._key_event(1, 1, 1)
+    tracker._key_event(1, 1, 2)
+    tracker._key_event(1, 1, 0)
+    assert cancels == ["cancel"]
+
+    tracker._key_event(1, 1, 1)
+    assert cancels == ["cancel", "cancel"]
+
+
+def test_tracker_keeps_cancel_and_main_chords_independent_while_held():
+    events: list[str] = []
+    tracker = ChordTracker(
+        chord=frozenset({29, 30}),
+        on_start=lambda: events.append("start"),
+        on_stop=lambda: events.append("stop"),
+        lock=threading.RLock(),
+        cancel=frozenset({1}),
+        on_cancel=lambda: events.append("cancel"),
+    )
+    tracker._held_by_device = {1: set()}
+
+    tracker._key_event(1, 1, 1)
+    tracker._key_event(1, 29, 1)
+    tracker._key_event(1, 30, 1)
+    tracker._key_event(1, 30, 0)
+    tracker._key_event(1, 29, 0)
+    tracker._key_event(1, 1, 0)
+
+    assert events == ["cancel", "start", "stop"]

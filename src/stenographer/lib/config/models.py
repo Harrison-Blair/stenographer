@@ -17,6 +17,7 @@ from stenographer.lib.config.reader import _Reader
 class HotkeyConfig:
     binding: str
     device: str | None
+    cancel_binding: str | None = "KEY_ESC"
     mode: str = "hybrid"
     hybrid_threshold_seconds: float = 0.5
 
@@ -72,6 +73,7 @@ class Config:
             hotkey=HotkeyConfig(
                 binding="KEY_RIGHTCTRL",
                 device=None,
+                cancel_binding="KEY_ESC",
                 mode="hybrid",
                 hybrid_threshold_seconds=0.5,
             ),

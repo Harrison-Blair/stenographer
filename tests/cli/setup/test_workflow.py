@@ -256,6 +256,7 @@ def test_full_review_lists_every_section_and_field():
         "[hotkey]",
         "  binding = KEY_RIGHTCTRL",
         "  device = automatic/unset",
+        "  cancel_binding = KEY_ESC",
         "  mode = hybrid",
         "  hybrid_threshold_seconds = 0.5",
         "[audio]",

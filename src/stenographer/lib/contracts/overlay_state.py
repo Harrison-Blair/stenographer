@@ -9,4 +9,5 @@ class OverlayState(StrEnum):
     RECORDING = "recording"
     TRANSCRIBING = "transcribing"
     DELIVERING = "delivering"
+    CANCELLED = "cancelled"
     ERROR = "error"

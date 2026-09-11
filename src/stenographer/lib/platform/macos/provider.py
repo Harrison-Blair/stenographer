@@ -61,6 +61,8 @@ class MacOSPlatform(DiagnosticsHostMixin):
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
         lock: threading.RLock,
+        cancel: frozenset[int] = frozenset(),
+        on_cancel: Callable[[], None] | None = None,
     ) -> HotkeyListener:
         raise UnsupportedPlatformError("hotkey listener is not available on macOS yet")
 

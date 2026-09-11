@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Local PyInstaller onedir build. See BUILD.md.
+# Local PyInstaller onedir build. See docs/building.md.
 #
 # Default output is an indeterminate progress bar driven by the PyInstaller
 # log, with a live tail of the last log lines; the full log lands in

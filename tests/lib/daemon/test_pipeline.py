@@ -149,7 +149,8 @@ def test_feedback_failures_preserve_the_already_delivered_outcome(daemon_logs):
         publish_state=publish_state,
         fail=fail,
         play_cue=daemon._feedback.play,
-        cancelled=daemon._stop_event.is_set,
+        cancelled=daemon._cancel_pending,
+        cancel_state=lambda: OverlayState.HIDDEN,
     )
     try:
         with pytest.raises(RuntimeError, match="failure reporting also failed"):

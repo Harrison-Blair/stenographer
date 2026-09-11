@@ -8,7 +8,6 @@ from collections import deque
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.protocol.codec import encode_message
 from stenographer.overlay.protocol.command import Command
-from stenographer.overlay.protocol.constants import ERROR_DISPLAY_SECONDS
 from stenographer.overlay.protocol.messages import (
     CommandMessage,
     LoadingActivityMessage,
@@ -17,7 +16,8 @@ from stenographer.overlay.protocol.messages import (
     StateMessage,
 )
 from stenographer.overlay.protocol.ordering import (
-    error_timeout_applies,
+    transient_display_seconds,
+    transient_timeout_applies,
 )
 from stenographer.overlay.supervision.constants import _MAILBOX_CAPACITY
 from stenographer.overlay.supervision.models import _AudioBlock
@@ -47,7 +47,7 @@ class OutboundMailbox:
         self._current_state = StateMessage(0, OverlayState.HIDDEN)
         self._loading_active = False
         self._recording_generation: int | None = None
-        self._error_deadline: float | None = None
+        self._transient_deadline: float | None = None
         self._condition = threading.Condition()
 
     @property
@@ -56,9 +56,9 @@ class OutboundMailbox:
             return self._current_state
 
     @property
-    def error_deadline(self) -> float | None:
+    def transient_deadline(self) -> float | None:
         with self._condition:
-            return self._error_deadline
+            return self._transient_deadline
 
     def _append(self, message: StateMessage | LoadingActivityMessage) -> None:
         if (
@@ -94,8 +94,9 @@ class OutboundMailbox:
             self._next_sequence = 0
             self._append(message)
             self._current_state = message
-            self._error_deadline = (
-                time.monotonic() + ERROR_DISPLAY_SECONDS if state is OverlayState.ERROR else None
+            display_seconds = transient_display_seconds(state)
+            self._transient_deadline = (
+                None if display_seconds is None else time.monotonic() + display_seconds
             )
             self._condition.notify()
             return message.generation
@@ -148,18 +149,18 @@ class OutboundMailbox:
             self._condition.notify()
             return message.sequence
 
-    def expire_error(self, now: float | None = None) -> int | None:
-        """Queue a guarded hide when the current error's fixed timeout expires."""
+    def expire_transient(self, now: float | None = None) -> int | None:
+        """Queue a guarded hide when the current transient state expires."""
         if now is None:
             now = time.monotonic()
         with self._condition:
-            deadline = self._error_deadline
+            deadline = self._transient_deadline
             current = self._current_state
             if (
                 self._closed
                 or deadline is None
                 or now < deadline
-                or not error_timeout_applies(current.generation, current)
+                or not transient_timeout_applies(current.generation, current)
             ):
                 return None
             message = StateMessage(self._generation(), OverlayState.HIDDEN)
@@ -169,7 +170,7 @@ class OutboundMailbox:
             self._next_sequence = 0
             self._append(message)
             self._current_state = message
-            self._error_deadline = None
+            self._transient_deadline = None
             self._condition.notify()
             return message.generation
 
@@ -181,7 +182,7 @@ class OutboundMailbox:
             self._pending.clear()
             self._audio_pending = None
             self._spectrum_pending = None
-            self._error_deadline = None
+            self._transient_deadline = None
             self._shutdown_pending = True
             self._condition.notify_all()
 

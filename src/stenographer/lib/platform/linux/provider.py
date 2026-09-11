@@ -58,11 +58,19 @@ class LinuxPlatform(DiagnosticsHostMixin):
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
         lock: threading.RLock,
+        cancel: frozenset[int] = frozenset(),
+        on_cancel: Callable[[], None] | None = None,
     ) -> HotkeyListener:
         from stenographer.lib.platform.linux.evdev_hotkey_listener import EvdevHotkeyListener
 
         return EvdevHotkeyListener(
-            chord=chord, device_path=device, on_start=on_start, on_stop=on_stop, lock=lock
+            chord=chord,
+            device_path=device,
+            on_start=on_start,
+            on_stop=on_stop,
+            lock=lock,
+            cancel=cancel,
+            on_cancel=on_cancel,
         )
 
     def hotkey_devices(self) -> list[tuple[str, str]]:

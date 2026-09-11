@@ -26,6 +26,7 @@ def test_defaults_match_spec():
     d = Config.defaults()
     assert d.hotkey.binding == "KEY_RIGHTCTRL"
     assert d.hotkey.device is None
+    assert d.hotkey.cancel_binding == "KEY_ESC"
     assert d.hotkey.mode == "hybrid"
     assert d.hotkey.hybrid_threshold_seconds == 0.5
     assert d.audio.input_device is None
@@ -53,6 +54,11 @@ def test_write_default_round_trips(tmp_path):
     p = tmp_path / "config.toml"
     Config.write_default(p)
     assert Config.load(p) == Config.defaults()
+
+
+def test_missing_cancel_binding_uses_the_default():
+    cfg = Config.loads('[stenographer.hotkey]\nbinding = "KEY_F8"\n')
+    assert cfg.hotkey.cancel_binding == "KEY_ESC"
 
 
 def test_default_template_takes_its_hotkey_device_comment_from_the_platform():
@@ -226,12 +232,13 @@ def test_hybrid_mode_with_its_threshold_without_restating_hotkey_defaults(tmp_pa
 def test_empty_string_is_unset(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text(
-        '[stenographer.hotkey]\ndevice = ""\n'
+        '[stenographer.hotkey]\ndevice = ""\ncancel_binding = ""\n'
         '[stenographer.audio]\ninput_device = ""\n'
         '[stenographer.asr]\nhotwords = ""\ninitial_prompt = ""\n'
     )
     cfg = Config.load(p)
     assert cfg.hotkey.device is None
+    assert cfg.hotkey.cancel_binding is None
     assert cfg.audio.input_device is None
     assert cfg.asr.hotwords is None
     assert cfg.asr.initial_prompt is None

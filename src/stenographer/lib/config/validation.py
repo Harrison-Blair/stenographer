@@ -24,6 +24,7 @@ def _build_hotkey(table: dict, path: pathlib.Path) -> HotkeyConfig:
     return HotkeyConfig(
         binding,
         r.optional_str("device"),
+        r.optional_str("cancel_binding"),
         r.choice("mode", ALLOWED_HOTKEY_MODES),
         r.ranged_number("hybrid_threshold_seconds", 0.05, 5.0),
     )

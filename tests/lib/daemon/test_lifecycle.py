@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from stenographer.lib.config.models import Config
+from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.transcribe.results import TranscriptionResult
 
 from .support import (
@@ -17,6 +18,7 @@ from .support import (
     _build_or_skip,
     _current_stamp,
     _daemon,
+    _daemon_with_status,
     _Recorder,
     _run_utterance,
     _summary,
@@ -127,6 +129,92 @@ def test_stop_closes_an_in_flight_recording_as_cancelled(daemon_logs):
 
     assert "outcome=CANCELLED" in _summary(daemon_logs)
     assert _current_stamp() == ""
+
+
+def test_cancel_while_recording_discards_audio_without_starting_pipeline(daemon_logs):
+    daemon, status = _daemon_with_status(
+        result=TranscriptionResult(text="never", duration_seconds=1.0)
+    )
+    try:
+        daemon.on_key_down()
+        daemon.on_cancel()
+        assert status.states == [OverlayState.RECORDING, OverlayState.CANCELLED]
+    finally:
+        daemon.stop()
+
+    assert daemon._worker.utterances == []
+    assert daemon._deliverer.delivered == []
+    assert daemon._feedback.cues[-1] == "error"
+    assert daemon._notifier.errors == []
+    assert "outcome=CANCELLED" in _summary(daemon_logs)
+
+
+def test_cancel_during_capture_finalization_never_starts_pipeline(daemon_logs):
+    class _CancelingRecorder(_Recorder):
+        cancel = None
+
+        def stop(self) -> np.ndarray:
+            samples = super().stop()
+            assert self.cancel is not None
+            self.cancel()
+            return samples
+
+    daemon = _daemon(result=TranscriptionResult(text="never", duration_seconds=1.0))
+    recorder = _CancelingRecorder(_SPEECH)
+    recorder.cancel = daemon.on_cancel
+    daemon._recorder = recorder
+    try:
+        daemon.on_key_down()
+        daemon.on_key_up()
+    finally:
+        daemon.stop()
+
+    assert daemon._pipeline_thread is None
+    assert daemon._worker.utterances == []
+    assert daemon._deliverer.delivered == []
+    assert daemon._feedback.cues == ["record_start", "error"]
+    assert "outcome=CANCELLED" in _summary(daemon_logs)
+
+
+def test_cancel_while_busy_discards_result_before_delivery(daemon_logs):
+    daemon, status = _daemon_with_status(
+        result=TranscriptionResult(text="never", duration_seconds=1.0)
+    )
+    worker = daemon._worker
+    worker.block_transcribe = True
+    try:
+        daemon.on_key_down()
+        daemon.on_key_up()
+        assert worker.transcribe_started.wait(timeout=1.0)
+
+        daemon.on_cancel()
+        assert status.states[-1] is OverlayState.CANCELLED
+        worker.transcribe_release.set()
+        thread = daemon._pipeline_thread
+        assert thread is not None
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+    finally:
+        worker.transcribe_release.set()
+        daemon.stop()
+
+    assert daemon._deliverer.delivered == []
+    assert daemon._notifier.errors == []
+    assert "outcome=CANCELLED" in _summary(daemon_logs)
+
+
+def test_cancel_while_idle_is_ignored(daemon_logs):
+    daemon, status = _daemon_with_status(
+        result=TranscriptionResult(text="never", duration_seconds=1.0)
+    )
+    try:
+        daemon.on_cancel()
+    finally:
+        daemon.stop()
+
+    assert status.states == []
+    assert daemon._feedback.cues == []
+    assert "hotkey: cancel_ignored" in daemon_logs.text
 
 
 def test_a_hybrid_tap_latches_until_the_next_press_whose_release_is_ignored(daemon_logs):

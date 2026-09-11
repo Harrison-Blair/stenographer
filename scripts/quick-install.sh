@@ -47,7 +47,7 @@ main() {
     case "$(uname -m)" in
         x86_64) arch="x86_64" ;;
         aarch64|arm64) arch="aarch64" ;;
-        *) die "no prebuilt bundle for $(uname -m); build from source instead (see BUILD.md)" ;;
+        *) die "no prebuilt bundle for $(uname -m); build from source instead (see docs/building.md)" ;;
     esac
     for tool in curl tar sha256sum; do
         command -v "${tool}" >/dev/null || die "required tool not found: ${tool}"

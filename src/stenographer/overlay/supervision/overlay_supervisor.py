@@ -83,7 +83,7 @@ class OverlaySupervisor:
                 log.info("overlay: helper_unavailable reason=unsupported_platform")
                 return
             while True:
-                self._mailbox.expire_error()
+                self._mailbox.expire_transient()
                 try:
                     helper = transport.spawn(command, stderr_path=_helper_stderr_path())
                 except (OSError, ValueError) as exc:
@@ -162,7 +162,7 @@ class OverlaySupervisor:
                 ):
                     log.warning("overlay: helper_ready_timeout")
                     break
-                self._mailbox.expire_error()
+                self._mailbox.expire_transient()
                 recording = self._mailbox.current_state.state is OverlayState.RECORDING
                 next_spectrum_at, produce = schedule_spectrum(recording, next_spectrum_at, now)
                 if produce:

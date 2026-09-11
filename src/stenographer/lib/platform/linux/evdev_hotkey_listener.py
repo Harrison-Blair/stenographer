@@ -38,8 +38,17 @@ class EvdevHotkeyListener(ChordTracker):
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
         lock: threading.RLock,
+        cancel: frozenset[int] = frozenset(),
+        on_cancel: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__(chord=chord, on_start=on_start, on_stop=on_stop, lock=lock)
+        super().__init__(
+            chord=chord,
+            on_start=on_start,
+            on_stop=on_stop,
+            lock=lock,
+            cancel=cancel,
+            on_cancel=on_cancel,
+        )
         self._device_path = device_path
         self._supervisor: threading.Thread | None = None
         self._readers: list[threading.Thread] = []
@@ -70,7 +79,7 @@ class EvdevHotkeyListener(ChordTracker):
         self._readers = []
         self._supervisor = None
         with self._lock:
-            self._active = False
+            self._reset_edges()
 
     @property
     def is_running(self) -> bool:
@@ -95,7 +104,7 @@ class EvdevHotkeyListener(ChordTracker):
                     self._held.clear()
                     self._held_by_device = {id(device): set() for device in devices}
                     self._devices = devices
-                self._active = False
+                self._reset_edges()
                 self._readers = [self._spawn_reader(d) for d in devices]
                 self._supervise()
                 for t in list(self._readers):
@@ -207,6 +216,8 @@ class EvdevHotkeyListener(ChordTracker):
                 self._devices = [opened for opened in self._devices if opened is not device]
                 self._rebuild_held()
                 is_active = chord_active(self._held, self._chord)
+                cancel_active = chord_active(self._held, self._cancel)
+                self._cancel_active = cancel_active
             with contextlib.suppress(OSError):
                 device.close()
             if not self._stop_event.is_set():

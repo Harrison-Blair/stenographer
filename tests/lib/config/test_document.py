@@ -44,11 +44,17 @@ def test_render_preserves_comments_order_and_unknown_content():
     assert Config.loads(rendered) == reviewed
 
 
-def test_render_materializes_all_23_known_keys():
+def test_render_materializes_all_24_known_keys():
     rendered = ConfigDocument.loads("").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
 
-    assert list(root["hotkey"]) == ["binding", "device", "mode", "hybrid_threshold_seconds"]
+    assert list(root["hotkey"]) == [
+        "binding",
+        "device",
+        "cancel_binding",
+        "mode",
+        "hybrid_threshold_seconds",
+    ]
     assert list(root["audio"]) == ["input_device", "min_speech_rms", "max_recording_seconds"]
     assert list(root["asr"]) == [
         "model",
@@ -70,7 +76,7 @@ def test_render_materializes_all_23_known_keys():
         "sound_pack",
         "log_level",
     ]
-    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 23
+    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 24
 
 
 def test_render_encodes_optional_strings_as_empty_strings():
@@ -78,6 +84,7 @@ def test_render_encodes_optional_strings_as_empty_strings():
     root = tomlkit.parse(rendered)["stenographer"]
 
     assert root["hotkey"]["device"] == ""
+    assert root["hotkey"]["cancel_binding"] == "KEY_ESC"
     assert root["audio"]["input_device"] == ""
     assert root["asr"]["hotwords"] == ""
     assert root["asr"]["initial_prompt"] == ""
@@ -91,6 +98,7 @@ def test_render_round_trips_nondefault_production_config():
             defaults.hotkey,
             binding="KEY_F9",
             device="/dev/input/event7",
+            cancel_binding=None,
             mode="toggle",
         ),
         audio=replace(
@@ -124,6 +132,7 @@ def test_render_round_trips_nondefault_production_config():
     rendered = ConfigDocument.loads(PRESERVATION_FIXTURE).render(reviewed)
 
     assert Config.loads(rendered) == reviewed
+    assert 'cancel_binding = ""' in rendered
 
 
 def test_render_round_trips_calibrated_spectrum_profile_as_toml_array():

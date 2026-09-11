@@ -8,6 +8,8 @@ from stenographer.lib.contracts.publication import should_publish_state
 from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.policy import (
     can_start,
+    cancel_action,
+    cancel_state,
     classify_pipeline,
     edge_handlers,
     hybrid_release_action,
@@ -117,12 +119,24 @@ def test_publish_policy_always_represents_error():
 def test_publish_policy_dedups_stable_states():
     # Every non-ERROR state coalesces when repeated; any actual change passes.
     for state in OverlayState:
-        if state is OverlayState.ERROR:
+        if state in (OverlayState.ERROR, OverlayState.CANCELLED):
             continue
         assert should_publish_state(state, state) is False
     assert should_publish_state(OverlayState.HIDDEN, OverlayState.RECORDING) is True
     assert should_publish_state(OverlayState.RECORDING, OverlayState.TRANSCRIBING) is True
     assert should_publish_state(OverlayState.ERROR, OverlayState.HIDDEN) is True
+
+
+def test_cancel_action_prioritizes_recording_then_pipeline():
+    assert cancel_action(recording=True, busy=True) == "recording"
+    assert cancel_action(recording=True, busy=False) == "recording"
+    assert cancel_action(recording=False, busy=True) == "pipeline"
+    assert cancel_action(recording=False, busy=False) is None
+
+
+def test_cancel_state_hides_during_shutdown():
+    assert cancel_state(shutting_down=False) is OverlayState.CANCELLED
+    assert cancel_state(shutting_down=True) is OverlayState.HIDDEN
 
 
 def test_edge_handlers_map_mode_to_rising_and_falling_callbacks():

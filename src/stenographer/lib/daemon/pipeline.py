@@ -58,6 +58,7 @@ class UtterancePipeline:
         fail: Callable[[str], None],
         play_cue: Callable[[str], None],
         cancelled: Callable[[], bool],
+        cancel_state: Callable[[], OverlayState],
     ) -> None:
         self._min_speech_rms = min_speech_rms
         self._worker = worker
@@ -67,11 +68,16 @@ class UtterancePipeline:
         self._fail = fail
         self._play_cue = play_cue
         self._cancelled = cancelled
+        self._cancel_state = cancel_state
 
     def run(self, samples: np.ndarray, *, utterance: int, record: UtteranceRecord | None) -> str:
         """Run the ordered stages and report the existing terminal outcome name."""
         outcome_name = Outcome.ERROR.name
         try:
+            if self._cancelled():
+                outcome_name = "CANCELLED"
+                self._publish_state(self._cancel_state())
+                return outcome_name
             if not self._gate(samples, record):
                 outcome_name = Outcome.SILENT.name
                 self._publish_state(OverlayState.HIDDEN)
@@ -84,7 +90,7 @@ class UtterancePipeline:
                 self._apply_worker_timings(record)
                 if self._cancelled():
                     outcome_name = "CANCELLED"
-                    self._publish_state(OverlayState.HIDDEN)
+                    self._publish_state(self._cancel_state())
                     return outcome_name
                 # Pathological rejections contain audited counts only. Other
                 # worker errors may carry decoder output and must stay private.
@@ -104,7 +110,7 @@ class UtterancePipeline:
             self._telemetry.checkpoint(record, "accepted_recognition")
             if self._cancelled():
                 outcome_name = "CANCELLED"
-                self._publish_state(OverlayState.HIDDEN)
+                self._publish_state(self._cancel_state())
                 return outcome_name
             text, transcript_nonempty = self._format(result, record)
             try:
@@ -121,7 +127,7 @@ class UtterancePipeline:
                 self._apply_delivery(record, attempted=transcript_nonempty)
                 if self._cancelled():
                     outcome_name = "CANCELLED"
-                    self._publish_state(OverlayState.HIDDEN)
+                    self._publish_state(self._cancel_state())
                     return outcome_name
                 log_failure(log, logging.WARNING, "pipeline: delivery_failed", exc, safe=False)
                 if record is not None:
@@ -141,7 +147,7 @@ class UtterancePipeline:
                 outcome_name = "CANCELLED"
                 if record is not None:
                     record.failure = None
-                self._publish_state(OverlayState.HIDDEN)
+                self._publish_state(self._cancel_state())
                 return outcome_name
             elif outcome is Outcome.ERROR and record is not None:
                 record.failure = "copy_failed"

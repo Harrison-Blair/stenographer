@@ -58,6 +58,7 @@ exclude = [
     "!/pyproject.toml",
     "!/LICENSE",
     "!/README.md",
+    # Compatibility redirect for the protected README link.
     "!/BUILD.md",
     "!/AGENTS.md",
     "!/CLAUDE.md",
@@ -116,7 +117,9 @@ exclude = [
     # Maintained documentation and curated Refactoring.Guru references.
     "!/docs/",
     "!/docs/architecture.md",
+    "!/docs/building.md",
     "!/docs/cue-audition.md",
+    "!/docs/usage.md",
     "!/docs/reference/",
     "!/docs/reference/guru/",
     "!/docs/reference/guru/code-smells.md",

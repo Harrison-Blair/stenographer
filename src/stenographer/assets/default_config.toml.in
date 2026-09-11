@@ -3,6 +3,7 @@
 [stenographer.hotkey]
 binding = "KEY_RIGHTCTRL"
 device = ""                    # {hotkey_device_comment}
+cancel_binding = "KEY_ESC"     # global cancel; "" disables it
 mode = "hybrid"                # hold = push-to-talk; toggle = press/press; hybrid = tap or hold
 hybrid_threshold_seconds = 0.5 # hybrid only: a press held this long stops on release
 

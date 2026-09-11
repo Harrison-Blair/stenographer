@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>stenographer</title>
-  <meta name="description" content="Local, offline push-to-talk dictation for Wayland. Press a hotkey, speak, and your words land at your cursor. Your audio and transcripts never leave your machine.">
+  <meta name="description" content="Local Wayland dictation. Press a hotkey, speak, and your words land at your cursor. Dictation stays on your machine.">
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="site.css">
 </head>
@@ -21,6 +21,7 @@
       <a href="#install">Install</a>
       <a href="#how">How it works</a>
       <a href="#cli">CLI</a>
+      <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">User guide</a>
       <a href="https://github.com/Harrison-Blair/stenographer">GitHub</a>
     </nav>
   </header>
@@ -29,20 +30,21 @@
     <section class="hero">
       <div class="hero-copy">
         <h1>Dictation that stays on your machine.</h1>
-        <p class="lead">Press a hotkey, speak, and your words land at your cursor. Whisper runs on your own hardware, with no account and no network. Your audio and transcripts never leave your machine.</p>
+        <p class="lead">Press a hotkey, speak, and your words land at your cursor. Local transcription runs on your own hardware, with no account. Your audio and transcripts never leave your machine.</p>
         <div class="cmd" id="quick-install">
           <pre><code>curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start</code></pre>
           <button type="button" id="copy" class="copy" aria-label="Copy the quick-install command">Copy</button>
         </div>
-        <p class="fine">You need Linux on x86_64 or AArch64, a Wayland session, and a systemd user manager. The script downloads the latest release, verifies it against <code>SHA256SUMS</code>, and installs the user service for you. You do not need Python or build tools.</p>
+        <p class="fine">You need Linux on x86_64 or AArch64, a Wayland session, and a systemd user manager. The script downloads the latest release, verifies it against <code>SHA256SUMS</code>, and installs the user service for you. You do not need Python or build tools; the model download is a separate choice.</p>
         <div class="cta">
           <a class="btn" href="#install">Install</a>
           <a class="btn ghost" href="https://github.com/Harrison-Blair/stenographer#readme">Read the README</a>
+          <a class="btn ghost" href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">User guide</a>
         </div>
       </div>
 
       <div class="stage" id="stage" data-state="hidden" data-loading="0" aria-label="The lifecycle pill you will see on screen, cycling through its states">
-        <div class="hint">hold <kbd>Right Ctrl</kbd> and speak</div>
+      <div class="hint">hold <kbd>Right Ctrl</kbd> and speak · <kbd>Escape</kbd> cancels</div>
         <div class="pill">
           <span class="ring"></span>
           <span class="pi" role="img" aria-label="quill"></span>
@@ -59,13 +61,14 @@
       <div class="st" data-for="transcribing"><i class="sw asr"></i><b>Transcribing</b><p>faster-whisper is turning your speech into English text, on your machine.</p></div>
       <div class="st" data-for="delivering"><i class="sw deliver"></i><b>Delivering</b><p>Your clipboard has the text. A paste chord is landing at your cursor.</p></div>
       <div class="st" data-for="loading"><i class="sw load"></i><b>Loading</b><p>An amber border breathes while your model warms up, over whatever else is showing.</p></div>
+      <div class="st" data-for="cancelled"><i class="sw cancel"></i><b>Cancelled</b><p>You pressed Escape. The audio and transcript are discarded; nothing is pasted.</p></div>
       <div class="st" data-for="error"><i class="sw rec"></i><b>Error</b><p>Something failed. A desktop notification tells you what and why.</p></div>
     </section>
 
     <section id="how" class="block">
       <h2>How it works</h2>
       <ol class="pipe">
-        <li><b>Your hotkey</b><span>Right Ctrl by default. Tap it to latch, or hold it, speak, and release. If you prefer plain hold or toggle, each is one setting away.</span></li>
+        <li><b>Your hotkey</b><span>Right Ctrl by default. Tap it to latch, or hold it, speak, and release. Press Escape any time before delivery to cancel without pasting. If you prefer plain hold or toggle, each is one setting away.</span></li>
         <li><b>Your microphone</b><span>Captured through PortAudio, with a quiet-audio gate so an accidental press does not paste noise into your work.</span></li>
         <li><b>Local transcription</b><span>faster-whisper runs on your CPU or GPU. You download the model once, and only when you ask for it.</span></li>
         <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key.</span></li>
@@ -99,7 +102,7 @@ update_check = false</code></pre>
           <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. Run <code>stenographer doctor</code> and it tells you what you are missing and how to fix it.</p>
         </li>
         <li>
-          <b>Run the quick install</b> above, or build it yourself from source.
+          <b>Run the quick install</b> above, or build it yourself using the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">build guide</a>.
           <pre><code>git clone https://github.com/Harrison-Blair/stenographer.git
 cd stenographer
 python3 -m venv .venv
@@ -136,14 +139,15 @@ scripts/install.sh --no-start</code></pre>
           </tbody>
         </table>
       </div>
-      <p class="fine">Add <code>--help</code> to any command for its full usage. You get four sound packs: <code>legacy</code>, <code>warm-desk</code>, <code>soft-electronic</code>, and the default <code>minimal-ui</code>.</p>
+      <p class="fine">Add <code>--help</code> to any command for its full usage. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">user guide</a> for configuration, sound packs, statistics, privacy, and troubleshooting.</p>
     </section>
   </main>
 
   <footer>
     <div>
       <a href="https://github.com/Harrison-Blair/stenographer/releases/latest">Latest release __RELEASE_TAG__</a>
-      · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/BUILD.md">Build guide</a>
+      · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">User guide</a>
+      · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">Build guide</a>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/LICENSE">GPL-3.0-or-later</a>
     </div>
     <div class="fine">Linux and Wayland only for now, and English only. The wordmark and pill label are set in Caveat, used under the <a href="assets/Caveat-OFL.txt">SIL Open Font License</a>. Your browser loads nothing from third parties on this page.</div>

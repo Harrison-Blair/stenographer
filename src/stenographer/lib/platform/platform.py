@@ -54,6 +54,8 @@ class Platform(Protocol):
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
         lock: threading.RLock,
+        cancel: frozenset[int] = frozenset(),
+        on_cancel: Callable[[], None] | None = None,
     ) -> HotkeyListener: ...
 
     def hotkey_devices(self) -> list[tuple[str, str]]:

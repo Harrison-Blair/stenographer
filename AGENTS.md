@@ -4,7 +4,7 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
 
 - Use `.venv/bin/` for all Python tooling. Metadata, dependencies, and lint
   settings live in `pyproject.toml`. Source files need the GPL SPDX header.
-- Keep Git/build allowlists synchronized; see BUILD.md. Refactoring references:
+- Keep Git/build allowlists synchronized; see docs/building.md. Refactoring references:
   `docs/reference/guru/`.
 - User-facing changes update README.md, owning docs, and the Pages site
   (`site/`).
@@ -41,7 +41,7 @@ For code changes, run:
 .venv/bin/stenographer --help
 ```
 
-See README.md for usage, BUILD.md for packaging, and
+See README.md for usage, docs/building.md for packaging, and
 packaging/NATIVE-ACCEPTANCE.md for release acceptance.
 
 Keep this file under 300 words. Put feature details in their owning docs.

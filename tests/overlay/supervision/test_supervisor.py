@@ -211,18 +211,34 @@ def test_helper_replay_uses_current_state_and_active_loading_only():
     assert mailbox.take_nowait() is None
 
 
-def test_mailbox_error_timeout_enqueues_a_generation_guarded_hide():
+def test_mailbox_transient_timeout_enqueues_a_generation_guarded_hide():
     mailbox = OutboundMailbox()
     error_generation = mailbox.publish(OverlayState.ERROR)
-    deadline = mailbox.error_deadline
+    deadline = mailbox.transient_deadline
     assert deadline is not None
     assert mailbox.take_nowait() == StateMessage(error_generation, OverlayState.ERROR)
 
-    assert mailbox.expire_error(deadline - 0.001) is None
-    hide_generation = mailbox.expire_error(deadline)
+    assert mailbox.expire_transient(deadline - 0.001) is None
+    hide_generation = mailbox.expire_transient(deadline)
 
     assert hide_generation == error_generation + 1
     assert mailbox.take_nowait() == StateMessage(hide_generation, OverlayState.HIDDEN)
+
+
+def test_mailbox_cancelled_timeout_is_short_and_generation_guarded():
+    mailbox = OutboundMailbox()
+    cancelled_generation = mailbox.publish(OverlayState.CANCELLED)
+    deadline = mailbox.transient_deadline
+    assert deadline is not None
+    assert mailbox.expire_transient(deadline - 0.001) is None
+    hide_generation = mailbox.expire_transient(deadline)
+
+    assert hide_generation == cancelled_generation + 1
+    assert mailbox.take_nowait() == StateMessage(hide_generation, OverlayState.HIDDEN)
+
+    newer = mailbox.publish(OverlayState.RECORDING)
+    assert mailbox.expire_transient(deadline + 100.0) is None
+    assert mailbox.current_state == StateMessage(newer, OverlayState.RECORDING)
 
 
 def test_restart_budget_allows_exactly_one_unexpected_restart():
