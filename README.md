@@ -174,10 +174,15 @@ The flow is hotkey → microphone → local English transcription → clipboard 
 paste chord at the cursor. The paste chord fires only after a confirmed
 clipboard copy and physical hotkey release.
 
+Production code is organized into `lib/` for reusable engines, `cli/` for
+command workflows, and `overlay/` for the optional display helper. CLI workflows
+connect the engines and display services; library code imports neither frontend.
+See [the architecture guide](docs/architecture.md) for ownership and boundaries.
+
 The core pipeline is platform-neutral and reaches every host-specific surface
-through one boundary, `stenographer.platform`: the hotkey listener, clipboard
+through one boundary, `stenographer.lib.platform`: the hotkey listener, clipboard
 writer, paste injector, sound-cue player, notifier, single-instance lock, user
-directories, and capability probes. The Linux backend (`platform/linux/`) is
+directories, and capability probes. The Linux backend (`lib/platform/linux/`) is
 evdev for the hotkey, a `uinput` Shift+Insert chord for the paste, `wl-copy` or
 `xclip` for both clipboard selections, `canberra`/`pw-play`/`paplay` for cues,
 `notify-send`, an `flock` under `$XDG_RUNTIME_DIR`, and XDG paths. Hotkey
@@ -191,8 +196,8 @@ tag, showing a desktop notification when a newer version exists and pointing
 back at the quick-install command above. It never downloads anything; a failed
 check is silent, and the next attempt waits for the 24-hour window. Turn it off
 with `update_check = false` under `[feedback]`. Logs may contain timings and
-counts, but never transcript text or audio. See [AGENTS.md](AGENTS.md) for the
-binding behavioral and architecture decisions.
+counts, but never transcript text or audio. See [AGENTS.md](AGENTS.md) for
+agent working instructions.
 
 ## Service and troubleshooting
 
@@ -241,7 +246,7 @@ The completion checker runs every supported shell available locally and reports
 missing shells as skipped; CI installs and checks Bash, Zsh, and Fish.
 
 The integration suite and real dictation are the release gate and must run in a
-real graphical session, not CI or a sandbox. `tests/platform/test_core_isolation.py`
+real graphical session, not CI or a sandbox. `tests/lib/platform/test_core_isolation.py`
 guards the boundary: it imports the whole core with evdev, fcntl, termios, and the
 Wayland/X11 libraries blocked, so a Linux-only import leaking into the core fails
 on any machine. CI also runs the unit suite on Windows as a portability check.

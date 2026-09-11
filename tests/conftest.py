@@ -27,7 +27,7 @@ def drain_analytics():
 
 @pytest.fixture
 def analytics_session(request, drain_analytics):
-    from stenographer.analytics import AnalyticsSession
+    from stenographer.lib.analytics.session import AnalyticsSession
 
     def create(path, **kwargs):
         session = AnalyticsSession(path, **kwargs)

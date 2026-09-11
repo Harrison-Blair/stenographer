@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The generated core key table must still match the installed evdev.
+
+``stenographer.lib.hotkey.keycodes`` is emitted by ``scripts/gen_keycodes.py`` from
+``evdev.ecodes`` so every provider speaks one ``KEY_*`` vocabulary. This proves
+the checked-in codes agree with names available in the installed kernel headers,
+and that the Linux table's evdev-first lookup agrees with it entry for entry.
+
+Linux-only: the directory conftest ignores it elsewhere.
+"""
+
+from __future__ import annotations
+
+import evdev
+
+from stenographer.lib.hotkey.keycodes import CODE_NAMES, KEY_CODES
+from stenographer.lib.hotkey.static_key_table import StaticKeyTable
+from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
+
+
+def test_generated_codes_match_evdev():
+    # Older host headers can lack newer names; the pure cross-platform table
+    # intentionally remains a superset. Existing names must never be renumbered.
+    mismatched = {
+        name: (code, evdev.ecodes.ecodes.get(name))
+        for name, code in KEY_CODES.items()
+        if name in evdev.ecodes.ecodes and evdev.ecodes.ecodes[name] != code
+    }
+    assert mismatched == {}
+
+
+def test_generated_table_covers_every_evdev_key_and_button_name():
+    expected = {
+        name
+        for name, value in evdev.ecodes.ecodes.items()
+        if name.startswith(("KEY_", "BTN_")) and isinstance(value, int)
+    }
+    assert expected - set(KEY_CODES) == set()
+
+
+def test_generated_names_match_the_linux_table():
+    evdev_table = EvdevKeyTable()
+    mismatched = {
+        code: (name, evdev_table.name(code))
+        for code, name in CODE_NAMES.items()
+        if evdev_table.name(code) != name
+    }
+    assert mismatched == {}
+
+
+def test_both_tables_resolve_every_name_identically():
+    static = StaticKeyTable()
+    evdev_table = EvdevKeyTable()
+    mismatched = {
+        name: (static.code(name), evdev_table.code(name))
+        for name in KEY_CODES
+        if static.code(name) != evdev_table.code(name)
+    }
+    assert mismatched == {}

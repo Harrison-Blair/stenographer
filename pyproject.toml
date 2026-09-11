@@ -54,7 +54,7 @@ include = [
     "src/stenographer/assets/completions/*",
     "src/stenographer/assets/keycodes.toml",
     "src/stenographer/assets/default_config.toml.in",
-    "src/stenographer/platform/linux/overlay_backends/protocols/**/*.py",
+    "src/stenographer/overlay/platform/linux/backends/protocols/**/*.py",
 ]
 
 [tool.ruff]

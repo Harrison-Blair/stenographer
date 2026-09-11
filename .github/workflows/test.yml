@@ -38,7 +38,7 @@ jobs:
 
   unit-windows:
     # Portability proof only: the core and every pure suite must install,
-    # import, and pass on Windows (tests/platform/linux is not collected there).
+    # import, and pass on Windows (tests/lib/platform/linux is not collected there).
     # No Windows backend exists yet; `doctor` exits 78 and `run` is refused.
     name: unit (windows)
     runs-on: windows-latest

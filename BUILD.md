@@ -4,9 +4,8 @@
 
 A local PyInstaller onedir build for machines without a Python setup, plus a
 limited draft-release channel for Linux x86_64 and AArch64. Scope remains
-deliberately narrow: no multi-distro installer or self-update (see
-`AGENTS.md`). The included installer targets one machine and one user
-only.
+deliberately narrow: no multi-distro installer or self-update. The included
+installer targets one machine and one user only.
 
 ## Quick start
 
