@@ -15,10 +15,10 @@
 
   var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var script = [
-    { s: "hidden", ms: 1400, cap: "idle · no surface" },
-    { s: "recording", ms: 3400, cap: "hotkey held · 18-band spectrum" },
-    { s: "transcribing", ms: 1500, cap: "faster-whisper, local" },
-    { s: "delivering", ms: 900, cap: "clipboard confirmed · Shift+Insert" }
+    { s: "hidden", ms: 1400, cap: "idle · nothing on screen" },
+    { s: "recording", ms: 3400, cap: "you hold the key · 18 bars follow your voice" },
+    { s: "transcribing", ms: 1500, cap: "faster-whisper, on your machine" },
+    { s: "delivering", ms: 900, cap: "your clipboard, then Shift+Insert at your cursor" }
   ];
   var labels = { transcribing: "Transcribing", delivering: "Delivering", error: "Error" };
   var index = 0;
@@ -55,7 +55,7 @@
     var loading = cur.s === "recording" && pass === 0;
     stage.setAttribute("data-state", cur.s);
     stage.setAttribute("data-loading", loading ? "1" : "0");
-    cap.textContent = cur.cap + (loading ? " · model loading" : "");
+    cap.textContent = cur.cap + (loading ? " · your model is loading" : "");
     lbl.textContent = labels[cur.s] || "";
     for (var t = 0; t < tiles.length; t++) {
       var tile = tiles[t].getAttribute("data-for");
