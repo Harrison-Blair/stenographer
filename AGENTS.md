@@ -26,58 +26,52 @@ below. Native acceptance requirements
 live in `packaging/NATIVE-ACCEPTANCE.md`;
 an untested target must never be advertised as supported.
 
-### Experiment-led expansion (authorized September 2026)
+### Experiment-led expansion (authorized September 2026, discontinued 2026-09-11)
 
-The owner authorized private incremental
-ASR experiments and a separate optional LLM cleanup stage. The previously
-authorized Qt/PySide6 settings process was withdrawn below. The inference
-experiments supersede the cut-feature restriction only for private inference,
-never live transcript preview. Production defaults remain unchanged
-until measured comparisons and the owner's selection. Repository-only study
-runners are authorized; no new `bench` application command is introduced.
+The owner authorized private incremental ASR experiments and a separate
+optional LLM cleanup stage in September 2026, then discontinued both on
+2026-09-11 before either reached the daemon. The experimental cluster —
+`inference.py` (shared `Failure`/`Request`/`Result` contracts), `cleanup.py`
+(structural edit validation and pre-delivery selection), `evaluation.py`
+(alignment and chunk-planning math), `transcribe/reconcile.py` (private-chunk
+reconciliation), `scripts/dictation_study.py` (the repository-only study
+runner), and their tests — was removed in the same commit. The previously
+authorized Qt/PySide6 settings process was withdrawn below. Reintroducing
+either experiment, a `bench` command, live transcript preview, or incremental
+decoding requires a new decision recorded here first.
 
-Capture diagnostics may copy scalar callback clock metadata in addition to
-blocks. No signal analysis, logging, I/O, or slow-consumer locks in callbacks.
-The first callback is measured against accepted press and stream activation;
-ADC clock discontinuities are diagnostics, not proof that speech was lost.
+What survives from that work is live and stays: capture diagnostics may copy
+scalar callback clock metadata in addition to blocks (`capture_metrics.py`,
+consumed by the recorder on every stop). No signal analysis, logging, I/O, or
+slow-consumer locks in callbacks. The first callback is measured against
+accepted press and stream activation; ADC clock discontinuities are
+diagnostics, not proof that speech was lost.
 
-Shared experimental contracts live in `inference.py`; cleanup validation and
-evaluation math remain pure. The unimplemented `ASR`/`Cleanup` Protocols, the cleanup
-prompt constant, and the unreferenced `analytics_overhead.py` runner were
-removed on 2026-09-11; an adapter reintroduces its contract together with its
-implementation, never ahead of it. Private chunks retain the full utterance, bound
-pending work, and fall back to whole-utterance ASR on uncertain reconciliation.
-Exactly one final delivery remains the daemon's responsibility. Native APIs,
-inference process management, and any future native settings integration stay
-behind `platform/`. No platform is implemented by pretending its native calls
-passed mocked tests.
-
-Cleanup is off until explicitly enabled, local by default, tool-free, and gets
-only the final transcript. It preserves paragraphs/lists and substantive content.
-Failed, empty, malformed, truncated, over-context, or timed-out cleanup selects
-the original formatted transcript with a visible cleanup-skipped state. A
-cancelled utterance is never pasted. Structural edit validation is not semantic
-fidelity certification. An explicitly configured self-hosted endpoint may receive
-transcript text only, with authenticated transport and no remote fallback; this
-is an authorized future exception to the network invariant, not an active path.
-Model downloads remain explicit. No transcript, audio, prompt, response, or
-credential may enter logs or automatic history.
-
-Configuration/protocol extensions necessary for these features are authorized
-but must be documented with their implementation. Existing 23-key files stay
+The constraints written for those experiments remain binding on any future
+attempt, whether or not the code returns: exactly one final delivery is the
+daemon's responsibility; a cancelled utterance is never pasted; native APIs
+and inference process management stay behind `platform/`; no platform is
+implemented by pretending its native calls passed mocked tests; any cleanup
+stage is off until explicitly enabled, local by default, tool-free, receives
+only the final transcript, falls back to the original formatted transcript
+with a visible skipped state on any failure, and never lets a transcript,
+audio, prompt, response, or credential enter logs or automatic history; the
+network invariant admits no remote inference path without a recorded
+decision. Model downloads remain explicit. Existing 23-key files stay
 readable without automatic rewriting; CLI saves use the preservation layer.
 Saved settings take effect after an explicit daemon restart. The pill remains
-isolated, click-through and transcript-free; new
-duration/cleaning/delivery/fallback metadata requires a versioned wire change.
-No physical microphone reproduction without explicit consent. Real-platform
-acceptance is required per release target, including macOS signing/notarization and Windows
-installation/signing checks before packaging is called ready.
+isolated, click-through and transcript-free; new metadata on the wire requires
+a versioned protocol change. No physical microphone reproduction without
+explicit consent. Real-platform acceptance is required per release target,
+including macOS signing/notarization and Windows installation/signing checks
+before packaging is called ready.
 
 Do not reintroduce cut features (old GTK HUD / transcript preview, cancel
 binding, `dictate`, `bench`, per-character typing / wtype, live preview /
-incremental decoding, self-update, sound downloads, per-cue overrides, config
-migrations, multi-distro installers) without recording the decision in this
-file first. Already authorized: toggle mode, the default hybrid mode (every
+incremental decoding, the LLM cleanup stage and its study runners,
+self-update, sound downloads, per-cue overrides, config migrations,
+multi-distro installers) without recording the decision in this file first.
+Already authorized: toggle mode, the default hybrid mode (every
 press starts; a release before `hotkey.hybrid_threshold_seconds` latches the
 recording for the next press to stop, a release at or after it stops
 immediately; the max-duration timer is armed at that latching release rather
