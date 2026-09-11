@@ -241,57 +241,23 @@ def _merge(base: dict, overlay: dict) -> dict:
     return result
 
 
-_DEFAULT_TOML_TEMPLATE = """\
-# stenographer configuration.
-
-[stenographer.hotkey]
-binding = "KEY_RIGHTCTRL"
-device = ""                    # {hotkey_device_comment}
-mode = "hybrid"                # hold = push-to-talk; toggle = press/press; hybrid = tap or hold
-hybrid_threshold_seconds = 0.5 # hybrid only: a press held this long stops on release
-
-[stenographer.audio]
-input_device = ""              # PortAudio device name/index; "" = system default
-min_speech_rms = 0.0005        # pre-decode energy gate; 0 disables the gate
-max_recording_seconds = 600
-
-[stenographer.asr]
-model = "Systran/faster-whisper-medium.en"
-compute_type = "int8"          # int8 | int8_float16 | float16 | float32 | default
-beam_size = 1
-hotwords = ""                  # proper nouns; full models only (distil models drop words)
-initial_prompt = ""            # style/domain context prepended to decoding
-vad_filter = true
-silence_threshold = 0.6        # post-decode no-speech-probability gate
-idle_unload_seconds = 900      # kill the idle worker child; 0 disables
-cpu_threads = 0                # 0 = auto (physical cores, capped at 8)
-
-[stenographer.feedback]
-volume = 0.6
-mute = false
-overlay = true                 # best-effort lifecycle pill; dictation is independent
-update_check = true            # daily HTTPS check for a newer release; a notice, never self-update
-spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
-sound_pack = "{sound_pack}"      # bundled pack name or valid pack under sounds/
-log_level = "info"             # debug | info | warning | error; the file keeps debug
-
-[stenographer.analytics]
-enabled = true                # local numeric history; no audio or transcript text
-resource_profiling = true     # sample application/host resources during utterances
-"""
-
-
 def default_toml() -> str:
     """The annotated default config, with the host's ``hotkey.device`` comment.
 
-    Rendered at write time rather than at import: what a hotkey device *is*
-    differs per host, so that one comment comes from ``HostGuidance`` and the
-    core never spells a device-node convention.
+    The template is the data file ``assets/default_config.toml.in`` (the
+    ``.in`` suffix marks it as a ``str.format`` template, not loadable TOML),
+    read at write time rather than at import: what a hotkey device *is*
+    differs per host, so the ``{hotkey_device_comment}`` placeholder comes
+    from ``HostGuidance`` and the core never spells a device-node
+    convention; ``{sound_pack}`` is ``DEFAULT_SOUND_PACK``.
     """
+
+    from importlib.resources import files
 
     from stenographer.platform import current_platform
 
-    return _DEFAULT_TOML_TEMPLATE.format(
+    template = files("stenographer").joinpath("assets", "default_config.toml.in")
+    return template.read_text(encoding="utf-8").format(
         hotkey_device_comment=current_platform().guidance().hotkey_device_comment,
         sound_pack=DEFAULT_SOUND_PACK,
     )

@@ -152,7 +152,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # recreate venv
 .venv/bin/ruff check . && .venv/bin/ruff format --check .    # lint (--fix to autofix)
 .venv/bin/pytest -m "not integration"                        # unit suite
 STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest                  # + smoke (real machine only)
-.venv/bin/pytest tests/test_daemon.py::test_name             # single test
+.venv/bin/pytest tests/daemon/test_lifecycle.py::test_name   # single test
 .venv/bin/stenographer --help                                # CLI smoke
 ```
 
@@ -216,7 +216,7 @@ The rule is structural, not stylistic, and it is enforced by a test.
   test_core_isolation.py` imports every core module in a fresh interpreter
   with those names blocked; a violation anywhere in the core fails it. Some
   stdlib modules import fine everywhere and only *behave* per-OS — a core
-  driver (`overlay/supervisor.py`, `audio.py`, `hotkey.py`, `daemon.py`,
+  driver (`overlay/supervisor.py`, `audio.py`, `hotkey.py`, every `daemon/` module,
   `transcribe/worker.py`)
   therefore never reaches for `subprocess`, `selectors`, `fcntl`, `signal`,
   `msvcrt`, `multiprocessing`, or raw `os.read`/`os.kill` either; the same test greps their
@@ -229,9 +229,9 @@ The rule is structural, not stylistic, and it is enforced by a test.
   `collect_submodules` the Windows stub too). OS-only third-party deps carry
   `sys_platform` markers in `pyproject.toml`.
 - **Shared vocabulary is core data, not a host capability.** `hotkey.binding`
-  uses evdev `KEY_*` names on every platform; `keycodes.py` (generated, pure)
-  holds the table so a Windows provider maps names → VK codes without a schema
-  change. `status.Backend` is protocol-v4 wire vocabulary; a Windows overlay
+  uses evdev `KEY_*` names on every platform; `keycodes.py` (pure, stdlib-only)
+  loads the table from the generated `assets/keycodes.toml` so a Windows
+  provider maps names → VK codes without a schema change. `status.Backend` is protocol-v4 wire vocabulary; a Windows overlay
   backend is a protocol-extension decision, and until then the overlay is
   disabled there. `capabilities.Capabilities` / `REQUIRED` field names are
   semantic and identical to `platform/base.HostProbe`'s (`key_injector_ok`,
@@ -443,15 +443,15 @@ authoritative when editing.
 
 | Module | Role |
 |---|---|
-| `daemon.py` | Orchestrator: hotkey → record → transcribe → deliver. `Daemon.build(cfg, clipboard_backend=, status=, platform=)`; `run()` logs the startup banner (version, Python, platform, chosen backends, config path, every effective key in section order, resolved cpu_threads) before the capability gate can refuse, then takes the platform single-instance lock, installs stop handlers, prepares audio, starts the listener, and — when `feedback.update_check` is on — starts the update-notice thread. Warms a cold model in the background once capture starts; toggle mode — and a hybrid tap that latched — ends at `audio.max_recording_seconds` through the same stop path (hybrid arms that timer at the latching release, never at the press, for the window's remainder, so the cap always runs from the press and coincides with the recorder's own sample cap); the falling edge in hybrid runs `hybrid_release_action`. Each accepted start allocates the next `utt=N` (also the stale-max-duration-timer generation) and opens an `UtteranceRecord`; every phase fills it under the state lock, and the one `pipeline: utterance` INFO line is rendered from that record — still holding the lock, because it reads the record's own `started_at` and then clears the process-global `utt` stamp, and a re-press accepted in between would take both from it. Logging is a queue put, not process I/O. `stop()` closes an in-flight recording the same way, as `CANCELLED`. |
+| `daemon/` | Orchestrator package: `daemon.py` contains only `Daemon`, the single owner of hotkey/capture state, timer generations, model warm-up, threads, locks, and shutdown. `Daemon.build(cfg, clipboard_backend=, status=, platform=)` remains the single wiring point. `pipeline.py` contains only `UtterancePipeline`, which processes explicit samples/utterance/record inputs through gate → recognition → formatting → delivery using injected collaborators and callbacks; it retains no active record. `telemetry.py` contains only `UtteranceTelemetry`, which owns the diagnostics collection and projects explicitly supplied records into start/checkpoint/finish operations. `policy.py` holds pure hotkey and outcome decisions; `outcome.py` holds only `Outcome`; `feedback.py` isolates cue/status publication failures; `banner.py` reports the effective configuration; `startup.py` owns capability-gated process startup and cleanup. `__init__.py` preserves the existing entry points and consumed policy exports. Class files contain no standalone functions or additional classes; imports, constants, logger declarations, and documentation are allowed. |
 | `hotkey.py` | Platform-neutral `parse_binding` (via `KeyTable`), `chord_active`/`edge`, `ChordTracker` (held-key union across devices, stuck-key synthesis, `wait_binding_released`). Providers subclass it and feed `_key_event(device_id, code, value)`. |
-| `keycodes.py` | Generated pure `KEY_*`/`BTN_*` name→code table (`scripts/gen_keycodes.py`); drift test on Linux. |
+| `keycodes.py` | Pure stdlib-only loader (`tomllib`) exposing the `KEY_*`/`BTN_*` name→code table from the generated `assets/keycodes.toml` (`scripts/gen_keycodes.py`); drift test on Linux. |
 | `binding_capture.py` | Core capture vocabulary shared by `cli/` and every provider: `BindingCaptureError`, `CaptureState`, `KeyEvent`, pure `reduce_capture`, `serialize_capture` (validated canonical `KEY_*` names). No host imports. |
 | `capabilities.py` | The shared capability gate (core, so the daemon never imports `cli/`): `Capabilities` / `OverlayCapability` with names identical to `HostProbe`'s, `REQUIRED`, pure `missing_required` (→ exit 78 / startup refusal), and the read-only `probe` / `probe_overlay` (host half from `probe_host()`, plus mic and model cache). Labels, fix hints, and rendering live in `cli/doctor.py`. |
 | `audio_probe.py` | The one PortAudio input-device enumeration (`query_devices`, never raises) plus its pure adapters, shared by the capability gate, `setup`, and `devices`. |
 | `update_check.py` | The daemon-start update notice (core, stdlib-only apart from an optional `certifi` CA bundle): pure `evaluate` (installed vs. latest tag, 1 h re-notify floor, never notifies for a local build ahead of the release), pure `build_request` and `tag_from_location` (the redirect target must sit under the repository's `releases/tag/` prefix, and the message renders from the parsed tag, never the URL), the cached record, and the thin edge — `fetch_latest_tag` (one metadata-only `HEAD` for the latest GitHub release, `User-Agent: stenographer-update-check`), `start_background_check`, and `run_check` (stamps the 24 h window on every attempt, fetches only when it has lapsed), which notifies through the platform `Notifier.info`. |
 | `audio.py` | PortAudio recorder: retained pre-negotiated stream, block-copy callback with latest-only handoff to the overlay supervisor, sample-rate fallback + resample, one stale-stream recovery, and a `CaptureStats` for the completed capture. `speech_gate_stats` is the RMS gate and the only one: one framing produces both the verdict and the numbers reported beside it, so a stats line cannot disagree with the decision it explains. |
-| `config.py` | TOML → frozen dataclasses; missing file written with annotated defaults (`default_toml()` renders the template at write time so the `hotkey.device` comment comes from `HostGuidance`); in-memory load path for validating setup output. |
+| `config.py` | TOML → frozen dataclasses; missing file written with annotated defaults (the annotated template lives in `assets/default_config.toml.in` and `default_toml()` renders it at write time so the `hotkey.device` comment comes from `HostGuidance`); in-memory load path for validating setup output. |
 | `status.py` | Lifecycle states + strict protocol-v4 NDJSON contract + pure generation/coalescing policy. |
 | `transcribe/` | `worker.py` (ASR policy over an injected `AsrTransport`: one job at a time, load-only warm-up, idle unload after `asr.idle_unload_seconds`, fixed load/decode deadlines, logs via queue; every request carries the parent's `utt` so the child stamps its own lines, and a decode reports `WorkerTimings`), `model.py` (faster-whisper, anti-hallucination stack, `PathologicalOutputError`, `local_files_only`), `format.py` (zero-knob formatter), `pipeline.py` (the gate → decode → format core the daemon and `stenographer transcribe` share: the pure `UtteranceRecord`/phase measurements/`summary_fields`, the channel-0 `downmix`, the single `transcript_text` formatter call, and the two `log_*` emitters). |
 | `delivery/` | `deliver.py` (`Deliverer` policy: confirmed copy → wait for release → `KeyInjector` chord, reporting `DeliveryTimings` for the summary), `feedback.py` (resolve one sound pack at startup, mute/volume policy, `CuePlayer`; no player → no-op). |
@@ -461,8 +461,24 @@ authoritative when editing.
 | `platform/` | The host boundary — see above. `diagnostics.py` provides resource probes, process identity/liveness, and runtime context for all three providers. `asr.py` owns the shared multiprocessing transport and picklable child entry point, resolved lazily by every provider via `asr_transport()`. `AsrProcess` exposes PID/exit code/running status, tuple send/receive (poll expiry raises `TimeoutError`), and idempotent close; graceful close requests stop and waits two seconds before terminate/kill escalation. Worker policy retains overall deadlines. `Daemon.build` supplies its injected provider; direct `Worker` callers resolve the default lazily. `HelperTransport.spawn(command, stderr_path=)` takes the file the helper's stderr appends to; `linux/overlay.py` classifies a backend's `ImportError` as `backend_dependency_missing` and never raises out of a probe. |
 | `utils/logging_setup.py` | The logging pipeline: a `QueueHandler` on the `stenographer` logger and one `QueueListener` thread owning both sinks — stderr (threshold from `STENOGRAPHER_LOG_LEVEL`, else `feedback.log_level`, re-applied after config loading by `with_config`, setup, and sounds through `apply_stderr_level`; no `asctime` when `Platform.journal_attached`) and the unconditionally DEBUG rotating state file (5 MiB × 3). Pure `fmt_event` (quoting values that would otherwise break `key=value` and ASCII-escaping Unicode controls) / `stderr_format`, the `utt=N` filter on the queue handler (`set_utterance`), tiered `log_failure`, privacy-safe worker forwarding (`forward_worker_record` queues prepared child records without re-stamping; registered child relays drain before the sole sink listener stops), `log_paths()` (the daemon and helper log paths derived from `current_platform().state_dir` without opening the pipeline), the helper's own `setup_helper_logging` / `cap_helper_log` (a plain append-mode `overlay-helper.log` shared with the helper's stderr, capped once at start and never rotated while open), and a `shutdown_logging` that stops the listener so the tail is never lost (`cli.main` runs it in a `finally`). |
 | `assets/` | Sound packs (`sounds/<pack>/`), icon, font, static completions. |
-| `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `quick-install.sh` (release bootstrap behind the README one-liner), `gen_keycodes.py`, `cue_audition.py`, `sound_asset_guard.py`, and `verify_distributions.py` (the shared release/preflight archive validator). |
+| `packaging/`, `scripts/` | systemd user unit; `build.sh` / `install.sh` (local bundle, per-user install), `quick-install.sh` (release bootstrap behind the README one-liner), `gen_keycodes.py` (regenerates `assets/keycodes.toml`), `cue_audition.py`, `sound_asset_guard.py`, and `verify_distributions.py` (the shared release/preflight archive validator). |
 | `docs/` | `windows/SCOPE.md` (Windows backend scope), `code-smells.md` / `refactoring-techniques.md` (review/refactor references), `cue-audition.md`. |
+
+The daemon package preserves the lifecycle ordering of the original module.
+Startup logs the banner (every effective key in section order and resolved CPU
+threads) before the capability gate, then acquires the single-instance lock,
+installs stop handlers, prepares audio, starts the optional update-notice thread,
+and runs the listener. Model warm-up starts only after accepted capture begins.
+Toggle mode and a latched hybrid tap use the same generation-guarded stop path;
+hybrid arms the timer at the latching release for the remainder of the window
+measured from the press. Every accepted start allocates the next `utt=N` and
+opens an `UtteranceRecord`. The pipeline fills phase measurements, while the
+daemon alone detaches the record and renders its one `pipeline: utterance` line
+under the state lock, before clearing the global utterance stamp or admitting
+another press. Logging is a queue put, not process I/O. Shutdown finalizes a
+live recording as `CANCELLED`; the pipeline never releases the model or closes
+the utterance itself. Unit coverage is grouped under `tests/daemon/`;
+real-machine acceptance remains in `tests/test_daemon_smoke.py`.
 
 The ASR model (~1.5 GB) is never bundled — `stenographer model download`
 fetches it once; `asr.hotwords` require a full (non-distil) model.

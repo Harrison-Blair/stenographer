@@ -11,22 +11,32 @@ from pathlib import Path
 from sound_asset_guard import check_sound_assets
 
 COMPLETIONS = ("stenographer.bash", "_stenographer", "stenographer.fish")
+KEYCODES = "keycodes.toml"
+CONFIG_TEMPLATE = "default_config.toml.in"
 
 
 def verify_distributions(dist_dir: Path, version: str) -> None:
-    """Require the named archives and their completions, license, and sound packs."""
+    """Require the archives and their completions, key table, config template, license, sounds."""
     wheel = dist_dir / f"stenographer-{version}-py3-none-any.whl"
     sdist = dist_dir / f"stenographer-{version}.tar.gz"
     with zipfile.ZipFile(wheel) as archive:
         names = {info.filename for info in archive.infolist() if not info.is_dir()}
-    _require(names, {f"stenographer/assets/completions/{name}" for name in COMPLETIONS})
+    _require(
+        names,
+        {f"stenographer/assets/completions/{name}" for name in COMPLETIONS}
+        | {f"stenographer/assets/{KEYCODES}", f"stenographer/assets/{CONFIG_TEMPLATE}"},
+    )
     check_sound_assets(wheel, "stenographer/assets/sounds")
     with tarfile.open(sdist, "r:gz") as archive:
         names = {info.name for info in archive.getmembers() if info.isfile()}
     root = f"stenographer-{version}"
     _require(
         names,
-        {f"{root}/LICENSE"}
+        {
+            f"{root}/LICENSE",
+            f"{root}/src/stenographer/assets/{KEYCODES}",
+            f"{root}/src/stenographer/assets/{CONFIG_TEMPLATE}",
+        }
         | {f"{root}/src/stenographer/assets/completions/{name}" for name in COMPLETIONS},
     )
     check_sound_assets(sdist, f"{root}/src/stenographer/assets/sounds")

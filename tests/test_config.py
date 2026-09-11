@@ -145,6 +145,19 @@ def test_default_template_documents_the_update_check_as_enabled():
     assert Config.loads(default_toml()).feedback.update_check is True
 
 
+def test_default_template_leaves_no_placeholder_unfilled():
+    """Every ``{...}`` in ``assets/default_config.toml.in`` must be rendered.
+
+    ``str.format`` raises on an unknown placeholder, but a stray brace that is
+    not a field can survive rendering; either way the written config must hold
+    none. Seen to FAIL with ``{typo}`` added to the template (``KeyError``).
+    """
+
+    rendered = default_toml()
+    assert "{" not in rendered
+    assert "}" not in rendered
+
+
 def test_old_config_inherits_default_sound_pack_without_migration(tmp_path):
     p = tmp_path / "config.toml"
     original = "[stenographer.feedback]\nvolume = 0.25\n"
