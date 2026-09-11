@@ -46,6 +46,12 @@ class UtteranceRecord:
     words: int | None = None
     chars_raw: int | None = None
     chars_out: int | None = None
+    refine_ms: float | None = None
+    refine_chars_in: int | None = None
+    refine_chars_out: int | None = None
+    refine_applied: bool | None = None
+    refine_attempted: bool | None = None
+    refine_failed: bool | None = None
     copy_ms: float | None = None
     release_wait_ms: float | None = None
     release_timeout: bool | None = None

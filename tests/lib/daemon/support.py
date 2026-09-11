@@ -25,6 +25,8 @@ from stenographer.lib.daemon.policy import cancel_state
 from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.logging.utterance_filter import UtteranceFilter
 from stenographer.lib.platform.errors import UnsupportedPlatformError
+from stenographer.lib.refine.policy import should_refine
+from stenographer.lib.refine.results import OUTCOME_APPLIED, RefineResult
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker_timings import WorkerTimings
 
@@ -126,6 +128,68 @@ class _Worker:
         return self._result
 
 
+class _Refiner:
+    """Refiner double: no Ollama, no network, the real contract.
+
+    Constructed with what the stage should do (return a string, or raise), so
+    a pipeline test can prove the fallback without pretending to be a server.
+    """
+
+    def __init__(
+        self,
+        *,
+        refined: str | None = None,
+        error: Exception | None = None,
+        min_words: int = 10,
+        outcome: str = OUTCOME_APPLIED,
+        measurement_error: Exception | None = None,
+        unload_error: Exception | None = None,
+    ) -> None:
+        self._refined = refined
+        self._error = error
+        self._min_words = min_words
+        self._outcome = outcome
+        self._measurement_error = measurement_error
+        self._unload_error = unload_error
+        self._last_result: RefineResult | None = None
+        self.calls: list[str] = []
+        self.unloaded = 0
+        self.on_refine = None
+
+    def unload(self) -> None:
+        self.unloaded += 1
+        if self._unload_error is not None:
+            raise self._unload_error
+
+    @property
+    def last_result(self) -> RefineResult | None:
+        # Reading a measurement is a call into the collaborator too, so it has
+        # to be breakable independently of ``refine`` itself.
+        if self._measurement_error is not None:
+            raise self._measurement_error
+        return self._last_result
+
+    def will_refine(self, text: str) -> bool:
+        return should_refine(text, self._min_words)
+
+    def refine(self, text: str) -> str:
+        self.calls.append(text)
+        if self.on_refine is not None:
+            self.on_refine()
+        if self._error is not None:
+            # A real refiner swallows its own failures; this one is also used
+            # to prove the pipeline survives one that does not.
+            raise self._error
+        refined = self._refined if self._refined is not None else text
+        self._last_result = RefineResult(
+            self._outcome,
+            chars_in=len(text),
+            chars_out=len(refined),
+            duration_ms=12.0,
+        )
+        return refined
+
+
 class _Deliverer:
     def __init__(self) -> None:
         self.delivered: list[str] = []
@@ -141,7 +205,7 @@ class _Deliverer:
     def close(self) -> None: ...
 
 
-def _daemon(*, result=None, error=None, samples=_SPEECH, mode="hold") -> Daemon:
+def _daemon(*, result=None, error=None, samples=_SPEECH, mode="hold", refiner=None) -> Daemon:
     cfg = Config.defaults()
     cfg = dataclasses.replace(cfg, hotkey=dataclasses.replace(cfg.hotkey, mode=mode))
     daemon = Daemon(
@@ -152,10 +216,13 @@ def _daemon(*, result=None, error=None, samples=_SPEECH, mode="hold") -> Daemon:
         recorder=_Recorder(samples),
     )
     daemon._deliverer = _Deliverer()
+    if refiner is not None:
+        daemon._refiner = refiner
     daemon._pipeline = UtterancePipeline(
         min_speech_rms=cfg.audio.min_speech_rms,
         worker=daemon._worker,
         deliverer=daemon._deliverer,
+        refiner=daemon._refiner,
         telemetry=daemon._telemetry,
         publish_state=daemon._publish_state,
         fail=daemon._fail,
@@ -205,8 +272,10 @@ class _Status:
         self.loading.append(active)
 
 
-def _daemon_with_status(*, result=None, samples=_SPEECH, warm=True) -> tuple[Daemon, _Status]:
-    daemon = _daemon(result=result, samples=samples)
+def _daemon_with_status(
+    *, result=None, samples=_SPEECH, warm=True, refiner=None
+) -> tuple[Daemon, _Status]:
+    daemon = _daemon(result=result, samples=samples, refiner=refiner)
     daemon._worker.is_model_ready = warm
     status = _Status()
     daemon._status = status

@@ -4,15 +4,48 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import soundfile
 
+from stenographer.cli.transcribe.handler import cmd_transcribe
 from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.config.models import Config
+from stenographer.lib.refine.policy import should_refine
+from stenographer.lib.refine.results import RefineResult
 from stenographer.lib.transcribe.results import TranscriptionResult
+
+#: Twelve words: over the ten-word refine threshold.
+SPOKEN = "um i think we should ship it on thursday no wait friday"
+REFINED = "I think we should ship it on Friday."
+
+
+def _spoken_clip(monkeypatch, tmp_path, text: str):
+    """A real WAV plus a decoder that returns *text*, so only refine is a double."""
+    from stenographer.lib.transcribe import download, model
+
+    path = tmp_path / "clip.wav"
+    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+
+    class ModelDouble:
+        def __init__(self, cfg):
+            pass
+
+        def transcribe(self, samples):
+            return TranscriptionResult(
+                text=text, duration_seconds=samples.size / SAMPLE_RATE, vad_seconds=0.1
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(download, "is_model_cached", lambda name: True)
+    monkeypatch.setattr(model, "Model", ModelDouble)
+    return path
 
 
 @pytest.mark.parametrize("failure_phase", [None, "decode", "format"])
@@ -248,3 +281,117 @@ def test_a_model_that_never_loads_is_summarized_without_a_close(monkeypatch, tmp
     assert "outcome=ERROR" in summaries[0]
     assert "load_ms=" in summaries[0]
     assert "decode_ms=" not in summaries[0]
+
+
+class _Refiner:
+    """Refiner double for the file path: the real contract, no Ollama."""
+
+    def __init__(self, refined: str) -> None:
+        self._refined = refined
+        self.calls: list[str] = []
+        self.last_result = RefineResult("applied", chars_in=0, chars_out=0, duration_ms=3.0)
+
+    def will_refine(self, text: str) -> bool:
+        return should_refine(text, 10)
+
+    def refine(self, text: str) -> str:
+        self.calls.append(text)
+        return self._refined
+
+
+def _refine_args(path, **overrides) -> argparse.Namespace:
+    state = {"file": str(path), "raw": False, "refine": False}
+    state.update(overrides)
+    return argparse.Namespace(**state)
+
+
+@pytest.fixture
+def refine_capture(monkeypatch):
+    """Capture how ``transcribe`` builds its refiner, without a network."""
+
+    from stenographer.cli.transcribe import handler
+
+    built: list[dict] = []
+    refiner = _Refiner(REFINED)
+
+    def build_refiner(section, *, idle_unload_seconds, enabled=None):
+        built.append({"section": section, "enabled": enabled})
+        return refiner
+
+    monkeypatch.setattr(
+        "stenographer.lib.refine.factory.build_refiner", build_refiner, raising=True
+    )
+    assert handler is not None
+    return SimpleNamespace(built=built, refiner=refiner)
+
+
+def test_refine_flag_cleans_a_long_transcript_before_it_is_printed(
+    refine_capture, monkeypatch, tmp_path, capsys
+):
+    path = _spoken_clip(monkeypatch, tmp_path, SPOKEN)
+
+    assert cmd_transcribe.__wrapped__(_refine_args(path, refine=True), Config.defaults()) == 0
+
+    assert refine_capture.refiner.calls, "the refiner was never asked"
+    assert capsys.readouterr().out == f"{REFINED}\n"
+
+
+def test_without_the_flag_the_model_is_never_contacted(
+    refine_capture, monkeypatch, tmp_path, capsys
+):
+    path = _spoken_clip(monkeypatch, tmp_path, SPOKEN)
+
+    assert cmd_transcribe.__wrapped__(_refine_args(path), Config.defaults()) == 0
+
+    assert refine_capture.built == []
+    assert refine_capture.refiner.calls == []
+    assert REFINED not in capsys.readouterr().out
+
+
+def test_the_daemon_setting_is_not_inherited_by_a_file_transcription(
+    refine_capture, monkeypatch, tmp_path, capsys
+):
+    """A configured daemon must not make one-off file runs start calling a
+    model, and ``--refine`` must work against a config with the stage off."""
+    defaults = Config.defaults()
+    enabled_cfg = dataclasses.replace(
+        defaults, refine=dataclasses.replace(defaults.refine, enabled=True)
+    )
+    path = _spoken_clip(monkeypatch, tmp_path, SPOKEN)
+
+    assert cmd_transcribe.__wrapped__(_refine_args(path), enabled_cfg) == 0
+
+    assert refine_capture.built == [], "an enabled daemon leaked into the file path"
+    assert REFINED not in capsys.readouterr().out
+
+    assert cmd_transcribe.__wrapped__(_refine_args(path, refine=True), defaults) == 0
+
+    assert defaults.refine.enabled is False
+    assert [entry["enabled"] for entry in refine_capture.built] == [True]
+
+
+def test_raw_output_is_never_refined(refine_capture, monkeypatch, tmp_path, capsys):
+    """``--raw`` means exactly what the decoder produced; a cleanup pass on top
+    of it would make the flag a lie."""
+    path = _spoken_clip(monkeypatch, tmp_path, SPOKEN)
+
+    assert (
+        cmd_transcribe.__wrapped__(_refine_args(path, raw=True, refine=True), Config.defaults())
+        == 0
+    )
+
+    assert refine_capture.built == []
+    assert refine_capture.refiner.calls == []
+    assert capsys.readouterr().out == f"{SPOKEN}\n"
+
+
+def test_a_short_transcript_is_below_the_threshold_and_is_printed_unrefined(
+    refine_capture, monkeypatch, tmp_path, capsys
+):
+    path = _spoken_clip(monkeypatch, tmp_path, "ship it on friday")
+
+    assert cmd_transcribe.__wrapped__(_refine_args(path, refine=True), Config.defaults()) == 0
+
+    assert refine_capture.refiner.calls == []
+    # The formatter's dictation trailing space, unchanged by the skipped stage.
+    assert capsys.readouterr().out == "Ship it on friday \n"

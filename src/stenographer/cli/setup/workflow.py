@@ -27,7 +27,12 @@ from stenographer.cli.shared.terminal import (
     require_interactive,
     restart_service,
 )
-from stenographer.lib.config.constants import ALLOWED_COMPUTE_TYPES, ALLOWED_LOG_LEVELS
+from stenographer.lib.config.constants import (
+    ALLOWED_COMPUTE_TYPES,
+    ALLOWED_LOG_LEVELS,
+    MAX_REFINE_WORDS,
+    MIN_REFINE_WORDS,
+)
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 
@@ -35,7 +40,7 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.host_guidance import HostGuidance
 
 _CLEAR = "clear"
-_SECTIONS = ("hotkey", "audio", "asr", "feedback")
+_SECTIONS = ("hotkey", "audio", "asr", "feedback", "refine")
 #: The keys the quick wizard edits, in the order its review screen lists them.
 _QUICK_REVIEW_FIELDS = (
     ("hotkey", "device"),
@@ -48,6 +53,8 @@ _QUICK_REVIEW_FIELDS = (
     ("feedback", "update_check"),
     ("feedback", "sound_pack"),
     ("feedback", "spectrum_floor_dbfs"),
+    ("refine", "enabled"),
+    ("refine", "model"),
 )
 
 
@@ -119,11 +126,14 @@ def parse_review_action(text: str) -> str:
         "4": "feedback",
         "f": "feedback",
         "feedback": "feedback",
+        "5": "refine",
+        "r": "refine",
+        "refine": "refine",
     }
     try:
         return actions[value]
     except KeyError:
-        raise ValueError("choose Save, Cancel, or section 1-4") from None
+        raise ValueError("choose Save, Cancel, or section 1-5") from None
 
 
 def parse_quick_review_action(text: str) -> str:
@@ -195,6 +205,52 @@ def quick_review_lines(config: Config) -> list[str]:
         lines.append(f"  {section_name}.{field_name} = {field_display(value, field_name)}")
     lines.append("Audio-gate, recording-limit, and all ASR settings will be retained unchanged.")
     return lines
+
+
+def refine_intro_lines(host: str, *, loopback: bool) -> list[str]:
+    """Explain the optional cleanup pass, and say where the text would go. PURE."""
+
+    lines = [
+        "\nRefine (optional)",
+        "An extra pass sends each finished transcript to a local Ollama model, "
+        "which removes filler words, resolves self-corrections, and fixes "
+        "punctuation. It never summarizes and never answers what you said, and "
+        "model reasoning is always disabled.",
+    ]
+    if loopback:
+        lines.append(f"{host} is on this machine, so nothing leaves it.")
+    else:
+        lines.append(f"WARNING: {host} is not loopback; transcripts would leave this machine.")
+    return lines
+
+
+def refine_model_hint() -> str:
+    """Name the benchmarked default and its one documented alternative. PURE.
+
+    Read from the prompt module rather than spelled here, so a re-benchmark
+    that changes the default does not leave the wizard recommending the old
+    one. Models genuinely are not interchangeable for this job, so the wizard
+    says which two were verified rather than presenting the installed list as
+    equally good choices.
+    """
+
+    from stenographer.lib.refine.prompt import DEFAULT_MODEL
+
+    return (
+        f"Verified: {DEFAULT_MODEL} (the default, plain text), or qwen3.5:4b with "
+        "structured_output = true. Any other installed model is allowed but unverified."
+    )
+
+
+def parse_model_choice(text: str, current: str, choices: Sequence[str]) -> str:
+    """Enter keeps, a number picks from the listing, anything else is a tag. PURE."""
+
+    value = text.strip()
+    if not value:
+        return current
+    if value.isdecimal() and 1 <= int(value) <= len(choices):
+        return choices[int(value) - 1]
+    return value
 
 
 def quick_tryout_lines(
@@ -319,6 +375,82 @@ def _prompt_sound_pack(console: Console, current: str, config_dir: pathlib.Path)
             lambda text: parse_sound_pack_choice(text, current, choices),
         )
     )
+
+
+def _refine_models(host: str) -> list[str]:
+    """Model tags the configured Ollama reports; ``[]`` when nothing answers."""
+
+    from stenographer.lib.refine.client import installed_model_names
+
+    return installed_model_names(host)
+
+
+def _edit_refine_section(console: Console, config: Config, *, ask_details: bool) -> Config:
+    """Prompt the refine keys both wizards share.
+
+    The full wizard also asks for the host and the word threshold; the quick
+    wizard asks only whether to turn the stage on and which model to use, and
+    keeps the configured host. Listing installed models is a read-only probe of
+    the configured host and is skipped entirely while the stage stays off.
+    """
+
+    from stenographer.lib.refine.endpoints import is_loopback
+
+    refine = config.refine
+    for line in refine_intro_lines(refine.host, loopback=is_loopback(refine.host)):
+        console.write(line)
+    refine = dataclasses.replace(
+        refine,
+        enabled=_prompt_bool(console, "Enable transcript refinement", refine.enabled),
+    )
+    if not refine.enabled:
+        return dataclasses.replace(config, refine=refine)
+    if ask_details:
+        refine = dataclasses.replace(
+            refine, host=_prompt_string(console, "Ollama host", refine.host)
+        )
+    installed = _refine_models(refine.host)
+    console.write(refine_model_hint())
+    if installed:
+        console.write("Installed Ollama models:")
+        for number, name in enumerate(installed, 1):
+            console.write(f"  {number}. {name}")
+    else:
+        console.write(
+            f"No Ollama server answered at {refine.host}. The model can still be named "
+            "now and pulled later with `stenographer model download --refine`."
+        )
+    refine = dataclasses.replace(
+        refine,
+        model=str(
+            console.validated(
+                f"Refine model [{refine.model}; Enter keeps, number selects, or type a tag]: ",
+                lambda text: parse_model_choice(text, refine.model, installed),
+            )
+        ),
+    )
+    if ask_details:
+        refine = dataclasses.replace(
+            refine,
+            min_words=int(
+                _prompt_number(
+                    console,
+                    "Minimum words before refining",
+                    refine.min_words,
+                    MIN_REFINE_WORDS,
+                    MAX_REFINE_WORDS,
+                    integer=True,
+                )
+            ),
+            structured_output=_prompt_bool(
+                console, "Constrain the reply with a JSON schema", refine.structured_output
+            ),
+        )
+    return dataclasses.replace(config, refine=refine)
+
+
+def _edit_refine(console: Console, config: Config) -> Config:
+    return _edit_refine_section(console, config, ask_details=True)
 
 
 def _audio_devices() -> list[tuple[str, str]]:
@@ -623,6 +755,7 @@ def _editors(config_dir: pathlib.Path) -> Mapping[str, Callable[[Console, Config
         "audio": _edit_audio,
         "asr": _edit_asr,
         "feedback": functools.partial(_edit_feedback, config_dir=config_dir),
+        "refine": _edit_refine,
     }
 
 
@@ -639,7 +772,8 @@ def _wizard(console: Console, initial: Config, config_dir: pathlib.Path) -> Conf
     while True:
         _review(console, config)
         action = console.validated(
-            "Save [Enter/S], Cancel [C], or re-edit 1 Hotkey / 2 Audio / 3 ASR / 4 Feedback: ",
+            "Save [Enter/S], Cancel [C], or re-edit "
+            "1 Hotkey / 2 Audio / 3 ASR / 4 Feedback / 5 Refine: ",
             parse_review_action,
         )
         if action == "save":
@@ -724,6 +858,9 @@ def _guided_setup(
             else:
                 console.write("Model download complete.")
 
+    if config.refine.enabled:
+        operational_failure |= _offer_refine_pull(console, config, quick=quick)
+
     try:
         caps = probe(config)
     except Exception as exc:
@@ -780,6 +917,45 @@ def _guided_setup(
             restart_pending=restart_pending,
         )
     return exit_code
+
+
+def _offer_refine_pull(console: Console, config: Config, *, quick: bool) -> bool:
+    """Offer the explicit Ollama pull when the chosen refine model is absent.
+
+    Returns whether an operational failure occurred. An unreachable Ollama is
+    reported and left alone: the daemon falls open on every utterance, so a
+    missing refine model never blocks dictation and never fails setup.
+    """
+
+    from stenographer.lib.refine.client import installed_model_names, pull_model
+    from stenographer.lib.refine.errors import RefineError
+    from stenographer.lib.refine.prompt import APPROXIMATE_MODEL_SIZES_GB
+
+    installed = installed_model_names(config.refine.host)
+    if not installed:
+        console.write(
+            f"\nNo Ollama server answered at {config.refine.host}; refinement will be "
+            "skipped until one does. Dictation is unaffected."
+        )
+        return False
+    if config.refine.model in installed:
+        return False
+    size = APPROXIMATE_MODEL_SIZES_GB.get(config.refine.model)
+    cost = f"approximately {size:.1f} GB" if size is not None else "of unknown size"
+    console.write(f"\nRefine model {config.refine.model} is not installed (download is {cost}).")
+    if not ask_yes_no(console, "Pull it through Ollama now?", default=quick):
+        return False
+    try:
+        pull_model(
+            config.refine.host,
+            config.refine.model,
+            on_progress=lambda line: console.write(f"  {line}"),
+        )
+    except RefineError as exc:
+        console.error(f"refine model pull failed: {exc}")
+        return True
+    console.write("Refine model pull complete.")
+    return False
 
 
 def _print_quick_tryout(

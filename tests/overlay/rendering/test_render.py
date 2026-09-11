@@ -45,6 +45,7 @@ def test_lifecycle_visual_contract_has_no_loading_label_or_dot() -> None:
     assert isinstance(STATE_LABELS, MappingProxyType)
     assert STATE_LABELS == {
         OverlayState.TRANSCRIBING: "Transcribing",
+        OverlayState.REFINING: "Refining",
         OverlayState.DELIVERING: "Delivering",
         OverlayState.CANCELLED: "Cancelled",
         OverlayState.ERROR: "Error",
@@ -53,6 +54,7 @@ def test_lifecycle_visual_contract_has_no_loading_label_or_dot() -> None:
     assert STATE_DOT_COLORS == {
         OverlayState.RECORDING: (0xEF, 0x44, 0x44, 0xFF),
         OverlayState.TRANSCRIBING: (0x3B, 0x82, 0xF6, 0xFF),
+        OverlayState.REFINING: (0x14, 0xB8, 0xA6, 0xFF),
         OverlayState.DELIVERING: (0x8B, 0x5C, 0xF6, 0xFF),
         OverlayState.CANCELLED: (0xA1, 0xA1, 0xAA, 0xFF),
         OverlayState.ERROR: (0xEF, 0x44, 0x44, 0xFF),

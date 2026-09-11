@@ -11,6 +11,7 @@ from stenographer.cli.setup.workflow import (
     _audio_devices,
     _capture_or_choose_binding,
     _edit_feedback_section,
+    _edit_refine_section,
     _hotkey_devices,
     _prompt_choice,
     _prompt_device,
@@ -66,6 +67,8 @@ def _quick_wizard(
         skip_floor_without_overlay=True,
         ask_log_level=False,
     )
+
+    config = _edit_refine_section(console, config, ask_details=False)
 
     for line in quick_review_lines(config):
         console.write(line)

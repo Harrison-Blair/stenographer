@@ -53,6 +53,8 @@ end
 
 complete -c stenographer -n '__stenographer_command_is transcribe' -f -l raw \
     -d 'Emit the unformatted transcript'
+complete -c stenographer -n '__stenographer_command_is transcribe' -f -l refine \
+    -d 'Clean the transcript through a local Ollama model'
 complete -c stenographer -n __stenographer_transcribe_file_needed -F
 complete -c stenographer -n '__stenographer_command_is setup' -f -l quick \
     -d 'Configure essentials only'
@@ -67,7 +69,11 @@ complete -c stenographer -n '__stenographer_command_is sounds' -f \
     -a 'legacy warm-desk soft-electronic minimal-ui'
 
 complete -c stenographer -n '__stenographer_nested_command_needed model' -f -a download \
-    -d 'Download the ASR model'
+    -d 'Download the ASR or refine model'
+complete -c stenographer -n '__stenographer_command_is model' -f -l asr \
+    -d 'Download only the speech-recognition model'
+complete -c stenographer -n '__stenographer_command_is model' -f -l refine \
+    -d 'Pull only the refine model'
 
 complete -c stenographer -n '__stenographer_nested_command_needed completion' -f \
     -a 'bash zsh fish'

@@ -32,6 +32,13 @@ spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 1
 sound_pack = "{sound_pack}"      # bundled pack name or valid pack under sounds/
 log_level = "info"             # debug | info | warning | error; the file keeps debug
 
+[stenographer.refine]
+enabled = false                # optional cleanup pass through a local Ollama model
+host = "{refine_host}" # non-loopback hosts send transcript text over the network
+model = "{refine_model}"           # pull it with `stenographer model download --refine`
+min_words = 10                 # shorter utterances are delivered without a refine
+structured_output = false      # some models (qwen3.5:4b) need the JSON text-field schema
+
 [stenographer.analytics]
 enabled = true                # local numeric history; no audio or transcript text
 resource_profiling = true     # sample application/host resources during utterances

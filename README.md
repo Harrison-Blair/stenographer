@@ -122,7 +122,8 @@ Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics.
-- `stenographer transcribe FILE [--raw]` — transcribe an audio file.
+- `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
+- `stenographer model download [--asr|--refine]` — fetch a model explicitly.
 - `stenographer run` — run the daemon in the foreground.
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
@@ -143,6 +144,11 @@ configuration, and device or model names stay on your machine. Logs never
 contain transcript text or audio. The only network request is an optional,
 metadata-only release check; disable it in `[stenographer.feedback]` with
 `update_check = false`.
+
+Optionally, an off-by-default [refine](docs/refine.md) pass cleans filler words
+and self-corrections out of each transcript through a local Ollama model
+(`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
+machine.
 
 Read the [user guide](docs/usage.md) for privacy settings and more examples.
 

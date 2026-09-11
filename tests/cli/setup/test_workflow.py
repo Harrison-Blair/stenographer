@@ -117,6 +117,8 @@ def test_number_retains_and_enforces_type_and_range():
         ("2", "audio"),
         ("3", "asr"),
         ("4", "feedback"),
+        ("5", "refine"),
+        ("refine", "refine"),
     ],
 )
 def test_review_actions(answer, expected):
@@ -290,6 +292,12 @@ def test_full_review_lists_every_section_and_field():
         "  spectrum_floor_dbfs = -45.0",
         "  sound_pack = minimal-ui",
         "  log_level = info",
+        "[refine]",
+        "  enabled = False",
+        "  host = http://127.0.0.1:11434",
+        "  model = gemma4:e2b",
+        "  min_words = 10",
+        "  structured_output = False",
     ]
 
 
@@ -318,6 +326,8 @@ def test_quick_review_lists_only_the_keys_the_quick_wizard_edits():
         "  feedback.update_check = True",
         "  feedback.sound_pack = minimal-ui",
         "  feedback.spectrum_floor_dbfs = -45.0",
+        "  refine.enabled = False",
+        "  refine.model = gemma4:e2b",
         "Audio-gate, recording-limit, and all ASR settings will be retained unchanged.",
     ]
 
@@ -765,8 +775,10 @@ def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_
     assert "Spectrum response" in stdout
 
 
-#: Enter keeps every value; the wizard asks four sections then the review.
-_KEEP_EVERYTHING = "\n" * 22 + "keep\n"
+#: Enter keeps every value; the wizard asks five sections then the review.
+#: The trailing blank answers "Enable transcript refinement", which defaults to
+#: no and so never reaches the Ollama probe.
+_KEEP_EVERYTHING = "\n" * 22 + "keep\n" + "\n"
 
 
 def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
@@ -779,6 +791,7 @@ def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
         "auto\n\n120\n"  # audio
         "\n\n5\nevdev\n\nno\n\n\n\n"  # asr
         "0.9\n\n\n\nlegacy\ndebug\nkeep\n"  # feedback
+        "\n"  # refine: stay disabled
         "\n"  # review: save
     )
 
@@ -1408,3 +1421,74 @@ def test_write_default_reports_an_unusable_target_and_fails(tmp_path, monkeypatc
     )
     assert str(blocker) in err.getvalue()
     assert blocker.read_text(encoding="utf-8") == "not a directory\n"
+
+
+def test_refine_intro_says_where_the_transcript_would_go():
+    local = setup.refine_intro_lines("http://127.0.0.1:11434", loopback=True)
+    remote = setup.refine_intro_lines("http://192.168.1.5:11434", loopback=False)
+
+    assert "http://127.0.0.1:11434 is on this machine, so nothing leaves it." in local
+    assert not any("WARNING" in line for line in local)
+    assert any("WARNING" in line and "leave this machine" in line for line in remote)
+    assert any("reasoning is always disabled" in line for line in local)
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [("", "kept:tag"), ("2", "second:tag"), ("someone/custom:tag", "someone/custom:tag")],
+)
+def test_model_choice_keeps_selects_or_accepts_a_typed_tag(answer, expected):
+    assert setup.parse_model_choice(answer, "kept:tag", ["first:tag", "second:tag"]) == expected
+
+
+def test_a_number_outside_the_listing_is_taken_as_a_typed_tag():
+    assert setup.parse_model_choice("9", "kept:tag", ["only:tag"]) == "9"
+
+
+def test_the_refine_wizard_never_probes_ollama_while_the_stage_stays_off(monkeypatch):
+    def forbidden(host):
+        raise AssertionError("a disabled stage must not reach the network")
+
+    monkeypatch.setattr(setup, "_refine_models", forbidden)
+    console = _console("no\n")
+
+    config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
+
+    assert config.refine.enabled is False
+    assert config.refine == Config.defaults().refine
+
+
+def test_enabling_refine_lists_installed_models_and_takes_a_numbered_choice(monkeypatch):
+    monkeypatch.setattr(setup, "_refine_models", lambda host: ["first:tag", "second:tag"])
+    console = _console("yes\n\n2\n20\nyes\n")
+
+    config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
+
+    assert config.refine.enabled is True
+    assert config.refine.model == "second:tag"
+    assert config.refine.min_words == 20
+    assert config.refine.structured_output is True
+    assert "  1. first:tag" in console.stdout.getvalue()
+    assert "Verified:" in console.stdout.getvalue()
+
+
+def test_an_absent_ollama_still_lets_the_model_be_named_for_a_later_pull(monkeypatch):
+    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    console = _console("yes\nsome/other:tag\n")
+
+    config = setup._edit_refine_section(console, Config.defaults(), ask_details=False)
+
+    assert config.refine.model == "some/other:tag"
+    assert "No Ollama server answered" in console.stdout.getvalue()
+    assert "model download --refine" in console.stdout.getvalue()
+
+
+def test_the_model_hint_names_the_benchmarked_default_rather_than_a_literal():
+    """A re-benchmark updates one constant; the wizard must follow it."""
+    from stenographer.lib.refine.prompt import DEFAULT_MODEL
+
+    hint = setup.refine_model_hint()
+
+    assert DEFAULT_MODEL in hint
+    assert "qwen3.5:4b" in hint and "structured_output" in hint
+    assert "unverified" in hint

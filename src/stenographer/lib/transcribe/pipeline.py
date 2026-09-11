@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
     from stenographer.lib.audio.records import CaptureStats, GateStats
     from stenographer.lib.delivery.timings import DeliveryTimings
+    from stenographer.lib.refine.results import RefineResult
     from stenographer.lib.transcribe.results import TranscriptionResult
     from stenographer.lib.transcribe.worker_timings import WorkerTimings
 
@@ -99,6 +100,35 @@ def apply_formatting(
     record.format_ms = (ready_at - started_at) * 1000
     if record.stopped_at is not None:
         record.stop_to_ready_ms = (ready_at - record.stopped_at) * 1000
+
+
+def apply_refinement(
+    record: UtteranceRecord | None,
+    result: RefineResult | None,
+    *,
+    delivered: str | None = None,
+) -> None:
+    """Project one refine verdict, and the text it produced, as numbers. PURE.
+
+    *delivered* is the string that will actually reach the clipboard, given
+    only when the refined form replaced the formatted one: ``chars_out`` and
+    ``final_words`` describe what the user gets, and every later word count
+    (``copied_words``, ``chord_words``) reads them. Readiness timing is *not*
+    restated — ``stop_to_ready_ms`` and ``format_ms`` keep measuring the local
+    formatter, and ``refine_ms`` accounts for the model separately.
+    """
+    if record is None:
+        return
+    if result is not None:
+        record.refine_attempted = result.attempted
+        record.refine_applied = result.applied
+        record.refine_failed = result.failed
+        record.refine_chars_in = result.chars_in
+        record.refine_chars_out = result.chars_out
+        record.refine_ms = result.duration_ms
+    if delivered is not None:
+        record.chars_out = len(delivered)
+        record.final_words = count_words(delivered)
 
 
 def apply_worker_timings(record: UtteranceRecord | None, timings: WorkerTimings | None) -> None:
@@ -181,6 +211,9 @@ def summary_fields(record: UtteranceRecord) -> dict[str, object]:
         "words": record.words,
         "chars_raw": record.chars_raw,
         "chars_out": record.chars_out,
+        "refine": _flag(record.refine_applied),
+        "refine_ms": _ms(record.refine_ms),
+        "refine_failed": _flag(record.refine_failed),
         "copy_ms": _ms(record.copy_ms),
         "release_wait_ms": _ms(record.release_wait_ms),
         "release_timeout": _flag(record.release_timeout),

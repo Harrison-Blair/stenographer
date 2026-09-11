@@ -36,7 +36,7 @@ _stenographer() {
             if ((COMP_CWORD == 2)); then
                 mapfile -t COMPREPLY < <(compgen -W 'download -h --help' -- "${cur}")
             elif [[ "${COMP_WORDS[2]-}" == download ]]; then
-                mapfile -t COMPREPLY < <(compgen -W '-h --help' -- "${cur}")
+                mapfile -t COMPREPLY < <(compgen -W '-h --help --asr --refine' -- "${cur}")
             fi
             ;;
         completion)
@@ -48,7 +48,7 @@ _stenographer() {
             ;;
         transcribe)
             if [[ "${cur}" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W '-h --help --raw' -- "${cur}")
+                mapfile -t COMPREPLY < <(compgen -W '-h --help --raw --refine' -- "${cur}")
                 return
             fi
             has_file=0
@@ -59,7 +59,7 @@ _stenographer() {
                 fi
             done
             if ((has_file)); then
-                mapfile -t COMPREPLY < <(compgen -W '-h --help --raw' -- "${cur}")
+                mapfile -t COMPREPLY < <(compgen -W '-h --help --raw --refine' -- "${cur}")
             else
                 mapfile -t COMPREPLY < <(compgen -f -- "${cur}")
                 compopt -o filenames 2>/dev/null || true

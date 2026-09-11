@@ -32,6 +32,7 @@ from stenographer.lib.daemon.telemetry import UtteranceTelemetry
 from stenographer.lib.delivery.deliverer import Deliverer
 from stenographer.lib.logging.pipeline import fmt_event, log_failure, set_utterance
 from stenographer.lib.platform import current_platform
+from stenographer.lib.refine.factory import build_refiner
 from stenographer.lib.sounds.feedback import Feedback
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.pipeline import apply_capture, log_summary
@@ -49,6 +50,10 @@ if TYPE_CHECKING:
 log = logging.getLogger("stenographer.lib.daemon")
 
 _PIPELINE_JOIN_SECONDS = 30.0
+#: The refine warm-up is fire-and-forget and logs its own failure, so shutdown
+#: gives it a courtesy moment and then stops waiting. A cold model load can take
+#: minutes; blocking on one would make Ctrl-C look hung.
+_REFINE_WARMUP_JOIN_SECONDS = 1.0
 
 
 class Daemon:
@@ -92,7 +97,9 @@ class Daemon:
         self._deliverer: Deliverer | None = None
         self._platform: Platform | None = None
         self._telemetry = UtteranceTelemetry()
+        self._refiner = build_refiner(cfg.refine, idle_unload_seconds=cfg.asr.idle_unload_seconds)
         self._pipeline: UtterancePipeline | None = None
+        self._refine_warmup_thread: threading.Thread | None = None
         self._capture_lock = threading.Lock()
         self._model_load_started_at: float | None = None
         self._model_load_utterance: int | None = None
@@ -181,6 +188,7 @@ class Daemon:
             min_speech_rms=cfg.audio.min_speech_rms,
             worker=worker,
             deliverer=deliverer,
+            refiner=daemon._refiner,
             telemetry=daemon._telemetry,
             publish_state=daemon._publish_state,
             fail=daemon._fail,
@@ -249,6 +257,47 @@ class Daemon:
                 # ``classify_error`` detail, whose inference branch can quote
                 # decoder text derived from the audio.
                 log_failure(log, logging.WARNING, "worker: warmup_failed", exc, safe=False)
+
+    def _start_refine_warmup(self) -> None:
+        """Resident the refine model off the hot path, or not at all.
+
+        A daemon thread that is never joined on the dictation path: a cold or
+        missing Ollama must not delay the first press, and the refiner logs its
+        own failure and then simply falls open on every utterance.
+        """
+        warm = getattr(self._refiner, "warm", None)
+        if warm is None:
+            return
+        thread = threading.Thread(target=warm, name="stenographer-refine-warmup", daemon=True)
+        try:
+            thread.start()
+        except RuntimeError as exc:
+            log_failure(log, logging.WARNING, "refine: warm_start_failed", exc, safe=True)
+            return
+        self._refine_warmup_thread = thread
+
+    def _release_refine_model(self) -> None:
+        """Hand the refine model's VRAM back before the process goes away.
+
+        The daemon deliberately holds the model with a long ``keep_alive`` so
+        it is resident between utterances; without this, stopping the daemon
+        leaves gigabytes tied up until Ollama's own timer expires, which on a
+        ``idle_unload_seconds = 0`` configuration is never.
+
+        Best-effort in every direction: the warm-up is given a moment rather
+        than joined, a refiner with nothing to release is left alone, and no
+        failure here can keep the daemon from stopping.
+        """
+        warmup = self._refine_warmup_thread
+        if warmup is not None:
+            warmup.join(timeout=_REFINE_WARMUP_JOIN_SECONDS)
+        unload = getattr(self._refiner, "unload", None)
+        if unload is None:
+            return
+        try:
+            unload()
+        except Exception as exc:
+            log_failure(log, logging.DEBUG, "refine: unload_failed", exc, safe=True)
 
     def _start_model_warmup(self, utterance: int) -> None:
         thread = threading.Thread(
@@ -524,6 +573,7 @@ class Daemon:
         if self._listener is None:
             raise RuntimeError("daemon.run() before build()")
         self._telemetry.open(self._cfg, self._platform, pids=lambda: self._worker.process_ids)
+        self._start_refine_warmup()
         self._listener.start()
         log.info("daemon: running pid=%d", os.getpid())
         self._stop_event.wait()
@@ -562,6 +612,7 @@ class Daemon:
         warmup = self._warmup_thread
         if warmup is not None:
             warmup.join(timeout=_PIPELINE_JOIN_SECONDS)
+        self._release_refine_model()
         thread = self._pipeline_thread
         if thread is not None:
             thread.join(timeout=_PIPELINE_JOIN_SECONDS)

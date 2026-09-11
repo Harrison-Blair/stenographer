@@ -9,11 +9,21 @@ from stenographer.lib.config.constants import (
     ALLOWED_COMPUTE_TYPES,
     ALLOWED_HOTKEY_MODES,
     ALLOWED_LOG_LEVELS,
+    ALLOWED_REFINE_SCHEMES,
+    MAX_REFINE_WORDS,
+    MIN_REFINE_WORDS,
     SOUND_PACK_PATTERN,
 )
 from stenographer.lib.config.errors import ConfigError
-from stenographer.lib.config.models import AsrConfig, AudioConfig, FeedbackConfig, HotkeyConfig
+from stenographer.lib.config.models import (
+    AsrConfig,
+    AudioConfig,
+    FeedbackConfig,
+    HotkeyConfig,
+    RefineConfig,
+)
 from stenographer.lib.config.reader import _Reader
+from stenographer.lib.refine.endpoints import host_name, normalize_host, userinfo
 
 
 def _build_hotkey(table: dict, path: pathlib.Path) -> HotkeyConfig:
@@ -71,6 +81,35 @@ def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
         spectrum_floor_dbfs=r.spectrum_floor("spectrum_floor_dbfs"),
         sound_pack=sound_pack,
         log_level=r.folded_choice("log_level", ALLOWED_LOG_LEVELS),
+    )
+
+
+def _build_refine(table: dict, path: pathlib.Path) -> RefineConfig:
+    r = _Reader(table, path, "refine")
+    host = normalize_host(r.str("host"))
+    scheme = host.partition("://")[0]
+    if scheme not in ALLOWED_REFINE_SCHEMES:
+        raise ConfigError(
+            path,
+            "refine.host",
+            f"must be an http:// or https:// URL, got {r.str('host')!r}",
+        )
+    if not host_name(host):
+        raise ConfigError(path, "refine.host", "must name a host")
+    if userinfo(host):
+        # Ollama has no authentication to use these for, and the daemon reports
+        # its configured host at start; a secret in the URL would be a secret
+        # in the log. The message never echoes the value.
+        raise ConfigError(path, "refine.host", "must not embed credentials")
+    model = r.str("model").strip()
+    if not model:
+        raise ConfigError(path, "refine.model", "must be non-empty")
+    return RefineConfig(
+        enabled=r.bool("enabled"),
+        host=host,
+        model=model,
+        min_words=r.ranged_int("min_words", MIN_REFINE_WORDS, MAX_REFINE_WORDS),
+        structured_output=r.bool("structured_output"),
     )
 
 
