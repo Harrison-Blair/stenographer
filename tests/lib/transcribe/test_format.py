@@ -41,3 +41,10 @@ def test_trailing_space_option():
     assert format_transcript("hi", trailing_space=True) == "Hi "
     assert format_transcript("hi") == "Hi"
     assert format_transcript("", trailing_space=True) == ""
+
+
+def test_a_token_with_no_letters_is_left_alone_and_still_ends_a_sentence():
+    # "42." has nothing to capitalise, but it still terminates the sentence so
+    # the next word starts one.
+    assert format_transcript("123 go") == "123 go"
+    assert format_transcript("42. go") == "42. Go"

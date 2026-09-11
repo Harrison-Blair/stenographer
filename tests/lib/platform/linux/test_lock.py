@@ -11,6 +11,7 @@ import errno
 import os
 
 from stenographer.lib.platform.linux.lock import (
+    LOCK_PATH,
     SingleInstanceLockError,
     acquire_single_instance_lock,
     is_lock_contention,
@@ -56,3 +57,44 @@ def test_single_instance_lock_is_mutually_exclusive(tmp_path):
         assert acquire_single_instance_lock(lock) == -1
     finally:
         os.close(next_fd)
+
+
+def test_flock_single_instance_lock_excludes_a_second_holder_until_released(tmp_path):
+    """The daemon's lock object over a REAL flock on a tmp path.
+
+    Two instances against the same path are two open file descriptions, so the
+    second contends in-process exactly as a second daemon would. Release is
+    proven by what it enables — the loser can then take the lock — rather than
+    by inspecting the descriptor.
+    """
+    from stenographer.lib.platform.linux.flock_single_instance_lock import FlockSingleInstanceLock
+
+    path = tmp_path / "stenographer.lock"
+    first = FlockSingleInstanceLock(path)
+    second = FlockSingleInstanceLock(path)
+
+    assert first.acquire() is True
+    assert second.acquire() is False
+    assert path.read_text().strip() == str(os.getpid())
+
+    first.release()
+    assert second.acquire() is True
+    try:
+        assert FlockSingleInstanceLock(path).acquire() is False
+    finally:
+        second.release()
+        # Releasing an unheld lock is a no-op, so daemon shutdown may be
+        # unwound twice without closing an fd it no longer owns.
+        second.release()
+
+    third = FlockSingleInstanceLock(path)
+    assert third.acquire() is True
+    third.release()
+
+
+def test_flock_single_instance_lock_defaults_to_the_runtime_lock_path():
+    # The default is the shared runtime path, so two daemons contend without
+    # either being told where the lock lives. Nothing is acquired here.
+    from stenographer.lib.platform.linux.flock_single_instance_lock import FlockSingleInstanceLock
+
+    assert FlockSingleInstanceLock()._path == LOCK_PATH

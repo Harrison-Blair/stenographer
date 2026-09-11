@@ -7,6 +7,7 @@ import math
 from itertools import pairwise
 
 import numpy as np
+import pytest
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.overlay.spectrum.analysis import (
@@ -15,6 +16,8 @@ from stenographer.overlay.spectrum.analysis import (
     DISPLAY_GAMMA,
     DISPLAY_RANGE_DBFS,
     FFT_MIN_SIZE,
+    MAX_SPECTRUM_FLOOR_DBFS,
+    MIN_SPECTRUM_FLOOR_DBFS,
     RELEASE_SECONDS,
     SPECTRUM_CEILING_DBFS,
     SPECTRUM_FPS,
@@ -324,3 +327,183 @@ def test_quantization_is_clamped_deterministic_and_exactly_eighteen_levels() -> 
 
     assert len(quantized) == SPECTRUM_BANDS
     assert quantized == (0, 0, 128, 255, 255, 0, 255, 0, *([0] * 10))
+
+
+@pytest.mark.parametrize(
+    "floor",
+    [
+        MIN_SPECTRUM_FLOOR_DBFS - 0.1,
+        MAX_SPECTRUM_FLOOR_DBFS + 0.1,
+        float("inf"),
+        float("nan"),
+    ],
+)
+def test_a_scalar_floor_outside_the_usable_range_is_refused(floor: float) -> None:
+    """A floor above the ceiling would invert the display mapping, and one
+    below -96 dBFS would map dither noise to full-height bars.
+    """
+    with pytest.raises(ValueError, match="spectrum floor must be in"):
+        display_levels(np.full(SPECTRUM_BANDS, -30.0), floor)
+
+
+@pytest.mark.parametrize("floor", [object(), "quiet", {"band": 1}])
+def test_a_floor_that_is_neither_a_number_nor_a_profile_is_refused(floor: object) -> None:
+    with pytest.raises(TypeError, match="number or 18-band sequence"):
+        display_levels(np.full(SPECTRUM_BANDS, -30.0), floor)
+
+
+@pytest.mark.parametrize("size", [SPECTRUM_BANDS - 1, SPECTRUM_BANDS + 1, 0])
+def test_a_calibrated_profile_must_name_every_band(size: int) -> None:
+    with pytest.raises(ValueError, match=f"requires {SPECTRUM_BANDS} bands"):
+        display_levels(np.full(SPECTRUM_BANDS, -30.0), np.full(size, -45.0))
+
+
+@pytest.mark.parametrize("bad", [-200.0, 0.0, float("nan")])
+def test_one_unusable_band_invalidates_a_whole_profile(bad: float) -> None:
+    profile = np.full(SPECTRUM_BANDS, -45.0)
+    profile[3] = bad
+
+    with pytest.raises(ValueError, match="spectrum floor must be in"):
+        display_levels(np.full(SPECTRUM_BANDS, -30.0), profile)
+
+
+@pytest.mark.parametrize("sample_rate", [0, -1, True, 16000.0])
+def test_band_measurement_requires_a_negotiated_positive_sample_rate(
+    sample_rate: object,
+) -> None:
+    with pytest.raises(ValueError, match="sample rate must be a positive integer"):
+        _band_dbfs(np.zeros(64, dtype=np.float32), sample_rate)
+
+
+@pytest.mark.parametrize("sample_count", [0, -1, True, 4096.0])
+def test_the_fft_size_requires_a_positive_whole_window(sample_count: object) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        fft_size_for_window(sample_count)
+
+
+@pytest.mark.parametrize("samples", [np.zeros(1), np.zeros(0), object(), "audio"])
+def test_a_block_too_small_or_too_odd_to_measure_reads_as_silence(samples: object) -> None:
+    """Callback edges hand the analyzer stubs; they must read as silence rather
+    than raise inside the recording loop.
+    """
+    assert np.all(np.isneginf(_band_dbfs(samples, _RATE)))
+
+
+def test_a_window_with_no_analysis_gain_reads_as_silence() -> None:
+    """``np.hanning(2)`` is two zeros: the shortest measurable block has no
+    coherent gain to normalize by, so no band can claim a level.
+    """
+    assert np.all(np.isneginf(_band_dbfs(np.array([0.5, -0.5]), _RATE)))
+
+
+def test_a_sample_rate_below_the_band_range_leaves_every_band_empty() -> None:
+    """At 120 Hz the whole 80 Hz - 8 kHz range sits above Nyquist, so every
+    band collapses to an empty bin range and reads as silence, not an error.
+    """
+    measured = _band_dbfs(np.linspace(-0.5, 0.5, 64), 120)
+
+    assert measured.shape == (SPECTRUM_BANDS,)
+    assert np.all(np.isneginf(measured))
+
+
+@pytest.mark.parametrize("size", [SPECTRUM_BANDS - 1, SPECTRUM_BANDS + 1])
+def test_display_mapping_requires_exactly_eighteen_measurements(size: int) -> None:
+    with pytest.raises(ValueError, match=f"requires {SPECTRUM_BANDS} levels"):
+        display_levels(np.full(size, -30.0))
+
+
+@pytest.mark.parametrize(
+    ("previous", "target"),
+    [
+        (np.zeros(SPECTRUM_BANDS - 1), np.zeros(SPECTRUM_BANDS)),
+        (np.zeros(SPECTRUM_BANDS), np.zeros(SPECTRUM_BANDS + 1)),
+    ],
+)
+def test_smoothing_requires_both_frames_to_cover_every_band(previous, target) -> None:
+    with pytest.raises(ValueError, match=f"requires {SPECTRUM_BANDS} levels"):
+        smooth_spectrum(previous, target, _FRAME_SECONDS)
+
+
+@pytest.mark.parametrize("elapsed", [-0.001, float("nan"), float("inf")])
+def test_smoothing_refuses_an_elapsed_time_that_is_not_a_real_interval(
+    elapsed: float,
+) -> None:
+    frame = np.zeros(SPECTRUM_BANDS)
+
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        smooth_spectrum(frame, frame, elapsed)
+
+
+@pytest.mark.parametrize(
+    ("attack", "release"),
+    [(0.0, RELEASE_SECONDS), (ATTACK_SECONDS, 0.0), (-1.0, RELEASE_SECONDS)],
+)
+def test_smoothing_refuses_time_constants_that_would_divide_by_zero(
+    attack: float, release: float
+) -> None:
+    frame = np.zeros(SPECTRUM_BANDS)
+
+    with pytest.raises(ValueError, match="finite and positive"):
+        smooth_spectrum(frame, frame, _FRAME_SECONDS, attack=attack, release=release)
+
+
+@pytest.mark.parametrize("size", [SPECTRUM_BANDS - 1, SPECTRUM_BANDS + 1])
+def test_quantization_requires_exactly_eighteen_levels(size: int) -> None:
+    with pytest.raises(ValueError, match=f"requires {SPECTRUM_BANDS} levels"):
+        quantize_spectrum(np.zeros(size))
+
+
+def test_the_analyzer_reports_the_fixed_floor_it_was_configured_with() -> None:
+    scalar = SpectrumAnalyzer(-40.0)
+    profile = SpectrumAnalyzer(tuple(float(-50 - index) for index in range(SPECTRUM_BANDS)))
+
+    assert scalar.floor_dbfs == -40.0
+    assert profile.floor_dbfs == tuple(float(-50 - index) for index in range(SPECTRUM_BANDS))
+
+
+def test_an_analyzer_cannot_be_built_on_an_unusable_floor() -> None:
+    with pytest.raises(ValueError, match="spectrum floor must be in"):
+        SpectrumAnalyzer(0.0)
+
+
+@pytest.mark.parametrize("stream_epoch", [-1, True, 0.0, "0"])
+def test_the_analyzer_requires_a_real_stream_epoch(stream_epoch: object) -> None:
+    """The epoch is what tells one device stream from the next; a bool would
+    fold two of them together and carry stale samples across.
+    """
+    analyzer = SpectrumAnalyzer()
+
+    with pytest.raises(ValueError, match="stream epoch must be a non-negative integer"):
+        analyzer.update(_tone(1000.0), _RATE, stream_epoch=stream_epoch)
+
+
+@pytest.mark.parametrize("samples", [object(), "audio", {"left": 1}])
+def test_an_unreadable_block_leaves_the_window_and_frame_intact(samples: object) -> None:
+    analyzer = SpectrumAnalyzer()
+    expected = analyzer.update(np.zeros(512, dtype=np.float32), _RATE, stream_epoch=0)
+
+    assert analyzer.update(samples, _RATE, stream_epoch=0) == expected
+
+
+def test_resetting_forgets_the_stream_so_the_next_block_reconfigures() -> None:
+    """A reset analyzer must not carry the previous device's samples into the
+    first frame of the next recording.
+    """
+    analyzer = SpectrumAnalyzer()
+    loud = analyzer.update(_tone(1000.0, 0.5), _RATE, stream_epoch=0)
+    assert max(loud) > 0
+
+    analyzer.reset()
+    first = analyzer.update(np.zeros(0, dtype=np.float32), _RATE, stream_epoch=0)
+
+    assert first == (0,) * SPECTRUM_BANDS
+
+
+def test_beginning_a_recording_before_any_block_has_nothing_to_clear() -> None:
+    analyzer = SpectrumAnalyzer()
+
+    analyzer.begin_recording()
+
+    assert analyzer.update(np.zeros(0, dtype=np.float32), _RATE, stream_epoch=0) == (
+        (0,) * SPECTRUM_BANDS
+    )

@@ -50,6 +50,11 @@ def _glob_event_nodes() -> list[str]:
     return [str(p) for p in sorted(Path("/dev/input").glob("event*"))]
 
 
+def _list_device_nodes() -> list[str]:
+    """Return every evdev-readable device path (patchable test seam)."""
+    return evdev.list_devices()
+
+
 def auto_detect_paths() -> list[str]:
     """Return every main-keyboard /dev/input/event* path, most-capable first.
 
@@ -77,7 +82,7 @@ def list_hotkey_devices() -> list[tuple[str, str]]:
     """Readable evdev devices with key capabilities, as setup's ``(value, label)`` pairs."""
     devices: list[tuple[str, str]] = []
     try:
-        paths = evdev.list_devices()
+        paths = _list_device_nodes()
     except OSError as exc:
         # WARNING: this is why setup and doctor show an empty device list.
         log_failure(logger, logging.WARNING, "hotkey: enumerate_failed", exc, safe=True)

@@ -64,17 +64,32 @@ class Model:
             cpu_threads,
         )
 
+    @staticmethod
+    def _is_silent_input(samples: np.ndarray) -> bool:
+        """True when the capture holds no frames, the one input that skips decode. PURE."""
+        return samples.size == 0
+
+    @staticmethod
+    def _prepare_samples(samples: np.ndarray) -> np.ndarray:
+        """Return the 1-D mono buffer the decoder expects, downmixing 2-D captures. PURE.
+
+        Multi-channel input is averaged across channels; a single-channel 2-D
+        capture drops its trailing axis. 1-D input is handed back unchanged.
+        """
+        if samples.ndim == 2:
+            return samples.mean(axis=1) if samples.shape[1] > 1 else samples.squeeze(-1)
+        return samples
+
     def transcribe(self, samples: np.ndarray) -> TranscriptionResult:
         started = time.monotonic()
-        if samples.size == 0:
+        if self._is_silent_input(samples):
             log.info(
                 "asr: decode_complete elapsed_ms=%d audio_frames=0 vad_frames=0 "
                 "segments=0 words=0 transcript_chars=0",
                 round((time.monotonic() - started) * 1000),
             )
             return TranscriptionResult(text="", duration_seconds=0.0, segments=[], vad_seconds=0.0)
-        if samples.ndim == 2:
-            samples = samples.mean(axis=1) if samples.shape[1] > 1 else samples.squeeze(-1)
+        samples = self._prepare_samples(samples)
         cfg = self._cfg
         audio_seconds = samples.shape[0] / SAMPLE_RATE
         segments_iter, info = self._impl.transcribe(

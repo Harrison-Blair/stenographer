@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure menu, listing, setup-choice, and restart-policy tests for sound packs."""
+"""Menu, listing, selection, restart-policy, and command-run tests for sound packs.
+
+The pure halves are asserted directly; ``run`` and ``_post_save`` are driven
+over string streams with the configuration document, the pack API, and the host
+provider supplied, so no cue is ever played and no service is ever restarted.
+"""
 
 from __future__ import annotations
 
@@ -290,3 +295,385 @@ def test_sounds_applies_the_loaded_log_level_before_discovery(monkeypatch, tmp_p
 
     assert sounds.run(list_only=True, stdout=io.StringIO(), stderr=io.StringIO()) == 0
     assert events == ["level:warning", "discover"]
+
+
+class _Terminal(io.StringIO):
+    """A stream that claims to be a terminal."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def _platform(*, service_active="active", restart=(True, ""), probe_error=None):
+    class Plat:
+        def guidance(self):
+            return _GUIDANCE
+
+        def probe_host(self):
+            if probe_error is not None:
+                raise probe_error
+            return SimpleNamespace(service_active=service_active)
+
+        def restart_service(self):
+            return restart
+
+    return Plat
+
+
+def test_menu_spaces_the_listing_after_a_successful_preview():
+    packs = ("legacy", "warm-desk")
+    previewed: list[object] = []
+
+    def preview(console, config, pack):
+        previewed.append(pack)
+        return True
+
+    chosen, stdout, stderr = _menu(
+        "P1\n2\n",
+        packs,
+        load=lambda name: f"pack:{name}",
+        preview=preview,
+        discover=lambda: packs,
+    )
+
+    assert chosen == "warm-desk"
+    assert previewed == ["pack:legacy"]
+    assert stderr == ""
+    assert stdout.count("Sound packs") == 2
+    # The audition ends the prompt line before the menu is listed again.
+    assert "or cancel Q: \nSound packs" in stdout
+
+
+def _post_save(answers="", **kwargs):
+    console = Console(io.StringIO(answers), io.StringIO(), io.StringIO())
+    code = sounds._post_save(console, **kwargs)
+    return code, console.stdout.getvalue(), console.stderr.getvalue()
+
+
+def test_post_save_never_probes_the_host_when_nothing_changed(monkeypatch):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(
+        platform_module,
+        "current_platform",
+        _platform(probe_error=AssertionError("the host was probed")),
+    )
+
+    code, stdout, stderr = _post_save(changed=False, custom_config=False, interactive=True)
+
+    assert (code, stdout, stderr) == (0, "", "")
+
+
+def test_post_save_reports_an_unreadable_service_status_and_fails(monkeypatch):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(
+        platform_module,
+        "current_platform",
+        _platform(probe_error=OSError("systemctl is not on PATH")),
+    )
+
+    code, stdout, stderr = _post_save(changed=True, custom_config=False, interactive=True)
+
+    assert code == 1
+    assert stderr == (
+        "stenographer: could not determine steno-agent status: systemctl is not on PATH\n"
+    )
+    assert stdout == "Restart the daemon manually to apply the saved sound pack.\n"
+
+
+def test_post_save_prints_the_guidance_arm_without_prompting(monkeypatch):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active="inactive"))
+
+    code, stdout, stderr = _post_save(changed=True, custom_config=False, interactive=True)
+
+    assert code == 0
+    assert stdout == (
+        "Service is not active; sounds did not start it. "
+        "Run `steno-agent start` when ready; the new pack applies when it starts.\n"
+    )
+    assert stderr == ""
+
+
+def test_post_save_declined_restart_names_the_command_to_run_later(monkeypatch):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(platform_module, "current_platform", _platform())
+
+    code, stdout, stderr = _post_save(
+        "n\n",
+        changed=True,
+        custom_config=False,
+        interactive=True,
+    )
+
+    assert code == 0
+    assert "Restart the active steno-agent to apply the sound pack? [Y/n]: " in stdout
+    assert stdout.endswith("Run `steno-agent restart` to apply it later.\n")
+    assert stderr == ""
+
+
+def test_post_save_accepted_restart_reports_the_restart(monkeypatch):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(platform_module, "current_platform", _platform())
+
+    code, stdout, stderr = _post_save(
+        "\n",
+        changed=True,
+        custom_config=False,
+        interactive=True,
+    )
+
+    assert code == 0
+    assert stdout.endswith("Restarted steno-agent.\n")
+    assert stderr == ""
+
+
+def test_post_save_failed_restart_reports_the_detail_and_fails(monkeypatch):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(
+        platform_module,
+        "current_platform",
+        _platform(restart=(False, "unit not loaded")),
+    )
+
+    code, _, stderr = _post_save(
+        "y\n",
+        changed=True,
+        custom_config=False,
+        interactive=True,
+    )
+
+    assert code == 1
+    assert stderr == "stenographer: could not restart steno-agent: unit not loaded\n"
+
+
+def _api(packs=("legacy", "warm-desk"), *, loadable=("legacy", "warm-desk"), discover=None):
+    def discover_sound_packs(config_dir):
+        if discover is not None:
+            return discover()
+        return packs
+
+    return SimpleNamespace(
+        BUNDLED_PACKS=("legacy", "warm-desk"),
+        discover_sound_packs=discover_sound_packs,
+        load_sound_pack=lambda name, config_dir: f"pack:{name}" if name in loadable else None,
+        effective_sound_pack_name=lambda name, config_dir: name if name in packs else packs[0],
+    )
+
+
+def _document(tmp_path, saved, *, changed=True, error=None):
+    from stenographer.lib.config.save_result import SaveResult
+
+    path = tmp_path / "config.toml"
+
+    class Document:
+        def __init__(self):
+            self.path = path
+            self.config = Config.defaults()
+
+        def save(self, config):
+            if error is not None:
+                raise error
+            saved.append(config)
+            return SaveResult(changed, path)
+
+    return Document()
+
+
+@pytest.fixture
+def sounds_run(monkeypatch):
+    """Run ``sounds`` with the document, pack API, and log threshold supplied."""
+
+    from stenographer.lib.logging import pipeline as logging_setup
+
+    monkeypatch.delenv("STENOGRAPHER_CONFIG", raising=False)
+    monkeypatch.setattr(logging_setup, "apply_stderr_level", lambda level: None)
+
+    def invoke(*, document, api, answers="", terminal=False, **kwargs):
+        monkeypatch.setattr(sounds, "load_document", lambda *args, **kw: document)
+        monkeypatch.setattr(sounds, "_sound_pack_api", lambda: api)
+        stream = _Terminal if terminal else io.StringIO
+        stdin, stdout, stderr = stream(answers), stream(), io.StringIO()
+        code = sounds.run(stdin=stdin, stdout=stdout, stderr=stderr, **kwargs)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    return invoke
+
+
+def test_run_returns_the_load_ladders_own_exit_code(sounds_run):
+    code, stdout, _ = sounds_run(document=78, api=_api(), list_only=True)
+
+    assert code == 78
+    assert stdout == ""
+
+
+def test_run_reports_a_failed_discovery_and_fails(sounds_run, tmp_path):
+    def explode():
+        raise OSError("permission denied")
+
+    code, _, stderr = sounds_run(
+        document=_document(tmp_path, []),
+        api=_api(discover=explode),
+        list_only=True,
+    )
+
+    assert code == 1
+    assert stderr == "stenographer: could not discover sound packs: permission denied\n"
+
+
+def test_run_treats_an_interrupted_discovery_as_an_interruption(sounds_run, tmp_path):
+    def interrupt():
+        raise KeyboardInterrupt
+
+    code, _, stderr = sounds_run(
+        document=_document(tmp_path, []),
+        api=_api(discover=interrupt),
+        list_only=True,
+    )
+
+    assert code == 130
+    assert stderr == "stenographer: sounds interrupted\n"
+
+
+def test_run_lists_every_pack_without_touching_the_configuration(sounds_run, tmp_path):
+    saved: list[Config] = []
+
+    code, stdout, _ = sounds_run(
+        document=_document(tmp_path, saved),
+        api=_api(),
+        list_only=True,
+    )
+
+    assert code == 0
+    assert saved == []
+    assert "legacy (bundled" in stdout
+    assert "warm-desk (bundled" in stdout
+
+
+def test_run_refuses_to_preview_a_pack_that_is_not_available(sounds_run, tmp_path):
+    code, _, stderr = sounds_run(
+        document=_document(tmp_path, []),
+        api=_api(),
+        preview_name="gone-pack",
+    )
+
+    assert code == 2
+    assert stderr == "stenographer: invalid or unavailable sound pack: gone-pack\n"
+
+
+@pytest.mark.parametrize(("succeeds", "expected"), [(True, 0), (False, 1)])
+def test_run_preview_exit_code_follows_the_audition(
+    sounds_run,
+    monkeypatch,
+    tmp_path,
+    succeeds,
+    expected,
+):
+    auditioned: list[object] = []
+    monkeypatch.setattr(
+        sounds,
+        "_preview",
+        lambda console, config, pack: auditioned.append(pack) or succeeds,
+    )
+
+    code, _, _ = sounds_run(
+        document=_document(tmp_path, []),
+        api=_api(),
+        preview_name="warm-desk",
+    )
+
+    assert code == expected
+    assert auditioned == ["pack:warm-desk"]
+
+
+def test_run_refuses_to_select_a_pack_that_is_not_available(sounds_run, tmp_path):
+    saved: list[Config] = []
+
+    code, _, stderr = sounds_run(
+        document=_document(tmp_path, saved),
+        api=_api(),
+        pack_name="gone-pack",
+    )
+
+    assert code == 2
+    assert saved == []
+    assert stderr == "stenographer: invalid or unavailable sound pack: gone-pack\n"
+
+
+def test_run_saves_the_named_pack_and_reports_the_save(sounds_run, monkeypatch, tmp_path):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active="inactive"))
+    saved: list[Config] = []
+
+    code, stdout, _ = sounds_run(
+        document=_document(tmp_path, saved),
+        api=_api(),
+        pack_name="warm-desk",
+    )
+
+    assert code == 0
+    assert [config.feedback.sound_pack for config in saved] == ["warm-desk"]
+    assert f"Selected sound pack warm-desk; saved {tmp_path / 'config.toml'}" in stdout
+
+
+def test_run_reports_a_refused_save_and_fails(sounds_run, tmp_path):
+    from stenographer.lib.config.errors import ConfigPersistenceError
+
+    code, _, stderr = sounds_run(
+        document=_document(tmp_path, [], error=ConfigPersistenceError("cannot replace config")),
+        api=_api(),
+        pack_name="warm-desk",
+    )
+
+    assert code == 1
+    assert stderr == "stenographer: cannot replace config\n"
+
+
+def test_run_menu_selection_saves_the_chosen_pack(sounds_run, monkeypatch, tmp_path):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active="inactive"))
+    saved: list[Config] = []
+
+    code, _, _ = sounds_run(
+        document=_document(tmp_path, saved),
+        api=_api(),
+        answers="2\n",
+        terminal=True,
+    )
+
+    assert code == 0
+    assert [config.feedback.sound_pack for config in saved] == ["warm-desk"]
+
+
+def test_run_cancelled_menu_leaves_the_configuration_alone(sounds_run, tmp_path):
+    saved: list[Config] = []
+
+    code, stdout, _ = sounds_run(
+        document=_document(tmp_path, saved),
+        api=_api(),
+        answers="q\n",
+        terminal=True,
+    )
+
+    assert code == 0
+    assert saved == []
+    assert stdout.endswith("Sound-pack selection cancelled; configuration was not changed.\n")
+
+
+def test_run_treats_an_exhausted_menu_input_as_an_interruption(sounds_run, tmp_path):
+    code, _, stderr = sounds_run(
+        document=_document(tmp_path, []),
+        api=_api(),
+        answers="",
+        terminal=True,
+    )
+
+    assert code == 130
+    assert stderr == "stenographer: sounds interrupted\n"

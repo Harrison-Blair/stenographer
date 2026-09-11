@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure gate and save-report tests for the shared interactive-CLI frame."""
+"""Gate, save-report, document-load, and service-restart tests for the shared CLI frame."""
 
 from __future__ import annotations
 
 import io
 import pathlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -137,3 +138,83 @@ def test_interrupted_load_keeps_each_commands_spacing(monkeypatch, blank_line, e
     assert code == 130
     assert console.stdout.getvalue() == expected_stdout
     assert console.stderr.getvalue() == "stenographer: setup interrupted\n"
+
+
+def test_rejected_configuration_reports_the_key_error_and_exits_seventy_eight(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "config.toml"
+    path.write_text("[stenographer.asr]\nbeam_size = 99\n", encoding="utf-8")
+    monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
+    console = Console(io.StringIO(), io.StringIO(), io.StringIO())
+
+    code = load_document(
+        console,
+        interrupt_message="setup interrupted",
+        blank_line_before_interrupt=True,
+    )
+
+    assert code == 78
+    assert "beam_size" in console.stderr.getvalue()
+    assert console.stdout.getvalue() == ""
+
+
+def test_unreadable_configuration_reports_a_persistence_failure_and_exits_one(monkeypatch):
+    from stenographer.cli.shared import terminal as terminal_module
+    from stenographer.lib.config.errors import ConfigPersistenceError
+
+    def refuse(path):
+        raise ConfigPersistenceError(f"cannot resolve {path}: too many levels of symbolic links")
+
+    monkeypatch.setattr(terminal_module.ConfigDocument, "load", refuse)
+    console = Console(io.StringIO(), io.StringIO(), io.StringIO())
+
+    code = load_document(
+        console,
+        interrupt_message="sounds interrupted",
+        blank_line_before_interrupt=False,
+    )
+
+    assert code == 1
+    assert "too many levels of symbolic links" in console.stderr.getvalue()
+
+
+def test_restart_reports_the_platform_service_name_on_success(monkeypatch):
+    from stenographer.cli.shared import terminal as terminal_module
+    from stenographer.lib import platform as platform_module
+
+    class Plat:
+        def restart_service(self):
+            return True, ""
+
+        def guidance(self):
+            return SimpleNamespace(service_name="steno-agent")
+
+    monkeypatch.setattr(platform_module, "current_platform", Plat)
+    console = Console(io.StringIO(), io.StringIO(), io.StringIO())
+
+    assert terminal_module.restart_service(console) is True
+    assert console.stdout.getvalue() == "Restarted steno-agent.\n"
+    assert console.stderr.getvalue() == ""
+
+
+def test_restart_reports_the_platform_detail_on_failure(monkeypatch):
+    from stenographer.cli.shared import terminal as terminal_module
+    from stenographer.lib import platform as platform_module
+
+    class Plat:
+        def restart_service(self):
+            return False, "unit not loaded"
+
+        def guidance(self):
+            return SimpleNamespace(service_name="steno-agent")
+
+    monkeypatch.setattr(platform_module, "current_platform", Plat)
+    console = Console(io.StringIO(), io.StringIO(), io.StringIO())
+
+    assert terminal_module.restart_service(console) is False
+    assert console.stdout.getvalue() == ""
+    assert console.stderr.getvalue() == (
+        "stenographer: could not restart steno-agent: unit not loaded\n"
+    )

@@ -13,8 +13,10 @@ from io import StringIO
 import pytest
 
 from stenographer.lib.logging.pipeline import (
+    apply_stderr_level,
     fmt_event,
     log_failure,
+    log_paths,
     owned_handlers,
     resolve_log_level,
     set_utterance,
@@ -428,3 +430,161 @@ def test_child_relay_preserves_stamp_and_drains_before_parent_listener(tmp_path)
         set_utterance(None)
         stop_relay()
         shutdown_logging()
+
+
+def test_log_paths_name_both_logs_in_the_host_state_directory_without_creating_them(tmp_path):
+    from stenographer.lib.platform import current_platform
+
+    daemon_log, helper_log = log_paths({"XDG_STATE_HOME": str(tmp_path)}, tmp_path)
+
+    state = current_platform().state_dir({"XDG_STATE_HOME": str(tmp_path)}, tmp_path)
+    assert daemon_log == state / "stenographer.log"
+    assert helper_log == state / "overlay-helper.log"
+    assert daemon_log != helper_log
+    # ``doctor`` reports the locations; reporting must never create them.
+    assert not daemon_log.exists()
+    assert not helper_log.exists()
+    assert not state.exists()
+
+    defaults = log_paths()
+    assert [path.name for path in defaults] == ["stenographer.log", "overlay-helper.log"]
+
+
+def test_a_second_setup_reuses_the_installed_pipeline(tmp_path):
+    shutdown_logging()
+    stream = StringIO()
+    try:
+        logger = setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=stream)
+        installed = list(logger.handlers)
+        other = StringIO()
+
+        again = setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=other)
+
+        assert again is logger
+        assert list(logger.handlers) == installed
+        again.warning(fmt_event("test", "second_setup"))
+        shutdown_logging()
+        assert "test: second_setup" in stream.getvalue()
+        assert other.getvalue() == ""
+    finally:
+        shutdown_logging()
+
+
+def _stderr_level() -> int:
+    """The level of the one owned stderr sink, whatever else is installed."""
+    handler = next(
+        handler
+        for handler in owned_handlers()
+        if isinstance(handler, logging.StreamHandler)
+        and not isinstance(handler, logging.FileHandler)
+    )
+    return handler.level
+
+
+def test_the_process_override_outranks_the_configured_stderr_level(tmp_path):
+    """``STENOGRAPHER_LOG_LEVEL`` is resolved before any config exists and stays.
+
+    Seen to FAIL against an ``apply_stderr_level`` that always re-applied the
+    configured level: the operator's ``STENOGRAPHER_LOG_LEVEL=WARNING`` was
+    silently replaced by ``feedback.log_level`` a moment later.
+    """
+    from stenographer.lib.logging import pipeline as pipeline_module
+
+    pinned = pipeline_module._stderr_level_pinned
+    shutdown_logging()
+    stream = StringIO()
+    try:
+        logger = setup_logging(
+            env={"XDG_STATE_HOME": str(tmp_path), "STENOGRAPHER_LOG_LEVEL": "WARNING"},
+            home=tmp_path,
+            stderr=stream,
+        )
+        assert _stderr_level() == logging.WARNING
+
+        apply_stderr_level("DEBUG")
+        assert _stderr_level() == logging.WARNING
+
+        logger.info(fmt_event("test", "info_under_pin"))
+        logger.warning(fmt_event("test", "warning_under_pin"))
+        shutdown_logging()
+
+        assert "test: warning_under_pin" in stream.getvalue()
+        assert "test: info_under_pin" not in stream.getvalue()
+
+        configured = StringIO()
+        logger = setup_logging(
+            env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=configured
+        )
+        assert _stderr_level() == logging.INFO
+
+        apply_stderr_level("debug")
+        assert _stderr_level() == logging.DEBUG
+
+        logger.debug(fmt_event("test", "debug_after_config"))
+        shutdown_logging()
+
+        assert "test: debug_after_config" in configured.getvalue()
+    finally:
+        shutdown_logging()
+        pipeline_module._stderr_level_pinned = pinned
+
+
+def test_worker_logging_replaces_child_handlers_with_one_forwarder():
+    """A spawned child must never open or rotate a second copy of the log file."""
+    from queue import Queue
+
+    from stenographer.lib.logging.pipeline import configure_worker_logging
+
+    logger = logging.getLogger("stenographer")
+    saved_handlers = list(logger.handlers)
+    saved_level, saved_propagate = logger.level, logger.propagate
+    child_queue: Queue = Queue()
+    inherited = logging.StreamHandler(StringIO())
+    try:
+        logger.handlers.clear()
+        logger.addHandler(inherited)
+
+        configure_worker_logging(child_queue, logging.DEBUG)
+
+        assert inherited not in logger.handlers
+        assert len(logger.handlers) == 1
+        assert isinstance(logger.handlers[0], logging.handlers.QueueHandler)
+        assert logger.handlers[0].queue is child_queue
+        assert logger.level == logging.DEBUG
+        assert logger.propagate is False
+
+        set_utterance(7)
+        logging.getLogger("stenographer.asr").debug(fmt_event("asr", "child_line"))
+        record = child_queue.get_nowait()
+        assert record.getMessage() == "asr: child_line"
+        assert record.utt_suffix == " utt=7"
+        assert child_queue.empty()
+    finally:
+        set_utterance(None)
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+        logger.handlers[:] = saved_handlers
+        logger.setLevel(saved_level)
+        logger.propagate = saved_propagate
+
+
+def test_an_unavailable_log_file_is_reported_once_per_process(tmp_path):
+    """The warning names a recovery action; repeating it every rotation would not."""
+    from stenographer.lib.logging.pipeline import _build_file_handler
+
+    blocked = tmp_path / "occupied"
+    blocked.write_text("not a directory", encoding="utf-8")
+    logger = logging.getLogger("stenographer.tests.filewarning")
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    env = {"XDG_STATE_HOME": str(blocked)}
+    try:
+        assert _build_file_handler(logger, env, tmp_path, handler) is None
+        assert _build_file_handler(logger, env, tmp_path, handler) is None
+
+        assert stream.getvalue().count("logging: file_unavailable") == 1
+        assert f"path={blocked}" in stream.getvalue()
+        assert "fallback=stderr" in stream.getvalue()
+    finally:
+        if hasattr(logger, "_stenographer_file_warning_emitted"):
+            delattr(logger, "_stenographer_file_warning_emitted")

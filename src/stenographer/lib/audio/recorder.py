@@ -64,6 +64,9 @@ class Recorder:
         self._max_seconds = max_seconds
         self._on_block = on_block
         self._stream: Any = None
+        # The PortAudio module this recorder negotiated with, remembered so a
+        # recovery re-prepare reuses it rather than re-resolving the import.
+        self._sounddevice: Any = None
         self._stream_epoch = 0
         self._device_rate = SAMPLE_RATE
         self._channels = 1
@@ -85,21 +88,36 @@ class Recorder:
         self._last_capture: CaptureStats | None = None
         self._state = RecorderState.UNPREPARED
 
-    def prepare(self) -> None:
+    def _resolve_sounddevice(self, override: Any | None) -> Any:
+        """Return the PortAudio module to negotiate with, remembering it.
+
+        *override* wins, then the module a previous ``prepare`` negotiated
+        with, then the real ``sounddevice`` imported lazily on first use.
+        """
+        module = override if override is not None else self._sounddevice
+        if module is None:
+            import sounddevice
+
+            module = sounddevice
+        self._sounddevice = module
+        return module
+
+    def prepare(self, sounddevice: Any | None = None) -> None:
         """Negotiate and retain a stopped stream without starting callbacks.
 
         Repeated calls while prepared or capturing are no-ops. A failed
         negotiation leaves the recorder unprepared so the next press can try
-        the then-current default input device.
+        the then-current default input device. *sounddevice* defaults to the
+        real module and is retained, so ``start``'s recovery re-prepare
+        negotiates against whatever module this recorder was built on.
         """
         if self._state is not RecorderState.UNPREPARED:
             return
-        import sounddevice
-
+        module = self._resolve_sounddevice(sounddevice)
         started_at = time.perf_counter()
         try:
-            self._select_default_device(sounddevice)
-            self._negotiate(sounddevice)
+            self._select_default_device(module)
+            self._negotiate(module)
         except Exception:
             self._invalidate(reselect_default=True)
             raise

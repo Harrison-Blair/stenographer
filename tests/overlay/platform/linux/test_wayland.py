@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import errno
+import mmap
 
 import pytest
 
@@ -12,6 +13,7 @@ pytest.importorskip("pywayland")
 from stenographer.overlay.platform.linux.backends.global_removal import GlobalRemoval
 from stenographer.overlay.platform.linux.backends.registry_inventory import RegistryInventory
 from stenographer.overlay.platform.linux.backends.scale_plan import ScalePlan
+from stenographer.overlay.platform.linux.backends.shm_buffer import _ShmBuffer
 from stenographer.overlay.platform.linux.backends.wayland import (
     callback_is_current,
     choose_scale_plan,
@@ -111,3 +113,48 @@ def test_a_full_socket_asks_for_write_interest_instead_of_failing():
 def test_any_other_short_flush_is_a_lost_connection():
     with pytest.raises(RuntimeError, match="flush"):
         flush_wants_write(-1, errno.EPIPE)
+
+
+def test_the_inventory_lists_every_global_it_still_holds():
+    inventory = RegistryInventory()
+    inventory.add(4, "wl_compositor", 6)
+    inventory.add(9, "wl_shm", 1)
+    inventory.remove(4)
+
+    assert tuple(item.interface for item in inventory.values()) == ("wl_shm",)
+
+
+def test_a_buffer_release_never_raises_out_of_the_frame_loop():
+    """Both halves fail independently on a dying compositor: the proxy is gone
+    with the connection, and the mapping is still held by a buffer the server
+    has not released. Either raising would abort the frame that was cleaning up.
+    """
+    destroyed = []
+
+    class _Proxy:
+        def destroy(self):
+            destroyed.append("destroy")
+            raise RuntimeError("connection already gone")
+
+    mapping = mmap.mmap(-1, 64)
+    held = memoryview(mapping)
+    buffer = _ShmBuffer(_Proxy(), mapping)
+
+    buffer.close()
+
+    assert destroyed == ["destroy"]
+    assert mapping.closed is False  # the live export blocked it, and that is fine
+    held.release()
+    mapping.close()
+
+
+def test_a_buffer_release_closes_a_mapping_nothing_is_holding():
+    mapping = mmap.mmap(-1, 64)
+
+    class _Proxy:
+        def destroy(self):
+            return None
+
+    _ShmBuffer(_Proxy(), mapping).close()
+
+    assert mapping.closed is True

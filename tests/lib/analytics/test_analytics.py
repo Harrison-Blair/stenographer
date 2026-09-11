@@ -6,10 +6,13 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import sqlite3
+import threading
 import time
 from contextlib import closing
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -620,3 +623,272 @@ def test_checkpoint_advancement_freezes_snapshots_and_shares_terminal_window():
     assert terminal.metrics["capture_s"] == 3
     with pytest.raises(ValueError, match="regress"):
         advance_checkpoint(second, "secured_capture", updated_at="bad", monotonic_now=13)
+
+
+def test_the_database_lives_beside_the_other_host_state(tmp_path, monkeypatch):
+    from stenographer.lib.analytics.paths import database_path
+    from stenographer.lib.platform import current_platform
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    path = database_path()
+
+    assert path.name == "analytics.sqlite3"
+    assert path.parent == current_platform().state_dir(os.environ, Path.home())
+    # Resolving a location must never create one.
+    assert not path.exists()
+
+
+def test_only_personal_transcription_sources_may_start(tmp_path, analytics_session):
+    session = analytics_session(tmp_path / "analytics.db")
+
+    with pytest.raises(ValueError, match="hotkey and file"):
+        session.start(1, source="screen_reader")
+
+    assert session.start(1, source="file").endswith(":1")
+
+
+def test_one_utterance_identity_cannot_start_twice(tmp_path, analytics_session):
+    session = analytics_session(tmp_path / "analytics.db")
+    session.start(1)
+
+    with pytest.raises(ValueError, match="already started"):
+        session.start(1)
+
+
+def test_checkpoints_reject_unknown_phases_and_outcomes(tmp_path, analytics_session):
+    session = analytics_session(tmp_path / "analytics.db")
+    identity = session.start(1)
+
+    with pytest.raises(ValueError, match="phase"):
+        session.checkpoint(identity, "invented_phase")
+    with pytest.raises(ValueError, match="outcome"):
+        session.checkpoint(identity, "terminal", outcome="private_transcript")
+
+
+def test_a_checkpoint_for_an_unknown_utterance_is_ignored(tmp_path, analytics_session):
+    path = tmp_path / "analytics.db"
+    session = analytics_session(path)
+    identity = session.start(1)
+    session.finish(identity, "success")
+
+    # The terminal checkpoint removed the record; later phases have nowhere to go.
+    session.checkpoint(identity, "clipboard_confirmed", {"copy_ms": 5})
+    session.checkpoint("never-started", "secured_capture", {"capture_s": 1})
+    assert session.close(timeout=15)
+
+    (record,) = Store(path).records()
+    assert record["phase"] == "terminal"
+    assert "copy_ms" not in record["metrics"]
+    assert [row["phase"] for row in Store(path).timeline(record["id"])] == [
+        "accepted_start",
+        "terminal",
+    ]
+
+
+def test_work_started_after_close_is_never_collected(tmp_path, analytics_session):
+    path = tmp_path / "analytics.db"
+    session = analytics_session(path)
+    session.start(1)
+    assert session.close(timeout=15)
+
+    late = session.start(2)
+    session.checkpoint(late, "secured_capture", {"capture_s": 1})
+
+    assert late == f"{session.run_id}:2"
+    assert [record["id"] for record in Store(path).records()] == [f"{session.run_id}:1"]
+
+
+def test_a_failing_resource_probe_is_counted_without_retaining_its_message(
+    tmp_path, analytics_session
+):
+    path = tmp_path / "analytics.db"
+    attempted = threading.Event()
+
+    def probe():
+        attempted.set()
+        raise RuntimeError("nvml said something about /home/someone")
+
+    session = analytics_session(path, resource_probe=probe)
+    identity = session.start(1)
+    assert attempted.wait(timeout=10.0)
+
+    session.finish(identity, "success")
+    assert session.close(timeout=15)
+
+    (record,) = Store(path).records()
+    assert record["metrics"]["resource_probe_failures"] >= 1
+    assert record["metrics"]["resource_samples"] == 0
+    assert record["context"]["resource_availability"] == "sampling:no_timely_samples"
+    assert "nvml" not in Store(path).export_json()
+
+
+def test_a_recording_still_in_progress_is_sampled_between_checkpoints(tmp_path, analytics_session):
+    # The writer samples resources on its own 500 ms cadence, not only at the
+    # phase boundaries, so a long utterance is not a measurement hole.
+    path = tmp_path / "analytics.db"
+    sampled = threading.Event()
+    observations = []
+
+    def probe():
+        observations.append(len(observations) + 1)
+        if len(observations) >= 2:
+            sampled.set()
+        return {"cpu_seconds": 0.1 * len(observations), "resident_bytes": 4096}
+
+    session = analytics_session(path, resource_probe=probe)
+    identity = session.start(1)
+    # The first observation is the accepted-start boundary; the second can only
+    # come from the writer's own cadence, since nothing else is queued.
+    assert sampled.wait(timeout=10.0), observations
+
+    still_open = session.start(2)
+    session.finish(identity, "success")
+    # The second utterance is still recording when the daemon shuts down.
+    assert session.close(timeout=15)
+
+    stored = {record["id"]: record for record in Store(path).records()}
+    assert stored[identity]["metrics"]["resource_samples"] >= 2
+    assert stored[identity]["metrics"]["resource_boundary_samples"] >= 1
+    assert stored[identity]["metrics"]["app_rss_bytes_max"] == 4096
+    assert stored[still_open]["outcome"] is None
+
+
+def test_an_unwritable_database_reports_dropped_checkpoints(tmp_path, analytics_session):
+    occupied = tmp_path / "state"
+    occupied.write_text("not a directory", encoding="utf-8")
+    session = analytics_session(occupied / "analytics.db", retries=0)
+
+    identity = session.start(1)
+    session.finish(identity, "success")
+    assert session.close(timeout=15)
+
+    health = session.health
+    assert health["degraded"] is True
+    assert health["dropped_checkpoints"] >= 1
+    assert occupied.read_text(encoding="utf-8") == "not a directory"
+
+
+def test_a_run_records_the_process_identity_it_may_later_be_judged_by(tmp_path, analytics_session):
+    path = tmp_path / "analytics.db"
+    asked = []
+
+    def alive(pid, started):
+        asked.append((pid, started))
+        return None
+
+    session = analytics_session(path, process_identity=(4242, 1000.0), process_alive=alive)
+    session.finish(session.start(1), "success")
+    assert session.close(timeout=15)
+
+    with closing(sqlite3.connect(path)) as connection:
+        rows = list(connection.execute("SELECT run_id,process_id,process_started FROM runs"))
+    assert rows == [(session.run_id, 4242, 1000.0)]
+    # Its own live run is not a candidate for interrupted-work recovery.
+    assert asked == []
+
+
+def test_direct_writes_reject_unknown_phases_and_foreign_sources(tmp_path):
+    store = Store(tmp_path / "analytics.db")
+    unknown_phase = checkpoint()
+    unknown_phase["phase"] = "invented_phase"
+    foreign_source = checkpoint()
+    foreign_source["source"] = "screen_reader"
+
+    with pytest.raises(ValueError, match="vocabulary"):
+        store.write_checkpoint(unknown_phase)
+    with pytest.raises(ValueError, match="vocabulary"):
+        store.write_checkpoint(foreign_source)
+    assert not store.path.exists()
+
+
+def test_absent_history_answers_every_read_without_creating_it(tmp_path):
+    store = Store(tmp_path / "missing" / "analytics.db")
+
+    assert store.timeline("run:1") == []
+    assert store.recover_interrupted(lambda pid, started: False) == 0
+    assert store.records() == []
+    assert not store.path.exists()
+
+
+def test_a_host_that_cannot_answer_liveness_leaves_work_incomplete(tmp_path):
+    store = Store(tmp_path / "analytics.db")
+    store.register_run("run", {}, (123, 100.0))
+    store.write_checkpoint(checkpoint())
+
+    def unavailable(pid, started):
+        raise OSError("process table unavailable")
+
+    assert store.recover_interrupted(unavailable) == 0
+    assert store.records()[0]["outcome"] is None
+
+
+def test_reset_deletes_every_source_and_suppresses_late_writes(tmp_path):
+    store = Store(tmp_path / "analytics.db")
+    store.write_checkpoint(checkpoint())
+    file_record = checkpoint("run:2")
+    file_record["source"] = "file"
+    store.write_checkpoint(file_record)
+
+    assert store.reset() == 2
+    assert store.records(Filters(source=None)) == []
+    assert store.write_checkpoint(checkpoint("run:1", revision=1)) is False
+
+
+def test_unknown_and_unmeasurable_values_are_told_apart():
+    assert clean_metrics({"capture_s": None, "words": 3}) == {"words": 3}
+    assert clean_context({"device": None, "model": "medium.en"}) == {"model": "medium.en"}
+    for value in (["list"], float("inf"), "x" * 257, "control\x07character"):
+        with pytest.raises(ValueError, match="Invalid analytics context"):
+            clean_context({"device": value})
+
+
+def test_filters_reject_foreign_sources_and_empty_ranges():
+    with pytest.raises(ValueError, match="Invalid analytics source"):
+        Filters(source="screen_reader")
+    with pytest.raises(ValueError, match="empty or reversed"):
+        Filters(since="2026-01-02T00:00:00+00:00", until="2026-01-01T00:00:00+00:00")
+
+
+def test_a_record_older_than_the_range_is_excluded():
+    filters = Filters(since="2026-01-01T12:00:00.000000+00:00")
+    record = {
+        "source": "hotkey",
+        "started_at": "2026-01-01T11:59:59.999999+00:00",
+        "outcome": "success",
+        "context": {},
+    }
+
+    assert filters.matches(record) is False
+    assert filters.matches({**record, "started_at": "2026-01-01T12:00:00.000000+00:00"}) is True
+
+
+def test_advancing_a_checkpoint_rejects_unknown_phases_and_outcomes():
+    from stenographer.lib.analytics.checkpoint_records import Checkpoint
+    from stenographer.lib.analytics.checkpoints import advance_checkpoint
+
+    old = Checkpoint(
+        id="run:1",
+        run_id="run",
+        source="hotkey",
+        started_at="2026-01-01T12:00:00.000000+00:00",
+        updated_at="2026-01-01T12:00:00.000000+00:00",
+        monotonic_started=10.0,
+    )
+    arguments = {"updated_at": "2026-01-01T12:00:01.000000+00:00", "monotonic_now": 11.0}
+
+    with pytest.raises(ValueError, match="phase"):
+        advance_checkpoint(old, "invented_phase", **arguments)
+    with pytest.raises(ValueError, match="outcome"):
+        advance_checkpoint(old, "terminal", outcome="private_transcript", **arguments)
+    with pytest.raises(ValueError, match="regress"):
+        advance_checkpoint(
+            advance_checkpoint(old, "terminal", **arguments), "secured_capture", **arguments
+        )
+
+
+def test_fully_available_resources_report_no_availability_note():
+    summary = ResourceSummary(10)
+    summary.observe({"cpu_seconds": 1.0, "resident_bytes": 2048}, observed_at=10.0)
+
+    assert summary.context() == {}
+    assert summary.metrics(10.5)["resource_samples"] == 1

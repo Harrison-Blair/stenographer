@@ -16,6 +16,7 @@ implementation made it pass:
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -187,3 +188,140 @@ def test_tracker_keeps_cancel_and_main_chords_independent_while_held():
     tracker._key_event(1, 1, 0)
 
     assert events == ["cancel", "start", "stop"]
+
+
+class _HandoffLock:
+    """A real RLock with a rendezvous on the way in.
+
+    The dispatch lock is injected by the daemon, so a lock that says when a
+    caller has reached it — and holds that caller there until the test lets it
+    through — makes the two-reader race deterministic without changing the
+    tracker or patching anything inside it.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self.reached = threading.Event()
+        self.proceed = threading.Event()
+
+    def __enter__(self):
+        self.reached.set()
+        assert self.proceed.wait(10), "the handoff lock was never released"
+        return self._lock.__enter__()
+
+    def __exit__(self, *exc):
+        return self._lock.__exit__(*exc)
+
+
+def test_release_guard_stops_waiting_when_the_listener_stops():
+    """A stopped listener will never report the key-up, so the guard must not
+    sit out its whole timeout before the deliverer may paste."""
+    tracker, _ = _tracker(frozenset({100}), 1)
+    tracker._key_event(1, 100, 1)
+    tracker._stop_event.set()
+
+    started_at = time.monotonic()
+    assert tracker.wait_binding_released(timeout=5.0) is True
+    assert time.monotonic() - started_at < 1.0
+
+
+class _ObservedHeldLock:
+    """A real lock that reports when the guard has sampled the held keys."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.sampled = threading.Event()
+
+    def __enter__(self):
+        return self._lock.__enter__()
+
+    def __exit__(self, *exc):
+        result = self._lock.__exit__(*exc)
+        self.sampled.set()
+        return result
+
+
+def test_release_guard_polls_until_the_chord_key_actually_comes_up():
+    """The guard must remain pending while the key is held, then observe release.
+
+    Seen to FAIL against a guard that only sampled once (returns False while
+    the key is still held, so the paste chord fires with a modifier down).
+    """
+    tracker, _ = _tracker(frozenset({100}), 1)
+    tracker._key_event(1, 100, 1)
+    held_lock = _ObservedHeldLock()
+    tracker._held_lock = held_lock
+    finished = threading.Event()
+    results: list[bool] = []
+
+    def wait_for_release():
+        try:
+            results.append(tracker.wait_binding_released(timeout=10.0, poll_interval=0.01))
+        finally:
+            finished.set()
+
+    waiter = threading.Thread(target=wait_for_release)
+    waiter.start()
+    try:
+        assert held_lock.sampled.wait(10), "the guard never sampled the held key"
+        assert not finished.wait(0.05), "the guard returned while the key was still held"
+        tracker._key_event(1, 100, 0)
+        assert finished.wait(10), "the guard never observed the key release"
+        assert results == [True]
+        assert tracker._held == set()
+    finally:
+        tracker._stop_event.set()
+        waiter.join(timeout=10)
+    assert not waiter.is_alive()
+
+
+def test_an_edge_that_arrives_during_shutdown_is_not_dispatched():
+    # stop() sets the flag while readers may still be in flight; a callback
+    # fired then would start a session the daemon is already tearing down.
+    tracker, events = _tracker(frozenset({100}), 1)
+    tracker._stop_event.set()
+
+    tracker._update(True)
+    tracker._update_cancel(True)
+
+    assert events == []
+    assert tracker._active is False
+    assert tracker._cancel_active is False
+
+
+def test_two_readers_seeing_the_same_press_dispatch_only_one_edge():
+    """The was-active read and the callback happen under the dispatch lock.
+
+    The losing reader is held at the lock until the winner's edge has landed,
+    so it re-reads the settled state and finds no transition left to report.
+    Seen to FAIL against a tracker that decided the edge before taking the
+    lock (both readers fire on_start).
+    """
+    events: list[str] = []
+    lock = _HandoffLock()
+    tracker = ChordTracker(
+        chord=frozenset({100}),
+        on_start=lambda: events.append("start"),
+        on_stop=lambda: events.append("stop"),
+        lock=lock,
+        cancel=frozenset({1}),
+        on_cancel=lambda: events.append("cancel"),
+    )
+
+    dispatchers = (
+        (tracker._update, "_active"),
+        (tracker._update_cancel, "_cancel_active"),
+    )
+    for dispatch, settled in dispatchers:
+        lock.reached.clear()
+        lock.proceed.clear()
+        loser = threading.Thread(target=dispatch, args=(True,), daemon=True)
+        loser.start()
+        assert lock.reached.wait(10)
+        # The other reader's edge won the race while this one waited.
+        setattr(tracker, settled, True)
+        lock.proceed.set()
+        loser.join(timeout=10)
+        assert loser.is_alive() is False
+
+    assert events == []

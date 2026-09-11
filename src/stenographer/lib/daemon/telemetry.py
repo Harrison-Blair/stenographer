@@ -28,8 +28,10 @@ class UtteranceTelemetry:
     with the caller.
     """
 
-    def __init__(self) -> None:
-        self._collection: Collection | None = None
+    def __init__(self, *, collection: Collection | None = None) -> None:
+        # Left unopened by default: ``open`` creates the session collection when
+        # the daemon starts. An injected collection is used as-is instead.
+        self._collection: Collection | None = collection
 
     def open(
         self,

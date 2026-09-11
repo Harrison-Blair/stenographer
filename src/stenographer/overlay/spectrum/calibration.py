@@ -185,9 +185,16 @@ def calibrate_spectrum_profile(
     on_countdown: Callable[[int], None],
     on_voice_prompt: Callable[[], None],
     cancellation: threading.Event | None = None,
+    recorder_factory: Callable[..., Recorder] | None = None,
 ) -> tuple[float, ...]:
-    """Capture known silence plus normal voice and return one fixed profile."""
-    recorder = Recorder(device=device, max_seconds=CAPTURE_SECONDS)
+    """Capture known silence plus normal voice and return one fixed profile.
+
+    *recorder_factory* defaults to :class:`Recorder` and is called with the same
+    ``device``/``max_seconds`` keywords, so tests can supply a substitute capture
+    source without a real input device.
+    """
+    factory = recorder_factory if recorder_factory is not None else Recorder
+    recorder = factory(device=device, max_seconds=CAPTURE_SECONDS)
     quiet = np.empty(0, dtype=np.float32)
     voice = np.empty(0, dtype=np.float32)
     try:

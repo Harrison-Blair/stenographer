@@ -60,3 +60,31 @@ def test_an_unimportable_backend_constructs_the_same_reason_it_probes(backend, m
         spec.construct()
     assert caught.value.reason is UnavailableReason.BACKEND_DEPENDENCY_MISSING
     assert caught.value.reason is spec.probe()
+
+
+@pytest.mark.parametrize(
+    ("backend", "dependency", "variable", "reason"),
+    [
+        (
+            Backend.LAYER_SHELL,
+            "pywayland",
+            "WAYLAND_DISPLAY",
+            UnavailableReason.NO_WAYLAND_DISPLAY,
+        ),
+        (Backend.XWAYLAND, "Xlib", "DISPLAY", UnavailableReason.NO_X_DISPLAY),
+    ],
+)
+def test_a_missing_session_variable_is_reported_as_a_missing_display(
+    backend, dependency, variable, reason, monkeypatch
+):
+    """``doctor`` on a headless machine must say which session is absent, not
+    that the install is broken — the two have different fixes.
+
+    Each backend skips only on its own dependency: a machine with just one of
+    them installed still proves the other half.
+    """
+    pytest.importorskip(dependency)
+    monkeypatch.delenv(variable, raising=False)
+    spec = next(item for item in overlay_backends() if item.backend is backend)
+
+    assert spec.probe() is reason

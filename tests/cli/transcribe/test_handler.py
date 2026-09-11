@@ -110,3 +110,141 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
         for present in ("vad_frames=1600", "segments=0", "words=0", "chars_raw=20", "chars_out=21"):
             assert present in summary
         assert capsys.readouterr().out == "Sensitive transcript \n"
+
+
+def test_a_missing_file_is_refused_before_the_model_cache_is_consulted(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    from stenographer.cli.transcribe.handler import cmd_transcribe
+    from stenographer.lib.transcribe import download
+
+    consulted: list[str] = []
+    monkeypatch.setattr(download, "is_model_cached", lambda name: consulted.append(name) or True)
+    path = tmp_path / "absent.wav"
+
+    args = argparse.Namespace(file=str(path), raw=False)
+
+    assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 2
+
+    captured = capsys.readouterr()
+    assert captured.err == f"stenographer: file not found: {path}\n"
+    assert captured.out == ""
+    assert consulted == []
+
+
+def test_an_uncached_model_is_refused_with_the_download_instruction(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    from stenographer.cli.transcribe.handler import cmd_transcribe
+    from stenographer.lib.transcribe import download
+
+    path = tmp_path / "clip.wav"
+    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+    monkeypatch.setattr(download, "is_model_cached", lambda name: False)
+
+    args = argparse.Namespace(file=str(path), raw=False)
+
+    assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 78
+
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "stenographer: ASR model not found; run `stenographer model download`\n"
+    )
+    assert captured.out == ""
+
+
+def test_audio_that_cannot_be_decoded_is_refused_with_its_path(monkeypatch, tmp_path, capsys):
+    from stenographer.cli.transcribe.handler import cmd_transcribe
+    from stenographer.lib.transcribe import download
+
+    path = tmp_path / "clip.wav"
+    path.write_bytes(b"RIFF not really a wave file at all")
+    monkeypatch.setattr(download, "is_model_cached", lambda name: True)
+
+    args = argparse.Namespace(file=str(path), raw=False)
+
+    assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 2
+
+    captured = capsys.readouterr()
+    assert captured.err.startswith(f"stenographer: cannot read {path}: ")
+    assert captured.out == ""
+
+
+def test_a_close_failure_surfaces_when_the_run_itself_succeeded(monkeypatch, tmp_path, caplog):
+    """Seen to FAIL against a ``finally`` that swallowed ``close()`` errors: a
+    leaked native handle was reported as a clean transcription."""
+
+    from stenographer.cli.transcribe.handler import cmd_transcribe
+    from stenographer.lib.transcribe import download, model
+
+    path = tmp_path / "clip.wav"
+    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+    close_error = RuntimeError("could not release the decoder")
+
+    class ModelDouble:
+        def __init__(self, cfg):
+            pass
+
+        def transcribe(self, samples):
+            return TranscriptionResult(
+                text="a clean transcript",
+                duration_seconds=samples.size / SAMPLE_RATE,
+                vad_seconds=0.1,
+            )
+
+        def close(self):
+            raise close_error
+
+    monkeypatch.setattr(download, "is_model_cached", lambda name: True)
+    monkeypatch.setattr(model, "Model", ModelDouble)
+    args = argparse.Namespace(file=str(path), raw=False)
+
+    with (
+        caplog.at_level(logging.INFO, logger="stenographer.lib.transcribe.pipeline"),
+        pytest.raises(RuntimeError) as raised,
+    ):
+        cmd_transcribe.__wrapped__(args, Config.defaults())
+
+    assert raised.value is close_error
+    # The summary is still written: the run's own measurements are not lost.
+    summaries = [
+        message for message in caplog.messages if message.startswith("pipeline: utterance ")
+    ]
+    assert len(summaries) == 1
+    assert "outcome=OK" in summaries[0]
+    assert "a clean transcript" not in summaries[0]
+
+
+def test_a_model_that_never_loads_is_summarized_without_a_close(monkeypatch, tmp_path, caplog):
+    from stenographer.cli.transcribe.handler import cmd_transcribe
+    from stenographer.lib.transcribe import download, model
+
+    path = tmp_path / "clip.wav"
+    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+    load_error = RuntimeError("CUDA library not found")
+
+    def refuse(cfg):
+        raise load_error
+
+    monkeypatch.setattr(download, "is_model_cached", lambda name: True)
+    monkeypatch.setattr(model, "Model", refuse)
+    args = argparse.Namespace(file=str(path), raw=False)
+
+    with (
+        caplog.at_level(logging.INFO, logger="stenographer.lib.transcribe.pipeline"),
+        pytest.raises(RuntimeError) as raised,
+    ):
+        cmd_transcribe.__wrapped__(args, Config.defaults())
+
+    assert raised.value is load_error
+    summaries = [
+        message for message in caplog.messages if message.startswith("pipeline: utterance ")
+    ]
+    assert len(summaries) == 1
+    assert "outcome=ERROR" in summaries[0]
+    assert "load_ms=" in summaries[0]
+    assert "decode_ms=" not in summaries[0]
