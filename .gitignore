@@ -82,6 +82,13 @@
 !/docs/reference/guru/code-smells.md
 !/docs/reference/guru/refactoring-techniques.md
 
+# GitHub Pages site; the icon and font are copied from src/ at deploy time.
+!/site/
+!/site/index.html
+!/site/site.css
+!/site/pill.js
+!/site/favicon.png
+
 # Local and generated directories remain excluded inside approved trees.
 __pycache__/
 .venv/

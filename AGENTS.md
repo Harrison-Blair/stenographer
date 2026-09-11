@@ -6,6 +6,8 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
   settings live in `pyproject.toml`. Source files need the GPL SPDX header.
 - Keep Git/build allowlists synchronized; see BUILD.md. Refactoring references:
   `docs/reference/guru/`.
+- User-facing changes update README.md, owning docs, and the Pages site
+  (`site/`).
 - Organize production code under `lib/`, `cli/<command>/`, and `overlay/`.
   CLI workflows connect independent library engines and overlay services;
   `lib/` imports neither CLI nor overlay code. Native code stays behind
@@ -39,7 +41,6 @@ For code changes, run:
 .venv/bin/stenographer --help
 ```
 
-Read relevant code, docstrings, and tests for implementation details.
 See README.md for usage, BUILD.md for packaging, and
 packaging/NATIVE-ACCEPTANCE.md for release acceptance.
 
