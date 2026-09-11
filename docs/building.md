@@ -10,6 +10,13 @@ limited draft-release channel for Linux x86_64 and AArch64. Scope remains
 deliberately narrow: no multi-distro installer or self-update. The included
 installer targets one machine and one user only.
 
+## Release notes
+
+[`CHANGELOG.md`](../CHANGELOG.md) is the canonical authored history for every
+published release. The release workflow validates the entry for the checked-in
+version and uses that entry as the GitHub release body, so add the release note
+with the version bump before merging to `main`.
+
 ## Quick start
 
 ```sh

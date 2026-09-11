@@ -13,6 +13,8 @@
 
 [![release](https://img.shields.io/github/v/release/Harrison-Blair/stenographer?color=brightgreen)](https://github.com/Harrison-Blair/stenographer/releases)
 
+[Release notes](CHANGELOG.md)
+
 Local, offline, Wayland push-to-talk, toggle, or hybrid dictation daemon.
 Press a configurable hotkey, speak, get the text at your cursor and in your
 clipboard. See [BUILD.md](BUILD.md) for the standalone-binary build

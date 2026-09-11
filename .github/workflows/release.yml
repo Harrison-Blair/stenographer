@@ -60,6 +60,10 @@ jobs:
           .venv/bin/python scripts/release_guard.py \
             "${RUNNER_TEMP}/releases.json" src/stenographer/_version.py \
             --github-output "${GITHUB_OUTPUT}"
+      - name: Check authored release notes
+        env:
+          VERSION: ${{ steps.guard.outputs.version }}
+        run: .venv/bin/python scripts/release_notes.py check "${VERSION}" CHANGELOG.md
       - name: Reject a conflicting Git tag
         env:
           TAG: ${{ steps.guard.outputs.tag }}
@@ -247,6 +251,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: Prepare release helper environment
+        run: python -m venv .venv
       - uses: actions/download-artifact@v8
         with:
           pattern: release-*
@@ -296,7 +302,7 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: release/*
-      - name: Final guard, generate notes, and create or refresh draft
+      - name: Final guard, extract authored notes, and create or refresh draft
         env:
           EXPECTED_TAG: ${{ needs.preflight.outputs.tag }}
           EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
@@ -322,18 +328,10 @@ jobs:
           TAG="${tag}"
           VERSION="${version}"
           DRAFT_ID="${draft_id}"
-
-          notes_args=(
-            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -X POST
-            -f "tag_name=${TAG}"
-            -f "target_commitish=${GITHUB_SHA}"
-          )
-          if [[ -n "${previous_tag}" ]]; then
-            notes_args+=(-f "previous_tag_name=${previous_tag}")
-          fi
-          gh api "${notes_args[@]}" > "${RUNNER_TEMP}/generated-notes.json"
-          jq -er .name "${RUNNER_TEMP}/generated-notes.json" > "${RUNNER_TEMP}/release-name.txt"
-          jq -er .body "${RUNNER_TEMP}/generated-notes.json" > "${RUNNER_TEMP}/release-body.md"
+          .venv/bin/python scripts/release_notes.py check "${VERSION}" CHANGELOG.md
+          printf 'v%s\n' "${VERSION}" > "${RUNNER_TEMP}/release-name.txt"
+          .venv/bin/python scripts/release_notes.py extract "${VERSION}" CHANGELOG.md \
+            > "${RUNNER_TEMP}/release-body.md"
 
           request=(
             -f "tag_name=${TAG}"

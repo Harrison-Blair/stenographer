@@ -11,6 +11,7 @@
 !/pyproject.toml
 !/LICENSE
 !/README.md
+!/CHANGELOG.md
 # Compatibility redirect for the protected README link.
 !/BUILD.md
 !/AGENTS.md
