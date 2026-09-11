@@ -16,6 +16,34 @@ scripts/build.sh
 dist/stenographer/stenographer --version
 ```
 
+## Repository and distribution contents
+
+The repository ignores files by default. `.gitignore` allows Python code in
+the application and tests, development scripts, packaging files, workflows,
+and explicitly listed metadata, documentation, and bundled assets. Local
+recordings, downloaded models, caches, build output, and agent/editor settings
+stay ignored. Shared guidance remains in `AGENTS.md` and `CLAUDE.md`.
+The curated [code-smell reference](docs/reference/guru/code-smells.md) and
+[refactoring techniques](docs/reference/guru/refactoring-techniques.md) remain
+tracked together under `docs/reference/guru/`.
+
+For a new file type, documentation file, or asset, update both `.gitignore`
+and `[tool.hatch.build].exclude` in `pyproject.toml` before staging it. Keep
+their non-comment patterns identical and in the same order, including the
+parent-directory exceptions. Existing Python and script patterns allow new
+modules automatically. Use `git check-ignore -v --no-index <path>` to inspect
+which rule applies; review `git status --short` before staging. Ignore rules
+do not remove tracked files or prevent an explicit `git add -f`.
+
+Hatchling can discard VCS exclusions when the catch-all pattern matches the
+project root. Builds therefore set `ignore-vcs = true` and apply the mirrored
+exclusions explicitly. The final recursive content rules also prevent local
+files from entering packages when a builder traverses an ignored directory.
+After changing the policy, build and verify the wheel and source distribution
+with `scripts/verify_distributions.py`, check archive contents, and verify that
+the source distribution can build a wheel. Preserve the source distribution's
+installer scripts and all required package resources.
+
 ## Draft releases
 
 A push to `main`, or a manual workflow dispatch targeting `main`, creates or

@@ -4,6 +4,8 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
 
 - Use `.venv/bin/` for all Python tooling. Metadata, dependencies, and lint
   settings live in `pyproject.toml`. Source files need the GPL SPDX header.
+- Keep Git/build allowlists synchronized; see BUILD.md. Refactoring references:
+  `docs/reference/guru/`.
 - Organize production code under `lib/`, `cli/<command>/`, and `overlay/`.
   CLI workflows connect independent library engines and overlay services;
   `lib/` imports neither CLI nor overlay code. Native code stays behind
