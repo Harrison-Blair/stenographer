@@ -18,6 +18,7 @@ from stenographer.overlay.platform.linux.backends.pict_format import PictFormat
 from stenographer.overlay.platform.linux.backends.placement import Placement
 from stenographer.overlay.platform.linux.backends.stacking_reassert_plan import StackingReassertPlan
 from stenographer.overlay.platform.linux.backends.x11 import (
+    _render_formats,
     choose_dpi_scale,
     consume_stacking_reassert,
     freeze_placement,
@@ -218,3 +219,87 @@ def test_the_root_fallback_placement_never_vanishes() -> None:
 
     assert placement_output_vanished(root, set()) is False
     assert placement_output_vanished(None, set()) is False
+
+
+@pytest.mark.parametrize("epoch", [-1, True, 1.0, "7"])
+def test_a_reassert_plan_needs_a_real_window_epoch(epoch: object) -> None:
+    """The epoch is the only thing that keeps a plan from firing writes at a
+    window that was already destroyed and recreated.
+    """
+    with pytest.raises(ValueError, match="window epoch must be a non-negative integer"):
+        start_stacking_reassert(epoch=epoch, now=100.0)
+
+
+@pytest.mark.parametrize("now", [float("inf"), float("nan")])
+def test_a_reassert_plan_needs_a_finite_clock(now: float) -> None:
+    with pytest.raises(ValueError, match="reassertion clock must be finite"):
+        start_stacking_reassert(epoch=0, now=now)
+
+
+def test_an_exhausted_or_absent_plan_asks_for_no_selector_wait() -> None:
+    assert stacking_reassert_timeout(None, current_epoch=7, now=100.0) is None
+    assert (
+        stacking_reassert_timeout(StackingReassertPlan(7, ()), current_epoch=7, now=100.0) is None
+    )
+    plan = start_stacking_reassert(epoch=7, now=100.0)
+    assert stacking_reassert_timeout(plan, current_epoch=8, now=100.0) is None
+
+
+@pytest.mark.parametrize("scale", [0, -1.0, float("inf"), float("nan")])
+def test_a_new_placement_needs_a_usable_scale(scale: float) -> None:
+    monitor = _monitor(1, (0, 0, 1920, 1080))
+
+    with pytest.raises(ValueError, match="placement scale must be finite and positive"):
+        freeze_placement(None, monitor, scale)
+
+
+def test_x_resources_are_read_as_latin_one_bytes_straight_off_the_wire() -> None:
+    """The property arrives as bytes; decoding must never raise on a stray
+    non-UTF-8 byte in an unrelated resource line.
+    """
+    assert parse_xft_dpi(b"Xft.dpi:\t144\nXcursor.theme:\tcaf\xe9\n") == 144.0
+    assert parse_xft_dpi(None) is None
+
+
+@pytest.mark.parametrize("resources", [144, 144.0, ["Xft.dpi:\t144"]])
+def test_x_resources_must_be_text_bytes_or_absent(resources: object) -> None:
+    with pytest.raises(TypeError, match="text, bytes, or None"):
+        parse_xft_dpi(resources)
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "limit", "bytes_per_pixel", "overhead"),
+    [
+        (0, 88, 262144, 4, 28),
+        (304, 0, 262144, 4, 28),
+        (304, 88, 0, 4, 28),
+        (304, 88, 262144, 0, 28),
+        (304, 88, 262144, 4, -1),
+    ],
+)
+def test_upload_plan_rejects_dimensions_that_cannot_describe_an_image(
+    width: int, height: int, limit: int, bytes_per_pixel: int, overhead: int
+) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        plan_upload_chunks(
+            width=width,
+            height=height,
+            max_request_bytes=limit,
+            bytes_per_pixel=bytes_per_pixel,
+            request_overhead=overhead,
+        )
+
+
+def test_a_server_without_the_render_extension_offers_no_formats() -> None:
+    """Seen to matter on a bare XWayland: without RENDER there is no
+    authoritative ARGB visual, and guessing one draws an opaque black pill.
+    """
+    queried = []
+
+    class _Display:
+        def query_extension(self, name):
+            queried.append(name)
+            return SimpleNamespace(present=False)
+
+    assert _render_formats(_Display()) is None
+    assert queried == ["RENDER"]

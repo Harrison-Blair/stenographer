@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import pathlib
+import threading
 import wave
 
 import pytest
@@ -14,6 +16,7 @@ from stenographer.lib.config.models import FeedbackConfig
 from stenographer.lib.sounds.constants import BUNDLED_PACKS, CUE_ORDER
 from stenographer.lib.sounds.feedback import Feedback
 from stenographer.lib.sounds.packs import (
+    bundled_sound_root,
     discover_sound_packs,
     effective_sound_pack_name,
     is_valid_pack_name,
@@ -21,7 +24,8 @@ from stenographer.lib.sounds.packs import (
     resolve_sound_pack,
     sound_pack_cue_paths,
 )
-from stenographer.lib.sounds.playback import cue_audible, preview_volume
+from stenographer.lib.sounds.playback import cue_audible, preview_sound_pack, preview_volume
+from stenographer.lib.sounds.sound_pack import SoundPack
 from stenographer.lib.sounds.validation import _wav_header_ok, _wav_payload_ok
 
 _BUNDLED = pathlib.Path(__file__).parents[3] / "src" / "stenographer" / "assets" / "sounds"
@@ -296,11 +300,6 @@ def test_effective_name_is_none_when_nothing_resolves(tmp_path):
     assert effective_sound_pack_name("missing", tmp_path, bundled_root=bundled) is None
 
 
-def test_feedback_requires_explicit_config_dir():
-    with pytest.raises(TypeError):
-        Feedback(cfg=FeedbackConfig(volume=0.6, mute=False), player=None)  # type: ignore[call-arg]
-
-
 @pytest.mark.parametrize(
     ("mute", "volume", "has_player", "expected"),
     [
@@ -319,3 +318,193 @@ def test_wav_payload_must_match_the_declared_frame_geometry():
     assert _wav_payload_ok(4800, 1200, 2, 2) is True
     assert _wav_payload_ok(4799, 1200, 2, 2) is False
     assert _wav_payload_ok(0, 0, 1, 2) is True
+
+
+class RecordingCuePlayer:
+    """A cue player that records requests instead of opening an audio device."""
+
+    def __init__(self, *, on_preview=None) -> None:
+        self.played: list[tuple[pathlib.Path, float]] = []
+        self.previewed: list[tuple[pathlib.Path, float, bool]] = []
+        self._on_preview = on_preview
+
+    def play(self, path: pathlib.Path, volume: float) -> None:
+        self.played.append((path, volume))
+
+    def preview(self, path: pathlib.Path, volume: float, *, cancellation=None) -> None:
+        self.previewed.append((path, volume, cancellation is not None))
+        if self._on_preview is not None:
+            self._on_preview()
+
+
+def _pack(tmp_path: pathlib.Path) -> SoundPack:
+    """The strictly resolved ``custom`` pack written by ``_write_pack``."""
+    pack = load_sound_pack("custom", tmp_path, bundled_root=_BUNDLED)
+    assert pack is not None
+    return pack
+
+
+def test_preview_plays_every_cue_in_lifecycle_order_at_one_volume(tmp_path):
+    _write_pack(tmp_path / "sounds" / "custom")
+    pack = _pack(tmp_path)
+    player = RecordingCuePlayer()
+
+    preview_sound_pack(pack, player, 0.4, pause_seconds=0.0)
+
+    assert [path.stem for path, _volume, _cancellable in player.previewed] == list(CUE_ORDER)
+    assert {volume for _path, volume, _cancellable in player.previewed} == {0.4}
+    assert player.played == []
+
+
+def test_preview_refuses_an_incomplete_pack_without_playing_anything(tmp_path):
+    bundled = tmp_path / "bundled"
+    (_write_pack(bundled / DEFAULT_SOUND_PACK) / "error.wav").unlink()
+    pack = resolve_sound_pack("missing", tmp_path, bundled_root=bundled)
+    player = RecordingCuePlayer()
+
+    with pytest.raises(ValueError, match="incomplete"):
+        preview_sound_pack(pack, player, 0.4, pause_seconds=0.0)
+
+    assert player.previewed == []
+
+
+def test_preview_cancelled_before_the_first_cue_plays_nothing(tmp_path):
+    _write_pack(tmp_path / "sounds" / "custom")
+    player = RecordingCuePlayer()
+    cancellation = threading.Event()
+    cancellation.set()
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        preview_sound_pack(
+            _pack(tmp_path), player, 0.4, pause_seconds=0.0, cancellation=cancellation
+        )
+
+    assert player.previewed == []
+
+
+def test_preview_cancelled_during_the_pause_stops_after_the_current_cue(tmp_path):
+    _write_pack(tmp_path / "sounds" / "custom")
+    cancellation = threading.Event()
+    player = RecordingCuePlayer(on_preview=cancellation.set)
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        preview_sound_pack(
+            _pack(tmp_path), player, 0.4, pause_seconds=0.05, cancellation=cancellation
+        )
+
+    # The cancellation is honoured by the inter-cue wait, not by a later cue.
+    assert [path.stem for path, _volume, _cancellable in player.previewed] == ["record_start"]
+    assert player.previewed[0][2] is True
+
+
+def test_feedback_plays_the_configured_cue_at_the_configured_volume(tmp_path):
+    _write_pack(tmp_path / "sounds" / "custom")
+    player = RecordingCuePlayer()
+    feedback = Feedback(
+        cfg=FeedbackConfig(volume=0.25, mute=False, sound_pack="custom"),
+        player=player,
+        config_dir=tmp_path,
+        asset_root=_BUNDLED,
+    )
+
+    feedback.play("record_start")
+
+    assert feedback.sound_pack.name == "custom"
+    assert [path.stem for path, _volume in player.played] == ["record_start"]
+    assert player.played[0][1] == 0.25
+
+
+def test_feedback_plays_nothing_when_inaudible_or_the_cue_is_unknown(tmp_path):
+    _write_pack(tmp_path / "sounds" / "custom")
+    player = RecordingCuePlayer()
+
+    def feedback_for(**overrides):
+        return Feedback(
+            cfg=FeedbackConfig(sound_pack="custom", **overrides),
+            player=player,
+            config_dir=tmp_path,
+            asset_root=_BUNDLED,
+        )
+
+    feedback_for(volume=0.25, mute=True).play("record_start")
+    feedback_for(volume=0.0, mute=False).play("record_start")
+    feedback_for(volume=0.25, mute=False).play("no_such_cue")
+
+    assert player.played == []
+
+
+def test_feedback_without_a_player_stays_silent_and_still_resolves_its_pack(tmp_path):
+    _write_pack(tmp_path / "sounds" / "custom")
+    feedback = Feedback(
+        cfg=FeedbackConfig(volume=0.25, mute=False, sound_pack="custom"),
+        player=None,
+        config_dir=tmp_path,
+        asset_root=_BUNDLED,
+    )
+
+    feedback.play("record_start")  # no player: the cue is simply not audible
+
+    assert feedback.sound_pack.name == "custom"
+    assert feedback.close() is None
+
+
+def test_feedback_skips_a_cue_the_partial_fallback_could_not_resolve(tmp_path):
+    bundled = tmp_path / "bundled"
+    (_write_pack(bundled / DEFAULT_SOUND_PACK) / "error.wav").unlink()
+    player = RecordingCuePlayer()
+    feedback = Feedback(
+        cfg=FeedbackConfig(volume=0.25, mute=False, sound_pack="missing"),
+        player=player,
+        config_dir=tmp_path,
+        asset_root=bundled,
+    )
+
+    feedback.play("error")
+    feedback.play("record_start")
+
+    assert [path.stem for path, _volume in player.played] == ["record_start"]
+
+
+def test_path_for_an_unknown_cue_name_is_unavailable_not_an_error(tmp_path):
+    _write_pack(tmp_path / "sounds" / "custom")
+
+    assert _pack(tmp_path).path_for("record_start") is not None
+    assert _pack(tmp_path).path_for("shutdown") is None
+
+
+def test_invalid_pack_names_never_reach_the_filesystem(tmp_path):
+    _write_pack(tmp_path / "sounds" / "Not-A-Slug")
+
+    assert load_sound_pack("Not-A-Slug", tmp_path, bundled_root=_BUNDLED) is None
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX directory permissions only")
+def test_unreadable_custom_sounds_directory_still_lists_bundled_packs(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root bypasses directory permissions")
+    custom_root = _write_pack(tmp_path / "sounds" / "custom").parent
+    custom_root.chmod(0o000)
+    try:
+        assert discover_sound_packs(tmp_path, bundled_root=_BUNDLED) == BUNDLED_PACKS
+    finally:
+        custom_root.chmod(0o700)
+
+
+def test_a_cancellable_preview_that_is_never_cancelled_plays_every_cue(tmp_path):
+    _write_pack(tmp_path / "sounds" / "custom")
+    player = RecordingCuePlayer()
+
+    preview_sound_pack(
+        _pack(tmp_path), player, 0.4, pause_seconds=0.0, cancellation=threading.Event()
+    )
+
+    assert [path.stem for path, _volume, _cancellable in player.previewed] == list(CUE_ORDER)
+    assert all(cancellable for _path, _volume, cancellable in player.previewed)
+
+
+def test_the_bundled_asset_root_is_the_installed_sounds_directory():
+    root = bundled_sound_root()
+
+    assert root.is_dir()
+    assert root.parts[-2:] == ("assets", "sounds")
+    assert {path.name for path in root.iterdir() if path.is_dir()} == set(BUNDLED_PACKS)

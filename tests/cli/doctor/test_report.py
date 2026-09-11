@@ -561,3 +561,84 @@ def test_log_status_keeps_the_size_of_a_log_it_may_not_open(tmp_path):
     assert status.size == path.stat().st_size
     assert not status.readable
     assert status.tail == ()
+
+
+def _capabilities(**overrides) -> Capabilities:
+    state = {
+        "key_injector_ok": True,
+        "hotkey_access_ok": True,
+        "has_mic": True,
+        "model_cached": True,
+        "clipboard_ok": True,
+        "clipboard_backend": "wl-copy",
+        "cue_player": "paplay",
+        "service_enabled": "enabled",
+        "service_active": "active",
+    }
+    state.update(overrides)
+    return Capabilities(**state)
+
+
+def test_run_prints_the_report_and_succeeds_when_nothing_is_missing(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    from stenographer.lib.config.models import Config
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(doctor, "probe", lambda cfg: _capabilities())
+    config_path = tmp_path / "config.toml"
+
+    assert doctor.run(Config.defaults(), config_path) == 0
+
+    out = capsys.readouterr().out
+    assert f"config: {config_path}" in out
+    assert "all required capabilities present" in out
+    assert str(tmp_path / "state" / "stenographer" / "stenographer.log") in out
+    assert "(absent)" in out
+
+
+def test_run_reports_the_missing_capability_and_exits_seventy_eight(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    from stenographer.lib.config.models import Config
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(doctor, "probe", lambda cfg: _capabilities(has_mic=False))
+
+    assert doctor.run(Config.defaults(), tmp_path / "config.toml") == 78
+
+    out = capsys.readouterr().out
+    assert "missing required capabilities:" in out
+    assert "all required capabilities present" not in out
+
+
+def test_run_replays_the_complaints_of_an_existing_log(monkeypatch, tmp_path, capsys):
+    from stenographer.lib.config.models import Config
+
+    state = tmp_path / "state" / "stenographer"
+    state.mkdir(parents=True)
+    log = state / "stenographer.log"
+    log.write_text(
+        "\n".join(
+            (
+                _log_line("INFO", "daemon: started"),
+                _log_line("ERROR", "daemon: startup_failed reason=stale"),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(doctor, "probe", lambda cfg: _capabilities())
+
+    assert doctor.run(Config.defaults(), tmp_path / "config.toml") == 0
+
+    out = capsys.readouterr().out
+    assert f"daemon: {log} ({log.stat().st_size} bytes)" in out
+    assert "daemon: startup_failed reason=stale" in out
+    assert "daemon: started" not in out
+    assert f"helper: {state / 'overlay-helper.log'} (absent)" in out

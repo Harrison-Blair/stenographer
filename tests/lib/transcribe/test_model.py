@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 from stenographer.lib.transcribe.decode import (
@@ -160,3 +161,25 @@ def test_assemble_validates_survivor_word_density():
     segments = [_segment(0.0, 1.0, "x" * 13, 0.1, words)]
     with pytest.raises(PathologicalOutputError):
         _assemble(segments, silence_threshold=0.6, audio_seconds=1.5, vad_seconds=1.0)
+
+
+def test_only_an_empty_capture_skips_the_decoder():
+    from stenographer.lib.transcribe.model import Model
+
+    assert Model._is_silent_input(np.empty(0, dtype=np.float32)) is True
+    # Silence is not the same as no audio: a captured silent buffer still goes
+    # through the decoder, whose VAD decides what it was.
+    assert Model._is_silent_input(np.zeros(16000, dtype=np.float32)) is False
+
+
+def test_multichannel_captures_are_downmixed_to_one_dimension():
+    from stenographer.lib.transcribe.model import Model
+
+    stereo = np.array([[1.0, 0.0], [0.5, 0.5]], dtype=np.float32)
+    single = np.array([[0.25], [0.75]], dtype=np.float32)
+    mono = np.array([0.25, 0.75], dtype=np.float32)
+
+    assert Model._prepare_samples(stereo).tolist() == [0.5, 0.5]
+    assert Model._prepare_samples(single).tolist() == [0.25, 0.75]
+    assert Model._prepare_samples(single).ndim == 1
+    assert Model._prepare_samples(mono) is mono

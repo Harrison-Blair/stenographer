@@ -1,14 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure round-trip rendering tests for interactive setup configuration."""
+"""Round-trip rendering and real-filesystem persistence for setup configuration."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 
+import pytest
 import tomlkit
 
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.document import ConfigDocument
+from stenographer.lib.config.errors import (
+    ConfigChangedError,
+    ConfigError,
+    ConfigPersistenceError,
+)
 from stenographer.lib.config.models import Config
 
 PRESERVATION_FIXTURE = """\
@@ -161,3 +168,124 @@ def test_defaults_document_renders_the_annotated_template_verbatim(tmp_path):
 
     assert rendered == default_toml()
     assert "# mine" not in rendered
+
+
+def test_load_reports_an_unreadable_path_without_inventing_defaults(tmp_path):
+    # A directory where the config belongs is the mode-independent form of
+    # "present but unreadable": silently starting from defaults here would
+    # later overwrite whatever the user actually has.
+    path = tmp_path / "config.toml"
+    path.mkdir()
+
+    with pytest.raises(ConfigError) as failure:
+        ConfigDocument.load(path)
+
+    assert "cannot read" in str(failure.value)
+    assert str(path) in str(failure.value)
+
+
+def test_load_reports_a_file_that_is_not_utf8(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_bytes(b'[stenographer.asr]\nhotwords = "caf\xe9"\n')
+
+    with pytest.raises(ConfigError) as failure:
+        ConfigDocument.load(path)
+
+    assert "cannot decode as UTF-8" in str(failure.value)
+    assert path.read_bytes().endswith(b'caf\xe9"\n')
+
+
+def test_save_writes_the_reviewed_config_and_keeps_the_previous_bytes(tmp_path):
+    path = tmp_path / "config.toml"
+    original = b"# exact original\n[stenographer.feedback]\nvolume = 0.25 # comment\n"
+    path.write_bytes(original)
+    document = ConfigDocument.load(path)
+    reviewed = replace(document.config, feedback=replace(document.config.feedback, mute=True))
+
+    result = document.save(reviewed)
+
+    assert result.changed is True
+    assert result.path == path.resolve()
+    assert result.backup_path is not None
+    assert result.backup_path.read_bytes() == original
+    assert Config.load(path) == reviewed
+    assert "# exact original" in path.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_save_of_unchanged_bytes_writes_nothing_at_all(tmp_path):
+    path = tmp_path / "config.toml"
+    Config.write_default(path)
+    document = ConfigDocument.load(path)
+    before = path.read_bytes()
+
+    result = document.save(document.config)
+
+    assert result.changed is False
+    assert result.backup_path is None
+    assert path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_save_refuses_a_config_edited_since_it_was_loaded(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[stenographer.feedback]\nmute = false\n", encoding="utf-8")
+    document = ConfigDocument.load(path)
+    edited = "[stenographer.feedback]\nmute = true # edited in another window\n"
+    path.write_text(edited, encoding="utf-8")
+
+    with pytest.raises(ConfigChangedError):
+        document.save(document.config)
+
+    assert path.read_text(encoding="utf-8") == edited
+    assert not list(tmp_path.glob("*.bak-*"))
+
+
+def test_save_refuses_a_symlink_repointed_since_it_was_loaded(tmp_path):
+    first = tmp_path / "first.toml"
+    first.write_text("[stenographer.feedback]\nmute = false\n", encoding="utf-8")
+    second = tmp_path / "second.toml"
+    second.write_text("[stenographer.feedback]\nmute = false\n", encoding="utf-8")
+    link = tmp_path / "config.toml"
+    link.symlink_to(first.name)
+    document = ConfigDocument.load(link)
+
+    link.unlink()
+    link.symlink_to(second.name)
+    reviewed = replace(document.config, feedback=replace(document.config.feedback, mute=True))
+
+    with pytest.raises(ConfigChangedError):
+        document.save(reviewed)
+
+    assert second.read_text(encoding="utf-8") == "[stenographer.feedback]\nmute = false\n"
+    assert not list(tmp_path.glob("*.bak-*"))
+
+
+@pytest.mark.skipif(
+    getattr(os, "geteuid", lambda: 1)() == 0, reason="root ignores directory permissions"
+)
+def test_save_reports_a_parent_directory_it_cannot_create(tmp_path):
+    blocked = tmp_path / "blocked"
+    blocked.mkdir(mode=0o555)
+    path = blocked / "nested" / "config.toml"
+    document = ConfigDocument.load(path)
+    try:
+        with pytest.raises(ConfigPersistenceError) as failure:
+            document.save(document.config)
+    finally:
+        blocked.chmod(0o755)
+
+    assert "cannot create" in str(failure.value)
+    assert not path.parent.exists()
+
+
+def test_save_materializes_a_config_whose_directory_does_not_exist_yet(tmp_path):
+    path = tmp_path / "nested" / "deeper" / "config.toml"
+    document = ConfigDocument.load(path)
+
+    result = document.save(document.config)
+
+    assert result.changed is True
+    assert result.backup_path is None
+    assert Config.load(path) == Config.defaults()
+    assert path.read_text(encoding="utf-8").startswith("# stenographer configuration.")

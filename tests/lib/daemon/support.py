@@ -195,12 +195,14 @@ class _Status:
 
     def __init__(self) -> None:
         self.states: list[OverlayState] = []
+        self.loading: list[bool] = []
 
     def publish(self, state: OverlayState) -> int:
         self.states.append(state)
         return len(self.states)
 
-    def loading_activity(self, active: bool) -> None: ...
+    def loading_activity(self, active: bool) -> None:
+        self.loading.append(active)
 
 
 def _daemon_with_status(*, result=None, samples=_SPEECH, warm=True) -> tuple[Daemon, _Status]:
@@ -209,3 +211,94 @@ def _daemon_with_status(*, result=None, samples=_SPEECH, warm=True) -> tuple[Dae
     status = _Status()
     daemon._status = status
     return daemon, status
+
+
+class _KeyInjector:
+    """Injection double: records chords instead of opening ``/dev/uinput``."""
+
+    def __init__(self) -> None:
+        self.chords = 0
+        self.closed = False
+
+    def send_chord(self) -> None:
+        self.chords += 1
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _Listener:
+    """Retains the wiring ``Daemon.build`` hands the host; starts and stops for real."""
+
+    def __init__(
+        self,
+        *,
+        chord,
+        device,
+        on_start,
+        on_stop,
+        lock,
+        cancel=frozenset(),
+        on_cancel=None,
+    ) -> None:
+        self.chord = chord
+        self.device = device
+        self.cancel = cancel
+        self.lock = lock
+        self._on_start = on_start
+        self._on_stop = on_stop
+        self.on_cancel = on_cancel
+        self.started = threading.Event()
+        self.stopped = threading.Event()
+
+    def start(self) -> None:
+        self.started.set()
+
+    def stop(self) -> None:
+        self.stopped.set()
+
+    def wait_binding_released(self, timeout: float | None = None) -> bool:
+        return True
+
+
+class _Platform:
+    """Host double for ``Daemon.build``: inert backends, real key vocabulary."""
+
+    name = "test"
+
+    def __init__(self) -> None:
+        self.listener: _Listener | None = None
+        self.injector = _KeyInjector()
+        self.notifier_double = _Notifier()
+        self.clipboard_backends: list[str] = []
+        self.copied: list[str] = []
+
+    def cue_player(self):
+        return None
+
+    def notifier(self):
+        return self.notifier_double
+
+    def asr_transport(self):
+        return None
+
+    def keys(self):
+        from stenographer.lib.hotkey.static_key_table import StaticKeyTable
+
+        return StaticKeyTable()
+
+    def hotkey_listener(self, **wiring):
+        self.listener = _Listener(**wiring)
+        return self.listener
+
+    def key_injector(self):
+        return self.injector
+
+    def clipboard_writer(self, backend: str):
+        self.clipboard_backends.append(backend)
+
+        def copy(text: str) -> bool:
+            self.copied.append(text)
+            return True
+
+        return copy

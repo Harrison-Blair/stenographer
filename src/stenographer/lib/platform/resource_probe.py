@@ -8,6 +8,8 @@ import sys
 import time
 from pathlib import Path
 
+_SYSFS_DRM_ROOT = Path("/sys/class/drm")
+
 
 class ResourceProbe:
     """Sample only registered processes and anonymous host aggregates.
@@ -19,11 +21,14 @@ class ResourceProbe:
     cannot subtract work. Work after its final observation remains unmeasured.
     """
 
-    def __init__(self):
+    def __init__(self, *, sysfs_drm_root: Path = _SYSFS_DRM_ROOT):
         self._host_cpu = None
         self._process_cpu: dict[tuple[int, float], float] = {}
         self._cpu_total = 0.0
         self._nvidia = shutil.which("nvidia-smi")
+        # The Linux aggregate-metrics root; injectable so the sysfs branch can
+        # be exercised against a real directory tree instead of the live host.
+        self._sysfs_drm_root = sysfs_drm_root
 
     def __call__(self, pids=()) -> dict:
         import psutil
@@ -115,7 +120,7 @@ class ResourceProbe:
             except (OSError, ValueError, subprocess.SubprocessError):
                 return {}, "gpu_probe_failed"
         if sys.platform == "linux":
-            devices = list(Path("/sys/class/drm").glob("card[0-9]*/device"))
+            devices = list(self._sysfs_drm_root.glob("card[0-9]*/device"))
             usage, memory = [], []
             for device in devices:
                 try:

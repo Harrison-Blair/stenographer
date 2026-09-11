@@ -1,8 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure tests for overlay supervision policy (no child processes)."""
+"""Pure tests for overlay supervision policy (no child processes).
+
+The mailbox's blocking ``take`` is the one exception: two real threads, because
+a queue that never wakes its consumer is exactly the bug worth catching.
+"""
 
 from __future__ import annotations
 
+import logging
+import threading
+import time
 from itertools import pairwise
 
 import pytest
@@ -17,9 +24,10 @@ from stenographer.overlay.protocol.messages import (
     StateMessage,
 )
 from stenographer.overlay.supervision.constants import _POLL_SECONDS, _SPECTRUM_INTERVAL
-from stenographer.overlay.supervision.models import RestartBudget
+from stenographer.overlay.supervision.models import RestartBudget, _ProcessOutcome
 from stenographer.overlay.supervision.outbound_mailbox import OutboundMailbox
 from stenographer.overlay.supervision.policy import (
+    _helper_stderr_path,
     helper_command,
     helper_ready_timed_out,
     schedule_spectrum,
@@ -254,3 +262,192 @@ def test_expected_exit_never_spends_or_uses_restart_budget():
 
     assert budget.on_exit(unexpected=False) is False
     assert budget.on_exit(unexpected=True) is True
+
+
+@pytest.mark.parametrize("capacity", [0, -1, True, False, 8.0, "8"])
+def test_mailbox_capacity_must_be_a_real_positive_integer(capacity: object) -> None:
+    """``True`` is an ``int`` in Python: a bool capacity would silently make a
+    one-slot mailbox that drops every record but the newest.
+    """
+    with pytest.raises(ValueError, match="positive integer"):
+        OutboundMailbox(capacity=capacity)
+
+
+def test_mailbox_publish_requires_a_real_overlay_state() -> None:
+    with pytest.raises(TypeError, match="OverlayState"):
+        OutboundMailbox().publish("recording")
+
+
+def test_a_closed_mailbox_accepts_nothing_but_still_reports_the_last_state() -> None:
+    """The daemon keeps calling the sink while it shuts down; those calls must
+    neither raise nor displace the shutdown command already queued.
+    """
+    mailbox = OutboundMailbox()
+    recording = mailbox.publish(OverlayState.RECORDING)
+    mailbox.close()
+
+    assert mailbox.publish(OverlayState.ERROR) == recording
+    mailbox.loading_activity(True)
+    mailbox.audio_block(object(), 16000, 0)
+
+    assert mailbox.take_nowait() == CommandMessage(Command.SHUTDOWN)
+    assert mailbox.take_nowait() is None
+    assert mailbox.take_audio_nowait() is None
+
+
+def test_disabling_discards_every_optional_record_and_stops_accepting_more() -> None:
+    """Once the helper is permanently gone the daemon must not accumulate
+    frames nobody will ever read.
+    """
+    mailbox = OutboundMailbox()
+    generation = mailbox.publish(OverlayState.RECORDING)
+    mailbox.audio_block(object(), 16000, 0)
+    mailbox.publish_spectrum(generation, (9,) * SPECTRUM_BANDS)
+
+    mailbox.disable()
+
+    assert mailbox.take_nowait() is None
+    assert mailbox.take_audio_nowait() is None
+    assert mailbox.publish(OverlayState.ERROR) == generation
+    mailbox.loading_activity(True)
+    mailbox.audio_block(object(), 16000, 0)
+    assert mailbox.take_nowait() is None
+    assert mailbox.take_audio_nowait() is None
+
+
+@pytest.mark.parametrize("sample_rate", [0, -1, True, 16000.0])
+def test_audio_blocks_with_an_unusable_sample_rate_are_dropped(sample_rate: object) -> None:
+    mailbox = OutboundMailbox()
+    mailbox.publish(OverlayState.RECORDING)
+
+    mailbox.audio_block(object(), sample_rate, 0)
+
+    assert mailbox.take_audio_nowait() is None
+
+
+@pytest.mark.parametrize("stream_epoch", [-1, True, 0.0])
+def test_audio_blocks_with_an_unusable_stream_epoch_are_dropped(stream_epoch: object) -> None:
+    mailbox = OutboundMailbox()
+    mailbox.publish(OverlayState.RECORDING)
+
+    mailbox.audio_block(object(), 16000, stream_epoch)
+
+    assert mailbox.take_audio_nowait() is None
+
+
+def test_audio_arriving_outside_a_recording_is_dropped_rather_than_tagged() -> None:
+    """There is no generation to tag it with, and an untagged block would be
+    replayed into whatever recording starts next.
+    """
+    mailbox = OutboundMailbox()
+    mailbox.publish(OverlayState.TRANSCRIBING)
+
+    mailbox.audio_block(object(), 16000, 0)
+
+    assert mailbox.take_audio_nowait() is None
+
+
+def test_a_duplicate_loading_edge_queues_nothing() -> None:
+    mailbox = OutboundMailbox()
+    mailbox.loading_activity(True)
+    assert mailbox.take_nowait() == LoadingActivityMessage(True)
+
+    mailbox.loading_activity(True)
+
+    assert mailbox.take_nowait() is None
+
+
+def test_expire_transient_reads_the_clock_when_the_caller_does_not() -> None:
+    """The supervisor calls it with no argument on every loop turn."""
+    mailbox = OutboundMailbox()
+    mailbox.publish(OverlayState.RECORDING)
+
+    assert mailbox.expire_transient() is None
+    assert mailbox.current_state.state is OverlayState.RECORDING
+
+
+def test_a_blocking_take_wakes_on_the_next_published_record() -> None:
+    """The supervisor's wait has to end when work arrives, not when it expires.
+
+    Seen to FAIL against a ``take`` that waited without being notified: the
+    first state change of a session would be delayed by the whole timeout.
+    """
+    mailbox = OutboundMailbox()
+    taken: list[object] = []
+    ready = threading.Event()
+
+    def consume() -> None:
+        ready.set()
+        taken.append(mailbox.take(timeout=10.0))
+
+    consumer = threading.Thread(target=consume, name="mailbox-take")
+    consumer.start()
+    try:
+        assert ready.wait(10.0)
+        started = time.monotonic()
+        mailbox.publish(OverlayState.DELIVERING)
+        consumer.join(timeout=10.0)
+    finally:
+        consumer.join(timeout=10.0)
+
+    assert not consumer.is_alive()
+    assert taken == [StateMessage(0, OverlayState.DELIVERING)]
+    assert time.monotonic() - started < 5.0
+
+
+def test_a_blocking_take_returns_nothing_once_its_timeout_expires() -> None:
+    mailbox = OutboundMailbox()
+
+    assert mailbox.take(timeout=0.01) is None
+
+
+def test_a_blocking_take_returns_a_waiting_record_without_waiting() -> None:
+    mailbox = OutboundMailbox()
+    mailbox.publish(OverlayState.ERROR)
+
+    assert mailbox.take(timeout=10.0) == StateMessage(0, OverlayState.ERROR)
+
+
+@pytest.mark.parametrize("remaining", [-1, True])
+def test_a_restart_budget_must_be_a_real_non_negative_count(remaining: object) -> None:
+    with pytest.raises(ValueError, match="non-negative integer"):
+        RestartBudget(remaining)
+
+
+def test_a_process_outcome_is_only_unavailable_when_the_helper_said_so() -> None:
+    """An expected exit is not the same as an overlay that cannot exist: only
+    the second one stops the supervisor from ever trying again.
+    """
+    assert _ProcessOutcome(True).unavailable is False
+    assert _ProcessOutcome(False, True).unavailable is True
+
+
+def test_the_helper_stderr_file_is_created_under_the_state_directory(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    path = _helper_stderr_path()
+
+    assert path is not None
+    assert path.name == "overlay-helper.log"
+    assert path.parent.is_dir()
+
+
+def test_an_unusable_state_directory_costs_the_diagnostics_not_the_overlay(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    """Seen to matter on a machine whose state path is occupied by a file: a
+    helper that refused to start over its own log would disable the overlay.
+    """
+    occupied = tmp_path / "occupied"
+    occupied.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("XDG_STATE_HOME", str(occupied))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(logging.getLogger("stenographer"), "propagate", True)
+
+    with caplog.at_level(logging.DEBUG, logger="stenographer.overlay.supervision.constants"):
+        assert _helper_stderr_path() is None
+
+    assert any("helper_log_unavailable" in record.getMessage() for record in caplog.records), [
+        record.getMessage() for record in caplog.records
+    ]

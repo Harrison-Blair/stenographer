@@ -444,3 +444,79 @@ def test_golden_pixels_pin_composited_output_bytes(
 
     sampled = {name: frame.image.getpixel(_GOLDEN_COORDINATES[name]) for name in expected}
     assert sampled == expected
+
+
+def test_an_entirely_transparent_image_has_no_visible_bounds_to_crop() -> None:
+    """Seen to matter for the packaged icon: an empty crop box would make PIL
+    raise deep inside the render rather than at the asset that is wrong.
+    """
+    with pytest.raises(ValueError, match="no visible pixels"):
+        _crop_transparent(Image.new("RGBA", (8, 8), (0, 0, 0, 0)))
+
+
+@pytest.mark.parametrize(
+    "levels",
+    [(0,) * (SPECTRUM_BANDS - 1), (0,) * (SPECTRUM_BANDS + 1), "0" * SPECTRUM_BANDS, 0],
+)
+def test_spectrum_geometry_requires_exactly_eighteen_levels(levels: object) -> None:
+    with pytest.raises(ValueError, match=f"{SPECTRUM_BANDS} levels"):
+        spectrum_bar_bounds(levels)
+
+
+@pytest.mark.parametrize(
+    "level", [256, -1, True, 1.0, "255"], ids=["over", "under", "bool", "float", "text"]
+)
+def test_spectrum_geometry_requires_whole_bytes_for_every_bar(level: object) -> None:
+    levels = (0,) * (SPECTRUM_BANDS - 1) + (level,)
+
+    with pytest.raises(ValueError, match="integers from 0 to 255"):
+        spectrum_bar_bounds(levels)
+
+
+@pytest.mark.parametrize("scale", [0, -1.0, float("inf"), float("nan")])
+def test_spectrum_geometry_rejects_a_scale_that_cannot_size_a_bar(scale: float) -> None:
+    with pytest.raises(ValueError, match="finite and positive"):
+        spectrum_bar_bounds(None, scale=scale)
+
+
+def test_spectrum_geometry_treats_no_levels_as_eighteen_silent_bars() -> None:
+    assert spectrum_bar_bounds(None) == spectrum_bar_bounds((0,) * SPECTRUM_BANDS)
+
+
+@pytest.mark.parametrize("state", ["recording", 0, None])
+def test_rendering_requires_a_real_lifecycle_state(state: object) -> None:
+    with pytest.raises(TypeError, match="OverlayState"):
+        render_overlay(state)
+
+
+@pytest.mark.parametrize("scale", [True, "1.0", None])
+def test_rendering_requires_a_numeric_scale_rather_than_a_truthy_one(scale: object) -> None:
+    """``True`` is a number in Python and would render a scale-1.0 frame that
+    the caller believed was something else.
+    """
+    with pytest.raises(TypeError, match="scale must be a number"):
+        render_overlay(OverlayState.RECORDING, scale=scale)
+
+
+@pytest.mark.parametrize("byteorder", ["middle", "LITTLE", ""])
+def test_argb32_conversion_refuses_an_unknown_byte_order(byteorder: str) -> None:
+    with pytest.raises(ValueError, match="little or big"):
+        premultiplied_argb32(Image.new("RGBA", (1, 1)), byteorder=byteorder)
+
+
+@pytest.mark.parametrize(
+    "output_rect",
+    [(0, 0, 1920), (0, 0, 1920, 1080, 0), (0, 0, 1920.0, 1080), (0, 0, True, 1080)],
+)
+def test_position_requires_four_whole_pixel_output_bounds(output_rect: tuple) -> None:
+    frame = render_overlay(OverlayState.ERROR)
+
+    with pytest.raises(TypeError, match="four integers"):
+        overlay_position(output_rect, frame)
+
+
+def test_position_rejects_a_negative_edge_offset() -> None:
+    frame = render_overlay(OverlayState.ERROR)
+
+    with pytest.raises(ValueError, match="output is too small"):
+        overlay_position((0, 0, 1920, 1080), frame, edge_offset=-1)

@@ -65,3 +65,32 @@ def test_retiring_registered_child_does_not_subtract_cpu():
         if child.poll() is None:
             child.kill()
             child.wait()
+
+
+def test_process_alive_is_false_for_a_reaped_child():
+    """A daemon whose recorded pid is gone must read as dead, not as unknown.
+
+    The child is a real process this test starts and reaps, so the pid is
+    certainly not running when it is asked about (``psutil.NoSuchProcess``).
+    """
+    import subprocess
+    import sys
+    import time
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    assert child.wait(timeout=30) == 0
+    platform = current_platform()
+    assert platform.process_alive(child.pid, time.time()) is False
+
+
+def test_runtime_context_answers_every_diagnostics_field_about_this_host():
+    context = current_platform().runtime_context()
+    assert set(context) == {"os", "os_version", "architecture", "python_version"}
+    assert all(isinstance(value, str) and value for value in context.values())
+    # Checked against an independent source, not against platform.* again.
+    import sys
+
+    assert context["python_version"].startswith(
+        f"{sys.version_info.major}.{sys.version_info.minor}."
+    )
+    assert context["os"] == {"linux": "Linux", "win32": "Windows", "darwin": "Darwin"}[sys.platform]

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
@@ -288,3 +290,120 @@ def test_transient_display_windows_match_the_visual_contract():
     assert transient_display_seconds(OverlayState.ERROR) == ERROR_DISPLAY_SECONDS
     assert transient_display_seconds(OverlayState.CANCELLED) == CANCELLED_DISPLAY_SECONDS
     assert transient_display_seconds(OverlayState.HIDDEN) is None
+
+
+@pytest.mark.parametrize(
+    ("message", "match"),
+    [
+        (SpectrumMessage(-1, 0, (0,) * SPECTRUM_BANDS), "generation"),
+        (SpectrumMessage(0, True, (0,) * SPECTRUM_BANDS), "sequence"),
+        (SpectrumMessage(0, 0, [0] * SPECTRUM_BANDS), "levels"),
+        (CommandMessage("shutdown"), "command"),
+        (ReadyMessage("xwayland"), "backend"),
+        (UnavailableMessage("no_x_display"), "unavailable reason"),
+        (object(), "unsupported protocol message type"),
+    ],
+)
+def test_the_encoder_refuses_anything_it_cannot_describe_exactly(message, match):
+    """A str subclass is not a ``Backend``: accepting one would put a value on
+    the wire that the other end's enum lookup has never heard of.
+    """
+    with pytest.raises(ProtocolError, match=match):
+        encode_message(message)
+
+
+@pytest.mark.parametrize(
+    ("record", "match"),
+    [
+        ('{"v":4,"type":"state","generation":0,"state":7}\n', "state has wrong type"),
+        ('{"v":4,"type":"command","command":null}\n', "command has wrong type"),
+        ('{"v":4,"type":"ready","backend":4}\n', "backend has wrong type"),
+        ('{"v":4,"type":"unavailable","reason":[]}\n', "reason has wrong type"),
+        ('{"v":4,"type":"ready","backend":"quartz"}\n', "backend has unknown value"),
+        ('{"v":4,"type":"command","command":"restart"}\n', "command has unknown value"),
+        ('{"v":4,"type":"unavailable","reason":"bored"}\n', "reason has unknown value"),
+    ],
+)
+def test_the_decoder_separates_a_wrong_type_from_an_unknown_value(record, match):
+    """Both are refusals, but only the second one means the peer is newer."""
+    with pytest.raises(ProtocolError, match=match):
+        decode_message(record)
+
+
+@pytest.mark.parametrize(
+    ("generation", "sequence", "match"),
+    [(-1, 0, "generation"), (0, -1, "sequence"), (True, 0, "generation")],
+)
+def test_the_decoder_rejects_spectrum_counters_outside_the_wire_range(generation, sequence, match):
+    levels = str([0] * SPECTRUM_BANDS).replace(" ", "")
+    record = (
+        f'{{"v":4,"type":"spectrum","generation":{json.dumps(generation)},'
+        f'"sequence":{json.dumps(sequence)},"levels":{levels}}}\n'
+    )
+
+    with pytest.raises(ProtocolError, match=match):
+        decode_message(record)
+
+
+def test_the_decoder_rejects_oversize_bytes_before_decoding_them():
+    with pytest.raises(ProtocolError, match="too large"):
+        decode_message(b"x" * (MAX_MESSAGE_BYTES + 1))
+
+
+def test_the_decoder_rejects_bytes_that_are_not_utf_eight():
+    with pytest.raises(ProtocolError, match="not UTF-8"):
+        decode_message(b'{"v":4,"type":"ready","backend":"\xff\xfe"}\n')
+
+
+@pytest.mark.parametrize("record", [4, None, ["state"], {"v": 4}])
+def test_the_decoder_only_accepts_text_or_bytes(record):
+    with pytest.raises(ProtocolError, match="record has wrong type"):
+        decode_message(record)
+
+
+@pytest.mark.parametrize("record", ["[1,2,3]\n", '"state"\n', "4\n", "null\n"])
+def test_a_json_value_that_is_not_an_object_is_not_a_record(record):
+    with pytest.raises(ProtocolError, match=r"not an object|unsupported protocol version"):
+        decode_message(record)
+
+
+def test_the_display_gate_only_accepts_the_three_generated_display_records():
+    """A command reaching the gate would be silently gated on a generation it
+    does not have; it belongs on the ordering path beside the gate, not in it.
+    """
+    gate = DisplayMessageGate()
+
+    with pytest.raises(TypeError, match="generated display messages"):
+        gate.accept(CommandMessage(Command.SHUTDOWN))
+
+
+@pytest.mark.parametrize("generation", [-1, True, 1.0])
+def test_the_display_gate_refuses_a_generation_it_cannot_order(generation):
+    gate = DisplayMessageGate()
+
+    with pytest.raises(ValueError, match="non-negative signed 64-bit integer"):
+        gate.accept(StateMessage(generation, OverlayState.RECORDING))
+
+
+def test_an_empty_read_frames_nothing_and_leaves_the_buffer_untouched():
+    """A selector can report a descriptor readable and yield nothing; that must
+    not be mistaken for a completed record.
+    """
+    reader = LineReader()
+    reader.feed(b'{"v":4')
+
+    assert reader.feed(b"") == []
+
+    with pytest.raises(ProtocolError, match="mid-record"):
+        reader.finish()
+
+
+def test_a_complete_but_oversize_line_is_rejected_as_it_is_framed():
+    reader = LineReader()
+
+    with pytest.raises(ProtocolError, match="too large"):
+        reader.feed(b"x" * MAX_MESSAGE_BYTES + b"\n")
+
+
+def test_finishing_an_empty_reader_is_a_clean_end_of_stream():
+    LineReader().finish()
