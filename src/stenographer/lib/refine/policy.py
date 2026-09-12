@@ -16,6 +16,12 @@ TIMEOUT_BASE_SECONDS = 10.0
 #: Marginal part: roughly the decode cost of one more spoken word.
 TIMEOUT_PER_WORD_SECONDS = 0.06
 
+#: How long one utterance may wait for a model that is not resident to load.
+#: The reply budget above assumes a warm model; a cold load is paged in from
+#: disk and can take far longer than any reply, so it gets its own budget and
+#: the reply budget starts only once the model is up.
+COLD_LOAD_TIMEOUT_SECONDS = 120.0
+
 #: The keep_alive Ollama is sent when the ASR worker never unloads either.
 #: Negative means "hold the model indefinitely" in Ollama's own vocabulary.
 INDEFINITE_KEEP_ALIVE = -1
@@ -34,7 +40,7 @@ def should_refine(text: str, min_words: int) -> bool:
 
 
 def timeout_seconds(words: int) -> float:
-    """The wall-clock budget for one refine, in seconds."""
+    """The wall-clock budget for one reply from a resident model, in seconds."""
 
     return TIMEOUT_BASE_SECONDS + TIMEOUT_PER_WORD_SECONDS * max(0, words)
 

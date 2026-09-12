@@ -11,10 +11,12 @@ from stenographer.lib.refine.endpoints import (
     host_name,
     is_loopback,
     normalize_host,
+    ps_url,
     pull_url,
     tags_url,
 )
 from stenographer.lib.refine.policy import (
+    COLD_LOAD_TIMEOUT_SECONDS,
     INDEFINITE_KEEP_ALIVE,
     keep_alive_for,
     should_refine,
@@ -51,6 +53,13 @@ def test_timeout_is_ten_seconds_plus_sixty_milliseconds_per_word():
     assert timeout_seconds(200) == pytest.approx(22.0)
     # A negative count cannot shorten the budget below its fixed floor.
     assert timeout_seconds(-5) == pytest.approx(10.0)
+
+
+def test_a_cold_load_gets_its_own_two_minute_budget_outside_the_utterance_one():
+    """Loading a model into VRAM is not decoding; it must never be charged
+    against the ten-second utterance budget and must still end eventually."""
+    assert pytest.approx(120.0) == COLD_LOAD_TIMEOUT_SECONDS
+    assert timeout_seconds(1000) < COLD_LOAD_TIMEOUT_SECONDS
 
 
 def test_keep_alive_follows_the_asr_idle_window_and_never_expires_at_zero():
@@ -115,6 +124,7 @@ def test_endpoints_are_built_from_one_normalized_host():
     assert tags_url(host) == "http://127.0.0.1:11434/api/tags"
     assert pull_url(host) == "http://127.0.0.1:11434/api/pull"
     assert generate_url(host) == "http://127.0.0.1:11434/api/generate"
+    assert ps_url(host) == "http://127.0.0.1:11434/api/ps"
 
 
 @pytest.mark.parametrize(

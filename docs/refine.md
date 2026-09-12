@@ -157,8 +157,11 @@ The stage fails open, always. On any of the following, the locally formatted
 transcript is delivered unchanged and the daemon logs one line saying why:
 
 - Ollama is not running, is unreachable, or returns an HTTP error.
+- The model is not resident and does not finish loading within two minutes.
 - The reply does not arrive inside the time budget, which is
-  `10 s + 0.06 s × input words`.
+  `10 s + 0.06 s × input words`. That budget prices a reply from a model that
+  is already loaded; see [Residency](#residency) for what happens when it is
+  not.
 - The reply is not a usable chat response, or the structured reply has no text
   field.
 - The output guard refuses the reply. It does that when the output is empty,
@@ -195,3 +198,13 @@ The daemon warms the model in the background at start, so the first refined
 utterance is not also a cold load. The model is held for as long as
 `[stenographer.asr] idle_unload_seconds`; if that is `0` — meaning the ASR
 worker never unloads — the refine model is held indefinitely too.
+
+A model can still be evicted: the idle window passes, Ollama makes room for
+something else, or the server restarts. Before each utterance the stage asks
+Ollama whether the model is resident. If it is, the reply budget above starts
+at once. If it is not, the stage loads it first and waits up to two minutes for
+that to finish, and only then does the reply budget start. The *Refining* pill
+stays up for the whole wait, and Escape still cancels it. Without this, a cold
+load would have spent the whole reply budget and your text would have been
+pasted unrefined every time the model had gone cold. The daemon logs one line
+with the load time whenever this happens.

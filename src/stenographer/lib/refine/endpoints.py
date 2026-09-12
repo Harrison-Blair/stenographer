@@ -99,3 +99,10 @@ def generate_url(host: str) -> str:
     """The generate endpoint, used only to warm and to unload a model."""
 
     return f"{normalize_host(host)}/api/generate"
+
+
+def ps_url(host: str) -> str:
+    """The running-model listing, asked before each utterance to tell a cold
+    model from a warm one so a load is never charged against the reply budget."""
+
+    return f"{normalize_host(host)}/api/ps"

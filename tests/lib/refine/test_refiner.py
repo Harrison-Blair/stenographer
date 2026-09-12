@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The refiner's fail-open contract, and what it records about each attempt.
 
-``post_chat`` is the only seam replaced here — the module boundary the package
-itself already draws around ``urllib`` — so the request builder, the parser,
-the guard, the classification, and the measurement all run for real. Nothing
-starts a server and nothing touches the network.
+``post_chat``, ``is_model_loaded`` and ``warm_model`` are the only seams
+replaced here — the module boundary the package itself already draws around
+``urllib`` — so the request builder, the parser, the guard, the classification,
+and the measurement all run for real. Nothing starts a server and nothing
+touches the network.
 """
 
 from __future__ import annotations
@@ -56,7 +57,13 @@ def transport(monkeypatch):
     """Replace the one function that opens a socket, and capture its calls."""
 
     calls: list[dict] = []
-    state: dict = {"reply": _answer(CLEANED), "raise": None}
+    warm_calls: list[dict] = []
+    state: dict = {
+        "reply": _answer(CLEANED),
+        "raise": None,
+        "loaded": True,
+        "warm_raise": None,
+    }
 
     def post_chat(host, body, *, timeout):
         calls.append({"host": host, "body": body, "timeout": timeout})
@@ -64,8 +71,21 @@ def transport(monkeypatch):
             raise state["raise"]
         return state["reply"]
 
+    def is_model_loaded(host, model):
+        return state["loaded"]
+
+    def warm_model(host, model, *, keep_alive, timeout):
+        warm_calls.append(
+            {"host": host, "model": model, "keep_alive": keep_alive, "timeout": timeout}
+        )
+        if state["warm_raise"] is not None:
+            raise state["warm_raise"]
+
     monkeypatch.setattr(ollama_refiner, "post_chat", post_chat)
+    monkeypatch.setattr(ollama_refiner, "is_model_loaded", is_model_loaded)
+    monkeypatch.setattr(ollama_refiner, "warm_model", warm_model)
     state["calls"] = calls
+    state["warm_calls"] = warm_calls
     return state
 
 
@@ -88,6 +108,56 @@ def test_the_time_budget_sent_follows_the_word_count(transport):
     _refiner().refine(SPOKEN)
 
     assert transport["calls"][0]["timeout"] == pytest.approx(timeout_seconds(word_count(SPOKEN)))
+
+
+def test_a_resident_model_is_not_loaded_again(transport):
+    _refiner().refine(SPOKEN)
+
+    assert transport["warm_calls"] == []
+    assert len(transport["calls"]) == 1
+
+
+def test_a_cold_model_is_loaded_on_its_own_budget_before_the_utterance_is_timed(transport):
+    """The utterance budget assumes a warm model. A cold load must get the
+    long budget first, and only then is the ordinary one started."""
+    from stenographer.lib.refine.policy import (
+        COLD_LOAD_TIMEOUT_SECONDS,
+        timeout_seconds,
+        word_count,
+    )
+
+    transport["loaded"] = False
+    refiner = _refiner(keep_alive=-1)
+
+    assert refiner.refine(SPOKEN) == CLEANED
+    assert refiner.last_result.outcome == OUTCOME_APPLIED
+
+    (warm,) = transport["warm_calls"]
+    assert warm["model"] == "test-model"
+    assert warm["keep_alive"] == -1
+    assert warm["timeout"] == pytest.approx(COLD_LOAD_TIMEOUT_SECONDS)
+    (chat,) = transport["calls"]
+    assert chat["timeout"] == pytest.approx(timeout_seconds(word_count(SPOKEN)))
+
+
+@pytest.mark.parametrize(
+    ("failure", "outcome"),
+    [
+        (RefineTimeoutError("ollama did not answer in time"), OUTCOME_TIMEOUT),
+        (RefineTransportError("ollama could not be reached"), OUTCOME_FAILED),
+    ],
+)
+def test_a_load_that_does_not_finish_delivers_the_raw_text_without_a_chat(
+    transport, failure, outcome
+):
+    transport["loaded"] = False
+    transport["warm_raise"] = failure
+    refiner = _refiner()
+
+    assert refiner.refine(SPOKEN) == SPOKEN
+    assert refiner.last_result.outcome == outcome
+    assert refiner.last_result.failed is True
+    assert transport["calls"] == []
 
 
 def test_short_text_never_reaches_the_model(transport):

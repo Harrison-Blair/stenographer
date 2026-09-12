@@ -7,9 +7,14 @@ import logging
 import time
 
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
-from stenographer.lib.refine.client import post_chat
+from stenographer.lib.refine.client import is_model_loaded, post_chat, warm_model
 from stenographer.lib.refine.errors import RefineError, RefineRejectedError, RefineTimeoutError
-from stenographer.lib.refine.policy import should_refine, timeout_seconds, word_count
+from stenographer.lib.refine.policy import (
+    COLD_LOAD_TIMEOUT_SECONDS,
+    should_refine,
+    timeout_seconds,
+    word_count,
+)
 from stenographer.lib.refine.request import build_chat_body
 from stenographer.lib.refine.response import refined_text, restore_trailing_space
 from stenographer.lib.refine.results import (
@@ -84,8 +89,6 @@ class OllamaRefiner:
     def warm(self) -> bool:
         """Resident the model ahead of the first utterance. Never raises."""
 
-        from stenographer.lib.refine.client import warm_model
-
         try:
             warm_model(self._host, self._model, keep_alive=self._keep_alive)
         except Exception as exc:
@@ -120,6 +123,7 @@ class OllamaRefiner:
             structured_output=self._structured_output,
         )
         try:
+            self._ensure_loaded()
             payload = post_chat(self._host, body, timeout=timeout_seconds(words))
             candidate = refined_text(payload, text, structured_output=self._structured_output)
         except Exception as exc:
@@ -150,6 +154,37 @@ class OllamaRefiner:
             duration_ms=(time.perf_counter() - started_at) * 1000,
         )
         return result
+
+    def _ensure_loaded(self) -> None:
+        """Wait for a cold model to load before the reply budget starts.
+
+        The per-utterance budget in :func:`timeout_seconds` prices a reply
+        from a resident model. When the model has been evicted — the ASR idle
+        window passed, or Ollama made room for something else — the same chat
+        request would first page it back in, spend the whole budget doing so,
+        and the utterance would be pasted unrefined every time. So a model
+        that ``/api/ps`` does not list is loaded here on its own, much longer
+        budget, and only then is the ordinary one started. A resident model
+        costs one loopback probe and nothing more.
+
+        Raises whatever the load raised; the caller classifies it exactly as
+        it would a failed reply.
+        """
+
+        if is_model_loaded(self._host, self._model):
+            return
+        started_at = time.perf_counter()
+        warm_model(
+            self._host, self._model, keep_alive=self._keep_alive, timeout=COLD_LOAD_TIMEOUT_SECONDS
+        )
+        log.info(
+            fmt_event(
+                "refine",
+                "cold_load",
+                model=self._model,
+                load_ms=round((time.perf_counter() - started_at) * 1000),
+            )
+        )
 
     @staticmethod
     def _outcome_for(exc: Exception) -> str:

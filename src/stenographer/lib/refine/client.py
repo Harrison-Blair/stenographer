@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from stenographer.lib.refine.endpoints import chat_url, generate_url, pull_url, tags_url
+from stenographer.lib.refine.endpoints import chat_url, generate_url, ps_url, pull_url, tags_url
 from stenographer.lib.refine.errors import RefineError, RefineTimeoutError, RefineTransportError
 from stenographer.lib.refine.request import USER_AGENT, build_unload_body, build_warm_body, encode
 
@@ -101,8 +101,8 @@ def post_chat(host: str, body: dict[str, object], *, timeout: float) -> bytes:
         raise _translated(exc) from exc
 
 
-def installed_models(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> list[dict]:
-    """Every model ``/api/tags`` reports, or ``[]`` when nothing answers.
+def _model_listing(url: str, *, timeout: float) -> list[dict]:
+    """GET one of Ollama's ``{"models": [...]}`` listings, or ``[]``.
 
     Returning a list rather than raising is deliberate: every caller is asking
     "is there an Ollama here, and what does it have?", for which an unreachable
@@ -112,7 +112,7 @@ def installed_models(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> li
     import urllib.request
 
     try:
-        request = urllib.request.Request(tags_url(host), headers={"User-Agent": USER_AGENT})
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read())
     except Exception:
@@ -123,6 +123,19 @@ def installed_models(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> li
     return [entry for entry in models if isinstance(entry, dict)]
 
 
+def _listed_names(entries: list[dict]) -> list[str]:
+    """The tags a listing names, under either key Ollama uses, sorted. PURE."""
+
+    names = {str(entry[key]) for entry in entries for key in ("name", "model") if key in entry}
+    return sorted(names)
+
+
+def installed_models(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> list[dict]:
+    """Every model ``/api/tags`` reports, or ``[]`` when nothing answers."""
+
+    return _model_listing(tags_url(host), timeout=timeout)
+
+
 def installed_model_names(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> list[str]:
     """The model tags installed on *host*, sorted, or ``[]``."""
 
@@ -130,6 +143,24 @@ def installed_model_names(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) 
         str(entry["name"]) for entry in installed_models(host, timeout=timeout) if "name" in entry
     }
     return sorted(names)
+
+
+def running_model_names(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> list[str]:
+    """The model tags ``/api/ps`` reports as resident right now, or ``[]``."""
+
+    return _listed_names(_model_listing(ps_url(host), timeout=timeout))
+
+
+def is_model_loaded(host: str, model: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> bool:
+    """Whether *model* is resident on *host* at this moment.
+
+    A server that cannot answer reads as "not loaded". That is the safe error:
+    the caller then warms, and the warm — which may raise — is what reports
+    the real failure. A false "not loaded" costs one no-token generate that a
+    resident model answers immediately.
+    """
+
+    return model in running_model_names(host, timeout=timeout)
 
 
 def installed_model_bytes(
@@ -195,14 +226,18 @@ def pull_progress_line(record: dict) -> str:
     return status_text
 
 
-def warm_model(host: str, model: str, *, keep_alive: int) -> None:
-    """Load *model* and hold it for *keep_alive*. Raises only RefineError."""
+def warm_model(
+    host: str, model: str, *, keep_alive: int, timeout: float = WARM_TIMEOUT_SECONDS
+) -> None:
+    """Load *model* and hold it for *keep_alive*. Raises only RefineError.
+
+    The default budget suits the background warm at daemon start, which nobody
+    is waiting on. An utterance waiting for a cold model passes a shorter one.
+    """
 
     try:
         with _post(
-            generate_url(host),
-            build_warm_body(model=model, keep_alive=keep_alive),
-            WARM_TIMEOUT_SECONDS,
+            generate_url(host), build_warm_body(model=model, keep_alive=keep_alive), timeout
         ) as response:
             response.read()
     except Exception as exc:

@@ -6,6 +6,14 @@ These notes cover every published stable release. They describe observable
 behavior and release packaging, with internal planning and generated commit
 lists left out.
 
+## [Unreleased]
+
+- Refine no longer pastes the raw transcript when its model has gone cold.
+  Before each utterance the stage checks whether the model is resident; if it
+  is not, it waits up to two minutes for the load and only then starts the
+  usual reply budget. A model that is already loaded behaves exactly as
+  before.
+
 ## [v0.13.0] - 2026-09-11
 
 This release adds an optional local cleanup stage that turns dictated speech

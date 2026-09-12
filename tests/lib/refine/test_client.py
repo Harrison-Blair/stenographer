@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import http.client
+import io
+import json
 
 import pytest
 
-from stenographer.lib.refine.client import pull_progress_line
+from stenographer.lib.refine.client import is_model_loaded, pull_progress_line, running_model_names
 from stenographer.lib.refine.errors import RefineError
 
 
@@ -89,3 +91,54 @@ def test_a_pull_stream_reports_progress_until_it_fails(monkeypatch):
         module.pull_model("http://127.0.0.1:11434", "some:tag", on_progress=seen.append)
 
     assert seen == ["pulling manifest"]
+
+
+class _Reply(io.BytesIO):
+    """A ``urlopen`` result: readable bytes that also work as a context manager."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
+
+def _serve_ps(monkeypatch, payload):
+    import urllib.request
+
+    seen: list[str] = []
+
+    def urlopen(request, timeout):
+        seen.append(request.full_url)
+        if isinstance(payload, Exception):
+            raise payload
+        return _Reply(json.dumps(payload).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    return seen
+
+
+def test_the_residency_probe_reads_api_ps_and_reports_running_tags(monkeypatch):
+    seen = _serve_ps(
+        monkeypatch,
+        {"models": [{"name": "gemma4:e2b", "model": "gemma4:e2b"}, {"model": "qwen3.5:4b"}, 7]},
+    )
+
+    assert running_model_names("http://127.0.0.1:11434/") == ["gemma4:e2b", "qwen3.5:4b"]
+    assert seen == ["http://127.0.0.1:11434/api/ps"]
+    assert is_model_loaded("http://127.0.0.1:11434", "gemma4:e2b") is True
+    assert is_model_loaded("http://127.0.0.1:11434", "qwen3.5:4b") is True
+    assert is_model_loaded("http://127.0.0.1:11434", "gemma3:4b") is False
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [ConnectionRefusedError(), TimeoutError(), {"models": "nope"}, [], {}],
+)
+def test_a_probe_that_cannot_answer_counts_as_nothing_loaded(monkeypatch, payload):
+    """An unreachable or confused server is treated as cold: the caller then
+    warms, and the warm is what reports the real failure."""
+    _serve_ps(monkeypatch, payload)
+
+    assert running_model_names("http://127.0.0.1:11434") == []
+    assert is_model_loaded("http://127.0.0.1:11434", "gemma4:e2b") is False
