@@ -23,6 +23,9 @@ def _console() -> Console:
 
 def _platform(player):
     class Plat:
+        def default_hotkey_binding(self):
+            return "KEY_RIGHTCTRL"
+
         def cue_player(self):
             if isinstance(player, Exception):
                 raise player

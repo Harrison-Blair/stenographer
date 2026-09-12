@@ -538,6 +538,9 @@ def key_vocabulary(monkeypatch):
         def keys(self):
             return _Keys()
 
+        def default_hotkey_binding(self):
+            return "KEY_RIGHTCTRL"
+
     monkeypatch.setattr(platform_module, "current_platform", Plat)
     return Plat
 
@@ -1141,6 +1144,9 @@ def guided(monkeypatch):
         class Plat:
             def guidance(self):
                 return _GUIDANCE
+
+            def default_hotkey_binding(self):
+                return "KEY_RIGHTCTRL"
 
             def restart_service(self):
                 events.append("restart")

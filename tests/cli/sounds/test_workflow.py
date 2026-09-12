@@ -309,6 +309,9 @@ def _platform(*, service_active="active", restart=(True, ""), probe_error=None):
         def guidance(self):
             return _GUIDANCE
 
+        def default_hotkey_binding(self):
+            return "KEY_RIGHTCTRL"
+
         def probe_host(self):
             if probe_error is not None:
                 raise probe_error

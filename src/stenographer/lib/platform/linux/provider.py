@@ -50,6 +50,9 @@ class LinuxPlatform(DiagnosticsHostMixin):
 
         return EvdevKeyTable()
 
+    def default_hotkey_binding(self) -> str:
+        return "KEY_RIGHTCTRL"
+
     def hotkey_listener(
         self,
         *,

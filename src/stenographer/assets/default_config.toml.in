@@ -1,7 +1,7 @@
 # stenographer configuration.
 
 [stenographer.hotkey]
-binding = "KEY_RIGHTCTRL"
+binding = "{hotkey_binding}"
 device = ""                    # {hotkey_device_comment}
 cancel_binding = "KEY_ESC"     # global cancel; "" disables it
 mode = "hybrid"                # hold = push-to-talk; toggle = press/press; hybrid = tap or hold

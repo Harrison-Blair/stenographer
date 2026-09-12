@@ -11,6 +11,7 @@ from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import AnalyticsConfig, Config
 from stenographer.lib.config.paths import load_or_default
+from stenographer.lib.platform import current_platform
 
 
 def test_config_error_message():
@@ -24,7 +25,10 @@ def test_config_error_message():
 
 def test_defaults_match_spec():
     d = Config.defaults()
-    assert d.hotkey.binding == "KEY_RIGHTCTRL"
+    # Host-owned: Windows dictates with Right Alt where the others use Right
+    # Ctrl, so the spec here is "whatever this provider names", and the
+    # per-provider values are asserted in tests/lib/platform/test_platform.py.
+    assert d.hotkey.binding == current_platform().default_hotkey_binding()
     assert d.hotkey.device is None
     assert d.hotkey.cancel_binding == "KEY_ESC"
     assert d.hotkey.mode == "hybrid"
@@ -90,6 +94,20 @@ def test_default_template_ships_the_default_mode_at_the_fixed_comment_column():
     line = next(text for text in default_toml().splitlines() if text.startswith("mode = "))
     assert line.startswith(f'mode = "{Config.defaults().hotkey.mode}"')
     assert line.index("#") == 31
+
+
+def test_default_template_ships_the_host_binding():
+    """The template must render the provider's binding, not a hard-coded key.
+
+    Seen to FAIL before ``Platform.default_hotkey_binding`` existed, when both
+    the template and ``Config.defaults`` spelled ``KEY_RIGHTCTRL`` literally and
+    a Windows install got the wrong default.
+    """
+
+    expected = current_platform().default_hotkey_binding()
+    assert f'binding = "{expected}"\n' in default_toml()
+    # No placeholder survived, and nothing else is left unrendered.
+    assert "{" not in default_toml()
 
 
 def test_loads_validates_without_a_file():

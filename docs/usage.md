@@ -42,7 +42,8 @@ overlay = false
 
 Hybrid mode is the default. Tap Right Ctrl to latch a recording, or hold it
 while speaking and release to stop. In hold mode only the held press records;
-in toggle mode press once to start and again to stop.
+in toggle mode press once to start and again to stop. A fresh config on Windows
+binds Right Alt instead; rebind it if you type with AltGr.
 
 Save changes through the CLI when possible: comments and settings the CLI does
 not know about are preserved. Restart the service after saving:

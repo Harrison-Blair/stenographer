@@ -46,6 +46,15 @@ class Platform(Protocol):
     # --- hotkey / input ---
     def keys(self) -> KeyTable: ...
 
+    def default_hotkey_binding(self) -> str:
+        """The ``KEY_*`` name a fresh config binds dictation to on this host.
+
+        Which key is free to hold down is a property of the host's desktop, not
+        of the core, so the provider names it and ``Config.defaults()`` asks
+        rather than branching on ``sys.platform``.
+        """
+        ...
+
     def hotkey_listener(
         self,
         *,

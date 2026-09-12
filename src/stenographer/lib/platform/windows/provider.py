@@ -59,6 +59,12 @@ class WindowsPlatform(DiagnosticsHostMixin):
         # must still parse and render where no hotkey backend exists.
         return StaticKeyTable()
 
+    def default_hotkey_binding(self) -> str:
+        # Right Alt, where the other hosts default to Right Ctrl. On an
+        # international layout this key is AltGr, so a user who types accented
+        # characters with it should rebind; setup offers that on first run.
+        return "KEY_RIGHTALT"
+
     def hotkey_listener(
         self,
         *,

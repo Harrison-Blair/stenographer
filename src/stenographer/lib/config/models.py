@@ -82,9 +82,13 @@ class Config:
 
     @classmethod
     def defaults(cls) -> Config:
+        # The merge base for every load, so the binding has to come from the
+        # host: which key a fresh config dictates with differs per desktop.
+        from stenographer.lib.platform import current_platform
+
         return cls(
             hotkey=HotkeyConfig(
-                binding="KEY_RIGHTCTRL",
+                binding=current_platform().default_hotkey_binding(),
                 device=None,
                 cancel_binding="KEY_ESC",
                 mode="hybrid",

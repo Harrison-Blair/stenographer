@@ -53,6 +53,9 @@ class MacOSPlatform(DiagnosticsHostMixin):
     def keys(self) -> KeyTable:
         return StaticKeyTable()
 
+    def default_hotkey_binding(self) -> str:
+        return "KEY_RIGHTCTRL"
+
     def hotkey_listener(
         self,
         *,
