@@ -86,10 +86,13 @@ SYSTEM_PROMPT = (
 #: encodes the assistant half as JSON when structured output is on, so these
 #: stay readable and stay independent of the transport format.
 #:
-#: Two of these carry their weight far beyond their size, per the benchmark:
+#: Three of these carry their weight far beyond their size, per the benchmark:
 #: the first *deletes* the abandoned choice rather than writing "Actually, ..."
-#: (every model copies whichever it is shown), and the fifth is what stops a
-#: model respelling a proper noun or expanding a model number.
+#: (every model copies whichever it is shown), the fifth is what stops a
+#: model respelling a proper noun or expanding a model number, and the sixth
+#: (a lone digit, a clock time and a percentage) is what stops the default
+#: model writing "8" as "eight". Stating the same thing as a rule made every
+#: model tested worse, so the digit rule stays as it is.
 FEW_SHOT_EXAMPLES: tuple[tuple[str, str], ...] = (
     (
         "um so we should do the review on monday no wait tuesday because i'm out monday",
@@ -118,6 +121,12 @@ FEW_SHOT_EXAMPLES: tuple[tuple[str, str], ...] = (
         "utterance tomorrow i'll try the 8b one on ana strøm's box",
         "So I benchmarked it on the RTX 3080, and gemma three 4b did 1.7 seconds per "
         "utterance. Tomorrow I'll try the 8b one on Ana Strøm's box.",
+    ),
+    (
+        "okay so the sync is at 4:15 and only 8 people have replied which is like 20% of "
+        "the team so um can you ping the rest",
+        "Okay, so the sync is at 4:15 and only 8 people have replied, which is 20% of the "
+        "team. Can you ping the rest?",
     ),
 )
 

@@ -163,8 +163,23 @@ transcript is delivered unchanged and the daemon logs one line saying why:
   field.
 - The output guard refuses the reply. It does that when the output is empty,
   when its length is outside 0.30×–1.6× the input's (which catches a summary
-  and catches a model that answered instead of editing), or when it is still
-  wrapped in quotes or a code fence after one wrapping pair is stripped.
+  and catches a model that answered instead of editing), when it is still
+  wrapped in quotes or a code fence after one wrapping pair is stripped, or
+  when it mishandles a number. A reply may never add, repeat, or reformat a
+  numeral: a spelled-out number turned into digits, a colon pushed into
+  `3080`, a time or version rewritten, all refused. A reply may drop a
+  numeral only when you took it back, meaning a correction such as "no
+  wait", "actually", "sorry", or "I mean" follows it within six words of your
+  speech. So "at 3, no wait, 4" may become "at 4", while a digit that simply
+  went missing, or was respelled as a word, is refused and you get your own
+  words instead.
+
+  The correction is permission, not an order. The model still decides
+  whether the number goes; the guard only decides whether to accept what it
+  produced. "not" and "wait" are not treated as corrections, because "3
+  items, not counting the 4 spares" and "wait until 6" are not retractions.
+  Measured on the default model, this refused no correct cleanup and passed
+  no wrong number; strict equality had refused four correct cleanups.
 
   The floor is 0.30 rather than something tighter because a correct answer can
   legitimately be much shorter: collapsing a list whose last item the speaker

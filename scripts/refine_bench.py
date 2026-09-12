@@ -96,6 +96,12 @@ FEW_SHOT: tuple[tuple[str, str], ...] = (
         "So I benchmarked it on the RTX 3080, and gemma three 4b did 1.7 seconds per "
         "utterance. Tomorrow I'll try the 8b one on Ana Strøm's box.",
     ),
+    (
+        "okay so the sync is at 4:15 and only 8 people have replied which is like 20% of "
+        "the team so um can you ping the rest",
+        "Okay, so the sync is at 4:15 and only 8 people have replied, which is 20% of the "
+        "team. Can you ping the rest?",
+    ),
 )
 
 TEXT_SCHEMA = {

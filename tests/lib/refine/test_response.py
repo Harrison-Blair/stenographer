@@ -204,3 +204,145 @@ def test_a_genuinely_quoted_reply_is_still_unwrapped():
 
     assert guard(ORIGINAL, f'"{body}"') == body
     assert guard(ORIGINAL, f"“{body}”") == body
+
+
+# --- Numerals must come through untouched ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("spoken", "candidate"),
+    [
+        # The default model's one measured blemish: a lone digit written as a word.
+        (
+            "the rtx 3080 only has 8 gigabytes of vram",
+            "The RTX 3080 only has eight gigabytes of VRAM.",
+        ),
+        # qwen3:4b under a schema: punctuation injected into a digit string.
+        ("so i benchmarked it on the rtx 3080", "So I benchmarked it on the RTX 3:080."),
+        # A spelled-out time turned into digits is an addition the speaker never made.
+        ("i think it moved to nine thirty", "I think it moved to 9:30."),
+        # A version string reformatted, and a number invented.
+        ("we are on version 0.12.3 now", "We are on version 0.12.3 now, build 1204."),
+        # A number the speaker said once, delivered twice.
+        (
+            "port 8080 is taken so pick another one for the dev server please",
+            "Port 8080 is taken, so pick 8080 for the dev server, please.",
+        ),
+    ],
+)
+def test_output_that_changes_a_number_is_refused(spoken, candidate):
+    """Seen to FAIL before the numeral guard existed: every candidate here is
+    inside the length band, unwrapped, and non-empty, so nothing else stops it."""
+    with pytest.raises(RefineRejectedError):
+        guard(spoken, candidate)
+
+
+def test_numbers_kept_verbatim_pass_the_guard():
+    spoken = (
+        "okay so the sync is at 4:15 and only 8 people have replied which is like 20% of "
+        "the team um and we are on version 0.12.3 with 1,204 rows"
+    )
+    cleaned = (
+        "Okay, so the sync is at 4:15 and only 8 people have replied, which is 20% of "
+        "the team, and we are on version 0.12.3 with 1,204 rows."
+    )
+
+    assert guard(spoken, cleaned) == cleaned
+
+
+def test_reordered_numbers_still_pass_when_each_survives():
+    """The guard compares what numbers appear, not where; a correct paragraph
+    split or clause reorder must not trip it."""
+    spoken = "ping me at 3 and then at 5 about the 2 tickets"
+    cleaned = "About the 2 tickets: ping me at 3, and then at 5."
+
+    assert guard(spoken, cleaned) == cleaned
+
+
+@pytest.mark.parametrize(
+    ("spoken", "cleaned"),
+    [
+        # Each is a real corpus sample and the correct cleanup for it. Seen to
+        # FAIL against strict numeral equality, which refused all of them.
+        ("lets meet at 3 no wait 4 in the small room", "Let's meet at 4 in the small room."),
+        (
+            "i tagged version 0.12.2 sorry 0.12.3 this morning",
+            "I tagged version 0.12.3 this morning.",
+        ),
+        ("can you buy 2 of them actually 3 of them", "Can you buy 3 of them?"),
+        (
+            "we need 3 mics 2 stands and 4 cables actually not the cables",
+            "We need:\n- 3 mics\n- 2 stands",
+        ),
+        ("the meeting is at 6 in the main hall no wait 7", "The meeting is at 7 in the main hall."),
+        ("lets do it at 2 no 3 no wait 4", "Let's do it at 4."),
+        ("it costs 40 dollars i mean 45 for the pair", "It costs 45 for the pair."),
+    ],
+)
+def test_a_number_the_speaker_took_back_may_be_dropped(spoken, cleaned):
+    assert guard(spoken, cleaned) == cleaned
+
+
+def test_a_correction_marker_is_permission_not_an_order():
+    """A marker after a number lets the model drop it; keeping it is fine too."""
+    spoken = "lets meet at 3 no wait 4 in the small room"
+    kept = "Let's meet at 3, no wait, 4 in the small room."
+
+    assert guard(spoken, kept) == kept
+
+
+def test_the_number_kept_must_be_the_one_the_speaker_settled_on():
+    """The default model really produced this: it kept the abandoned time and
+    deleted the settled one. Nothing follows 9:30 in the input, so its
+    disappearance is unjustified and the raw text is delivered instead."""
+    spoken = "standup moved to 9:15 no 9:30"
+    wrong = "Standup moved to 9:15."
+
+    with pytest.raises(RefineRejectedError):
+        guard(spoken, wrong)
+
+
+@pytest.mark.parametrize(
+    ("spoken", "candidate"),
+    [
+        # A dropped time with no correction anywhere.
+        (
+            "so the build finished at 4:15 and the tests went green at 4:40",
+            "So the build finished at 4:15 and the tests went green.",
+        ),
+        # The same number said twice, delivered once.
+        (
+            "the daemon listens on port 8080 and the overlay talks to 8080 from the other side",
+            "The daemon listens on port 8080, and the overlay talks to it from the other side.",
+        ),
+        # "not" and "wait" are not correction markers.
+        (
+            "i need 3 items not counting the 4 spares in the box",
+            "I need items, not counting the 4 spares in the box.",
+        ),
+        ("wait until 6 and then send the 2 files", "Wait until then and send the 2 files."),
+        # A marker too far after the number to have been about it.
+        (
+            "the room holds 40 people and the projector is broken so actually lets use the annex",
+            "The room holds people and the projector is broken, so let's use the annex.",
+        ),
+    ],
+)
+def test_a_number_dropped_without_a_spoken_correction_is_refused(spoken, candidate):
+    with pytest.raises(RefineRejectedError):
+        guard(spoken, candidate)
+
+
+def test_a_marker_still_counts_when_the_number_carries_punctuation():
+    spoken = "the sync is at 4:15, no, 4:30, in the small room"
+    cleaned = "The sync is at 4:30 in the small room."
+
+    assert guard(spoken, cleaned) == cleaned
+
+
+def test_a_retraction_licenses_one_drop_not_every_copy_of_that_number():
+    spoken = "it is 30 kilometers actually about 30 miles and 30 is the limit"
+    both_dropped = "It is about miles, and the limit."
+
+    with pytest.raises(RefineRejectedError):
+        guard(spoken, both_dropped)

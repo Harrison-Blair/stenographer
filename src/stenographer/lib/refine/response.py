@@ -15,6 +15,8 @@ reason, and the caller's log is the user's log.
 from __future__ import annotations
 
 import json
+import re
+from collections import Counter
 
 from stenographer.lib.refine.errors import RefineRejectedError, RefineResponseError
 from stenographer.lib.refine.prompt import RESPONSE_KEY
@@ -42,6 +44,37 @@ _FENCE = "```"
 
 #: Ollama's own word for "I stopped because num_predict ran out".
 _TRUNCATED_REASON = "length"
+
+#: A numeral as dictation produces it: a digit run, optionally joined by the
+#: separators a time, version, decimal or thousands group uses. ``4:15``,
+#: ``0.12.3`` and ``1,204`` are each one numeral, so a reply that reformats
+#: one is seen to have changed it rather than to have kept its digits.
+_NUMERAL = re.compile(r"\d+(?:[.,:]\d+)*")
+
+#: What a speaker says right after a number they are taking back. A numeral
+#: may vanish from the reply only when one of these follows it in the input.
+#: "not" and "wait" are deliberately absent: they fire on "3 items, not
+#: counting the 4 spares" and "wait until 6", which are not corrections.
+_CORRECTION_MARKERS = frozenset(
+    {
+        "no",
+        "no wait",
+        "actually",
+        "sorry",
+        "i mean",
+        "scratch that",
+        "make that",
+        "rather",
+        "correction",
+    }
+)
+
+#: How many words after a numeral a correction marker may start. Measured:
+#: real retractions needed up to six ("at 6 in the main hall no wait 7");
+#: nothing in the corpus changed past six.
+_MARKER_WINDOW = 6
+
+_EDGE_PUNCTUATION = ".,;:!?\"'()[]"
 
 
 def message_content(payload: str | bytes) -> str:
@@ -131,12 +164,61 @@ def _strip_one_wrapper(text: str) -> tuple[str, bool]:
     return value, False
 
 
+def _numerals(text: str) -> Counter[str]:
+    """Every numeral in *text*, with multiplicity and without position. PURE."""
+
+    return Counter(_NUMERAL.findall(text))
+
+
+def _words(text: str) -> list[str]:
+    """Whitespace tokens, lowercased, without edge punctuation. PURE."""
+
+    return [token.strip(_EDGE_PUNCTUATION).lower() for token in text.split()]
+
+
+def _marker_follows(words: list[str], index: int) -> bool:
+    """Whether a correction marker starts within the window after *index*. PURE."""
+
+    for start in range(index + 1, min(index + 1 + _MARKER_WINDOW, len(words))):
+        if words[start] in _CORRECTION_MARKERS:
+            return True
+        if " ".join(words[start : start + 2]) in _CORRECTION_MARKERS:
+            return True
+    return False
+
+
+def _retracted_numerals(original: str) -> Counter[str]:
+    """How many times each numeral in *original* is followed by a correction. PURE.
+
+    This is permission, not prediction: a numeral counted here *may* be absent
+    from the reply. The model still decides whether it goes.
+    """
+
+    words = _words(original)
+    allowed: Counter[str] = Counter()
+    for index, word in enumerate(words):
+        found = _NUMERAL.search(word)
+        if found and _marker_follows(words, index):
+            allowed[found.group()] += 1
+    return allowed
+
+
 def guard(original: str, candidate: str) -> str:
     """Return the deliverable form of *candidate*, or refuse it.
 
     One wrapping pair is forgiven — models quote an edited sentence back
     routinely — but a reply still wrapped after that was formatted rather than
     edited, and the length band catches the rest.
+
+    Numerals are held to a stricter standard than words. Prompting cannot
+    promise they survive — the benchmark saw a model write ``8`` as ``eight``,
+    another inject a colon into ``3080``, and a rule against both made every
+    model tested *worse* — so the promise is made here instead. The reply may
+    not add, repeat or reformat a numeral, and it may drop one only when the
+    speaker took it back: a correction marker follows it in the input. A
+    respelled digit has no marker after it, so it is caught as a drop. On
+    every real model output measured, this refused nothing correct and
+    delivered nothing wrong; strict equality had refused four good cleanups.
     """
 
     stripped, _ = _strip_one_wrapper(candidate)
@@ -151,6 +233,15 @@ def guard(original: str, candidate: str) -> str:
     ratio = len(stripped) / len(reference)
     if not MIN_LENGTH_RATIO <= ratio <= MAX_LENGTH_RATIO:
         raise RefineRejectedError("output length was out of range")
+    source = _numerals(reference)
+    produced = _numerals(stripped)
+    if produced - source:
+        raise RefineRejectedError("output changed a number")
+    dropped = source - produced
+    if dropped:
+        allowed = _retracted_numerals(reference)
+        if any(allowed[value] < count for value, count in dropped.items()):
+            raise RefineRejectedError("output dropped a number")
     return stripped
 
 

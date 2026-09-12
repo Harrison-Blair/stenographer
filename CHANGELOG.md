@@ -15,7 +15,8 @@ into written text without leaving your machine.
   more words to a local Ollama model, collapses self-corrections, removes
   hesitation fillers, and renders spoken lists as lines. Meaning is preserved;
   nothing is summarized, answered, or added. On any error or timeout the
-  original transcript is delivered unchanged.
+  original transcript is delivered unchanged, and so is any reply that adds,
+  rewrites, or loses a number you did not take back.
 - Defaults to `gemma4:e2b` over loopback, chosen by the new
   `scripts/refine_bench.py` benchmark. Any installed Ollama model can be
   configured; a non-loopback host is reported in the daemon banner.
