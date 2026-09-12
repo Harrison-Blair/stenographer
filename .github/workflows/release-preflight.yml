@@ -2,10 +2,11 @@
 name: release preflight
 
 # Read-only rehearsal of the draft-release workflow for PRs into main: the
-# version/tag guard and the wheel/sdist verification run here so a release
-# that would fail is caught before merge. Lint, unit tests, and the standalone
-# bundles are deliberately not repeated — lint.yml, test.yml, and build.yml
-# already run them on every PR. Nothing here writes to releases or tags.
+# version/tag guard, the authored release-note check, and the wheel/sdist
+# verification run here so a release that would fail is caught before merge.
+# Lint, unit tests, and the standalone bundles are deliberately not repeated
+# — lint.yml, test.yml, and build.yml already run them on every PR. Nothing
+# here writes to releases or tags.
 on:
   pull_request:
     branches: [main]
@@ -48,6 +49,10 @@ jobs:
           .venv/bin/python scripts/release_guard.py \
             "${RUNNER_TEMP}/releases.json" src/stenographer/_version.py \
             --github-output "${GITHUB_OUTPUT}"
+      - name: Check authored release notes
+        env:
+          VERSION: ${{ steps.guard.outputs.version }}
+        run: .venv/bin/python scripts/release_notes.py check "${VERSION}" CHANGELOG.md
       - name: Reject a conflicting Git tag
         env:
           TAG: ${{ steps.guard.outputs.tag }}

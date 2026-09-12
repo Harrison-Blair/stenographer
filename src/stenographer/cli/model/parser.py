@@ -8,13 +8,13 @@ MODEL_COMMANDS: tuple[CommandSpec, ...] = (
         "download",
         handler_module="stenographer.cli.model.download.handler",
         handler_name="cmd_model_download",
-        help="Download the ASR model into the cache.",
+        parser_module="stenographer.cli.model.download.parser",
     ),
 )
 
 
 def register(subparsers) -> None:
-    model = subparsers.add_parser("model", help="Manage the ASR model.")
+    model = subparsers.add_parser("model", help="Manage the ASR and refine models.")
     model_sub = model.add_subparsers(dest="model_command", required=True)
     for spec in MODEL_COMMANDS:
         spec.register(model_sub)

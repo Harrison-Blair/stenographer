@@ -39,7 +39,7 @@ pytestmark = pytest.mark.integration
 
 _FIXTURES = pathlib.Path(__file__).parents[2] / "fixtures"
 _CLIP = _FIXTURES / "speech_16k.wav"
-_MODEL_ID = "Systran/faster-whisper-medium.en"
+_MODEL_ID = "dropbox-dash/faster-whisper-large-v3-turbo"
 
 if not _CLIP.exists():
     pytest.skip(f"fixture WAV absent: {_CLIP}", allow_module_level=True)

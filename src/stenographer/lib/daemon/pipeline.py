@@ -13,12 +13,14 @@ from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.policy import classify_pipeline
 from stenographer.lib.logging.pipeline import log_failure
+from stenographer.lib.refine.null_refiner import NullRefiner
 from stenographer.lib.transcribe.errors import WorkerError, WorkerPathologicalError
 from stenographer.lib.transcribe.pipeline import (
     apply_delivery,
     apply_formatting,
     apply_gate,
     apply_recognition,
+    apply_refinement,
     apply_worker_timings,
     log_gate,
     transcript_text,
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 
     from stenographer.lib.daemon.telemetry import UtteranceTelemetry
     from stenographer.lib.delivery.deliverer import Deliverer
+    from stenographer.lib.refine.text_refiner import TextRefiner
     from stenographer.lib.transcribe.results import TranscriptionResult
     from stenographer.lib.transcribe.utterance_record import UtteranceRecord
     from stenographer.lib.transcribe.worker import Worker
@@ -53,6 +56,7 @@ class UtterancePipeline:
         min_speech_rms: float,
         worker: Worker,
         deliverer: Deliverer,
+        refiner: TextRefiner | None = None,
         telemetry: UtteranceTelemetry,
         publish_state: Callable[[OverlayState], None],
         fail: Callable[[str], None],
@@ -63,6 +67,7 @@ class UtterancePipeline:
         self._min_speech_rms = min_speech_rms
         self._worker = worker
         self._deliverer = deliverer
+        self._refiner = refiner if refiner is not None else NullRefiner()
         self._telemetry = telemetry
         self._publish_state = publish_state
         self._fail = fail
@@ -113,6 +118,13 @@ class UtterancePipeline:
                 self._publish_state(self._cancel_state())
                 return outcome_name
             text, transcript_nonempty = self._format(result, record)
+            if transcript_nonempty:
+                text = self._refine(text, record)
+                if self._cancelled():
+                    outcome_name = "CANCELLED"
+                    self._publish_state(self._cancel_state())
+                    return outcome_name
+                self._publish_state(OverlayState.DELIVERING)
             try:
                 deliver_result = (
                     self._deliverer.deliver(
@@ -190,9 +202,48 @@ class UtterancePipeline:
             record.failure = "empty"
         if not transcript_nonempty:
             self._publish_state(OverlayState.HIDDEN)
-        else:
-            self._publish_state(OverlayState.DELIVERING)
         return text, transcript_nonempty
+
+    def _refine(self, text: str, record: UtteranceRecord | None) -> str:
+        """Run the optional cleanup stage. Never raises; never loses the text.
+
+        The refiner already fails open on its own errors, so the guard here is
+        for the stage around it: a refiner that violated its contract must not
+        be able to turn a finished transcript into a lost one. That is why
+        *every* call into the collaborator is inside the try, not just
+        ``refine`` — asking whether it will run, and reading back what it
+        measured, are calls into the same object and can fail the same way. The
+        only statement outside is the one that cannot raise: ``accepted``
+        already holds the text to deliver by the time anything else runs.
+
+        A refusal below the word threshold never shows the pill and never
+        records a phase, because from the user's side nothing happened.
+
+        The stage is also the longest one an utterance can sit in — a cold
+        model load plus a reply is a two-minute worst case — so the cancel
+        predicate goes in with the text. Cancelling is what gives the hotkey
+        back: the overlay says CANCELLED at once, but the daemon stays busy
+        until this returns, and every press until then is counted as an
+        ignored busy press rather than starting a new utterance.
+        """
+        accepted = text
+        try:
+            if not self._refiner.will_refine(text):
+                return text
+            self._publish_state(OverlayState.REFINING)
+            refined = self._refiner.refine(text, cancelled=self._cancelled)
+            # A refiner that broke its contract and returned nothing must not
+            # cost the utterance; the formatted transcript stays deliverable.
+            accepted = refined if refined.strip() else text
+            apply_refinement(
+                record,
+                self._refiner.last_result,
+                delivered=accepted if accepted != text else None,
+            )
+            self._telemetry.checkpoint(record, "accepted_refinement")
+        except Exception as exc:
+            log_failure(log, logging.WARNING, "pipeline: refine_failed", exc, safe=False)
+        return accepted
 
     def _apply_worker_timings(self, record: UtteranceRecord | None) -> None:
         apply_worker_timings(record, self._worker.last_timings)

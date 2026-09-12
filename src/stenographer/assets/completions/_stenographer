@@ -48,10 +48,12 @@ _stenographer_impl() {
             ;;
         model)
             if ((CURRENT == 3)); then
-                _values 'command or option' 'download[download the ASR model]' \
+                _values 'command or option' 'download[download the ASR or refine model]' \
                     '-h[show help]' '--help[show help]'
             elif [[ "${words[3]-}" == download ]]; then
-                _values 'option' '-h[show help]' '--help[show help]'
+                _values 'option' '-h[show help]' '--help[show help]' \
+                    '--asr[download only the speech-recognition model]' \
+                    '--refine[pull only the refine model]'
             fi
             ;;
         completion)
@@ -65,7 +67,8 @@ _stenographer_impl() {
         transcribe)
             if [[ "${PREFIX}" == -* ]]; then
                 _values 'option' '-h[show help]' '--help[show help]' \
-                    '--raw[emit the unformatted transcript]'
+                    '--raw[emit the unformatted transcript]' \
+                    '--refine[clean the transcript through a local Ollama model]'
                 return
             fi
             has_file=0
@@ -77,7 +80,8 @@ _stenographer_impl() {
             done
             if ((has_file)); then
                 _values 'option' '-h[show help]' '--help[show help]' \
-                    '--raw[emit the unformatted transcript]'
+                    '--raw[emit the unformatted transcript]' \
+                    '--refine[clean the transcript through a local Ollama model]'
             else
                 _files
             fi

@@ -15,8 +15,12 @@ stenographer setup
 
 For common settings only, use `stenographer setup --quick`. The wizard can
 check the microphone, clipboard, model, and input permissions, and offers the
-separate model download. The model is about 1.5 GB and is downloaded only when
+separate model download. The model is about 1.6 GB and is downloaded only when
 you choose it.
+
+The default ASR model is `dropbox-dash/faster-whisper-large-v3-turbo`. It is
+about 1.6 GB and is downloaded only when you explicitly choose the model
+download. Existing configurations keep their selected model.
 
 The configuration file is:
 
@@ -127,14 +131,25 @@ names do not leave the machine. Logs contain timings and counts, never audio or
 transcript text. The lifecycle pill does not receive raw audio or transcript
 text.
 
-The daemon's only network access is an optional metadata-only request for the
-latest GitHub release tag, at most once every 24 hours. It never downloads a
-model or release. Disable the check with:
+By default the only network access that leaves the machine is an optional
+metadata-only request for the latest GitHub release tag, at most once every
+24 hours. It never downloads a model or release. Disable the check with:
 
 ```toml
 [stenographer.feedback]
 update_check = false
 ```
+
+The [refine](refine.md) stage is the one setting that sends transcript text
+anywhere. It is on by default, and its default host is loopback, so the text
+stays on the machine; pointing `[stenographer.refine] host` at another machine
+sends transcripts to it over the network.
+
+It cleans filler words and self-corrections out of each transcript through a
+local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
+`qwen3.5:4b` is the documented alternative and needs
+`structured_output = true`. Model reasoning is always disabled. See
+[docs/refine.md](refine.md) for the whole feature.
 
 ## Troubleshoot a running service
 
@@ -163,3 +178,36 @@ Common fixes:
   not stop dictation.
 
 For command-specific options, run `stenographer COMMAND --help`.
+
+## Improve microphone capture
+
+Start by checking which inputs Stenographer can see:
+
+```sh
+stenographer devices
+```
+
+Select the intended microphone in your audio settings or configuration. Keep a
+headset or close microphone about 10–20 cm from your mouth, point it toward (but
+slightly to the side of) your mouth, and avoid touching the desk or cable. Speak
+normally while adjusting the input level: louder is not always better. Raise it
+until ordinary speech is clear, then check a louder word for clipping or harsh
+distortion. If words disappear only when you speak quietly, compare a modest
+level increase; if background noise rises with it, move the microphone closer
+instead of adding more gain.
+
+Temporarily compare operating-system noise suppression, automatic gain control,
+echo cancellation, and beamforming one at a time. A wired headset often gives a
+cleaner signal than a distant array. Restore your original setting if a change
+does not improve repeated, matched samples. The value shown by a mixer is not
+enough to diagnose gain: the captured speech level and clipping must be checked.
+
+### What normalization does
+
+Digital RMS normalization rescales a recording so its measured speech energy
+approaches a target level such as `-24 dBFS`. It can make consistently quiet
+audio easier for a recognizer to use, but it cannot reconstruct a consonant that
+the microphone never captured. It can also amplify background noise and expose
+clipping or distortion. In the project's public-audio evaluation it improved
+development clips but regressed the held-out clips, so it is not enabled by
+default. Fix microphone placement and capture level first.

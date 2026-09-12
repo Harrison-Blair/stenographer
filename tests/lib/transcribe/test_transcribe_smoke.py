@@ -12,7 +12,7 @@ Four real, non-mocked checks:
     construction.
   * hotwords     — a proper noun set in asr.hotwords is honored in the decode.
 
-The model-based checks really load the medium.en model and decode a
+The model-based checks really load the large-v3-turbo model and decode a
 machine-supplied clip; nothing is mocked. The whole module is collected only
 with STENOGRAPHER_INTEGRATION=1, and skipped further unless the model is cached
 locally and the fixture WAV is present — so the default unit run never touches
@@ -33,7 +33,7 @@ _FIXTURES = pathlib.Path(__file__).parents[2] / "fixtures"
 _CLIP = _FIXTURES / "speech_16k.wav"
 _HOTWORD_CLIP = _FIXTURES / "hotword_16k.wav"
 _HOTWORD_NOUN = "Anthropic"
-_MODEL_ID = "Systran/faster-whisper-medium.en"
+_MODEL_ID = "dropbox-dash/faster-whisper-large-v3-turbo"
 
 if not _CLIP.exists():
     pytest.skip(f"fixture WAV absent: {_CLIP}", allow_module_level=True)

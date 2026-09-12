@@ -5,6 +5,13 @@ The same gate, the same downmix, the same formatter call and the same summary
 line as the daemon's pipeline — via ``transcribe.pipeline`` — so a file run is
 a faithful rehearsal of a dictation instead of a second, subtly different one.
 
+``--refine`` is an explicit opt-in and deliberately does not inherit
+``[stenographer.refine] enabled``: a one-off file transcription should not
+start sending text to a model because the daemon was configured to. Everything
+else about the stage — host, model, threshold, guard, fail-open — is shared
+with the daemon path. ``--raw`` wins over it, since raw means "exactly what the
+decoder produced".
+
 One deliberate difference: the gate here only *reports*. A file the user named
 explicitly is decoded whatever its energy, because the answer they asked for is
 the transcript, not a verdict. The summary therefore records ``SILENT`` when
@@ -26,6 +33,37 @@ from stenographer.lib.audio.constants import SAMPLE_RATE
 
 if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
+    from stenographer.lib.transcribe.utterance_record import UtteranceRecord
+
+
+def _refine(
+    cfg: Config,
+    args: argparse.Namespace,
+    text: str,
+    record: UtteranceRecord | None,
+) -> str:
+    """Apply the opt-in cleanup pass, or hand *text* straight back."""
+
+    from stenographer.lib.refine.factory import build_refiner
+    from stenographer.lib.transcribe.pipeline import apply_refinement
+
+    if args.raw or not getattr(args, "refine", False) or not text.strip():
+        return text
+    refiner = build_refiner(
+        cfg.refine,
+        idle_unload_seconds=cfg.asr.idle_unload_seconds,
+        enabled=True,
+    )
+    if not refiner.will_refine(text):
+        return text
+    refined = refiner.refine(text)
+    accepted = refined if refined.strip() else text
+    apply_refinement(
+        record,
+        refiner.last_result,
+        delivered=accepted if accepted != text else None,
+    )
+    return accepted
 
 
 @with_config
@@ -107,6 +145,7 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
         format_started_at = time.perf_counter()
         text = transcript_text(result, raw=args.raw)
         apply_formatting(record, text, started_at=format_started_at, ready_at=time.perf_counter())
+        text = _refine(cfg, args, text, record)
         terminal = "success" if result.text.strip() else "empty"
     except Exception:
         record.outcome = "ERROR"

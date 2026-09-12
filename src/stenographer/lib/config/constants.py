@@ -28,4 +28,14 @@ SOUND_PACK_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 DEFAULT_SOUND_PACK = "minimal-ui"
 
 
+#: The refine stage accepts an HTTP(S) Ollama host and nothing else.
+ALLOWED_REFINE_SCHEMES: frozenset[str] = frozenset({"http", "https"})
+
+
+MIN_REFINE_WORDS = 1
+
+
+MAX_REFINE_WORDS = 10000
+
+
 SpectrumFloor = float | tuple[float, ...]

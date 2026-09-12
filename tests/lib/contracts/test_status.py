@@ -13,6 +13,7 @@ def test_visible_state_set_has_no_loading_pill() -> None:
         OverlayState.HIDDEN,
         OverlayState.RECORDING,
         OverlayState.TRANSCRIBING,
+        OverlayState.REFINING,
         OverlayState.DELIVERING,
         OverlayState.CANCELLED,
         OverlayState.ERROR,

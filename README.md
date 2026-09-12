@@ -13,6 +13,8 @@
 
 [![release](https://img.shields.io/github/v/release/Harrison-Blair/stenographer?color=brightgreen)](https://github.com/Harrison-Blair/stenographer/releases)
 
+[Release notes](CHANGELOG.md)
+
 Local, offline, Wayland push-to-talk, toggle, or hybrid dictation daemon.
 Press a configurable hotkey, speak, get the text at your cursor and in your
 clipboard. See [BUILD.md](BUILD.md) for the standalone-binary build
@@ -84,8 +86,15 @@ systemctl --user start stenographer.service
 ```
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
-offers the separate model download (about 1.5 GB). Use plain `setup` to review
-every setting, or run `stenographer model download` later.
+offers the separate large-v3-turbo model download (about 1.6 GB). Use plain
+`setup` to review every setting, or run `stenographer model download` later.
+
+For clearer recognition, first run `stenographer devices` and select the
+intended microphone. Keep it about 10–20 cm from your mouth, aim it slightly
+off-axis, and raise the input level only until normal speech is clear without
+clipping. A close wired headset often beats a distant microphone. See the
+[microphone and normalization guidance](docs/usage.md#improve-microphone-capture)
+for troubleshooting steps.
 
 Configuration lives at `~/.config/stenographer/config.toml`. For example:
 
@@ -120,7 +129,8 @@ Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics.
-- `stenographer transcribe FILE [--raw]` — transcribe an audio file.
+- `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
+- `stenographer model download [--asr|--refine]` — fetch a model explicitly.
 - `stenographer run` — run the daemon in the foreground.
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
@@ -138,9 +148,15 @@ systemctl --user restart stenographer.service
 
 The model download is explicit and dictation runs locally. Audio, transcripts,
 configuration, and device or model names stay on your machine. Logs never
-contain transcript text or audio. The only network request is an optional,
-metadata-only release check; disable it in `[stenographer.feedback]` with
-`update_check = false`.
+contain transcript text or audio. The only network request that leaves your
+machine is an optional, metadata-only release check; disable it in
+`[stenographer.feedback]` with `update_check = false`.
+
+A [refine](docs/refine.md) pass, on by default, cleans filler words and
+self-corrections out of each transcript through a local Ollama model
+(`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
+machine. Turn it off or point it elsewhere in `[stenographer.refine]`; a
+non-loopback host sends transcripts there over the network.
 
 Read the [user guide](docs/usage.md) for privacy settings and more examples.
 
@@ -148,6 +164,9 @@ Read the [user guide](docs/usage.md) for privacy settings and more examples.
 
 See [docs/building.md](docs/building.md) for standalone builds and contributor
 checks. See [docs/architecture.md](docs/architecture.md) for code boundaries.
+The [transcription-quality study](docs/transcription-experiments.md) contains
+public-audio benchmark runners, measured results, and a microphone experiment
+catalog. These diagnostics do not change the installed dictation settings.
 
 ## License
 

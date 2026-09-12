@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import time
+
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.contracts.publication import should_publish_state
 from stenographer.lib.daemon.outcome import Outcome
@@ -15,6 +17,7 @@ from stenographer.lib.daemon.policy import (
     hybrid_release_action,
     ignored_edge_reason,
     max_duration_applies,
+    remaining_seconds,
     toggle_action,
 )
 
@@ -155,3 +158,16 @@ def test_edge_handlers_map_mode_to_rising_and_falling_callbacks():
     on_start, on_stop = edge_handlers(daemon, "hybrid")
     assert on_start == daemon.on_toggle_press
     assert on_stop == daemon.on_hybrid_release
+
+
+def test_remaining_seconds_counts_down_to_a_future_deadline():
+    deadline = time.perf_counter() + 10.0
+    remaining = remaining_seconds(deadline)
+    assert 0.0 < remaining <= 10.0
+
+
+def test_remaining_seconds_clamps_a_past_deadline_to_zero():
+    # Seen to FAIL against a bare `deadline - time.perf_counter()`, which
+    # would hand a negative number down to `threading.Thread.join` for a
+    # deadline that has already passed.
+    assert remaining_seconds(time.perf_counter() - 5.0) == 0.0

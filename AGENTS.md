@@ -4,8 +4,8 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
 
 - Use `.venv/bin/` for all Python tooling. Metadata, dependencies, and lint
   settings live in `pyproject.toml`. Source files need the GPL SPDX header.
-- Keep Git/build allowlists synchronized; see docs/building.md. Refactoring references:
-  `docs/reference/guru/`.
+- Keep Git/build allowlists synchronized; see docs/building.md.
+  Refactoring: `docs/reference/guru/`.
 - User-facing changes update README.md, owning docs, and the Pages site
   (`site/`).
 - Organize production code under `lib/`, `cli/<command>/`, and `overlay/`.
@@ -15,22 +15,23 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
   imports must remain portable across Linux, Windows, and macOS.
 - Keep ordinary classes in their own files without standalone helpers.
   Related dataclasses may share files; related exceptions share domain
-  `errors.py`. Keep errors with their domain; general shared errors belong
-  in `lib/utils/errors.py`. Split by responsibility and navigability, without
-  a numeric size limit. Keep resources in `assets/`.
-- Dictation stays offline; model downloads are explicit. The existing
-  metadata-only update notice is the daemon's sole network exception.
+  `errors.py`. Keep errors with their domain; shared ones belong in
+  `lib/utils/errors.py`. Split by responsibility and navigability, with no
+  size limit. Keep resources in `assets/`.
+- Dictation stays offline; model downloads are explicit. The daemon's only
+  network calls: the metadata-only update notice and the
+  loopback-by-default refine request (docs/refine.md).
   Never put transcript text or audio in logs or history.
 - Preserve configuration compatibility and use the existing preservation
   layer for saves.
 - Unit-test pure logic; see new regression tests fail before fixing behavior.
   Test native behavior on real platforms instead of mocking OS calls.
-  Never enable integration tests in CI/sandboxes or access the physical
-  microphone without explicit consent.
+  Never enable integration tests in CI/sandboxes or access the microphone
+  without explicit consent.
 - Develop on `dev`. Use conventional commits without attribution trailers.
   Merging to `main` requires real-machine acceptance.
-- After verified application changes, offer `scripts/reinstall.sh`; run it
-  when authorized and report the result.
+- After verified changes, offer `scripts/reinstall.sh`; run it when
+  authorized and report the result.
 
 For code changes, run:
 

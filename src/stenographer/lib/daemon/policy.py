@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Literal
 
 from stenographer.lib.contracts.overlay_state import OverlayState
@@ -121,3 +122,17 @@ def cancel_action(*, recording: bool, busy: bool) -> Literal["recording", "pipel
 def cancel_state(*, shutting_down: bool) -> OverlayState:
     """Choose the terminal display state for a cancellation. PURE."""
     return OverlayState.HIDDEN if shutting_down else OverlayState.CANCELLED
+
+
+def remaining_seconds(deadline: float) -> float:
+    """What is left of a ``time.perf_counter()`` deadline, never negative.
+
+    Not PURE in the sense the rest of this module is — it reads the clock —
+    but it is still a small, deterministic-given-the-clock calculation with
+    no config or platform dependency, so it lives here rather than as a
+    method on ``Daemon``. Used by ``Daemon.stop()`` to give every bounded
+    shutdown wait a share of one deadline rather than a fresh budget each.
+    The clamp keeps a deadline already in the past well-defined: it becomes
+    an immediate, zero-length ``join`` rather than a negative timeout.
+    """
+    return max(0.0, deadline - time.perf_counter())

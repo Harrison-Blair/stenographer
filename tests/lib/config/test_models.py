@@ -32,7 +32,7 @@ def test_defaults_match_spec():
     assert d.audio.input_device is None
     assert d.audio.min_speech_rms == 0.0005
     assert d.audio.max_recording_seconds == 600
-    assert d.asr.model == "Systran/faster-whisper-medium.en"
+    assert d.asr.model == "dropbox-dash/faster-whisper-large-v3-turbo"
     assert d.asr.compute_type == "int8"
     assert d.asr.beam_size == 1
     assert d.asr.hotwords is None

@@ -11,6 +11,7 @@
 !/pyproject.toml
 !/LICENSE
 !/README.md
+!/CHANGELOG.md
 # Compatibility redirect for the protected README link.
 !/BUILD.md
 !/AGENTS.md
@@ -79,6 +80,8 @@
 !/docs/architecture.md
 !/docs/building.md
 !/docs/cue-audition.md
+!/docs/refine.md
+!/docs/transcription-experiments.md
 !/docs/usage.md
 !/docs/reference/
 !/docs/reference/guru/

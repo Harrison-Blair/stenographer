@@ -11,6 +11,7 @@ from stenographer.lib.config.constants import DEFAULT_SOUND_PACK, SpectrumFloor
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.reader import _Reader
+from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUTPUT
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,17 @@ class FeedbackConfig:
 
 
 @dataclass(frozen=True)
+class RefineConfig:
+    """The local-model cleanup pass. On by default, loopback by default."""
+
+    enabled: bool = True
+    host: str = "http://127.0.0.1:11434"
+    model: str = DEFAULT_MODEL
+    min_words: int = 10
+    structured_output: bool = DEFAULT_STRUCTURED_OUTPUT
+
+
+@dataclass(frozen=True)
 class AnalyticsConfig:
     enabled: bool = True
     resource_profiling: bool = True
@@ -65,6 +77,7 @@ class Config:
     audio: AudioConfig
     asr: AsrConfig
     feedback: FeedbackConfig
+    refine: RefineConfig = RefineConfig()
     analytics: AnalyticsConfig = AnalyticsConfig()
 
     @classmethod
@@ -79,7 +92,7 @@ class Config:
             ),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
             asr=AsrConfig(
-                model="Systran/faster-whisper-medium.en",
+                model="dropbox-dash/faster-whisper-large-v3-turbo",
                 compute_type="int8",
                 beam_size=1,
                 hotwords=None,
@@ -118,6 +131,7 @@ class Config:
             _build_audio,
             _build_feedback,
             _build_hotkey,
+            _build_refine,
             _merge,
         )
 
@@ -131,7 +145,7 @@ class Config:
         if not isinstance(table, dict):
             raise ConfigError(path, "stenographer", f"must be a table, got {type(table).__name__}")
         merged = _merge(asdict(cls.defaults()), table)
-        for name in ("hotkey", "audio", "asr", "feedback", "analytics"):
+        for name in ("hotkey", "audio", "asr", "feedback", "refine", "analytics"):
             if not isinstance(merged[name], dict):
                 raise ConfigError(path, name, f"must be a table, got {type(merged[name]).__name__}")
         return cls(
@@ -139,6 +153,7 @@ class Config:
             audio=_build_audio(merged["audio"], path),
             asr=_build_asr(merged["asr"], path),
             feedback=_build_feedback(merged["feedback"], path),
+            refine=_build_refine(merged["refine"], path),
             analytics=AnalyticsConfig(
                 enabled=_Reader(merged["analytics"], path, "analytics").bool("enabled"),
                 resource_profiling=_Reader(merged["analytics"], path, "analytics").bool(

@@ -94,6 +94,7 @@ def test_banner_reports_build_backends_and_every_configured_key(caplog):
         "config_audio",
         "config_asr",
         "config_feedback",
+        "config_refine",
         "config_analytics",
     }
     assert f"version={__version__}" in lines["build"]
@@ -176,3 +177,69 @@ def test_banner_reports_the_resolved_thread_count_from_the_host_core_count(caplo
     assert "cpu_threads=0" in counted["config_asr"]
     assert "resolved_cpu_threads=6" in counted["config_asr"]
     assert "resolved_cpu_threads=4" in uncounted["config_asr"]
+
+
+def test_banner_reports_the_refine_stage_and_marks_a_loopback_host_as_local(caplog):
+    cfg = Config.defaults()
+
+    lines = _banner(caplog, cfg, _capabilities())
+
+    line = lines["config_refine"]
+    assert f"enabled={int(cfg.refine.enabled)}" in line
+    assert f"model={cfg.refine.model}" in line
+    assert f"min_words={cfg.refine.min_words}" in line
+    assert "host=127.0.0.1:11434" in line
+    assert "loopback=1" in line
+    assert "remote_host" not in "\n".join(lines)
+
+
+def test_an_enabled_non_loopback_refine_host_is_warned_about_at_every_start(caplog):
+    """The one configuration that sends transcripts off the machine. It is the
+    user's own choice, so the daemon starts — but never quietly."""
+    defaults = Config.defaults()
+    cfg = dataclasses.replace(
+        defaults,
+        refine=dataclasses.replace(defaults.refine, enabled=True, host="http://192.168.1.5:11434"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="stenographer.lib.daemon"):
+        lines = _banner(caplog, cfg, _capabilities())
+
+    assert "loopback=0" in lines["config_refine"]
+    assert "host=192.168.1.5:11434" in lines["config_refine"]
+    warning = lines["remote_host"]
+    assert "leaves_machine=1" in warning
+    assert "host=192.168.1.5:11434" in warning
+
+
+def test_a_disabled_stage_on_a_remote_host_is_reported_but_not_warned_about(caplog):
+    defaults = Config.defaults()
+    cfg = dataclasses.replace(
+        defaults,
+        refine=dataclasses.replace(defaults.refine, enabled=False, host="http://192.168.1.5:11434"),
+    )
+
+    lines = _banner(caplog, cfg, _capabilities())
+
+    assert "loopback=0" in lines["config_refine"]
+    assert "remote_host" not in lines
+
+
+def test_the_banner_never_echoes_credentials_written_into_the_refine_host(caplog):
+    """Validation rejects userinfo, but the banner is written before anything
+    else runs and must not be the place a secret first appears in the log."""
+    defaults = Config.defaults()
+    cfg = dataclasses.replace(
+        defaults,
+        refine=dataclasses.replace(
+            defaults.refine, enabled=True, host="http://user:hunter2@192.168.1.5:11434"
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="stenographer.lib.daemon"):
+        lines = _banner(caplog, cfg, _capabilities())
+
+    rendered = "\n".join(lines.values())
+    assert "hunter2" not in rendered
+    assert "user" not in rendered
+    assert "host=192.168.1.5:11434" in lines["config_refine"]

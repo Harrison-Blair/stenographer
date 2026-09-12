@@ -10,6 +10,32 @@ limited draft-release channel for Linux x86_64 and AArch64. Scope remains
 deliberately narrow: no multi-distro installer or self-update. The included
 installer targets one machine and one user only.
 
+## Release notes
+
+[`CHANGELOG.md`](../CHANGELOG.md) is the canonical authored history for every
+published release. The release workflow validates the entry for the checked-in
+version and uses that entry as the GitHub release body, so add the release note
+with the version bump before merging to `main`.
+
+Every entry, including `## [Unreleased]`, has the same shape: a synopsis of one
+to three sentences of plain prose, then `### Added`, `### Removed`, and
+`### Fixed` in that order. Omit a section that has nothing in it rather than
+writing "None", and give each present section a single bullet list with no
+prose, no sub-bullets, and no blank lines between bullets. Wrap bullets at 79
+columns with a two-space continuation indent.
+
+A changed default or renamed option belongs under `### Added`, phrased as the
+new behavior ("Uses `faster-whisper-large-v3-turbo` as the default model").
+Internal-only work — refactoring, test coverage, packaging with no observable
+effect — is folded into the synopsis or left out, never listed as a fix. An
+`[Unreleased]` section may be empty while nothing is pending, and otherwise
+follows the same structure.
+
+`scripts/release_notes.py check` enforces this for every entry in the file. It
+runs in the release preflight on pull requests into `main` and again in the
+draft-release workflow, so a missing or malformed entry fails before the draft
+is written.
+
 ## Quick start
 
 ```sh
@@ -143,7 +169,7 @@ The target system must provide:
   order (degrades to silent if absent).
 - **`/dev/uinput` write access** and membership in the **`input` group** —
   paste chord and hotkey capture.
-- **The ASR model** (~1.5 GB) — never bundled. Fetch it once with
+- **The ASR model** (~1.6 GB) — never bundled. Fetch it once with
   `dist/stenographer/stenographer model download`. `certifi` supplies HTTPS
   trust for explicit downloads and the metadata-only update notice.
 

@@ -8,6 +8,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from stenographer.lib.logging.pipeline import fmt_event
+from stenographer.lib.refine.endpoints import authority, is_loopback
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -127,6 +128,28 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             log_level=feedback.log_level,
         )
     )
+    refine = cfg.refine
+    # The authority, not the configured string: a URL can carry userinfo, and
+    # while validation now rejects that, the banner is written before anything
+    # else can go wrong and must not be the place a credential first appears.
+    refine_host = authority(refine.host)
+    log.info(
+        fmt_event(
+            "banner",
+            "config_refine",
+            enabled=int(refine.enabled),
+            host=refine_host,
+            model=refine.model,
+            min_words=refine.min_words,
+            structured_output=int(refine.structured_output),
+            loopback=int(is_loopback(refine.host)),
+        )
+    )
+    if refine.enabled and not is_loopback(refine.host):
+        # The one configuration that makes a transcript leave the machine. It
+        # is the user's own choice, so this warns rather than refuses — but it
+        # is never silent.
+        log.warning(fmt_event("refine", "remote_host", host=refine_host, leaves_machine=1))
     log.info(
         fmt_event(
             "banner",

@@ -26,12 +26,14 @@ from stenographer.lib.daemon.policy import (
     hybrid_release_action,
     ignored_edge_reason,
     max_duration_applies,
+    remaining_seconds,
     toggle_action,
 )
 from stenographer.lib.daemon.telemetry import UtteranceTelemetry
 from stenographer.lib.delivery.deliverer import Deliverer
 from stenographer.lib.logging.pipeline import fmt_event, log_failure, set_utterance
 from stenographer.lib.platform import current_platform
+from stenographer.lib.refine.factory import build_refiner
 from stenographer.lib.sounds.feedback import Feedback
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.pipeline import apply_capture, log_summary
@@ -48,7 +50,26 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("stenographer.lib.daemon")
 
-_PIPELINE_JOIN_SECONDS = 30.0
+#: ``stop()`` owes every bounded wait it does — the ASR warm-up join and the
+#: pipeline join — to ONE shared deadline, not one budget each. A second and
+#: third Ctrl-C during shutdown are inert (SIGINT is permanently rebound to
+#: ``request_stop`` while the process is up), so the user's only escape from
+#: a stuck shutdown is SIGKILL; separate per-wait budgets would let a slow
+#: warm-up plus a slow pipeline compose into a shutdown far longer than either
+#: alone, with no way out. A wait still not satisfied once the shared deadline
+#: passes is accepted as a narrow residual race rather than growing the wait.
+_STOP_BUDGET_SECONDS = 30.0
+#: The refine warm-up join inside ``_release_refine_model`` deliberately does
+#: NOT share ``_STOP_BUDGET_SECONDS``: that join used to matter for
+#: correctness (see this module's history), but the refiner's own shutdown
+#: gate now guarantees the model ends up released whether or not the warm-up
+#: has finished by the time ``unload`` runs — see ``_release_refine_model``'s
+#: docstring. Waiting here only avoids one redundant unload call if the
+#: warm-up happens to finish promptly, so it gets a small cap of its own
+#: rather than the whole shared budget: a cold or hung Ollama can keep a
+#: warm-up busy for minutes, and burning anywhere near that long here would
+#: make Ctrl-C look hung for a benefit this small.
+_REFINE_WARMUP_JOIN_SECONDS = 1.0
 
 
 class Daemon:
@@ -92,7 +113,9 @@ class Daemon:
         self._deliverer: Deliverer | None = None
         self._platform: Platform | None = None
         self._telemetry = UtteranceTelemetry()
+        self._refiner = build_refiner(cfg.refine, idle_unload_seconds=cfg.asr.idle_unload_seconds)
         self._pipeline: UtterancePipeline | None = None
+        self._refine_warmup_thread: threading.Thread | None = None
         self._capture_lock = threading.Lock()
         self._model_load_started_at: float | None = None
         self._model_load_utterance: int | None = None
@@ -181,6 +204,7 @@ class Daemon:
             min_speech_rms=cfg.audio.min_speech_rms,
             worker=worker,
             deliverer=deliverer,
+            refiner=daemon._refiner,
             telemetry=daemon._telemetry,
             publish_state=daemon._publish_state,
             fail=daemon._fail,
@@ -249,6 +273,72 @@ class Daemon:
                 # ``classify_error`` detail, whose inference branch can quote
                 # decoder text derived from the audio.
                 log_failure(log, logging.WARNING, "worker: warmup_failed", exc, safe=False)
+
+    def _start_refine_warmup(self) -> None:
+        """Resident the refine model off the hot path, or not at all.
+
+        A daemon thread that is never joined on the dictation path: a cold or
+        missing Ollama must not delay the first press, and the refiner logs its
+        own failure and then simply falls open on every utterance.
+        """
+        warm = getattr(self._refiner, "warm", None)
+        if warm is None:
+            return
+        thread = threading.Thread(target=warm, name="stenographer-refine-warmup", daemon=True)
+        try:
+            thread.start()
+        except RuntimeError as exc:
+            log_failure(log, logging.WARNING, "refine: warm_start_failed", exc, safe=True)
+            return
+        self._refine_warmup_thread = thread
+
+    def _release_refine_model(self, deadline: float) -> None:
+        """Hand the refine model's VRAM back before the process goes away.
+
+        The daemon deliberately holds the model with a long ``keep_alive`` so
+        it is resident between utterances; without this, stopping the daemon
+        leaves gigabytes tied up until Ollama's own timer expires, which on a
+        ``idle_unload_seconds = 0`` configuration is never.
+
+        Callers should still run this only after the pipeline thread has been
+        joined, though it is a preference now rather than a correctness
+        requirement: the refiner's own ``unload`` is itself a shutdown gate
+        (see ``OllamaRefiner.unload``/``_claim``/``_release``) — it refuses any
+        request issued after it runs and, if a request was already in flight,
+        that request re-unloads on its own way out, so the model ends up
+        released regardless of how this join timed out. Calling this after the
+        pipeline join still matters for two lesser reasons: it shortens the
+        window a resident model is exposed to a stray request, and it avoids
+        one redundant unload call (this one, then the in-flight request's own).
+        One race stays genuinely unclosable from here: if the process exits
+        before an in-flight refine request returns, the re-unload in
+        ``_release`` never runs, and nothing in this process can wait that out
+        without risking an unbounded shutdown.
+
+        *deadline* is a ``time.perf_counter()`` instant shared with every
+        other bounded wait in ``stop()``, but this call's own warm-up join
+        does not draw on it: it is capped at ``_REFINE_WARMUP_JOIN_SECONDS``
+        instead, because that join no longer buys correctness (only, at best,
+        one avoided redundant unload) now that the refiner's own shutdown
+        gate guarantees the model gets released regardless. *deadline* is
+        still threaded through so a caller running this after the shared
+        budget is already spent gets the smaller of the two, never a fresh
+        30s on top of it.
+
+        Best-effort in every other direction: a refiner with nothing to
+        release is left alone, and no failure here can keep the daemon from
+        stopping.
+        """
+        warmup = self._refine_warmup_thread
+        if warmup is not None:
+            warmup.join(timeout=min(_REFINE_WARMUP_JOIN_SECONDS, remaining_seconds(deadline)))
+        unload = getattr(self._refiner, "unload", None)
+        if unload is None:
+            return
+        try:
+            unload()
+        except Exception as exc:
+            log_failure(log, logging.DEBUG, "refine: unload_failed", exc, safe=True)
 
     def _start_model_warmup(self, utterance: int) -> None:
         thread = threading.Thread(
@@ -524,6 +614,7 @@ class Daemon:
         if self._listener is None:
             raise RuntimeError("daemon.run() before build()")
         self._telemetry.open(self._cfg, self._platform, pids=lambda: self._worker.process_ids)
+        self._start_refine_warmup()
         self._listener.start()
         log.info("daemon: running pid=%d", os.getpid())
         self._stop_event.wait()
@@ -559,12 +650,33 @@ class Daemon:
             self._recorder.close()
         with contextlib.suppress(Exception):
             self._worker.shutdown()
+        # One shared deadline for every bounded wait below: SIGINT is
+        # permanently rebound to request_stop() while the process is up (see
+        # install_stop_handlers), so a second or third Ctrl-C here does
+        # nothing — the only escape from a shutdown that grows past its
+        # budget is SIGKILL. Giving each wait its own fresh budget would let
+        # them compose into exactly that. In practice the warmup join below
+        # costs this budget nothing: worker.shutdown() above already blocks
+        # until the ASR warm-up thread aborts, because both contend on the
+        # same Worker._lock (warmup holds it for its whole body; shutdown
+        # acquires it too, and the warm-up's poll loop checks the shutdown
+        # flag every 0.1s) — so that thread is already unwound by the time
+        # this deadline is struck.
+        deadline = time.perf_counter() + _STOP_BUDGET_SECONDS
         warmup = self._warmup_thread
         if warmup is not None:
-            warmup.join(timeout=_PIPELINE_JOIN_SECONDS)
+            warmup.join(timeout=remaining_seconds(deadline))
         thread = self._pipeline_thread
         if thread is not None:
-            thread.join(timeout=_PIPELINE_JOIN_SECONDS)
+            thread.join(timeout=remaining_seconds(deadline))
+        # Joining the pipeline thread first is a preference, not a correctness
+        # requirement: the refiner's own unload() is now a shutdown gate that
+        # refuses a later request and lets an in-flight one re-unload on its
+        # own way out (see _release_refine_model's docstring), so the model
+        # ends up released even if this join timed out with the thread still
+        # running. Keeping the order shortens that exposure window and skips
+        # a redundant unload call.
+        self._release_refine_model(deadline)
         if self._deliverer is not None:
             with contextlib.suppress(Exception):
                 self._deliverer.close()
