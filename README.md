@@ -122,6 +122,9 @@ Right Ctrl is the default hybrid binding:
 
 Otherwise the transcript is pasted at your cursor and remains on the clipboard.
 Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
+Set `binding` to any `KEY_*` name to rebind. A fresh config picks the key from
+the host, so Windows starts from Right Alt rather than Right Ctrl; rebind it if
+you type with AltGr.
 
 ## Common commands
 
