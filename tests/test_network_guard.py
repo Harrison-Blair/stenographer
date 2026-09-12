@@ -92,15 +92,20 @@ def test_a_proxied_request_is_refused_by_its_real_destination():
 
 
 @pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="no AF_UNIX on this platform")
-def test_a_unix_socket_still_connects(tmp_path):
-    """Wayland, X11, PipeWire and journald all ride on this."""
+def test_a_unix_socket_still_connects(tmp_path, monkeypatch):
+    """Wayland, X11, PipeWire and journald all ride on this.
 
-    address = str(tmp_path / "socket")
+    Bound by relative name from inside ``tmp_path``: ``sun_path`` holds 104
+    bytes on macOS and 108 on Linux, and the per-user ``$TMPDIR`` pytest hands
+    out on macOS spends more than that before the leaf.
+    """
+
+    monkeypatch.chdir(tmp_path)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-        server.bind(address)
+        server.bind("socket")
         server.listen()
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.connect(address)
+            client.connect("socket")
             accepted, _ = server.accept()
             with accepted:
                 client.sendall(b"ok")
