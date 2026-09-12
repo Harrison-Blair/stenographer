@@ -150,7 +150,7 @@ The target system must provide:
   order (degrades to silent if absent).
 - **`/dev/uinput` write access** and membership in the **`input` group** —
   paste chord and hotkey capture.
-- **The ASR model** (~1.5 GB) — never bundled. Fetch it once with
+- **The ASR model** (~1.6 GB) — never bundled. Fetch it once with
   `dist/stenographer/stenographer model download`. `certifi` supplies HTTPS
   trust for explicit downloads and the metadata-only update notice.
 

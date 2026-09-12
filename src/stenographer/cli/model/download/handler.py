@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
 
 #: What the ASR default weighs; the cache API cannot say before downloading.
-ASR_SIZE_TEXT = "about 1.5 GB"
+ASR_SIZE_TEXT = "about 1.6 GB"
 
 #: Shown when the combined offer is declined, so saying no to both is not a
 #: dead end for someone who only wanted one of them.

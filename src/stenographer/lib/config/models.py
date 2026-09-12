@@ -92,7 +92,7 @@ class Config:
             ),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
             asr=AsrConfig(
-                model="Systran/faster-whisper-medium.en",
+                model="dropbox-dash/faster-whisper-large-v3-turbo",
                 compute_type="int8",
                 beam_size=1,
                 hotwords=None,

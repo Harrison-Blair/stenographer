@@ -847,7 +847,7 @@ def _guided_setup(
         operational_failure = True
     if not cached:
         console.write(
-            f"\nModel {config.asr.model} is not cached (download is approximately 1.5 GB)."
+            f"\nModel {config.asr.model} is not cached (download is approximately 1.6 GB)."
         )
         if ask_yes_no(console, "Download it from the network now?", default=quick):
             try:

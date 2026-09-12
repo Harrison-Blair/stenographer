@@ -86,8 +86,15 @@ systemctl --user start stenographer.service
 ```
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
-offers the separate model download (about 1.5 GB). Use plain `setup` to review
-every setting, or run `stenographer model download` later.
+offers the separate large-v3-turbo model download (about 1.6 GB). Use plain
+`setup` to review every setting, or run `stenographer model download` later.
+
+For clearer recognition, first run `stenographer devices` and select the
+intended microphone. Keep it about 10–20 cm from your mouth, aim it slightly
+off-axis, and raise the input level only until normal speech is clear without
+clipping. A close wired headset often beats a distant microphone. See the
+[microphone and normalization guidance](docs/usage.md#improve-microphone-capture)
+for troubleshooting steps.
 
 Configuration lives at `~/.config/stenographer/config.toml`. For example:
 
@@ -156,6 +163,9 @@ Read the [user guide](docs/usage.md) for privacy settings and more examples.
 
 See [docs/building.md](docs/building.md) for standalone builds and contributor
 checks. See [docs/architecture.md](docs/architecture.md) for code boundaries.
+The [transcription-quality study](docs/transcription-experiments.md) contains
+public-audio benchmark runners, measured results, and a microphone experiment
+catalog. These diagnostics do not change the installed dictation settings.
 
 ## License
 

@@ -11,6 +11,11 @@ lists left out.
 This release adds an optional local cleanup stage that turns dictated speech
 into written text without leaving your machine.
 
+- Uses `dropbox-dash/faster-whisper-large-v3-turbo` as the new default ASR
+  model (about 1.6 GB), while preserving existing configured model choices.
+- Documents microphone placement, input-level checks, and digital normalization
+  tradeoffs; normalization remains disabled by default.
+
 - Adds refine: an off-by-default stage that sends each dictation of ten or
   more words to a local Ollama model, collapses self-corrections, removes
   hesitation fillers, and renders spoken lists as lines. Meaning is preserved;

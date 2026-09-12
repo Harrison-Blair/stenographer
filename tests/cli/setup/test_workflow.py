@@ -275,7 +275,7 @@ def test_full_review_lists_every_section_and_field():
         "  min_speech_rms = 0.0005",
         "  max_recording_seconds = 600",
         "[asr]",
-        "  model = Systran/faster-whisper-medium.en",
+        "  model = dropbox-dash/faster-whisper-large-v3-turbo",
         "  compute_type = int8",
         "  beam_size = 1",
         "  hotwords = automatic/unset",
@@ -1162,7 +1162,7 @@ def test_guided_setup_prints_the_doctor_report_and_succeeds(guided):
 
     assert code == 0
     assert "== doctor report ==" in stdout
-    assert events == ["cache:Systran/faster-whisper-medium.en", "probe"]
+    assert events == ["cache:dropbox-dash/faster-whisper-large-v3-turbo", "probe"]
     assert stderr == ""
 
 
@@ -1170,9 +1170,9 @@ def test_guided_setup_offers_the_download_of_an_uncached_model_and_takes_no_for_
     code, stdout, _, events = guided(cached=False, answers="\n", changed=False)
 
     assert code == 0
-    assert "is not cached (download is approximately 1.5 GB)" in stdout
+    assert "is not cached (download is approximately 1.6 GB)" in stdout
     assert "Download it from the network now? [y/N]: " in stdout
-    assert "download:Systran/faster-whisper-medium.en" not in events
+    assert "download:dropbox-dash/faster-whisper-large-v3-turbo" not in events
 
 
 def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
@@ -1180,7 +1180,7 @@ def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
 
     assert code == 0
     assert "Download it from the network now? [Y/n]: " in stdout
-    assert "download:Systran/faster-whisper-medium.en" in events
+    assert "download:dropbox-dash/faster-whisper-large-v3-turbo" in events
     assert "Model download complete." in stdout
 
 

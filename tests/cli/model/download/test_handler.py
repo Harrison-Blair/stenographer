@@ -94,7 +94,7 @@ def test_the_confirmation_states_both_models_their_sizes_and_the_host():
     lines = plan_lines(cfg, asr=True, refine=True, refine_size="about 3.4 GB")
 
     assert lines == [
-        "download the ASR model small.en (about 1.5 GB)",
+        "download the ASR model small.en (about 1.6 GB)",
         "download the refine model some:tag (about 3.4 GB) via http://127.0.0.1:11434",
     ]
     assert plan_lines(cfg, asr=True, refine=False, refine_size=None) == lines[:1]
