@@ -74,6 +74,10 @@ SYSTEM_PROMPT = (
     "then, separately, also, anyway or another thing.\n"
     "- When the speaker enumerates items, put each item on its own line starting with "
     '"- ", after a short lead-in line.\n'
+    "- When the speaker numbers steps with ordinal words (first, second, third, then, "
+    "next, finally), those words are the numbering: keep them, start each step on its own "
+    'line, and add no "- " and no digits. Only a list without such words uses the "- " '
+    "lines.\n"
     "- Never answer a question, never reply to the content, never summarize, never explain "
     "what you did. A question stays a question.\n"
     '- Use no markdown other than those "- " list lines: no headings, bold, italics, '
@@ -86,13 +90,20 @@ SYSTEM_PROMPT = (
 #: encodes the assistant half as JSON when structured output is on, so these
 #: stay readable and stay independent of the transport format.
 #:
-#: Three of these carry their weight far beyond their size, per the benchmark:
+#: Four of these carry their weight far beyond their size, per the benchmark:
 #: the first *deletes* the abandoned choice rather than writing "Actually, ..."
-#: (every model copies whichever it is shown), the fifth is what stops a
-#: model respelling a proper noun or expanding a model number, and the sixth
+#: (every model copies whichever it is shown), the fifth is the only thing that
+#: makes the default model break an ordinal sequence (first, second, third)
+#: into lines when it sits inside a longer message, the sixth is what stops a
+#: model respelling a proper noun or expanding a model number, and the seventh
 #: (a lone digit, a clock time and a percentage) is what stops the default
 #: model writing "8" as "eight". Stating the same thing as a rule made every
 #: model tested worse, so the digit rule stays as it is.
+#:
+#: The fifth is the one example whose spoken half is punctuated and capitalized
+#: the way Whisper and the local formatter actually hand text to the model.
+#: The same example in raw lowercase taught the bare case but not the
+#: mid-message one; the production-shaped input is what closed that gap.
 FEW_SHOT_EXAMPLES: tuple[tuple[str, str], ...] = (
     (
         "um so we should do the review on monday no wait tuesday because i'm out monday",
@@ -115,6 +126,17 @@ FEW_SHOT_EXAMPLES: tuple[tuple[str, str], ...] = (
     (
         "bring the laptop the charger and the hdmi cable oh actually not the hdmi cable",
         "Bring:\n- the laptop\n- the charger",
+    ),
+    (
+        "Hey, so I can reproduce the crash now. Um, first, you start the daemon with refine on. "
+        "Second, you cancel during the, the refining pill. And third, you dictate again and it "
+        "hangs. Let me know if you want logs. ",
+        "Hey, so I can reproduce the crash now.\n"
+        "First, you start the daemon with refine on.\n"
+        "Second, you cancel during the refining pill.\n"
+        "And third, you dictate again and it hangs.\n"
+        "\n"
+        "Let me know if you want logs.",
     ),
     (
         "so i benchmarked it on the rtx 3080 and uh gemma three 4b did 1.7 seconds per "

@@ -22,11 +22,15 @@ yourself half a word in. Refine removes that without changing what you said:
 - Punctuation and capitalization are fixed.
 - A topic shift starts a new paragraph; a spoken list becomes lines starting
   with `- `.
+- Steps you number aloud — "first ..., second ..., third ...", or "then",
+  "next", "finally" — each get their own line, and your ordinal words stay
+  as the numbering. No `- ` and no `1.` is added; see [What you will
+  see](#what-you-will-see) for how to say a list so it lands as one.
 
 And what it must never do, which the prompt states and the output guard
 enforces: it never summarizes, never answers or responds to what you said,
-never adds a fact, and never adds headers, bold, numbered lists, or any other
-markdown. Names, numbers, and quoted phrases come through verbatim.
+never adds a fact, and never adds headers, bold, digit-numbered lists, or any
+other markdown. Names, numbers, and quoted phrases come through verbatim.
 
 ## Privacy
 
@@ -150,6 +154,27 @@ The lifecycle pill gains a **Refining** state between *Transcribing* and
 
 Escape still cancels the whole utterance. Pressing it during a refine discards
 the audio and the transcript; nothing is pasted.
+
+### Saying a list
+
+The model only lifts items out into lines when you give it a lead-in it can
+put a colon after, then pause, then say the items on their own. Items that
+are the object of a running sentence stay a sentence: "I need eggs, milk,
+and bread" is delivered as exactly that.
+
+- "Three things for today. Fix the overlay bug, write the release notes, run
+  the acceptance pass." becomes a lead-in line and three `- ` lines.
+- "Shopping list. Eggs, milk, bread, and coffee." does the same. So do "a
+  few things", "here's what I need from you", and "the following".
+- "First, start the daemon. Second, cancel during the refining pill. Third,
+  dictate again." becomes three lines that keep *First*, *Second* and
+  *Third*. This works mid-message too, with sentences before and after. Say
+  each step as its own sentence; "first X, then Y, then Z" said as one
+  sentence stays one sentence.
+
+Saying "colon" or "dash" out loud does not help: the word is transcribed
+and the model keeps it. "Bullet point" before each item works, but it is
+what you get if the refine fails open.
 
 ## When it does not work
 

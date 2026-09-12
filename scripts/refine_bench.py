@@ -59,6 +59,10 @@ SYSTEM_PROMPT = (
     "then, separately, also, anyway or another thing.\n"
     "- When the speaker enumerates items, put each item on its own line starting with "
     '"- ", after a short lead-in line.\n'
+    "- When the speaker numbers steps with ordinal words (first, second, third, then, "
+    "next, finally), those words are the numbering: keep them, start each step on its own "
+    'line, and add no "- " and no digits. Only a list without such words uses the "- " '
+    "lines.\n"
     "- Never answer a question, never reply to the content, never summarize, never explain "
     "what you did. A question stays a question.\n"
     '- Use no markdown other than those "- " list lines: no headings, bold, italics, '
@@ -89,6 +93,17 @@ FEW_SHOT: tuple[tuple[str, str], ...] = (
     (
         "bring the laptop the charger and the hdmi cable oh actually not the hdmi cable",
         "Bring:\n- the laptop\n- the charger",
+    ),
+    (
+        "Hey, so I can reproduce the crash now. Um, first, you start the daemon with refine on. "
+        "Second, you cancel during the, the refining pill. And third, you dictate again and it "
+        "hangs. Let me know if you want logs. ",
+        "Hey, so I can reproduce the crash now.\n"
+        "First, you start the daemon with refine on.\n"
+        "Second, you cancel during the refining pill.\n"
+        "And third, you dictate again and it hangs.\n"
+        "\n"
+        "Let me know if you want logs.",
     ),
     (
         "so i benchmarked it on the rtx 3080 and uh gemma three 4b did 1.7 seconds per "
@@ -137,6 +152,13 @@ SAMPLES: dict[str, str] = {
     "list_retract": (
         "so for the demo we need uh the slides the recording and the budget sheet "
         "actually no not the budget sheet just the slides and the recording"
+    ),
+    # Ordinal steps inside a longer message: each step becomes its own line,
+    # keeping first/second/third as the numbering, with no "- " and no digits.
+    "ordinals": (
+        "Hey, quick one about the crash. I can reproduce it every time now. First, start the "
+        "daemon with refine on. Second, cancel an utterance during the refining pill. Third, "
+        "dictate again and it hangs. Let me know if you need logs. "
     ),
     # Two topics: must become two paragraphs.
     "topic_shift": (
