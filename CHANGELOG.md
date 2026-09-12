@@ -11,6 +11,16 @@ Each entry opens with a short synopsis, then lists changes under `### Added`,
 nothing in it. The release workflow validates this structure and publishes
 the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
+## [v0.13.1] - 2026-09-12
+
+The default dictation key is now chosen by the host rather than fixed for
+every platform.
+
+### Added
+
+- Windows installs now default to Right Alt as the dictation hotkey; Linux and
+  macOS keep Right Ctrl, and an explicitly configured binding is unchanged.
+
 ## [v0.13.0] - 2026-09-11
 
 This release adds a local cleanup stage, on by default, that turns dictated
