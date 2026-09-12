@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -12,6 +13,7 @@ import pytest
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.daemon import Daemon
+from stenographer.lib.refine.cancellation import never_cancelled
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.results import TranscriptionResult
 
@@ -23,6 +25,7 @@ from .support import (
     _daemon,
     _daemon_with_status,
     _Listener,
+    _no_network_cfg,
     _Platform,
     _Recorder,
     _run_utterance,
@@ -320,7 +323,10 @@ def test_build_wires_the_worker_callbacks_onto_this_daemon(tmp_path, monkeypatch
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(tmp_path / "config.toml"))
     platform = _Platform()
     status = _Status()
-    daemon = Daemon.build(Config.defaults(), clipboard_backend="wl-copy", platform=platform)
+    # `_no_network_cfg`: this builds via `Daemon.build` directly (to inject the
+    # fake `platform`), not through `_build_or_skip`, so it needs the same
+    # off-the-network config for itself — see `_no_network_cfg`'s docstring.
+    daemon = Daemon.build(_no_network_cfg(), clipboard_backend="wl-copy", platform=platform)
     try:
         assert platform.clipboard_backends == ["wl-copy"]
         assert platform.listener is not None
@@ -621,3 +627,249 @@ def test_shutdown_during_capture_finalization_takes_the_pill_straight_down(daemo
         daemon.stop()
 
     assert "outcome=CANCELLED" in _summary(daemon_logs)
+
+
+def test_stop_waits_for_an_in_flight_refine_before_unloading_the_model():
+    # Seen to FAIL when unload() ran before the pipeline thread (which can
+    # still be inside refine()) was joined: an in-flight request can
+    # re-establish Ollama's ``keep_alive`` after the model was told to
+    # unload, pinning it in VRAM. Asserted on ORDER, not timing: the fake
+    # refiner blocks in refine() on ``hold_refine`` (bounded by its own
+    # timeout, so a bug can never hang the test), and unload() records
+    # whether the pipeline thread was still alive at the moment it ran — a
+    # direct, non-racy check of what actually happened, not of scheduling
+    # luck.
+    order: list[str] = []
+    pipeline_alive_at_unload: list[bool] = []
+    refine_entered = threading.Event()
+    unload_entered = threading.Event()
+    hold_refine = threading.Event()
+    daemon_holder: list[Daemon] = []
+
+    class _BlockingRefiner:
+        def will_refine(self, text: str) -> bool:
+            return True
+
+        @property
+        def last_result(self):
+            return None
+
+        def refine(self, text: str, *, cancelled=never_cancelled) -> str:
+            order.append("refine")
+            refine_entered.set()
+            hold_refine.wait(timeout=5.0)
+            return text
+
+        def unload(self) -> None:
+            thread = daemon_holder[0]._pipeline_thread
+            pipeline_alive_at_unload.append(thread.is_alive() if thread is not None else False)
+            order.append("unload")
+            unload_entered.set()
+
+    daemon = _daemon(
+        result=TranscriptionResult(text="one", duration_seconds=1.0),
+        refiner=_BlockingRefiner(),
+    )
+    daemon_holder.append(daemon)
+    stop_errors: list[BaseException] = []
+
+    def _run_stop() -> None:
+        try:
+            daemon.stop()
+        except BaseException as exc:  # surfaced via the assertion below, not swallowed
+            stop_errors.append(exc)
+
+    try:
+        daemon.on_key_down()
+        daemon.on_key_up()
+        assert refine_entered.wait(timeout=5.0)
+
+        stop_thread = threading.Thread(target=_run_stop, name="test-stop")
+        stop_thread.start()
+
+        # THIS WAIT IS THE DETECTION MECHANISM, not a courtesy — do not shorten
+        # or remove it. The passing direction needs no timing at all: unload()
+        # cannot run until hold_refine is released below, full stop. But the
+        # only way to observe a *buggy* stop() reaching unload() early is to
+        # give it a window to do so before we ourselves release hold_refine;
+        # without one, releasing immediately could let the pipeline finish
+        # before a slow-to-schedule buggy stop() even gets there, and
+        # unload()'s own is_alive() check would then read False — a false
+        # pass against the very bug this test exists to catch. A buggy
+        # stop() reaches unload() in a handful of Python statements with no
+        # blocking calls in between, so 1 second is generous; this has been
+        # verified to hold under heavy contention (48 spinners on 16 cores).
+        unload_entered.wait(timeout=1.0)
+        hold_refine.set()
+        stop_thread.join(timeout=10.0)
+        assert not stop_thread.is_alive()
+    finally:
+        hold_refine.set()
+
+    assert stop_errors == []
+    assert order == ["refine", "unload"]
+    assert pipeline_alive_at_unload == [False]
+
+
+def test_stop_joins_the_pipeline_thread_before_calling_unload(monkeypatch):
+    # Deterministic companion to the behavioural test above: asserts the
+    # code-level call SEQUENCE (pipeline join before unload) with nothing
+    # blocked, so there is no timing window at all — it inverts 100% of the
+    # time against the reverted ordering, by construction. It is whiter-box
+    # than the test above (it asserts "join was called" rather than the
+    # user-visible "the thread was not alive"), so it is kept as a second,
+    # belt-and-braces guard rather than a replacement for it.
+    order: list[str] = []
+
+    class _Refiner:
+        def will_refine(self, text: str) -> bool:
+            return True
+
+        @property
+        def last_result(self):
+            return None
+
+        def refine(self, text: str, *, cancelled=never_cancelled) -> str:
+            return text
+
+        def unload(self) -> None:
+            order.append("unload")
+
+    daemon = _daemon(
+        result=TranscriptionResult(text="one", duration_seconds=1.0), refiner=_Refiner()
+    )
+    daemon.on_key_down()
+    daemon.on_key_up()
+    pipeline_thread = daemon._pipeline_thread
+    assert pipeline_thread is not None
+
+    real_join = threading.Thread.join
+
+    def spy_join(self, timeout=None):
+        if self is pipeline_thread:
+            order.append("pipeline_join")
+        return real_join(self, timeout=timeout)
+
+    monkeypatch.setattr(threading.Thread, "join", spy_join)
+    daemon.stop()
+
+    assert order == ["pipeline_join", "unload"]
+
+
+def test_stop_does_not_wait_out_a_hung_refine_warmup():
+    # Seen to FAIL when the refine warm-up join drew on the full shared
+    # shutdown budget (_STOP_BUDGET_SECONDS, 30s) instead of its own small
+    # cap (_REFINE_WARMUP_JOIN_SECONDS, 1s): stop() would then take the whole
+    # 30s waiting out a warm-up that never finishes, making Ctrl-C look hung
+    # against a cold or unreachable Ollama. That join no longer buys
+    # correctness now that the refiner's own unload() guarantees residency
+    # regardless (see _release_refine_model's docstring), so there is nothing
+    # left to justify the long wait. Bounded well under both the 30s shared
+    # budget and the warm-up thread's own 10s safety valve, so a regression
+    # back to the shared deadline fails fast rather than hanging the test.
+    warm_entered = threading.Event()
+    release_warm = threading.Event()
+
+    class _HungWarmupRefiner:
+        def warm(self) -> None:
+            warm_entered.set()
+            release_warm.wait(timeout=10.0)
+
+        def unload(self) -> None:
+            pass
+
+    daemon = _daemon(refiner=_HungWarmupRefiner())
+    daemon._start_refine_warmup()
+    try:
+        assert warm_entered.wait(timeout=5.0)
+
+        started_at = time.perf_counter()
+        daemon.stop()
+        elapsed = time.perf_counter() - started_at
+
+        assert elapsed < 5.0, elapsed
+    finally:
+        release_warm.set()
+
+
+def test_stop_bounds_the_total_wait_when_every_shutdown_join_is_wedged(monkeypatch):
+    """Pins the aggregate shutdown ceiling as an executable claim.
+
+    Wedges all three of stop()'s bounded waits at once — a hung ASR warm-up
+    thread, a wedged pipeline thread, and a hung refine warm-up — with
+    ``_STOP_BUDGET_SECONDS`` monkeypatched small so the test stays fast. The
+    ASR warm-up's fake ``shutdown()`` is a no-op (it does not release the
+    thread), so this does not lean on ``Worker._lock`` the way production
+    does: it proves the shared deadline itself bounds a hung ASR warm-up,
+    which is the gap a correct worst-case analysis could otherwise hide
+    behind a dependency living outside this file.
+
+    The bound is ``1.5 * _STOP_BUDGET_SECONDS`` rather than
+    ``_STOP_BUDGET_SECONDS + _REFINE_WARMUP_JOIN_SECONDS``: with every wait
+    wedged, the ASR-warmup join (first in line) always exhausts the whole
+    shared deadline, so the refine warm-up join's own cap never has anything
+    left to spend regardless of its value — a full extra
+    ``_REFINE_WARMUP_JOIN_SECONDS`` of slack would be wide enough to let a
+    regression that gives the ASR-warmup and pipeline joins a full fresh
+    budget EACH (2x the shared deadline, instead of sharing it) pass
+    unnoticed. ``1.5x`` sits with equal margin between the correct total
+    (~1x, confirmed empirically) and that regression's total (~2x).
+
+    Does NOT independently catch a reverted ``min()`` in
+    ``_release_refine_model`` (structurally cannot: the shared deadline is
+    already spent by the time the refine warm-up join runs, so wrapping it in
+    ``min()`` or not makes no observable difference here) — that regression
+    is what ``test_stop_does_not_wait_out_a_hung_refine_warmup`` above pins,
+    by wedging *only* the refine warm-up so the shared budget is still there
+    to be misspent.
+    """
+    import stenographer.lib.daemon.daemon as daemon_module
+
+    patched_budget = 0.8
+    monkeypatch.setattr(daemon_module, "_STOP_BUDGET_SECONDS", patched_budget)
+
+    warmup_release = threading.Event()
+    refine_warm_release = threading.Event()
+
+    class _WedgedWorker(_Worker):
+        def warmup(self, utterance: int | None = None) -> None:
+            warmup_release.wait(timeout=10.0)
+
+        def shutdown(self) -> None:
+            # Deliberately does NOT release warmup_release: this test must
+            # not depend on the real Worker._lock coupling that daemon.py's
+            # own comment documents as making the ASR-warmup join cheap in
+            # production.
+            pass
+
+    class _WedgedRefiner:
+        def warm(self) -> None:
+            refine_warm_release.wait(timeout=10.0)
+
+        def unload(self) -> None:
+            pass
+
+    daemon = _daemon(
+        result=TranscriptionResult(text="one", duration_seconds=1.0),
+        refiner=_WedgedRefiner(),
+    )
+    worker = _WedgedWorker(daemon._worker._result, daemon._worker._error)
+    worker.block_transcribe = True
+    daemon._worker = worker
+    daemon._pipeline._worker = worker
+
+    try:
+        daemon.on_key_down()
+        daemon.on_key_up()
+        assert worker.transcribe_started.wait(timeout=5.0)
+        daemon._start_refine_warmup()
+
+        started_at = time.perf_counter()
+        daemon.stop()
+        elapsed = time.perf_counter() - started_at
+
+        assert elapsed < 1.5 * patched_budget, elapsed
+    finally:
+        warmup_release.set()
+        worker.transcribe_release.set()
+        refine_warm_release.set()

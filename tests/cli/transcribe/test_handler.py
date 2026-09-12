@@ -357,6 +357,9 @@ def test_the_daemon_setting_is_not_inherited_by_a_file_transcription(
     enabled_cfg = dataclasses.replace(
         defaults, refine=dataclasses.replace(defaults.refine, enabled=True)
     )
+    disabled_cfg = dataclasses.replace(
+        defaults, refine=dataclasses.replace(defaults.refine, enabled=False)
+    )
     path = _spoken_clip(monkeypatch, tmp_path, SPOKEN)
 
     assert cmd_transcribe.__wrapped__(_refine_args(path), enabled_cfg) == 0
@@ -364,9 +367,9 @@ def test_the_daemon_setting_is_not_inherited_by_a_file_transcription(
     assert refine_capture.built == [], "an enabled daemon leaked into the file path"
     assert REFINED not in capsys.readouterr().out
 
-    assert cmd_transcribe.__wrapped__(_refine_args(path, refine=True), defaults) == 0
+    assert cmd_transcribe.__wrapped__(_refine_args(path, refine=True), disabled_cfg) == 0
 
-    assert defaults.refine.enabled is False
+    assert disabled_cfg.refine.enabled is False
     assert [entry["enabled"] for entry in refine_capture.built] == [True]
 
 

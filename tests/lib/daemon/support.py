@@ -25,6 +25,7 @@ from stenographer.lib.daemon.policy import cancel_state
 from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.logging.utterance_filter import UtteranceFilter
 from stenographer.lib.platform.errors import UnsupportedPlatformError
+from stenographer.lib.refine.cancellation import never_cancelled
 from stenographer.lib.refine.policy import should_refine
 from stenographer.lib.refine.results import OUTCOME_APPLIED, RefineResult
 from stenographer.lib.transcribe.results import TranscriptionResult
@@ -46,6 +47,22 @@ _CAPTURE = CaptureStats(
 )
 
 
+def _no_network_cfg(cfg: Config | None = None) -> Config:
+    """A daemon config guaranteed not to reach Ollama.
+
+    Refine now defaults to enabled, so building a daemon straight from
+    ``cfg.refine`` gives it a live ``OllamaRefiner``; that refiner's own
+    ``unload()`` runs unconditionally in ``Daemon.stop()``, not only on the
+    warm-up path, so any test that builds a real daemon and stops it hits the
+    network unless refine is off. Every daemon test that is not itself about
+    refine behaviour routes through this (directly, or via ``_build_or_skip``)
+    so the suite never touches Ollama. Tests that want a live refiner pass
+    ``refiner=`` explicitly instead of relying on ``cfg.refine``.
+    """
+    cfg = cfg if cfg is not None else Config.defaults()
+    return dataclasses.replace(cfg, refine=dataclasses.replace(cfg.refine, enabled=False))
+
+
 def _build_or_skip(cfg):
     """Build for real, or skip where the host provides no hotkey/paste backend.
 
@@ -55,7 +72,7 @@ def _build_or_skip(cfg):
     from stenographer.lib.daemon.daemon import Daemon
 
     try:
-        return Daemon.build(cfg, clipboard_backend="wl-copy")
+        return Daemon.build(_no_network_cfg(cfg), clipboard_backend="wl-copy")
     except UnsupportedPlatformError as exc:
         pytest.skip(f"no hotkey/injection backend on this host: {exc}")
 
@@ -172,7 +189,7 @@ class _Refiner:
     def will_refine(self, text: str) -> bool:
         return should_refine(text, self._min_words)
 
-    def refine(self, text: str) -> str:
+    def refine(self, text: str, *, cancelled=never_cancelled) -> str:
         self.calls.append(text)
         if self.on_refine is not None:
             self.on_refine()
@@ -206,7 +223,7 @@ class _Deliverer:
 
 
 def _daemon(*, result=None, error=None, samples=_SPEECH, mode="hold", refiner=None) -> Daemon:
-    cfg = Config.defaults()
+    cfg = _no_network_cfg()
     cfg = dataclasses.replace(cfg, hotkey=dataclasses.replace(cfg.hotkey, mode=mode))
     daemon = Daemon(
         cfg=cfg,

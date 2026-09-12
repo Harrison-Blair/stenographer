@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 
 import pytest
 
@@ -89,3 +90,39 @@ def test_completion_dispatch_writes_only_the_selected_definition(capsys):
     captured = capsys.readouterr()
     assert captured.out == completion_definition("fish")
     assert captured.err == ""
+
+
+def test_fish_does_not_offer_model_download_flags_at_the_model_level():
+    """``stenographer model --<TAB>`` must not offer ``--asr``/``--refine``:
+    argparse only accepts them one level deeper, after ``model download``."""
+    definition = completion_definition("fish")
+
+    offending = [
+        line
+        for line in definition.splitlines()
+        if ("-l asr" in line or "-l refine" in line) and "model" in line and "download" not in line
+    ]
+
+    assert offending == []
+
+
+def test_fish_nested_command_predicate_gates_flags_at_the_correct_depth():
+    """Pins the whole `__stenographer_nested_command_is` mechanism, not just
+    the absence of the old bug: a deleted or renamed predicate, a weakened
+    token-count guard, or shifted token indices must fail this test too, since
+    none of those would offer `--asr`/`--refine` at the right depth either."""
+    definition = completion_definition("fish")
+
+    match = re.search(
+        r"function __stenographer_nested_command_is\n(.*?)\nend", definition, re.DOTALL
+    )
+    assert match, "fish completion defines no __stenographer_nested_command_is predicate"
+    body = match.group(1)
+    assert "count $tokens) -ge 3" in body
+    assert '"$tokens[2]" = "$argv[1]"' in body
+    assert '"$tokens[3]" = "$argv[2]"' in body
+
+    for flag in ("asr", "refine"):
+        assert f"-n '__stenographer_nested_command_is model download' -f -l {flag}" in definition, (
+            f"--{flag} is not gated on the model-download predicate"
+        )

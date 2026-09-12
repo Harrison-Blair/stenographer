@@ -5,11 +5,13 @@ Two models, two very different transports: the ASR weights come from the
 Hugging Face cache API, and the refine model is pulled by the local Ollama
 server through its own ``/api/pull``. Both stay explicit — nothing here runs
 without the user having typed this command, and the no-flag form additionally
-states the sizes and asks before it starts.
+states the sizes and asks before it starts, when refine is enabled and there
+is a terminal to ask on.
 
-``--asr`` and ``--refine`` select one. With neither flag and no terminal to
-prompt on, only the ASR model is fetched, so an existing script that ran this
-command keeps doing exactly what it did before.
+``--asr`` and ``--refine`` select one. With neither flag, only the ASR model
+is fetched when there is no terminal to prompt on, or when refine has been
+explicitly turned off (``refine.enabled = false``), so an existing script —
+or a user who opted out of refine — keeps doing exactly what it did before.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ _BYTES_PER_GB = 1000**3
 _INSTALLED_PREFIX = "already installed"
 
 
-def size_phrase(model: str, installed_bytes: int | None, approximate_gb: float | None) -> str:
+def size_phrase(installed_bytes: int | None, approximate_gb: float | None) -> str:
     """Describe a pull's cost from what is actually known about it. PURE.
 
     Ollama's own reported size wins when the model is already there (the pull
@@ -61,7 +63,6 @@ def refine_size_phrase(cfg: Config) -> str:
     from stenographer.lib.refine.prompt import APPROXIMATE_MODEL_SIZES_GB
 
     return size_phrase(
-        cfg.refine.model,
         installed_model_bytes(cfg.refine.host, cfg.refine.model),
         APPROXIMATE_MODEL_SIZES_GB.get(cfg.refine.model),
     )
@@ -85,19 +86,24 @@ def plan_lines(cfg: Config, *, asr: bool, refine: bool, refine_size: str | None)
     return lines
 
 
-def selection(args: argparse.Namespace, *, interactive: bool) -> tuple[bool, bool]:
+def selection(
+    args: argparse.Namespace, *, interactive: bool, refine_enabled: bool
+) -> tuple[bool, bool]:
     """Decide which models this invocation covers. PURE.
 
-    Neither flag means "both" only where there is a terminal to confirm on; a
-    piped or scripted run keeps the historical ASR-only behaviour rather than
-    silently starting a second multi-gigabyte download.
+    Neither flag means "both" only where there is a terminal to confirm on and
+    refine has not been explicitly turned off; a piped or scripted run keeps
+    the historical ASR-only behaviour rather than silently starting a second
+    multi-gigabyte download, and an explicit `refine.enabled = false` is
+    respected the same way. An explicit `--refine` flag still forces the pull
+    regardless of `refine.enabled` — it is a deliberate opt-in.
     """
 
     asr = bool(getattr(args, "asr", False))
     refine = bool(getattr(args, "refine", False))
     if asr or refine:
         return asr, refine
-    return True, interactive
+    return True, interactive and refine_enabled
 
 
 def _download_asr(cfg: Config) -> int:
@@ -129,7 +135,9 @@ def cmd_model_download(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.cli.shared.terminal import ask_yes_no, open_console
 
     console = open_console(None, None, None)
-    asr, refine = selection(args, interactive=console.interactive)
+    asr, refine = selection(
+        args, interactive=console.interactive, refine_enabled=cfg.refine.enabled
+    )
     explicit = bool(getattr(args, "asr", False) or getattr(args, "refine", False))
     if not explicit:
         lines = plan_lines(
@@ -143,7 +151,9 @@ def cmd_model_download(args: argparse.Namespace, cfg: Config) -> int:
             for line in lines:
                 console.write(f"  - {line}")
             try:
-                if not ask_yes_no(console, "Continue?", default=True):
+                # Default to declining: a multi-gigabyte download must never be
+                # one stray Enter away from starting.
+                if not ask_yes_no(console, "Continue?", default=False):
                     console.write("Nothing was downloaded.")
                     console.write(DECLINED_HINT)
                     return 0

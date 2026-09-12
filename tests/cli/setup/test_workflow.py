@@ -293,7 +293,7 @@ def test_full_review_lists_every_section_and_field():
         "  sound_pack = minimal-ui",
         "  log_level = info",
         "[refine]",
-        "  enabled = False",
+        "  enabled = True",
         "  host = http://127.0.0.1:11434",
         "  model = gemma4:e2b",
         "  min_words = 10",
@@ -326,7 +326,7 @@ def test_quick_review_lists_only_the_keys_the_quick_wizard_edits():
         "  feedback.update_check = True",
         "  feedback.sound_pack = minimal-ui",
         "  feedback.spectrum_floor_dbfs = -45.0",
-        "  refine.enabled = False",
+        "  refine.enabled = True",
         "  refine.model = gemma4:e2b",
         "Audio-gate, recording-limit, and all ASR settings will be retained unchanged.",
     ]
@@ -776,9 +776,9 @@ def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_
 
 
 #: Enter keeps every value; the wizard asks five sections then the review.
-#: The trailing blank answers "Enable transcript refinement", which defaults to
-#: no and so never reaches the Ollama probe.
-_KEEP_EVERYTHING = "\n" * 22 + "keep\n" + "\n"
+#: The trailing answer is explicit "no" to "Enable transcript refinement",
+#: which now defaults to yes, so the wizard never reaches the Ollama probe.
+_KEEP_EVERYTHING = "\n" * 22 + "keep\n" + "no\n"
 
 
 def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
@@ -791,7 +791,7 @@ def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
         "auto\n\n120\n"  # audio
         "\n\n5\nevdev\n\nno\n\n\n\n"  # asr
         "0.9\n\n\n\nlegacy\ndebug\nkeep\n"  # feedback
-        "\n"  # refine: stay disabled
+        "no\n"  # refine: turn off
         "\n"  # review: save
     )
 
@@ -1081,6 +1081,7 @@ def guided(monkeypatch):
     from stenographer.cli.shared import capability_probe
     from stenographer.lib import platform as platform_module
     from stenographer.lib.diagnostics import capabilities as diagnostics
+    from stenographer.lib.refine import client as refine_client
     from stenographer.lib.transcribe import download
     from stenographer.overlay import platform as overlay_platform_module
 
@@ -1099,8 +1100,12 @@ def guided(monkeypatch):
         changed=True,
         custom_config=False,
         quick=False,
+        config=None,
+        refine_installed=True,
+        pull_error=None,
     ):
         probed = _caps() if caps is None else caps
+        used_config = Config.defaults() if config is None else config
 
         def is_model_cached(name):
             events.append(f"cache:{name}")
@@ -1118,6 +1123,20 @@ def guided(monkeypatch):
             if probe_error is not None:
                 raise probe_error
             return probed
+
+        def installed_model_names(host, *, timeout=refine_client.PROBE_TIMEOUT_SECONDS):
+            # Never let a default (refine-enabled) config reach a real Ollama
+            # from a unit test: `refine_installed` fakes the listing instead.
+            events.append(f"refine-probe:{host}")
+            if refine_installed is None:
+                return []
+            return [used_config.refine.model] if refine_installed else ["unrelated:tag"]
+
+        def pull_model(host, model, *, on_progress):
+            events.append(f"refine-pull:{model}")
+            if pull_error is not None:
+                raise pull_error
+            on_progress("pulling...")
 
         class Plat:
             def guidance(self):
@@ -1142,11 +1161,13 @@ def guided(monkeypatch):
         )
         monkeypatch.setattr(platform_module, "current_platform", Plat)
         monkeypatch.setattr(overlay_platform_module, "current_platform", OverlayPlat)
+        monkeypatch.setattr(refine_client, "installed_model_names", installed_model_names)
+        monkeypatch.setattr(refine_client, "pull_model", pull_model)
 
         console = _console(answers)
         code = setup._guided_setup(
             console,
-            Config.defaults(),
+            used_config,
             pathlib.Path("/cfg/config.toml"),
             changed=changed,
             custom_config=custom_config,
@@ -1162,7 +1183,11 @@ def test_guided_setup_prints_the_doctor_report_and_succeeds(guided):
 
     assert code == 0
     assert "== doctor report ==" in stdout
-    assert events == ["cache:dropbox-dash/faster-whisper-large-v3-turbo", "probe"]
+    assert events == [
+        "cache:dropbox-dash/faster-whisper-large-v3-turbo",
+        "refine-probe:http://127.0.0.1:11434",
+        "probe",
+    ]
     assert stderr == ""
 
 
@@ -1277,6 +1302,184 @@ def test_guided_setup_points_a_stopped_service_at_its_start_command(guided):
         "Service is not active; setup did not start it. Run `steno-agent start` when ready."
         in stdout
     )
+
+
+def test_guided_setup_reports_a_failed_refine_pull_as_an_operational_failure(guided):
+    """Pins the wiring at ``_guided_setup``'s ``operational_failure |=
+    _offer_refine_pull(...)``: a failed pull must make `setup` exit 1, not
+    silently succeed while telling the user (and any script chaining on the
+    exit code) that everything worked."""
+    from stenographer.lib.refine.errors import RefineError
+
+    code, _, stderr, events = guided(
+        answers="y\n",
+        changed=False,
+        refine_installed=False,
+        pull_error=RefineError("boom"),
+    )
+
+    assert code == 1
+    assert stderr == "stenographer: refine model pull failed: boom\n"
+    assert events == [
+        "cache:dropbox-dash/faster-whisper-large-v3-turbo",
+        "refine-probe:http://127.0.0.1:11434",
+        "refine-pull:gemma4:e2b",
+        "probe",
+    ]
+
+
+def test_guided_setup_leaves_refine_alone_when_ollama_is_unreachable(guided):
+    code, stdout, _, events = guided(refine_installed=None, changed=False)
+
+    assert code == 0
+    assert "No refine model is available" in stdout
+    assert not any(event.startswith("refine-pull") for event in events)
+
+
+def test_guided_setup_skips_the_refine_probe_when_the_stage_is_off(guided):
+    defaults = Config.defaults()
+    disabled = dataclasses.replace(
+        defaults, refine=dataclasses.replace(defaults.refine, enabled=False)
+    )
+
+    code, _, _, events = guided(config=disabled, changed=False)
+
+    assert code == 0
+    assert not any(event.startswith("refine-probe") for event in events)
+
+
+def _refine_config(model: str) -> Config:
+    defaults = Config.defaults()
+    return dataclasses.replace(defaults, refine=dataclasses.replace(defaults.refine, model=model))
+
+
+@pytest.mark.parametrize(
+    ("config_model", "listed_model"),
+    [
+        ("gemma4:latest", "gemma4:latest"),  # both already tagged: literal match
+        ("gemma4", "gemma4:latest"),  # bare config value; Ollama always reports tagged
+        ("gemma4:latest", "gemma4"),  # tagged config value; listing happens to be bare
+    ],
+    ids=["tagged-vs-tagged", "bare-config-vs-tagged-listing", "tagged-config-vs-bare-listing"],
+)
+def test_offer_refine_pull_recognizes_an_installed_model_regardless_of_tag_spelling(
+    monkeypatch, config_model, listed_model
+):
+    """Seen to FAIL (for the 'bare-config-vs-tagged-listing' case) against the
+    previous call site, ``if config.refine.model in installed``: Ollama always
+    reports a fully-qualified tag, so an untagged config value never matched
+    and the wizard offered to pull a model the user already had, on every
+    single ``stenographer setup`` run."""
+    from stenographer.lib.refine import client as refine_client
+
+    probes: list[str] = []
+
+    def fake_installed(host, **kwargs):
+        probes.append(host)
+        return [listed_model]
+
+    monkeypatch.setattr(refine_client, "installed_model_names", fake_installed)
+    monkeypatch.setattr(
+        refine_client,
+        "pull_model",
+        lambda *a, **k: pytest.fail("an installed model must never be offered for a pull"),
+    )
+
+    config = _refine_config(config_model)
+    console = _console("no\n")
+
+    failed = setup._offer_refine_pull(console, config, quick=False)
+
+    assert failed is False
+    assert probes == [config.refine.host]
+    assert "is not installed" not in console.stdout.getvalue()
+
+
+def test_offer_refine_pull_offers_and_pulls_an_absent_model(monkeypatch):
+    from stenographer.lib.refine import client as refine_client
+
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host, **kw: ["other:tag"])
+    pulled = []
+
+    def fake_pull(host, model, *, on_progress):
+        pulled.append((host, model))
+        on_progress("downloading layer 1/1")
+
+    monkeypatch.setattr(refine_client, "pull_model", fake_pull)
+
+    config = _refine_config("gemma4:e2b")
+    console = _console("yes\n")
+
+    failed = setup._offer_refine_pull(console, config, quick=False)
+
+    assert failed is False
+    assert pulled == [(config.refine.host, "gemma4:e2b")]
+    stdout = console.stdout.getvalue()
+    assert "Refine model gemma4:e2b is not installed" in stdout
+    assert "  downloading layer 1/1" in stdout
+    assert "Refine model pull complete." in stdout
+
+
+def test_offer_refine_pull_may_be_declined(monkeypatch):
+    from stenographer.lib.refine import client as refine_client
+
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host, **kw: ["other:tag"])
+    monkeypatch.setattr(
+        refine_client, "pull_model", lambda *a, **k: pytest.fail("declined pull must not run")
+    )
+
+    config = _refine_config("gemma4:e2b")
+    console = _console("no\n")
+
+    failed = setup._offer_refine_pull(console, config, quick=False)
+
+    assert failed is False
+
+
+def test_offer_refine_pull_reports_a_failed_pull_as_an_operational_failure(monkeypatch):
+    from stenographer.lib.refine import client as refine_client
+    from stenographer.lib.refine.errors import RefineError
+
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host, **kw: ["other:tag"])
+
+    def failing_pull(host, model, *, on_progress):
+        raise RefineError("boom")
+
+    monkeypatch.setattr(refine_client, "pull_model", failing_pull)
+
+    config = _refine_config("gemma4:e2b")
+    console = _console("yes\n")
+
+    failed = setup._offer_refine_pull(console, config, quick=False)
+
+    assert failed is True
+    assert "refine model pull failed: boom" in console.stderr.getvalue()
+
+
+def test_offer_refine_pull_reports_an_unreachable_ollama_without_prompting(monkeypatch):
+    from stenographer.lib.refine import client as refine_client
+
+    probes: list[str] = []
+
+    def fake_installed(host, **kwargs):
+        probes.append(host)
+        return []
+
+    monkeypatch.setattr(refine_client, "installed_model_names", fake_installed)
+    monkeypatch.setattr(
+        refine_client, "pull_model", lambda *a, **k: pytest.fail("unreachable host must not pull")
+    )
+
+    config = Config.defaults()
+    console = _console("")
+
+    failed = setup._offer_refine_pull(console, config, quick=False)
+
+    assert failed is False
+    assert probes == [config.refine.host]
+    stdout = console.stdout.getvalue()
+    assert f"No refine model is available at {config.refine.host}" in stdout
+    assert "No Ollama server answered" not in stdout
 
 
 def _document_double(tmp_path, *, save=None):
@@ -1433,6 +1636,99 @@ def test_refine_intro_says_where_the_transcript_would_go():
     assert any("reasoning is always disabled" in line for line in local)
 
 
+def test_a_host_changed_to_non_loopback_is_warned_about_before_the_probe(monkeypatch):
+    """Seen to FAIL before the fix: the loopback reassurance printed once at
+    the top of the section, for the OLD (loopback) host; a newly typed remote
+    host reached ``_refine_models`` with no warning ever shown for it."""
+    console = _console("yes\nhttps://ollama.example.com:8443\n\n\n\n")
+    seen_before_probe: dict[str, str] = {}
+
+    def fake_refine_models(host):
+        seen_before_probe["stdout"] = console.stdout.getvalue()
+        return []
+
+    monkeypatch.setattr(setup, "_refine_models", fake_refine_models)
+
+    config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
+
+    assert config.refine.host == "https://ollama.example.com:8443"
+    assert "stdout" in seen_before_probe, "the probe never ran"
+    assert (
+        "WARNING: https://ollama.example.com:8443 is not loopback; "
+        "transcripts would leave this machine." in seen_before_probe["stdout"]
+    )
+
+
+def test_keeping_the_same_non_loopback_host_does_not_double_the_warning(monkeypatch):
+    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    defaults = Config.defaults()
+    remote_config = dataclasses.replace(
+        defaults,
+        refine=dataclasses.replace(defaults.refine, host="https://ollama.example.com:8443"),
+    )
+    console = _console("yes\n\n\n\n\n")  # Enter on the host prompt keeps it unchanged
+
+    config = setup._edit_refine_section(console, remote_config, ask_details=True)
+
+    assert config.refine.host == "https://ollama.example.com:8443"
+    stdout = console.stdout.getvalue()
+    assert stdout.count("WARNING: https://ollama.example.com:8443 is not loopback") == 1
+
+
+def test_moving_from_a_remote_host_to_loopback_gets_the_reassurance_too(monkeypatch):
+    """Seen to FAIL before the fix: the re-warn guard only fired for a
+    non-loopback destination, so undoing a remote host by typing a loopback
+    one left the stale remote WARNING (from the intro, describing the OLD
+    host) as the only host sentence in the section — exactly backwards for a
+    user who typed the safe value on purpose to stop transcripts leaving."""
+    console = _console("yes\nlocalhost:11434\n\n\n\n")
+    seen_before_probe: dict[str, str] = {}
+
+    def fake_refine_models(host):
+        seen_before_probe["stdout"] = console.stdout.getvalue()
+        return []
+
+    monkeypatch.setattr(setup, "_refine_models", fake_refine_models)
+    defaults = Config.defaults()
+    remote_config = dataclasses.replace(
+        defaults,
+        refine=dataclasses.replace(defaults.refine, host="https://ollama.example.com:8443"),
+    )
+
+    config = setup._edit_refine_section(console, remote_config, ask_details=True)
+
+    assert config.refine.host == "http://localhost:11434"
+    stdout = seen_before_probe["stdout"]
+    stale_warning = (
+        "WARNING: https://ollama.example.com:8443 is not loopback; "
+        "transcripts would leave this machine."
+    )
+    reassurance = "http://localhost:11434 is on this machine, so nothing leaves it."
+    assert stale_warning in stdout  # the intro's honest description of the OLD host
+    assert reassurance in stdout
+    # The stale warning must not be the last word: the reassurance for the
+    # host actually being saved has to come after it.
+    assert stdout.index(reassurance) > stdout.index(stale_warning)
+
+
+def test_the_quick_wizard_never_re_warns_about_a_host_it_never_asked_for(monkeypatch):
+    """``ask_details=False`` skips the host prompt entirely, so the change
+    that re-warns after it must be a complete no-op on this path."""
+    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    defaults = Config.defaults()
+    remote_config = dataclasses.replace(
+        defaults,
+        refine=dataclasses.replace(defaults.refine, host="https://ollama.example.com:8443"),
+    )
+    console = _console("yes\n\n")  # enabled, model (kept)
+
+    config = setup._edit_refine_section(console, remote_config, ask_details=False)
+
+    assert config.refine.host == "https://ollama.example.com:8443"
+    stdout = console.stdout.getvalue()
+    assert stdout.count("WARNING: https://ollama.example.com:8443 is not loopback") == 1
+
+
 @pytest.mark.parametrize(
     ("answer", "expected"),
     [("", "kept:tag"), ("2", "second:tag"), ("someone/custom:tag", "someone/custom:tag")],
@@ -1445,7 +1741,7 @@ def test_a_number_outside_the_listing_is_taken_as_a_typed_tag():
     assert setup.parse_model_choice("9", "kept:tag", ["only:tag"]) == "9"
 
 
-def test_the_refine_wizard_never_probes_ollama_while_the_stage_stays_off(monkeypatch):
+def test_turning_refine_off_never_probes_ollama(monkeypatch):
     def forbidden(host):
         raise AssertionError("a disabled stage must not reach the network")
 
@@ -1455,7 +1751,8 @@ def test_the_refine_wizard_never_probes_ollama_while_the_stage_stays_off(monkeyp
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
 
     assert config.refine.enabled is False
-    assert config.refine == Config.defaults().refine
+    # Everything besides `enabled` is untouched by declining the wizard.
+    assert config.refine == dataclasses.replace(Config.defaults().refine, enabled=False)
 
 
 def test_enabling_refine_lists_installed_models_and_takes_a_numbered_choice(monkeypatch):
@@ -1479,8 +1776,100 @@ def test_an_absent_ollama_still_lets_the_model_be_named_for_a_later_pull(monkeyp
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=False)
 
     assert config.refine.model == "some/other:tag"
-    assert "No Ollama server answered" in console.stdout.getvalue()
+    assert "No refine model is available" in console.stdout.getvalue()
     assert "model download --refine" in console.stdout.getvalue()
+
+
+def test_the_empty_listing_message_does_not_claim_the_server_never_answered(monkeypatch):
+    """``_refine_models`` returns ``[]`` both when nothing is listening at the
+    host and when a live Ollama simply has no models installed — the wizard
+    cannot tell those apart, and the message must not pretend it can. Seen to
+    FAIL before the fix: the old wording asserted unreachability outright,
+    which is false in the second case."""
+    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    console = _console("yes\nsome/other:tag\n")
+
+    setup._edit_refine_section(console, Config.defaults(), ask_details=False)
+
+    stdout = console.stdout.getvalue()
+    assert "No Ollama server answered" not in stdout
+    assert "No refine model is available" in stdout
+    assert "either nothing answered there, or none is installed" in stdout
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("", "kept"),
+        ("localhost:11434", "http://localhost:11434"),
+        ("http://127.0.0.1:11434/", "http://127.0.0.1:11434"),
+        ("HTTP://127.0.0.1:11434", "http://127.0.0.1:11434"),
+    ],
+)
+def test_refine_host_parser_normalizes_before_review(text, expected):
+    """The value the review screen shows must already be what re-parsing the
+    saved document would produce, or the round-trip save check refuses to
+    persist it. Seen to FAIL before the fix: ``localhost:11434`` came back
+    unchanged instead of normalized."""
+    assert setup.parse_refine_host(text, "kept") == expected
+
+
+def test_refine_host_parser_rejects_credentials_and_a_hostless_url():
+    with pytest.raises(ValueError, match="must not embed credentials"):
+        setup.parse_refine_host("http://user:pass@host:11434", "kept")
+    with pytest.raises(ValueError, match="must name a host"):
+        setup.parse_refine_host("http://", "kept")
+    with pytest.raises(ValueError, match="http:// or https://"):
+        setup.parse_refine_host("ftp://host", "kept")
+
+
+def test_refine_host_prompt_in_the_wizard_normalizes_before_the_review_screen(monkeypatch):
+    """Drives the real wizard prompt (not just the pure parser) to guard the
+    seam that used to store the raw text verbatim via ``_prompt_string``."""
+    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    console = _console("yes\nlocalhost:11434\n\n\n\n")
+
+    config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
+
+    assert config.refine.host == "http://localhost:11434"
+
+
+def test_refine_host_prompt_rejects_credentials_and_a_hostless_url_then_retries(monkeypatch):
+    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    console = _console("yes\nhttp://user:pass@evil:11434\nhttp://\nHTTP://127.0.0.1:11434\n\n\n\n")
+
+    config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
+
+    assert config.refine.host == "http://127.0.0.1:11434"
+    assert "must not embed credentials" in console.stderr.getvalue()
+    assert "must name a host" in console.stderr.getvalue()
+
+
+def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypatch):
+    """Ties the coverage to the actual failure mode (``ConfigDocument.render``'s
+    round-trip check) rather than to a hand-written expected string. A change
+    to ``normalize_host`` that still satisfied the string-equality tests above
+    but broke the real save would be caught here and nowhere else."""
+    from stenographer.lib.config.document import ConfigDocument
+
+    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    console = _console("yes\nlocalhost:11434\n\n\n\n")
+
+    config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
+
+    document = ConfigDocument.loads(default_toml())
+    document.render(config)  # must not raise ConfigPersistenceError
+
+
+def test_pressing_enter_on_the_refine_prompt_leaves_it_enabled_by_default(monkeypatch):
+    """Refine now defaults to on, so a blank answer must walk into the
+    host/model sub-flow rather than the old off-by-default behaviour."""
+    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    console = _console("\n\n\n\n\n")
+
+    config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
+
+    assert config.refine.enabled is True
 
 
 def test_the_model_hint_names_the_benchmarked_default_rather_than_a_literal():

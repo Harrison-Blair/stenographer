@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Drives the lifecycle pill replica through the daemon's real state order:
 // HIDDEN → RECORDING → TRANSCRIBING → REFINING → DELIVERING → CANCELLED → HIDDEN.
-// REFINING only appears for someone who turned the optional cleanup on. The first pass
+// REFINING appears on by default, unless you turned the cleanup pass off. The first pass
 // carries the cold-load ring on RECORDING, because model warmup starts on
 // the hotkey press and the loading edge layers over whatever state is showing.
 (function () {
@@ -19,7 +19,7 @@
     { s: "hidden", ms: 1400, cap: "idle · nothing on screen" },
     { s: "recording", ms: 3400, cap: "you hold the key · 18 bars follow your voice" },
     { s: "transcribing", ms: 1500, cap: "faster-whisper, on your machine" },
-    { s: "refining", ms: 1100, cap: "optional · a local model tidies what you said" },
+    { s: "refining", ms: 1100, cap: "on by default · a local model tidies what you said" },
     { s: "delivering", ms: 900, cap: "your clipboard, then Shift+Insert at your cursor" },
     { s: "cancelled", ms: 1200, cap: "Escape · nothing was pasted" }
   ];

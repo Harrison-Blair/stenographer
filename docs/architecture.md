@@ -15,7 +15,7 @@ their existing paths in `assets/`.
 - `audio/`, `hotkey/`, and `transcribe/`: recording and measurements, binding
   vocabulary, session/cancel chord tracking, ASR workers, formatting, and
   utterance records.
-- `refine/`: the optional local-model cleanup stage between formatting and
+- `refine/`: the local-model cleanup stage between formatting and
   delivery — pure request building, response parsing and the output guard, the
   Ollama client, and the refiner behind a protocol whose null implementation is
   what a disabled stage gets. It is the one domain that makes a network call

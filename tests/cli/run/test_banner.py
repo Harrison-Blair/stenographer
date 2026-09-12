@@ -215,7 +215,8 @@ def test_an_enabled_non_loopback_refine_host_is_warned_about_at_every_start(capl
 def test_a_disabled_stage_on_a_remote_host_is_reported_but_not_warned_about(caplog):
     defaults = Config.defaults()
     cfg = dataclasses.replace(
-        defaults, refine=dataclasses.replace(defaults.refine, host="http://192.168.1.5:11434")
+        defaults,
+        refine=dataclasses.replace(defaults.refine, enabled=False, host="http://192.168.1.5:11434"),
     )
 
     lines = _banner(caplog, cfg, _capabilities())

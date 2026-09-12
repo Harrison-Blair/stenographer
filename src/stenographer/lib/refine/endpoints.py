@@ -77,6 +77,24 @@ def is_loopback(host: str) -> bool:
     return len(parts) == 4 and parts[0] == "127" and all(part.isdecimal() for part in parts)
 
 
+def qualify_tag(model: str) -> str:
+    """*model* with an explicit tag, defaulting a bare name to ``:latest``. PURE.
+
+    Ollama always reports installed and running models fully qualified
+    (``gemma4:latest``), but a config value or CLI argument commonly names
+    only the model (``gemma4``) — exactly what ``ollama pull gemma4`` itself
+    resolves to. Comparing the two as written never matches; qualifying the
+    bare name first is what makes ``"gemma4"`` behave the way Ollama does.
+
+    Only a colon after the last ``/`` is a tag separator: a custom registry
+    name such as ``localhost:5000/gemma4`` carries a port, not a tag, and
+    must still be qualified to ``localhost:5000/gemma4:latest``.
+    """
+
+    _, _, last = model.rpartition("/")
+    return model if ":" in last else f"{model}:latest"
+
+
 def chat_url(host: str) -> str:
     """The native chat endpoint, which the refine request posts to."""
 

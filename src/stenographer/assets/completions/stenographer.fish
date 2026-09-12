@@ -15,6 +15,11 @@ function __stenographer_nested_command_needed
     test (count $tokens) -eq 2; and test "$tokens[2]" = "$argv[1]"
 end
 
+function __stenographer_nested_command_is
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 3; and test "$tokens[2]" = "$argv[1]"; and test "$tokens[3]" = "$argv[2]"
+end
+
 function __stenographer_transcribe_file_needed
     set -l tokens (commandline -opc)
     test (count $tokens) -ge 2; or return 1
@@ -70,9 +75,9 @@ complete -c stenographer -n '__stenographer_command_is sounds' -f \
 
 complete -c stenographer -n '__stenographer_nested_command_needed model' -f -a download \
     -d 'Download the ASR or refine model'
-complete -c stenographer -n '__stenographer_command_is model' -f -l asr \
+complete -c stenographer -n '__stenographer_nested_command_is model download' -f -l asr \
     -d 'Download only the speech-recognition model'
-complete -c stenographer -n '__stenographer_command_is model' -f -l refine \
+complete -c stenographer -n '__stenographer_nested_command_is model download' -f -l refine \
     -d 'Pull only the refine model'
 
 complete -c stenographer -n '__stenographer_nested_command_needed completion' -f \

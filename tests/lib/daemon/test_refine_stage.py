@@ -9,9 +9,18 @@ an optional stage, not a mock's.
 
 from __future__ import annotations
 
+import threading
+import time
+
 from stenographer.lib.analytics.metrics import METRICS, PHASES, clean_metrics
 from stenographer.lib.contracts.overlay_state import OverlayState
-from stenographer.lib.refine.results import OUTCOME_FAILED, RefineResult
+from stenographer.lib.refine.cancellation import never_cancelled
+from stenographer.lib.refine.results import (
+    OUTCOME_APPLIED,
+    OUTCOME_CANCELLED,
+    OUTCOME_FAILED,
+    RefineResult,
+)
 from stenographer.lib.transcribe.pipeline import analytics_metrics
 from stenographer.lib.transcribe.results import TranscriptionResult
 
@@ -27,8 +36,56 @@ CLEANED = "I think we should ship it on Friday. "
 FORMATTED = "Um I think we should ship it on thursday no wait friday "
 
 
+#: A stand-in for the worst case a real refiner can impose on the pipeline:
+#: ``COLD_LOAD_TIMEOUT_SECONDS`` plus a probe plus the reply budget, which is
+#: a little over two minutes. Scaled down to something a test may really wait
+#: out, so that waiting it out is visible rather than fatal.
+_MODEL_BUDGET = 2.0
+#: Everything here should happen in milliseconds; this only bounds a hang.
+_DEADLINE = 10.0
+
+
 def _raise(*args, **kwargs):
     raise RuntimeError("a refiner that broke its contract")
+
+
+class _SlowRefiner:
+    """A refiner that takes a model's worth of time and can be told to stop.
+
+    Honours the same contract the shipping one does, including the optional
+    ``cancelled`` predicate: it polls between the steps it would otherwise be
+    blocked in, exactly as ``OllamaRefiner`` checks between its requests.
+    """
+
+    def __init__(self, *, budget: float = _MODEL_BUDGET) -> None:
+        self._budget = budget
+        self._last_result: RefineResult | None = None
+        self.started = threading.Event()
+        self.observed_cancel = False
+        self.elapsed: float | None = None
+
+    @property
+    def last_result(self) -> RefineResult | None:
+        return self._last_result
+
+    def will_refine(self, text: str) -> bool:
+        return True
+
+    def refine(self, text: str, *, cancelled=never_cancelled) -> str:
+        self.started.set()
+        started_at = time.perf_counter()
+        while time.perf_counter() - started_at < self._budget:
+            if cancelled():
+                self.observed_cancel = True
+                break
+            time.sleep(0.005)
+        self.elapsed = time.perf_counter() - started_at
+        self._last_result = RefineResult(
+            OUTCOME_CANCELLED if self.observed_cancel else OUTCOME_APPLIED,
+            chars_in=len(text),
+            duration_ms=self.elapsed * 1000,
+        )
+        return text
 
 
 def _result(text: str) -> TranscriptionResult:
@@ -138,6 +195,35 @@ def test_cancelling_during_a_refine_drops_the_utterance_without_pasting():
         daemon.stop()
 
     assert refiner.calls != []
+    assert daemon._deliverer.delivered == []
+    assert OverlayState.CANCELLED in status.states
+
+
+def test_cancelling_a_refine_releases_the_pipeline_without_waiting_out_the_budget():
+    """Cancel is the user saying "stop, give me my hotkey back". The overlay
+    already said CANCELLED, but the daemon stays busy until the pipeline thread
+    returns, and a refine can hold it for the cold-load budget plus the reply
+    budget — up to about two minutes, during which every press is counted as
+    an ignored busy press. The stage has to be told, not just outlived. Seen to
+    FAIL against a ``_refine`` that never handed the refiner a cancel
+    predicate: ``observed_cancel`` was False and the pipeline waited out the
+    whole budget."""
+    refiner = _SlowRefiner()
+    daemon, status = _daemon_with_status(result=_result(LONG), refiner=refiner)
+    daemon.on_key_down()
+    daemon.on_key_up()
+    assert refiner.started.wait(timeout=_DEADLINE)
+
+    daemon.on_cancel()
+    thread = daemon._pipeline_thread
+    assert thread is not None
+    thread.join(timeout=_DEADLINE)
+    daemon.stop()
+
+    assert not thread.is_alive()
+    assert refiner.observed_cancel is True
+    assert refiner.elapsed is not None and refiner.elapsed < _MODEL_BUDGET / 2
+    assert daemon._busy is False
     assert daemon._deliverer.delivered == []
     assert OverlayState.CANCELLED in status.states
 

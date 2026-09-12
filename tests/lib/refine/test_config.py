@@ -14,10 +14,10 @@ from stenographer.lib.config.models import Config, RefineConfig
 from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUTPUT
 
 
-def test_the_stage_ships_off_and_loopback():
+def test_the_stage_ships_on_and_loopback():
     section = Config.defaults().refine
 
-    assert section.enabled is False
+    assert section.enabled is True
     assert section.host == "http://127.0.0.1:11434"
     assert section.model == DEFAULT_MODEL
     assert section.min_words == 10
@@ -26,7 +26,8 @@ def test_the_stage_ships_off_and_loopback():
 
 def test_a_config_written_before_refine_existed_loads_without_migration():
     """Every key defaults, so an existing file keeps working untouched and the
-    stage stays off for a user who never asked for it."""
+    stage turns on for a user who never configured it, same as any other
+    default that changes between releases."""
     cfg = Config.loads('[stenographer.asr]\nmodel = "local/model"\n')
 
     assert cfg.refine == RefineConfig()
@@ -70,7 +71,7 @@ def test_a_scalar_refine_section_is_a_scoped_error():
     assert failure.value.key == "refine"
 
 
-def test_the_annotated_template_ships_the_section_off():
+def test_the_annotated_template_ships_the_section_on():
     from stenographer.lib.config.defaults import default_toml
 
     rendered = default_toml()

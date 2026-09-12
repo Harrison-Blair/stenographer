@@ -56,9 +56,9 @@ class FeedbackConfig:
 
 @dataclass(frozen=True)
 class RefineConfig:
-    """The optional local-model cleanup pass. Off, and loopback, by default."""
+    """The local-model cleanup pass. On by default, loopback by default."""
 
-    enabled: bool = False
+    enabled: bool = True
     host: str = "http://127.0.0.1:11434"
     model: str = DEFAULT_MODEL
     min_words: int = 10

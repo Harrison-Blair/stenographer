@@ -5,7 +5,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from stenographer.lib.refine.cancellation import never_cancelled
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from stenographer.lib.refine.results import RefineResult
 
 
@@ -16,6 +20,12 @@ class NullRefiner:
     than a ``None`` check at the one place that would otherwise have to
     remember it. ``last_result`` stays ``None`` so a disabled daemon records no
     refine measurements at all, rather than a run of zeroes.
+
+    It accepts ``cancelled`` to honour the protocol and never asks it: nothing
+    here can be interrupted because nothing here takes any time. It
+    deliberately has neither ``warm`` nor ``unload`` — ``Daemon`` probes for
+    those with ``getattr`` and reads their absence as "no model to hold or
+    release" — so the cancellation contract stops at ``refine``.
     """
 
     @property
@@ -25,5 +35,5 @@ class NullRefiner:
     def will_refine(self, text: str) -> bool:
         return False
 
-    def refine(self, text: str) -> str:
+    def refine(self, text: str, *, cancelled: Callable[[], bool] = never_cancelled) -> str:
         return text

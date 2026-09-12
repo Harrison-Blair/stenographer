@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import io
 
 import pytest
 
@@ -15,7 +16,15 @@ from stenographer.cli.model.download.handler import (
     selection,
     size_phrase,
 )
+from stenographer.cli.shared.console import Console
 from stenographer.lib.config.models import Config
+
+
+class _Terminal(io.StringIO):
+    """A stream that claims to be a terminal, so ``console.interactive`` is True."""
+
+    def isatty(self) -> bool:
+        return True
 
 
 def test_download_fetches_the_configured_model_and_names_it(monkeypatch, capsys):
@@ -52,8 +61,19 @@ def test_a_failed_download_is_not_reported_as_a_success(monkeypatch, capsys):
 def test_neither_flag_without_a_terminal_keeps_the_historical_asr_only_behavior():
     """An existing script that ran `stenographer model download` must not
     silently start a second multi-gigabyte pull it never asked for."""
-    assert selection(argparse.Namespace(), interactive=False) == (True, False)
-    assert selection(argparse.Namespace(asr=False, refine=False), interactive=True) == (True, True)
+    assert selection(argparse.Namespace(), interactive=False, refine_enabled=True) == (True, False)
+    assert selection(
+        argparse.Namespace(asr=False, refine=False), interactive=True, refine_enabled=True
+    ) == (True, True)
+
+
+def test_an_explicit_opt_out_of_refine_suppresses_the_combined_offer():
+    """`refine.enabled = false` must be respected even on a TTY: the combined
+    offer only appears for someone who has not turned refine off."""
+    assert selection(argparse.Namespace(), interactive=True, refine_enabled=False) == (True, False)
+    assert selection(
+        argparse.Namespace(asr=False, refine=False), interactive=True, refine_enabled=False
+    ) == (True, False)
 
 
 @pytest.mark.parametrize(
@@ -63,20 +83,28 @@ def test_neither_flag_without_a_terminal_keeps_the_historical_asr_only_behavior(
 def test_an_explicit_flag_selects_only_what_it_names(asr, refine, expected):
     args = argparse.Namespace(asr=asr, refine=refine)
 
-    assert selection(args, interactive=True) == expected
-    assert selection(args, interactive=False) == expected
+    assert selection(args, interactive=True, refine_enabled=True) == expected
+    assert selection(args, interactive=False, refine_enabled=True) == expected
+
+
+def test_an_explicit_refine_flag_forces_the_pull_even_when_refine_is_disabled():
+    """`--refine` is a deliberate opt-in and must override `refine.enabled`."""
+    args = argparse.Namespace(asr=False, refine=True)
+
+    assert selection(args, interactive=True, refine_enabled=False) == (False, True)
+    assert selection(args, interactive=False, refine_enabled=False) == (False, True)
 
 
 def test_an_installed_model_is_reported_at_its_real_size_not_the_table():
-    assert size_phrase("m", 3_389_983_735, 9.9) == "already installed, 3.4 GB"
+    assert size_phrase(3_389_983_735, 9.9) == "already installed, 3.4 GB"
 
 
 def test_a_known_model_is_sized_from_the_table_before_it_exists_locally():
-    assert size_phrase("m", None, 3.4) == "about 3.4 GB"
+    assert size_phrase(None, 3.4) == "about 3.4 GB"
 
 
 def test_an_unknown_model_is_never_guessed_at():
-    assert size_phrase("someone/custom:tag", None, None) == "size unknown"
+    assert size_phrase(None, None) == "size unknown"
 
 
 def _plan_cfg():
@@ -107,7 +135,7 @@ def test_a_refine_model_ollama_already_has_is_not_announced_as_a_download():
         _plan_cfg(),
         asr=False,
         refine=True,
-        refine_size=size_phrase("some:tag", 3_400_000_000, None),
+        refine_size=size_phrase(3_400_000_000, None),
     )
 
     assert lines == [
@@ -135,6 +163,31 @@ def test_a_refine_pull_that_ollama_refuses_is_not_reported_as_a_success(monkeypa
     captured = capsys.readouterr()
     assert "could not pull" in captured.err
     assert captured.out == ""
+
+
+def test_a_stray_enter_declines_the_combined_offer_instead_of_starting_it(monkeypatch):
+    """A user refreshing only the ASR model who presses Enter without reading
+    the prompt must not start an unwanted multi-gigabyte refine pull: the
+    confirmation now defaults to declining, not accepting."""
+    from stenographer.cli.shared import terminal
+    from stenographer.lib.refine import client
+    from stenographer.lib.transcribe import download
+
+    asr_calls: list[str] = []
+    refine_calls: list[str] = []
+    monkeypatch.setattr(download, "download_model", asr_calls.append)
+    monkeypatch.setattr(client, "pull_model", lambda host, model, **kw: refine_calls.append(model))
+    monkeypatch.setattr(client, "installed_model_bytes", lambda host, model: None)
+
+    console = Console(_Terminal("\n"), _Terminal(), io.StringIO())
+    monkeypatch.setattr(terminal, "open_console", lambda *_: console)
+
+    result = cmd_model_download.__wrapped__(argparse.Namespace(), Config.defaults())
+
+    assert result == 0
+    assert asr_calls == []
+    assert refine_calls == []
+    assert "Nothing was downloaded." in console.stdout.getvalue()
 
 
 def test_declining_the_combined_offer_names_the_flag_for_fetching_only_one():

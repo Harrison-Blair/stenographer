@@ -19,7 +19,7 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
   `lib/utils/errors.py`. Split by responsibility and navigability, with no
   size limit. Keep resources in `assets/`.
 - Dictation stays offline; model downloads are explicit. The daemon's only
-  network calls: the metadata-only update notice and the optional,
+  network calls: the metadata-only update notice and the
   loopback-by-default refine request (docs/refine.md).
   Never put transcript text or audio in logs or history.
 - Preserve configuration compatibility and use the existing preservation

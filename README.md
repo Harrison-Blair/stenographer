@@ -148,14 +148,15 @@ systemctl --user restart stenographer.service
 
 The model download is explicit and dictation runs locally. Audio, transcripts,
 configuration, and device or model names stay on your machine. Logs never
-contain transcript text or audio. The only network request is an optional,
-metadata-only release check; disable it in `[stenographer.feedback]` with
-`update_check = false`.
+contain transcript text or audio. The only network request that leaves your
+machine is an optional, metadata-only release check; disable it in
+`[stenographer.feedback]` with `update_check = false`.
 
-Optionally, an off-by-default [refine](docs/refine.md) pass cleans filler words
-and self-corrections out of each transcript through a local Ollama model
+A [refine](docs/refine.md) pass, on by default, cleans filler words and
+self-corrections out of each transcript through a local Ollama model
 (`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
-machine.
+machine. Turn it off or point it elsewhere in `[stenographer.refine]`; a
+non-loopback host sends transcripts there over the network.
 
 Read the [user guide](docs/usage.md) for privacy settings and more examples.
 

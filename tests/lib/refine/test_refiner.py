@@ -251,7 +251,7 @@ def test_the_factory_carries_the_asr_idle_window_into_keep_alive():
 
 def test_an_explicit_opt_in_does_not_need_the_daemon_setting():
     """``transcribe --refine`` must work against a config with the stage off."""
-    section = Config.defaults().refine
+    section = dataclasses.replace(Config.defaults().refine, enabled=False)
 
     assert section.enabled is False
     assert isinstance(build_refiner(section, idle_unload_seconds=900), NullRefiner)

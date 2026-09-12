@@ -13,6 +13,7 @@ from stenographer.lib.refine.endpoints import (
     normalize_host,
     ps_url,
     pull_url,
+    qualify_tag,
     tags_url,
 )
 from stenographer.lib.refine.policy import (
@@ -147,3 +148,48 @@ def test_a_host_with_no_authority_normalizes_to_something_with_no_name(host):
     """``http://`` names no server. Seen to FAIL against a normalizer that
     turned it into ``http://http:`` by re-prefixing its own scheme."""
     assert host_name(normalize_host(host)) == ""
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "127.0.0.1:11434",  # scheme-less, from test_host_is_normalized_rather_than_rejected
+        "http://127.0.0.1:11434/",  # trailing slash, same test
+        "http://127.0.0.1:11434//",  # more than one trailing slash
+        "HTTP://127.0.0.1:11434",  # upper-case scheme, from test_an_upper_case_scheme_...
+        "HTTP://127.0.0.1:11434/",  # upper-case scheme plus a trailing slash together
+        "http://[::1]:11434",  # IPv6 literal, from test_host_name_drops_the_port_...
+        "https://user:pw@ollama.example.com:443/x",  # host with a path, same test
+        "  http://127.0.0.1:11434  ",  # surrounding whitespace, from test_host_is_normalized_...
+    ],
+)
+def test_normalize_host_is_idempotent(host):
+    """The setup wizard now normalizes the host it prompts for so its saved
+    value round-trips against what the config layer normalizes again on
+    load (see cli/setup); that equality holds only if normalizing an
+    already-normalized host is a no-op. Every shape this module treats
+    specially -- a bare host, a trailing slash, an upper-case scheme, an
+    IPv6 literal, a host with a path -- must settle to a fixed point on the
+    first pass, not keep changing on a second."""
+    once = normalize_host(host)
+    assert normalize_host(once) == once
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("gemma4", "gemma4:latest"),
+        ("gemma4:e2b", "gemma4:e2b"),
+        ("gemma4:latest", "gemma4:latest"),
+        # A colon before the model's registry path is a port, not a tag: it
+        # must not be mistaken for one and left unqualified.
+        ("localhost:5000/gemma4", "localhost:5000/gemma4:latest"),
+        ("localhost:5000/gemma4:e2b", "localhost:5000/gemma4:e2b"),
+    ],
+)
+def test_qualify_tag_only_treats_a_colon_after_the_last_slash_as_a_tag(model, expected):
+    """Seen to FAIL for the registry-port cases against a qualifier that
+    checks ``":" in model`` over the whole string: a custom registry name
+    such as ``localhost:5000/gemma4`` would then be left bare forever,
+    reproducing the exact never-matches bug fix 2 set out to remove."""
+    assert qualify_tag(model) == expected

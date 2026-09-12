@@ -27,3 +27,13 @@ class RefineResponseError(RefineError):
 
 class RefineRejectedError(RefineError):
     """The reply parsed, but the output guard refused it."""
+
+
+class RefineCancelledError(RefineError):
+    """The utterance was withdrawn, or the stage shut down, mid-attempt.
+
+    Not a failure of the model or the host: nobody is waiting for this reply
+    any more. Carried as an exception so the one fail-open handler in the
+    refiner classifies it beside every other reason an attempt produced no
+    usable text, rather than growing a second exit path of its own.
+    """

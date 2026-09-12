@@ -37,7 +37,7 @@ def test_quick_wizard_asks_only_the_essentials_and_returns_them(device_menus, tm
         "1\n"  # audio input device
         "0.8\n\n\n\nlegacy\n"  # feedback: volume, mute, overlay, updates, pack
         "keep\n"  # spectrum response
-        "\n"  # refine: stay disabled
+        "no\n"  # refine: turn off
         "\n"  # review: save
     )
 
@@ -74,7 +74,7 @@ def test_quick_wizard_skips_calibration_when_the_overlay_is_turned_off(device_me
         "\nkeep\n\n"  # hotkey device, binding, mode
         "\n"  # audio input device
         "\n\nno\n\n\n"  # feedback, overlay disabled
-        "\n"  # refine: stay disabled
+        "no\n"  # refine: turn off
         "\n"  # review: save
     )
 
@@ -92,14 +92,14 @@ def test_quick_wizard_skips_calibration_when_the_overlay_is_turned_off(device_me
 
 
 def test_quick_wizard_cancel_raises_so_nothing_is_saved(device_menus, tmp_path):
-    console = _console("\nkeep\n\n\n\n\n\n\n\nkeep\n\nc\n")
+    console = _console("\nkeep\n\n\n\n\n\n\n\nkeep\nno\nc\n")
 
     with pytest.raises(SetupCancelledError):
         quick_setup._quick_wizard(console, Config.defaults(), tmp_path, new_config=False)
 
 
 def test_a_new_configuration_offers_binding_capture_first(device_menus, tmp_path):
-    console = _console("\nkeep\n\n\n\n\n\n\n\nkeep\n\n\n")
+    console = _console("\nkeep\n\n\n\n\n\n\n\nkeep\nno\n\n")
 
     quick_setup._quick_wizard(console, Config.defaults(), tmp_path, new_config=True)
 

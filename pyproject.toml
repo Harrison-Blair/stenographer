@@ -204,6 +204,11 @@ select = ["E", "F", "I", "B", "UP", "N", "SIM", "RUF"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+# An exception that escapes a worker thread otherwise only warns, and the test
+# that started the thread still passes. The daemon does its refine warm-up on
+# one (`_start_refine_warmup`), so the network guard in `tests/conftest.py`
+# fires there into silence unless the warning is fatal.
+filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]
 markers = [
     "integration: opt-in tests that touch the user's environment (clipboard, real audio). Set STENOGRAPHER_INTEGRATION=1 to run.",
 ]

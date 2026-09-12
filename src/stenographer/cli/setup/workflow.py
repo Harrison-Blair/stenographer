@@ -30,6 +30,7 @@ from stenographer.cli.shared.terminal import (
 from stenographer.lib.config.constants import (
     ALLOWED_COMPUTE_TYPES,
     ALLOWED_LOG_LEVELS,
+    ALLOWED_REFINE_SCHEMES,
     MAX_REFINE_WORDS,
     MIN_REFINE_WORDS,
 )
@@ -207,21 +208,31 @@ def quick_review_lines(config: Config) -> list[str]:
     return lines
 
 
-def refine_intro_lines(host: str, *, loopback: bool) -> list[str]:
-    """Explain the optional cleanup pass, and say where the text would go. PURE."""
+def refine_host_line(host: str, *, loopback: bool) -> str:
+    """The one line saying whether a transcript sent to *host* stays here. PURE.
 
-    lines = [
-        "\nRefine (optional)",
+    The single source of truth for that wording: :func:`refine_intro_lines`
+    uses it to describe the host the section opened with, and the wizard
+    re-emits it for a host the user just typed, so the two callers can never
+    drift into two different warning sentences.
+    """
+
+    if loopback:
+        return f"{host} is on this machine, so nothing leaves it."
+    return f"WARNING: {host} is not loopback; transcripts would leave this machine."
+
+
+def refine_intro_lines(host: str, *, loopback: bool) -> list[str]:
+    """Explain the cleanup pass, and say where the text would go. PURE."""
+
+    return [
+        "\nRefine",
         "An extra pass sends each finished transcript to a local Ollama model, "
         "which removes filler words, resolves self-corrections, and fixes "
         "punctuation. It never summarizes and never answers what you said, and "
         "model reasoning is always disabled.",
+        refine_host_line(host, loopback=loopback),
     ]
-    if loopback:
-        lines.append(f"{host} is on this machine, so nothing leaves it.")
-    else:
-        lines.append(f"WARNING: {host} is not loopback; transcripts would leave this machine.")
-    return lines
 
 
 def refine_model_hint() -> str:
@@ -240,6 +251,32 @@ def refine_model_hint() -> str:
         f"Verified: {DEFAULT_MODEL} (the default, plain text), or qwen3.5:4b with "
         "structured_output = true. Any other installed model is allowed but unverified."
     )
+
+
+def parse_refine_host(text: str, current: str) -> str:
+    """Normalize and validate an Ollama host the way saving will. PURE.
+
+    The reviewed value must already be what re-parsing the saved document
+    produces, or the config layer's round-trip check refuses to persist it —
+    so normalization and rejection both happen here, at entry, rather than
+    letting a raw ``localhost:11434`` reach the review screen only to blow up
+    the whole session at save time. The rejections mirror ``_build_refine``.
+    """
+
+    from stenographer.lib.refine.endpoints import host_name, normalize_host, userinfo
+
+    value = text.strip()
+    if not value:
+        return current
+    host = normalize_host(value)
+    scheme = host.partition("://")[0]
+    if scheme not in ALLOWED_REFINE_SCHEMES:
+        raise ValueError("must be an http:// or https:// URL")
+    if not host_name(host):
+        raise ValueError("must name a host")
+    if userinfo(host):
+        raise ValueError("must not embed credentials")
+    return host
 
 
 def parse_model_choice(text: str, current: str, choices: Sequence[str]) -> str:
@@ -406,9 +443,24 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
     if not refine.enabled:
         return dataclasses.replace(config, refine=refine)
     if ask_details:
+        previous_host = refine.host
         refine = dataclasses.replace(
-            refine, host=_prompt_string(console, "Ollama host", refine.host)
+            refine,
+            host=str(
+                console.validated(
+                    f"Ollama host [{refine.host}]: ",
+                    lambda text: parse_refine_host(text, refine.host),
+                )
+            ),
         )
+        # Only when the accepted host actually changed: an unchanged host was
+        # already described (warned or reassured) by the intro above, and
+        # repeating that line for the same host would just be noise. A host
+        # that did change gets the line for its own value, loopback or not —
+        # otherwise moving away from a remote host leaves that host's stale
+        # warning as the only sentence on screen for the whole section.
+        if refine.host != previous_host:
+            console.write(refine_host_line(refine.host, loopback=is_loopback(refine.host)))
     installed = _refine_models(refine.host)
     console.write(refine_model_hint())
     if installed:
@@ -417,7 +469,8 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
             console.write(f"  {number}. {name}")
     else:
         console.write(
-            f"No Ollama server answered at {refine.host}. The model can still be named "
+            f"No refine model is available at {refine.host} yet (either nothing "
+            "answered there, or none is installed). The model can still be named "
             "now and pulled later with `stenographer model download --refine`."
         )
     refine = dataclasses.replace(
@@ -928,17 +981,22 @@ def _offer_refine_pull(console: Console, config: Config, *, quick: bool) -> bool
     """
 
     from stenographer.lib.refine.client import installed_model_names, pull_model
+    from stenographer.lib.refine.endpoints import qualify_tag
     from stenographer.lib.refine.errors import RefineError
     from stenographer.lib.refine.prompt import APPROXIMATE_MODEL_SIZES_GB
 
     installed = installed_model_names(config.refine.host)
     if not installed:
         console.write(
-            f"\nNo Ollama server answered at {config.refine.host}; refinement will be "
-            "skipped until one does. Dictation is unaffected."
+            f"\nNo refine model is available at {config.refine.host} yet (either nothing "
+            "answered there, or none is installed); refinement will be skipped until "
+            "that changes. Dictation is unaffected."
         )
         return False
-    if config.refine.model in installed:
+    # Qualified against the one listing already fetched, rather than a second
+    # probe of the same listing: identical result at half the network cost,
+    # and immune to the two listings disagreeing between fetches.
+    if qualify_tag(config.refine.model) in {qualify_tag(name) for name in installed}:
         return False
     size = APPROXIMATE_MODEL_SIZES_GB.get(config.refine.model)
     cost = f"approximately {size:.1f} GB" if size is not None else "of unknown size"

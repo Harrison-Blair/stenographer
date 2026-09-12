@@ -218,13 +218,20 @@ class UtterancePipeline:
 
         A refusal below the word threshold never shows the pill and never
         records a phase, because from the user's side nothing happened.
+
+        The stage is also the longest one an utterance can sit in — a cold
+        model load plus a reply is a two-minute worst case — so the cancel
+        predicate goes in with the text. Cancelling is what gives the hotkey
+        back: the overlay says CANCELLED at once, but the daemon stays busy
+        until this returns, and every press until then is counted as an
+        ignored busy press rather than starting a new utterance.
         """
         accepted = text
         try:
             if not self._refiner.will_refine(text):
                 return text
             self._publish_state(OverlayState.REFINING)
-            refined = self._refiner.refine(text)
+            refined = self._refiner.refine(text, cancelled=self._cancelled)
             # A refiner that broke its contract and returned nothing must not
             # cost the utterance; the formatted transcript stays deliverable.
             accepted = refined if refined.strip() else text

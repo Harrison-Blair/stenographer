@@ -59,7 +59,7 @@
     <section class="states" id="states" aria-label="What the pill is telling you">
       <div class="st" data-for="recording"><i class="sw rec"></i><b>Recording</b><p>You are holding or have latched the hotkey. 18 bars follow your microphone.</p></div>
       <div class="st" data-for="transcribing"><i class="sw asr"></i><b>Transcribing</b><p>faster-whisper is turning your speech into English text, on your machine.</p></div>
-      <div class="st" data-for="refining"><i class="sw refine"></i><b>Refining</b><p>Optional, and off until you ask for it. A model on your machine tidies the filler out of what you said.</p></div>
+      <div class="st" data-for="refining"><i class="sw refine"></i><b>Refining</b><p>On by default. A model on your own machine tidies the filler out of what you said.</p></div>
       <div class="st" data-for="delivering"><i class="sw deliver"></i><b>Delivering</b><p>Your clipboard has the text. A paste chord is landing at your cursor.</p></div>
       <div class="st" data-for="loading"><i class="sw load"></i><b>Loading</b><p>An amber border breathes while your model warms up, over whatever else is showing.</p></div>
       <div class="st" data-for="cancelled"><i class="sw cancel"></i><b>Cancelled</b><p>You pressed Escape. The audio and transcript are discarded; nothing is pasted.</p></div>
@@ -72,7 +72,7 @@
         <li><b>Your hotkey</b><span>Right Ctrl by default. Tap it to latch, or hold it, speak, and release. Press Escape any time before delivery to cancel without pasting. If you prefer plain hold or toggle, each is one setting away.</span></li>
         <li><b>Your microphone</b><span>Captured through PortAudio, with a quiet-audio gate so an accidental press does not paste noise into your work.</span></li>
         <li><b>Local transcription</b><span>faster-whisper runs on your CPU or GPU. You download the model once, and only when you ask for it.</span></li>
-        <li><b>Optional cleanup</b><span>If you turn it on, your transcript goes to a model running on your own machine through Ollama — <code>gemma4:e2b</code> unless you pick another — which drops the "um"s, resolves the sentences you restarted, and fixes your punctuation. It never summarizes and never answers you, and if it is slow or missing you simply get your transcript as it was.</span></li>
+        <li><b>Local cleanup</b><span>On by default, your transcript goes to a model running on your own machine through Ollama — <code>gemma4:e2b</code> unless you pick another — which drops the "um"s, resolves the sentences you restarted, and fixes your punctuation. It never summarizes and never answers you, and if it is slow or missing you simply get your transcript as it was. Turn it off in your config if you would rather skip it.</span></li>
         <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key.</span></li>
         <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. It stays on your clipboard too.</span></li>
       </ol>
@@ -92,7 +92,7 @@
           <p>At most once every 24 hours, stenographer asks GitHub for the latest release tag. Metadata only, never a download, and silent if it fails. You get a desktop notification when a newer version exists. If you would rather it never asked, turn it off in your config:</p>
           <pre><code>[stenographer.feedback]
 update_check = false</code></pre>
-          <p>The optional cleanup pass is the other one, and it is off until you enable it. Its default host is <code>127.0.0.1</code>, so your transcript goes to a model on your own machine and no further. Point it somewhere else and your transcripts travel there — your config says so, and so does every daemon start.</p>
+          <p>The cleanup pass is the other one, and it runs by default. Its default host is <code>127.0.0.1</code>, so your transcript goes to a model on your own machine and no further. Point it somewhere else and your transcripts travel there — your config says so, and so does every daemon start. Turn it off in your config if you would rather skip it.</p>
         </div>
       </div>
     </section>

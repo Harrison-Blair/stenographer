@@ -131,23 +131,23 @@ names do not leave the machine. Logs contain timings and counts, never audio or
 transcript text. The lifecycle pill does not receive raw audio or transcript
 text.
 
-The daemon's only network access is an optional metadata-only request for the
-latest GitHub release tag, at most once every 24 hours. It never downloads a
-model or release. Disable the check with:
+By default the only network access that leaves the machine is an optional
+metadata-only request for the latest GitHub release tag, at most once every
+24 hours. It never downloads a model or release. Disable the check with:
 
 ```toml
 [stenographer.feedback]
 update_check = false
 ```
 
-The optional [refine](refine.md) stage is the one setting that sends transcript
-text anywhere. It is off by default, and its default host is loopback, so the
-text stays on the machine; pointing `[stenographer.refine] host` at another
-machine sends transcripts to it over the network.
+The [refine](refine.md) stage is the one setting that sends transcript text
+anywhere. It is on by default, and its default host is loopback, so the text
+stays on the machine; pointing `[stenographer.refine] host` at another machine
+sends transcripts to it over the network.
 
-Enabling it cleans filler words and self-corrections out of each transcript
-through a local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB
-download; `qwen3.5:4b` is the documented alternative and needs
+It cleans filler words and self-corrections out of each transcript through a
+local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
+`qwen3.5:4b` is the documented alternative and needs
 `structured_output = true`. Model reasoning is always disabled. See
 [docs/refine.md](refine.md) for the whole feature.
 

@@ -22,9 +22,17 @@ OUTCOME_TIMEOUT = "timeout"
 OUTCOME_FAILED = "failed"
 #: A well-formed reply the output guard refused, truncation included.
 OUTCOME_REJECTED = "rejected"
+#: The utterance was cancelled, or the stage shut down, before a reply could be
+#: used. Nothing was wrong with the model or the host.
+OUTCOME_CANCELLED = "cancelled"
 
 #: Outcomes that mean a request was actually sent and did not succeed.
 FAILURE_OUTCOMES = frozenset({OUTCOME_TIMEOUT, OUTCOME_FAILED, OUTCOME_REJECTED})
+
+#: Outcomes that charge no attempt to the model: below the word threshold, or
+#: withdrawn before any reply mattered. An analytics run that counted either as
+#: an attempt would report a refine rate the user never asked for.
+NON_ATTEMPT_OUTCOMES = frozenset({OUTCOME_SKIPPED, OUTCOME_CANCELLED})
 
 
 @dataclass(frozen=True)
@@ -46,7 +54,7 @@ class RefineResult:
     def attempted(self) -> bool:
         """Whether a request was actually sent to the model."""
 
-        return self.outcome != OUTCOME_SKIPPED
+        return self.outcome not in NON_ATTEMPT_OUTCOMES
 
     @property
     def failed(self) -> bool:

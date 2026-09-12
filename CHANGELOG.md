@@ -11,40 +11,42 @@ Each entry opens with a short synopsis, then lists changes under `### Added`,
 nothing in it. The release workflow validates this structure and publishes
 the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
-## [Unreleased]
-
-Refine now survives a model the Ollama server has evicted.
-
-### Fixed
-
-- Refine no longer pastes the raw transcript when its model has gone cold.
-  Before each utterance the stage checks whether the model is resident; if it
-  is not, it waits up to two minutes for the load and only then starts the
-  usual reply budget. A model that is already loaded behaves exactly as
-  before.
-
 ## [v0.13.0] - 2026-09-11
 
-This release adds an optional local cleanup stage that turns dictated speech
-into written text without leaving your machine. It also raises the default
-speech model, backed by new transcription and refine benchmarks kept in the
-repository.
+This release adds a local cleanup stage, on by default, that turns dictated
+speech into written text without leaving your machine. It also raises the
+default speech model, backed by new transcription and refine benchmarks kept
+in the repository.
 
 ### Added
 
-- Adds refine: an off-by-default stage that sends each dictation of ten or
-  more words to a local Ollama model, collapses self-corrections, removes
-  hesitation fillers, and renders spoken lists as lines. Meaning is preserved;
-  nothing is summarized, answered, or added. On any error or timeout the
-  original transcript is delivered unchanged, and so is any reply that adds,
-  rewrites, or loses a number you did not take back.
+- Adds refine: a stage, on by default but inert until Ollama and its model
+  are installed, that sends each dictation of ten or more words to a local
+  Ollama model, collapses self-corrections, removes hesitation fillers, and
+  renders spoken lists as lines. Meaning is preserved; nothing is
+  summarized, answered, or added. If the server has evicted the model, the
+  stage waits up to two minutes for it to load again before timing the
+  reply, so an utterance that arrives on a cold model still gets cleaned up
+  instead of being handed back as-is. On any error or timeout, the original
+  transcript is delivered unchanged — as it is when a reply adds, rewrites,
+  or loses a number you did not take back.
 - Defaults to `gemma4:e2b` over loopback. Any installed Ollama model can be
   configured; a non-loopback host is reported in the daemon banner.
-- `stenographer model download` now offers to fetch both the ASR and refine
-  models; `--asr` and `--refine` select one. `stenographer transcribe` gains an
-  explicit `--refine` flag.
-- The overlay shows a Refining state, and local analytics record refine
-  timing and outcomes as numbers only.
+- Stopping the daemon releases the model from VRAM instead of leaving it
+  pinned until Ollama's own timer expires — which on `idle_unload_seconds = 0`
+  is never.
+- `stenographer model download` offers to fetch both the ASR and refine
+  models when refine is on, and defaults its confirmation to No — a bare
+  Enter downloads nothing rather than starting a multi-gigabyte pull. With
+  refine off, it downloads just the ASR model immediately, the same as
+  `--asr`. `--asr` and `--refine` always force one explicitly, regardless of
+  the setting. `stenographer transcribe` gains its own explicit `--refine`
+  flag.
+- The overlay shows a Refining state; cancelling during it stops the stage
+  at the end of whichever request is already open — up to two minutes if
+  that is a cold load, seconds otherwise — rather than waiting out the
+  utterance's full budget. Local analytics record refine timing and
+  outcomes, including a `cancelled` outcome, as numbers only.
 - Uses `dropbox-dash/faster-whisper-large-v3-turbo` as the new default ASR
   model (about 1.6 GB), while preserving existing configured model choices.
 - Documents microphone placement, input-level checks, and digital

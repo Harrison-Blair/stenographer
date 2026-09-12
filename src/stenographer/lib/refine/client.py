@@ -15,7 +15,14 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from stenographer.lib.refine.endpoints import chat_url, generate_url, ps_url, pull_url, tags_url
+from stenographer.lib.refine.endpoints import (
+    chat_url,
+    generate_url,
+    ps_url,
+    pull_url,
+    qualify_tag,
+    tags_url,
+)
 from stenographer.lib.refine.errors import RefineError, RefineTimeoutError, RefineTransportError
 from stenographer.lib.refine.request import USER_AGENT, build_unload_body, build_warm_body, encode
 
@@ -140,7 +147,9 @@ def installed_model_names(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) 
     """The model tags installed on *host*, sorted, or ``[]``."""
 
     names = {
-        str(entry["name"]) for entry in installed_models(host, timeout=timeout) if "name" in entry
+        entry["name"]
+        for entry in installed_models(host, timeout=timeout)
+        if isinstance(entry.get("name"), str)
     }
     return sorted(names)
 
@@ -160,16 +169,27 @@ def is_model_loaded(host: str, model: str, *, timeout: float = PROBE_TIMEOUT_SEC
     resident model answers immediately.
     """
 
-    return model in running_model_names(host, timeout=timeout)
+    return qualify_tag(model) in running_model_names(host, timeout=timeout)
 
 
 def installed_model_bytes(
     host: str, model: str, *, timeout: float = PROBE_TIMEOUT_SECONDS
 ) -> int | None:
-    """The on-disk size Ollama reports for *model*, or ``None`` if absent."""
+    """The on-disk size Ollama reports for *model*, or ``None`` if absent.
 
+    Both sides are qualified before comparing: a bare config value must
+    still find a fully-tagged listing, and — should a listing ever report a
+    bare name — the reverse must match too, rather than silently narrowing
+    to an exact string match.
+    """
+
+    target = qualify_tag(model)
     for entry in installed_models(host, timeout=timeout):
-        if entry.get("name") == model or entry.get("model") == model:
+        name, listed = entry.get("name"), entry.get("model")
+        matches = (isinstance(name, str) and qualify_tag(name) == target) or (
+            isinstance(listed, str) and qualify_tag(listed) == target
+        )
+        if matches:
             size = entry.get("size")
             if isinstance(size, int) and not isinstance(size, bool) and size >= 0:
                 return size
@@ -185,19 +205,23 @@ def pull_model(
 ) -> None:
     """Stream ``/api/pull`` to completion, reporting each status line.
 
-    Ollama answers with one JSON object per line. Only the ``status`` field and
-    the byte counters are forwarded; a line that fails to parse is skipped
-    rather than ending a multi-gigabyte download.
+    Ollama answers with one JSON object per line and ends a successful pull
+    with a terminal ``{"status": "success"}`` line. An ``{"error": ...}``
+    line always ends the pull, whether or not a caller is watching progress —
+    the check runs on every line, not only when ``on_progress`` is set. A
+    line that fails to parse is skipped rather than ending a multi-gigabyte
+    download, but a stream that runs out without ever reporting success is
+    itself a failure: nothing short of that line confirms the model actually
+    landed on disk.
     """
 
     body = {"model": model, "stream": True}
+    succeeded = False
     try:
         with _post(pull_url(host), body, timeout) as response:
             # Reading the stream is where a multi-gigabyte download actually
             # breaks, so it is inside the translation too, not just the open.
             for line in response:
-                if on_progress is None:
-                    continue
                 text = line.decode("utf-8", "replace").strip()
                 if not text:
                     continue
@@ -209,7 +233,12 @@ def pull_model(
                     continue
                 if isinstance(record.get("error"), str):
                     raise RefineTransportError("ollama refused the pull")
-                on_progress(pull_progress_line(record))
+                if record.get("status") == "success":
+                    succeeded = True
+                if on_progress is not None:
+                    on_progress(pull_progress_line(record))
+        if not succeeded:
+            raise RefineTransportError("ollama ended the pull without confirming success")
     except Exception as exc:
         raise _translated(exc) from exc
 

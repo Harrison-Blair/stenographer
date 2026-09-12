@@ -1,14 +1,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Refine: optional local cleanup
+# Refine: local cleanup
 
-Refine is an optional second pass over a finished transcript. After the local
-formatter has done its work and before anything is pasted, the text goes to a
-model running on your own machine through [Ollama](https://ollama.com), and the
+Refine is a second pass over a finished transcript. After the local formatter
+has done its work and before anything is pasted, the text goes to a model
+running on your own machine through [Ollama](https://ollama.com), and the
 cleaned result is what lands at your cursor.
 
-It is **off by default**. Nothing in this document happens unless you turn it
-on.
+It is **on by default**, and its default host is loopback (`127.0.0.1`), so
+the transcript stays on your machine. Turn it off, or point it at another
+host, in `[stenographer.refine]`; a non-loopback host sends transcript text
+there.
 
 ## What it does
 
@@ -47,20 +49,19 @@ every start.
 Nothing else changes. Transcript text still never appears in a log line, an
 error message, a notification, or your local statistics. The refine stage adds
 only numbers to the history: how long it took, how many characters went in and
-came out, and whether it was applied.
+came out, and its outcome — applied, skipped, cancelled, or one of the failure
+modes in [When it does not work](#when-it-does-not-work). A cancel you asked
+for is recorded as neither an attempt nor a failure; it is its own outcome.
 
-## Turning it on
+## Setup
 
-You need Ollama installed and running. Then:
-
-```toml
-[stenographer.refine]
-enabled = true
-```
+It is on by default, but needs Ollama installed and running to do anything;
+until then, every transcript passes through unchanged (see [When it does not
+work](#when-it-does-not-work)).
 
 The default `gemma4:e2b` is about a 7.2 GB download and about 1.7 GB resident.
 
-`stenographer setup` walks you through the same thing, lists the models Ollama
+`stenographer setup` walks you through picking a model, lists the ones Ollama
 already has, and offers to pull the one you choose.
 
 Download the model explicitly, like the ASR model:
@@ -68,13 +69,15 @@ Download the model explicitly, like the ASR model:
 ```sh
 stenographer model download --refine   # just the refine model
 stenographer model download --asr      # just the speech-recognition model
-stenographer model download            # asks about both, with sizes
+stenographer model download            # offers both when refine is on; just the ASR model otherwise
 ```
 
-The no-flag form needs a terminal to ask on. Run from a script, a pipe, or
-anywhere without a TTY, it downloads only the ASR model and tells you which
-flag to pass for the other — so an existing install script does not suddenly
-start pulling several more gigabytes.
+With refine on and a terminal to ask on, the no-flag form shows the combined
+plan with sizes and asks `Continue? [y/N]`; the default is No, so a bare Enter
+downloads nothing. With refine off, there is no plan and no prompt — the ASR
+model downloads immediately, the same as `--asr`. Run from a script, a pipe,
+or anywhere without a TTY, it downloads only the ASR model — so an existing
+install script does not suddenly start pulling several more gigabytes.
 
 To try it on a file without touching the daemon's settings:
 
@@ -85,13 +88,20 @@ stenographer transcribe recording.wav --refine
 That flag is a deliberate opt-in and does not read `enabled`, so a configured
 daemon does not make one-off file transcriptions start calling a model.
 
+To turn the stage off:
+
+```toml
+[stenographer.refine]
+enabled = false
+```
+
 ## Settings
 
 All of these live under `[stenographer.refine]`.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `enabled` | `false` | Whether the stage runs at all. |
+| `enabled` | `true` | Whether the stage runs at all. |
 | `host` | `"http://127.0.0.1:11434"` | Your Ollama server. Anything but loopback sends transcripts over the network. |
 | `model` | `"gemma4:e2b"` | The Ollama model tag to use. |
 | `min_words` | `10` | Shorter utterances are delivered without a refine. |
@@ -155,6 +165,21 @@ The lifecycle pill gains a **Refining** state between *Transcribing* and
 Escape still cancels the whole utterance. Pressing it during a refine discards
 the audio and the transcript; nothing is pasted.
 
+Cancelling frees the hotkey quickly, but refine can only stop between
+requests — it has no way to abort one already open. How long that takes
+depends on where the cancel lands:
+
+- Between requests: immediately, nothing is sent.
+- During the residency check: within about five seconds.
+- During a cold load: within the two-minute load window (see
+  [Residency](#residency)).
+- During the reply itself: within the reply budget (see [When it does not
+  work](#when-it-does-not-work)).
+
+The common case is the last one — cancelling while a warm model composes a
+reply — so the hotkey is free again in roughly the time an ordinary reply
+takes, not stuck for a cold load it never needed.
+
 ### Saying a list
 
 The model only lifts items out into lines when you give it a lead-in it can
@@ -179,7 +204,10 @@ what you get if the refine fails open.
 ## When it does not work
 
 The stage fails open, always. On any of the following, the locally formatted
-transcript is delivered unchanged and the daemon logs one line saying why:
+transcript is delivered unchanged and the daemon logs one line saying why.
+A cancelled utterance is not one of these: nothing is pasted at all, refined
+or not, and it is recorded as its own outcome rather than a failure — see
+[What you will see](#what-you-will-see).
 
 - Ollama is not running, is unreachable, or returns an HTTP error.
 - The model is not resident and does not finish loading within two minutes.
@@ -233,3 +261,12 @@ stays up for the whole wait, and Escape still cancels it. Without this, a cold
 load would have spent the whole reply budget and your text would have been
 pasted unrefined every time the model had gone cold. The daemon logs one line
 with the load time whenever this happens.
+
+Stopping the daemon releases the model too, even on `idle_unload_seconds = 0`
+— the one setting that otherwise holds it forever. The one gap: if the
+process exits before a request already in flight returns, that release
+cannot run, and the model stays resident until Ollama's own timers reclaim
+it — or indefinitely on `idle_unload_seconds = 0`, where there is no such
+timer. An ordinary stop can hit this gap, not only a forced kill: shutdown
+gives the in-flight request only a bounded wait, and the process may exit
+before a slow one returns.
