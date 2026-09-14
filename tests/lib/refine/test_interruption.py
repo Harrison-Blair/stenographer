@@ -212,6 +212,28 @@ def test_shutdown_stops_a_refine_that_is_already_past_its_claim(transport):
     assert refiner.last_result.outcome == OUTCOME_CANCELLED
 
 
+def test_shutdown_during_a_blocked_cold_load_still_reports_finished(transport):
+    """A ``finished`` event must never be suppressed by shutdown overtaking the
+    load it brackets: a suppressed one would leave the loading pill on with
+    nothing left to turn it off."""
+    events: list[str] = []
+    refiner = _refiner(
+        on_model_loading=lambda: events.append("loading"),
+        on_model_loading_finished=lambda: events.append("finished"),
+    )
+    transport.loaded = False
+    transport.block_warm = True
+    worker = _in_thread(lambda: refiner.refine(SPOKEN))
+    assert transport.warm_entered.wait(timeout=_DEADLINE)
+
+    refiner.unload()
+    transport.warm_release.set()
+    worker.join(timeout=_DEADLINE)
+
+    assert not worker.is_alive()
+    assert events == ["loading", "finished"]
+
+
 def test_only_the_last_request_out_reissues_the_unload(transport):
     """Whoever returns while something else is still open must leave the
     unload to that one: an unload issued with a request still in flight is
@@ -261,7 +283,8 @@ def test_a_cancel_during_the_residency_probe_never_commits_to_the_cold_load(tran
     the stage. Seen to FAIL against an ``_ensure_loaded`` that probed and then
     loaded without looking: the utterance was committed to the long budget by
     a decision taken before the user pressed cancel."""
-    refiner = _refiner()
+    events: list[str] = []
+    refiner = _refiner(on_model_loading=lambda: events.append("loading"))
     transport.loaded = False
 
     # False until the probe has run, true immediately after: the cancel lands
@@ -270,6 +293,7 @@ def test_a_cancel_during_the_residency_probe_never_commits_to_the_cold_load(tran
 
     assert transport.journal == ["probe"], transport.journal
     assert refiner.last_result.outcome == OUTCOME_CANCELLED
+    assert events == []
 
 
 def test_a_cancel_between_the_load_and_the_reply_stops_before_the_chat(transport):

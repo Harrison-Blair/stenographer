@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from stenographer.lib.logging.pipeline import log_failure
 
 if TYPE_CHECKING:
+    from stenographer.lib.contracts.loading_model import LoadingModel
     from stenographer.lib.contracts.overlay_state import OverlayState
     from stenographer.lib.contracts.status_sink import StatusSink
     from stenographer.lib.sounds.feedback import Feedback
@@ -34,9 +35,9 @@ def _publish_status(status: StatusSink, state: OverlayState) -> None:
         )
 
 
-def _publish_loading_activity(status: StatusSink, active: bool) -> None:
+def _publish_loading_activity(status: StatusSink, model: LoadingModel, active: bool) -> None:
     try:
-        status.loading_activity(active)
+        status.loading_activity(model, active)
     except Exception as exc:
         log_failure(
             log,
@@ -44,5 +45,6 @@ def _publish_loading_activity(status: StatusSink, active: bool) -> None:
             "overlay: loading_activity_failed",
             exc,
             safe=True,
+            model=model.value,
             active=int(active),
         )

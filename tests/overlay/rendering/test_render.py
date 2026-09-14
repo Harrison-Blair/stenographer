@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.rendering.constants import (
     CANVAS_HEIGHT,
@@ -18,9 +19,9 @@ from stenographer.overlay.rendering.constants import (
     EDGE_OFFSET,
     LOADING_ANIMATION_FPS,
     LOADING_BORDER_COLOR,
+    LOADING_BORDER_COLORS,
     LOADING_BORDER_INSET,
     LOADING_BORDER_WIDTH,
-    LOADING_FRAME_INTERVAL,
     LOADING_OPACITY_MAX,
     LOADING_OPACITY_MIN,
     LOADING_PULSE_SECONDS,
@@ -29,7 +30,6 @@ from stenographer.overlay.rendering.constants import (
     STATE_DOT_COLORS,
     STATE_LABELS,
 )
-from stenographer.overlay.rendering.loading_pulse import LoadingPulse
 from stenographer.overlay.rendering.render import (
     _crop_transparent,
     layer_margin_bottom,
@@ -167,72 +167,9 @@ def test_loading_border_rejects_invalid_elapsed_time(elapsed: object) -> None:
     with pytest.raises(TypeError if elapsed in (True, "0") else ValueError):
         loading_border_opacity(elapsed)
     with pytest.raises(TypeError if elapsed in (True, "0") else ValueError):
-        render_overlay(OverlayState.RECORDING, loading_elapsed=elapsed)
-
-
-def test_loading_pulse_dedupes_activity_edges_and_tracks_start_time() -> None:
-    pulse = LoadingPulse()
-    assert pulse.set_active(False, 10.0) is False
-    assert pulse.set_active(True, 10.0) is True
-    assert pulse.started_at == 10.0
-    assert pulse.set_active(True, 11.0) is False
-    assert pulse.started_at == 10.0
-    assert pulse.set_active(False, 12.0) is True
-    assert pulse.started_at is None
-    assert pulse.next_frame_at is None
-    assert pulse.set_active(False, 13.0) is False
-
-
-def test_loading_pulse_elapsed_is_clamped_and_none_while_inactive() -> None:
-    pulse = LoadingPulse()
-    assert pulse.elapsed(10.0) is None
-    pulse.set_active(True, 10.0)
-    assert pulse.elapsed(12.5) == 2.5
-    assert pulse.elapsed(9.0) == 0.0
-    pulse.set_active(False, 13.0)
-    assert pulse.elapsed(14.0) is None
-
-
-def test_loading_pulse_timeout_requires_active_visible_and_armed_deadline() -> None:
-    pulse = LoadingPulse()
-    assert pulse.timeout(10.0, True) is None
-    pulse.set_active(True, 10.0)
-    assert pulse.timeout(10.0, True) is None
-    pulse.arm(10.0)
-    assert pulse.timeout(10.0, False) is None
-    assert pulse.timeout(10.0, True) == pytest.approx(LOADING_FRAME_INTERVAL)
-    assert pulse.timeout(10.0 + 2 * LOADING_FRAME_INTERVAL, True) == 0.0
-    pulse.set_active(False, 11.0)
-    assert pulse.timeout(11.0, True) is None
-
-
-def test_loading_pulse_frame_due_fires_at_the_deadline_and_advances_cadence() -> None:
-    pulse = LoadingPulse()
-    pulse.set_active(True, 100.0)
-    pulse.arm(100.0)
-    assert pulse.frame_due(100.0, True) is False
-    due_at = 100.0 + LOADING_FRAME_INTERVAL
-    assert pulse.frame_due(due_at, False) is False
-    assert pulse.frame_due(due_at, True) is True
-    pulse.advance(due_at)
-    assert pulse.next_frame_at == pytest.approx(due_at + LOADING_FRAME_INTERVAL)
-    assert pulse.frame_due(due_at, True) is False
-    assert pulse.frame_due(due_at + LOADING_FRAME_INTERVAL, True) is True
-
-
-def test_loading_pulse_disarm_clears_only_the_frame_deadline() -> None:
-    pulse = LoadingPulse()
-    pulse.set_active(True, 50.0)
-    pulse.arm(50.0)
-    pulse.disarm_frames()
-    assert pulse.next_frame_at is None
-    assert pulse.active is True
-    assert pulse.started_at == 50.0
-    assert pulse.timeout(51.0, True) is None
-    assert pulse.frame_due(51.0, True) is False
-    pulse.arm(51.0)
-    assert pulse.next_frame_at == pytest.approx(51.0 + LOADING_FRAME_INTERVAL)
-    assert pulse.elapsed(51.0) == 1.0
+        render_overlay(
+            OverlayState.RECORDING, loading_elapsed=elapsed, loading_model=LoadingModel.ASR
+        )
 
 
 @pytest.mark.parametrize("state", list(OverlayState)[1:])
@@ -241,8 +178,12 @@ def test_loading_border_is_deterministic_and_does_not_change_pill_geometry(
 ) -> None:
     levels = (128,) * SPECTRUM_BANDS if state is OverlayState.RECORDING else None
     baseline = render_overlay(state, levels=levels)
-    first = render_overlay(state, levels=levels, loading_elapsed=0.75)
-    same = render_overlay(state, levels=levels, loading_elapsed=0.75)
+    first = render_overlay(
+        state, levels=levels, loading_elapsed=0.75, loading_model=LoadingModel.ASR
+    )
+    same = render_overlay(
+        state, levels=levels, loading_elapsed=0.75, loading_model=LoadingModel.ASR
+    )
 
     assert first.pill_bounds == baseline.pill_bounds
     assert first.image.size == baseline.image.size
@@ -288,6 +229,7 @@ def test_visible_states_and_loading_border_share_canvas_bounds_and_placement(sca
             scale=scale,
             levels=(128,) * SPECTRUM_BANDS if state is OverlayState.RECORDING else None,
             loading_elapsed=0.75 if bordered else None,
+            loading_model=LoadingModel.ASR if bordered else None,
         )
         for state in list(OverlayState)[1:]
         for bordered in (False, True)
@@ -437,7 +379,9 @@ def test_golden_pixels_pin_composited_output_bytes(
     golden: dict[str, tuple[int, int, int, int]],
     text_samples: frozenset[str],
 ) -> None:
-    frame = render_overlay(state, scale=1.0, levels=levels, loading_elapsed=0.75)
+    frame = render_overlay(
+        state, scale=1.0, levels=levels, loading_elapsed=0.75, loading_model=LoadingModel.ASR
+    )
 
     expected = golden
     if text_samples and not _reference_text_stack():
@@ -446,6 +390,47 @@ def test_golden_pixels_pin_composited_output_bytes(
 
     sampled = {name: frame.image.getpixel(_GOLDEN_COORDINATES[name]) for name in expected}
     assert sampled == expected
+
+
+def test_loading_border_colours_follow_the_model() -> None:
+    assert LOADING_BORDER_COLORS[LoadingModel.ASR] == LOADING_BORDER_COLOR
+    assert LOADING_BORDER_COLORS[LoadingModel.REFINE] == STATE_DOT_COLORS[OverlayState.REFINING][:3]
+
+    asr = render_overlay(
+        OverlayState.TRANSCRIBING, loading_elapsed=0.75, loading_model=LoadingModel.ASR
+    )
+    refine = render_overlay(
+        OverlayState.TRANSCRIBING, loading_elapsed=0.75, loading_model=LoadingModel.REFINE
+    )
+    assert asr.image.tobytes() != refine.image.tobytes()
+
+    with pytest.raises(ValueError, match="loading elapsed time and model"):
+        render_overlay(OverlayState.TRANSCRIBING, loading_elapsed=0.75)
+    with pytest.raises(ValueError, match="loading elapsed time and model"):
+        render_overlay(OverlayState.TRANSCRIBING, loading_model=LoadingModel.ASR)
+
+
+# Sampled from the reference renderer the same way as ``_GOLDEN_TRANSCRIBING``,
+# but with the REFINE model breathing instead of ASR.
+_GOLDEN_TRANSCRIBING_REFINE = (20, 150, 136, 249)
+
+
+def test_the_refine_border_pixel_is_the_refining_colour_over_the_pill() -> None:
+    frame = render_overlay(
+        OverlayState.TRANSCRIBING,
+        scale=1.0,
+        loading_elapsed=0.75,
+        loading_model=LoadingModel.REFINE,
+    )
+
+    sampled = frame.image.getpixel(_GOLDEN_COORDINATES["border_top"])
+
+    assert sampled == _GOLDEN_TRANSCRIBING_REFINE
+    assert sampled != _GOLDEN_TRANSCRIBING["border_top"]
+    assert sampled[3] == _GOLDEN_TRANSCRIBING["border_top"][3]
+    red, green, blue, _alpha = sampled
+    assert green > red
+    assert blue > red
 
 
 def test_an_entirely_transparent_image_has_no_visible_bounds_to_crop() -> None:

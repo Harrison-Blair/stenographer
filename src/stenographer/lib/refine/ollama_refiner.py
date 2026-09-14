@@ -72,12 +72,16 @@ class OllamaRefiner:
         min_words: int,
         structured_output: bool,
         keep_alive: int,
+        on_model_loading: Callable[[], None] | None = None,
+        on_model_loading_finished: Callable[[], None] | None = None,
     ) -> None:
         self._host = host
         self._model = model
         self._min_words = min_words
         self._structured_output = structured_output
         self._keep_alive = keep_alive
+        self._on_model_loading = on_model_loading
+        self._on_model_loading_finished = on_model_loading_finished
         self._last_result: RefineResult | None = None
         # Guards the two fields below only; never held across a request.
         self._lock = threading.Lock()
@@ -121,12 +125,14 @@ class OllamaRefiner:
 
         if not self._claim():
             return False
+        self._notify(self._on_model_loading, "loading")
         try:
             warm_model(self._host, self._model, keep_alive=self._keep_alive)
         except Exception as exc:
             log_failure(log, logging.WARNING, "refine: warm_failed", exc, safe=True)
             return False
         finally:
+            self._notify(self._on_model_loading_finished, "finished")
             self._release()
         log.info(fmt_event("refine", "warm", model=self._model, keep_alive=self._keep_alive))
         return True
@@ -280,6 +286,27 @@ class OllamaRefiner:
         except Exception as exc:
             log_failure(log, logging.DEBUG, "refine: unload_failed", exc, safe=True)
 
+    def _notify(self, callback: Callable[[], None] | None, event: str) -> None:
+        """Failure-isolate an optional loading observer. Never raises.
+
+        An observer failure must not be classified as a refine failure by the
+        one fail-open handler in :meth:`refine`, so it is caught here instead.
+        """
+
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception as exc:
+            log_failure(
+                log,
+                logging.WARNING,
+                "refine: observer_failed",
+                exc,
+                safe=True,
+                refine_event=event,
+            )
+
     def _check_stopped(self, cancelled: Callable[[], bool]) -> None:
         """Abandon the attempt if nobody is waiting for the reply any more.
 
@@ -322,10 +349,17 @@ class OllamaRefiner:
         if is_model_loaded(self._host, self._model):
             return
         self._check_stopped(cancelled)
+        self._notify(self._on_model_loading, "loading")
         started_at = time.perf_counter()
-        warm_model(
-            self._host, self._model, keep_alive=self._keep_alive, timeout=COLD_LOAD_TIMEOUT_SECONDS
-        )
+        try:
+            warm_model(
+                self._host,
+                self._model,
+                keep_alive=self._keep_alive,
+                timeout=COLD_LOAD_TIMEOUT_SECONDS,
+            )
+        finally:
+            self._notify(self._on_model_loading_finished, "finished")
         log.info(
             fmt_event(
                 "refine",

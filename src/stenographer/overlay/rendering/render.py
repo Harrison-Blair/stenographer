@@ -9,6 +9,7 @@ from typing import Literal
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.rendering.constants import (
     _CANVAS_MARGIN_LEFT,
@@ -41,7 +42,7 @@ from stenographer.overlay.rendering.constants import (
     CANVAS_WIDTH,
     EDGE_OFFSET,
     LOADING_ANIMATION_FPS,
-    LOADING_BORDER_COLOR,
+    LOADING_BORDER_COLORS,
     LOADING_BORDER_INSET,
     LOADING_BORDER_WIDTH,
     LOADING_OPACITY_MAX,
@@ -257,6 +258,7 @@ def _render_dynamic_layer(
     pill_bounds: tuple[int, int, int, int],
     scale: float,
     loading_alpha: int | None,
+    loading_color: tuple[int, int, int] | None,
 ) -> Image.Image:
     factor = _DYNAMIC_SUPERSAMPLE
     pill_size = (pill_bounds[2] - pill_bounds[0], pill_bounds[3] - pill_bounds[1])
@@ -276,7 +278,7 @@ def _render_dynamic_layer(
         draw.rounded_rectangle(
             _exclusive_box(border_bounds),
             radius=max(1, (_scaled(_CORNER_RADIUS, scale) * factor) - inset),
-            outline=(*LOADING_BORDER_COLOR, loading_alpha),
+            outline=(*loading_color, loading_alpha),
             width=max(1, _scaled(LOADING_BORDER_WIDTH, scale) * factor),
         )
 
@@ -301,6 +303,7 @@ def render_overlay(
     scale: float = 1.0,
     levels: object | None = None,
     loading_elapsed: object | None = None,
+    loading_model: LoadingModel | None = None,
 ) -> OverlayFrame:
     """Render a visible lifecycle state into a scale-aware RGBA canvas.
 
@@ -319,10 +322,13 @@ def render_overlay(
         raise ValueError("scale must be finite and positive")
     if state is not OverlayState.RECORDING and levels is not None:
         raise ValueError("spectrum levels apply only to the recording state")
+    if (loading_elapsed is None) != (loading_model is None):
+        raise ValueError("loading elapsed time and model go together")
     normalized_levels = _validated_levels(levels) if state is OverlayState.RECORDING else ()
     loading_alpha = (
         None if loading_elapsed is None else round(loading_border_opacity(loading_elapsed) * 255)
     )
+    loading_color = None if loading_model is None else LOADING_BORDER_COLORS[loading_model]
     static, pill_bounds = _cached_static_render(state, scale)
     if normalized_levels or loading_alpha is not None:
         dynamic = _render_dynamic_layer(
@@ -330,6 +336,7 @@ def render_overlay(
             pill_bounds,
             scale,
             loading_alpha,
+            loading_color,
         )
         image = static.copy()
         image.alpha_composite(dynamic, (pill_bounds[0], pill_bounds[1]))

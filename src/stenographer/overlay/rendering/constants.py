@@ -6,6 +6,7 @@ from importlib.resources import files
 from pathlib import Path
 from types import MappingProxyType
 
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 
 PILL_WIDTH = 280
@@ -156,5 +157,13 @@ STATE_DOT_COLORS: Mapping[OverlayState, tuple[int, int, int, int]] = MappingProx
         OverlayState.DELIVERING: (0x8B, 0x5C, 0xF6, 0xFF),
         OverlayState.CANCELLED: (0xA1, 0xA1, 0xAA, 0xFF),
         OverlayState.ERROR: (0xEF, 0x44, 0x44, 0xFF),
+    }
+)
+
+
+LOADING_BORDER_COLORS: Mapping[LoadingModel, tuple[int, int, int]] = MappingProxyType(
+    {
+        LoadingModel.ASR: LOADING_BORDER_COLOR,
+        LoadingModel.REFINE: STATE_DOT_COLORS[OverlayState.REFINING][:3],
     }
 )

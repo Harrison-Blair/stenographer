@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.platform.errors import UnsupportedPlatformError
 from stenographer.overlay.protocol.backend import Backend
@@ -480,7 +481,7 @@ def test_a_restarted_helper_is_replayed_the_current_state_not_the_history(
     instance = supervisor()
     assert transport.attempted.acquire(timeout=_DEADLINE)
     first.reply(ReadyMessage(Backend.XWAYLAND))
-    instance.loading_activity(True)
+    instance.loading_activity(LoadingModel.ASR, True)
     instance.publish(OverlayState.TRANSCRIBING)
 
     delivered = first.records(2)
@@ -492,7 +493,7 @@ def test_a_restarted_helper_is_replayed_the_current_state_not_the_history(
     assert transport.attempted.acquire(timeout=_DEADLINE)
 
     assert second.records(2) == [
-        LoadingActivityMessage(True),
+        LoadingActivityMessage(LoadingModel.ASR, True),
         StateMessage(generation, OverlayState.TRANSCRIBING),
     ]
     assert _finished(instance)
@@ -538,7 +539,7 @@ def test_a_helper_that_dies_mid_record_is_reported_as_a_framing_failure(
     with caplog.at_level(logging.WARNING, logger=_LOG):
         instance = supervisor()
         assert transport.attempted.acquire(timeout=_DEADLINE)
-        first.send_raw(b'{"v":4,"type":"rea')
+        first.send_raw(b'{"v":5,"type":"rea')
         first.close_output()
         assert transport.attempted.acquire(timeout=_DEADLINE)
         second.close_output()

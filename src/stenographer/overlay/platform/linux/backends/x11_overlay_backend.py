@@ -265,7 +265,7 @@ class X11OverlayBackend(HelperBackend):
             self._stacking_reassert = start_stacking_reassert(
                 epoch=self._window_epoch, now=time.monotonic()
             )
-        if self._pulse.active and self._pulse.next_frame_at is None:
+        if self._pulse.breathing and self._pulse.next_frame_at is None:
             self._pulse.arm(time.monotonic())
         self._display.flush()
 

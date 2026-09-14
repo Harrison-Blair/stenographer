@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 
 
@@ -16,7 +17,7 @@ class StatusSink(Protocol):
 
     def publish(self, state: OverlayState) -> None: ...
 
-    def loading_activity(self, active: bool) -> None: ...
+    def loading_activity(self, model: LoadingModel, active: bool) -> None: ...
 
     def audio_block(self, samples: object, sample_rate: int, stream_epoch: int) -> None: ...
 

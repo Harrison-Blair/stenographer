@@ -17,6 +17,7 @@ import pytest
 
 from stenographer.lib.audio.records import CaptureStats
 from stenographer.lib.config.models import Config
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.daemon import Daemon
 from stenographer.lib.daemon.feedback import _play_cue
@@ -279,14 +280,14 @@ class _Status:
 
     def __init__(self) -> None:
         self.states: list[OverlayState] = []
-        self.loading: list[bool] = []
+        self.loading: list[tuple[LoadingModel, bool]] = []
 
     def publish(self, state: OverlayState) -> int:
         self.states.append(state)
         return len(self.states)
 
-    def loading_activity(self, active: bool) -> None:
-        self.loading.append(active)
+    def loading_activity(self, model: LoadingModel, active: bool) -> None:
+        self.loading.append((model, active))
 
 
 def _daemon_with_status(

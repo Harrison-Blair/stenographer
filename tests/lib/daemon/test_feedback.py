@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.feedback import (
     _play_cue,
@@ -30,8 +31,8 @@ class _BrokenStatus:
         self.attempts.append(state)
         raise RuntimeError("overlay pipe closed")
 
-    def loading_activity(self, active: bool) -> None:
-        self.attempts.append(active)
+    def loading_activity(self, model: LoadingModel, active: bool) -> None:
+        self.attempts.append((model, active))
         raise RuntimeError("overlay pipe closed")
 
 
@@ -58,9 +59,13 @@ def test_a_failing_overlay_publish_never_reaches_the_caller(daemon_logs):
 def test_a_failing_loading_activity_never_reaches_the_caller(daemon_logs):
     status = _BrokenStatus()
 
-    _publish_loading_activity(status, True)
-    _publish_loading_activity(status, False)
+    _publish_loading_activity(status, LoadingModel.ASR, True)
+    _publish_loading_activity(status, LoadingModel.ASR, False)
 
-    assert status.attempts == [True, False]
-    assert "overlay: loading_activity_failed active=1 error=RuntimeError" in daemon_logs.text
-    assert "overlay: loading_activity_failed active=0 error=RuntimeError" in daemon_logs.text
+    assert status.attempts == [(LoadingModel.ASR, True), (LoadingModel.ASR, False)]
+    assert (
+        "overlay: loading_activity_failed model=asr active=1 error=RuntimeError" in daemon_logs.text
+    )
+    assert (
+        "overlay: loading_activity_failed model=asr active=0 error=RuntimeError" in daemon_logs.text
+    )

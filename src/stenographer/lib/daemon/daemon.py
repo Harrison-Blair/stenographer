@@ -11,6 +11,7 @@ import time
 from typing import TYPE_CHECKING
 
 from stenographer.lib.audio.recorder import Recorder
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.null_status_sink import NullStatusSink
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.contracts.publication import should_publish_state
@@ -113,7 +114,14 @@ class Daemon:
         self._deliverer: Deliverer | None = None
         self._platform: Platform | None = None
         self._telemetry = UtteranceTelemetry()
-        self._refiner = build_refiner(cfg.refine, idle_unload_seconds=cfg.asr.idle_unload_seconds)
+        self._refine_load_lock = threading.Lock()
+        self._refine_loads = 0
+        self._refiner = build_refiner(
+            cfg.refine,
+            idle_unload_seconds=cfg.asr.idle_unload_seconds,
+            on_model_loading=self._on_refine_loading,
+            on_model_loading_finished=self._on_refine_loading_finished,
+        )
         self._pipeline: UtterancePipeline | None = None
         self._refine_warmup_thread: threading.Thread | None = None
         self._capture_lock = threading.Lock()
@@ -249,7 +257,7 @@ class Daemon:
                 return
             self._model_load_started_at = time.perf_counter()
             self._model_load_utterance = self._utterance_id
-            _publish_loading_activity(self._status, True)
+            _publish_loading_activity(self._status, LoadingModel.ASR, True)
 
     def _on_model_loading_finished(self) -> None:
         """Remove display activity after either model-ready or load failure."""
@@ -262,7 +270,30 @@ class Daemon:
                 self._record.load_ms = (time.perf_counter() - self._model_load_started_at) * 1000
             self._model_load_started_at = None
             self._model_load_utterance = None
-            _publish_loading_activity(self._status, False)
+            _publish_loading_activity(self._status, LoadingModel.ASR, False)
+
+    def _on_refine_loading(self) -> None:
+        """Publish refine activity only on the open→active edge.
+
+        The refine warm thread and the pipeline thread can both hold an open
+        load at once, so only the first opener raises the pill and only the
+        last to finish lowers it.
+        """
+        with self._refine_load_lock:
+            self._refine_loads += 1
+            if self._refine_loads == 1 and not self._stop_event.is_set():
+                _publish_loading_activity(self._status, LoadingModel.REFINE, True)
+
+    def _on_refine_loading_finished(self) -> None:
+        """Lower refine activity once every open load has finished.
+
+        Never suppressed by shutdown: a load that never reports finished would
+        leave the pill on with nothing left to turn it off.
+        """
+        with self._refine_load_lock:
+            self._refine_loads = max(0, self._refine_loads - 1)
+            if self._refine_loads == 0:
+                _publish_loading_activity(self._status, LoadingModel.REFINE, False)
 
     def _warm_model(self, utterance: int) -> None:
         try:

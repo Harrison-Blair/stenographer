@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.errors import ProtocolError
@@ -46,7 +47,7 @@ class OverlayReducer:
                 raise ProtocolError("unsupported helper command")
             return DisplayIntent.STOP
         if isinstance(message, LoadingActivityMessage):
-            return self._loading_activity(message.active, now)
+            return self._loading_activity(message.model, message.active, now)
         if isinstance(message, SpectrumMessage):
             self.levels = message.levels
             if self.state is not OverlayState.RECORDING:
@@ -56,15 +57,15 @@ class OverlayReducer:
             raise ProtocolError("unsupported helper message")
         return self._state_change(message.state, now)
 
-    def _loading_activity(self, active: bool, now: float) -> DisplayIntent:
-        if not self.pulse.set_active(active, now):
+    def _loading_activity(self, model: LoadingModel, active: bool, now: float) -> DisplayIntent:
+        if not self.pulse.set_active(model, active):
             # A duplicate edge must not restart the breathing phase.
             return DisplayIntent.NONE
         if not self.visible:
             return DisplayIntent.NONE
-        if active:
-            self.pulse.arm(now)
-        return DisplayIntent.REPAINT
+        if active and self.pulse.start_breathing(now):
+            return DisplayIntent.REPAINT
+        return DisplayIntent.NONE
 
     def _state_change(self, state: OverlayState, now: float) -> DisplayIntent:
         self.state = state
@@ -72,8 +73,10 @@ class OverlayReducer:
             # A new recording never inherits the previous utterance's bars.
             self.levels = _SILENT_LEVELS
         if state is OverlayState.HIDDEN:
-            self.pulse.disarm_frames()
+            # A hidden pill never resumes an in-progress breath: the next
+            # show starts a fresh one at the trough.
+            self.pulse.stop_breathing()
             return DisplayIntent.TEARDOWN
-        if self.pulse.active:
+        if not self.pulse.start_breathing(now) and self.pulse.breathing:
             self.pulse.arm(now)
         return DisplayIntent.REDRAW

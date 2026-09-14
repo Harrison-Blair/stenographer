@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.null_status_sink import NullStatusSink
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.contracts.publication import should_publish_state
@@ -27,10 +28,16 @@ def test_state_publication_repeats_transient_states_but_suppresses_stable_duplic
     assert should_publish_state(OverlayState.CANCELLED, OverlayState.CANCELLED) is True
 
 
+def test_loading_models_are_exactly_asr_and_refine() -> None:
+    assert tuple(LoadingModel) == (LoadingModel.ASR, LoadingModel.REFINE)
+    assert LoadingModel.ASR == "asr"
+    assert LoadingModel.REFINE == "refine"
+
+
 def test_null_sink_accepts_all_fixed_display_metadata():
     sink = NullStatusSink()
     sink.publish(OverlayState.RECORDING)
-    sink.loading_activity(True)
-    sink.loading_activity(False)
+    sink.loading_activity(LoadingModel.ASR, True)
+    sink.loading_activity(LoadingModel.ASR, False)
     sink.audio_block(object(), 16000, 4)
     sink.close()

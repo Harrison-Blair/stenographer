@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.command import Command
@@ -91,11 +92,14 @@ def encode_message(message: ProtocolMessage) -> str:
             "levels": list(message.levels),
         }
     elif isinstance(message, LoadingActivityMessage):
+        if not isinstance(message.model, LoadingModel):
+            raise ProtocolError("protocol loading model has wrong type")
         if not isinstance(message.active, bool):
             raise ProtocolError("protocol loading activity has wrong type")
         payload = {
             "v": PROTOCOL_VERSION,
             "type": "loading_activity",
+            "model": message.model.value,
             "active": message.active,
         }
     elif isinstance(message, CommandMessage):
@@ -160,10 +164,12 @@ def decode_message(record: str | bytes) -> ProtocolMessage:
             raise ProtocolError("protocol spectrum levels are invalid")
         return SpectrumMessage(obj["generation"], obj["sequence"], tuple(obj["levels"]))
     if message_type == "loading_activity":
-        _expect_fields(obj, frozenset({"v", "type", "active"}))
+        _expect_fields(obj, frozenset({"v", "type", "model", "active"}))
         if not isinstance(obj["active"], bool):
             raise ProtocolError("protocol loading activity has wrong type")
-        return LoadingActivityMessage(obj["active"])
+        return LoadingActivityMessage(
+            _enum_value(LoadingModel, obj["model"], "model"), obj["active"]
+        )
     if message_type == "command":
         _expect_fields(obj, frozenset({"v", "type", "command"}))
         return CommandMessage(_enum_value(Command, obj["command"], "command"))

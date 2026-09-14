@@ -19,14 +19,12 @@ class DisplayMessageGate:
     current: int = -1
     recording_generation: int | None = None
     sequence: int = -1
-    loading_active: bool = False
 
     def accept(
         self,
         message: StateMessage | SpectrumMessage | LoadingActivityMessage,
     ) -> bool:
         if isinstance(message, LoadingActivityMessage):
-            self.loading_active = message.active
             return True
         if isinstance(message, SpectrumMessage):
             if message.generation != self.recording_generation or message.sequence <= self.sequence:
