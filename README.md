@@ -159,7 +159,10 @@ A [refine](docs/refine.md) pass, on by default, cleans filler words and
 self-corrections out of each transcript through a local Ollama model
 (`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
 machine. Turn it off or point it elsewhere in `[stenographer.refine]`; a
-non-loopback host sends transcripts there over the network.
+non-loopback host sends transcripts there over the network. While a model
+loads, the lifecycle pill's border breathes: in the amber Loading colour for
+the speech model and in the Refining colour for the cleanup model, taking
+turns one breath each when both are loading.
 
 Read the [user guide](docs/usage.md) for privacy settings and more examples.
 

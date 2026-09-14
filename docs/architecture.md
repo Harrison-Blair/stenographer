@@ -50,7 +50,7 @@ The model download and stats operations have their own subcommand packages.
 
 ## Optional overlay
 
-`overlay/protocol/` owns protocol-v4 messages, codecs, stream framing, and display
+`overlay/protocol/` owns protocol-v5 messages, codecs, stream framing, and display
 ordering. `overlay/supervision/` owns mailbox, restart, and timeout policy;
 `overlay/helper/` owns helper execution and backend selection.
 `overlay/rendering/` owns geometry, frames, animation, and display reduction.

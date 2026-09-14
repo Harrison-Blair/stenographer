@@ -160,7 +160,9 @@ entire token budget deliberating and then return nothing at all.
 ## What you will see
 
 The lifecycle pill gains a **Refining** state between *Transcribing* and
-*Delivering*, so you can tell which stage is taking the time.
+*Delivering*, so you can tell which stage is taking the time. While the
+cleanup model itself is loading, the pill's border breathes in the Refining
+colour (see [Residency](#residency)).
 
 Escape still cancels the whole utterance. Pressing it during a refine discards
 the audio and the transcript; nothing is pasted.
@@ -261,6 +263,17 @@ stays up for the whole wait, and Escape still cancels it. Without this, a cold
 load would have spent the whole reply budget and your text would have been
 pasted unrefined every time the model had gone cold. The daemon logs one line
 with the load time whenever this happens.
+
+Both the background warm at daemon start and a mid-utterance cold load show
+the breathing loading border in the Refining colour — but only on an
+already-visible pill; loading never makes the pill appear on its own. A
+residency check that finds the model already loaded shows nothing. If both
+the speech model and the cleanup model are loading at once, their borders
+take turns, one full breath each, and the border always finishes its current
+breath before it changes colour or disappears. The startup warm signals even
+when the model turns out to be already resident: that is intentional, and
+brief — invisible if the pill is hidden at the time, one Refining-coloured
+breath if it happens to be visible.
 
 Stopping the daemon releases the model too, even on `idle_unload_seconds = 0`
 — the one setting that otherwise holds it forever. The one gap: if the
