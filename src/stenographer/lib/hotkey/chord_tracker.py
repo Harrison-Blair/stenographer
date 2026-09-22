@@ -47,7 +47,7 @@ class ChordTracker:
         on_start: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
         bindings: dict[str, frozenset[int]] | None = None,
-        on_binding_start: Callable[[str], bool | None] | None = None,
+        on_binding_start: Callable[[str], None] | None = None,
         on_binding_stop: Callable[[str], None] | None = None,
         cancel: frozenset[int] = frozenset(),
         on_cancel: Callable[[], None] | None = None,
@@ -70,6 +70,7 @@ class ChordTracker:
         self._bindings = dict(bindings)
         self._on_binding_start = on_binding_start
         self._on_binding_stop = on_binding_stop
+        self._binding_keys = frozenset().union(*self._bindings.values())
         # Compatibility aliases for the original single-binding tests and the
         # evdev loss-recovery path. Production dispatch uses ``_bindings``.
         self._chord = next(iter(self._bindings.values()))
@@ -85,7 +86,6 @@ class ChordTracker:
         self._active = False
         self._binding_active = {name: False for name in self._bindings}
         self._selected_binding: str | None = None
-        self._last_started_chord = self._chord
         self._cancel_active = False
         self._stop_event = threading.Event()
 
@@ -100,7 +100,7 @@ class ChordTracker:
             if self._stop_event.is_set():
                 return self._report_release(started_at, released=True, reason="listener_stopped")
             with self._held_lock:
-                still_held = bool(self._last_started_chord & self._held)
+                still_held = bool(self._binding_keys & self._held)
             if not still_held:
                 return self._report_release(started_at, released=True, reason="released")
             if time.monotonic() >= deadline:
@@ -225,11 +225,7 @@ class ChordTracker:
                         self._binding_active[name] = True
                         self._selected_binding = name
                         self._active = name == next(iter(self._bindings))
-                        previous_chord = self._last_started_chord
-                        self._last_started_chord = self._bindings[name]
-                        accepted = self._on_binding_start(name)
-                        if accepted is False:
-                            self._last_started_chord = previous_chord
+                        self._on_binding_start(name)
                         break
             for name, is_active in active.items():
                 self._binding_active[name] = is_active

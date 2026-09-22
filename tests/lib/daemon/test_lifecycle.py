@@ -33,6 +33,7 @@ from .support import (
     _run_utterance,
     _Status,
     _summary,
+    _TrackerPlatform,
     _Worker,
 )
 
@@ -88,11 +89,31 @@ def test_build_wires_toggle_mode_press_only():
         toggle.stop()
 
 
-def test_toggle_press_reports_the_action_taken():
-    daemon = _daemon(mode="toggle")
+def test_a_busy_press_of_the_other_binding_holds_the_paste_until_released():
+    # Hybrid default: Agent = Right Ctrl, General = Right Alt. After a stop the
+    # pipeline is busy; holding Right Alt then is refused by the daemon, and a
+    # paste now would send Alt+Ctrl+V. The daemon's own deliverer must wait on
+    # the real tracker it was wired to. Busy stands in for transcription so
+    # nothing records.
+    platform = _TrackerPlatform()
+    daemon = Daemon.build(_no_network_cfg(), clipboard_backend="wl-copy", platform=platform)
     try:
-        assert daemon.on_toggle_press() == "start"
-        assert daemon.on_toggle_press() == "stop"
+        tracker = platform.listener
+        (general_key,) = tracker._bindings["general"]
+        daemon._busy = True
+        tracker._key_event(1, general_key, 1)
+        assert daemon._recording is False
+
+        delivery = threading.Thread(target=daemon._deliverer.deliver, args=("x",))
+        delivery.start()
+        delivery.join(timeout=0.1)
+        assert delivery.is_alive()
+        assert platform.injector.chords == 0
+
+        tracker._key_event(1, general_key, 0)
+        delivery.join(timeout=1.0)
+        assert not delivery.is_alive()
+        assert platform.injector.chords == 1
     finally:
         daemon.stop()
 

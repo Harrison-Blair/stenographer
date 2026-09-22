@@ -55,7 +55,7 @@ class Platform(Protocol):
         on_stop: Callable[[], None],
         lock: threading.RLock,
         bindings: dict[str, frozenset[int]] | None = None,
-        on_binding_start: Callable[[str], bool | None] | None = None,
+        on_binding_start: Callable[[str], None] | None = None,
         on_binding_stop: Callable[[str], None] | None = None,
         cancel: frozenset[int] = frozenset(),
         on_cancel: Callable[[], None] | None = None,

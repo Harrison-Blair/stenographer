@@ -24,6 +24,7 @@ from stenographer.lib.daemon.feedback import _play_cue
 from stenographer.lib.daemon.pipeline import UtterancePipeline
 from stenographer.lib.daemon.policy import cancel_state
 from stenographer.lib.delivery.timings import DeliveryTimings
+from stenographer.lib.hotkey.chord_tracker import ChordTracker
 from stenographer.lib.logging.utterance_filter import UtteranceFilter
 from stenographer.lib.platform.errors import UnsupportedPlatformError
 from stenographer.lib.refine.cancellation import never_cancelled
@@ -404,3 +405,12 @@ class _Platform:
             return True
 
         return copy
+
+
+class _TrackerPlatform(_Platform):
+    """Host double whose listener is the real chord tracker over one fake device."""
+
+    def hotkey_listener(self, *, device, **wiring):
+        self.listener = ChordTracker(**wiring)
+        self.listener._held_by_device[1] = set()
+        return self.listener
