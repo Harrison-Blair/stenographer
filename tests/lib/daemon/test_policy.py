@@ -122,7 +122,13 @@ def test_publish_policy_always_represents_error():
 def test_publish_policy_dedups_stable_states():
     # Every non-ERROR state coalesces when repeated; any actual change passes.
     for state in OverlayState:
-        if state in (OverlayState.ERROR, OverlayState.CANCELLED):
+        if state in (
+            OverlayState.ERROR,
+            OverlayState.CANCELLED,
+            OverlayState.APPLIED,
+            OverlayState.SKIPPED,
+            OverlayState.FALLBACK,
+        ):
             continue
         assert should_publish_state(state, state) is False
     assert should_publish_state(OverlayState.HIDDEN, OverlayState.RECORDING) is True

@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING
 from stenographer.lib.logging.pipeline import log_failure
 
 if TYPE_CHECKING:
+    from stenographer.lib.contracts.loading_model import LoadingModel
     from stenographer.lib.contracts.overlay_state import OverlayState
     from stenographer.lib.contracts.status_sink import StatusSink
+    from stenographer.lib.refine.profiles import RefineProfile
     from stenographer.lib.sounds.feedback import Feedback
 
 log = logging.getLogger("stenographer.lib.daemon")
@@ -24,19 +26,25 @@ def _play_cue(feedback: Feedback, name: str) -> None:
         log_failure(log, logging.WARNING, "feedback: cue_failed", exc, safe=True, cue=name)
 
 
-def _publish_status(status: StatusSink, state: OverlayState) -> None:
+def _publish_status(
+    status: StatusSink, state: OverlayState, profile: RefineProfile | None = None
+) -> None:
     """Enqueue fixed lifecycle metadata without allowing overlay failure through."""
     try:
-        status.publish(state)
+        publish_profiled = getattr(status, "publish_profiled", None)
+        if publish_profiled is None:
+            status.publish(state)
+        else:
+            publish_profiled(state, profile)
     except Exception as exc:
         log_failure(
             log, logging.WARNING, "overlay: publish_failed", exc, safe=True, state=state.value
         )
 
 
-def _publish_loading_activity(status: StatusSink, active: bool) -> None:
+def _publish_loading_activity(status: StatusSink, model: LoadingModel, active: bool) -> None:
     try:
-        status.loading_activity(active)
+        status.loading_activity(model, active)
     except Exception as exc:
         log_failure(
             log,
@@ -44,5 +52,6 @@ def _publish_loading_activity(status: StatusSink, active: bool) -> None:
             "overlay: loading_activity_failed",
             exc,
             safe=True,
+            model=model.value,
             active=int(active),
         )

@@ -43,6 +43,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
+# Release builds generate this file from the version planned from stable tags.
 path = "src/stenographer/_version.py"
 
 [tool.hatch.build]

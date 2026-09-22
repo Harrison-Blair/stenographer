@@ -11,6 +11,7 @@ import time
 from typing import TYPE_CHECKING
 
 from stenographer.lib.audio.recorder import Recorder
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.null_status_sink import NullStatusSink
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.contracts.publication import should_publish_state
@@ -34,6 +35,7 @@ from stenographer.lib.delivery.deliverer import Deliverer
 from stenographer.lib.logging.pipeline import fmt_event, log_failure, set_utterance
 from stenographer.lib.platform import current_platform
 from stenographer.lib.refine.factory import build_refiner
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.sounds.feedback import Feedback
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.pipeline import apply_capture, log_summary
@@ -106,6 +108,7 @@ class Daemon:
         self._utterance_id = 0
         self._cancelled_utterance: int | None = None
         self._record: UtteranceRecord | None = None
+        self._record_profile: RefineProfile | None = None
         self._max_timer: threading.Timer | None = None
         self._warmup_thread: threading.Thread | None = None
         self._pipeline_thread: threading.Thread | None = None
@@ -113,7 +116,14 @@ class Daemon:
         self._deliverer: Deliverer | None = None
         self._platform: Platform | None = None
         self._telemetry = UtteranceTelemetry()
-        self._refiner = build_refiner(cfg.refine, idle_unload_seconds=cfg.asr.idle_unload_seconds)
+        self._refine_load_lock = threading.Lock()
+        self._refine_loads = 0
+        self._refiner = build_refiner(
+            cfg.refine,
+            idle_unload_seconds=cfg.asr.idle_unload_seconds,
+            on_model_loading=self._on_refine_loading,
+            on_model_loading_finished=self._on_refine_loading_finished,
+        )
         self._pipeline: UtterancePipeline | None = None
         self._refine_warmup_thread: threading.Thread | None = None
         self._capture_lock = threading.Lock()
@@ -183,12 +193,33 @@ class Daemon:
             else frozenset()
         )
         log.info("hotkey: configured mode=%s", cfg.hotkey.mode)
+
+        def on_profile_start(name: str) -> bool:
+            profile = RefineProfile(name)
+            if cfg.hotkey.mode in {"toggle", "hybrid"}:
+                daemon.on_toggle_press(profile=profile)
+            else:
+                daemon.on_key_down(profile=profile)
+            return daemon._recording and daemon._record_profile is profile
+
+        def on_profile_stop(_name: str) -> None:
+            if cfg.hotkey.mode == "hybrid":
+                daemon.on_hybrid_release()
+            elif cfg.hotkey.mode == "hold":
+                daemon.on_key_up()
+
         listener = plat.hotkey_listener(
             chord=parse_binding(cfg.hotkey.binding, keys),
             device=cfg.hotkey.device,
             on_start=on_start,
             on_stop=on_stop,
             lock=threading.RLock(),
+            bindings={
+                RefineProfile.AGENT.value: parse_binding(cfg.hotkey.binding, keys),
+                RefineProfile.GENERAL.value: parse_binding(cfg.hotkey.general_binding, keys),
+            },
+            on_binding_start=on_profile_start,
+            on_binding_stop=on_profile_stop,
             cancel=cancel,
             on_cancel=daemon.on_cancel,
         )
@@ -220,7 +251,7 @@ class Daemon:
             if not should_publish_state(self._overlay_state, state):
                 return
             self._overlay_state = state
-            _publish_status(self._status, state)
+            _publish_status(self._status, state, self._record_profile)
 
     def _fail(self, notify_msg: str) -> None:
         """Announce a failed phase on every user-facing channel at once.
@@ -249,7 +280,7 @@ class Daemon:
                 return
             self._model_load_started_at = time.perf_counter()
             self._model_load_utterance = self._utterance_id
-            _publish_loading_activity(self._status, True)
+            _publish_loading_activity(self._status, LoadingModel.ASR, True)
 
     def _on_model_loading_finished(self) -> None:
         """Remove display activity after either model-ready or load failure."""
@@ -262,7 +293,30 @@ class Daemon:
                 self._record.load_ms = (time.perf_counter() - self._model_load_started_at) * 1000
             self._model_load_started_at = None
             self._model_load_utterance = None
-            _publish_loading_activity(self._status, False)
+            _publish_loading_activity(self._status, LoadingModel.ASR, False)
+
+    def _on_refine_loading(self) -> None:
+        """Publish refine activity only on the open→active edge.
+
+        The refine warm thread and the pipeline thread can both hold an open
+        load at once, so only the first opener raises the pill and only the
+        last to finish lowers it.
+        """
+        with self._refine_load_lock:
+            self._refine_loads += 1
+            if self._refine_loads == 1 and not self._stop_event.is_set():
+                _publish_loading_activity(self._status, LoadingModel.REFINE, True)
+
+    def _on_refine_loading_finished(self) -> None:
+        """Lower refine activity once every open load has finished.
+
+        Never suppressed by shutdown: a load that never reports finished would
+        leave the pill on with nothing left to turn it off.
+        """
+        with self._refine_load_lock:
+            self._refine_loads = max(0, self._refine_loads - 1)
+            if self._refine_loads == 0:
+                _publish_loading_activity(self._status, LoadingModel.REFINE, False)
 
     def _warm_model(self, utterance: int) -> None:
         try:
@@ -354,7 +408,7 @@ class Daemon:
             return
         self._warmup_thread = thread
 
-    def on_toggle_press(self) -> None:
+    def on_toggle_press(self, *, profile: RefineProfile | None = None) -> None:
         """Toggle and hybrid modes: one press starts a recording, the next press stops it."""
         with self._lock:
             action = toggle_action(
@@ -365,7 +419,7 @@ class Daemon:
             if action is None and self._busy and self._record is not None:
                 self._record.ignored_busy_presses += 1
         if action == "start":
-            self.on_key_down()
+            self.on_key_down(profile=profile)
         elif action == "stop":
             self.on_key_up()
 
@@ -436,7 +490,7 @@ class Daemon:
             timer.cancel()
             self._max_timer = None
 
-    def on_key_down(self) -> None:
+    def on_key_down(self, *, profile: RefineProfile | None = None) -> None:
         with self._lock:
             if not can_start(self._recording, self._busy, self._stop_event.is_set()):
                 if self._busy and self._record is not None:
@@ -452,6 +506,7 @@ class Daemon:
                 )
                 return
             self._utterance_id += 1
+            self._record_profile = profile
             set_utterance(self._utterance_id)
             started_at = time.perf_counter()
             self._record = UtteranceRecord(
@@ -601,13 +656,19 @@ class Daemon:
         outcome_name = Outcome.ERROR.name
         try:
             assert self._pipeline is not None
-            outcome_name = self._pipeline.run(samples, utterance=self._utterance_id, record=record)
+            outcome_name = self._pipeline.run(
+                samples,
+                utterance=self._utterance_id,
+                record=record,
+                profile=self._record_profile,
+            )
         finally:
             with self._lock:
                 self._worker.release_model()
                 self._busy = False
                 outcome = record.outcome if record is not None else None
                 self._emit_summary(self._take_record(outcome or outcome_name))
+                self._record_profile = None
 
     def run(self) -> None:
         """Start the listener and block until stopped."""

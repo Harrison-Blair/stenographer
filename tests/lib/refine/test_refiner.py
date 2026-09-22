@@ -74,7 +74,7 @@ def transport(monkeypatch):
     def is_model_loaded(host, model):
         return state["loaded"]
 
-    def warm_model(host, model, *, keep_alive, timeout):
+    def warm_model(host, model, *, keep_alive, timeout=None):
         warm_calls.append(
             {"host": host, "model": model, "keep_alive": keep_alive, "timeout": timeout}
         )
@@ -189,6 +189,88 @@ def test_every_failure_delivers_the_raw_text_and_is_classified(transport, failur
     assert refiner.last_result.chars_out is None
 
 
+def test_a_cold_load_reports_loading_only_around_the_warm_request(transport, monkeypatch):
+    transport["loaded"] = False
+    order: list[str] = []
+    real_warm = ollama_refiner.warm_model
+
+    def warm_model(*args, **kwargs):
+        order.append("warm_start")
+        real_warm(*args, **kwargs)
+        order.append("warm_end")
+
+    monkeypatch.setattr(ollama_refiner, "warm_model", warm_model)
+    refiner = _refiner(
+        on_model_loading=lambda: order.append("loading"),
+        on_model_loading_finished=lambda: order.append("finished"),
+    )
+
+    assert refiner.refine(SPOKEN) == CLEANED
+
+    assert order == ["loading", "warm_start", "warm_end", "finished"]
+
+
+def test_a_resident_model_reports_no_loading(transport):
+    events: list[str] = []
+    refiner = _refiner(
+        on_model_loading=lambda: events.append("loading"),
+        on_model_loading_finished=lambda: events.append("finished"),
+    )
+
+    assert refiner.refine(SPOKEN) == CLEANED
+
+    assert events == []
+
+
+def test_a_failed_load_still_reports_finished(transport):
+    transport["loaded"] = False
+    transport["warm_raise"] = RefineTimeoutError("ollama did not answer in time")
+    events: list[str] = []
+    refiner = _refiner(
+        on_model_loading=lambda: events.append("loading"),
+        on_model_loading_finished=lambda: events.append("finished"),
+    )
+
+    assert refiner.refine(SPOKEN) == SPOKEN
+
+    assert refiner.last_result.outcome == OUTCOME_TIMEOUT
+    assert events == ["loading", "finished"]
+
+
+@pytest.mark.parametrize("warm_raise", [None, RefineTransportError("ollama could not be reached")])
+def test_the_startup_warm_reports_loading_and_finished(transport, warm_raise):
+    transport["warm_raise"] = warm_raise
+    events: list[str] = []
+    refiner = _refiner(
+        on_model_loading=lambda: events.append("loading"),
+        on_model_loading_finished=lambda: events.append("finished"),
+    )
+
+    result = refiner.warm()
+
+    assert events == ["loading", "finished"]
+    assert result is (warm_raise is None)
+
+
+def test_a_loading_observer_that_raises_never_changes_the_outcome(transport, caplog):
+    transport["loaded"] = False
+
+    def broken_loading():
+        raise RuntimeError("observer exploded")
+
+    refiner = _refiner(on_model_loading=broken_loading)
+
+    with caplog.at_level(logging.WARNING, logger="stenographer.lib.refine"):
+        assert refiner.refine(SPOKEN) == CLEANED
+
+    assert refiner.last_result.outcome == OUTCOME_APPLIED
+    observer_lines = [m for m in caplog.messages if "observer_failed" in m]
+    assert len(observer_lines) == 1
+    assert "refine: observer_failed" in observer_lines[0]
+    text = "\n".join(caplog.messages)
+    assert "thursday" not in text and "friday" not in text.casefold()
+
+
 def test_a_reply_the_guard_refuses_delivers_the_raw_text(transport):
     transport["reply"] = _answer("Friday.")
 
@@ -262,3 +344,19 @@ def test_an_explicit_opt_out_overrides_an_enabled_config():
     section = dataclasses.replace(Config.defaults().refine, enabled=True)
 
     assert isinstance(build_refiner(section, idle_unload_seconds=900, enabled=False), NullRefiner)
+
+
+def test_the_factory_passes_the_loading_observers_through():
+    def on_loading(): ...
+    def on_finished(): ...
+
+    refiner = build_refiner(
+        RefineConfig(enabled=True),
+        idle_unload_seconds=900,
+        on_model_loading=on_loading,
+        on_model_loading_finished=on_finished,
+    )
+
+    assert isinstance(refiner, OllamaRefiner)
+    assert refiner._on_model_loading is on_loading
+    assert refiner._on_model_loading_finished is on_finished

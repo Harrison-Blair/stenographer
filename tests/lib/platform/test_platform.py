@@ -361,3 +361,13 @@ def test_stop_handlers_really_register_and_name_the_reason_they_were_given():
     finally:
         for sig, previous in saved.items():
             signal.signal(sig, previous)
+
+
+def test_each_provider_resolves_the_universal_profile_bindings():
+    """Agent and General use the same portable key vocabulary on every host."""
+
+    from stenographer.lib.platform.macos.provider import MacOSPlatform
+
+    for provider in (WindowsPlatform(), MacOSPlatform(), current_platform()):
+        for binding in ("KEY_RIGHTCTRL", "KEY_RIGHTALT"):
+            assert provider.keys().name(provider.keys().code(binding)) == binding

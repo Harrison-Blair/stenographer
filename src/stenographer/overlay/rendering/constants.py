@@ -6,9 +6,20 @@ from importlib.resources import files
 from pathlib import Path
 from types import MappingProxyType
 
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 
-PILL_WIDTH = 280
+_BASE_PILL_WIDTH = 280
+
+
+# The bar rail, the profile label, and the status dot must all fit between the
+# pill's insets.  The profile label is only drawn while recording, so the pill
+# is widened by exactly the room the label needs and the rail shifts right by
+# the same amount, keeping the right-hand margins identical.
+_PROFILE_LABEL_EXTRA = 60
+
+
+PILL_WIDTH = _BASE_PILL_WIDTH + _PROFILE_LABEL_EXTRA
 
 
 PILL_HEIGHT = 64
@@ -144,6 +155,9 @@ STATE_LABELS: Mapping[OverlayState, str] = MappingProxyType(
         OverlayState.DELIVERING: "Delivering",
         OverlayState.CANCELLED: "Cancelled",
         OverlayState.ERROR: "Error",
+        OverlayState.APPLIED: "Applied",
+        OverlayState.SKIPPED: "Skipped",
+        OverlayState.FALLBACK: "Fallback",
     }
 )
 
@@ -156,5 +170,16 @@ STATE_DOT_COLORS: Mapping[OverlayState, tuple[int, int, int, int]] = MappingProx
         OverlayState.DELIVERING: (0x8B, 0x5C, 0xF6, 0xFF),
         OverlayState.CANCELLED: (0xA1, 0xA1, 0xAA, 0xFF),
         OverlayState.ERROR: (0xEF, 0x44, 0x44, 0xFF),
+        OverlayState.APPLIED: (0x22, 0xC5, 0x5E, 0xFF),
+        OverlayState.SKIPPED: (0xA1, 0xA1, 0xAA, 0xFF),
+        OverlayState.FALLBACK: (0xF5, 0x9E, 0x0B, 0xFF),
+    }
+)
+
+
+LOADING_BORDER_COLORS: Mapping[LoadingModel, tuple[int, int, int]] = MappingProxyType(
+    {
+        LoadingModel.ASR: LOADING_BORDER_COLOR,
+        LoadingModel.REFINE: STATE_DOT_COLORS[OverlayState.REFINING][:3],
     }
 )

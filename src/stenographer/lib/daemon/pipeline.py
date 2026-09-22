@@ -14,6 +14,7 @@ from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.policy import classify_pipeline
 from stenographer.lib.logging.pipeline import log_failure
 from stenographer.lib.refine.null_refiner import NullRefiner
+from stenographer.lib.refine.results import OUTCOME_APPLIED
 from stenographer.lib.transcribe.errors import WorkerError, WorkerPathologicalError
 from stenographer.lib.transcribe.pipeline import (
     apply_delivery,
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 
     from stenographer.lib.daemon.telemetry import UtteranceTelemetry
     from stenographer.lib.delivery.deliverer import Deliverer
+    from stenographer.lib.refine.profiles import RefineProfile
     from stenographer.lib.refine.text_refiner import TextRefiner
     from stenographer.lib.transcribe.results import TranscriptionResult
     from stenographer.lib.transcribe.utterance_record import UtteranceRecord
@@ -74,10 +76,19 @@ class UtterancePipeline:
         self._play_cue = play_cue
         self._cancelled = cancelled
         self._cancel_state = cancel_state
+        self._refine_display_state: OverlayState | None = None
 
-    def run(self, samples: np.ndarray, *, utterance: int, record: UtteranceRecord | None) -> str:
+    def run(
+        self,
+        samples: np.ndarray,
+        *,
+        utterance: int,
+        record: UtteranceRecord | None,
+        profile: RefineProfile | None = None,
+    ) -> str:
         """Run the ordered stages and report the existing terminal outcome name."""
         outcome_name = Outcome.ERROR.name
+        self._refine_display_state = None
         try:
             if self._cancelled():
                 outcome_name = "CANCELLED"
@@ -119,7 +130,7 @@ class UtterancePipeline:
                 return outcome_name
             text, transcript_nonempty = self._format(result, record)
             if transcript_nonempty:
-                text = self._refine(text, record)
+                text = self._refine(text, record, profile=profile)
                 if self._cancelled():
                     outcome_name = "CANCELLED"
                     self._publish_state(self._cancel_state())
@@ -164,7 +175,7 @@ class UtterancePipeline:
             elif outcome is Outcome.ERROR and record is not None:
                 record.failure = "copy_failed"
             if outcome is Outcome.DELIVERED:
-                self._publish_state(OverlayState.HIDDEN)
+                self._publish_state(self._refine_display_state or OverlayState.HIDDEN)
                 self._play_cue("delivered")
             elif outcome is Outcome.ERROR:
                 self._fail(message or "delivery failed")
@@ -204,7 +215,13 @@ class UtterancePipeline:
             self._publish_state(OverlayState.HIDDEN)
         return text, transcript_nonempty
 
-    def _refine(self, text: str, record: UtteranceRecord | None) -> str:
+    def _refine(
+        self,
+        text: str,
+        record: UtteranceRecord | None,
+        *,
+        profile: RefineProfile | None = None,
+    ) -> str:
         """Run the optional cleanup stage. Never raises; never loses the text.
 
         The refiner already fails open on its own errors, so the guard here is
@@ -229,9 +246,14 @@ class UtterancePipeline:
         accepted = text
         try:
             if not self._refiner.will_refine(text):
+                if profile is not None:
+                    self._refine_display_state = OverlayState.SKIPPED
                 return text
             self._publish_state(OverlayState.REFINING)
-            refined = self._refiner.refine(text, cancelled=self._cancelled)
+            if profile is None:
+                refined = self._refiner.refine(text, cancelled=self._cancelled)
+            else:
+                refined = self._refiner.refine(text, profile=profile, cancelled=self._cancelled)
             # A refiner that broke its contract and returned nothing must not
             # cost the utterance; the formatted transcript stays deliverable.
             accepted = refined if refined.strip() else text
@@ -241,8 +263,17 @@ class UtterancePipeline:
                 delivered=accepted if accepted != text else None,
             )
             self._telemetry.checkpoint(record, "accepted_refinement")
+            if profile is not None:
+                result = self._refiner.last_result
+                self._refine_display_state = (
+                    OverlayState.APPLIED
+                    if result is not None and result.outcome == OUTCOME_APPLIED
+                    else OverlayState.FALLBACK
+                )
         except Exception as exc:
             log_failure(log, logging.WARNING, "pipeline: refine_failed", exc, safe=False)
+            if profile is not None:
+                self._refine_display_state = OverlayState.FALLBACK
         return accepted
 
     def _apply_worker_timings(self, record: UtteranceRecord | None) -> None:

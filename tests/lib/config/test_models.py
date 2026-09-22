@@ -11,6 +11,7 @@ from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import AnalyticsConfig, Config
 from stenographer.lib.config.paths import load_or_default
+from stenographer.lib.platform import current_platform
 
 
 def test_config_error_message():
@@ -25,6 +26,7 @@ def test_config_error_message():
 def test_defaults_match_spec():
     d = Config.defaults()
     assert d.hotkey.binding == "KEY_RIGHTCTRL"
+    assert d.hotkey.general_binding == "KEY_RIGHTALT"
     assert d.hotkey.device is None
     assert d.hotkey.cancel_binding == "KEY_ESC"
     assert d.hotkey.mode == "hybrid"
@@ -68,8 +70,6 @@ def test_default_template_takes_its_hotkey_device_comment_from_the_platform():
     "explicit /dev/input/event* path" while the platform said otherwise).
     """
 
-    from stenographer.lib.platform import current_platform
-
     expected = current_platform().guidance().hotkey_device_comment
     rendered = default_toml()
     assert f'device = ""                    # {expected}\n' in rendered
@@ -90,6 +90,14 @@ def test_default_template_ships_the_default_mode_at_the_fixed_comment_column():
     line = next(text for text in default_toml().splitlines() if text.startswith("mode = "))
     assert line.startswith(f'mode = "{Config.defaults().hotkey.mode}"')
     assert line.index("#") == 31
+
+
+def test_default_template_ships_the_two_universal_profile_bindings():
+    text = default_toml()
+    assert 'binding = "KEY_RIGHTCTRL"' in text
+    assert 'general_binding = "KEY_RIGHTALT"' in text
+    # No placeholder survived, and nothing else is left unrendered.
+    assert "{" not in text
 
 
 def test_loads_validates_without_a_file():

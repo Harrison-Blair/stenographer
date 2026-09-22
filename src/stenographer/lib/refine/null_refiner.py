@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stenographer.lib.refine.cancellation import never_cancelled
+from stenographer.lib.refine.profiles import RefineProfile
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,5 +36,11 @@ class NullRefiner:
     def will_refine(self, text: str) -> bool:
         return False
 
-    def refine(self, text: str, *, cancelled: Callable[[], bool] = never_cancelled) -> str:
+    def refine(
+        self,
+        text: str,
+        *,
+        profile: RefineProfile = RefineProfile.AGENT,
+        cancelled: Callable[[], bool] = never_cancelled,
+    ) -> str:
         return text

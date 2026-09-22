@@ -20,6 +20,11 @@ from __future__ import annotations
 
 import json
 
+from stenographer.lib.refine.agent_prompt import (
+    FEW_SHOT_EXAMPLES as AGENT_FEW_SHOT_EXAMPLES,
+)
+from stenographer.lib.refine.agent_prompt import SYSTEM_PROMPT as AGENT_SYSTEM_PROMPT
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.prompt import (
     FEW_SHOT_EXAMPLES,
     NUM_PREDICT_BASE,
@@ -52,11 +57,22 @@ def _assistant_turn(cleaned: str, *, structured_output: bool) -> str:
     return json.dumps({RESPONSE_KEY: cleaned}, ensure_ascii=False)
 
 
-def build_messages(text: str, *, structured_output: bool) -> list[dict[str, str]]:
+def build_messages(
+    text: str,
+    *,
+    structured_output: bool,
+    profile: RefineProfile = RefineProfile.GENERAL,
+) -> list[dict[str, str]]:
     """The system turn, the few-shot turns, and the utterance to clean."""
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for spoken, cleaned in FEW_SHOT_EXAMPLES:
+    if profile is RefineProfile.AGENT:
+        examples = AGENT_FEW_SHOT_EXAMPLES
+        system_prompt = AGENT_SYSTEM_PROMPT
+    else:
+        examples = FEW_SHOT_EXAMPLES
+        system_prompt = SYSTEM_PROMPT
+    messages = [{"role": "system", "content": system_prompt}]
+    for spoken, cleaned in examples:
         messages.append({"role": "user", "content": spoken})
         answer = _assistant_turn(cleaned, structured_output=structured_output)
         messages.append({"role": "assistant", "content": answer})
@@ -71,12 +87,13 @@ def build_chat_body(
     words: int,
     keep_alive: int,
     structured_output: bool,
+    profile: RefineProfile = RefineProfile.GENERAL,
 ) -> dict[str, object]:
     """The complete ``/api/chat`` body for one utterance."""
 
     body: dict[str, object] = {
         "model": model,
-        "messages": build_messages(text, structured_output=structured_output),
+        "messages": build_messages(text, structured_output=structured_output, profile=profile),
         "stream": False,
         "think": False,
         "keep_alive": keep_alive,

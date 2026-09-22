@@ -566,10 +566,10 @@ def _parse_binding(text: str) -> str:
     return value
 
 
-def _prompt_typed_binding(console: Console, current: str) -> str:
+def _prompt_typed_binding(console: Console, current: str, label: str = "Binding") -> str:
     return str(
         console.validated(
-            f"Binding [{current}]: ",
+            f"{label} [{current}]: ",
             lambda text: _parse_binding(text.strip() or current),
         )
     )
@@ -579,12 +579,17 @@ def _edit_hotkey(console: Console, config: Config) -> Config:
     console.write("\nHotkey")
     console.write(
         "Binding uses key names (the evdev KEY_* vocabulary) joined with '+'. "
-        "Mode is hold, toggle, or hybrid; the hybrid threshold splits a tap from a hold."
+        "Agent is the default conservative profile; General retains ordinary transcript "
+        "cleanup. Mode is hold, toggle, or hybrid for both bindings."
     )
 
     hotkey = dataclasses.replace(
         config.hotkey,
-        binding=_prompt_typed_binding(console, config.hotkey.binding),
+        binding=_prompt_typed_binding(console, config.hotkey.binding, "Agent binding"),
+    )
+    hotkey = dataclasses.replace(
+        hotkey,
+        general_binding=_prompt_typed_binding(console, hotkey.general_binding, "General binding"),
     )
     hotkey = dataclasses.replace(
         hotkey,

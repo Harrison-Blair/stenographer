@@ -7,9 +7,11 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.logging.pipeline import log_failure
 from stenographer.lib.platform.errors import UnsupportedPlatformError
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.helper.control import reduce_helper_control
 from stenographer.overlay.helper.models import HelperControlState
 from stenographer.overlay.platform import current_platform
@@ -62,8 +64,11 @@ class OverlaySupervisor:
     def publish(self, state: OverlayState) -> None:
         self._mailbox.publish(state)
 
-    def loading_activity(self, active: bool) -> None:
-        self._mailbox.loading_activity(active)
+    def publish_profiled(self, state: OverlayState, profile: RefineProfile | None) -> None:
+        self._mailbox.publish(state, profile)
+
+    def loading_activity(self, model: LoadingModel, active: bool) -> None:
+        self._mailbox.loading_activity(model, active)
 
     def audio_block(self, samples: object, sample_rate: int, stream_epoch: int) -> None:
         self._mailbox.audio_block(samples, sample_rate, stream_epoch)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.errors import ProtocolError
@@ -91,60 +92,103 @@ def test_a_duplicate_loading_edge_never_restarts_the_breathing_phase() -> None:
     reducer = OverlayReducer()
     _recording(reducer)
 
-    assert reducer.apply(LoadingActivityMessage(True), 100.5) is DisplayIntent.REPAINT
-    started_at = reducer.pulse.started_at
+    assert (
+        reducer.apply(LoadingActivityMessage(LoadingModel.ASR, True), 100.5)
+        is DisplayIntent.REPAINT
+    )
+    breath_started_at = reducer.pulse.breath_started_at
     next_frame_at = reducer.pulse.next_frame_at
 
-    assert reducer.apply(LoadingActivityMessage(True), 103.0) is DisplayIntent.NONE
-    assert reducer.pulse.started_at == started_at
+    assert (
+        reducer.apply(LoadingActivityMessage(LoadingModel.ASR, True), 103.0) is DisplayIntent.NONE
+    )
+    assert reducer.pulse.breath_started_at == breath_started_at
     assert reducer.pulse.next_frame_at == next_frame_at
 
 
 def test_a_loading_edge_while_hidden_records_activity_without_drawing() -> None:
     reducer = OverlayReducer()
 
-    assert reducer.apply(LoadingActivityMessage(True), 100.0) is DisplayIntent.NONE
-    assert reducer.pulse.active is True
-    assert reducer.pulse.next_frame_at is None
+    assert (
+        reducer.apply(LoadingActivityMessage(LoadingModel.ASR, True), 100.0) is DisplayIntent.NONE
+    )
+    assert reducer.pulse.loading == [LoadingModel.ASR]
+    assert reducer.pulse.breathing is False
 
-    # The pending pulse arms itself the moment a surface appears.
+    # The pending pulse starts breathing the moment a surface appears.
     _recording(reducer, now=101.0)
-    assert reducer.pulse.next_frame_at is not None
+    assert reducer.pulse.breathing is True
+    assert reducer.pulse.breath_model is LoadingModel.ASR
+    assert reducer.pulse.breath_started_at == 101.0
 
 
-def test_loading_off_repaints_the_visible_pill_without_arming_frames() -> None:
+def test_loading_off_lets_the_current_breath_finish_before_the_border_goes() -> None:
     reducer = OverlayReducer()
     _recording(reducer)
-    reducer.apply(LoadingActivityMessage(True), 100.5)
+    reducer.apply(LoadingActivityMessage(LoadingModel.ASR, True), 100.5)
 
-    assert reducer.apply(LoadingActivityMessage(False), 101.0) is DisplayIntent.REPAINT
-    assert reducer.pulse.active is False
-    assert reducer.pulse.next_frame_at is None
-    assert reducer.pulse.elapsed(102.0) is None
+    assert (
+        reducer.apply(LoadingActivityMessage(LoadingModel.ASR, False), 101.0) is DisplayIntent.NONE
+    )
+    assert reducer.pulse.breathing is True
+    assert reducer.pulse.next_frame_at is not None
+
+    reducer.pulse.advance(reducer.pulse.breath_started_at + 2.0)
+
+    assert reducer.pulse.breathing is False
+    assert reducer.pulse.elapsed(105.0) is None
+    assert reducer.pulse.timeout(105.0, visible=True) is None
 
 
 def test_hiding_disarms_loading_frames_but_keeps_the_activity_edge() -> None:
     reducer = OverlayReducer()
     _recording(reducer)
-    reducer.apply(LoadingActivityMessage(True), 100.5)
+    reducer.apply(LoadingActivityMessage(LoadingModel.ASR, True), 100.5)
 
     assert reducer.apply(StateMessage(1, OverlayState.HIDDEN), 101.0) is DisplayIntent.TEARDOWN
     assert reducer.pulse.next_frame_at is None
-    assert reducer.pulse.active is True
+    assert reducer.pulse.breathing is False
+    assert reducer.pulse.loading == [LoadingModel.ASR]
     assert reducer.pulse.timeout(101.0, visible=False) is None
 
 
 def test_a_visible_state_change_rearms_the_frame_cadence_from_now() -> None:
     reducer = OverlayReducer()
     _recording(reducer)
-    reducer.apply(LoadingActivityMessage(True), 100.5)
+    reducer.apply(LoadingActivityMessage(LoadingModel.ASR, True), 100.5)
 
     reducer.apply(StateMessage(1, OverlayState.TRANSCRIBING), 200.0)
 
     assert reducer.pulse.next_frame_at is not None
     assert reducer.pulse.next_frame_at > 200.0
-    # The phase itself is anchored to the activity edge, not to the state.
-    assert reducer.pulse.elapsed(200.0) == pytest.approx(99.5)
+    # The breath itself is kept across a visible state change, not restarted.
+    assert reducer.pulse.breath_model is LoadingModel.ASR
+    assert reducer.pulse.breath_started_at == 100.5
+
+
+def test_a_second_model_joining_repaints_nothing_until_its_breath() -> None:
+    reducer = OverlayReducer()
+    _recording(reducer)
+    reducer.apply(LoadingActivityMessage(LoadingModel.ASR, True), 100.5)
+
+    assert (
+        reducer.apply(LoadingActivityMessage(LoadingModel.REFINE, True), 100.8)
+        is DisplayIntent.NONE
+    )
+    assert reducer.pulse.loading == [LoadingModel.ASR, LoadingModel.REFINE]
+    assert reducer.pulse.breath_model is LoadingModel.ASR
+    assert reducer.pulse.breath_started_at == 100.5
+
+
+def test_a_show_after_a_hide_starts_the_aura_at_the_trough_with_the_earliest_model() -> None:
+    reducer = OverlayReducer()
+    reducer.apply(LoadingActivityMessage(LoadingModel.REFINE, True), 100.0)
+    reducer.apply(LoadingActivityMessage(LoadingModel.ASR, True), 100.5)
+
+    assert reducer.apply(StateMessage(0, OverlayState.TRANSCRIBING), 300.0) is DisplayIntent.REDRAW
+
+    assert reducer.pulse.breath_model is LoadingModel.REFINE
+    assert reducer.pulse.elapsed(300.0) == 0.0
 
 
 def test_one_utterance_drives_the_same_intents_for_either_backend() -> None:
@@ -152,10 +196,10 @@ def test_one_utterance_drives_the_same_intents_for_either_backend() -> None:
     sequence = [
         (StateMessage(0, OverlayState.RECORDING), DisplayIntent.REDRAW),
         (SpectrumMessage(0, 0, LOUD), DisplayIntent.REPAINT),
-        (LoadingActivityMessage(True), DisplayIntent.REPAINT),
+        (LoadingActivityMessage(LoadingModel.ASR, True), DisplayIntent.REPAINT),
         (StateMessage(1, OverlayState.TRANSCRIBING), DisplayIntent.REDRAW),
         (SpectrumMessage(1, 0, SILENT), DisplayIntent.NONE),
-        (LoadingActivityMessage(False), DisplayIntent.REPAINT),
+        (LoadingActivityMessage(LoadingModel.ASR, False), DisplayIntent.NONE),
         (StateMessage(2, OverlayState.DELIVERING), DisplayIntent.REDRAW),
         (StateMessage(3, OverlayState.HIDDEN), DisplayIntent.TEARDOWN),
         (CommandMessage(Command.SHUTDOWN), DisplayIntent.STOP),

@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The single source of truth for stenographer's release version."""
+"""Generated release build version; release tags remain authoritative."""
 
-__version__ = "0.13.0"
+# Source and editable checkouts use an explicit non-release placeholder. The
+# release workflow replaces this file in each build job with its tag-derived
+# version before installing or packaging Stenographer.
+__version__ = "0.0.0+source"

@@ -17,6 +17,7 @@ import pytest
 
 from stenographer.lib.audio.records import CaptureStats
 from stenographer.lib.config.models import Config
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.daemon import Daemon
 from stenographer.lib.daemon.feedback import _play_cue
@@ -27,6 +28,7 @@ from stenographer.lib.logging.utterance_filter import UtteranceFilter
 from stenographer.lib.platform.errors import UnsupportedPlatformError
 from stenographer.lib.refine.cancellation import never_cancelled
 from stenographer.lib.refine.policy import should_refine
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED, RefineResult
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker_timings import WorkerTimings
@@ -170,6 +172,7 @@ class _Refiner:
         self._unload_error = unload_error
         self._last_result: RefineResult | None = None
         self.calls: list[str] = []
+        self.profiles: list[RefineProfile] = []
         self.unloaded = 0
         self.on_refine = None
 
@@ -189,8 +192,15 @@ class _Refiner:
     def will_refine(self, text: str) -> bool:
         return should_refine(text, self._min_words)
 
-    def refine(self, text: str, *, cancelled=never_cancelled) -> str:
+    def refine(
+        self,
+        text: str,
+        *,
+        profile: RefineProfile = RefineProfile.GENERAL,
+        cancelled=never_cancelled,
+    ) -> str:
         self.calls.append(text)
+        self.profiles.append(profile)
         if self.on_refine is not None:
             self.on_refine()
         if self._error is not None:
@@ -279,14 +289,14 @@ class _Status:
 
     def __init__(self) -> None:
         self.states: list[OverlayState] = []
-        self.loading: list[bool] = []
+        self.loading: list[tuple[LoadingModel, bool]] = []
 
     def publish(self, state: OverlayState) -> int:
         self.states.append(state)
         return len(self.states)
 
-    def loading_activity(self, active: bool) -> None:
-        self.loading.append(active)
+    def loading_activity(self, model: LoadingModel, active: bool) -> None:
+        self.loading.append((model, active))
 
 
 def _daemon_with_status(
@@ -324,6 +334,9 @@ class _Listener:
         on_start,
         on_stop,
         lock,
+        bindings=None,
+        on_binding_start=None,
+        on_binding_stop=None,
         cancel=frozenset(),
         on_cancel=None,
     ) -> None:
@@ -331,6 +344,9 @@ class _Listener:
         self.device = device
         self.cancel = cancel
         self.lock = lock
+        self.bindings = bindings
+        self.on_binding_start = on_binding_start
+        self.on_binding_stop = on_binding_stop
         self._on_start = on_start
         self._on_stop = on_stop
         self.on_cancel = on_cancel

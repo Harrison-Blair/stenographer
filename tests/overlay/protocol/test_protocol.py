@@ -8,6 +8,7 @@ import json
 import pytest
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.codec import decode_message, encode_message
@@ -43,8 +44,8 @@ from stenographer.overlay.protocol.unavailablereason import UnavailableReason
         StateMessage(generation=7, state=OverlayState.RECORDING),
         StateMessage(generation=8, state=OverlayState.CANCELLED),
         SpectrumMessage(generation=7, sequence=4, levels=tuple(range(SPECTRUM_BANDS))),
-        LoadingActivityMessage(active=True),
-        LoadingActivityMessage(active=False),
+        LoadingActivityMessage(LoadingModel.ASR, True),
+        LoadingActivityMessage(LoadingModel.REFINE, False),
         CommandMessage(command=Command.SHUTDOWN),
         ReadyMessage(backend=Backend.LAYER_SHELL),
         ReadyMessage(backend=Backend.XWAYLAND),
@@ -59,9 +60,9 @@ def test_protocol_round_trip_is_one_ndjson_record(message):
     assert decode_message(encoded) == message
 
 
-def test_protocol_uses_version_four_and_only_fixed_state_fields():
+def test_protocol_uses_version_five_and_only_fixed_state_fields():
     encoded = encode_message(StateMessage(3, OverlayState.TRANSCRIBING))
-    assert encoded == '{"v":4,"type":"state","generation":3,"state":"transcribing"}\n'
+    assert encoded == '{"v":5,"type":"state","generation":3,"state":"transcribing"}\n'
     assert "transcript" not in encoded
     assert "audio" not in encoded
 
@@ -74,20 +75,21 @@ def test_protocol_uses_version_four_and_only_fixed_state_fields():
         '{"v":1,"type":"state","generation":0,"state":"hidden"}\n',
         '{"v":2,"type":"state","generation":0,"state":"hidden"}\n',
         '{"v":3,"type":"state","generation":0,"state":"hidden"}\n',
-        '{"v":4.0,"type":"state","generation":0,"state":"hidden"}\n',
-        '{"v":4,"v":4,"type":"state","generation":0,"state":"hidden"}\n',
-        '{"v":4,"type":"state","generation":0,"state":"hidden","state":"secret"}\n',
-        '{"v":4,"type":"state","generation":true,"state":"hidden"}\n',
-        '{"v":4,"type":"state","generation":-1,"state":"hidden"}\n',
-        '{"v":4,"type":"state","generation":0,"state":"success"}\n',
-        '{"v":4,"type":"state","generation":0,"state":"model_loading"}\n',
-        '{"v":4,"type":"state","generation":0,"state":"hidden","text":"secret"}\n',
-        '{"v":4,"type":"lifecycle","generation":1,"event":"model_ready"}\n',
-        '{"v":4,"type":"lifecycle","generation":1,"event":"transcript_ready"}\n',
-        '{"v":4,"type":"ready","backend":"gtk"}\n',
-        '{"v":4,"type":"unavailable","reason":"a detailed display error"}\n',
-        '{"v":4,"type":"command","command":"show_preview"}\n',
-        '{"v":4,"type":"command","command":"shutdown"}\ntrailing',
+        '{"v":4,"type":"state","generation":0,"state":"hidden"}\n',
+        '{"v":5.0,"type":"state","generation":0,"state":"hidden"}\n',
+        '{"v":5,"v":5,"type":"state","generation":0,"state":"hidden"}\n',
+        '{"v":5,"type":"state","generation":0,"state":"hidden","state":"secret"}\n',
+        '{"v":5,"type":"state","generation":true,"state":"hidden"}\n',
+        '{"v":5,"type":"state","generation":-1,"state":"hidden"}\n',
+        '{"v":5,"type":"state","generation":0,"state":"success"}\n',
+        '{"v":5,"type":"state","generation":0,"state":"model_loading"}\n',
+        '{"v":5,"type":"state","generation":0,"state":"hidden","text":"secret"}\n',
+        '{"v":5,"type":"lifecycle","generation":1,"event":"model_ready"}\n',
+        '{"v":5,"type":"lifecycle","generation":1,"event":"transcript_ready"}\n',
+        '{"v":5,"type":"ready","backend":"gtk"}\n',
+        '{"v":5,"type":"unavailable","reason":"a detailed display error"}\n',
+        '{"v":5,"type":"command","command":"show_preview"}\n',
+        '{"v":5,"type":"command","command":"shutdown"}\ntrailing',
     ],
 )
 def test_protocol_rejects_malformed_or_expansive_records_without_echo(record):
@@ -114,34 +116,39 @@ def test_encoder_rejects_invalid_typed_values():
     with pytest.raises(ProtocolError, match="levels"):
         encode_message(SpectrumMessage(1, 0, (0,) * (SPECTRUM_BANDS - 1) + (True,)))
     with pytest.raises(ProtocolError, match="activity"):
-        encode_message(LoadingActivityMessage(1))
+        encode_message(LoadingActivityMessage(LoadingModel.ASR, 1))
+    with pytest.raises(ProtocolError, match="model"):
+        encode_message(LoadingActivityMessage("asr", True))
 
 
-def test_loading_activity_protocol_is_a_strict_boolean_only() -> None:
-    assert encode_message(LoadingActivityMessage(True)) == (
-        '{"v":4,"type":"loading_activity","active":true}\n'
+def test_loading_activity_protocol_is_a_strict_model_and_boolean() -> None:
+    assert encode_message(LoadingActivityMessage(LoadingModel.ASR, True)) == (
+        '{"v":5,"type":"loading_activity","model":"asr","active":true}\n'
     )
-    assert encode_message(LoadingActivityMessage(False)) == (
-        '{"v":4,"type":"loading_activity","active":false}\n'
+    assert encode_message(LoadingActivityMessage(LoadingModel.REFINE, False)) == (
+        '{"v":5,"type":"loading_activity","model":"refine","active":false}\n'
     )
     for record in (
-        '{"v":4,"type":"loading_activity","active":1}\n',
-        '{"v":4,"type":"loading_activity","active":"true"}\n',
-        '{"v":4,"type":"loading_activity","active":null}\n',
-        '{"v":4,"type":"loading_activity","active":true,"phase":0}\n',
+        '{"v":5,"type":"loading_activity","model":"tts","active":true}\n',
+        '{"v":5,"type":"loading_activity","active":true}\n',
+        '{"v":5,"type":"loading_activity","model":"asr","active":1}\n',
+        '{"v":5,"type":"loading_activity","model":"asr","active":"true"}\n',
+        '{"v":5,"type":"loading_activity","model":"asr","active":null}\n',
+        '{"v":5,"type":"loading_activity","active":true,"phase":0}\n',
+        '{"v":5,"type":"loading_activity","model":"asr","active":true,"phase":0}\n',
     ):
-        with pytest.raises(ProtocolError, match=r"activity|fields"):
+        with pytest.raises(ProtocolError, match=r"activity|fields|model"):
             decode_message(record)
 
 
 @pytest.mark.parametrize(
     "record",
     [
-        '{"v":4,"type":"spectrum","generation":3,"sequence":0,"levels":[0]}\n',
-        '{"v":4,"type":"spectrum","generation":3,"sequence":0,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,256]}\n',
-        '{"v":4,"type":"spectrum","generation":3,"sequence":0,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,true]}\n',
-        '{"v":4,"type":"spectrum","generation":3,"sequence":false,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}\n',
-        '{"v":4,"type":"spectrum","generation":3,"sequence":0,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"text":"secret"}\n',
+        '{"v":5,"type":"spectrum","generation":3,"sequence":0,"levels":[0]}\n',
+        '{"v":5,"type":"spectrum","generation":3,"sequence":0,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,256]}\n',
+        '{"v":5,"type":"spectrum","generation":3,"sequence":0,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,true]}\n',
+        '{"v":5,"type":"spectrum","generation":3,"sequence":false,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}\n',
+        '{"v":5,"type":"spectrum","generation":3,"sequence":0,"levels":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"text":"secret"}\n',
     ],
 )
 def test_protocol_rejects_malformed_spectrum_records(record):
@@ -166,12 +173,10 @@ def test_loading_activity_preserves_recording_generation_and_spectrum_order() ->
     gate = DisplayMessageGate()
     assert gate.accept(StateMessage(4, OverlayState.RECORDING)) is True
     assert gate.accept(SpectrumMessage(4, 0, (0,) * SPECTRUM_BANDS)) is True
-    assert gate.accept(LoadingActivityMessage(True)) is True
-    assert gate.loading_active is True
+    assert gate.accept(LoadingActivityMessage(LoadingModel.ASR, True)) is True
     assert gate.recording_generation == 4
     assert gate.accept(SpectrumMessage(4, 1, (1,) * SPECTRUM_BANDS)) is True
-    assert gate.accept(LoadingActivityMessage(False)) is True
-    assert gate.loading_active is False
+    assert gate.accept(LoadingActivityMessage(LoadingModel.ASR, False)) is True
     assert gate.accept(SpectrumMessage(4, 2, (2,) * SPECTRUM_BANDS)) is True
 
 
@@ -179,7 +184,7 @@ def test_spectrum_coalescing_keeps_latest_adjacent_frame_and_ordering_barriers()
     state = StateMessage(3, OverlayState.RECORDING)
     first = SpectrumMessage(3, 0, (1,) * SPECTRUM_BANDS)
     latest = SpectrumMessage(3, 1, (2,) * SPECTRUM_BANDS)
-    loading = LoadingActivityMessage(True)
+    loading = LoadingActivityMessage(LoadingModel.ASR, True)
     hidden = StateMessage(4, OverlayState.HIDDEN)
 
     assert coalesce_spectrum_messages((state, first, latest, loading, first, hidden)) == (
@@ -206,7 +211,7 @@ def test_incremental_line_reader_rejects_oversize_and_truncated_records():
         reader.feed(b"x" * MAX_MESSAGE_BYTES)
 
     reader = LineReader()
-    reader.feed(b'{"v":4')
+    reader.feed(b'{"v":5')
     with pytest.raises(ProtocolError, match="mid-record"):
         reader.finish()
 
@@ -246,7 +251,7 @@ def test_drain_display_stream_coalesces_adjacent_spectrum_frames_only():
         encode_message(StateMessage(2, OverlayState.RECORDING))
         + encode_message(SpectrumMessage(2, 0, (1,) * SPECTRUM_BANDS))
         + encode_message(SpectrumMessage(2, 1, (2,) * SPECTRUM_BANDS))
-        + encode_message(LoadingActivityMessage(True))
+        + encode_message(LoadingActivityMessage(LoadingModel.ASR, True))
         + encode_message(SpectrumMessage(2, 2, (3,) * SPECTRUM_BANDS))
         + encode_message(CommandMessage(Command.SHUTDOWN))
     ).encode()
@@ -254,7 +259,7 @@ def test_drain_display_stream_coalesces_adjacent_spectrum_frames_only():
     assert drain_display_stream(stream, reader, gate) == (
         StateMessage(2, OverlayState.RECORDING),
         SpectrumMessage(2, 1, (2,) * SPECTRUM_BANDS),
-        LoadingActivityMessage(True),
+        LoadingActivityMessage(LoadingModel.ASR, True),
         SpectrumMessage(2, 2, (3,) * SPECTRUM_BANDS),
         CommandMessage(Command.SHUTDOWN),
     )
@@ -315,13 +320,13 @@ def test_the_encoder_refuses_anything_it_cannot_describe_exactly(message, match)
 @pytest.mark.parametrize(
     ("record", "match"),
     [
-        ('{"v":4,"type":"state","generation":0,"state":7}\n', "state has wrong type"),
-        ('{"v":4,"type":"command","command":null}\n', "command has wrong type"),
-        ('{"v":4,"type":"ready","backend":4}\n', "backend has wrong type"),
-        ('{"v":4,"type":"unavailable","reason":[]}\n', "reason has wrong type"),
-        ('{"v":4,"type":"ready","backend":"quartz"}\n', "backend has unknown value"),
-        ('{"v":4,"type":"command","command":"restart"}\n', "command has unknown value"),
-        ('{"v":4,"type":"unavailable","reason":"bored"}\n', "reason has unknown value"),
+        ('{"v":5,"type":"state","generation":0,"state":7}\n', "state has wrong type"),
+        ('{"v":5,"type":"command","command":null}\n', "command has wrong type"),
+        ('{"v":5,"type":"ready","backend":4}\n', "backend has wrong type"),
+        ('{"v":5,"type":"unavailable","reason":[]}\n', "reason has wrong type"),
+        ('{"v":5,"type":"ready","backend":"quartz"}\n', "backend has unknown value"),
+        ('{"v":5,"type":"command","command":"restart"}\n', "command has unknown value"),
+        ('{"v":5,"type":"unavailable","reason":"bored"}\n', "reason has unknown value"),
     ],
 )
 def test_the_decoder_separates_a_wrong_type_from_an_unknown_value(record, match):
@@ -337,7 +342,7 @@ def test_the_decoder_separates_a_wrong_type_from_an_unknown_value(record, match)
 def test_the_decoder_rejects_spectrum_counters_outside_the_wire_range(generation, sequence, match):
     levels = str([0] * SPECTRUM_BANDS).replace(" ", "")
     record = (
-        f'{{"v":4,"type":"spectrum","generation":{json.dumps(generation)},'
+        f'{{"v":5,"type":"spectrum","generation":{json.dumps(generation)},'
         f'"sequence":{json.dumps(sequence)},"levels":{levels}}}\n'
     )
 
@@ -352,7 +357,7 @@ def test_the_decoder_rejects_oversize_bytes_before_decoding_them():
 
 def test_the_decoder_rejects_bytes_that_are_not_utf_eight():
     with pytest.raises(ProtocolError, match="not UTF-8"):
-        decode_message(b'{"v":4,"type":"ready","backend":"\xff\xfe"}\n')
+        decode_message(b'{"v":5,"type":"ready","backend":"\xff\xfe"}\n')
 
 
 @pytest.mark.parametrize("record", [4, None, ["state"], {"v": 4}])
@@ -390,7 +395,7 @@ def test_an_empty_read_frames_nothing_and_leaves_the_buffer_untouched():
     not be mistaken for a completed record.
     """
     reader = LineReader()
-    reader.feed(b'{"v":4')
+    reader.feed(b'{"v":5')
 
     assert reader.feed(b"") == []
 

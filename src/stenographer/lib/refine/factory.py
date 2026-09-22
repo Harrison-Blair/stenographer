@@ -15,6 +15,8 @@ from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 from stenographer.lib.refine.policy import keep_alive_for
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from stenographer.lib.config.models import RefineConfig
     from stenographer.lib.refine.text_refiner import TextRefiner
 
@@ -24,6 +26,8 @@ def build_refiner(
     *,
     idle_unload_seconds: int,
     enabled: bool | None = None,
+    on_model_loading: Callable[[], None] | None = None,
+    on_model_loading_finished: Callable[[], None] | None = None,
 ) -> TextRefiner:
     """Build the configured refiner.
 
@@ -41,4 +45,6 @@ def build_refiner(
         min_words=cfg.min_words,
         structured_output=cfg.structured_output,
         keep_alive=keep_alive_for(idle_unload_seconds),
+        on_model_loading=on_model_loading,
+        on_model_loading_finished=on_model_loading_finished,
     )

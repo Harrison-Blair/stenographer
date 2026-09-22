@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.constants import (
@@ -76,6 +78,10 @@ def encode_message(message: ProtocolMessage) -> str:
             "generation": message.generation,
             "state": message.state.value,
         }
+        if message.profile is not None:
+            if not isinstance(message.profile, RefineProfile):
+                raise ProtocolError("protocol profile has wrong type")
+            payload["profile"] = message.profile.value
     elif isinstance(message, SpectrumMessage):
         if not _valid_generation(message.generation):
             raise ProtocolError("protocol generation is out of range")
@@ -91,11 +97,14 @@ def encode_message(message: ProtocolMessage) -> str:
             "levels": list(message.levels),
         }
     elif isinstance(message, LoadingActivityMessage):
+        if not isinstance(message.model, LoadingModel):
+            raise ProtocolError("protocol loading model has wrong type")
         if not isinstance(message.active, bool):
             raise ProtocolError("protocol loading activity has wrong type")
         payload = {
             "v": PROTOCOL_VERSION,
             "type": "loading_activity",
+            "model": message.model.value,
             "active": message.active,
         }
     elif isinstance(message, CommandMessage):
@@ -146,10 +155,20 @@ def decode_message(record: str | bytes) -> ProtocolMessage:
         raise ProtocolError("unsupported protocol version")
     message_type = obj.get("type")
     if message_type == "state":
-        _expect_fields(obj, frozenset({"v", "type", "generation", "state"}))
+        fields = frozenset(obj)
+        if fields not in {
+            frozenset({"v", "type", "generation", "state"}),
+            frozenset({"v", "type", "generation", "state", "profile"}),
+        }:
+            raise ProtocolError("protocol record has unexpected fields")
         if not _valid_generation(obj["generation"]):
             raise ProtocolError("protocol generation is out of range")
-        return StateMessage(obj["generation"], _enum_value(OverlayState, obj["state"], "state"))
+        profile = (
+            _enum_value(RefineProfile, obj["profile"], "profile") if "profile" in obj else None
+        )
+        return StateMessage(
+            obj["generation"], _enum_value(OverlayState, obj["state"], "state"), profile
+        )
     if message_type == "spectrum":
         _expect_fields(obj, frozenset({"v", "type", "generation", "sequence", "levels"}))
         if not _valid_generation(obj["generation"]):
@@ -160,10 +179,12 @@ def decode_message(record: str | bytes) -> ProtocolMessage:
             raise ProtocolError("protocol spectrum levels are invalid")
         return SpectrumMessage(obj["generation"], obj["sequence"], tuple(obj["levels"]))
     if message_type == "loading_activity":
-        _expect_fields(obj, frozenset({"v", "type", "active"}))
+        _expect_fields(obj, frozenset({"v", "type", "model", "active"}))
         if not isinstance(obj["active"], bool):
             raise ProtocolError("protocol loading activity has wrong type")
-        return LoadingActivityMessage(obj["active"])
+        return LoadingActivityMessage(
+            _enum_value(LoadingModel, obj["model"], "model"), obj["active"]
+        )
     if message_type == "command":
         _expect_fields(obj, frozenset({"v", "type", "command"}))
         return CommandMessage(_enum_value(Command, obj["command"], "command"))

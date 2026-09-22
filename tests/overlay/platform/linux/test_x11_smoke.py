@@ -14,6 +14,7 @@ from Xlib import display as xdisplay
 from Xlib.ext import shape
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
 from stenographer.overlay.platform.linux.backends.x11_overlay_backend import X11OverlayBackend
@@ -188,7 +189,7 @@ def test_real_xwayland_window_is_click_through_and_updates_in_place():
 
         os.write(
             write_fd,
-            encode_message(LoadingActivityMessage(True)).encode("ascii"),
+            encode_message(LoadingActivityMessage(LoadingModel.ASR, True)).encode("ascii"),
         )
         loading_pixels = _wait_for_repaint(observer, window, spectrum_pixels)
         assert _wait_for_window(observer, window_id, present=True).id == window_id
@@ -211,7 +212,7 @@ def test_real_xwayland_window_is_click_through_and_updates_in_place():
 
         os.write(
             write_fd,
-            encode_message(LoadingActivityMessage(False)).encode("ascii"),
+            encode_message(LoadingActivityMessage(LoadingModel.ASR, False)).encode("ascii"),
         )
         assert _wait_for_repaint(observer, transcribing_window, transcribing_pixels)
 

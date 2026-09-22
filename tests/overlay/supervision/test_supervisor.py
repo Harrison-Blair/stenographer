@@ -15,6 +15,7 @@ from itertools import pairwise
 import pytest
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.messages import (
@@ -130,23 +131,25 @@ def test_loading_activity_is_ordered_without_resetting_recording_slots():
     mailbox.audio_block(object(), 16000, 11)
     assert mailbox.publish_spectrum(generation, (1,) * SPECTRUM_BANDS) == 0
 
-    mailbox.loading_activity(True)
+    mailbox.loading_activity(LoadingModel.ASR, True)
 
-    assert mailbox.take_nowait() == LoadingActivityMessage(True)
+    assert mailbox.take_nowait() == LoadingActivityMessage(LoadingModel.ASR, True)
     block = mailbox.take_audio_nowait()
     assert block is not None and block.generation == generation
     assert mailbox.take_nowait() == SpectrumMessage(generation, 0, (1,) * SPECTRUM_BANDS)
     assert mailbox.publish_spectrum(generation, (2,) * SPECTRUM_BANDS) == 1
 
-    mailbox.loading_activity(False)
-    assert mailbox.take_nowait() == LoadingActivityMessage(False)
+    mailbox.loading_activity(LoadingModel.ASR, False)
+    assert mailbox.take_nowait() == LoadingActivityMessage(LoadingModel.ASR, False)
     assert mailbox.take_nowait() == SpectrumMessage(generation, 1, (2,) * SPECTRUM_BANDS)
 
 
-def test_loading_activity_requires_a_strict_boolean():
+def test_loading_activity_requires_a_loading_model_and_a_strict_boolean():
     mailbox = OutboundMailbox()
+    with pytest.raises(TypeError, match="LoadingModel"):
+        mailbox.loading_activity("asr", True)
     with pytest.raises(TypeError, match="boolean"):
-        mailbox.loading_activity(1)
+        mailbox.loading_activity(LoadingModel.ASR, 1)
 
 
 def test_mailbox_transition_discards_prior_recording_frames_and_takes_priority():
@@ -167,9 +170,9 @@ def test_mailbox_transition_discards_prior_recording_frames_and_takes_priority()
 def test_mailbox_is_bounded_and_keeps_newest_metadata():
     mailbox = OutboundMailbox(capacity=3)
     mailbox.publish(OverlayState.RECORDING)
-    mailbox.loading_activity(True)
+    mailbox.loading_activity(LoadingModel.ASR, True)
     mailbox.publish(OverlayState.TRANSCRIBING)
-    mailbox.loading_activity(False)
+    mailbox.loading_activity(LoadingModel.ASR, False)
     mailbox.publish(OverlayState.DELIVERING)
     mailbox.publish(OverlayState.ERROR)
 
@@ -205,18 +208,53 @@ def test_mailbox_remembers_latest_state_for_helper_restart():
 def test_helper_replay_uses_current_state_and_active_loading_only():
     mailbox = OutboundMailbox()
     mailbox.publish(OverlayState.RECORDING)
-    mailbox.loading_activity(True)
+    mailbox.loading_activity(LoadingModel.ASR, True)
     mailbox.publish(OverlayState.TRANSCRIBING)
 
     assert mailbox.replay_for_helper() == (
-        LoadingActivityMessage(True),
+        LoadingActivityMessage(LoadingModel.ASR, True),
         StateMessage(1, OverlayState.TRANSCRIBING),
     )
     assert mailbox.take_nowait() is None
 
-    mailbox.loading_activity(False)
+    mailbox.loading_activity(LoadingModel.ASR, False)
     assert mailbox.replay_for_helper() == (StateMessage(1, OverlayState.TRANSCRIBING),)
     assert mailbox.take_nowait() is None
+
+
+def test_loading_activity_dedups_per_model_and_keeps_start_order():
+    mailbox = OutboundMailbox()
+
+    mailbox.loading_activity(LoadingModel.REFINE, True)
+    mailbox.loading_activity(LoadingModel.ASR, True)
+    mailbox.loading_activity(LoadingModel.REFINE, True)
+
+    assert mailbox.take_nowait() == LoadingActivityMessage(LoadingModel.REFINE, True)
+    assert mailbox.take_nowait() == LoadingActivityMessage(LoadingModel.ASR, True)
+    assert mailbox.take_nowait() is None
+
+
+def test_helper_replay_lists_every_loading_model_earliest_first():
+    mailbox = OutboundMailbox()
+
+    mailbox.loading_activity(LoadingModel.REFINE, True)
+    mailbox.loading_activity(LoadingModel.ASR, True)
+    mailbox.publish(OverlayState.TRANSCRIBING)
+
+    assert mailbox.replay_for_helper() == (
+        LoadingActivityMessage(LoadingModel.REFINE, True),
+        LoadingActivityMessage(LoadingModel.ASR, True),
+        StateMessage(0, OverlayState.TRANSCRIBING),
+    )
+
+    mailbox.loading_activity(LoadingModel.ASR, False)
+    mailbox.loading_activity(LoadingModel.ASR, True)
+
+    assert mailbox.replay_for_helper() == (
+        LoadingActivityMessage(LoadingModel.REFINE, True),
+        LoadingActivityMessage(LoadingModel.ASR, True),
+        StateMessage(0, OverlayState.TRANSCRIBING),
+    )
 
 
 def test_mailbox_transient_timeout_enqueues_a_generation_guarded_hide():
@@ -287,7 +325,7 @@ def test_a_closed_mailbox_accepts_nothing_but_still_reports_the_last_state() -> 
     mailbox.close()
 
     assert mailbox.publish(OverlayState.ERROR) == recording
-    mailbox.loading_activity(True)
+    mailbox.loading_activity(LoadingModel.ASR, True)
     mailbox.audio_block(object(), 16000, 0)
 
     assert mailbox.take_nowait() == CommandMessage(Command.SHUTDOWN)
@@ -309,7 +347,7 @@ def test_disabling_discards_every_optional_record_and_stops_accepting_more() -> 
     assert mailbox.take_nowait() is None
     assert mailbox.take_audio_nowait() is None
     assert mailbox.publish(OverlayState.ERROR) == generation
-    mailbox.loading_activity(True)
+    mailbox.loading_activity(LoadingModel.ASR, True)
     mailbox.audio_block(object(), 16000, 0)
     assert mailbox.take_nowait() is None
     assert mailbox.take_audio_nowait() is None
@@ -349,10 +387,10 @@ def test_audio_arriving_outside_a_recording_is_dropped_rather_than_tagged() -> N
 
 def test_a_duplicate_loading_edge_queues_nothing() -> None:
     mailbox = OutboundMailbox()
-    mailbox.loading_activity(True)
-    assert mailbox.take_nowait() == LoadingActivityMessage(True)
+    mailbox.loading_activity(LoadingModel.ASR, True)
+    assert mailbox.take_nowait() == LoadingActivityMessage(LoadingModel.ASR, True)
 
-    mailbox.loading_activity(True)
+    mailbox.loading_activity(LoadingModel.ASR, True)
 
     assert mailbox.take_nowait() is None
 

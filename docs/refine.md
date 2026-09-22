@@ -12,7 +12,30 @@ the transcript stays on your machine. Turn it off, or point it at another
 host, in `[stenographer.refine]`; a non-loopback host sends transcript text
 there.
 
-## What it does
+## The two profiles
+
+There are exactly two built-ins. The hotkey captures the selected profile when
+recording starts; it cannot change during that utterance. Both profiles share
+the configured host, model, structured-output setting, ten-word minimum, and
+model residency lifecycle.
+
+- **Agent** (Right Ctrl, and the default for upgraded partial configs) formats
+  requests for an agent. It uses adaptive paragraphs or bullets without fixed
+  headings, never dispatches or answers the request, and preserves phase and
+  authorization boundaries, modality, scope, negations, hedges, numerals,
+  paths, CLI flags, identifiers, quoted text, and explicit tool/model choices.
+- **General** (Right Alt) is the original cleanup behavior described below.
+
+For Agent bullets, dictate an explicit item count and separate every item with
+a semicolon or an existing newline. Commas, conjunctions, and sentence-ending
+punctuation alone do not prove item boundaries; if a model invents bullets for
+an ambiguous list, the guard falls back to the formatted transcript.
+
+The overlay includes Agent or General throughout Recording, Transcribing,
+Refining, and Delivering, then briefly reports Applied, Skipped, or Fallback.
+It never displays transcript content.
+
+## What General does
 
 Speech is not writing. You restart sentences, you say "um", you correct
 yourself half a word in. Refine removes that without changing what you said:
@@ -29,7 +52,7 @@ yourself half a word in. Refine removes that without changing what you said:
   as the numbering. No `- ` and no `1.` is added; see [What you will
   see](#what-you-will-see) for how to say a list so it lands as one.
 
-And what it must never do, which the prompt states and the output guard
+And what it must never do, which the General prompt states and output guard
 enforces: it never summarizes, never answers or responds to what you said,
 never adds a fact, and never adds headers, bold, digit-numbered lists, or any
 other markdown. Names, numbers, and quoted phrases come through verbatim.
@@ -160,7 +183,9 @@ entire token budget deliberating and then return nothing at all.
 ## What you will see
 
 The lifecycle pill gains a **Refining** state between *Transcribing* and
-*Delivering*, so you can tell which stage is taking the time.
+*Delivering*, so you can tell which stage is taking the time. While the
+cleanup model itself is loading, the pill's border breathes in the Refining
+colour (see [Residency](#residency)).
 
 Escape still cancels the whole utterance. Pressing it during a refine discards
 the audio and the transcript; nothing is pasted.
@@ -261,6 +286,17 @@ stays up for the whole wait, and Escape still cancels it. Without this, a cold
 load would have spent the whole reply budget and your text would have been
 pasted unrefined every time the model had gone cold. The daemon logs one line
 with the load time whenever this happens.
+
+Both the background warm at daemon start and a mid-utterance cold load show
+the breathing loading border in the Refining colour — but only on an
+already-visible pill; loading never makes the pill appear on its own. A
+residency check that finds the model already loaded shows nothing. If both
+the speech model and the cleanup model are loading at once, their borders
+take turns, one full breath each, and the border always finishes its current
+breath before it changes colour or disappears. The startup warm signals even
+when the model turns out to be already resident: that is intentional, and
+brief — invisible if the pill is hidden at the time, one Refining-coloured
+breath if it happens to be visible.
 
 Stopping the daemon releases the model too, even on `idle_unload_seconds = 0`
 — the one setting that otherwise holds it forever. The one gap: if the

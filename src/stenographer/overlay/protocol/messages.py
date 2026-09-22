@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
@@ -13,6 +15,7 @@ from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 class StateMessage:
     generation: int
     state: OverlayState
+    profile: RefineProfile | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +27,7 @@ class SpectrumMessage:
 
 @dataclass(frozen=True, slots=True)
 class LoadingActivityMessage:
+    model: LoadingModel
     active: bool
 
 

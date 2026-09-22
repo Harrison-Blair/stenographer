@@ -11,6 +11,25 @@ Each entry opens with a short synopsis, then lists changes under `### Added`,
 nothing in it. The release workflow validates this structure and publishes
 the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
+## [Unreleased]
+
+## [v0.13.1] - 2026-09-21
+
+This release adds separate Agent and General dictation profiles and makes model
+loading state easier to read. Release builds now derive their versions from
+stable Git tags instead of an authored source version.
+
+### Added
+
+- Right Ctrl selects the conservative Agent profile for agent-directed
+  dictation, while Right Alt selects General's original transcript cleanup;
+  both bindings share the configured recording mode and can be rebound.
+- The loading border breathes in the amber Loading colour while the speech
+  model loads and in the Refining colour while the cleanup model loads, taking
+  turns one breath each when both are loading at once; it never makes a hidden
+  pill appear, and a residency check that finds a model already loaded shows
+  nothing. The overlay protocol moves from v4 to v5.
+
 ## [v0.13.0] - 2026-09-11
 
 This release adds a local cleanup stage, on by default, that turns dictated

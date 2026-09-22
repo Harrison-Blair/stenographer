@@ -20,11 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 class ChordTracker:
-    """Edge reporter over a held-key union: chord rising edge -> on_start,
-    falling edge -> on_stop. The daemon decides what an edge means (hold,
-    toggle, or hybrid mode).
+    """Edge reporter over one held-key union and multiple named bindings.
 
-    An optional second chord, *cancel*, is watched over the same held-key
+    A binding's rising edge selects its name and reports start; its falling
+    edge reports stop with that same name. The daemon decides what those edges
+    mean in hold, toggle, or hybrid mode. The legacy single-chord constructor
+    remains as a compatibility spelling over this same path.
+
+    An optional cancel chord is watched over the same held-key
     union and reports its rising edge to ``on_cancel``. It is a separate
     vocabulary, not a mode: what a cancel does to a session is the daemon's
     decision, exactly as with the start/stop edges.
@@ -39,14 +42,37 @@ class ChordTracker:
     def __init__(
         self,
         *,
-        chord: frozenset[int],
-        on_start: Callable[[], None],
-        on_stop: Callable[[], None],
         lock: threading.RLock,
+        chord: frozenset[int] | None = None,
+        on_start: Callable[[], None] | None = None,
+        on_stop: Callable[[], None] | None = None,
+        bindings: dict[str, frozenset[int]] | None = None,
+        on_binding_start: Callable[[str], bool | None] | None = None,
+        on_binding_stop: Callable[[str], None] | None = None,
         cancel: frozenset[int] = frozenset(),
         on_cancel: Callable[[], None] | None = None,
     ) -> None:
-        self._chord = chord
+        if bindings is None:
+            if chord is None or on_start is None or on_stop is None:
+                raise TypeError("a chord and its edge callbacks are required")
+            bindings = {"default": chord}
+
+            def legacy_start(_name: str) -> None:
+                on_start()
+
+            def legacy_stop(_name: str) -> None:
+                on_stop()
+
+            on_binding_start = legacy_start
+            on_binding_stop = legacy_stop
+        if not bindings or on_binding_start is None or on_binding_stop is None:
+            raise TypeError("bindings and their edge callbacks are required")
+        self._bindings = dict(bindings)
+        self._on_binding_start = on_binding_start
+        self._on_binding_stop = on_binding_stop
+        # Compatibility aliases for the original single-binding tests and the
+        # evdev loss-recovery path. Production dispatch uses ``_bindings``.
+        self._chord = next(iter(self._bindings.values()))
         self._on_start = on_start
         self._on_stop = on_stop
         self._lock = lock
@@ -57,6 +83,9 @@ class ChordTracker:
         self._held_lock = threading.Lock()
         self._transition_lock = threading.Lock()
         self._active = False
+        self._binding_active = {name: False for name in self._bindings}
+        self._selected_binding: str | None = None
+        self._last_started_chord = self._chord
         self._cancel_active = False
         self._stop_event = threading.Event()
 
@@ -71,7 +100,7 @@ class ChordTracker:
             if self._stop_event.is_set():
                 return self._report_release(started_at, released=True, reason="listener_stopped")
             with self._held_lock:
-                still_held = bool(self._chord & self._held)
+                still_held = bool(self._last_started_chord & self._held)
             if not still_held:
                 return self._report_release(started_at, released=True, reason="released")
             if time.monotonic() >= deadline:
@@ -105,7 +134,8 @@ class ChordTracker:
         *device_id* is no longer registered (the reader should stop).
         """
         with self._transition_lock:
-            after_release = stuck = False
+            after_release: dict[str, bool] = {}
+            stuck = False
             with self._held_lock:
                 device_held = self._held_by_device.get(device_id)
                 if device_held is None:
@@ -115,7 +145,10 @@ class ChordTracker:
                         stuck = True
                         device_held.remove(code)
                         self._rebuild_held()
-                        after_release = chord_active(self._held, self._chord)
+                        after_release = {
+                            name: chord_active(self._held, chord)
+                            for name, chord in self._bindings.items()
+                        }
                     device_held.add(code)
                 elif value == 0:
                     if code in device_held:
@@ -128,15 +161,17 @@ class ChordTracker:
                 else:
                     return True  # autorepeat (value 2) and any other value
                 self._rebuild_held()
-                is_active = chord_active(self._held, self._chord)
+                active_bindings = {
+                    name: chord_active(self._held, chord) for name, chord in self._bindings.items()
+                }
                 # Only the settled state: the synthesized release above exists
                 # to re-arm the session chord, whose falling edge ends a
                 # recording. A cancel key reported held twice without a release
                 # is one press, not two cancels.
                 cancel_active = chord_active(self._held, self._cancel)
             if stuck:
-                self._update(after_release)
-            self._update(is_active)
+                self._update_bindings(after_release)
+            self._update_bindings(active_bindings)
             self._update_cancel(cancel_active)
         return True
 
@@ -149,6 +184,8 @@ class ChordTracker:
     def _reset_edges(self) -> None:
         """Forget both chords' edge state so the next press is a rising edge."""
         self._active = False
+        self._binding_active = {name: False for name in self._bindings}
+        self._selected_binding = None
         self._cancel_active = False
 
     def _update(self, is_active: bool) -> None:
@@ -169,6 +206,31 @@ class ChordTracker:
                 self._on_start()
             else:
                 self._on_stop()
+
+    def _update_bindings(self, active: dict[str, bool]) -> None:
+        """Dispatch all profile chords through one selected-session state."""
+
+        with self._lock:
+            if self._stop_event.is_set():
+                return
+            selected = self._selected_binding
+            if selected is not None and not active[selected]:
+                self._binding_active[selected] = False
+                self._selected_binding = None
+                self._active = False
+                self._on_binding_stop(selected)
+            if self._selected_binding is None:
+                for name in self._bindings:
+                    if active[name] and not self._binding_active[name]:
+                        self._binding_active[name] = True
+                        self._selected_binding = name
+                        self._active = name == next(iter(self._bindings))
+                        accepted = self._on_binding_start(name)
+                        if accepted is not False:
+                            self._last_started_chord = self._bindings[name]
+                        break
+            for name, is_active in active.items():
+                self._binding_active[name] = is_active
 
     def _update_cancel(self, is_active: bool) -> None:
         """Dispatch the cancel chord's rising edge under the shared dispatch lock.

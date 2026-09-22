@@ -11,9 +11,11 @@ import numpy as np
 import pytest
 
 from stenographer.lib.config.models import Config
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.daemon import Daemon
 from stenographer.lib.refine.cancellation import never_cancelled
+from stenographer.lib.refine.null_refiner import NullRefiner
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.results import TranscriptionResult
 
@@ -337,9 +339,9 @@ def test_build_wires_the_worker_callbacks_onto_this_daemon(tmp_path, monkeypatch
         daemon._status = status
 
         daemon._worker._on_model_loading()
-        assert status.loading == [True]
+        assert status.loading == [(LoadingModel.ASR, True)]
         daemon._worker._on_model_loading_finished()
-        assert status.loading == [True, False]
+        assert status.loading == [(LoadingModel.ASR, True), (LoadingModel.ASR, False)]
 
         daemon._worker._on_transcribing()
         assert status.states == [OverlayState.TRANSCRIBING]
@@ -359,11 +361,11 @@ def test_model_loading_activity_is_published_and_timed_onto_the_live_record():
         assert record.load_ms is None
 
         daemon._on_model_loading()
-        assert status.loading == [True]
+        assert status.loading == [(LoadingModel.ASR, True)]
         assert daemon._model_load_utterance == daemon._utterance_id
 
         daemon._on_model_loading_finished()
-        assert status.loading == [True, False]
+        assert status.loading == [(LoadingModel.ASR, True), (LoadingModel.ASR, False)]
         assert record.load_ms is not None
         assert record.load_ms >= 0.0
         assert daemon._model_load_started_at is None
@@ -380,6 +382,88 @@ def test_model_loading_activity_is_suppressed_once_shutdown_began():
 
         assert status.loading == []
         assert daemon._model_load_started_at is None
+    finally:
+        daemon.stop()
+
+
+def test_refine_loading_activity_counts_open_loads():
+    # Two concurrent openers (the refine warm thread and the pipeline thread)
+    # must not raise the pill twice or drop it before the last one is done.
+    daemon, status = _daemon_with_status()
+    try:
+        daemon._on_refine_loading()
+        daemon._on_refine_loading()
+        assert status.loading == [(LoadingModel.REFINE, True)]
+
+        daemon._on_refine_loading_finished()
+        assert status.loading == [(LoadingModel.REFINE, True)]
+
+        daemon._on_refine_loading_finished()
+        assert status.loading == [(LoadingModel.REFINE, True), (LoadingModel.REFINE, False)]
+    finally:
+        daemon.stop()
+
+
+def test_refine_loading_start_is_suppressed_once_shutdown_began_but_the_finish_still_clears():
+    daemon, status = _daemon_with_status()
+    try:
+        daemon.request_stop()
+        daemon._on_refine_loading()
+        assert status.loading == []
+
+        daemon._on_refine_loading_finished()
+        assert status.loading == [(LoadingModel.REFINE, False)]
+    finally:
+        daemon.stop()
+
+
+def test_refine_loading_publish_happens_while_the_open_load_counter_is_locked():
+    # A publish issued after `_refine_load_lock` is released can interleave
+    # with a concurrent opener/closer and get reordered on the wire (an
+    # opener's True landing after a closer's False for the same edge count).
+    # Publishing while still holding the lock is what makes the edge and its
+    # announcement atomic with respect to the counter.
+    daemon, _ = _daemon_with_status()
+    seen_locked: list[bool] = []
+
+    class _LockCheckingStatus:
+        def publish(self, state):
+            return 0
+
+        def loading_activity(self, model, active):
+            seen_locked.append(daemon._refine_load_lock.locked())
+
+        def audio_block(self, samples, sample_rate, stream_epoch):
+            pass
+
+        def close(self):
+            pass
+
+    daemon._status = _LockCheckingStatus()
+    try:
+        daemon._on_refine_loading()
+        daemon._on_refine_loading_finished()
+    finally:
+        daemon.stop()
+
+    assert seen_locked == [True, True]
+
+
+def test_the_built_daemon_hands_its_refine_observers_to_the_refiner(monkeypatch):
+    captured: dict = {}
+
+    def fake_build_refiner(cfg, **kwargs):
+        captured.update(kwargs)
+        return NullRefiner()
+
+    # Patched before construction: `_daemon()` builds `Daemon(...)` directly,
+    # which calls `build_refiner` from inside `__init__`.
+    monkeypatch.setattr("stenographer.lib.daemon.daemon.build_refiner", fake_build_refiner)
+
+    daemon = _daemon()
+    try:
+        assert captured["on_model_loading"] == daemon._on_refine_loading
+        assert captured["on_model_loading_finished"] == daemon._on_refine_loading_finished
     finally:
         daemon.stop()
 

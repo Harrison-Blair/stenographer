@@ -17,8 +17,10 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from itertools import pairwise
 
 from stenographer.lib.refine.errors import RefineRejectedError, RefineResponseError
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.prompt import RESPONSE_KEY
 
 #: Accepted length of the output relative to the input. Cleanup removes fillers
@@ -75,6 +77,244 @@ _CORRECTION_MARKERS = frozenset(
 _MARKER_WINDOW = 6
 
 _EDGE_PUNCTUATION = ".,;:!?\"'()[]"
+
+_PROTECTED_TOKEN = re.compile(
+    r"(?<!\w)(?:--?[A-Za-z0-9][\w.-]*|(?:\.{0,2}/|~?/)[^\s,;!?]+|"
+    r"[A-Za-z]:\\[^\s,;!?]+|[A-Za-z][\w-]*(?:[._:/][\w.-]+)+|"
+    r"[A-Za-z]+[A-Z][A-Za-z0-9]*)"
+)
+_QUOTED = re.compile(r'(["\u201c]).*?(["\u201d])|(?<!\w)\'[^\'\n]+\'(?!\w)')
+_LEXICAL_TOKEN = re.compile(r"[A-Za-z0-9]+(?:['\u2019][A-Za-z0-9]+)?")
+_SAFE_FILLERS = frozenset({"um", "uh", "er", "ah"})
+_AGENT_CORRECTION_MARKERS = _CORRECTION_MARKERS - {"no", "rather"}
+_ENUMERATION_CUE = re.compile(
+    r"\b(?P<count>two|three|four|five|six|seven|eight|nine|ten|\d+)\s+"
+    r"(?:things|constraints|items|steps|points|requirements|tasks|changes)\b",
+    re.IGNORECASE,
+)
+_NUMBER_WORD_VALUES = {
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+_CLAUSE_BOUNDARY = re.compile(r"""[.?!]["')\]]*\s|[;\n]""")
+_BULLET_BOUNDARY = re.compile(r"[;\n]")
+
+
+def _matches(pattern: re.Pattern[str], text: str) -> Counter[str]:
+    values = []
+    for match in pattern.finditer(text):
+        suffix = text[match.end() :]
+        if re.match(r"(?:\W+\w+){0,6}\W+no\s+wait\b", suffix, re.IGNORECASE):
+            continue
+        value = match.group(0)
+        if pattern is _PROTECTED_TOKEN:
+            value = value.rstrip(".,;!?\"')]}>")
+        values.append(value)
+    return Counter(values)
+
+
+def _lexical_tokens(text: str) -> tuple[str, ...]:
+    return tuple(
+        match.group().casefold().replace("\u2019", "'") for match in _LEXICAL_TOKEN.finditer(text)
+    )
+
+
+def _clause_start_positions(text: str) -> frozenset[int]:
+    """Token positions proven to follow an input or explicit clause boundary."""
+
+    matches = tuple(_LEXICAL_TOKEN.finditer(text))
+    starts = {0}
+    for index in range(1, len(matches)):
+        separator = text[matches[index - 1].end() : matches[index].start()]
+        if _CLAUSE_BOUNDARY.search(separator):
+            starts.add(index)
+    return frozenset(starts)
+
+
+def _safe_cleanup_variants(
+    tokens: tuple[tuple[str, int], ...],
+) -> tuple[tuple[tuple[str, int], ...], ...]:
+    """Whole-sequence variants for unambiguous fillers and immediate repeats."""
+
+    variants = {tokens}
+    without_fillers = tuple(token for token in tokens if token[0] not in _SAFE_FILLERS)
+    variants.add(without_fillers)
+    for source in (tokens, without_fillers):
+        collapsed = []
+        for token in source:
+            if not collapsed or token[0] != collapsed[-1][0]:
+                collapsed.append(token)
+        variants.add(tuple(collapsed))
+    return tuple(variants)
+
+
+def _correction_variants(
+    tokens: tuple[tuple[str, int], ...], clause_starts: frozenset[int]
+) -> tuple[tuple[tuple[str, int], ...], ...]:
+    """Whole sequences formed by deleting one complete abandoned correction."""
+
+    variants = {tokens}
+    spans = []
+    markers = sorted(
+        (_lexical_tokens(marker) for marker in _AGENT_CORRECTION_MARKERS),
+        key=len,
+        reverse=True,
+    )
+    for start in range(len(tokens)):
+        for marker in markers:
+            end = start + len(marker)
+            if tuple(token[0] for token in tokens[start:end]) != marker or end >= len(tokens):
+                continue
+            eligible_starts = tuple(position for position in clause_starts if position < start)
+            if not eligible_starts:
+                continue
+            abandoned_start = max(eligible_starts)
+            variants.add(tokens[:abandoned_start] + tokens[end:])
+            spans.append((abandoned_start, end))
+            break
+    ordered_spans = sorted(set(spans))
+    if ordered_spans and all(
+        previous_end <= current_start
+        for (_previous_start, previous_end), (current_start, _current_end) in pairwise(
+            ordered_spans
+        )
+    ):
+        variants.add(
+            tuple(
+                token
+                for index, token in enumerate(tokens)
+                if not any(start <= index < end for start, end in ordered_spans)
+            )
+        )
+    return tuple(variants)
+
+
+def _bullet_start_positions(candidate: str) -> frozenset[int]:
+    """Lexical positions that begin real ``- `` bullet lines."""
+
+    return frozenset(
+        len(_lexical_tokens(candidate[: match.end()]))
+        for match in re.finditer(r"(?m)^\s*-\s+(?=\S)", candidate)
+    )
+
+
+def _enumeration_layouts(original: str) -> tuple[frozenset[int], ...]:
+    """Item starts proven only by semicolon or existing newline boundaries."""
+
+    tokens = tuple(_LEXICAL_TOKEN.finditer(original))
+    cues = tuple(_ENUMERATION_CUE.finditer(original))
+    layouts = []
+    for cue_index, cue in enumerate(cues):
+        start = next(
+            (index for index, token in enumerate(tokens) if token.start() >= cue.end()),
+            len(tokens),
+        )
+        end = len(tokens)
+        if cue_index + 1 < len(cues):
+            next_cue = cues[cue_index + 1]
+            next_start = next(
+                (index for index, token in enumerate(tokens) if token.start() >= next_cue.start()),
+                len(tokens),
+            )
+            end = min(end, next_start)
+        value = cue.group("count").casefold()
+        count = _NUMBER_WORD_VALUES.get(value, int(value) if value.isdigit() else 0)
+        if start >= end or not count:
+            continue
+        item_starts = [start]
+        for index in range(start + 1, end):
+            if len(item_starts) == count:
+                break
+            separator = original[tokens[index - 1].end() : tokens[index].start()]
+            if _BULLET_BOUNDARY.search(separator):
+                item_starts.append(index)
+        if len(item_starts) == count:
+            layouts.append(frozenset(item_starts))
+    return tuple(layouts)
+
+
+def _matches_layout_variant(
+    source: tuple[tuple[str, int], ...],
+    produced: tuple[str, ...],
+    bullet_starts: frozenset[int],
+    enumeration_layouts: tuple[frozenset[int], ...],
+) -> bool:
+    """Exact lexical equality with every bullet mapped to a proven item start."""
+
+    source_index = 0
+    produced_index = 0
+    bullet_sources = {}
+    while source_index < len(source) and produced_index < len(produced):
+        source_token, original_index = source[source_index]
+        if source_token == produced[produced_index]:
+            if produced_index in bullet_starts:
+                bullet_sources[produced_index] = original_index
+            source_index += 1
+            produced_index += 1
+            continue
+        return False
+    if source_index != len(source) or produced_index != len(produced):
+        return False
+    if bullet_starts != frozenset(bullet_sources):
+        return False
+    rendered_starts = [set() for _layout in enumeration_layouts]
+    for original_index in bullet_sources.values():
+        matches = [
+            index for index, starts in enumerate(enumeration_layouts) if original_index in starts
+        ]
+        if len(matches) != 1:
+            return False
+        rendered_starts[matches[0]].add(original_index)
+    return not bullet_starts or all(
+        rendered == starts
+        for rendered, starts in zip(rendered_starts, enumeration_layouts, strict=True)
+    )
+
+
+def _preserves_lexical_order(original: str, candidate: str) -> bool:
+    """Whether candidate is original modulo explicitly safe cleanup deletions."""
+
+    source_tokens = _lexical_tokens(original)
+    source = tuple((token, index) for index, token in enumerate(source_tokens))
+    produced = _lexical_tokens(candidate)
+    bullet_starts = _bullet_start_positions(candidate)
+    enumeration_layouts = _enumeration_layouts(original)
+    variants = {
+        cleanup
+        for correction in _correction_variants(source, _clause_start_positions(original))
+        for cleanup in _safe_cleanup_variants(correction)
+    }
+    return any(
+        _matches_layout_variant(
+            variant,
+            produced,
+            bullet_starts,
+            enumeration_layouts,
+        )
+        for variant in variants
+    )
+
+
+def agent_guard(original: str, candidate: str) -> str:
+    """Reject an Agent edit that changes deterministic safety-bearing tokens."""
+
+    accepted = guard(original, candidate)
+    if not _preserves_lexical_order(original, accepted):
+        raise RefineRejectedError("output changed dictated wording or order")
+    for pattern, reason in (
+        (_PROTECTED_TOKEN, "output changed a protected token"),
+        (_QUOTED, "output changed quoted text"),
+    ):
+        if _matches(pattern, original) != _matches(pattern, accepted):
+            raise RefineRejectedError(reason)
+    return accepted
 
 
 def message_content(payload: str | bytes) -> str:
@@ -245,13 +485,21 @@ def guard(original: str, candidate: str) -> str:
     return stripped
 
 
-def refined_text(payload: str | bytes, original: str, *, structured_output: bool) -> str:
+def refined_text(
+    payload: str | bytes,
+    original: str,
+    *,
+    structured_output: bool,
+    profile: RefineProfile = RefineProfile.GENERAL,
+) -> str:
     """Parse a reply and hand back text that passed the guard."""
 
     content = unwrap_structured(
         message_content(payload),
         structured_output=structured_output,
     )
+    if profile is RefineProfile.AGENT:
+        return agent_guard(original, content)
     return guard(original, content)
 
 

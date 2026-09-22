@@ -47,11 +47,14 @@ class HelperBackend:
 
     def _frame(self, state: OverlayState, *, scale: float = 1.0) -> OverlayFrame:
         """Build the one frame request shape every backend draws from."""
+        now = time.monotonic()
         return render_overlay(
             state,
             scale=scale,
             levels=self._reducer.levels_for(state),
-            loading_elapsed=self._pulse.elapsed(time.monotonic()),
+            loading_elapsed=self._pulse.elapsed(now),
+            loading_model=self._pulse.breath_model,
+            profile=self._reducer.profile,
         )
 
     def run(self, input_stream: BinaryIO) -> None:

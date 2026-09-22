@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import pathlib
+from itertools import combinations
 
 from stenographer.lib.config.constants import (
     ALLOWED_COMPUTE_TYPES,
@@ -23,6 +24,7 @@ from stenographer.lib.config.models import (
     RefineConfig,
 )
 from stenographer.lib.config.reader import _Reader
+from stenographer.lib.hotkey.keycodes import CODE_NAMES, KEY_CODES
 from stenographer.lib.refine.endpoints import host_name, normalize_host, userinfo
 
 
@@ -31,12 +33,92 @@ def _build_hotkey(table: dict, path: pathlib.Path) -> HotkeyConfig:
     binding = r.str("binding")
     if not binding:
         raise ConfigError(path, "hotkey.binding", "must be non-empty")
+    general_binding = r.str("general_binding")
+    if not general_binding:
+        raise ConfigError(path, "hotkey.general_binding", "must be non-empty")
+    cancel_binding = r.optional_str("cancel_binding")
+    _validate_binding_overlap(path, binding, general_binding, cancel_binding)
     return HotkeyConfig(
         binding,
         r.optional_str("device"),
-        r.optional_str("cancel_binding"),
+        cancel_binding,
         r.choice("mode", ALLOWED_HOTKEY_MODES),
         r.ranged_number("hybrid_threshold_seconds", 0.05, 5.0),
+        general_binding,
+    )
+
+
+def _binding_tokens(binding: str) -> frozenset[tuple[str, int | str]]:
+    tokens = []
+    for raw in binding.split("+"):
+        token = raw.strip().upper()
+        if not token:
+            continue
+        code = KEY_CODES.get(token)
+        tokens.append(("code", code) if code is not None else ("name", token.casefold()))
+    return frozenset(tokens)
+
+
+def _validate_binding_overlap(
+    path: pathlib.Path,
+    agent: str,
+    general: str,
+    cancel: str | None,
+) -> None:
+    """Reject equal/subset chords whose edges cannot be selected unambiguously."""
+
+    bindings = [("binding", agent), ("general_binding", general)]
+    if cancel is not None:
+        bindings.append(("cancel_binding", cancel))
+    parsed = [(name, _binding_tokens(value)) for name, value in bindings]
+    for index, (left_name, left) in enumerate(parsed):
+        for right_name, right in parsed[index + 1 :]:
+            if left <= right or right <= left:
+                raise ConfigError(
+                    path,
+                    f"hotkey.{right_name}",
+                    f"overlap with hotkey.{left_name}: equal/subset chords are ambiguous",
+                )
+
+
+def _migrate_hotkey_defaults(merged: dict, overlay: dict, path: pathlib.Path) -> None:
+    """Give old partial configs a non-conflicting General chord.
+
+    Before profiles, ``binding`` could itself be Right Alt (notably on
+    Windows). It remains the Agent binding after upgrade. When no explicit
+    General binding exists, select the normal Right Alt default unless it
+    overlaps Agent or cancel, then use the first conservative fallback.
+    """
+
+    raw_hotkey = overlay.get("hotkey")
+    if not isinstance(raw_hotkey, dict) or "general_binding" in raw_hotkey:
+        return
+    hotkey = merged["hotkey"]
+    occupied = [
+        _binding_tokens(value)
+        for value in (hotkey.get("binding"), hotkey.get("cancel_binding"))
+        if isinstance(value, str) and value
+    ]
+    preferred = (
+        "KEY_RIGHTALT",
+        "KEY_RIGHTCTRL",
+        *(f"KEY_F{number}" for number in range(12, 0, -1)),
+    )
+    canonical = tuple(
+        name for _code, name in sorted(CODE_NAMES.items()) if name.startswith(("KEY_", "BTN_"))
+    )
+    candidates = tuple(dict.fromkeys((*preferred, *canonical)))
+    for size in (1, 2):
+        for names in combinations(candidates, size):
+            candidate = "+".join(names)
+            chord = _binding_tokens(candidate)
+            if all(not (chord <= other or other <= chord) for other in occupied):
+                hotkey["general_binding"] = candidate
+                return
+    raise ConfigError(
+        path,
+        "hotkey.general_binding",
+        "no non-overlapping implicit General binding is available; configure one explicitly",
     )
 
 

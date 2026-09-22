@@ -117,7 +117,17 @@ def test_wheel_guard_rejects_symlinked_expected_sound_entry(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
-    "missing", [None, "wheel_completion", "sdist_completion", "license", "sound", "archive"]
+    "missing",
+    [
+        None,
+        "wheel_completion",
+        "sdist_completion",
+        "license",
+        "sound",
+        "archive",
+        "wheel_metadata",
+        "sdist_version",
+    ],
 )
 def test_distribution_contract(tmp_path: Path, missing: str | None) -> None:
     version = "1.2.3"
@@ -127,6 +137,9 @@ def test_distribution_contract(tmp_path: Path, missing: str | None) -> None:
     wheel_names += [f"stenographer/assets/sounds/{name}" for name in EXPECTED_PATHS]
     sdist_names = [f"stenographer-{version}/src/{name}" for name in wheel_names]
     sdist_names.append(f"stenographer-{version}/LICENSE")
+    wheel_metadata = f"stenographer-{version}.dist-info/METADATA"
+    wheel_version = "Version: 9.9.9\n" if missing == "wheel_metadata" else f"Version: {version}\n"
+    sdist_version = "9.9.9" if missing == "sdist_version" else version
     if missing == "wheel_completion":
         wheel_names.pop(0)
     elif missing == "sdist_completion":
@@ -138,11 +151,21 @@ def test_distribution_contract(tmp_path: Path, missing: str | None) -> None:
     with zipfile.ZipFile(tmp_path / f"stenographer-{version}-py3-none-any.whl", "w") as archive:
         for name in wheel_names:
             archive.writestr(name, b"fixture")
+        archive.writestr(wheel_metadata, wheel_version)
+        archive.writestr("stenographer/_version.py", f'__version__ = "{version}"\n')
     with tarfile.open(tmp_path / f"stenographer-{version}.tar.gz", "w:gz") as archive:
         for name in sdist_names:
             info = tarfile.TarInfo(name)
             info.size = 7
             archive.addfile(info, io.BytesIO(b"fixture"))
+        version_body = f'__version__ = "{sdist_version}"\n'.encode()
+        info = tarfile.TarInfo(f"stenographer-{version}/src/stenographer/_version.py")
+        info.size = len(version_body)
+        archive.addfile(info, io.BytesIO(version_body))
+        metadata_body = f"Version: {sdist_version}\n".encode()
+        info = tarfile.TarInfo(f"stenographer-{version}/PKG-INFO")
+        info.size = len(metadata_body)
+        archive.addfile(info, io.BytesIO(metadata_body))
     if missing is None:
         verify_distributions(tmp_path, version)
     else:

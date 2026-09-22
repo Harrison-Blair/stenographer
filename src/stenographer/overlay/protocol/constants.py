@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 
 MAX_MESSAGE_BYTES = 512

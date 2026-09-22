@@ -17,6 +17,7 @@ import time
 import pytest
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.platform.linux.backends import helper_backend as base
 from stenographer.overlay.platform.linux.backends.base import next_timeout, probe_backend
@@ -301,7 +302,7 @@ def test_a_readable_display_connection_is_serviced_in_the_same_turn(loop) -> Non
 
 def test_a_truncated_final_record_is_a_protocol_error_not_a_quiet_exit(loop) -> None:
     wire = loop()
-    wire.send_raw(b'{"v":4,"type":"state","generation":0')
+    wire.send_raw(b'{"v":5,"type":"state","generation":0')
     wire.end_input()
 
     with pytest.raises(ProtocolError, match="mid-record"):
@@ -318,7 +319,8 @@ def test_a_backend_deadline_and_the_loading_pulse_share_one_selector_wait(loop) 
     """Both are folded into one wait, so neither can be missed by the other."""
     backend = loop(_TimedBackend).backend
     backend._reducer.state = OverlayState.TRANSCRIBING
-    backend._reducer.pulse.set_active(True, time.monotonic())
+    backend._reducer.pulse.set_active(LoadingModel.ASR, True)
+    backend._reducer.pulse.start_breathing(time.monotonic())
     backend._reducer.pulse.arm(time.monotonic() + 10.0)
 
     pulse_only = backend._select_timeout()
@@ -332,7 +334,8 @@ def test_a_backend_deadline_and_the_loading_pulse_share_one_selector_wait(loop) 
 def test_a_due_loading_frame_repaints_and_rearms_the_cadence(loop) -> None:
     backend = loop(_TimedBackend).backend
     backend._reducer.state = OverlayState.TRANSCRIBING
-    backend._reducer.pulse.set_active(True, time.monotonic())
+    backend._reducer.pulse.set_active(LoadingModel.ASR, True)
+    backend._reducer.pulse.start_breathing(time.monotonic())
     backend._reducer.pulse.arm(time.monotonic() - 1.0)
 
     backend._on_timers()
@@ -413,14 +416,87 @@ def test_every_display_hook_is_unimplemented_until_a_backend_supplies_it(hook, a
 
 
 def test_a_loading_edge_while_hidden_changes_nothing_on_screen(loop) -> None:
-    """There is no surface to breathe on yet; arming the pulse without one
+    """There is no surface to breathe on yet; starting a breath without one
     would repaint a window that does not exist.
     """
     wire = loop()
-    wire.send(LoadingActivityMessage(True))
+    wire.send(LoadingActivityMessage(LoadingModel.ASR, True))
     wire.end_input()
 
     wire.backend.run(wire.stream)
 
     assert wire.backend.events == []
-    assert wire.backend._pulse.active is True
+    assert wire.backend._pulse.loading == [LoadingModel.ASR]
+    assert wire.backend._pulse.breathing is False
+
+
+def test_the_final_trough_repaints_once_and_then_the_frames_stop(loop) -> None:
+    """The last loading model finishing mid-breath must not cut the border
+    off early: the breath completes to its trough, repaints once there, and
+    only then stops requesting frames.
+    """
+    wire = loop()
+    backend = wire.backend
+    backend._reducer.state = OverlayState.TRANSCRIBING
+    pulse = backend._pulse
+    pulse.set_active(LoadingModel.ASR, True)
+    pulse.breath_model = LoadingModel.ASR
+    now = time.monotonic()
+    pulse.breath_started_at = now - 2.01
+    pulse.next_frame_at = now - 0.001
+    pulse.set_active(LoadingModel.ASR, False)
+
+    backend._on_timers()
+
+    assert backend.events == ["repaint"]
+    assert pulse.breathing is False
+    assert backend._select_timeout() is None
+
+
+def test_a_load_already_in_progress_is_picked_up_when_the_pill_appears(loop, monkeypatch) -> None:
+    """R4: loading that started before the pill was shown must still breathe
+    from the trough with the earliest model once a state makes it visible.
+
+    ``_LoopBackend``'s ``_draw`` is a display-less stand-in that only logs an
+    event; a real backend's calls ``_frame``.  This drives the reducer and
+    the frame request directly rather than through the full ``run`` loop, so
+    it still exercises the same reducer/``_frame`` contract a real backend
+    relies on.
+    """
+    captured: list[dict] = []
+    real_render_overlay = base.render_overlay
+
+    def _capturing_render_overlay(state, **kwargs):
+        captured.append(kwargs)
+        return real_render_overlay(state, **kwargs)
+
+    monkeypatch.setattr(base, "render_overlay", _capturing_render_overlay)
+
+    backend = loop().backend
+    now = time.monotonic()
+    backend._reducer.apply(LoadingActivityMessage(LoadingModel.REFINE, True), now)
+    backend._reducer.apply(LoadingActivityMessage(LoadingModel.ASR, True), now)
+    backend._reducer.apply(StateMessage(0, OverlayState.RECORDING), now)
+
+    backend._frame(OverlayState.RECORDING)
+
+    assert captured, "the frame request was expected to reach render_overlay"
+    first = captured[0]
+    assert first["loading_model"] is LoadingModel.REFINE
+    assert first["loading_elapsed"] == pytest.approx(0.0, abs=0.5)
+
+
+def test_the_shared_frame_request_carries_the_breath_model(loop) -> None:
+    now = time.monotonic()
+    asr_backend = loop().backend
+    asr_backend._reducer.pulse.set_active(LoadingModel.ASR, True)
+    asr_backend._reducer.pulse.start_breathing(now)
+
+    refine_backend = loop().backend
+    refine_backend._reducer.pulse.set_active(LoadingModel.REFINE, True)
+    refine_backend._reducer.pulse.start_breathing(now)
+
+    asr_frame = asr_backend._frame(OverlayState.TRANSCRIBING)
+    refine_frame = refine_backend._frame(OverlayState.TRANSCRIBING)
+
+    assert asr_frame.image.tobytes() != refine_frame.image.tobytes()

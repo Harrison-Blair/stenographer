@@ -45,7 +45,7 @@ def test_the_unknown_case_keeps_the_unspecific_reason():
     )
 
 
-def test_the_dependency_reason_round_trips_over_the_v4_protocol():
+def test_the_dependency_reason_round_trips_over_the_v5_protocol():
     """The reason set is fixed data, so a new value needs no protocol bump.
 
     Seen to FAIL before ``BACKEND_DEPENDENCY_MISSING`` existed
@@ -55,7 +55,7 @@ def test_the_dependency_reason_round_trips_over_the_v4_protocol():
     message = UnavailableMessage(UnavailableReason.BACKEND_DEPENDENCY_MISSING)
     record = encode_message(message)
 
-    assert '"v":4' in record
+    assert '"v":5' in record
     assert '"reason":"backend_dependency_missing"' in record
     assert decode_message(record) == message
 

@@ -5,7 +5,9 @@ import threading
 import time
 from collections import deque
 
+from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.protocol.codec import encode_message
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.messages import (
@@ -45,7 +47,7 @@ class OutboundMailbox:
         self._disabled = False
         self._shutdown_pending = False
         self._current_state = StateMessage(0, OverlayState.HIDDEN)
-        self._loading_active = False
+        self._loading_models: list[LoadingModel] = []
         self._recording_generation: int | None = None
         self._transient_deadline: float | None = None
         self._condition = threading.Condition()
@@ -79,13 +81,13 @@ class OutboundMailbox:
         self._next_generation += 1
         return generation
 
-    def publish(self, state: OverlayState) -> int:
+    def publish(self, state: OverlayState, profile: RefineProfile | None = None) -> int:
         if not isinstance(state, OverlayState):
             raise TypeError("state must be an OverlayState")
         with self._condition:
             if self._closed or self._disabled:
                 return self._current_state.generation
-            message = StateMessage(self._generation(), state)
+            message = StateMessage(self._generation(), state, profile)
             self._audio_pending = None
             self._spectrum_pending = None
             self._recording_generation = (
@@ -101,17 +103,23 @@ class OutboundMailbox:
             self._condition.notify()
             return message.generation
 
-    def loading_activity(self, active: bool) -> None:
+    def loading_activity(self, model: LoadingModel, active: bool) -> None:
         """Queue a boolean activity edge without disturbing recording slots."""
+        if not isinstance(model, LoadingModel):
+            raise TypeError("loading model must be a LoadingModel")
         if not isinstance(active, bool):
             raise TypeError("loading activity must be a boolean")
         with self._condition:
-            if self._closed or self._disabled or active == self._loading_active:
+            present = model in self._loading_models
+            if self._closed or self._disabled or active == present:
                 return
-            message = LoadingActivityMessage(active)
+            message = LoadingActivityMessage(model, active)
             encode_message(message)
             self._append(message)
-            self._loading_active = active
+            if active:
+                self._loading_models.append(model)
+            else:
+                self._loading_models.remove(model)
             self._condition.notify()
 
     def audio_block(self, samples: object, sample_rate: int, stream_epoch: int) -> None:
@@ -163,7 +171,9 @@ class OutboundMailbox:
                 or not transient_timeout_applies(current.generation, current)
             ):
                 return None
-            message = StateMessage(self._generation(), OverlayState.HIDDEN)
+            message = StateMessage(
+                self._generation(), OverlayState.HIDDEN, self._current_state.profile
+            )
             self._audio_pending = None
             self._spectrum_pending = None
             self._recording_generation = None
@@ -194,7 +204,7 @@ class OutboundMailbox:
             self._audio_pending = None
             self._spectrum_pending = None
             self._recording_generation = None
-            self._loading_active = False
+            self._loading_models = []
             self._condition.notify_all()
 
     def replay_for_helper(self) -> tuple[StateMessage | LoadingActivityMessage, ...]:
@@ -205,9 +215,9 @@ class OutboundMailbox:
         replaying out of order after the current snapshot.
         """
         with self._condition:
-            replay: list[StateMessage | LoadingActivityMessage] = []
-            if self._loading_active:
-                replay.append(LoadingActivityMessage(True))
+            replay: list[StateMessage | LoadingActivityMessage] = [
+                LoadingActivityMessage(model, True) for model in self._loading_models
+            ]
             if self._current_state.state is not OverlayState.HIDDEN:
                 replay.append(self._current_state)
             self._pending.clear()
