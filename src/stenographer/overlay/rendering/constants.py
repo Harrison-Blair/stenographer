@@ -9,7 +9,17 @@ from types import MappingProxyType
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 
-PILL_WIDTH = 280
+_BASE_PILL_WIDTH = 280
+
+
+# The bar rail, the profile label, and the status dot must all fit between the
+# pill's insets.  The profile label is only drawn while recording, so the pill
+# is widened by exactly the room the label needs and the rail shifts right by
+# the same amount, keeping the right-hand margins identical.
+_PROFILE_LABEL_EXTRA = 60
+
+
+PILL_WIDTH = _BASE_PILL_WIDTH + _PROFILE_LABEL_EXTRA
 
 
 PILL_HEIGHT = 64

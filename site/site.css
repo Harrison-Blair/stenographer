@@ -109,7 +109,7 @@ main, footer, .top { max-width: 1040px; margin-inline: auto; }
 }
 .stage[data-state="recording"] .hint kbd { transform: translateY(1px); border-bottom-width: 1px; background: #27272a; }
 .pill {
-  position: relative; width: 280px; height: 64px; border-radius: 32px;
+  position: relative; width: 340px; height: 64px; border-radius: 32px;   /* PILL_WIDTH 280 + 60 of profile-label room so the bar rail clears the pill edge */
   background: rgba(24, 24, 28, 0.9);              /* _PILL_FILL: #18181C at 230/255 */
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32);     /* _SHADOW_OFFSET_Y 3, blur 6, alpha 82/255 */
   color: #fff;

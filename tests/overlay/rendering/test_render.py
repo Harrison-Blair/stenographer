@@ -102,7 +102,7 @@ def test_rendered_pill_geometry_palette_and_determinism(
     assert frame.image.size == (CANVAS_WIDTH, CANVAS_HEIGHT)
     expected_left = (CANVAS_WIDTH - PILL_WIDTH) // 2
     assert frame.pill_bounds == (expected_left, 8, expected_left + PILL_WIDTH, 72)
-    assert frame.pill_bounds[2] - frame.pill_bounds[0] == PILL_WIDTH == 280
+    assert frame.pill_bounds[2] - frame.pill_bounds[0] == PILL_WIDTH == 340
     assert frame.pill_bounds[3] - frame.pill_bounds[1] == PILL_HEIGHT == 64
     assert frame.image.getpixel((frame.pill_bounds[0] + 110, frame.pill_bounds[1] + 12)) == (
         0x18,
@@ -205,10 +205,10 @@ def test_hidden_is_not_a_renderable_surface() -> None:
 @pytest.mark.parametrize(
     ("scale", "canvas_size", "pill_bounds"),
     [
-        (1.0, (304, 88), (12, 8, 292, 72)),
-        (1.25, (380, 110), (15, 10, 365, 90)),
-        (1.5, (456, 132), (18, 12, 438, 108)),
-        (2.0, (608, 176), (24, 16, 584, 144)),
+        (1.0, (364, 88), (12, 8, 352, 72)),
+        (1.25, (455, 110), (15, 10, 440, 90)),
+        (1.5, (546, 132), (18, 12, 528, 108)),
+        (2.0, (728, 176), (24, 16, 704, 144)),
     ],
 )
 @pytest.mark.parametrize("state", list(OverlayState)[1:])
@@ -333,7 +333,7 @@ def test_layer_margin_rejects_a_shadow_canvas_deeper_than_the_offset() -> None:
 _GOLDEN_COORDINATES = {
     "border_top": (150, 11),
     "bar_interior": (86, 40),
-    "dot_center": (274, 40),
+    "dot_center": (334, 40),
     "shadow_below": (150, 76),
     "pill_interior": (122, 20),
     "label_region": (140, 40),

@@ -29,6 +29,7 @@ from stenographer.overlay.rendering.constants import (
     _LABEL_GAP,
     _LABEL_WEIGHT,
     _PILL_FILL,
+    _PROFILE_LABEL_EXTRA,
     _SHADOW_BLUR,
     _SHADOW_FILL,
     _SHADOW_OFFSET_Y,
@@ -300,7 +301,7 @@ def _render_dynamic_layer(
             levels,
             pill_bounds=high_pill,
             scale=scale * factor,
-            left_offset=60 if profile is not None else 0,
+            left_offset=_PROFILE_LABEL_EXTRA if profile is not None else 0,
         ):
             draw.rounded_rectangle(
                 _exclusive_box(bounds),
