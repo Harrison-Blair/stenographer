@@ -120,13 +120,16 @@ def analyze_releases(
 
 
 def plan_release(
-    tags: list[str], pages: object, bump: str, expected_target_commit: str
+    tags: list[str], pages: object, bump: str, expected_target_commit: str | None
 ) -> ReleasePlan:
     """Select the next version from stable tags and validate GitHub release state."""
 
     if bump not in {"patch", "minor", "major"}:
         raise ReleaseGuardError("release bump must be patch, minor, or major")
-    if re.fullmatch(r"[0-9a-fA-F]{40,64}", expected_target_commit) is None:
+    if (
+        expected_target_commit is not None
+        and re.fullmatch(r"[0-9a-fA-F]{40,64}", expected_target_commit) is None
+    ):
         raise ReleaseGuardError("release target must be a full Git commit ID")
 
     stable: list[tuple[tuple[int, int, int], str]] = []
@@ -200,7 +203,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("releases", type=Path, help="JSON pages from gh api --paginate --slurp")
     parser.add_argument("bump", choices=("patch", "minor", "major"))
-    parser.add_argument("--target-commit", required=True)
+    parser.add_argument("--target-commit")
     parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()

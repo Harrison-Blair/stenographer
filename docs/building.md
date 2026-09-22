@@ -110,6 +110,8 @@ so wheel, source distribution, standalone bundle, and `--version` agree. The
 manual `release preflight` workflow can rehearse a selected bump without
 creating a tag or release; pull-request runs use a patch candidate only to
 exercise packaging and do not require that candidate's release-note entry.
+PR rehearsals also skip the draft's exact target-commit check because they run
+on a temporary merge commit; the manual rehearsal and release run check it.
 
 The README's one-line installer, `scripts/quick-install.sh`, consumes that
 published release: it downloads the native standalone archive, the source

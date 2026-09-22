@@ -8,7 +8,7 @@ import logging
 import os
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from stenographer.lib.audio.recorder import Recorder
 from stenographer.lib.contracts.loading_model import LoadingModel
@@ -196,11 +196,12 @@ class Daemon:
 
         def on_profile_start(name: str) -> bool:
             profile = RefineProfile(name)
+            stopped = False
             if cfg.hotkey.mode in {"toggle", "hybrid"}:
-                daemon.on_toggle_press(profile=profile)
+                stopped = daemon.on_toggle_press(profile=profile) == "stop"
             else:
                 daemon.on_key_down(profile=profile)
-            return daemon._recording and daemon._record_profile is profile
+            return stopped or (daemon._recording and daemon._record_profile is profile)
 
         def on_profile_stop(_name: str) -> None:
             if cfg.hotkey.mode == "hybrid":
@@ -408,7 +409,9 @@ class Daemon:
             return
         self._warmup_thread = thread
 
-    def on_toggle_press(self, *, profile: RefineProfile | None = None) -> None:
+    def on_toggle_press(
+        self, *, profile: RefineProfile | None = None
+    ) -> Literal["start", "stop"] | None:
         """Toggle and hybrid modes: one press starts a recording, the next press stops it."""
         with self._lock:
             action = toggle_action(
@@ -422,6 +425,7 @@ class Daemon:
             self.on_key_down(profile=profile)
         elif action == "stop":
             self.on_key_up()
+        return action
 
     def on_hybrid_release(self) -> None:
         """Hybrid mode: a tap latches the recording, a held press ends it.

@@ -251,3 +251,23 @@ def test_main_resolves_the_previous_tag_to_its_commit(tmp_path: Path, annotated:
     assert "release guard passed: v0.13.1" in result.stdout
     assert f"previous_commit={tagged}" in github_output.read_text(encoding="utf-8")
     assert "previous_tag=v0.13.0" in github_output.read_text(encoding="utf-8")
+
+
+def test_pr_rehearsal_allows_a_draft_targeting_main(tmp_path: Path) -> None:
+    repo, tagged, head = _release_repo(tmp_path, annotated=False)
+    pages = tmp_path / "releases.json"
+    pages.write_text(
+        json.dumps(
+            [[_release("v0.13.0", target=tagged), _release("v0.13.1", draft=True, target=tagged)]]
+        ),
+        encoding="utf-8",
+    )
+    command = [sys.executable, str(_SCRIPT), str(pages), "patch", "--repository", str(repo)]
+
+    rehearsal = subprocess.run(command, capture_output=True, text=True)
+    release = subprocess.run([*command, "--target-commit", head], capture_output=True, text=True)
+
+    assert rehearsal.returncode == 0, rehearsal.stderr
+    assert "draft=1" in rehearsal.stdout
+    assert release.returncode != 0
+    assert "unexpected commit" in release.stderr

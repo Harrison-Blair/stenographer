@@ -57,9 +57,13 @@ jobs:
         id: guard
         run: |
           python -m venv .venv
+          target_args=()
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+            target_args=(--target-commit "${GITHUB_SHA}")
+          fi
           .venv/bin/python scripts/release_guard.py \
             "${RUNNER_TEMP}/releases.json" "${{ inputs.bump || 'patch' }}" \
-            --target-commit "${GITHUB_SHA}" \
+            "${target_args[@]}" \
             --github-output "${GITHUB_OUTPUT}"
       - name: Check authored release notes
         if: github.event_name == 'workflow_dispatch'

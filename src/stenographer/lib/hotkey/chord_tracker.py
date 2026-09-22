@@ -225,9 +225,11 @@ class ChordTracker:
                         self._binding_active[name] = True
                         self._selected_binding = name
                         self._active = name == next(iter(self._bindings))
+                        previous_chord = self._last_started_chord
+                        self._last_started_chord = self._bindings[name]
                         accepted = self._on_binding_start(name)
-                        if accepted is not False:
-                            self._last_started_chord = self._bindings[name]
+                        if accepted is False:
+                            self._last_started_chord = previous_chord
                         break
             for name, is_active in active.items():
                 self._binding_active[name] = is_active

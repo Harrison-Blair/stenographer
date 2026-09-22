@@ -88,6 +88,15 @@ def test_build_wires_toggle_mode_press_only():
         toggle.stop()
 
 
+def test_toggle_press_reports_the_action_taken():
+    daemon = _daemon(mode="toggle")
+    try:
+        assert daemon.on_toggle_press() == "start"
+        assert daemon.on_toggle_press() == "stop"
+    finally:
+        daemon.stop()
+
+
 def test_a_stale_max_duration_timer_cannot_stop_the_next_utterance():
     # The id doubles as the stale-timer generation. A timer armed for utterance
     # 1 that reaches the lock only after utterance 2 has started must do
