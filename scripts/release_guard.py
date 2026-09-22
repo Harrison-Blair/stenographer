@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _VERSION_RE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+_COMMIT_RE = re.compile(r"[0-9a-fA-F]{40,64}")
 
 
 class ReleaseGuardError(ValueError):
@@ -76,6 +77,8 @@ def analyze_releases(
     pages: object,
     candidate_version: str,
     expected_target_commit: str | None = None,
+    *,
+    check_drafts: bool = True,
 ) -> ReleaseState:
     """Inspect every paginated GitHub release and decide whether release may proceed."""
 
@@ -90,6 +93,8 @@ def analyze_releases(
         for release in page:
             release_id, tag, draft, _prerelease, target_commitish = _release_fields(release)
             if draft:
+                if not check_drafts:
+                    continue
                 if tag != candidate_tag:
                     raise ReleaseGuardError(
                         f"unrelated draft {tag} exists while planning {candidate_tag}"
@@ -120,16 +125,18 @@ def analyze_releases(
 
 
 def plan_release(
-    tags: list[str], pages: object, bump: str, expected_target_commit: str | None
+    tags: list[str],
+    pages: object,
+    bump: str,
+    expected_target_commit: str | None,
+    *,
+    check_drafts: bool = True,
 ) -> ReleasePlan:
     """Select the next version from stable tags and validate GitHub release state."""
 
     if bump not in {"patch", "minor", "major"}:
         raise ReleaseGuardError("release bump must be patch, minor, or major")
-    if (
-        expected_target_commit is not None
-        and re.fullmatch(r"[0-9a-fA-F]{40,64}", expected_target_commit) is None
-    ):
+    if expected_target_commit is not None and _COMMIT_RE.fullmatch(expected_target_commit) is None:
         raise ReleaseGuardError("release target must be a full Git commit ID")
 
     stable: list[tuple[tuple[int, int, int], str]] = []
@@ -153,7 +160,7 @@ def plan_release(
         candidate = (major, minor, patch + 1)
     version = ".".join(str(part) for part in candidate)
 
-    state = analyze_releases(pages, version, expected_target_commit)
+    state = analyze_releases(pages, version, expected_target_commit, check_drafts=check_drafts)
     tag_names = set(tags)
     assert isinstance(pages, list)  # Validated by analyze_releases.
     for page in pages:
@@ -203,21 +210,38 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("releases", type=Path, help="JSON pages from gh api --paginate --slurp")
     parser.add_argument("bump", choices=("patch", "minor", "major"))
-    parser.add_argument("--target-commit")
+    draft_mode = parser.add_mutually_exclusive_group(required=True)
+    draft_mode.add_argument("--target-commit", help="require any matching draft to target this")
+    draft_mode.add_argument(
+        "--skip-target-check",
+        action="store_true",
+        help="rehearsal off main: check draft state but not the draft's target commit",
+    )
+    draft_mode.add_argument(
+        "--skip-draft-checks",
+        action="store_true",
+        help="packaging-only run: plan the version from tags and ignore drafts",
+    )
     parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
 
     try:
         pages = json.loads(args.releases.read_text(encoding="utf-8"))
-        plan = plan_release(read_git_tags(args.repository), pages, args.bump, args.target_commit)
+        plan = plan_release(
+            read_git_tags(args.repository),
+            pages,
+            args.bump,
+            args.target_commit,
+            check_drafts=not args.skip_draft_checks,
+        )
         previous_commit = _git_output(
             args.repository,
             "rev-parse",
             "--verify",
             f"refs/tags/{plan.previous_tag}^{{commit}}",
         )
-        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", previous_commit):
+        if not _COMMIT_RE.fullmatch(previous_commit):
             raise ReleaseGuardError(f"cannot resolve {plan.previous_tag} to a commit")
     except (OSError, json.JSONDecodeError, ReleaseGuardError) as error:
         raise SystemExit(f"release guard failed: {error}") from error

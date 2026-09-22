@@ -253,7 +253,15 @@ def test_main_resolves_the_previous_tag_to_its_commit(tmp_path: Path, annotated:
     assert "previous_tag=v0.13.0" in github_output.read_text(encoding="utf-8")
 
 
-def test_pr_rehearsal_allows_a_draft_targeting_main(tmp_path: Path) -> None:
+def _run_guard(pages: Path, repo: Path, *options: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(_SCRIPT), str(pages), "patch", "--repository", str(repo), *options],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_target_opt_out_allows_a_draft_on_the_previous_tagged_commit(tmp_path: Path) -> None:
     repo, tagged, head = _release_repo(tmp_path, annotated=False)
     pages = tmp_path / "releases.json"
     pages.write_text(
@@ -262,12 +270,68 @@ def test_pr_rehearsal_allows_a_draft_targeting_main(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    command = [sys.executable, str(_SCRIPT), str(pages), "patch", "--repository", str(repo)]
 
-    rehearsal = subprocess.run(command, capture_output=True, text=True)
-    release = subprocess.run([*command, "--target-commit", head], capture_output=True, text=True)
+    rehearsal = _run_guard(pages, repo, "--skip-target-check")
+    release = _run_guard(pages, repo, "--target-commit", head)
 
     assert rehearsal.returncode == 0, rehearsal.stderr
     assert "draft=1" in rehearsal.stdout
     assert release.returncode != 0
     assert "unexpected commit" in release.stderr
+
+
+def test_main_requires_a_target_commit_or_an_explicit_opt_out(tmp_path: Path) -> None:
+    repo, tagged, _head = _release_repo(tmp_path, annotated=False)
+    pages = tmp_path / "releases.json"
+    pages.write_text(json.dumps([[_release("v0.13.0", target=tagged)]]), encoding="utf-8")
+
+    result = _run_guard(pages, repo)
+
+    assert result.returncode != 0
+    assert "one of the arguments" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ("--target-commit", _TARGET, "--skip-target-check"),
+        ("--target-commit", _TARGET, "--skip-draft-checks"),
+        ("--skip-target-check", "--skip-draft-checks"),
+    ],
+)
+def test_main_rejects_contradictory_target_options(
+    tmp_path: Path, options: tuple[str, ...]
+) -> None:
+    repo, tagged, _head = _release_repo(tmp_path, annotated=False)
+    pages = tmp_path / "releases.json"
+    pages.write_text(json.dumps([[_release("v0.13.0", target=tagged)]]), encoding="utf-8")
+
+    result = _run_guard(pages, repo, *options)
+
+    assert result.returncode != 0
+    assert "not allowed with argument" in result.stderr
+
+
+def test_packaging_only_run_ignores_an_unrelated_draft(tmp_path: Path) -> None:
+    repo, tagged, _head = _release_repo(tmp_path, annotated=False)
+    pages = tmp_path / "releases.json"
+    pages.write_text(
+        json.dumps(
+            [[_release("v0.13.0", target=tagged), _release("v0.14.0", draft=True, target=tagged)]]
+        ),
+        encoding="utf-8",
+    )
+
+    packaging = _run_guard(pages, repo, "--skip-draft-checks")
+    rehearsal = _run_guard(pages, repo, "--skip-target-check")
+
+    assert packaging.returncode == 0, packaging.stderr
+    assert "release guard passed: v0.13.1" in packaging.stdout
+    assert "draft=none" in packaging.stdout
+    assert rehearsal.returncode != 0
+    assert "unrelated draft v0.14.0" in rehearsal.stderr
+
+
+def test_packaging_only_plan_still_rejects_a_newer_published_release() -> None:
+    with pytest.raises(ReleaseGuardError, match="equal to or newer"):
+        plan_release(["v1.4.5"], [[_release("v1.4.6")]], "patch", None, check_drafts=False)

@@ -110,8 +110,17 @@ so wheel, source distribution, standalone bundle, and `--version` agree. The
 manual `release preflight` workflow can rehearse a selected bump without
 creating a tag or release; pull-request runs use a patch candidate only to
 exercise packaging and do not require that candidate's release-note entry.
-PR rehearsals also skip the draft's exact target-commit check because they run
-on a temporary merge commit; the manual rehearsal and release run check it.
+The guard requires either `--target-commit` or an explicit opt-out, so a
+dropped flag fails instead of silently skipping a check:
+
+- The `draft release` workflow passes `--target-commit` on every guard call.
+- A manual rehearsal on `main` passes `--target-commit` too.
+- A manual rehearsal on another branch passes `--skip-target-check`: it still
+  rejects unrelated or duplicate drafts, but a draft targeting `main` cannot
+  match that branch's commit.
+- A pull-request run passes `--skip-draft-checks`: it runs on a temporary merge
+  commit and would plan a patch even while a minor or major draft awaits
+  publication, so it ignores drafts and plans its version from tags only.
 
 The README's one-line installer, `scripts/quick-install.sh`, consumes that
 published release: it downloads the native standalone archive, the source
