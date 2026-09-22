@@ -209,7 +209,10 @@ def main() -> None:
         pages = json.loads(args.releases.read_text(encoding="utf-8"))
         plan = plan_release(read_git_tags(args.repository), pages, args.bump, args.target_commit)
         previous_commit = _git_output(
-            args.repository, "rev-list", "-n", "1", "--verify", f"refs/tags/{plan.previous_tag}"
+            args.repository,
+            "rev-parse",
+            "--verify",
+            f"refs/tags/{plan.previous_tag}^{{commit}}",
         )
         if not re.fullmatch(r"[0-9a-fA-F]{40,64}", previous_commit):
             raise ReleaseGuardError(f"cannot resolve {plan.previous_tag} to a commit")

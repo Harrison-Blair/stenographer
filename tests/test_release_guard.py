@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure-logic tests for the GitHub release version guard."""
+"""Pure-logic tests plus the real-git invocation for the release version guard."""
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -11,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from release_guard import ReleaseGuardError, analyze_releases, plan_release
 
 _TARGET = "a" * 40
+_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "release_guard.py"
 
 
 def _release(
@@ -179,3 +182,72 @@ def test_release_plan_rejects_a_matching_draft_for_another_commit() -> None:
             "patch",
             _TARGET,
         )
+
+
+# --- The real Git invocation -------------------------------------------------
+# The version guard shells out to git; a mocked subprocess would happily pass
+# for a command git itself rejects, so these run the script against a real
+# temporary repository.
+
+
+def _release_repo(tmp_path: Path, *, annotated: bool) -> tuple[Path, str, str]:
+    """A two-commit repo tagging v0.13.0 on the first commit; returns the repo,
+    the tagged commit, and the dispatch head."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()  # Neutralize any global core.hooksPath.
+
+    def git(*args: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+        )
+        return result.stdout.strip()
+
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    git("config", "user.email", "guard@example.com")
+    git("config", "user.name", "Release Guard Test")
+    git("config", "core.hooksPath", str(hooks))
+    (repo / "tracked.txt").write_text("release\n", encoding="utf-8")
+    git("add", "tracked.txt")
+    git("commit", "-q", "-m", "first")
+    tagged = git("rev-parse", "HEAD")
+    if annotated:
+        git("tag", "-a", "-m", "release", "v0.13.0")
+    else:
+        git("tag", "v0.13.0")
+    (repo / "tracked.txt").write_text("dispatch\n", encoding="utf-8")
+    git("add", "tracked.txt")
+    git("commit", "-q", "-m", "second")
+    return repo, tagged, git("rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize("annotated", [False, True], ids=["lightweight", "annotated"])
+def test_main_resolves_the_previous_tag_to_its_commit(tmp_path: Path, annotated: bool) -> None:
+    """The previous tag resolves to a commit, not a tag object or a failure."""
+    repo, tagged, head = _release_repo(tmp_path, annotated=annotated)
+    pages = tmp_path / "releases.json"
+    pages.write_text(json.dumps([[_release("v0.13.0", target=tagged)]]), encoding="utf-8")
+    github_output = tmp_path / "github_output.txt"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT),
+            str(pages),
+            "patch",
+            "--target-commit",
+            head,
+            "--repository",
+            str(repo),
+            "--github-output",
+            str(github_output),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "release guard passed: v0.13.1" in result.stdout
+    assert f"previous_commit={tagged}" in github_output.read_text(encoding="utf-8")
+    assert "previous_tag=v0.13.0" in github_output.read_text(encoding="utf-8")
