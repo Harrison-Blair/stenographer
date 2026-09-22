@@ -8,6 +8,11 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    os.name != "posix",
+    reason="the guard step only runs on the Ubuntu runner and relies on POSIX shell stubs",
+)
+
 _WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "release-preflight.yml"
 _SHA = "c" * 40
 
