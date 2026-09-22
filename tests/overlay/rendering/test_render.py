@@ -49,6 +49,9 @@ def test_lifecycle_visual_contract_has_no_loading_label_or_dot() -> None:
         OverlayState.DELIVERING: "Delivering",
         OverlayState.CANCELLED: "Cancelled",
         OverlayState.ERROR: "Error",
+        OverlayState.APPLIED: "Applied",
+        OverlayState.SKIPPED: "Skipped",
+        OverlayState.FALLBACK: "Fallback",
     }
     assert isinstance(STATE_DOT_COLORS, MappingProxyType)
     assert STATE_DOT_COLORS == {
@@ -58,6 +61,9 @@ def test_lifecycle_visual_contract_has_no_loading_label_or_dot() -> None:
         OverlayState.DELIVERING: (0x8B, 0x5C, 0xF6, 0xFF),
         OverlayState.CANCELLED: (0xA1, 0xA1, 0xAA, 0xFF),
         OverlayState.ERROR: (0xEF, 0x44, 0x44, 0xFF),
+        OverlayState.APPLIED: (0x22, 0xC5, 0x5E, 0xFF),
+        OverlayState.SKIPPED: (0xA1, 0xA1, 0xAA, 0xFF),
+        OverlayState.FALLBACK: (0xF5, 0x9E, 0x0B, 0xFF),
     }
     assert OverlayState.HIDDEN not in STATE_LABELS
     assert OverlayState.RECORDING not in STATE_LABELS

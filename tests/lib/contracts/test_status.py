@@ -18,6 +18,9 @@ def test_visible_state_set_has_no_loading_pill() -> None:
         OverlayState.DELIVERING,
         OverlayState.CANCELLED,
         OverlayState.ERROR,
+        OverlayState.APPLIED,
+        OverlayState.SKIPPED,
+        OverlayState.FALLBACK,
     )
 
 
@@ -26,6 +29,7 @@ def test_state_publication_repeats_transient_states_but_suppresses_stable_duplic
     assert should_publish_state(OverlayState.RECORDING, OverlayState.RECORDING) is False
     assert should_publish_state(OverlayState.ERROR, OverlayState.ERROR) is True
     assert should_publish_state(OverlayState.CANCELLED, OverlayState.CANCELLED) is True
+    assert should_publish_state(OverlayState.APPLIED, OverlayState.APPLIED) is True
 
 
 def test_loading_models_are_exactly_asr_and_refine() -> None:

@@ -44,7 +44,7 @@
       </div>
 
       <div class="stage" id="stage" data-state="hidden" data-loading="0" aria-label="The lifecycle pill you will see on screen, cycling through its states">
-      <div class="hint">hold <kbd>Right Ctrl</kbd> and speak · <kbd>Escape</kbd> cancels</div>
+      <div class="hint"><kbd>Right Ctrl</kbd> Agent · <kbd>Right Alt</kbd> General · <kbd>Escape</kbd> cancels</div>
         <div class="pill">
           <span class="ring"></span>
           <span class="pi" role="img" aria-label="quill"></span>
@@ -57,10 +57,11 @@
     </section>
 
     <section class="states" id="states" aria-label="What the pill is telling you">
-      <div class="st" data-for="recording"><i class="sw rec"></i><b>Recording</b><p>You are holding or have latched the hotkey. 18 bars follow your microphone.</p></div>
+      <div class="st" data-for="recording"><i class="sw rec"></i><b>Recording</b><p>The pill names Agent or General while 18 bars follow your microphone.</p></div>
       <div class="st" data-for="transcribing"><i class="sw asr"></i><b>Transcribing</b><p>faster-whisper is turning your speech into English text, on your machine.</p></div>
-      <div class="st" data-for="refining"><i class="sw refine"></i><b>Refining</b><p>On by default. A model on your own machine tidies the filler out of what you said.</p></div>
+      <div class="st" data-for="refining"><i class="sw refine"></i><b>Refining</b><p>Agent conservatively formats requests; General performs ordinary transcript cleanup. The pill briefly reports Applied, Skipped, or Fallback.</p></div>
       <div class="st" data-for="delivering"><i class="sw deliver"></i><b>Delivering</b><p>Your clipboard has the text. A paste chord is landing at your cursor.</p></div>
+      <div class="st" data-for="applied"><i class="sw applied"></i><b>Applied</b><p>The selected profile was applied. Skipped and Fallback use the same brief, transcript-free result.</p></div>
       <div class="st" data-for="loading"><i class="sw load"></i><b>Loading</b><p>A border breathes while a model warms up, over whatever else is showing: the amber Loading colour for speech, the Refining colour for cleanup, taking turns one breath each if both load. It always finishes its breath before it changes or goes.</p></div>
       <div class="st" data-for="cancelled"><i class="sw cancel"></i><b>Cancelled</b><p>You pressed Escape. The audio and transcript are discarded; nothing is pasted.</p></div>
       <div class="st" data-for="error"><i class="sw rec"></i><b>Error</b><p>Something failed. A desktop notification tells you what and why.</p></div>
@@ -69,10 +70,10 @@
     <section id="how" class="block">
       <h2>How it works</h2>
       <ol class="pipe">
-        <li><b>Your hotkey</b><span>Right Ctrl by default, or Right Alt if you are on Windows. Tap it to latch, or hold it, speak, and release. Press Escape any time before delivery to cancel without pasting. If you prefer plain hold or toggle, each is one setting away.</span></li>
+        <li><b>Your hotkeys</b><span>Right Ctrl selects Agent; Right Alt selects General. Both can latch or be held, and Escape cancels without pasting.</span></li>
         <li><b>Your microphone</b><span>Captured through PortAudio, with a quiet-audio gate so an accidental press does not paste noise into your work.</span></li>
         <li><b>Local transcription</b><span>faster-whisper runs on your CPU or GPU. You download the model once, and only when you ask for it.</span></li>
-        <li><b>Local cleanup</b><span>On by default, your transcript goes to a model running on your own machine through Ollama — <code>gemma4:e2b</code> unless you pick another — which drops the "um"s, resolves the sentences you restarted, and fixes your punctuation. It never summarizes and never answers you, and if it is slow or missing you simply get your transcript as it was. Turn it off in your config if you would rather skip it.</span></li>
+        <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Agent formats agent-directed requests without inventing work or changing safety-bearing details. General keeps the original cleanup behavior. Both fail open to the formatted transcript.</span></li>
         <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key.</span></li>
         <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. It stays on your clipboard too.</span></li>
       </ol>
@@ -120,7 +121,7 @@ scripts/install.sh --no-start</code></pre>
         <li>
           <b>Start it and dictate.</b>
           <pre><code>systemctl --user start stenographer.service</code></pre>
-          <p>Hold Right Ctrl, speak, and release. Or tap to latch, and tap again when you are done.</p>
+          <p>Use Right Ctrl for Agent or Right Alt for General. Hold either, speak, and release—or tap to latch and tap again when you are done.</p>
         </li>
       </ol>
       <p class="fine">Your configuration lives at <code>~/.config/stenographer/config.toml</code>. When you save through the CLI, your comments and any settings it does not know about are kept. Restart the service to apply your changes.</p>

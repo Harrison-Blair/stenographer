@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Drives the lifecycle pill replica through the daemon's real state order:
-// HIDDEN → RECORDING → TRANSCRIBING → REFINING → DELIVERING → CANCELLED → HIDDEN.
+// HIDDEN → RECORDING → TRANSCRIBING → REFINING → DELIVERING → APPLIED → HIDDEN.
 // REFINING appears on by default, unless you turned the cleanup pass off. The first pass
 // carries a loading border: the amber speech-model breath on RECORDING, then the
 // Refining-coloured cleanup-model breath on REFINING, because loading only shows
@@ -22,9 +22,9 @@
     { s: "transcribing", ms: 1500, cap: "faster-whisper, on your machine" },
     { s: "refining", ms: 1100, cap: "on by default · a local model tidies what you said" },
     { s: "delivering", ms: 900, cap: "your clipboard, then Shift+Insert at your cursor" },
-    { s: "cancelled", ms: 1200, cap: "Escape · nothing was pasted" }
+    { s: "applied", ms: 1200, cap: "profile applied · no transcript content shown" }
   ];
-  var labels = { transcribing: "Transcribing", refining: "Refining", delivering: "Delivering", cancelled: "Cancelled", error: "Error" };
+  var labels = { recording: "Recording", transcribing: "Transcribing", refining: "Refining", delivering: "Delivering", applied: "Applied", cancelled: "Cancelled", error: "Error" };
   var loadingCaptions = { asr: " · your speech model is loading", refine: " · your cleanup model is loading" };
   var index = 0;
   var pass = 0;
@@ -57,11 +57,12 @@
 
   function step() {
     var cur = script[index];
+    var profile = pass % 2 === 0 ? "Agent" : "General";
     var loading = pass === 0 && cur.s === "recording" ? "asr" : pass === 0 && cur.s === "refining" ? "refine" : "0";
     stage.setAttribute("data-state", cur.s);
     stage.setAttribute("data-loading", loading);
     cap.textContent = cur.cap + (loadingCaptions[loading] || "");
-    lbl.textContent = labels[cur.s] || "";
+    lbl.textContent = labels[cur.s] ? profile + (cur.s === "recording" ? "" : " · " + labels[cur.s]) : "";
     for (var t = 0; t < tiles.length; t++) {
       var tile = tiles[t].getAttribute("data-for");
       tiles[t].classList.toggle("on", tile === cur.s || (tile === "loading" && loading !== "0"));

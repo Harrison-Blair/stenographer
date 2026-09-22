@@ -81,7 +81,8 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
         fmt_event(
             "banner",
             "config_hotkey",
-            binding=cfg.hotkey.binding,
+            agent_binding=cfg.hotkey.binding,
+            general_binding=cfg.hotkey.general_binding,
             cancel_binding=_shown(cfg.hotkey.cancel_binding),
             device=_shown(cfg.hotkey.device),
             mode=cfg.hotkey.mode,

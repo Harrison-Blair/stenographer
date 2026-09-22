@@ -126,12 +126,15 @@ main, footer, .top { max-width: 1040px; margin-inline: auto; }
 .stage[data-loading="asr"] .pill .ring { animation: breathe 2s ease-in-out infinite; }   /* 0.25 → 0.85 over 2 s, speech model */
 .stage[data-loading="refine"] .pill .ring { border-color: var(--refine); animation: breathe 2s ease-in-out infinite; }   /* same breath, cleanup model */
 @keyframes breathe { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.85; } }
-.stage[data-state="recording"] .lbl, .stage:not([data-state="recording"]) .bars { display: none; }
+.stage[data-state="recording"] .lbl { font-size: 18px; }
+.stage[data-state="recording"] .bars { left: 132px; }
+.stage:not([data-state="recording"]) .bars { display: none; }
 .stage[data-state="recording"] .dot, .stage[data-state="error"] .dot { background: var(--rec); }
 .stage[data-state="transcribing"] .dot { background: var(--asr); }
 .stage[data-state="refining"] .dot { background: var(--refine); }
 .stage[data-state="delivering"] .dot { background: var(--deliver); }
 .stage[data-state="cancelled"] .dot { background: var(--cancel); }
+.stage[data-state="applied"] .dot { background: #22c55e; }
 .stage .cap { position: absolute; bottom: 14px; left: 0; right: 0; text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   .stage[data-loading="asr"] .pill .ring, .stage[data-loading="refine"] .pill .ring { animation: none; opacity: 0.55; }
@@ -148,6 +151,7 @@ main, footer, .top { max-width: 1040px; margin-inline: auto; }
 .sw.rec { background: var(--rec); }
 .sw.asr { background: var(--asr); }
 .sw.refine { background: var(--refine); }
+.sw.applied { background: #22c55e; }
 .sw.deliver { background: var(--deliver); }
 .sw.cancel { background: var(--cancel); }
 .sw.load { background: var(--load); }

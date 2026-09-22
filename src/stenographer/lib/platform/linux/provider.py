@@ -50,9 +50,6 @@ class LinuxPlatform(DiagnosticsHostMixin):
 
         return EvdevKeyTable()
 
-    def default_hotkey_binding(self) -> str:
-        return "KEY_RIGHTCTRL"
-
     def hotkey_listener(
         self,
         *,
@@ -61,6 +58,9 @@ class LinuxPlatform(DiagnosticsHostMixin):
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
         lock: threading.RLock,
+        bindings: dict[str, frozenset[int]] | None = None,
+        on_binding_start: Callable[[str], bool | None] | None = None,
+        on_binding_stop: Callable[[str], None] | None = None,
         cancel: frozenset[int] = frozenset(),
         on_cancel: Callable[[], None] | None = None,
     ) -> HotkeyListener:
@@ -72,6 +72,9 @@ class LinuxPlatform(DiagnosticsHostMixin):
             on_start=on_start,
             on_stop=on_stop,
             lock=lock,
+            bindings=bindings,
+            on_binding_start=on_binding_start,
+            on_binding_stop=on_binding_stop,
             cancel=cancel,
             on_cancel=on_cancel,
         )

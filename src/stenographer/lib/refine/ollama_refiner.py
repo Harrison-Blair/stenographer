@@ -23,6 +23,7 @@ from stenographer.lib.refine.policy import (
     timeout_seconds,
     word_count,
 )
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.request import build_chat_body
 from stenographer.lib.refine.response import refined_text, restore_trailing_space
 from stenographer.lib.refine.results import (
@@ -171,7 +172,13 @@ class OllamaRefiner:
             self._shutdown = True
         self._unload_now()
 
-    def refine(self, text: str, *, cancelled: Callable[[], bool] = never_cancelled) -> str:
+    def refine(
+        self,
+        text: str,
+        *,
+        profile: RefineProfile = RefineProfile.GENERAL,
+        cancelled: Callable[[], bool] = never_cancelled,
+    ) -> str:
         """Return the cleaned text, or *text* unchanged on any failure at all.
 
         *cancelled* is asked between requests — before the load, after it, and
@@ -194,6 +201,7 @@ class OllamaRefiner:
             words=words,
             keep_alive=self._keep_alive,
             structured_output=self._structured_output,
+            profile=profile,
         )
         if not self._claim():
             self._last_result = RefineResult(OUTCOME_CANCELLED, chars_in=len(text))
@@ -204,7 +212,12 @@ class OllamaRefiner:
             self._check_stopped(cancelled)
             payload = post_chat(self._host, body, timeout=timeout_seconds(words))
             self._check_stopped(cancelled)
-            candidate = refined_text(payload, text, structured_output=self._structured_output)
+            candidate = refined_text(
+                payload,
+                text,
+                structured_output=self._structured_output,
+                profile=profile,
+            )
         except Exception as exc:
             outcome = self._outcome_for(exc)
             self._last_result = RefineResult(

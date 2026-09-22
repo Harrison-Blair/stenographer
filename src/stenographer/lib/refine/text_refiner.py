@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from stenographer.lib.refine.cancellation import never_cancelled
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import RefineResult
 
 if TYPE_CHECKING:
@@ -39,5 +40,11 @@ class TextRefiner(Protocol):
     def will_refine(self, text: str) -> bool:
         """Whether :meth:`refine` would send *text* to a model. PURE."""
 
-    def refine(self, text: str, *, cancelled: Callable[[], bool] = never_cancelled) -> str:
+    def refine(
+        self,
+        text: str,
+        *,
+        profile: RefineProfile = RefineProfile.AGENT,
+        cancelled: Callable[[], bool] = never_cancelled,
+    ) -> str:
         """Return the text to deliver: cleaned, or *text* itself on any failure."""

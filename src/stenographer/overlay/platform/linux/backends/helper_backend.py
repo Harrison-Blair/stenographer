@@ -54,6 +54,7 @@ class HelperBackend:
             levels=self._reducer.levels_for(state),
             loading_elapsed=self._pulse.elapsed(now),
             loading_model=self._pulse.breath_model,
+            profile=self._reducer.profile,
         )
 
     def run(self, input_stream: BinaryIO) -> None:

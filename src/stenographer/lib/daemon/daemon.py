@@ -35,6 +35,7 @@ from stenographer.lib.delivery.deliverer import Deliverer
 from stenographer.lib.logging.pipeline import fmt_event, log_failure, set_utterance
 from stenographer.lib.platform import current_platform
 from stenographer.lib.refine.factory import build_refiner
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.sounds.feedback import Feedback
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.pipeline import apply_capture, log_summary
@@ -107,6 +108,7 @@ class Daemon:
         self._utterance_id = 0
         self._cancelled_utterance: int | None = None
         self._record: UtteranceRecord | None = None
+        self._record_profile: RefineProfile | None = None
         self._max_timer: threading.Timer | None = None
         self._warmup_thread: threading.Thread | None = None
         self._pipeline_thread: threading.Thread | None = None
@@ -191,12 +193,33 @@ class Daemon:
             else frozenset()
         )
         log.info("hotkey: configured mode=%s", cfg.hotkey.mode)
+
+        def on_profile_start(name: str) -> bool:
+            profile = RefineProfile(name)
+            if cfg.hotkey.mode in {"toggle", "hybrid"}:
+                daemon.on_toggle_press(profile=profile)
+            else:
+                daemon.on_key_down(profile=profile)
+            return daemon._recording and daemon._record_profile is profile
+
+        def on_profile_stop(_name: str) -> None:
+            if cfg.hotkey.mode == "hybrid":
+                daemon.on_hybrid_release()
+            elif cfg.hotkey.mode == "hold":
+                daemon.on_key_up()
+
         listener = plat.hotkey_listener(
             chord=parse_binding(cfg.hotkey.binding, keys),
             device=cfg.hotkey.device,
             on_start=on_start,
             on_stop=on_stop,
             lock=threading.RLock(),
+            bindings={
+                RefineProfile.AGENT.value: parse_binding(cfg.hotkey.binding, keys),
+                RefineProfile.GENERAL.value: parse_binding(cfg.hotkey.general_binding, keys),
+            },
+            on_binding_start=on_profile_start,
+            on_binding_stop=on_profile_stop,
             cancel=cancel,
             on_cancel=daemon.on_cancel,
         )
@@ -228,7 +251,7 @@ class Daemon:
             if not should_publish_state(self._overlay_state, state):
                 return
             self._overlay_state = state
-            _publish_status(self._status, state)
+            _publish_status(self._status, state, self._record_profile)
 
     def _fail(self, notify_msg: str) -> None:
         """Announce a failed phase on every user-facing channel at once.
@@ -385,7 +408,7 @@ class Daemon:
             return
         self._warmup_thread = thread
 
-    def on_toggle_press(self) -> None:
+    def on_toggle_press(self, *, profile: RefineProfile | None = None) -> None:
         """Toggle and hybrid modes: one press starts a recording, the next press stops it."""
         with self._lock:
             action = toggle_action(
@@ -396,7 +419,7 @@ class Daemon:
             if action is None and self._busy and self._record is not None:
                 self._record.ignored_busy_presses += 1
         if action == "start":
-            self.on_key_down()
+            self.on_key_down(profile=profile)
         elif action == "stop":
             self.on_key_up()
 
@@ -467,7 +490,7 @@ class Daemon:
             timer.cancel()
             self._max_timer = None
 
-    def on_key_down(self) -> None:
+    def on_key_down(self, *, profile: RefineProfile | None = None) -> None:
         with self._lock:
             if not can_start(self._recording, self._busy, self._stop_event.is_set()):
                 if self._busy and self._record is not None:
@@ -483,6 +506,7 @@ class Daemon:
                 )
                 return
             self._utterance_id += 1
+            self._record_profile = profile
             set_utterance(self._utterance_id)
             started_at = time.perf_counter()
             self._record = UtteranceRecord(
@@ -632,13 +656,19 @@ class Daemon:
         outcome_name = Outcome.ERROR.name
         try:
             assert self._pipeline is not None
-            outcome_name = self._pipeline.run(samples, utterance=self._utterance_id, record=record)
+            outcome_name = self._pipeline.run(
+                samples,
+                utterance=self._utterance_id,
+                record=record,
+                profile=self._record_profile,
+            )
         finally:
             with self._lock:
                 self._worker.release_model()
                 self._busy = False
                 outcome = record.outcome if record is not None else None
                 self._emit_summary(self._take_record(outcome or outcome_name))
+                self._record_profile = None
 
     def run(self) -> None:
         """Start the listener and block until stopped."""

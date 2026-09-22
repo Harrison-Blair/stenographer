@@ -25,10 +25,8 @@ def test_config_error_message():
 
 def test_defaults_match_spec():
     d = Config.defaults()
-    # Host-owned: Windows dictates with Right Alt where the others use Right
-    # Ctrl, so the spec here is "whatever this provider names", and the
-    # per-provider values are asserted in tests/lib/platform/test_platform.py.
-    assert d.hotkey.binding == current_platform().default_hotkey_binding()
+    assert d.hotkey.binding == "KEY_RIGHTCTRL"
+    assert d.hotkey.general_binding == "KEY_RIGHTALT"
     assert d.hotkey.device is None
     assert d.hotkey.cancel_binding == "KEY_ESC"
     assert d.hotkey.mode == "hybrid"
@@ -72,8 +70,6 @@ def test_default_template_takes_its_hotkey_device_comment_from_the_platform():
     "explicit /dev/input/event* path" while the platform said otherwise).
     """
 
-    from stenographer.lib.platform import current_platform
-
     expected = current_platform().guidance().hotkey_device_comment
     rendered = default_toml()
     assert f'device = ""                    # {expected}\n' in rendered
@@ -96,18 +92,12 @@ def test_default_template_ships_the_default_mode_at_the_fixed_comment_column():
     assert line.index("#") == 31
 
 
-def test_default_template_ships_the_host_binding():
-    """The template must render the provider's binding, not a hard-coded key.
-
-    Seen to FAIL before ``Platform.default_hotkey_binding`` existed, when both
-    the template and ``Config.defaults`` spelled ``KEY_RIGHTCTRL`` literally and
-    a Windows install got the wrong default.
-    """
-
-    expected = current_platform().default_hotkey_binding()
-    assert f'binding = "{expected}"\n' in default_toml()
+def test_default_template_ships_the_two_universal_profile_bindings():
+    text = default_toml()
+    assert 'binding = "KEY_RIGHTCTRL"' in text
+    assert 'general_binding = "KEY_RIGHTALT"' in text
     # No placeholder survived, and nothing else is left unrendered.
-    assert "{" not in default_toml()
+    assert "{" not in text
 
 
 def test_loads_validates_without_a_file():

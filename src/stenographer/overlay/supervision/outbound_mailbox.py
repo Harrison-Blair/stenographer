@@ -7,6 +7,7 @@ from collections import deque
 
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.protocol.codec import encode_message
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.messages import (
@@ -80,13 +81,13 @@ class OutboundMailbox:
         self._next_generation += 1
         return generation
 
-    def publish(self, state: OverlayState) -> int:
+    def publish(self, state: OverlayState, profile: RefineProfile | None = None) -> int:
         if not isinstance(state, OverlayState):
             raise TypeError("state must be an OverlayState")
         with self._condition:
             if self._closed or self._disabled:
                 return self._current_state.generation
-            message = StateMessage(self._generation(), state)
+            message = StateMessage(self._generation(), state, profile)
             self._audio_pending = None
             self._spectrum_pending = None
             self._recording_generation = (
@@ -170,7 +171,9 @@ class OutboundMailbox:
                 or not transient_timeout_applies(current.generation, current)
             ):
                 return None
-            message = StateMessage(self._generation(), OverlayState.HIDDEN)
+            message = StateMessage(
+                self._generation(), OverlayState.HIDDEN, self._current_state.profile
+            )
             self._audio_pending = None
             self._spectrum_pending = None
             self._recording_generation = None

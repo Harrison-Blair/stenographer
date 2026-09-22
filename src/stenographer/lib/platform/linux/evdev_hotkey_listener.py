@@ -38,6 +38,9 @@ class EvdevHotkeyListener(ChordTracker):
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
         lock: threading.RLock,
+        bindings: dict[str, frozenset[int]] | None = None,
+        on_binding_start: Callable[[str], bool | None] | None = None,
+        on_binding_stop: Callable[[str], None] | None = None,
         cancel: frozenset[int] = frozenset(),
         on_cancel: Callable[[], None] | None = None,
     ) -> None:
@@ -46,6 +49,9 @@ class EvdevHotkeyListener(ChordTracker):
             on_start=on_start,
             on_stop=on_stop,
             lock=lock,
+            bindings=bindings,
+            on_binding_start=on_binding_start,
+            on_binding_stop=on_binding_stop,
             cancel=cancel,
             on_cancel=on_cancel,
         )
@@ -215,10 +221,18 @@ class EvdevHotkeyListener(ChordTracker):
                 self._held_by_device.pop(id(device), None)
                 self._devices = [opened for opened in self._devices if opened is not device]
                 self._rebuild_held()
-                is_active = chord_active(self._held, self._chord)
+                active_bindings = {
+                    name: chord_active(self._held, chord) for name, chord in self._bindings.items()
+                }
                 cancel_active = chord_active(self._held, self._cancel)
                 self._cancel_active = cancel_active
             with contextlib.suppress(OSError):
                 device.close()
             if not self._stop_event.is_set():
-                self._update(is_active)
+                if self._selected_binding is None and self._active:
+                    # A legacy single-binding listener may have been armed
+                    # before profile bindings existed; preserve its device-loss
+                    # falling edge during the compatibility window.
+                    self._update(active_bindings[next(iter(self._bindings))])
+                else:
+                    self._update_bindings(active_bindings)

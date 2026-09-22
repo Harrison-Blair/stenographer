@@ -16,11 +16,19 @@ from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUT
 
 @dataclass(frozen=True)
 class HotkeyConfig:
+    """Shared trigger behavior with one binding per built-in refine profile.
+
+    ``binding`` retains its historic name for configuration compatibility. It
+    is the Agent binding; old partial configurations therefore acquire the
+    universal default profile without a migration.
+    """
+
     binding: str
     device: str | None
     cancel_binding: str | None = "KEY_ESC"
     mode: str = "hybrid"
     hybrid_threshold_seconds: float = 0.5
+    general_binding: str = "KEY_RIGHTALT"
 
 
 @dataclass(frozen=True)
@@ -82,17 +90,16 @@ class Config:
 
     @classmethod
     def defaults(cls) -> Config:
-        # The merge base for every load, so the binding has to come from the
-        # host: which key a fresh config dictates with differs per desktop.
-        from stenographer.lib.platform import current_platform
-
+        # Agent is universal across hosts so partial old configs migrate to
+        # the conservative profile without changing their existing binding.
         return cls(
             hotkey=HotkeyConfig(
-                binding=current_platform().default_hotkey_binding(),
+                binding="KEY_RIGHTCTRL",
                 device=None,
                 cancel_binding="KEY_ESC",
                 mode="hybrid",
                 hybrid_threshold_seconds=0.5,
+                general_binding="KEY_RIGHTALT",
             ),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
             asr=AsrConfig(
@@ -137,6 +144,7 @@ class Config:
             _build_hotkey,
             _build_refine,
             _merge,
+            _migrate_hotkey_defaults,
         )
 
         try:
@@ -149,6 +157,7 @@ class Config:
         if not isinstance(table, dict):
             raise ConfigError(path, "stenographer", f"must be a table, got {type(table).__name__}")
         merged = _merge(asdict(cls.defaults()), table)
+        _migrate_hotkey_defaults(merged, table, path)
         for name in ("hotkey", "audio", "asr", "feedback", "refine", "analytics"):
             if not isinstance(merged[name], dict):
                 raise ConfigError(path, name, f"must be a table, got {type(merged[name]).__name__}")

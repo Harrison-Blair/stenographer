@@ -15,6 +15,7 @@ import time
 from stenographer.lib.analytics.metrics import METRICS, PHASES, clean_metrics
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.refine.cancellation import never_cancelled
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import (
     OUTCOME_APPLIED,
     OUTCOME_CANCELLED,
@@ -101,6 +102,29 @@ def test_a_long_utterance_is_refined_and_the_refined_text_is_what_is_pasted():
         daemon.stop()
 
     assert len(refiner.calls) == 1
+
+
+def test_profile_is_captured_at_recording_start_and_cannot_change_mid_utterance():
+    refiner = _Refiner(refined=CLEANED)
+    daemon = _daemon(result=_result(LONG), refiner=refiner)
+
+    daemon.on_key_down(profile=RefineProfile.GENERAL)
+    daemon.on_key_down(profile=RefineProfile.AGENT)
+    daemon.on_key_up()
+    daemon._pipeline_thread.join(timeout=5.0)
+
+    assert refiner.profiles == [RefineProfile.GENERAL]
+
+
+def test_profiled_pipeline_briefly_reports_the_refine_outcome():
+    refiner = _Refiner(refined=CLEANED)
+    daemon, status = _daemon_with_status(result=_result(LONG), refiner=refiner)
+
+    daemon.on_key_down(profile=RefineProfile.AGENT)
+    daemon.on_key_up()
+    daemon._pipeline_thread.join(timeout=5.0)
+
+    assert status.states[-1] is OverlayState.APPLIED
     assert daemon._deliverer.delivered == [CLEANED]
 
 

@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +22,16 @@ class ReleaseState:
     """Published-version boundary and optional refreshable draft."""
 
     highest_published_tag: str | None
+    matching_draft_id: int | None
+
+
+@dataclass(frozen=True)
+class ReleasePlan:
+    """Version selected from the stable tag history and requested bump."""
+
+    version: str
+    tag: str
+    previous_tag: str
     matching_draft_id: int | None
 
 
@@ -41,7 +51,7 @@ def _published_version(tag: str) -> tuple[int, int, int]:
         raise ReleaseGuardError(f"unrecognized published release tag: {tag!r}") from error
 
 
-def _release_fields(release: object) -> tuple[int, str, bool, bool]:
+def _release_fields(release: object) -> tuple[int, str, bool, bool, str]:
     if not isinstance(release, dict):
         raise ReleaseGuardError("malformed GitHub release data: release is not an object")
 
@@ -49,17 +59,24 @@ def _release_fields(release: object) -> tuple[int, str, bool, bool]:
     tag = release.get("tag_name")
     draft = release.get("draft")
     prerelease = release.get("prerelease")
+    target_commitish = release.get("target_commitish")
     if (
         type(release_id) is not int
         or not isinstance(tag, str)
         or type(draft) is not bool
         or type(prerelease) is not bool
+        or not isinstance(target_commitish, str)
+        or not target_commitish
     ):
         raise ReleaseGuardError("malformed GitHub release data: invalid release fields")
-    return release_id, tag, draft, prerelease
+    return release_id, tag, draft, prerelease, target_commitish
 
 
-def analyze_releases(pages: object, candidate_version: str) -> ReleaseState:
+def analyze_releases(
+    pages: object,
+    candidate_version: str,
+    expected_target_commit: str | None = None,
+) -> ReleaseState:
     """Inspect every paginated GitHub release and decide whether release may proceed."""
 
     candidate = _parse_version(candidate_version)
@@ -71,10 +88,20 @@ def analyze_releases(pages: object, candidate_version: str) -> ReleaseState:
     matching_drafts: list[int] = []
     for page in pages:
         for release in page:
-            release_id, tag, draft, _prerelease = _release_fields(release)
+            release_id, tag, draft, _prerelease, target_commitish = _release_fields(release)
             if draft:
-                if tag == candidate_tag:
-                    matching_drafts.append(release_id)
+                if tag != candidate_tag:
+                    raise ReleaseGuardError(
+                        f"unrelated draft {tag} exists while planning {candidate_tag}"
+                    )
+                if (
+                    expected_target_commit is not None
+                    and target_commitish != expected_target_commit
+                ):
+                    raise ReleaseGuardError(
+                        f"draft {tag} targets unexpected commit {target_commitish!r}"
+                    )
+                matching_drafts.append(release_id)
                 continue
 
             version = _published_version(tag)
@@ -92,57 +119,108 @@ def analyze_releases(pages: object, candidate_version: str) -> ReleaseState:
     return ReleaseState(highest_published_tag=highest_tag, matching_draft_id=draft_id)
 
 
-def read_project_version(path: Path) -> str:
-    """Read the sole literal ``__version__`` assignment without importing the project."""
+def plan_release(
+    tags: list[str], pages: object, bump: str, expected_target_commit: str
+) -> ReleasePlan:
+    """Select the next version from stable tags and validate GitHub release state."""
 
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except (OSError, SyntaxError) as error:
-        raise ReleaseGuardError(f"cannot read version file {path}: {error}") from error
+    if bump not in {"patch", "minor", "major"}:
+        raise ReleaseGuardError("release bump must be patch, minor, or major")
+    if re.fullmatch(r"[0-9a-fA-F]{40,64}", expected_target_commit) is None:
+        raise ReleaseGuardError("release target must be a full Git commit ID")
 
-    values: list[object] = []
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
+    stable: list[tuple[tuple[int, int, int], str]] = []
+    for tag in tags:
+        if not tag.startswith("v"):
             continue
-        is_version = any(
-            isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets
+        try:
+            stable.append((_parse_version(tag[1:]), tag))
+        except ReleaseGuardError as error:
+            raise ReleaseGuardError(f"unrecognized stable Git tag: {tag!r}") from error
+    if not stable:
+        raise ReleaseGuardError("no stable Git tag found; expected at least one vX.Y.Z tag")
+
+    previous, previous_tag = max(stable)
+    major, minor, patch = previous
+    if bump == "major":
+        candidate = (major + 1, 0, 0)
+    elif bump == "minor":
+        candidate = (major, minor + 1, 0)
+    else:
+        candidate = (major, minor, patch + 1)
+    version = ".".join(str(part) for part in candidate)
+
+    state = analyze_releases(pages, version, expected_target_commit)
+    tag_names = set(tags)
+    assert isinstance(pages, list)  # Validated by analyze_releases.
+    for page in pages:
+        for release in page:
+            _release_id, tag, draft, _prerelease, _target = _release_fields(release)
+            if not draft and tag not in tag_names:
+                raise ReleaseGuardError(f"published release {tag} has no matching stable Git tag")
+
+    return ReleasePlan(
+        version=version,
+        tag=f"v{version}",
+        previous_tag=previous_tag,
+        matching_draft_id=state.matching_draft_id,
+    )
+
+
+def _git_output(repository: Path, *args: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repository), *args],
+            check=True,
+            capture_output=True,
+            text=True,
         )
-        if is_version:
-            values.append(node.value.value if isinstance(node.value, ast.Constant) else None)
-    if len(values) != 1 or not isinstance(values[0], str):
-        raise ReleaseGuardError(f"{path} must contain one literal __version__ assignment")
-    _parse_version(values[0])
-    return values[0]
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ReleaseGuardError(f"cannot inspect Git tags in {repository}: {error}") from error
+    return result.stdout.strip()
 
 
-def _write_github_output(path: Path, version: str, state: ReleaseState) -> None:
+def read_git_tags(repository: Path) -> list[str]:
+    """Read every local tag from a fully fetched release checkout."""
+
+    output = _git_output(repository, "tag", "--list")
+    return output.splitlines() if output else []
+
+
+def _write_github_output(path: Path, plan: ReleasePlan, previous_commit: str) -> None:
     with path.open("a", encoding="utf-8") as output:
-        output.write(f"version={version}\n")
-        output.write(f"tag=v{version}\n")
-        output.write(f"previous_tag={state.highest_published_tag or ''}\n")
-        output.write(f"draft_id={state.matching_draft_id or ''}\n")
+        output.write(f"version={plan.version}\n")
+        output.write(f"tag={plan.tag}\n")
+        output.write(f"previous_tag={plan.previous_tag}\n")
+        output.write(f"previous_commit={previous_commit}\n")
+        output.write(f"draft_id={plan.matching_draft_id or ''}\n")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("releases", type=Path, help="JSON pages from gh api --paginate --slurp")
-    parser.add_argument("version_file", type=Path)
+    parser.add_argument("bump", choices=("patch", "minor", "major"))
+    parser.add_argument("--target-commit", required=True)
+    parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
 
     try:
-        version = read_project_version(args.version_file)
         pages = json.loads(args.releases.read_text(encoding="utf-8"))
-        state = analyze_releases(pages, version)
+        plan = plan_release(read_git_tags(args.repository), pages, args.bump, args.target_commit)
+        previous_commit = _git_output(
+            args.repository, "rev-list", "-n", "1", "--verify", f"refs/tags/{plan.previous_tag}"
+        )
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", previous_commit):
+            raise ReleaseGuardError(f"cannot resolve {plan.previous_tag} to a commit")
     except (OSError, json.JSONDecodeError, ReleaseGuardError) as error:
         raise SystemExit(f"release guard failed: {error}") from error
 
     if args.github_output is not None:
-        _write_github_output(args.github_output, version, state)
+        _write_github_output(args.github_output, plan, previous_commit)
     print(
-        f"release guard passed: v{version}; "
-        f"previous={state.highest_published_tag or 'none'}; "
-        f"draft={state.matching_draft_id or 'none'}"
+        f"release guard passed: {plan.tag}; previous={plan.previous_tag}; "
+        f"draft={plan.matching_draft_id or 'none'}"
     )
 
 

@@ -6,6 +6,7 @@ import json
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.constants import (
@@ -77,6 +78,10 @@ def encode_message(message: ProtocolMessage) -> str:
             "generation": message.generation,
             "state": message.state.value,
         }
+        if message.profile is not None:
+            if not isinstance(message.profile, RefineProfile):
+                raise ProtocolError("protocol profile has wrong type")
+            payload["profile"] = message.profile.value
     elif isinstance(message, SpectrumMessage):
         if not _valid_generation(message.generation):
             raise ProtocolError("protocol generation is out of range")
@@ -150,10 +155,20 @@ def decode_message(record: str | bytes) -> ProtocolMessage:
         raise ProtocolError("unsupported protocol version")
     message_type = obj.get("type")
     if message_type == "state":
-        _expect_fields(obj, frozenset({"v", "type", "generation", "state"}))
+        fields = frozenset(obj)
+        if fields not in {
+            frozenset({"v", "type", "generation", "state"}),
+            frozenset({"v", "type", "generation", "state", "profile"}),
+        }:
+            raise ProtocolError("protocol record has unexpected fields")
         if not _valid_generation(obj["generation"]):
             raise ProtocolError("protocol generation is out of range")
-        return StateMessage(obj["generation"], _enum_value(OverlayState, obj["state"], "state"))
+        profile = (
+            _enum_value(RefineProfile, obj["profile"], "profile") if "profile" in obj else None
+        )
+        return StateMessage(
+            obj["generation"], _enum_value(OverlayState, obj["state"], "state"), profile
+        )
     if message_type == "spectrum":
         _expect_fields(obj, frozenset({"v", "type", "generation", "sequence", "levels"}))
         if not _valid_generation(obj["generation"]):

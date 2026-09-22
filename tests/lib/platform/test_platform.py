@@ -363,24 +363,11 @@ def test_stop_handlers_really_register_and_name_the_reason_they_were_given():
             signal.signal(sig, previous)
 
 
-def test_each_provider_names_a_default_binding_in_the_shared_vocabulary():
-    """Windows dictates with Right Alt; the other hosts keep Right Ctrl.
-
-    Whatever a host picks has to exist in the generated ``KEY_*`` table and
-    round-trip through that host's own key table, or a fresh config would fail
-    to validate on first run. Note Right Alt is AltGr on international layouts.
-    """
+def test_each_provider_resolves_the_universal_profile_bindings():
+    """Agent and General use the same portable key vocabulary on every host."""
 
     from stenographer.lib.platform.macos.provider import MacOSPlatform
 
-    for provider, expected in (
-        (WindowsPlatform(), "KEY_RIGHTALT"),
-        (MacOSPlatform(), "KEY_RIGHTCTRL"),
-    ):
-        binding = provider.default_hotkey_binding()
-        assert binding == expected, provider.name
-        # Resolvable through the provider's own table: setup renders it back.
-        assert provider.keys().name(provider.keys().code(binding)) == binding
-
-    host = current_platform()
-    assert host.keys().name(host.keys().code(host.default_hotkey_binding())) is not None
+    for provider in (WindowsPlatform(), MacOSPlatform(), current_platform()):
+        for binding in ("KEY_RIGHTCTRL", "KEY_RIGHTALT"):
+            assert provider.keys().name(provider.keys().code(binding)) == binding

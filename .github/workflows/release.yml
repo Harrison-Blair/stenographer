@@ -2,20 +2,17 @@
 name: draft release
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "pyproject.toml"
-      - "packaging/**"
-      - "scripts/build.sh"
-      - "scripts/cue_audition.py"
-      - "scripts/progress.sh"
-      - "scripts/release_guard.py"
-      - "scripts/sound_asset_guard.py"
-      - "LICENSE"
-      - ".github/workflows/release.yml"
   workflow_dispatch:
+    inputs:
+      bump:
+        description: Stable version component to increment
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: read
@@ -32,6 +29,8 @@ jobs:
     outputs:
       version: ${{ steps.guard.outputs.version }}
       tag: ${{ steps.guard.outputs.tag }}
+      previous_tag: ${{ steps.guard.outputs.previous_tag }}
+      previous_commit: ${{ steps.guard.outputs.previous_commit }}
     steps:
       - name: Require main branch
         run: |
@@ -58,7 +57,8 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python scripts/release_guard.py \
-            "${RUNNER_TEMP}/releases.json" src/stenographer/_version.py \
+            "${RUNNER_TEMP}/releases.json" "${{ inputs.bump }}" \
+            --target-commit "${GITHUB_SHA}" \
             --github-output "${GITHUB_OUTPUT}"
       - name: Check authored release notes
         env:
@@ -116,6 +116,8 @@ jobs:
       - name: Install development dependencies
         run: |
           python -m venv .venv
+          .venv/bin/python scripts/build_version.py \
+            "${{ needs.preflight.outputs.version }}" src/stenographer/_version.py
           .venv/bin/pip install -e ".[dev]"
       - name: Run unit tests and CLI check
         run: |
@@ -138,6 +140,8 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install "build>=1.2"
+          .venv/bin/python scripts/build_version.py \
+            "${{ needs.preflight.outputs.version }}" src/stenographer/_version.py
           .venv/bin/python -m build
       - name: Verify distribution names and wheel contents
         env:
@@ -196,6 +200,8 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m venv .venv
+          .venv/bin/python scripts/build_version.py \
+            "${{ needs.preflight.outputs.version }}" src/stenographer/_version.py
           .venv/bin/pip install -e ".[build]"
       - name: Build and inspect native standalone bundle
         env:
@@ -284,8 +290,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.preflight.outputs.version }}
           TAG: ${{ needs.preflight.outputs.tag }}
+          EXPECTED_PREVIOUS_TAG: ${{ needs.preflight.outputs.previous_tag }}
+          EXPECTED_PREVIOUS_COMMIT: ${{ needs.preflight.outputs.previous_commit }}
         run: |
-          git fetch --force --tags origin
+          git fetch --tags origin
           if git show-ref --verify --quiet "refs/tags/${TAG}" || \
              git show-ref --verify --quiet "refs/tags/${VERSION}"; then
             echo "error: a Git tag appeared for ${TAG}" >&2
@@ -296,8 +304,16 @@ jobs:
             > "${RUNNER_TEMP}/releases-recheck.json"
           python -m venv .venv
           .venv/bin/python scripts/release_guard.py \
-            "${RUNNER_TEMP}/releases-recheck.json" src/stenographer/_version.py \
-            --github-output "${GITHUB_OUTPUT}"
+            "${RUNNER_TEMP}/releases-recheck.json" "${{ inputs.bump }}" \
+            --target-commit "${GITHUB_SHA}" \
+            --github-output "${RUNNER_TEMP}/guard-recheck.env"
+          source "${RUNNER_TEMP}/guard-recheck.env"
+          if [[ "${tag}" != "${TAG}" || "${version}" != "${VERSION}" || \
+                "${previous_tag}" != "${EXPECTED_PREVIOUS_TAG}" || \
+                "${previous_commit}" != "${EXPECTED_PREVIOUS_COMMIT}" ]]; then
+            echo "error: stable tag history or release plan changed during the run" >&2
+            exit 1
+          fi
       - name: Attest all release artifacts
         uses: actions/attest@v4
         with:
@@ -306,9 +322,11 @@ jobs:
         env:
           EXPECTED_TAG: ${{ needs.preflight.outputs.tag }}
           EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
+          EXPECTED_PREVIOUS_TAG: ${{ needs.preflight.outputs.previous_tag }}
+          EXPECTED_PREVIOUS_COMMIT: ${{ needs.preflight.outputs.previous_commit }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          git fetch --force --tags origin
+          git fetch --tags origin
           if git show-ref --verify --quiet "refs/tags/${EXPECTED_TAG}" || \
              git show-ref --verify --quiet "refs/tags/${EXPECTED_VERSION}"; then
             echo "error: a Git tag appeared for ${EXPECTED_TAG}" >&2
@@ -318,11 +336,14 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
             > "${RUNNER_TEMP}/releases-final.json"
           .venv/bin/python scripts/release_guard.py \
-            "${RUNNER_TEMP}/releases-final.json" src/stenographer/_version.py \
+            "${RUNNER_TEMP}/releases-final.json" "${{ inputs.bump }}" \
+            --target-commit "${GITHUB_SHA}" \
             --github-output "${RUNNER_TEMP}/guard.env"
           source "${RUNNER_TEMP}/guard.env"
-          if [[ "${tag}" != "${EXPECTED_TAG}" || "${version}" != "${EXPECTED_VERSION}" ]]; then
-            echo "error: checked-in version changed during the release run" >&2
+          if [[ "${tag}" != "${EXPECTED_TAG}" || "${version}" != "${EXPECTED_VERSION}" || \
+                "${previous_tag}" != "${EXPECTED_PREVIOUS_TAG}" || \
+                "${previous_commit}" != "${EXPECTED_PREVIOUS_COMMIT}" ]]; then
+            echo "error: stable tag history or release plan changed during the run" >&2
             exit 1
           fi
           TAG="${tag}"
@@ -334,8 +355,6 @@ jobs:
             > "${RUNNER_TEMP}/release-body.md"
 
           request=(
-            -f "tag_name=${TAG}"
-            -f "target_commitish=${GITHUB_SHA}"
             -F "name=@${RUNNER_TEMP}/release-name.txt"
             -F "body=@${RUNNER_TEMP}/release-body.md"
             -F draft=true
@@ -344,8 +363,8 @@ jobs:
           if [[ -n "${DRAFT_ID}" ]]; then
             gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_ID}" \
               > "${RUNNER_TEMP}/draft-before-refresh.json"
-            jq -e --arg tag "${TAG}" \
-              '.draft == true and .tag_name == $tag' \
+            jq -e --arg tag "${TAG}" --arg target "${GITHUB_SHA}" \
+              '.draft == true and .tag_name == $tag and .target_commitish == $target' \
               "${RUNNER_TEMP}/draft-before-refresh.json" > /dev/null
             release_id=$(gh api -X PATCH \
               "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_ID}" \
@@ -353,8 +372,15 @@ jobs:
           else
             release_id=$(gh api -X POST \
               "repos/${GITHUB_REPOSITORY}/releases" \
+              -f "tag_name=${TAG}" \
+              -f "target_commitish=${GITHUB_SHA}" \
               "${request[@]}" --jq .id)
           fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            > "${RUNNER_TEMP}/draft-after-write.json"
+          jq -e --arg tag "${TAG}" --arg target "${GITHUB_SHA}" \
+            '.draft == true and .tag_name == $tag and .target_commitish == $target' \
+            "${RUNNER_TEMP}/draft-after-write.json" > /dev/null
 
           assets=(
             "stenographer-${VERSION}-linux-x86_64.tar.gz"

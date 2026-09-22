@@ -13,26 +13,22 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
-The lifecycle pill's loading border now names which model is warming up, and
-always finishes its current breath before it changes or disappears.
+## [v0.13.1] - 2026-09-21
+
+This release adds separate Agent and General dictation profiles and makes model
+loading state easier to read. Release builds now derive their versions from
+stable Git tags instead of an authored source version.
 
 ### Added
 
+- Right Ctrl selects the conservative Agent profile for agent-directed
+  dictation, while Right Alt selects General's original transcript cleanup;
+  both bindings share the configured recording mode and can be rebound.
 - The loading border breathes in the amber Loading colour while the speech
-  model loads and in the Refining colour while the cleanup model loads,
-  taking turns one breath each when both are loading at once; it never makes
-  a hidden pill appear, and a residency check that finds a model already
-  loaded shows nothing. The overlay protocol moves from v4 to v5.
-
-## [v0.13.1] - 2026-09-12
-
-The default dictation key is now chosen by the host rather than fixed for
-every platform.
-
-### Added
-
-- Windows installs now default to Right Alt as the dictation hotkey; Linux and
-  macOS keep Right Ctrl, and an explicitly configured binding is unchanged.
+  model loads and in the Refining colour while the cleanup model loads, taking
+  turns one breath each when both are loading at once; it never makes a hidden
+  pill appear, and a residency check that finds a model already loaded shows
+  nothing. The overlay protocol moves from v4 to v5.
 
 ## [v0.13.0] - 2026-09-11
 

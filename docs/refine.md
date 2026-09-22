@@ -12,7 +12,30 @@ the transcript stays on your machine. Turn it off, or point it at another
 host, in `[stenographer.refine]`; a non-loopback host sends transcript text
 there.
 
-## What it does
+## The two profiles
+
+There are exactly two built-ins. The hotkey captures the selected profile when
+recording starts; it cannot change during that utterance. Both profiles share
+the configured host, model, structured-output setting, ten-word minimum, and
+model residency lifecycle.
+
+- **Agent** (Right Ctrl, and the default for upgraded partial configs) formats
+  requests for an agent. It uses adaptive paragraphs or bullets without fixed
+  headings, never dispatches or answers the request, and preserves phase and
+  authorization boundaries, modality, scope, negations, hedges, numerals,
+  paths, CLI flags, identifiers, quoted text, and explicit tool/model choices.
+- **General** (Right Alt) is the original cleanup behavior described below.
+
+For Agent bullets, dictate an explicit item count and separate every item with
+a semicolon or an existing newline. Commas, conjunctions, and sentence-ending
+punctuation alone do not prove item boundaries; if a model invents bullets for
+an ambiguous list, the guard falls back to the formatted transcript.
+
+The overlay includes Agent or General throughout Recording, Transcribing,
+Refining, and Delivering, then briefly reports Applied, Skipped, or Fallback.
+It never displays transcript content.
+
+## What General does
 
 Speech is not writing. You restart sentences, you say "um", you correct
 yourself half a word in. Refine removes that without changing what you said:
@@ -29,7 +52,7 @@ yourself half a word in. Refine removes that without changing what you said:
   as the numbering. No `- ` and no `1.` is added; see [What you will
   see](#what-you-will-see) for how to say a list so it lands as one.
 
-And what it must never do, which the prompt states and the output guard
+And what it must never do, which the General prompt states and output guard
 enforces: it never summarizes, never answers or responds to what you said,
 never adds a fact, and never adds headers, bold, digit-numbered lists, or any
 other markdown. Names, numbers, and quoted phrases come through verbatim.

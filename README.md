@@ -23,7 +23,8 @@ instructions.
 > [!NOTE]
 > This `README.md` was generated with AI, but reviewed for accuracy by a human
 
-Default hotkey: Right Ctrl in hybrid mode. Tap it to latch, or hold it, speak,
+Default hotkeys: Right Ctrl selects the conservative Agent profile; Right Alt
+selects General cleanup. Both use hybrid mode: tap to latch, or hold, speak,
 and release; plain hold-to-talk and toggle modes are optional. Press Escape at
 any point during an utterance to cancel it; nothing is transcribed or pasted.
 
@@ -100,6 +101,8 @@ Configuration lives at `~/.config/stenographer/config.toml`. For example:
 
 ```toml
 [stenographer.hotkey]
+binding = "KEY_RIGHTCTRL"          # Agent
+general_binding = "KEY_RIGHTALT"  # General
 mode = "toggle"       # or "hold"
 cancel_binding = "KEY_ESC"  # "" disables cancellation
 
@@ -113,7 +116,9 @@ service after editing it with `systemctl --user restart stenographer.service`.
 
 ## Dictate
 
-Right Ctrl is the default hybrid binding:
+Right Ctrl selects Agent, the universal default for agent-directed dictation.
+Right Alt selects General, which retains the original transcript-cleanup
+behavior. Both bindings share the configured mode:
 
 - Hold it, speak, and release for push-to-talk.
 - Tap it, speak, and tap again to stop a latched recording.
@@ -122,9 +127,8 @@ Right Ctrl is the default hybrid binding:
 
 Otherwise the transcript is pasted at your cursor and remains on the clipboard.
 Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
-Set `binding` to any `KEY_*` name to rebind. A fresh config picks the key from
-the host, so Windows starts from Right Alt rather than Right Ctrl; rebind it if
-you type with AltGr.
+Set `binding` (Agent) or `general_binding` to any `KEY_*` chord to rebind it.
+Agent, General, and cancel chords may not be equal or subsets of one another.
 
 ## Common commands
 
@@ -155,8 +159,11 @@ contain transcript text or audio. The only network request that leaves your
 machine is an optional, metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
 
-A [refine](docs/refine.md) pass, on by default, cleans filler words and
-self-corrections out of each transcript through a local Ollama model
+A [refine](docs/refine.md) pass, on by default, provides exactly two built-in
+profiles through one local Ollama model. Agent conservatively formats requests
+without acting on them or changing scope, authorization, negations, hedges,
+identifiers, paths, flags, quotes, numbers, or explicit tool/model choices.
+General keeps the original filler and self-correction cleanup behavior
 (`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
 machine. Turn it off or point it elsewhere in `[stenographer.refine]`; a
 non-loopback host sends transcripts there over the network. While a model

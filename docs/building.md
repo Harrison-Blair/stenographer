@@ -13,9 +13,11 @@ installer targets one machine and one user only.
 ## Release notes
 
 [`CHANGELOG.md`](../CHANGELOG.md) is the canonical authored history for every
-published release. The release workflow validates the entry for the checked-in
-version and uses that entry as the GitHub release body, so add the release note
-with the version bump before merging to `main`.
+published release. Stable `vX.Y.Z` Git tags are the sole release-version
+authority. The release workflow derives the next version from the highest
+stable tag and the selected patch, minor, or major bump, validates the matching
+changelog entry, and uses that entry as the GitHub release body. Add the
+release note before dispatching a release; there is no source version to bump.
 
 Every entry, including `## [Unreleased]`, has the same shape: a synopsis of one
 to three sentences of plain prose, then `### Added`, `### Removed`, and
@@ -32,9 +34,8 @@ effect — is folded into the synopsis or left out, never listed as a fix. An
 follows the same structure.
 
 `scripts/release_notes.py check` enforces this for every entry in the file. It
-runs in the release preflight on pull requests into `main` and again in the
-draft-release workflow, so a missing or malformed entry fails before the draft
-is written.
+runs in a manually dispatched release rehearsal and again in the draft-release
+workflow, so a missing or malformed entry fails before the draft is written.
 
 ## Quick start
 
@@ -75,10 +76,11 @@ installer scripts and all required package resources.
 
 ## Draft releases
 
-A push to `main`, or a manual workflow dispatch targeting `main`, creates or
-refreshes an unpublished GitHub draft for the checked-in `X.Y.Z` version. It
-does so only after lint, non-integration tests, and both native standalone
-builds pass. The draft contains:
+A manual `draft release` workflow dispatch targeting `main` asks for a patch,
+minor, or major bump. It calculates `X.Y.Z` from the highest stable `vX.Y.Z`
+tag and creates or refreshes that version's unpublished GitHub draft only
+after lint, non-integration tests, and both native standalone builds pass. The
+draft contains:
 
 - `stenographer-X.Y.Z-linux-x86_64.tar.gz`
 - `stenographer-X.Y.Z-linux-aarch64.tar.gz`
@@ -90,6 +92,24 @@ Each standalone archive contains the complete onedir bundle and `LICENSE`.
 The workflow checks every SHA-256 entry and records signed provenance for all
 five files. It never publishes a release: publishing the reviewed draft
 manually creates the stable `vX.Y.Z` release.
+
+The planner reads the complete Git tag history, rejects malformed `v` tags,
+requires every published GitHub release to retain its stable tag, refuses an
+existing candidate tag, and rechecks the chosen predecessor tag and commit
+before attestation and before changing the draft. A single matching draft is
+refreshed only when it already targets the dispatch commit, making same-commit
+retries safe; unrelated, foreign-commit, or duplicate drafts fail closed.
+Configure the repository to prevent deletion or force-updates of release tags,
+and never move a published `vX.Y.Z` tag.
+
+`src/stenographer/_version.py` is generated build metadata rather than a
+release input. In an ordinary source or editable checkout it reports the
+explicit non-release version `0.0.0+source`. Each release build generates the
+tag-derived version before installing, freezing, or packaging the application,
+so wheel, source distribution, standalone bundle, and `--version` agree. The
+manual `release preflight` workflow can rehearse a selected bump without
+creating a tag or release; pull-request runs use a patch candidate only to
+exercise packaging and do not require that candidate's release-note entry.
 
 The README's one-line installer, `scripts/quick-install.sh`, consumes that
 published release: it downloads the native standalone archive, the source

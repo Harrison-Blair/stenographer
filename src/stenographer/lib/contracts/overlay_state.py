@@ -12,3 +12,6 @@ class OverlayState(StrEnum):
     DELIVERING = "delivering"
     CANCELLED = "cancelled"
     ERROR = "error"
+    APPLIED = "applied"
+    SKIPPED = "skipped"
+    FALLBACK = "fallback"

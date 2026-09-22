@@ -2,8 +2,9 @@
 name: release preflight
 
 # Read-only rehearsal of the draft-release workflow for PRs into main: the
-# version/tag guard, the authored release-note check, and the wheel/sdist
-# verification run here so a release that would fail is caught before merge.
+# version/tag guard and wheel/sdist verification run here so unsafe release
+# state is caught before merge. A manual rehearsal also checks the authored
+# notes for its selected bump; a PR has no authoritative bump selection.
 # Lint, unit tests, and the standalone bundles are deliberately not repeated
 # — lint.yml, test.yml, and build.yml already run them on every PR. Nothing
 # here writes to releases or tags.
@@ -11,6 +12,16 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      bump:
+        description: Stable version component to rehearse
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: read
@@ -47,9 +58,11 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python scripts/release_guard.py \
-            "${RUNNER_TEMP}/releases.json" src/stenographer/_version.py \
+            "${RUNNER_TEMP}/releases.json" "${{ inputs.bump || 'patch' }}" \
+            --target-commit "${GITHUB_SHA}" \
             --github-output "${GITHUB_OUTPUT}"
       - name: Check authored release notes
+        if: github.event_name == 'workflow_dispatch'
         env:
           VERSION: ${{ steps.guard.outputs.version }}
         run: .venv/bin/python scripts/release_notes.py check "${VERSION}" CHANGELOG.md
@@ -58,7 +71,7 @@ jobs:
           TAG: ${{ steps.guard.outputs.tag }}
           VERSION: ${{ steps.guard.outputs.version }}
         run: |
-          git fetch --force --tags origin
+          git fetch --tags origin
           if git show-ref --verify --quiet "refs/tags/${TAG}" || \
              git show-ref --verify --quiet "refs/tags/${VERSION}"; then
             echo "error: a Git tag already exists for ${TAG}" >&2
@@ -81,6 +94,8 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install "build>=1.2"
+          .venv/bin/python scripts/build_version.py \
+            "${{ needs.preflight.outputs.version }}" src/stenographer/_version.py
           .venv/bin/python -m build
       - name: Verify distribution names and wheel contents
         env:

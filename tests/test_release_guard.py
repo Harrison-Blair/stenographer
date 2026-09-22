@@ -8,15 +8,25 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from release_guard import ReleaseGuardError, analyze_releases, read_project_version
+from release_guard import ReleaseGuardError, analyze_releases, plan_release
+
+_TARGET = "a" * 40
 
 
-def _release(tag: str, *, draft: bool = False, prerelease: bool = False, release_id: int = 1):
+def _release(
+    tag: str,
+    *,
+    draft: bool = False,
+    prerelease: bool = False,
+    release_id: int = 1,
+    target: str = _TARGET,
+):
     return {
         "id": release_id,
         "tag_name": tag,
         "draft": draft,
         "prerelease": prerelease,
+        "target_commitish": target,
     }
 
 
@@ -100,12 +110,72 @@ def test_malformed_release_data_fails_closed(pages: object) -> None:
         analyze_releases(pages, "0.10.0")
 
 
-def test_checked_in_version_must_be_one_literal_plain_version(tmp_path) -> None:
-    version_file = tmp_path / "_version.py"
-    version_file.write_text('__version__ = "0.10.0"\n', encoding="utf-8")
+@pytest.mark.parametrize(
+    ("bump", "candidate"),
+    [("patch", "1.4.6"), ("minor", "1.5.0"), ("major", "2.0.0")],
+)
+def test_release_plan_bumps_the_highest_stable_tag(bump: str, candidate: str) -> None:
+    plan = plan_release(
+        ["v1.3.9", "v1.4.5", "notes"],
+        [[_release("v1.3.9"), _release("v1.4.5")]],
+        bump,
+        _TARGET,
+    )
 
-    assert read_project_version(version_file) == "0.10.0"
+    assert plan.previous_tag == "v1.4.5"
+    assert plan.version == candidate
+    assert plan.tag == f"v{candidate}"
 
-    version_file.write_text('__version__ = "0.10.0-rc1"\n', encoding="utf-8")
-    with pytest.raises(ReleaseGuardError, match=r"plain X\.Y\.Z"):
-        read_project_version(version_file)
+
+def test_release_plan_uses_tags_even_when_the_latest_has_no_release() -> None:
+    plan = plan_release(["v1.4.5"], [[]], "patch", _TARGET)
+
+    assert plan.version == "1.4.6"
+
+
+@pytest.mark.parametrize("tags", [[], ["v1.2"], ["v01.2.3"], ["v1.2.3-rc1"]])
+def test_release_plan_fails_closed_without_an_unambiguous_stable_tag(tags: list[str]) -> None:
+    with pytest.raises(ReleaseGuardError, match="stable Git tag"):
+        plan_release(tags, [[]], "patch", _TARGET)
+
+
+def test_published_release_without_its_immutable_tag_fails_closed() -> None:
+    with pytest.raises(ReleaseGuardError, match="has no matching stable Git tag"):
+        plan_release(["v1.4.5"], [[_release("v1.4.4")]], "patch", _TARGET)
+
+
+def test_release_plan_preserves_matching_draft_for_retry() -> None:
+    plan = plan_release(
+        ["v1.4.5"],
+        [[_release("v1.4.6", draft=True, release_id=42)]],
+        "patch",
+        _TARGET,
+    )
+
+    assert plan.matching_draft_id == 42
+
+
+@pytest.mark.parametrize("bump", ["", "micro", "PATCH"])
+def test_release_plan_rejects_unknown_bump(bump: str) -> None:
+    with pytest.raises(ReleaseGuardError, match="patch, minor, or major"):
+        plan_release(["v1.4.5"], [[]], bump, _TARGET)
+
+
+def test_release_plan_rejects_an_unrelated_draft() -> None:
+    with pytest.raises(ReleaseGuardError, match="unrelated draft"):
+        plan_release(
+            ["v1.4.5"],
+            [[_release("v9.0.0", draft=True)]],
+            "patch",
+            _TARGET,
+        )
+
+
+def test_release_plan_rejects_a_matching_draft_for_another_commit() -> None:
+    with pytest.raises(ReleaseGuardError, match="unexpected commit"):
+        plan_release(
+            ["v1.4.5"],
+            [[_release("v1.4.6", draft=True, target="b" * 40)]],
+            "patch",
+            _TARGET,
+        )

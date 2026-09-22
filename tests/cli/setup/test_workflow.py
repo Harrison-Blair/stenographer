@@ -270,6 +270,7 @@ def test_full_review_lists_every_section_and_field():
         "  cancel_binding = KEY_ESC",
         "  mode = hybrid",
         "  hybrid_threshold_seconds = 0.5",
+        "  general_binding = KEY_RIGHTALT",
         "[audio]",
         "  input_device = automatic/unset",
         "  min_speech_rms = 0.0005",
@@ -538,9 +539,6 @@ def key_vocabulary(monkeypatch):
         def keys(self):
             return _Keys()
 
-        def default_hotkey_binding(self):
-            return "KEY_RIGHTCTRL"
-
     monkeypatch.setattr(platform_module, "current_platform", Plat)
     return Plat
 
@@ -666,11 +664,12 @@ def device_menus(monkeypatch):
 
 
 def test_edit_hotkey_asks_binding_device_mode_and_threshold(key_vocabulary, device_menus):
-    console = _console("KEY_F9\n1\ntoggle\n1.25\n")
+    console = _console("KEY_F9\nKEY_F10\n1\ntoggle\n1.25\n")
 
     hotkey = setup._edit_hotkey(console, Config.defaults()).hotkey
 
     assert hotkey.binding == "KEY_F9"
+    assert hotkey.general_binding == "KEY_F10"
     assert hotkey.device == "event3"
     assert hotkey.mode == "toggle"
     assert hotkey.hybrid_threshold_seconds == 1.25
@@ -781,7 +780,7 @@ def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_
 #: Enter keeps every value; the wizard asks five sections then the review.
 #: The trailing answer is explicit "no" to "Enable transcript refinement",
 #: which now defaults to yes, so the wizard never reaches the Ollama probe.
-_KEEP_EVERYTHING = "\n" * 22 + "keep\n" + "no\n"
+_KEEP_EVERYTHING = "\n" * 23 + "keep\n" + "no\n"
 
 
 def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
@@ -790,7 +789,7 @@ def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
     tmp_path,
 ):
     console = _console(
-        "KEY_F9\n1\ntoggle\n\n"  # hotkey
+        "KEY_F9\n\n1\ntoggle\n\n"  # Agent, General, device, mode, threshold
         "auto\n\n120\n"  # audio
         "\n\n5\nevdev\n\nno\n\n\n\n"  # asr
         "0.9\n\n\n\nlegacy\ndebug\nkeep\n"  # feedback
@@ -1144,9 +1143,6 @@ def guided(monkeypatch):
         class Plat:
             def guidance(self):
                 return _GUIDANCE
-
-            def default_hotkey_binding(self):
-                return "KEY_RIGHTCTRL"
 
             def restart_service(self):
                 events.append("restart")

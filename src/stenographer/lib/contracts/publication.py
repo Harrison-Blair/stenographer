@@ -3,7 +3,15 @@ from __future__ import annotations
 
 from stenographer.lib.contracts.overlay_state import OverlayState
 
-TRANSIENT_STATES = frozenset({OverlayState.CANCELLED, OverlayState.ERROR})
+TRANSIENT_STATES = frozenset(
+    {
+        OverlayState.CANCELLED,
+        OverlayState.ERROR,
+        OverlayState.APPLIED,
+        OverlayState.SKIPPED,
+        OverlayState.FALLBACK,
+    }
+)
 """States that dismiss themselves after a fixed display window."""
 
 

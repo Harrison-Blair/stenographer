@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.errors import ProtocolError
 from stenographer.overlay.protocol.messages import (
@@ -30,6 +31,7 @@ class OverlayReducer:
     state: OverlayState = OverlayState.HIDDEN
     levels: tuple[int, ...] = _SILENT_LEVELS
     pulse: LoadingPulse = field(default_factory=LoadingPulse)
+    profile: RefineProfile | None = None
 
     @property
     def visible(self) -> bool:
@@ -55,6 +57,7 @@ class OverlayReducer:
             return DisplayIntent.REPAINT
         if not isinstance(message, StateMessage):
             raise ProtocolError("unsupported helper message")
+        self.profile = message.profile
         return self._state_change(message.state, now)
 
     def _loading_activity(self, model: LoadingModel, active: bool, now: float) -> DisplayIntent:

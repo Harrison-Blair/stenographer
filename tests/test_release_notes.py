@@ -272,3 +272,13 @@ def test_repository_changelog_covers_every_published_release() -> None:
     notes = parse_changelog(changelog_path.read_text(encoding="utf-8"))
 
     assert tuple(note.version for note in notes) == _EXPECTED_VERSIONS[::-1]
+
+
+def test_next_patch_notes_cover_the_current_release_features() -> None:
+    changelog_path = Path(__file__).resolve().parents[1] / "CHANGELOG.md"
+    note = note_for_version(changelog_path.read_text(encoding="utf-8"), "0.13.1")
+
+    body = note.body.lower()
+    assert "agent" in body and "general" in body
+    assert "loading border" in body
+    assert "git tag" in body
