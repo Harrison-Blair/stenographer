@@ -18,6 +18,7 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.diagnostics.capabilities import missing_required
 from stenographer.lib.platform import current_platform
 from stenographer.overlay.capabilities.models import OverlayCapability
+from stenographer.overlay.platform import current_platform as current_overlay_platform
 
 pytestmark = pytest.mark.integration
 
@@ -30,7 +31,7 @@ def test_probe_returns_real_capabilities():
     assert caps.service_enabled is None or isinstance(caps.service_enabled, str)
     assert caps.service_active is None or isinstance(caps.service_active, str)
     assert isinstance(caps.overlay, OverlayCapability)
-    assert doctor.format_overlay_status(caps.overlay, current_platform().guidance()) in {
+    assert doctor.format_overlay_status(caps.overlay, current_overlay_platform().guidance()) in {
         "disabled",
         "layer-shell",
         "XWayland fallback",
