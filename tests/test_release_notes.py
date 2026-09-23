@@ -38,6 +38,7 @@ _EXPECTED_VERSIONS = (
     "v0.12.3",
     "v0.13.0",
     "v0.13.1",
+    "v0.13.2",
 )
 
 _THREE_SECTION_BODY = """\
@@ -267,7 +268,7 @@ def test_note_for_version_rejects_missing_and_malformed_versions() -> None:
         note_for_version(changelog, "1.2")
 
 
-def test_repository_changelog_covers_every_published_release() -> None:
+def test_repository_changelog_covers_every_authored_release_note() -> None:
     changelog_path = Path(__file__).resolve().parents[1] / "CHANGELOG.md"
     notes = parse_changelog(changelog_path.read_text(encoding="utf-8"))
 

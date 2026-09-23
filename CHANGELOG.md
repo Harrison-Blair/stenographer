@@ -13,6 +13,8 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
+## [v0.13.2] - 2026-09-23
+
 The Agent profile now cleans up rambling dictation instead of passing it
 through almost unchanged.
 
