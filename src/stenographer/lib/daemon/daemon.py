@@ -194,13 +194,12 @@ class Daemon:
         )
         log.info("hotkey: configured mode=%s", cfg.hotkey.mode)
 
-        def on_profile_start(name: str) -> bool:
+        def on_profile_start(name: str) -> None:
             profile = RefineProfile(name)
             if cfg.hotkey.mode in {"toggle", "hybrid"}:
                 daemon.on_toggle_press(profile=profile)
             else:
                 daemon.on_key_down(profile=profile)
-            return daemon._recording and daemon._record_profile is profile
 
         def on_profile_stop(_name: str) -> None:
             if cfg.hotkey.mode == "hybrid":

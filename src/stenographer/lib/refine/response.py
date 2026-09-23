@@ -87,233 +87,738 @@ _QUOTED = re.compile(r'(["\u201c]).*?(["\u201d])|(?<!\w)\'[^\'\n]+\'(?!\w)')
 _LEXICAL_TOKEN = re.compile(r"[A-Za-z0-9]+(?:['\u2019][A-Za-z0-9]+)?")
 _SAFE_FILLERS = frozenset({"um", "uh", "er", "ah"})
 _AGENT_CORRECTION_MARKERS = _CORRECTION_MARKERS - {"no", "rather"}
-_ENUMERATION_CUE = re.compile(
-    r"\b(?P<count>two|three|four|five|six|seven|eight|nine|ten|\d+)\s+"
-    r"(?:things|constraints|items|steps|points|requirements|tasks|changes)\b",
+
+#: A protected token counts as taken back only when a correction marker
+#: follows it within this many words *and* another protected token follows the
+#: marker within the reach: "use qwen3:8b no wait gemma4:e2b" replaces a
+#: choice, while "the bug is in OllamaRefiner actually" replaces nothing.
+_REPLACEMENT_REACH = 8
+#: Words after a correction marker searched for the replacement choice.
+_CORRECTION_REACH = 6
+#: Longest head phrase a correction may repeat ("the old retry logic sorry the
+#: new retry logic" repeats two).
+_HEAD_WORDS = 3
+_AGENT_MARKER_WORDS = tuple(tuple(marker.split()) for marker in _AGENT_CORRECTION_MARKERS)
+_AGENT_MARKERS = "|".join(
+    r"\s+".join(marker.split()) for marker in sorted(_AGENT_CORRECTION_MARKERS)
+)
+_AGENT_MARKER_AFTER = re.compile(
+    rf"(?:\W+\w+){{0,{_MARKER_WINDOW - 1}}}?\W+(?:{_AGENT_MARKERS})\b", re.IGNORECASE
+)
+
+#: A capitalized word inside a sentence: the name of a tool, model, or product
+#: ("use Codex", "ask Claude"). Lowercase choices are held by the negation
+#: anchors ("ripgrep not grep") and the content floor instead.
+_NAME = re.compile(r"(?<![.!?:\n] )(?<!- )(?<![.!?:\n\"])(?<!^)\b[A-Z][a-z]+\b")
+
+#: Spoken contractions of "not", expanded before any word is compared so that
+#: "don't" and "do not" are the same edit.
+_CONTRACTIONS = (
+    (re.compile(r"\bcan't\b"), "can not"),
+    (re.compile(r"\bwon't\b"), "will not"),
+    (re.compile(r"\bshan't\b"), "shall not"),
+    (re.compile(r"\bcannot\b"), "can not"),
+    (re.compile(r"n't\b"), " not"),
+)
+
+#: Words that flip what follows. Each one is anchored to the next two content
+#: words in its sentence, so a negation moved to another verb ("don't fix" ->
+#: "don't just investigate"), a dropped "no" ("no network access" -> "network
+#: access"), and a swapped contrast ("ripgrep not grep" -> "grep not ripgrep")
+#: all change an anchor. Two words, not one, because a flipped conditional
+#: keeps every single-word anchor: "if it's not green don't merge" and "if it's
+#: not green, merge" differ only in what follows "green". Negations are never
+#: allowed to vanish, even after a correction marker: dropping a real one is
+#: the most dangerous edit this guard sees, and a false refusal only costs the
+#: unrefined transcript.
+_NEGATIONS = frozenset(
+    {"not", "no", "never", "nothing", "none", "nor", "neither", "without", "nobody", "nowhere"}
+)
+#: An action verb this many words after a negation is forbidden, not asked for.
+_NEGATION_SCOPE = 3
+#: Content words after a negation that a new line or sentence may not split off.
+_NEGATION_REACH = 5
+#: Words that start a new clause, ending what a negation governs for the split
+#: check: "don't fix it yet, just investigate" negates nothing after "just".
+_CLAUSE_OPENERS = frozenset(
+    ("just", "only", "then", "but", "so", "please", "because", "since", "if", "when", "while")
+)
+#: A subject pronoun also opens a clause ("don't merge it yet I want ..."), but
+#: not right after a content word, where it is an object or starts a relative
+#: clause ("don't change it or ...", "the branches we merged or ...").
+_PRONOUNS = frozenset(("i", "you", "we", "they", "he", "she", "it"))
+_UNIT_BREAK = re.compile(r"(?<=[.!?;])\s+|\n+")
+_BULLET = re.compile(r"^\s*(?:[-*\u2022\u2013]|\d+[.)])\s+")
+_SENTENCE_BREAK = re.compile(r"[.?!;:]+(?=\s|$)|\n")
+#: A "no" that only answers or hedges ("No, that's fine", "yeah no so ...")
+#: negates nothing; "No retries." still does.
+_DISCOURSE_NO = re.compile(
+    r"(^|[.!?\n]\s*|\byeah,?\s+)no\b(?=\s*,|\s+(?:that's|it's|so|yeah|okay|ok|i)[\s,])"
+)
+#: "no" that opens a correction ("10 no wait 12") negates nothing.
+_CORRECTING_NO = re.compile(
+    r"\bno\s+(?=(?:wait|actually|sorry|i\s+mean|scratch\s+that|make\s+that|rather|correction)\b)"
+)
+
+#: Phase, scope, and authorization words; every one the speaker said must
+#: survive. "just" is kept unconditionally: the guard cannot tell "just
+#: investigate" (a scope limit) from filler, and losing a limit is the worse
+#: mistake.
+_INVESTIGATIVE_WORDS = tuple(
+    re.compile(rf"\b{stem}\b")
+    for stem in (
+        r"investigat\w*",
+        r"plan(?:s|ned|ning)?",
+        r"review\w*",
+        r"explain\w*",
+        r"validat\w*",
+    )
+)
+_PHASE_WORDS = _INVESTIGATIVE_WORDS + tuple(
+    re.compile(rf"\b{stem}\b") for stem in (r"wait\w*", "yet", "only", "just", "for now")
+)
+#: Words that make a request conditional; none may be lost ("if it's green
+#: you can merge" must not become "merge").
+_CONDITIONS = frozenset(("if", "unless", "until", "once", "otherwise"))
+#: An action verb within this many content words after an investigative word
+#: reads as part of that investigation ("just investigate, explain, and fix
+#: it"), so the speaker must have put it there too. Only words both texts share
+#: are counted, so fillers and asides the reply drops cannot move a verb into
+#: or out of reach.
+_PHASE_REACH = 6
+_HEDGES = tuple(
+    re.compile(rf"\b{hedge}\b") for hedge in ("maybe", "might", "probably", "possibly", "perhaps")
+)
+#: "I think" and "I guess" hedge a claim unless another hedge word right after
+#: them already does ("I think probably keep it"), or they open the filler
+#: "I think the thing is".
+_SPEAKER_HEDGE = re.compile(r"\bi (?:think|guess)\b(?! the thing is\b)")
+_SPEAKER_HEDGE_REACH = 3
+_SPEAKER_HEDGE_WORDS = frozenset({"think", "guess"})
+
+#: Verbs that authorize work. The reply may not introduce one the speaker never
+#: said. A form right after a determiner is a noun ("pushed a fix") and does
+#: not count.
+_ACTION_VERBS = {
+    verb: re.compile(forms)
+    for verb, forms in (
+        ("implement", r"implement\w*"),
+        ("fix", r"fix(?:es|ed|ing)?"),
+        ("change", r"chang(?:e|es|ed|ing)"),
+        ("apply", r"appl(?:y|ies|ied|ying)"),
+        ("commit", r"commit(?:s|ted|ting)?"),
+        ("merge", r"merg(?:e|es|ed|ing)"),
+        ("delete", r"delet(?:e|es|ed|ing)"),
+        ("write", r"writ(?:e|es|ing|ten)|wrote"),
+        ("build", r"buil(?:d|ds|ding|t)"),
+        ("push", r"push(?:es|ed|ing)?"),
+        ("add", r"add(?:s|ed|ing)?"),
+        ("update", r"updat(?:e|es|ed|ing)"),
+        ("remove", r"remov(?:e|es|ed|ing)"),
+        ("rename", r"renam(?:e|es|ed|ing)"),
+        ("refactor", r"refactor(?:s|ed|ing)?"),
+        ("touch", r"touch(?:es|ed|ing)?"),
+        ("install", r"install(?:s|ed|ing)?"),
+        ("run", r"r(?:un|uns|an|unning)"),
+        ("edit", r"edit(?:s|ed|ing)?"),
+        ("modify", r"modif(?:y|ies|ied|ying)"),
+        ("create", r"creat(?:e|es|ed|ing)"),
+        ("bump", r"bump(?:s|ed|ing)?"),
+        ("replace", r"replac(?:e|es|ed|ing)"),
+        ("deploy", r"deploy(?:s|ed|ing)?"),
+    )
+}
+_DETERMINERS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "this",
+        "that",
+        "these",
+        "those",
+        "my",
+        "your",
+        "our",
+        "their",
+        "its",
+        "his",
+        "her",
+        "any",
+        "some",
+        "each",
+        "every",
+        "another",
+    }
+)
+
+#: An answer explains; an edit does not. A causal connective the speaker never
+#: used is the model's own claim.
+_CAUSAL = re.compile(r"\b(?:because|since|due to|so that|therefore|caused by|as a result)\b")
+
+#: A question stays a question: a sentence ending in "?" or opened by one of
+#: these, after any spoken warm-up. A polite request ("can you look at ...")
+#: is not one; the reply may make it an imperative.
+_INTERROGATIVES = frozenset(
+    {
+        "can",
+        "could",
+        "would",
+        "why",
+        "how",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "is",
+        "are",
+        "does",
+        "did",
+        "should",
+    }
+)
+_SENTENCE = re.compile(r"[^.!?\n]+[.!?]*")
+_WARM_UP = re.compile(
+    r"[\s\"'(\-]*(?:(?:um|uh|er|ah|okay|ok|so|alright|well|like|and|but|then)[\s,]+)*",
     re.IGNORECASE,
 )
-_NUMBER_WORD_VALUES = {
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-}
-_CLAUSE_BOUNDARY = re.compile(r"""[.?!]["')\]]*\s|[;\n]""")
-_BULLET_BOUNDARY = re.compile(r"[;\n]")
+#: "you" only: "can we merge it?" asks permission. An opinion verb ("would you
+#: say ...") still asks a question.
+_POLITE_REQUEST = re.compile(
+    r"(?:can|could|would|will)\s+you\s+(?!(?:please\s+)?(?:say|think|know|agree|mind|reckon|feel)\b)",
+    re.IGNORECASE,
+)
+
+#: Share of the speaker's content words that must survive, counting repeats.
+#: Cleanup drops fillers, list scaffolding ("the first one is"), and abandoned
+#: choices, none of which count as content. Every correct reply measured kept
+#: at least 0.80 (the corpus question sample, which drops "quick question", sits
+#: exactly on the floor); dropping one of three
+#: spoken list items whose words recur kept 0.78, two of four kept 0.68. The
+#: margin is thin, and a refusal only costs the unrefined transcript.
+MIN_CONTENT_COVERAGE = 0.8
+#: Share of once-said content words the reply must keep in spoken order.
+#: Swapping two objects ("change staging, preserve production") scores
+#: 0.60-0.85; reordering a sentence or two scores higher.
+MIN_ORDER_KEPT = 0.9
+_STOPWORDS = frozenset(
+    word
+    for group in (
+        "a an the and or but if then so as of to in on at by for with from into onto about",
+        "over under up down out off than too very just only yet also again still even ever",
+        "is are was were be been being am do does did doing done have has had having",
+        "will would shall should can could may might must",
+        "i me my we us our you your he him his she her it its they them their",
+        "this that these those there here what which who whom whose when where why how",
+        "all any anything some something each every both either more most other such own",
+        "same few much many",
+        "it's i'm i've i'd i'll we're we've we'd we'll you're you've you'd you'll they're",
+        "there's that's what's let's he's she's",
+        "okay ok yeah yep alright well like know mean kind sort thing things really",
+        "basically literally actually quite pretty please right now",
+        "one ones first second third fourth fifth next last",
+    )
+    for word in group.split()
+)
+#: Stopwords the reply may add without having heard them ("also" among them).
+#: Quantifiers, modals, and timing or scope words are excluded: "one" -> "all", "could" ->
+#: "should", and an added "now" or "only" all change the request.
+_FUNCTION_WORDS = _STOPWORDS - frozenset(
+    word
+    for group in (
+        "all any anything every each both either some something one ones more most few much",
+        "many other such will would shall should can could may might must",
+        "now first second third fourth fifth next last again only yet just even still ever",
+    )
+    for word in group.split()
+)
 
 
-def _matches(pattern: re.Pattern[str], text: str) -> Counter[str]:
-    values = []
+def _value(pattern: re.Pattern[str], match: re.Match[str]) -> str:
+    value = match.group(0)
+    if pattern is _PROTECTED_TOKEN:
+        value = value.rstrip(".,;!?\"')]}>")
+    if pattern is _QUOTED:
+        # A comma or period moved just inside the closing quote is house style.
+        value = re.sub(r"[,.](?=[\"\u201d']$)", "", value)
+    return value
+
+
+def _agent_words(text: str) -> list[str]:
+    """Lowercased words with "n't" spelled out, fillers and a discourse "no" gone,
+    stammers collapsed."""
+
+    folded = text.casefold().replace("\u2019", "'")
+    for pattern, replacement in _CONTRACTIONS:
+        folded = pattern.sub(replacement, folded)
+    folded = _DISCOURSE_NO.sub(r"\1", folded)
+    words = [word for word in _LEXICAL_TOKEN.findall(folded) if word not in _SAFE_FILLERS]
+    for size in range(4, 0, -1):
+        index = 0
+        while index + 2 * size <= len(words):
+            if words[index : index + size] == words[index + size : index + 2 * size]:
+                del words[index + size : index + 2 * size]
+            else:
+                index += 1
+    return words
+
+
+def _anchored_values(pattern: re.Pattern[str], text: str) -> tuple[set[str], set[str]]:
+    """Values the reply must keep, and values the speaker replaced with another."""
+
+    kept: set[str] = set()
+    replaced: set[str] = set()
     for match in pattern.finditer(text):
-        suffix = text[match.end() :]
-        if re.match(r"(?:\W+\w+){0,6}\W+no\s+wait\b", suffix, re.IGNORECASE):
-            continue
-        value = match.group(0)
-        if pattern is _PROTECTED_TOKEN:
-            value = value.rstrip(".,;!?\"')]}>")
-        values.append(value)
-    return Counter(values)
+        value = _value(pattern, match)
+        marker = _AGENT_MARKER_AFTER.match(text, match.end())
+        replacement = marker and pattern.search(
+            " ".join(text[marker.end() :].split()[:_REPLACEMENT_REACH])
+        )
+        (replaced if replacement else kept).add(value)
+    return kept, replaced - kept
 
 
-def _lexical_tokens(text: str) -> tuple[str, ...]:
-    return tuple(
-        match.group().casefold().replace("\u2019", "'") for match in _LEXICAL_TOKEN.finditer(text)
+def _changes_anchored_values(pattern: re.Pattern[str], original: str, candidate: str) -> bool:
+    """Whether the reply lost a kept value, or wrote one that is new or replaced.
+
+    Values compare as sets, so a repeated value may be written once. A replaced
+    value may still appear when the reply keeps the correction that replaced
+    it, marker and all.
+    """
+
+    kept, replaced = _anchored_values(pattern, original)
+    produced_kept, produced_replaced = _anchored_values(pattern, candidate)
+    return produced_kept != kept or not produced_replaced <= replaced
+
+
+def _negation_anchors(text: str) -> set[tuple[str, str]]:
+    """Each negation paired with the next two content words in its sentence."""
+
+    anchors = set()
+    for sentence in _SENTENCE_BREAK.split(text):
+        words = _CORRECTING_NO.sub("", " ".join(_agent_words(sentence))).split()
+        for index, word in enumerate(words):
+            if word not in _NEGATIONS:
+                continue
+            governed = (
+                "not" if following in _NEGATIONS else following
+                for following in words[index + 1 :]
+                if following not in _STOPWORDS
+            )
+            anchors.add((next(governed, ""), next(governed, "")))
+    return anchors
+
+
+def _same_negations(original: str, candidate: str) -> bool:
+    """Whether both texts negate the same words.
+
+    A sentence break the reply added or removed may cut the second governed
+    word, so an empty second word matches any second word.
+    """
+
+    source = _negation_anchors(original)
+    produced = _negation_anchors(candidate)
+
+    def matched(anchor: tuple[str, str], others: set[tuple[str, str]]) -> bool:
+        return any(
+            anchor[0] == other[0] and (anchor[1] == other[1] or "" in (anchor[1], other[1]))
+            for other in others
+        )
+
+    return all(matched(anchor, produced) for anchor in source) and all(
+        matched(anchor, source) for anchor in produced
     )
 
 
-def _clause_start_positions(text: str) -> frozenset[int]:
-    """Token positions proven to follow an input or explicit clause boundary."""
-
-    matches = tuple(_LEXICAL_TOKEN.finditer(text))
-    starts = {0}
-    for index in range(1, len(matches)):
-        separator = text[matches[index - 1].end() : matches[index].start()]
-        if _CLAUSE_BOUNDARY.search(separator):
-            starts.add(index)
-    return frozenset(starts)
+def _speaker_hedged(text: str) -> bool:
+    for match in _SPEAKER_HEDGE.finditer(text):
+        reach = " ".join(text[match.end() :].split()[:_SPEAKER_HEDGE_REACH])
+        if not any(hedge.search(reach) for hedge in _HEDGES):
+            return True
+    return False
 
 
-def _safe_cleanup_variants(
-    tokens: tuple[tuple[str, int], ...],
-) -> tuple[tuple[tuple[str, int], ...], ...]:
-    """Whole-sequence variants for unambiguous fillers and immediate repeats."""
+def _authorized_actions(text: str, shared: set[str]) -> tuple[set[str], set[str]]:
+    """Action verbs asked for, and those asked for inside an investigation.
 
-    variants = {tokens}
-    without_fillers = tuple(token for token in tokens if token[0] not in _SAFE_FILLERS)
-    variants.add(without_fillers)
-    for source in (tokens, without_fillers):
-        collapsed = []
-        for token in source:
-            if not collapsed or token[0] != collapsed[-1][0]:
-                collapsed.append(token)
-        variants.add(tuple(collapsed))
-    return tuple(variants)
+    A form right after a determiner is a noun ("pushed a fix"); a form within
+    :data:`_NEGATION_SCOPE` words after a negation is forbidden, not asked for
+    ("don't write any code"). The investigative reach counts only the content
+    words in *shared* and runs on across sentence and bullet breaks, so
+    splitting "investigate and explain what you find" from a new "Then fix it."
+    or "- Fix it." changes nothing.
+    """
 
-
-def _correction_variants(
-    tokens: tuple[tuple[str, int], ...], clause_starts: frozenset[int]
-) -> tuple[tuple[tuple[str, int], ...], ...]:
-    """Whole sequences formed by deleting one complete abandoned correction."""
-
-    variants = {tokens}
-    spans = []
-    markers = sorted(
-        (_lexical_tokens(marker) for marker in _AGENT_CORRECTION_MARKERS),
-        key=len,
-        reverse=True,
-    )
-    for start in range(len(tokens)):
-        for marker in markers:
-            end = start + len(marker)
-            if tuple(token[0] for token in tokens[start:end]) != marker or end >= len(tokens):
+    asked: set[str] = set()
+    investigative: set[str] = set()
+    earlier: list[str] = []
+    for sentence in _SENTENCE_BREAK.split(text):
+        words = _agent_words(sentence)
+        for index, word in enumerate(words):
+            if index and words[index - 1] in _DETERMINERS:
                 continue
-            eligible_starts = tuple(position for position in clause_starts if position < start)
-            if not eligible_starts:
+            if _NEGATIONS.intersection(words[max(0, index - _NEGATION_SCOPE) : index]):
                 continue
-            abandoned_start = max(eligible_starts)
-            variants.add(tokens[:abandoned_start] + tokens[end:])
-            spans.append((abandoned_start, end))
+            verbs = {verb for verb, forms in _ACTION_VERBS.items() if forms.fullmatch(word)}
+            asked |= verbs
+            reach = [
+                before
+                for before in earlier + words[:index]
+                if _is_content(before) and _stem(before) in shared
+            ][-_PHASE_REACH:]
+            if any(phase.fullmatch(before) for before in reach for phase in _INVESTIGATIVE_WORDS):
+                investigative |= verbs
+        earlier += words
+    return asked, investigative
+
+
+def _asks(text: str, *, requests: bool) -> bool:
+    """Whether *text* asks a question; polite requests count only if *requests*."""
+
+    for sentence in _SENTENCE.findall(text):
+        body = sentence[_WARM_UP.match(sentence).end() :]
+        opener = re.match(r"[A-Za-z]+", body)
+        asked = sentence.rstrip().endswith("?") or bool(
+            opener and opener.group().casefold() in _INTERROGATIVES
+        )
+        if asked and (requests or not _POLITE_REQUEST.match(body)):
+            return True
+    return False
+
+
+def _stem(word: str) -> str:
+    """A rough lemma: "settings", "setting" -> "set"; "failing", "fails" -> "fail".
+
+    A stem that would collide with a function word or negation is not used
+    ("noted" must not match "not").
+    """
+
+    stem = word
+    if stem.endswith("s") and not stem.endswith("ss") and len(stem) > 3:
+        stem = stem[:-1]
+    for suffix in ("ing", "ed", "e"):
+        if stem.endswith(suffix) and len(stem) - len(suffix) >= 3:
+            stem = stem[: -len(suffix)]
             break
-    ordered_spans = sorted(set(spans))
-    if ordered_spans and all(
-        previous_end <= current_start
-        for (_previous_start, previous_end), (current_start, _current_end) in pairwise(
-            ordered_spans
-        )
-    ):
-        variants.add(
-            tuple(
-                token
-                for index, token in enumerate(tokens)
-                if not any(start <= index < end for start, end in ordered_spans)
-            )
-        )
-    return tuple(variants)
+    if len(stem) > 3 and stem[-1] == stem[-2]:
+        stem = stem[:-1]
+    return word if stem in _STOPWORDS or stem in _NEGATIONS else stem
 
 
-def _bullet_start_positions(candidate: str) -> frozenset[int]:
-    """Lexical positions that begin real ``- `` bullet lines."""
-
-    return frozenset(
-        len(_lexical_tokens(candidate[: match.end()]))
-        for match in re.finditer(r"(?m)^\s*-\s+(?=\S)", candidate)
+def _is_content(word: str) -> bool:
+    return (
+        word not in _STOPWORDS
+        and word not in _NEGATIONS
+        and not any(character.isdigit() for character in word)
     )
 
 
-def _enumeration_layouts(original: str) -> tuple[frozenset[int], ...]:
-    """Item starts proven only by semicolon or existing newline boundaries."""
+def _abandoned(source: list[str]) -> set[int]:
+    """Positions of correction markers and the words just before them.
 
-    tokens = tuple(_LEXICAL_TOKEN.finditer(original))
-    cues = tuple(_ENUMERATION_CUE.finditer(original))
-    layouts = []
-    for cue_index, cue in enumerate(cues):
-        start = next(
-            (index for index, token in enumerate(tokens) if token.start() >= cue.end()),
-            len(tokens),
-        )
-        end = len(tokens)
-        if cue_index + 1 < len(cues):
-            next_cue = cues[cue_index + 1]
-            next_start = next(
-                (index for index, token in enumerate(tokens) if token.start() >= next_cue.start()),
-                len(tokens),
-            )
-            end = min(end, next_start)
-        value = cue.group("count").casefold()
-        count = _NUMBER_WORD_VALUES.get(value, int(value) if value.isdigit() else 0)
-        if start >= end or not count:
-            continue
-        item_starts = [start]
-        for index in range(start + 1, end):
-            if len(item_starts) == count:
-                break
-            separator = original[tokens[index - 1].end() : tokens[index].start()]
-            if _BULLET_BOUNDARY.search(separator):
-                item_starts.append(index)
-        if len(item_starts) == count:
-            layouts.append(frozenset(item_starts))
-    return tuple(layouts)
+    That is what a self-correction abandons, so the reply may drop it.
+    """
+
+    abandoned = set()
+    for index in range(len(source)):
+        for marker in _AGENT_MARKER_WORDS:
+            end = index + len(marker)
+            if tuple(source[index:end]) == marker and end < len(source):
+                abandoned.update(range(max(0, index - _MARKER_WINDOW), end))
+    return abandoned
 
 
-def _matches_layout_variant(
-    source: tuple[tuple[str, int], ...],
-    produced: tuple[str, ...],
-    bullet_starts: frozenset[int],
-    enumeration_layouts: tuple[frozenset[int], ...],
-) -> bool:
-    """Exact lexical equality with every bullet mapped to a proven item start."""
+def _content_coverage(source: list[str], produced: list[str]) -> float:
+    """Share of the speaker's content words the reply kept, counting repeats."""
 
-    source_index = 0
-    produced_index = 0
-    bullet_sources = {}
-    while source_index < len(source) and produced_index < len(produced):
-        source_token, original_index = source[source_index]
-        if source_token == produced[produced_index]:
-            if produced_index in bullet_starts:
-                bullet_sources[produced_index] = original_index
-            source_index += 1
-            produced_index += 1
-            continue
-        return False
-    if source_index != len(source) or produced_index != len(produced):
-        return False
-    if bullet_starts != frozenset(bullet_sources):
-        return False
-    rendered_starts = [set() for _layout in enumeration_layouts]
-    for original_index in bullet_sources.values():
-        matches = [
-            index for index, starts in enumerate(enumeration_layouts) if original_index in starts
-        ]
-        if len(matches) != 1:
-            return False
-        rendered_starts[matches[0]].add(original_index)
-    return not bullet_starts or all(
-        rendered == starts
-        for rendered, starts in zip(rendered_starts, enumeration_layouts, strict=True)
+    abandoned = _abandoned(source)
+    said = Counter(
+        _stem(word)
+        for index, word in enumerate(source)
+        if index not in abandoned and _is_content(word)
     )
+    if not said:
+        return 1.0
+    written = Counter(_stem(word) for word in produced)
+    return sum(min(count, written[word]) for word, count in said.items()) / sum(said.values())
 
 
-def _preserves_lexical_order(original: str, candidate: str) -> bool:
-    """Whether candidate is original modulo explicitly safe cleanup deletions."""
-
-    source_tokens = _lexical_tokens(original)
-    source = tuple((token, index) for index, token in enumerate(source_tokens))
-    produced = _lexical_tokens(candidate)
-    bullet_starts = _bullet_start_positions(candidate)
-    enumeration_layouts = _enumeration_layouts(original)
-    variants = {
-        cleanup
-        for correction in _correction_variants(source, _clause_start_positions(original))
-        for cleanup in _safe_cleanup_variants(correction)
-    }
+def _adds_words(source: list[str], produced: list[str]) -> bool:
+    said = {_stem(word) for word in source}
     return any(
-        _matches_layout_variant(
-            variant,
-            produced,
-            bullet_starts,
-            enumeration_layouts,
+        word not in _FUNCTION_WORDS
+        and word not in _NEGATIONS
+        and not any(character.isdigit() for character in word)
+        and _stem(word) not in said
+        for word in produced
+    )
+
+
+def _revives_a_correction(source: list[str], produced: list[str]) -> bool:
+    """Whether the reply kept a word the speaker replaced ("use grep no wait use ripgrep").
+
+    A word counts as replaced when it is said once, right before a correction
+    marker, and the correction repeats the word before it with a new word
+    ("use grep" ... "use ripgrep"); or when it is said once before up to
+    :data:`_HEAD_WORDS` head words that the correction repeats after a new
+    word ("the old retry logic" ... "the new retry logic"). A reply that keeps
+    a marker shows the correction instead of reversing it.
+    """
+
+    def marker_at(words: list[str], index: int) -> tuple[str, ...] | None:
+        return next(
+            (
+                marker
+                for marker in _AGENT_MARKER_WORDS
+                if tuple(words[index : index + len(marker)]) == marker
+            ),
+            None,
         )
-        for variant in variants
+
+    if any(marker_at(produced, index) for index in range(len(produced))):
+        return False
+    written = {_stem(word) for word in produced}
+    for index in range(2, len(source)):
+        marker = marker_at(source, index)
+        if marker is None:
+            continue
+        after = source[index + len(marker) : index + len(marker) + _CORRECTION_REACH]
+        before, last = source[index - 2], source[index - 1]
+        # "use grep no wait use ripgrep": the word before the choice repeats.
+        if any(
+            previous == before and word != last and _is_content(word)
+            for previous, word in pairwise(after)
+        ) and _replaced(source, last, written):
+            return True
+        # "the old retry logic sorry the new retry logic": the head words
+        # repeat after a new modifier; the modifier before them was replaced.
+        for size in range(1, min(_HEAD_WORDS, index - 1) + 1):
+            head = source[index - size : index]
+            replaced = source[index - size - 1]
+            if not all(map(_is_content, head)):
+                break
+            if any(
+                after[start : start + size] == head
+                and _is_content(after[start - 1])
+                and after[start - 1] != replaced
+                for start in range(1, len(after) - size + 1)
+            ) and _replaced(source, replaced, written):
+                return True
+    return False
+
+
+def _replaced(source: list[str], word: str, written: set[str]) -> bool:
+    """Whether a once-said content word the speaker corrected made it into the reply."""
+
+    return _is_content(word) and source.count(word) == 1 and _stem(word) in written
+
+
+def _bullets(candidate: str) -> list[int]:
+    return [index for index, line in enumerate(candidate.splitlines()) if _BULLET.match(line)]
+
+
+def _drops_list_items(source: list[str], candidate: str, produced: list[str]) -> bool:
+    """Whether the reply bulleted a spoken list but lost part of it.
+
+    The list is the stretch of dictation between the lead-in's last content
+    word and the first content word after the last bullet; every content word
+    said in that stretch must be written somewhere. "I think" and "I guess"
+    are left to the hedge check.
+    """
+
+    lines = candidate.splitlines()
+    bullets = _bullets(candidate)
+    if not bullets:
+        return False
+    stems = [_stem(word) for word in source]
+
+    def content(text: str) -> list[str]:
+        return [_stem(word) for word in _agent_words(text) if _is_content(word)]
+
+    listed = content("\n".join(lines[bullets[0] : bullets[-1] + 1]))
+    lead = content("\n".join(lines[: bullets[0]]))
+    trail = content("\n".join(lines[bullets[-1] + 1 :]))
+    if not listed:
+        return False
+    if lead and lead[-1] in stems:
+        start = stems.index(lead[-1]) + 1
+    elif listed[0] in stems:
+        start = stems.index(listed[0])
+    else:
+        return False
+    last = max((index for index, stem in enumerate(stems) if stem == listed[-1]), default=start)
+    end = next(
+        (
+            index
+            for index in range(max(start, last) + 1, len(stems))
+            if trail and stems[index] == trail[0]
+        ),
+        len(stems),
+    )
+    abandoned = _abandoned(source)
+    written = {_stem(word) for word in produced}
+    return any(
+        _is_content(source[index])
+        and source[index] not in _SPEAKER_HEDGE_WORDS
+        and stems[index] not in written
+        for index in range(start, end)
+        if index not in abandoned
+    )
+
+
+def _orders(word: str) -> bool:
+    """Content words that fix meaning by position; hedges and phase words move freely."""
+
+    return (
+        _is_content(word)
+        and word not in _SPEAKER_HEDGE_WORDS
+        and not any(pattern.fullmatch(word) for pattern in _PHASE_WORDS + _HEDGES)
+    )
+
+
+def _order_kept(source: list[str], produced: list[str]) -> float:
+    """Share of once-said content words the reply keeps in the spoken order.
+
+    Only words said exactly once and written exactly once are placed, so
+    duplicates cannot be mismatched; the score is the longest run of them in
+    the same relative order.
+    """
+
+    said = [_stem(word) for word in source if _orders(word)]
+    written = [_stem(word) for word in produced if _orders(word)]
+    once = {word for word in said if said.count(word) == 1 and written.count(word) == 1}
+    positions = [written.index(word) for word in said if word in once]
+    if not positions:
+        return 1.0
+    longest = [1] * len(positions)
+    for index, position in enumerate(positions):
+        for earlier in range(index):
+            if positions[earlier] < position:
+                longest[index] = max(longest[index], longest[earlier] + 1)
+    return max(longest) / len(positions)
+
+
+def _splits_a_negation(original: str, candidate: str) -> bool:
+    """Whether a new line or sentence frees words from the negation before it.
+
+    "do not change staging and production" split into "do not change staging"
+    and "production" leaves "production" un-negated. A unit is flagged when it
+    has no negation of its own, it starts with a word the speaker negated, and
+    the unit before it holds the negated verb. A unit that opens with a subject
+    pronoun ("We need it ...") or follows a colon lead-in is a new clause or a
+    list under the negation, not a split.
+    """
+
+    governed_lists = []
+    for sentence in _SENTENCE_BREAK.split(original):
+        words = _CORRECTING_NO.sub("", " ".join(_agent_words(sentence))).split()
+        for index, word in enumerate(words):
+            if word in _NEGATIONS:
+                governed = []
+                for previous, following in pairwise(words[index:]):
+                    if following in _CLAUSE_OPENERS or (
+                        following in _PRONOUNS and not _is_content(previous)
+                    ):
+                        break
+                    if _is_content(following):
+                        governed.append(_stem(following))
+                if governed:
+                    governed_lists.append(governed[:_NEGATION_REACH])
+    units = [
+        (unit.rstrip().endswith(":"), words)
+        for unit in _UNIT_BREAK.split(candidate)
+        if (words := _agent_words(unit))
+    ]
+    for (introduces, previous), (_, current) in pairwise(units):
+        if introduces or current[0] in _PRONOUNS:
+            continue
+        if _NEGATIONS.intersection(current) or not _NEGATIONS.intersection(previous):
+            continue
+        first = next((word for word in current if _is_content(word)), None)
+        if first is None:
+            continue
+        held = {_stem(word) for word in previous}
+        if any(governed[0] in held and _stem(first) in governed[1:] for governed in governed_lists):
+            return True
+    return False
+
+
+def _changes_names(original: str, candidate: str) -> bool:
+    kept, replaced = _anchored_values(_NAME, original)
+    produced_kept = _anchored_values(_NAME, candidate)[0]
+    written = {word.casefold() for word in _LEXICAL_TOKEN.findall(candidate)}
+    return not {name.casefold() for name in kept} <= written or bool(
+        {name.casefold() for name in produced_kept} & {name.casefold() for name in replaced}
     )
 
 
 def agent_guard(original: str, candidate: str) -> str:
-    """Reject an Agent edit that changes deterministic safety-bearing tokens."""
+    """Reject an Agent edit that changes what the speaker asked for.
+
+    The Agent prompt rewrites freely — fillers, restarts, run-ons, bullets —
+    so word order is not evidence. What is checked instead is every token that
+    carries authority or meaning: protected tokens and quoted text, names,
+    negations and what they govern, phase and scope words, hedges, action verbs,
+    the question form, causal claims, no new words, most of the speaker's
+    content words in roughly their spoken order, and every item of a list the
+    reply bulleted.
+
+    Known gaps: a middle item dropped from a list the reply left inline, a swap
+    of words said more than once, a hedge moved onto a different claim, a
+    dropped qualifier ("directly") or quantifier ("all"), a reversed correction
+    that repeats no word ("grep no wait ripgrep"), a swap between words
+    sharing a stem ("stage", "staging"), and an action added more than
+    :data:`_PHASE_REACH` shared words after an investigation all pass when
+    every other check does.
+    """
 
     accepted = guard(original, candidate)
-    if not _preserves_lexical_order(original, accepted):
-        raise RefineRejectedError("output changed dictated wording or order")
     for pattern, reason in (
         (_PROTECTED_TOKEN, "output changed a protected token"),
         (_QUOTED, "output changed quoted text"),
     ):
-        if _matches(pattern, original) != _matches(pattern, accepted):
+        if _changes_anchored_values(pattern, original, accepted):
             raise RefineRejectedError(reason)
+    if _changes_names(original, accepted):
+        raise RefineRejectedError("output changed a name")
+    source = _agent_words(original)
+    produced = _agent_words(accepted)
+    if not _same_negations(original, accepted):
+        raise RefineRejectedError("output changed a negation")
+    source_text = re.sub(r"\bno wait\b", "", " ".join(source))
+    produced_text = re.sub(r"\bno wait\b", "", " ".join(produced))
+    if any(word.search(source_text) and not word.search(produced_text) for word in _PHASE_WORDS):
+        raise RefineRejectedError("output dropped a phase or scope word")
+    said_conditions = Counter(word for word in source if word in _CONDITIONS)
+    written_conditions = Counter(word for word in produced if word in _CONDITIONS)
+    if said_conditions - written_conditions:
+        raise RefineRejectedError("output dropped a condition")
+    if any(hedge.search(source_text) and not hedge.search(produced_text) for hedge in _HEDGES):
+        raise RefineRejectedError("output dropped a hedge")
+    if _speaker_hedged(source_text) and not _SPEAKER_HEDGE.search(produced_text):
+        raise RefineRejectedError("output dropped a hedge")
+    shared = {_stem(word) for word in source} & {_stem(word) for word in produced}
+    asked, investigative = _authorized_actions(original, shared)
+    written_asked, written_investigative = _authorized_actions(accepted, shared)
+    if written_asked - asked or written_investigative - investigative:
+        raise RefineRejectedError("output added an action")
+    if _asks(original, requests=False) and not _asks(accepted, requests=True):
+        raise RefineRejectedError("output answered a question")
+    if set(_CAUSAL.findall(produced_text)) - set(_CAUSAL.findall(source_text)):
+        raise RefineRejectedError("output added a causal claim")
+    if _adds_words(source, produced):
+        raise RefineRejectedError("output added words")
+    if _revives_a_correction(source, produced):
+        raise RefineRejectedError("output kept a corrected word")
+    if _content_coverage(source, produced) < MIN_CONTENT_COVERAGE:
+        raise RefineRejectedError("output dropped dictated content")
+    if _drops_list_items(source, accepted, produced):
+        raise RefineRejectedError("output dropped a list item")
+    if _splits_a_negation(original, accepted):
+        raise RefineRejectedError("output moved words out of a negation")
+    if _order_kept(source, produced) < MIN_ORDER_KEPT:
+        raise RefineRejectedError("output reordered dictated content")
     return accepted
 
 

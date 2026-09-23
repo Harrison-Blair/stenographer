@@ -19,17 +19,61 @@ recording starts; it cannot change during that utterance. Both profiles share
 the configured host, model, structured-output setting, ten-word minimum, and
 model residency lifecycle.
 
-- **Agent** (Right Ctrl, and the default for upgraded partial configs) formats
-  requests for an agent. It uses adaptive paragraphs or bullets without fixed
-  headings, never dispatches or answers the request, and preserves phase and
-  authorization boundaries, modality, scope, negations, hedges, numerals,
-  paths, CLI flags, identifiers, quoted text, and explicit tool/model choices.
+- **Agent** (Right Ctrl, and the default for upgraded partial configs) cleans
+  up rambling requests for an agent. It removes fillers and restarts, applies
+  self-corrections ("no wait", "actually", "scratch that"), splits run-ons,
+  starts a paragraph when the topic shifts, and never dispatches or answers
+  the request.
 - **General** (Right Alt) is the original cleanup behavior described below.
 
-For Agent bullets, dictate an explicit item count and separate every item with
-a semicolon or an existing newline. Commas, conjunctions, and sentence-ending
-punctuation alone do not prove item boundaries; if a model invents bullets for
-an ambiguous list, the guard falls back to the formatted transcript.
+For Agent bullets, just speak the list. The prompt asks the model to turn three
+or more parallel items, or an announced count ("a couple things", "three
+things"), into a short lead-in line and one `- ` bullet per item. The model
+does not always do it; an unbulleted list is still delivered if it passes the
+guard.
+
+Agent's output guard lets the wording change but falls back to the formatted
+transcript when the edit may have changed what you asked for. The edited text
+must keep:
+
+- every protected token (path, flag, identifier, model tag) and quoted
+  phrase, except a choice you replaced with a correction marker, which must
+  not come back (a comma or period moved just inside a closing quote is
+  allowed; the quoted words must match exactly);
+- any capitalized tool or model name you used mid-sentence, such as Codex or
+  Claude;
+- every negation (not, no, never, nothing, none, nor, without, no longer)
+  next to the same words, and no negation you did not say; a "no" that only
+  answers or hedges ("No, that's fine", "yeah no") is not a negation;
+- every phase or scope word (investigate, plan, review, explain, validate,
+  wait, yet, only, just, for now) and hedge (maybe, might, probably, possibly,
+  perhaps, I think, I guess);
+- every condition word (if, unless, until, once, otherwise);
+- a question as a question, though a polite request ("can you look at the
+  logs") may become an instruction ("Look at the logs.");
+- at least four in five of your content words, counting repeats, and every
+  word of a spoken list it turned into bullets (from the end of the lead-in to
+  the text after the last bullet);
+- the order of your words, closely enough that swapped objects ("change
+  staging, preserve production") are caught.
+
+It must not add a word you did not say (apart from small function words such
+as "the", "it", "also", or "about"; quantifiers like "all", modals like
+"should", and words like "now" or "only" count as new), an action verb you had not asked
+for, had negated, or had not asked for alongside an investigation
+("investigate and fix it"), a word you replaced with a correction ("use grep
+no wait use ripgrep"), a causal claim ("because", "since", "so that"), or a
+new line or sentence that pulls an item out from under a negation ("don't
+change A and B" split so B stands alone).
+
+The guard does not catch everything. These can still pass: a middle item
+dropped from a list left inline; a swap of words you said more than once; a
+hedge moved onto a different claim; a dropped qualifier such as "directly" or
+quantifier such as "all"; a reversed correction that does not repeat a word
+("use grep no wait ripgrep" delivered as "use grep"), unless the edit also
+drops too many other words; a word swapped for one that shares its stem
+("staging" for "stage"); and an action added well after an investigation
+(more than six of your words later).
 
 The overlay includes Agent or General throughout Recording, Transcribing,
 Refining, and Delivering, then briefly reports Applied, Skipped, or Fallback.

@@ -3,8 +3,10 @@ name: release preflight
 
 # Read-only rehearsal of the draft-release workflow for PRs into main: the
 # version/tag guard and wheel/sdist verification run here so unsafe release
-# state is caught before merge. A manual rehearsal also checks the authored
-# notes for its selected bump; a PR has no authoritative bump selection.
+# state is caught before merge. A PR run only exercises packaging, so it plans
+# a patch version from tags and ignores drafts. A manual rehearsal checks draft
+# state and its selected bump's authored notes; only a rehearsal on main also
+# checks a matching draft's target commit.
 # Lint, unit tests, and the standalone bundles are deliberately not repeated
 # — lint.yml, test.yml, and build.yml already run them on every PR. Nothing
 # here writes to releases or tags.
@@ -57,9 +59,16 @@ jobs:
         id: guard
         run: |
           python -m venv .venv
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            draft_args=(--skip-draft-checks)
+          elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            draft_args=(--target-commit "${GITHUB_SHA}")
+          else
+            draft_args=(--skip-target-check)
+          fi
           .venv/bin/python scripts/release_guard.py \
             "${RUNNER_TEMP}/releases.json" "${{ inputs.bump || 'patch' }}" \
-            --target-commit "${GITHUB_SHA}" \
+            "${draft_args[@]}" \
             --github-output "${GITHUB_OUTPUT}"
       - name: Check authored release notes
         if: github.event_name == 'workflow_dispatch'

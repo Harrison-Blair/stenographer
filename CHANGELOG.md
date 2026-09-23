@@ -13,6 +13,21 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
+The Agent profile now cleans up rambling dictation instead of passing it
+through almost unchanged.
+
+### Fixed
+
+- Agent refinement removes fillers and restarts, applies self-corrections,
+  splits run-ons, and is asked to turn spoken lists into `- ` bullets without
+  needing semicolons. Its guard now checks what the edit means rather than
+  exact word order: negations and what they apply to, phase, scope, hedge,
+  and condition words, questions, names, protected tokens, quoted text, and
+  most of the spoken words must survive in roughly the spoken order, and no
+  new word, action, causal claim, or negation may appear. A polite request
+  may become an instruction. An edit that fails these
+  checks falls back to the formatted transcript.
+
 ## [v0.13.1] - 2026-09-21
 
 This release adds separate Agent and General dictation profiles and makes model

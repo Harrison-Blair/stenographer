@@ -579,8 +579,8 @@ def _edit_hotkey(console: Console, config: Config) -> Config:
     console.write("\nHotkey")
     console.write(
         "Binding uses key names (the evdev KEY_* vocabulary) joined with '+'. "
-        "Agent is the default conservative profile; General retains ordinary transcript "
-        "cleanup. Mode is hold, toggle, or hybrid for both bindings."
+        "Agent is the default profile for cleaning up agent requests; General retains ordinary "
+        "transcript cleanup. Mode is hold, toggle, or hybrid for both bindings."
     )
 
     hotkey = dataclasses.replace(

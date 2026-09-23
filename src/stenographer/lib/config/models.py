@@ -91,7 +91,7 @@ class Config:
     @classmethod
     def defaults(cls) -> Config:
         # Agent is universal across hosts so partial old configs migrate to
-        # the conservative profile without changing their existing binding.
+        # the Agent profile without changing their existing binding.
         return cls(
             hotkey=HotkeyConfig(
                 binding="KEY_RIGHTCTRL",

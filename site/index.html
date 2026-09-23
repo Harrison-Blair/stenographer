@@ -59,7 +59,7 @@
     <section class="states" id="states" aria-label="What the pill is telling you">
       <div class="st" data-for="recording"><i class="sw rec"></i><b>Recording</b><p>The pill names Agent or General while 18 bars follow your microphone.</p></div>
       <div class="st" data-for="transcribing"><i class="sw asr"></i><b>Transcribing</b><p>faster-whisper is turning your speech into English text, on your machine.</p></div>
-      <div class="st" data-for="refining"><i class="sw refine"></i><b>Refining</b><p>Agent conservatively formats requests; General performs ordinary transcript cleanup. The pill briefly reports Applied, Skipped, or Fallback.</p></div>
+      <div class="st" data-for="refining"><i class="sw refine"></i><b>Refining</b><p>Agent cleans up rambling requests to an agent; General performs ordinary transcript cleanup. The pill briefly reports Applied, Skipped, or Fallback.</p></div>
       <div class="st" data-for="delivering"><i class="sw deliver"></i><b>Delivering</b><p>Your clipboard has the text. A paste chord is landing at your cursor.</p></div>
       <div class="st" data-for="applied"><i class="sw applied"></i><b>Applied</b><p>The selected profile was applied. Skipped and Fallback use the same brief, transcript-free result.</p></div>
       <div class="st" data-for="loading"><i class="sw load"></i><b>Loading</b><p>A border breathes while a model warms up, over whatever else is showing: the amber Loading colour for speech, the Refining colour for cleanup, taking turns one breath each if both load. It always finishes its breath before it changes or goes.</p></div>
@@ -73,7 +73,7 @@
         <li><b>Your hotkeys</b><span>Right Ctrl selects Agent; Right Alt selects General. Both can latch or be held, and Escape cancels without pasting.</span></li>
         <li><b>Your microphone</b><span>Captured through PortAudio, with a quiet-audio gate so an accidental press does not paste noise into your work.</span></li>
         <li><b>Local transcription</b><span>faster-whisper runs on your CPU or GPU. You download the model once, and only when you ask for it.</span></li>
-        <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Agent formats agent-directed requests without inventing work or changing safety-bearing details. General keeps the original cleanup behavior. Both fail open to the formatted transcript.</span></li>
+        <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Agent cleans up rambling agent-directed requests, usually turning spoken lists into bullets, without inventing work or changing safety-bearing details. General keeps the original cleanup behavior. Both fail open to the formatted transcript.</span></li>
         <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key.</span></li>
         <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. It stays on your clipboard too.</span></li>
       </ol>
