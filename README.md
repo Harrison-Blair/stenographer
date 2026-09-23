@@ -23,8 +23,8 @@ instructions.
 > [!NOTE]
 > This `README.md` was generated with AI, but reviewed for accuracy by a human
 
-Default hotkeys: Right Ctrl selects the conservative Agent profile; Right Alt
-selects General cleanup. Both use hybrid mode: tap to latch, or hold, speak,
+Default hotkeys: Right Ctrl selects the Agent profile; Right Alt selects
+General cleanup. Both use hybrid mode: tap to latch, or hold, speak,
 and release; plain hold-to-talk and toggle modes are optional. Press Escape at
 any point during an utterance to cancel it; nothing is transcribed or pasted.
 
@@ -160,9 +160,11 @@ machine is an optional, metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
 
 A [refine](docs/refine.md) pass, on by default, provides exactly two built-in
-profiles through one local Ollama model. Agent conservatively formats requests
+profiles through one local Ollama model. Agent cleans up rambling requests to
+an agent (fillers, restarts, self-corrections, usually bullets for spoken lists)
 without acting on them or changing scope, authorization, negations, hedges,
-identifiers, paths, flags, quotes, numbers, or explicit tool/model choices.
+questions, identifiers, paths, flags, quotes, numbers, or explicit tool/model
+choices.
 General keeps the original filler and self-correction cleanup behavior
 (`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
 machine. Turn it off or point it elsewhere in `[stenographer.refine]`; a

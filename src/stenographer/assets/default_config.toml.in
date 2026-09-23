@@ -1,7 +1,7 @@
 # stenographer configuration.
 
 [stenographer.hotkey]
-binding = "{hotkey_binding}"       # Agent: conservative formatting for agent-directed dictation
+binding = "{hotkey_binding}"       # Agent: cleanup for agent-directed dictation
 general_binding = "KEY_RIGHTALT"   # General: ordinary transcript cleanup
 device = ""                    # {hotkey_device_comment}
 cancel_binding = "KEY_ESC"     # global cancel; "" disables it
