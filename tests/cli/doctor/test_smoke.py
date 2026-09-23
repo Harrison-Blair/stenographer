@@ -16,7 +16,6 @@ from stenographer.cli.shared.capabilities import Capabilities
 from stenographer.cli.shared.capability_probe import probe
 from stenographer.lib.config.models import Config
 from stenographer.lib.diagnostics.capabilities import missing_required
-from stenographer.lib.platform import current_platform
 from stenographer.overlay.capabilities.models import OverlayCapability
 from stenographer.overlay.platform import current_platform as current_overlay_platform
 
