@@ -38,27 +38,19 @@ the complete MIT notice are bundled in
 [`asd-ste100-MIT.txt`](../src/stenographer/assets/licenses/asd-ste100-MIT.txt).
 No external skill files are read at runtime.
 
-Agent's output guard permits substantial compression, with no minimum output
-length ratio. The shared upper limit remains 1.6 times the input length.
-The guard requires exact distinct numeral values, protected literals (paths,
-flags, identifiers, and model tags), quoted phrases, and detected names to
-remain, except values explicitly replaced by a correction. Repeated values
-can consolidate. Quote-boundary punctuation can move without changing the
-quoted words.
+Agent trusts the model to preserve meaning through these prompt instructions.
+It does not compare the input and output for names, numbers, literals, negations,
+uncertainty, conditions, scope, or authorization. It has no input/output length
+ratio limit. A parsed, non-empty, untruncated rewrite is accepted after one
+wrapping quote pair or code fence is removed; a reply still wrapped after that
+is rejected. Malformed responses and invalid structured reply shapes are also
+rejected.
 
-The guard checks the presence of phase, scope, condition, hedge, and negation
-markers, with contraction normalization. It recognizes a finite set of action
-verbs and treats `repair`/`fix`, `modify`/`alter`/`change`, and `erase`/`remove`
-as equivalent in either direction. It keeps `validate` verbatim when that word
-limits authorization. Checks for introduced recognized actions and genuine
-questions are heuristics. A polite request can become an instruction.
-
-These checks cannot prove that every distinct idea or detail survived, or that
-a negation or condition still applies to the same idea. The guard does not
-check lexical coverage, word order, new words in general, neighboring words
-around negations, action proximity, or causal relationships. Preserving meaning
-is a prompt requirement that also needs real-model acceptance testing. A guard
-or model failure delivers the original formatted transcript instead.
+Meaning-changing rewrites can therefore reach the cursor, including changed
+names or numbers, lost uncertainty, or changed authorization. Real-model
+acceptance and human review are needed to assess fidelity. General retains its
+original length and numeral checks. A detected format, parsing, or transport
+failure delivers the original formatted transcript instead.
 
 The overlay includes Agent or General throughout Recording, Transcribing,
 Refining, and Delivering, then briefly reports Applied, Skipped, or Fallback.
@@ -75,7 +67,9 @@ STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest -s -m integration tests/lib/refine/t
 ```
 
 It checks rewritten structure and selected details with synthetic transcripts.
-Review the printed rewrites against each case's meaning checklist, including
+The corpus preserves former semantic-guard refusal examples as model-quality
+cases, not requirements for code to reject a reply. Review the printed rewrites
+against each case's meaning checklist, including
 which condition or negation applies to each request. The harness lowers its
 word threshold to exercise short regression cases without changing your
 configuration. It does not access a microphone or download a model. Do not run
@@ -290,27 +284,24 @@ or not, and it is recorded as its own outcome rather than a failure — see
   not.
 - The reply is not a usable chat response, or the structured reply has no text
   field.
-- The output guard refuses the reply. Both profiles refuse empty output,
-  output longer than 1.6 times the input, and replies still wrapped in quotes
-  or a code fence after one wrapping pair is stripped.
+- The output guard refuses the reply. Both profiles refuse empty output
+  and replies still wrapped in quotes or a code fence after one wrapping pair
+  is stripped.
 
-  **General** also refuses output shorter than 0.30 times the input. Its
-  numeral check preserves multiplicity: a reply cannot add, repeat, or
+  **General** also refuses output shorter than 0.30 or longer than 1.6 times
+  the input. Its numeral check preserves multiplicity: a reply cannot add, repeat, or
   reformat a numeral. It can drop a numeral only when a correction such as
   "no wait", "actually", "sorry", or "I mean" follows it within six words.
   Thus "at 3, no wait, 4" may become "at 4". "not" and "wait" alone do not
   retract numbers. The model decides whether to apply the correction.
   The 0.30 floor allows substantial shortening after spoken retractions.
 
-  **Agent** has no lower length limit. It preserves distinct numeral values,
-  rather than repeat counts, so repeated numbers can consolidate. It allows
-  explicit corrections but refuses new or reformatted numeral values. Its
-  additional checks and their limits are described under
-  [The two profiles](#the-two-profiles).
+  **Agent** has no length-ratio or semantic checks. It trusts the model's
+  meaning preservation, as described under [The two profiles](#the-two-profiles).
 
 A detected refinement failure delivers the text you would have got with refine
-switched off. An accepted rewrite can still change meaning in ways the guard
-does not detect.
+switched off. An accepted rewrite can still change meaning; Agent does not check
+for semantic changes, and General's mechanical checks cannot prove fidelity.
 
 ## Residency
 

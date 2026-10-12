@@ -1,17 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Agent's output guard: real cleanup passes, changed meaning does not.
+"""Agent format handling accepts rewrites without comparing meaning.
 
-The dictations below are rambly agent requests. The rejected candidates are
-edits that read well but change what the speaker authorized, negated, hedged,
-asked, or chose; the accepted ones are the cleanups the Agent prompt asks for.
+Meaning-changing examples are also retained in the real-model acceptance corpus
+for human review; acceptance here demonstrates only the format contract.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from stenographer.lib.refine.errors import RefineRejectedError
-from stenographer.lib.refine.response import agent_guard
+from stenographer.lib.refine.response import basic_format
 
 COUNT_LIST = (
     "Okay so a couple things. I think the thing is the config loader is kind of slow and you "
@@ -349,9 +347,8 @@ RUNON_MIXED = (
         ),
     ],
 )
-def test_agent_guard_rejects_edits_that_change_meaning(original, candidate):
-    with pytest.raises(RefineRejectedError):
-        agent_guard(original, candidate)
+def test_basic_format_accepts_edits_that_change_meaning(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -647,5 +644,5 @@ def test_agent_guard_rejects_edits_that_change_meaning(original, candidate):
         ),
     ],
 )
-def test_agent_guard_accepts_cleanup_that_keeps_meaning(original, candidate):
-    assert agent_guard(original, candidate) == candidate
+def test_basic_format_accepts_cleanup_that_keeps_meaning(original, candidate):
+    assert basic_format(original, candidate) == candidate

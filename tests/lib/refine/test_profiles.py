@@ -1,15 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The two built-in refinement profiles and Agent's safety boundary."""
+"""The two built-in profiles and Agent's prompt-only meaning preservation."""
 
 from __future__ import annotations
 
 import pytest
 
 from stenographer.lib.refine.agent_prompt import FEW_SHOT_EXAMPLES
-from stenographer.lib.refine.errors import RefineRejectedError
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.request import build_messages
-from stenographer.lib.refine.response import agent_guard
+from stenographer.lib.refine.response import basic_format
 
 
 def test_exactly_two_builtin_profiles_with_agent_as_default():
@@ -34,21 +33,20 @@ def test_profiles_use_separate_prompts_and_general_keeps_the_cleanup_prompt():
         ("Only investigate the bug before implementing it.", "Implement the bug fix."),
     ],
 )
-def test_agent_guard_rejects_changed_safety_bearing_content(original, candidate):
-    with pytest.raises(RefineRejectedError):
-        agent_guard(original, candidate)
+def test_basic_format_accepts_changed_safety_bearing_content(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_layout_and_punctuation_changes():
+def test_basic_format_allows_layout_and_punctuation_changes():
     original = "Maybe review --dry-run in /tmp/demo and then report it"
     candidate = "Maybe review --dry-run in /tmp/demo, and then report it."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_an_explicit_no_wait_self_correction():
+def test_basic_format_allows_an_explicit_no_wait_self_correction():
     original = "Maybe use qwen3.5:4b no wait maybe use gemma4:e2b for the model"
     candidate = "Maybe use gemma4:e2b for the model."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -103,9 +101,8 @@ def test_agent_guard_allows_an_explicit_no_wait_self_correction():
         ),
     ],
 )
-def test_agent_guard_rejects_tool_model_and_boundary_substitutions(original, candidate):
-    with pytest.raises(RefineRejectedError):
-        agent_guard(original, candidate)
+def test_basic_format_accepts_tool_model_and_boundary_substitutions(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -141,8 +138,8 @@ def test_agent_guard_rejects_tool_model_and_boundary_substitutions(original, can
         ),
     ],
 )
-def test_agent_guard_allows_cleanup_that_preserves_choices_and_boundaries(original, candidate):
-    assert agent_guard(original, candidate) == candidate
+def test_basic_format_allows_cleanup_that_preserves_choices_and_boundaries(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -152,38 +149,37 @@ def test_agent_guard_allows_cleanup_that_preserves_choices_and_boundaries(origin
         ("I have no permission.", "Permission."),
     ],
 )
-def test_agent_guard_rejects_dropped_content_and_changed_tokens(original, candidate):
-    with pytest.raises(RefineRejectedError):
-        agent_guard(original, candidate)
+def test_basic_format_accepts_dropped_content_and_changed_tokens(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(("original", "candidate"), FEW_SHOT_EXAMPLES)
-def test_agent_guard_accepts_current_agent_few_shots(original, candidate):
-    assert agent_guard(original, candidate) == candidate
+def test_basic_format_accepts_current_agent_few_shots(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_fillers_repeats_and_contraction_punctuation_cleanup():
+def test_basic_format_allows_fillers_repeats_and_contraction_punctuation_cleanup():
     original = "um please review review the logs and don't change them"
     candidate = "Please review the logs, and don\u2019t change them."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_one_complete_abandoned_correction_span():
+def test_basic_format_allows_one_complete_abandoned_correction_span():
     original = "Maybe deploy the change no wait maybe review the change"
     candidate = "Maybe review the change."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_a_correction_segment_after_a_sentence_boundary():
+def test_basic_format_allows_a_correction_segment_after_a_sentence_boundary():
     original = "Keep the first request. Deploy the change no wait review the change"
     candidate = "Keep the first request. Review the change."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_a_mid_clause_correction():
+def test_basic_format_allows_a_mid_clause_correction():
     original = "Please deploy the change no wait review the change"
     candidate = "Please review the change."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -221,14 +217,14 @@ def test_agent_guard_allows_a_mid_clause_correction():
         ),
     ],
 )
-def test_agent_guard_composes_safe_cleanup_with_enumeration_layout(original, candidate):
-    assert agent_guard(original, candidate) == candidate
+def test_basic_format_composes_safe_cleanup_with_enumeration_layout(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_collapses_two_separate_clause_corrections_together():
+def test_basic_format_collapses_two_separate_clause_corrections_together():
     original = (
         "Deploy the change no wait review the change. "
         "Delete staging sorry preserve staging. Keep production unchanged."
     )
     candidate = "Review the change. Preserve staging. Keep production unchanged."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate

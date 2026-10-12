@@ -136,7 +136,7 @@ def test_real_agent_avoids_known_semantic_regressions(
         f"\n{case_id}\nSpoken input: {spoken}\n"
         f"Required meaning: {meaning_checklist}\nEdited dictation: {output}"
     )
-    # Literal evidence beyond excluding one wrong string: all source values
-    # remain unless the source explicitly replaces them. The production guard
-    # already checks these; this test also demands a model result, not fallback.
+    # Excluding one known wrong string cannot establish semantic fidelity.
+    # Review every printed result against its human meaning checklist; Agent
+    # has no semantic guard. Demand a model result rather than fallback.
     assert output.strip(), (case_id, output)

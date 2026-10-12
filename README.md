@@ -164,9 +164,11 @@ profiles through one local Ollama model. Agent rewrites jumbled requests into
 concise instructions. It can rephrase, reorder, group ideas, and remove
 repetitions while the prompt requires every distinct fact, reason, request,
 uncertainty, and authorization limit to survive. It never acts on the request.
-Its guard checks protected values and boundary markers, but cannot prove that
-every detail or relationship survived. Failed refinement delivers the original
-formatted transcript.
+Agent trusts the model to preserve meaning: it has no semantic or length-ratio
+checks, so changed names, numbers, negations, uncertainty, or authorization can
+reach the cursor. It retains response-format, empty-output, truncation, and
+wrapper checks. Detected refinement failures deliver the original formatted
+transcript. General retains its original length and numeral checks.
 General keeps the original filler and self-correction cleanup behavior
 (`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
 machine. Turn it off or point it elsewhere in `[stenographer.refine]`; a

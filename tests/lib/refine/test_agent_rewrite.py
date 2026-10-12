@@ -4,7 +4,7 @@
 import pytest
 
 from stenographer.lib.refine.errors import RefineRejectedError
-from stenographer.lib.refine.response import agent_guard, guard
+from stenographer.lib.refine.response import basic_format, guard
 
 REWRITES = (
     (
@@ -32,7 +32,7 @@ REWRITES = (
 
 @pytest.mark.parametrize(("original", "candidate"), REWRITES)
 def test_agent_accepts_substantial_rewrites(original, candidate):
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
 def test_general_still_rejects_duplicate_numeral_compression():
@@ -67,9 +67,8 @@ def test_general_still_rejects_deep_compression():
         ("I sent a repair for review.", "Fix the defect for review."),
     ],
 )
-def test_agent_retains_distinct_values_and_boundary_words(original, candidate):
-    with pytest.raises(RefineRejectedError):
-        agent_guard(original, candidate)
+def test_agent_accepts_changed_values_and_boundary_words(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -89,14 +88,12 @@ def test_agent_retains_distinct_values_and_boundary_words(original, candidate):
 def test_agent_consolidates_repeated_boundaries_and_compares_aliases_symmetrically(
     original, candidate
 ):
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_rejects_an_introduced_detected_name():
-    with pytest.raises(RefineRejectedError, match="name"):
-        agent_guard(
-            "Contact Codex about the request.", "Contact Codex and Microsoft about the request."
-        )
+def test_agent_accepts_an_introduced_detected_name():
+    candidate = "Contact Codex and Microsoft about the request."
+    assert basic_format("Contact Codex about the request.", candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -107,4 +104,4 @@ def test_agent_rejects_an_introduced_detected_name():
     ],
 )
 def test_sentence_initial_source_words_can_move_without_becoming_new_names(original, candidate):
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
