@@ -19,65 +19,69 @@ recording starts; it cannot change during that utterance. Both profiles share
 the configured host, model, structured-output setting, ten-word minimum, and
 model residency lifecycle.
 
-- **Agent** (Right Ctrl, and the default for upgraded partial configs) cleans
-  up rambling requests for an agent. It removes fillers and restarts, applies
-  self-corrections ("no wait", "actually", "scratch that"), splits run-ons,
-  starts a paragraph when the topic shifts, and never dispatches or answers
-  the request.
+- **Agent** (Right Ctrl, and the default for upgraded partial configs) rewrites
+  jumbled requests into concise instructions for an agent. It can substantially
+  rephrase, reorder, group related ideas, remove repetitions, and collapse
+  explicit self-corrections. It must preserve every distinct fact, reason,
+  request, uncertainty, condition, and authorization limit. It never performs
+  or answers the request.
 - **General** (Right Alt) is the original cleanup behavior described below.
 
-For Agent bullets, just speak the list. The prompt asks the model to turn three
-or more parallel items, or an announced count ("a couple things", "three
-things"), into a short lead-in line and one `- ` bullet per item. The model
-does not always do it; an unbulleted list is still delivered if it passes the
-guard.
+Agent uses bundled structural writing rules adapted from the MIT-licensed
+`asd-ste100` skill, with a contextual base glossary. These favor short, active
+sentences, one instruction per sentence, plain verbs, and lists for three or
+more steps or conditions. Glossary meanings guide the rewrite in context,
+rather than replacing words globally. Necessary precision and uncertainty
+have priority over brevity. The adaptation does not include ASD's copyrighted
+dictionary and does not claim certified ASD-STE100 compliance. Attribution and
+the complete MIT notice are bundled in
+[`asd-ste100-MIT.txt`](../src/stenographer/assets/licenses/asd-ste100-MIT.txt).
+No external skill files are read at runtime.
 
-Agent's output guard lets the wording change but falls back to the formatted
-transcript when the edit may have changed what you asked for. The edited text
-must keep:
+Agent's output guard permits substantial compression, with no minimum output
+length ratio. The shared upper limit remains 1.6 times the input length.
+The guard requires exact distinct numeral values, protected literals (paths,
+flags, identifiers, and model tags), quoted phrases, and detected names to
+remain, except values explicitly replaced by a correction. Repeated values
+can consolidate. Quote-boundary punctuation can move without changing the
+quoted words.
 
-- every protected token (path, flag, identifier, model tag) and quoted
-  phrase, except a choice you replaced with a correction marker, which must
-  not come back (a comma or period moved just inside a closing quote is
-  allowed; the quoted words must match exactly);
-- any capitalized tool or model name you used mid-sentence, such as Codex or
-  Claude;
-- every negation (not, no, never, nothing, none, nor, without, no longer)
-  next to the same words, and no negation you did not say; a "no" that only
-  answers or hedges ("No, that's fine", "yeah no") is not a negation;
-- every phase or scope word (investigate, plan, review, explain, validate,
-  wait, yet, only, just, for now) and hedge (maybe, might, probably, possibly,
-  perhaps, I think, I guess);
-- every condition word (if, unless, until, once, otherwise);
-- a question as a question, though a polite request ("can you look at the
-  logs") may become an instruction ("Look at the logs.");
-- at least four in five of your content words, counting repeats, and every
-  word of a spoken list it turned into bullets (from the end of the lead-in to
-  the text after the last bullet);
-- the order of your words, closely enough that swapped objects ("change
-  staging, preserve production") are caught.
+The guard checks the presence of phase, scope, condition, hedge, and negation
+markers, with contraction normalization. It recognizes a finite set of action
+verbs and treats `repair`/`fix`, `modify`/`alter`/`change`, and `erase`/`remove`
+as equivalent in either direction. It keeps `validate` verbatim when that word
+limits authorization. Checks for introduced recognized actions and genuine
+questions are heuristics. A polite request can become an instruction.
 
-It must not add a word you did not say (apart from small function words such
-as "the", "it", "also", or "about"; quantifiers like "all", modals like
-"should", and words like "now" or "only" count as new), an action verb you had not asked
-for, had negated, or had not asked for alongside an investigation
-("investigate and fix it"), a word you replaced with a correction ("use grep
-no wait use ripgrep"), a causal claim ("because", "since", "so that"), or a
-new line or sentence that pulls an item out from under a negation ("don't
-change A and B" split so B stands alone).
-
-The guard does not catch everything. These can still pass: a middle item
-dropped from a list left inline; a swap of words you said more than once; a
-hedge moved onto a different claim; a dropped qualifier such as "directly" or
-quantifier such as "all"; a reversed correction that does not repeat a word
-("use grep no wait ripgrep" delivered as "use grep"), unless the edit also
-drops too many other words; a word swapped for one that shares its stem
-("staging" for "stage"); and an action added well after an investigation
-(more than six of your words later).
+These checks cannot prove that every distinct idea or detail survived, or that
+a negation or condition still applies to the same idea. The guard does not
+check lexical coverage, word order, new words in general, neighboring words
+around negations, action proximity, or causal relationships. Preserving meaning
+is a prompt requirement that also needs real-model acceptance testing. A guard
+or model failure delivers the original formatted transcript instead.
 
 The overlay includes Agent or General throughout Recording, Transcribing,
 Refining, and Delivering, then briefly reports Applied, Skipped, or Fallback.
 It never displays transcript content.
+
+## Agent real-model acceptance
+
+The synthetic acceptance corpus exercises the production Agent refiner with
+an already installed local model. Run it optionally on a real machine with
+Ollama running:
+
+```sh
+STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest -s -m integration tests/lib/refine/test_agent_acceptance_smoke.py
+```
+
+It checks rewritten structure and selected details with synthetic transcripts.
+Review the printed rewrites against each case's meaning checklist, including
+which condition or negation applies to each request. The harness lowers its
+word threshold to exercise short regression cases without changing your
+configuration. It does not access a microphone or download a model. Do not run
+it in CI or a sandbox. Real-model rewrite quality remains unverified in the
+sandbox. Passing this corpus provides evidence for its cases, rather than a
+guarantee for arbitrary dictation.
 
 ## What General does
 
@@ -286,33 +290,27 @@ or not, and it is recorded as its own outcome rather than a failure — see
   not.
 - The reply is not a usable chat response, or the structured reply has no text
   field.
-- The output guard refuses the reply. It does that when the output is empty,
-  when its length is outside 0.30×–1.6× the input's (which catches a summary
-  and catches a model that answered instead of editing), when it is still
-  wrapped in quotes or a code fence after one wrapping pair is stripped, or
-  when it mishandles a number. A reply may never add, repeat, or reformat a
-  numeral: a spelled-out number turned into digits, a colon pushed into
-  `3080`, a time or version rewritten, all refused. A reply may drop a
-  numeral only when you took it back, meaning a correction such as "no
-  wait", "actually", "sorry", or "I mean" follows it within six words of your
-  speech. So "at 3, no wait, 4" may become "at 4", while a digit that simply
-  went missing, or was respelled as a word, is refused and you get your own
-  words instead.
+- The output guard refuses the reply. Both profiles refuse empty output,
+  output longer than 1.6 times the input, and replies still wrapped in quotes
+  or a code fence after one wrapping pair is stripped.
 
-  The correction is permission, not an order. The model still decides
-  whether the number goes; the guard only decides whether to accept what it
-  produced. "not" and "wait" are not treated as corrections, because "3
-  items, not counting the 4 spares" and "wait until 6" are not retractions.
-  Measured on the default model, this refused no correct cleanup and passed
-  no wrong number; strict equality had refused four correct cleanups.
+  **General** also refuses output shorter than 0.30 times the input. Its
+  numeral check preserves multiplicity: a reply cannot add, repeat, or
+  reformat a numeral. It can drop a numeral only when a correction such as
+  "no wait", "actually", "sorry", or "I mean" follows it within six words.
+  Thus "at 3, no wait, 4" may become "at 4". "not" and "wait" alone do not
+  retract numbers. The model decides whether to apply the correction.
+  The 0.30 floor allows substantial shortening after spoken retractions.
 
-  The floor is 0.30 rather than something tighter because a correct answer can
-  legitimately be much shorter: collapsing a list whose last item the speaker
-  retracted drops about a third of the words, which measured 0.37–0.40 for
-  every model benchmarked.
+  **Agent** has no lower length limit. It preserves distinct numeral values,
+  rather than repeat counts, so repeated numbers can consolidate. It allows
+  explicit corrections but refuses new or reformatted numeral values. Its
+  additional checks and their limits are described under
+  [The two profiles](#the-two-profiles).
 
-A dictation is never lost to a cleanup pass. The worst case is that you get the
-text you would have got with refine switched off.
+A detected refinement failure delivers the text you would have got with refine
+switched off. An accepted rewrite can still change meaning in ways the guard
+does not detect.
 
 ## Residency
 

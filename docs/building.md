@@ -72,7 +72,10 @@ files from entering packages when a builder traverses an ignored directory.
 After changing the policy, build and verify the wheel and source distribution
 with `scripts/verify_distributions.py`, check archive contents, and verify that
 the source distribution can build a wheel. Preserve the source distribution's
-installer scripts and all required package resources.
+installer scripts and all required package resources. The Agent rewrite
+prompt's MIT attribution is packaged at
+`stenographer/assets/licenses/asd-ste100-MIT.txt` in wheels and retained under
+`src/` in source distributions.
 
 ## Draft releases
 
