@@ -12,6 +12,7 @@ from stenographer.lib.config.constants import (
     ALLOWED_LOG_LEVELS,
     ALLOWED_REFINE_SCHEMES,
     MAX_REFINE_WORDS,
+    MAX_RESTORE_DELAY_MS,
     MIN_REFINE_WORDS,
     SOUND_PACK_PATTERN,
 )
@@ -19,6 +20,7 @@ from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import (
     AsrConfig,
     AudioConfig,
+    DeliveryConfig,
     FeedbackConfig,
     HotkeyConfig,
     RefineConfig,
@@ -192,6 +194,15 @@ def _build_refine(table: dict, path: pathlib.Path) -> RefineConfig:
         model=model,
         min_words=r.ranged_int("min_words", MIN_REFINE_WORDS, MAX_REFINE_WORDS),
         structured_output=r.bool("structured_output"),
+    )
+
+
+def _build_delivery(table: dict, path: pathlib.Path) -> DeliveryConfig:
+    r = _Reader(table, path, "delivery")
+    return DeliveryConfig(
+        copy_original=r.bool("copy_original"),
+        restore_clipboard=r.bool("restore_clipboard"),
+        restore_delay_ms=r.ranged_int("restore_delay_ms", 0, MAX_RESTORE_DELAY_MS),
     )
 
 

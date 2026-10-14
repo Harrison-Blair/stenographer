@@ -13,6 +13,24 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
+Your previous clipboard item now comes back after each paste, and an Agent
+rewrite keeps the unrefined transcript in your clipboard history.
+
+### Added
+
+- After each paste, the daemon waits `restore_delay_ms` (500 ms by default) and
+  puts back the clipboard item it saved before copying the transcript. Only
+  one type of that item is restored, preferring plain text; items a password
+  manager marks as secret are skipped. The primary selection keeps the
+  transcript. The daemon stays busy during the wait, and Escape no longer
+  cancels once the text is pasted.
+- When Agent rewrites the text, the unrefined transcript is copied just before
+  the rewrite, so a clipboard history lists both.
+- A new `[stenographer.delivery]` section holds `copy_original`,
+  `restore_clipboard`, and `restore_delay_ms`. Restoring needs `wl-paste`
+  (or `xclip`); without it the daemon still runs, and `stenographer doctor`
+  shows a `clipboard restore` hint.
+
 ## [v0.13.2] - 2026-09-23
 
 The Agent profile now cleans up rambling dictation instead of passing it

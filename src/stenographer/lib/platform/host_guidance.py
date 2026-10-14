@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -44,3 +44,5 @@ class HostGuidance:
     """The ``hotkey.device`` comment written into the annotated default config."""
     run_with_config: Callable[[str], str]
     """Build the shell line that runs the daemon against an explicit config path."""
+    clipboard_read_fix_hints: Mapping[str, str] = field(default_factory=dict)
+    """How to enable the optional clipboard restore, keyed like ``clipboard_fix_hints``."""

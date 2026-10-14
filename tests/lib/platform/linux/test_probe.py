@@ -15,7 +15,8 @@ import pathlib
 import shutil
 
 from stenographer.lib.platform.host_probe import HostProbe
-from stenographer.lib.platform.linux.clipboard import probe_clipboard
+from stenographer.lib.platform.linux.clipboard import clipboard_read_available, probe_clipboard
+from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
 from stenographer.lib.platform.linux.cues import detect_player
 from stenographer.lib.platform.linux.probe import (
     in_input_group,
@@ -114,6 +115,7 @@ def test_probe_host_composes_the_platform_half_of_the_doctor_report():
     expected_injector = uinput_writable()
     expected_hotkey = in_input_group()
     expected_clipboard_ok, expected_backend = probe_clipboard()
+    expected_read_ok = clipboard_read_available(ClipboardBackend(expected_backend))
     expected_player = detect_player()
 
     probe = probe_host()
@@ -123,6 +125,7 @@ def test_probe_host_composes_the_platform_half_of_the_doctor_report():
     assert probe.hotkey_access_ok is expected_hotkey
     assert probe.clipboard_ok is expected_clipboard_ok
     assert probe.clipboard_backend == expected_backend
+    assert probe.clipboard_read_ok is expected_read_ok
     assert probe.cue_player == expected_player
     # The systemd pair is live state, so it is held to its vocabulary rather
     # than to a second query: the two vocabularies barely overlap, so a

@@ -58,7 +58,8 @@ You need Linux, Wayland, a systemd user manager, and:
 - A PortAudio-backed microphone and the system PortAudio library.
 - Read access to `/dev/input/event*`, normally through the `input` group.
 - Write access to `/dev/uinput`, through a udev rule or `uinput` group.
-- `wl-copy` from `wl-clipboard` (or `xclip` plus XWayland).
+- `wl-copy` from `wl-clipboard` (or `xclip` plus XWayland). `wl-paste`, also
+  from `wl-clipboard`, lets the daemon restore your previous clipboard item.
 
 Stenographer is English-focused. Run `stenographer doctor` for missing
 capabilities and fixes; for example, input access may require:
@@ -125,7 +126,11 @@ behavior. Both bindings share the configured mode:
 - Press Escape while recording or delivering to discard the audio and
   transcript. Nothing is pasted.
 
-Otherwise the transcript is pasted at your cursor and remains on the clipboard.
+Otherwise the transcript is pasted at your cursor. About half a second later
+your previous clipboard item is back on the clipboard. When Agent rewrites the
+text, the unrefined transcript is copied just before the rewrite, so a
+clipboard history keeps both. See
+[Keep your clipboard](docs/usage.md#keep-your-clipboard).
 Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
 Set `binding` (Agent) or `general_binding` to any `KEY_*` chord to rebind it.
 Agent, General, and cancel chords may not be equal or subsets of one another.

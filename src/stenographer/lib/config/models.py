@@ -74,6 +74,15 @@ class RefineConfig:
 
 
 @dataclass(frozen=True)
+class DeliveryConfig:
+    """The clipboard around a paste: the Agent original copy and the restore."""
+
+    copy_original: bool = True
+    restore_clipboard: bool = True
+    restore_delay_ms: int = 500
+
+
+@dataclass(frozen=True)
 class AnalyticsConfig:
     enabled: bool = True
     resource_profiling: bool = True
@@ -87,6 +96,7 @@ class Config:
     feedback: FeedbackConfig
     refine: RefineConfig = RefineConfig()
     analytics: AnalyticsConfig = AnalyticsConfig()
+    delivery: DeliveryConfig = DeliveryConfig()
 
     @classmethod
     def defaults(cls) -> Config:
@@ -140,6 +150,7 @@ class Config:
         from stenographer.lib.config.validation import (
             _build_asr,
             _build_audio,
+            _build_delivery,
             _build_feedback,
             _build_hotkey,
             _build_refine,
@@ -158,7 +169,7 @@ class Config:
             raise ConfigError(path, "stenographer", f"must be a table, got {type(table).__name__}")
         merged = _merge(asdict(cls.defaults()), table)
         _migrate_hotkey_defaults(merged, table, path)
-        for name in ("hotkey", "audio", "asr", "feedback", "refine", "analytics"):
+        for name in ("hotkey", "audio", "asr", "feedback", "refine", "analytics", "delivery"):
             if not isinstance(merged[name], dict):
                 raise ConfigError(path, name, f"must be a table, got {type(merged[name]).__name__}")
         return cls(
@@ -173,6 +184,7 @@ class Config:
                     "resource_profiling"
                 ),
             ),
+            delivery=_build_delivery(merged["delivery"], path),
         )
 
     @classmethod

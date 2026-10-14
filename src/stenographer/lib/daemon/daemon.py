@@ -222,10 +222,25 @@ class Daemon:
             cancel=cancel,
             on_cancel=daemon.on_cancel,
         )
+        # Decided once: a missing reader disables the restore for the session,
+        # never the daemon.
+        read = restore = None
+        if not cfg.delivery.restore_clipboard:
+            log.info(fmt_event("deliver", "clipboard_restore", state="disabled", reason="config"))
+        elif (read := plat.clipboard_reader(clipboard_backend)) is None:
+            log.info(
+                fmt_event("deliver", "clipboard_restore", state="disabled", reason="reader_missing")
+            )
+        else:
+            restore = plat.clipboard_restorer(clipboard_backend)
+            log.info(fmt_event("deliver", "clipboard_restore", state="enabled"))
         deliverer = Deliverer(
             keyboard=plat.key_injector(),
             wait_released=listener.wait_binding_released,
             copy=plat.clipboard_writer(clipboard_backend),
+            read=read,
+            restore=restore,
+            restore_delay=cfg.delivery.restore_delay_ms / 1000.0,
         )
         daemon._platform = plat
         daemon._listener = listener
@@ -241,6 +256,7 @@ class Daemon:
             play_cue=lambda name: _play_cue(feedback, name),
             cancelled=daemon._cancel_pending,
             cancel_state=lambda: cancel_state(shutting_down=daemon._stop_event.is_set()),
+            copy_original=cfg.delivery.copy_original,
         )
         return daemon
 
@@ -539,6 +555,10 @@ class Daemon:
             action = cancel_action(recording=self._recording, busy=self._busy)
             if action is None:
                 log.debug(fmt_event("hotkey", "cancel_ignored"))
+                return
+            # The paste has landed; only the clipboard restore is left.
+            if action == "pipeline" and self._pipeline is not None and self._pipeline.delivered:
+                log.debug(fmt_event("hotkey", "cancel_ignored", reason="delivered"))
                 return
             generation = self._utterance_id
             self._cancelled_utterance = generation

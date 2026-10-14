@@ -9,7 +9,7 @@ import pytest
 
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
-from stenographer.lib.config.models import AnalyticsConfig, Config
+from stenographer.lib.config.models import AnalyticsConfig, Config, DeliveryConfig
 from stenographer.lib.config.paths import load_or_default
 from stenographer.lib.platform import current_platform
 
@@ -367,3 +367,62 @@ def test_analytics_settings_default_without_rewriting_old_files(tmp_path):
         with pytest.raises(ConfigError) as error:
             Config.loads(f'[stenographer.analytics]\n{key} = "true"')
         assert error.value.key == f"analytics.{key}"
+
+
+def test_delivery_settings_default_without_rewriting_old_files(tmp_path):
+    path = tmp_path / "config.toml"
+    content = "[stenographer.feedback]\nmute = true # preserved\n"
+    path.write_text(content)
+
+    cfg = Config.load(path)
+
+    assert cfg.delivery == DeliveryConfig(
+        copy_original=True, restore_clipboard=True, restore_delay_ms=500
+    )
+    assert Config.defaults().delivery == cfg.delivery
+    assert path.read_text() == content
+
+
+def test_delivery_settings_load_from_their_section():
+    cfg = Config.loads(
+        "[stenographer.delivery]\n"
+        "copy_original = false\nrestore_clipboard = false\nrestore_delay_ms = 0\n"
+    )
+
+    assert cfg.delivery == DeliveryConfig(
+        copy_original=False, restore_clipboard=False, restore_delay_ms=0
+    )
+
+
+@pytest.mark.parametrize(
+    ("line", "key"),
+    [
+        ("restore_delay_ms = -1", "delivery.restore_delay_ms"),
+        ("restore_delay_ms = 60001", "delivery.restore_delay_ms"),
+        ("restore_delay_ms = true", "delivery.restore_delay_ms"),
+        ("restore_delay_ms = 1.5", "delivery.restore_delay_ms"),
+        ('restore_delay_ms = "500"', "delivery.restore_delay_ms"),
+        ('copy_original = "yes"', "delivery.copy_original"),
+        ("restore_clipboard = 1", "delivery.restore_clipboard"),
+    ],
+)
+def test_invalid_delivery_settings_raise(line, key):
+    with pytest.raises(ConfigError) as error:
+        Config.loads(f"[stenographer.delivery]\n{line}\n")
+    assert error.value.key == key
+
+
+def test_a_scalar_delivery_section_raises():
+    with pytest.raises(ConfigError) as error:
+        Config.loads("[stenographer]\ndelivery = 1\n")
+    assert error.value.key == "delivery"
+
+
+def test_default_template_documents_the_delivery_section(tmp_path):
+    p = tmp_path / "config.toml"
+    Config.write_default(p)
+    text = p.read_text()
+
+    assert "[stenographer.delivery]" in text
+    assert "restore_delay_ms = 500" in text
+    assert Config.load(p).delivery == DeliveryConfig()

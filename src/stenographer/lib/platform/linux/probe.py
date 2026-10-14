@@ -12,7 +12,8 @@ import shutil
 import subprocess
 
 from stenographer.lib.platform.host_probe import HostProbe
-from stenographer.lib.platform.linux.clipboard import probe_clipboard
+from stenographer.lib.platform.linux.clipboard import clipboard_read_available, probe_clipboard
+from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
 from stenographer.lib.platform.linux.cues import detect_player
 
 
@@ -82,6 +83,7 @@ def probe_host() -> HostProbe:
         hotkey_access_ok=in_input_group(),
         clipboard_ok=clipboard_ok,
         clipboard_backend=clipboard_backend,
+        clipboard_read_ok=clipboard_read_available(ClipboardBackend(clipboard_backend)),
         cue_player=detect_player(),
         service_enabled=service_enabled,
         service_active=service_active,

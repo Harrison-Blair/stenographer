@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.key_table import KeyTable
     from stenographer.lib.platform.notifier import Notifier
     from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
+    from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer
 
 from stenographer.lib.platform.linux.support import signal_reason
 
@@ -100,6 +101,18 @@ class LinuxPlatform(DiagnosticsHostMixin):
         from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
 
         return copy_for_backend(ClipboardBackend(backend))
+
+    def clipboard_reader(self, backend: str) -> ClipboardReader | None:
+        from stenographer.lib.platform.linux.clipboard import reader_for_backend
+        from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+
+        return reader_for_backend(ClipboardBackend(backend))
+
+    def clipboard_restorer(self, backend: str) -> ClipboardRestorer:
+        from stenographer.lib.platform.linux.clipboard import restorer_for_backend
+        from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+
+        return restorer_for_backend(ClipboardBackend(backend))
 
     def notifier(self) -> Notifier:
         from stenographer.lib.platform.linux.notify_send_notifier import NotifySendNotifier

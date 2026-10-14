@@ -24,7 +24,10 @@ model residency lifecycle.
   rephrase, reorder, group related ideas, remove repetitions, and collapse
   explicit self-corrections. It must preserve every distinct fact, reason,
   request, uncertainty, condition, and authorization limit. It never performs
-  or answers the request.
+  or answers the request. When Agent changes the text, the unrefined
+  transcript is copied to the clipboard just before the rewrite, so a clipboard
+  history keeps both; see
+  [Keep your clipboard](usage.md#keep-your-clipboard).
 - **General** (Right Alt) is the original cleanup behavior described below.
 
 Agent uses bundled structural writing rules adapted from the MIT-licensed

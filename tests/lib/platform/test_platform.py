@@ -73,6 +73,11 @@ def test_windows_stub_conforms_and_reports_everything_unavailable():
     with pytest.raises(UnsupportedPlatformError):
         plat.clipboard_writer("unavailable")
     with pytest.raises(UnsupportedPlatformError):
+        plat.clipboard_reader("unavailable")
+    with pytest.raises(UnsupportedPlatformError):
+        plat.clipboard_restorer("unavailable")
+    assert probe.clipboard_read_ok is False
+    with pytest.raises(UnsupportedPlatformError):
         plat.single_instance_lock()
     # The overlay supervisor asks for a transport before it spawns anything; a
     # stub that answered with a half-working one would spawn a helper Windows
@@ -237,6 +242,7 @@ def test_macos_stub_conforms_and_reports_everything_unavailable():
     assert isinstance(probe, HostProbe)
     assert not (probe.key_injector_ok or probe.hotkey_access_ok or probe.clipboard_ok)
     assert probe.clipboard_backend == "unavailable"
+    assert probe.clipboard_read_ok is False
     assert probe.cue_player is None
     assert probe.service_enabled is None
     assert probe.service_active is None
@@ -257,6 +263,10 @@ def test_macos_stub_conforms_and_reports_everything_unavailable():
         plat.key_injector()
     with pytest.raises(UnsupportedPlatformError):
         plat.clipboard_writer("unavailable")
+    with pytest.raises(UnsupportedPlatformError):
+        plat.clipboard_reader("unavailable")
+    with pytest.raises(UnsupportedPlatformError):
+        plat.clipboard_restorer("unavailable")
     with pytest.raises(UnsupportedPlatformError):
         plat.single_instance_lock()
 

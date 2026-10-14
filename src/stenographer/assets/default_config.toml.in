@@ -40,6 +40,11 @@ model = "{refine_model}"           # pull it with `stenographer model download -
 min_words = 10                 # shorter utterances are delivered without a refine
 structured_output = false      # some models (qwen3.5:4b) need the JSON text-field schema
 
+[stenographer.delivery]
+copy_original = true           # Agent: copy the unrefined transcript first, for clipboard history
+restore_clipboard = true       # put the previous clipboard item back after each paste
+restore_delay_ms = 500         # 0-60000; wait after the paste before restoring; daemon busy meanwhile
+
 [stenographer.analytics]
 enabled = true                # local numeric history; no audio or transcript text
 resource_profiling = true     # sample application/host resources during utterances

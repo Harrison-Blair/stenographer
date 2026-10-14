@@ -16,6 +16,7 @@ def test_probe_uses_model_cache_service_and_keeps_display_optional(monkeypatch):
         hotkey_access_ok=True,
         clipboard_ok=True,
         clipboard_backend="test-clipboard",
+        clipboard_read_ok=False,
         cue_player=None,
         service_enabled=None,
         service_active=None,
@@ -37,6 +38,8 @@ def test_probe_uses_model_cache_service_and_keeps_display_optional(monkeypatch):
     assert requested == [config.asr.model]
     assert result.model_cached is True
     assert result.clipboard_backend == "test-clipboard"
+    # Restoring the clipboard is a convenience: its reader is never required.
+    assert result.clipboard_read_ok is False
     assert capabilities.missing_required(result) == []
     assert not hasattr(result, "overlay")
 
@@ -76,6 +79,7 @@ def test_only_the_absent_required_capabilities_are_named():
         return Capabilities(
             **{**absent, **present},
             clipboard_backend="",
+            clipboard_read_ok=False,
             cue_player=None,
             service_enabled=None,
             service_active=None,

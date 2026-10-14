@@ -14,6 +14,7 @@ from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.policy import classify_pipeline
 from stenographer.lib.logging.pipeline import log_failure
 from stenographer.lib.refine.null_refiner import NullRefiner
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED
 from stenographer.lib.transcribe.errors import WorkerError, WorkerPathologicalError
 from stenographer.lib.transcribe.pipeline import (
@@ -22,6 +23,7 @@ from stenographer.lib.transcribe.pipeline import (
     apply_gate,
     apply_recognition,
     apply_refinement,
+    apply_restore,
     apply_worker_timings,
     log_gate,
     transcript_text,
@@ -35,7 +37,6 @@ if TYPE_CHECKING:
 
     from stenographer.lib.daemon.telemetry import UtteranceTelemetry
     from stenographer.lib.delivery.deliverer import Deliverer
-    from stenographer.lib.refine.profiles import RefineProfile
     from stenographer.lib.refine.text_refiner import TextRefiner
     from stenographer.lib.transcribe.results import TranscriptionResult
     from stenographer.lib.transcribe.utterance_record import UtteranceRecord
@@ -50,6 +51,9 @@ class UtterancePipeline:
     The daemon retains the active record and finalizes it under its state lock.
     This collaborator only fills processing measurements and returns an outcome;
     it never retains samples, transcript text, or a record between runs.
+
+    ``delivered`` is True from the moment a run chooses DELIVERED until the
+    next run starts, so the daemon can ignore a cancel during the restore.
     """
 
     def __init__(
@@ -65,6 +69,7 @@ class UtterancePipeline:
         play_cue: Callable[[str], None],
         cancelled: Callable[[], bool],
         cancel_state: Callable[[], OverlayState],
+        copy_original: bool = True,
     ) -> None:
         self._min_speech_rms = min_speech_rms
         self._worker = worker
@@ -76,7 +81,9 @@ class UtterancePipeline:
         self._play_cue = play_cue
         self._cancelled = cancelled
         self._cancel_state = cancel_state
+        self._copy_original = copy_original
         self._refine_display_state: OverlayState | None = None
+        self.delivered = False
 
     def run(
         self,
@@ -89,6 +96,8 @@ class UtterancePipeline:
         """Run the ordered stages and report the existing terminal outcome name."""
         outcome_name = Outcome.ERROR.name
         self._refine_display_state = None
+        self.delivered = False
+        delivery_attempted = False
         try:
             if self._cancelled():
                 outcome_name = "CANCELLED"
@@ -129,17 +138,25 @@ class UtterancePipeline:
                 self._publish_state(self._cancel_state())
                 return outcome_name
             text, transcript_nonempty = self._format(result, record)
+            original = None
             if transcript_nonempty:
+                formatted = text
                 text = self._refine(text, record, profile=profile)
+                # The history keeps the original one entry behind the refined
+                # text, for the Agent rewrite only.
+                if self._copy_original and profile is RefineProfile.AGENT and text != formatted:
+                    original = formatted
                 if self._cancelled():
                     outcome_name = "CANCELLED"
                     self._publish_state(self._cancel_state())
                     return outcome_name
                 self._publish_state(OverlayState.DELIVERING)
+            delivery_attempted = transcript_nonempty
             try:
                 deliver_result = (
                     self._deliverer.deliver(
                         text,
+                        original=original,
                         on_copied=lambda: self._clipboard_checkpoint(record),
                         cancelled=self._cancelled,
                     )
@@ -175,6 +192,7 @@ class UtterancePipeline:
             elif outcome is Outcome.ERROR and record is not None:
                 record.failure = "copy_failed"
             if outcome is Outcome.DELIVERED:
+                self.delivered = True
                 self._publish_state(self._refine_display_state or OverlayState.HIDDEN)
                 self._play_cue("delivered")
             elif outcome is Outcome.ERROR:
@@ -185,6 +203,10 @@ class UtterancePipeline:
             log_failure(log, logging.WARNING, "pipeline: failed", exc, safe=False)
             self._fail("transcription pipeline failed")
         finally:
+            # The one restore point: every exit after a delivery attempt,
+            # including a cue or publish that raised, puts the clipboard back.
+            if delivery_attempted:
+                self._restore_clipboard(record)
             # Reporting can itself raise after a terminal outcome is selected.
             # Keep that verdict available to the daemon's finalization even if
             # this call cannot return; record detachment remains daemon-owned.
@@ -275,6 +297,14 @@ class UtterancePipeline:
             if profile is not None:
                 self._refine_display_state = OverlayState.FALLBACK
         return accepted
+
+    def _restore_clipboard(self, record: UtteranceRecord | None) -> None:
+        """Ask the deliverer for the restore. Never raises into the run."""
+        try:
+            self._deliverer.restore_clipboard()
+            apply_restore(record, self._deliverer.last_timings)
+        except Exception as exc:
+            log_failure(log, logging.WARNING, "pipeline: restore_failed", exc, safe=False)
 
     def _apply_worker_timings(self, record: UtteranceRecord | None) -> None:
         apply_worker_timings(record, self._worker.last_timings)

@@ -74,8 +74,8 @@
         <li><b>Your microphone</b><span>Captured through PortAudio, with a quiet-audio gate so an accidental press does not paste noise into your work.</span></li>
         <li><b>Local transcription</b><span>faster-whisper runs on your CPU or GPU. You download the model once, and only when you ask for it.</span></li>
         <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Agent can rephrase, reorder, group ideas, and remove repetitions. Its prompt requires every distinct detail and authorization limit to survive. Agent trusts the model: it has no semantic or length-ratio checks, so names, numbers, negations, uncertainty, or authorization may change. It retains format, empty-output, truncation, and wrapper checks. General keeps its original cleanup, length, and numeral checks. Detected failures fall back to the formatted transcript.</span></li>
-        <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key.</span></li>
-        <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. It stays on your clipboard too.</span></li>
+        <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key. When Agent rewrites the text, the original is copied just before it, so your clipboard history keeps both.</span></li>
+        <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. About half a second later, your previous clipboard item is back.</span></li>
       </ol>
 
       <div class="two">
@@ -103,7 +103,7 @@ update_check = false</code></pre>
       <ol class="steps">
         <li>
           <b>Check your essentials.</b>
-          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. Run <code>stenographer doctor</code> and it tells you what you are missing and how to fix it.</p>
+          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. <code>wl-paste</code>, from the same package, lets it restore your previous clipboard item. Run <code>stenographer doctor</code> and it tells you what you are missing and how to fix it.</p>
         </li>
         <li>
           <b>Run the quick install</b> above, or build it yourself using the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">build guide</a>.

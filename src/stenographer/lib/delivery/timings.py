@@ -15,3 +15,8 @@ class DeliveryTimings:
     release_timeout: bool | None
     copied: bool = False
     chord_sent: bool = False
+    snapshot_ms: float | None = None
+    original_copied: bool | None = None
+    original_copy_ms: float | None = None
+    restore_ms: float | None = None
+    restored: bool | None = None

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.key_table import KeyTable
     from stenographer.lib.platform.notifier import Notifier
     from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
+    from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer
 
 from stenographer.lib.platform.windows.support import _APP, _run_with_config, signal_reason
 
@@ -90,6 +91,12 @@ class WindowsPlatform(DiagnosticsHostMixin):
     def clipboard_writer(self, backend: str) -> Callable[[str], bool]:
         raise UnsupportedPlatformError("clipboard delivery is not available on Windows yet")
 
+    def clipboard_reader(self, backend: str) -> ClipboardReader | None:
+        raise UnsupportedPlatformError("clipboard restore is not available on Windows yet")
+
+    def clipboard_restorer(self, backend: str) -> ClipboardRestorer:
+        raise UnsupportedPlatformError("clipboard restore is not available on Windows yet")
+
     def notifier(self) -> Notifier:
         return NullNotifier()
 
@@ -138,6 +145,7 @@ class WindowsPlatform(DiagnosticsHostMixin):
             hotkey_access_ok=False,
             clipboard_ok=False,
             clipboard_backend="unavailable",
+            clipboard_read_ok=False,
             cue_player=None,
             service_enabled=None,
             service_active=None,
