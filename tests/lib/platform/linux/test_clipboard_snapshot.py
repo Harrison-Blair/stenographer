@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+import time
 
 import pytest
 
@@ -231,6 +233,27 @@ def test_a_payload_over_the_cap_is_no_snapshot_and_never_logged(tools, monkeypat
 
     assert "reason=too_large" in caplog.text
     assert SENTINEL.decode() not in caplog.text
+
+
+def test_the_reader_never_reads_more_than_one_byte_past_the_cap(tools, monkeypatch):
+    cap = 10
+    monkeypatch.setattr(clipboard, "_SNAPSHOT_MAX_BYTES", cap)
+    tools.configure(types=["text/plain"], payload=SENTINEL)
+    read = []
+
+    class CountingOs:
+        def __getattr__(self, name):
+            return getattr(os, name)
+
+        def read(self, fd, n):
+            chunk = os.read(fd, n)
+            read.append(len(chunk))
+            return chunk
+
+    monkeypatch.setattr(clipboard, "os", CountingOs())
+    assert clipboard._capture_bounded(["wl-paste", "-n"], time.monotonic() + 5) is None
+
+    assert 0 < sum(read) <= cap + 1
 
 
 def test_a_payload_at_the_cap_is_kept(tools, monkeypatch):

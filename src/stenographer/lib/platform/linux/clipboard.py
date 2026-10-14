@@ -248,8 +248,9 @@ def pick_snapshot_type(offered: list[str]) -> str | None:
 def _capture_bounded(argv: list[str], deadline: float) -> bytes | None:
     """*argv*'s stdout, or None once it fails, overruns the deadline or the cap.
 
-    ``capture_output`` cannot bound memory, so stdout is read in chunks up to
-    one byte past the cap and the child is killed on overflow or deadline.
+    ``capture_output`` cannot bound memory, so stdout is read in chunks that
+    stop at one byte past the cap, and the child is killed on overflow or
+    deadline.
     The output is another application's clipboard: no exception carrying it
     is ever raised or logged here, only the reason and the tool's name.
     """
@@ -275,7 +276,7 @@ def _capture_bounded(argv: list[str], deadline: float) -> bytes | None:
                 if remaining <= 0 or not selector.select(remaining):
                     reason = "timeout"
                     break
-                chunk = os.read(proc.stdout.fileno(), 65536)
+                chunk = os.read(proc.stdout.fileno(), min(65536, _SNAPSHOT_MAX_BYTES + 1 - size))
                 if not chunk:
                     break
                 size += len(chunk)

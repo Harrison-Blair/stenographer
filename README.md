@@ -110,6 +110,11 @@ cancel_binding = "KEY_ESC"  # "" disables cancellation
 [stenographer.feedback]
 overlay = false
 sound_pack = "minimal-ui"
+
+[stenographer.delivery]
+copy_original = true      # Agent only
+restore_clipboard = true
+restore_delay_ms = 500    # 0 to 60000
 ```
 
 CLI saves preserve comments and settings they do not know about. Restart the
