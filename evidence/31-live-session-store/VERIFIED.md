@@ -5,7 +5,7 @@
 | Task | 31-live-session-store |
 | Commit verified | a2f63bb |
 | Date | 2026-10-19 |
-| Verifier | t31-verifier (Claude Code, claude-opus-5-5) |
+| Verifier | t31-verifier-1 (Claude Code, claude-opus-5-5) |
 | Tooling | The worktree has no `.venv`. Commands ran with `/home/penguin/source/stenographer/.venv/bin/` and `PYTHONPATH=src`, the same as the worker's evidence. The import path resolves to this worktree's `src/`. |
 
 ## Results
