@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta, timezone
 
@@ -164,36 +165,35 @@ def test_close_logs_only_session_metrics_and_never_phrase_text(tmp_path, caplog)
 
 def test_audio_and_transcript_writes_are_safe_from_three_threads(tmp_path):
     writer = _open_writer(tmp_path)
+    thread_count = 3
     blocks = 100
     block_size = 320
+    first_write = threading.Barrier(thread_count)
 
-    def write_source(source: str, value: float) -> None:
-        block = np.full(block_size, value, dtype=np.float32)
-        for _ in range(blocks):
-            writer.write_audio(source, block)
-
-    def write_transcript() -> None:
+    def write_source(thread_index: int) -> None:
+        block = np.full(block_size, 0.25, dtype=np.float32)
+        first_write.wait()
+        writer.write_audio("mic", block)
         for index in range(blocks):
-            writer.append_line(_line(start=float(index), text=f"phrase {index}"))
+            writer.write_audio("mic", block)
+            writer.append_line(
+                _line(start=float(thread_index * blocks + index), text=f"phrase {index}")
+            )
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [
-            executor.submit(write_source, "mic", 0.25),
-            executor.submit(write_source, "system", -0.5),
-            executor.submit(write_transcript),
-        ]
+    with ThreadPoolExecutor(max_workers=thread_count) as executor:
+        futures = [executor.submit(write_source, index) for index in range(thread_count)]
         for future in futures:
             future.result()
 
     writer.close()
 
-    for source, expected in (("mic", 0.25), ("system", -0.5)):
-        audio, rate = soundfile.read(writer.path / f"{source}.flac", dtype="float32")
-        assert rate == 16000
-        assert len(audio) == blocks * block_size
-        np.testing.assert_allclose(audio, expected, atol=1e-6)
+    audio, rate = soundfile.read(writer.path / "mic.flac", dtype="float32")
+    assert rate == 16000
+    assert len(audio) == thread_count * (blocks + 1) * block_size
+    np.testing.assert_allclose(audio, 0.25, atol=1e-6)
+
     records = (writer.path / "transcript.jsonl").read_text(encoding="utf-8").splitlines()
-    assert len(records) == blocks
+    assert len(records) == thread_count * blocks
     assert all(json.loads(record)["source"] == "mic" for record in records)
 
 
