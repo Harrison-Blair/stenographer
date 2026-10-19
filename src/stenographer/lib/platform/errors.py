@@ -8,3 +8,7 @@ class UnsupportedPlatformError(RuntimeError):
 
 class SingleInstanceLockError(OSError):
     """Lock I/O failed while acquiring the single-instance lock — not contention."""
+
+
+class SystemAudioCaptureError(RuntimeError):
+    """System audio capture could not start or stopped unexpectedly."""

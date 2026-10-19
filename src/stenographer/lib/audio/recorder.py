@@ -22,6 +22,7 @@ from stenographer.lib.audio.metrics import elapsed_ms, reduce_clock
 from stenographer.lib.audio.records import CaptureStats
 from stenographer.lib.audio.resample import _resample_poly
 from stenographer.lib.audio.state import RecorderState
+from stenographer.lib.audio.streaming_resampler import StreamingResampler
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,9 @@ class Recorder:
     ``prepare`` opens (but does not start) an input stream, negotiating channels
     and sample rate down the fallback lists. ``start`` activates that retained
     stream and ``stop`` returns it to the prepared/stopped state for the next
-    capture. Audio is returned as a 1-D float32 array at the ASR rate.
+    capture. By default, audio is returned as a 1-D float32 array at the ASR
+    rate. In streaming mode, blocks go to the sink at the ASR rate, and the
+    complete capture is not buffered.
     """
 
     def __init__(
@@ -54,6 +57,7 @@ class Recorder:
         device: str | int | None,
         max_seconds: int,
         on_block: Callable[[np.ndarray, int, int], None] | None = None,
+        streaming: bool = False,
     ) -> None:
         normalized_device: str | int | None = None if device == "" else device
         if isinstance(normalized_device, str) and normalized_device.isdecimal():
@@ -63,6 +67,9 @@ class Recorder:
         self._device_name: str | None = None
         self._max_seconds = max_seconds
         self._on_block = on_block
+        self._streaming = streaming
+        self._streaming_resampler: StreamingResampler | None = None
+        self._output_frames = 0
         self._stream: Any = None
         # The PortAudio module this recorder negotiated with, remembered so a
         # recovery re-prepare reuses it rather than re-resolving the import.
@@ -169,7 +176,7 @@ class Recorder:
                     self._stream_epoch += 1
                     self._device_rate = rate
                     self._channels = channels
-                    self._max_frames = self._max_seconds * rate
+                    self._max_frames = 0 if self._streaming else self._max_seconds * rate
                     self._state = RecorderState.PREPARED
                     if rate != SAMPLE_RATE:
                         logger.warning(
@@ -240,6 +247,10 @@ class Recorder:
         self._first_callback_at = None
         self._callback_count = 0
         self._overflow_count = 0
+        self._output_frames = 0
+        self._streaming_resampler = (
+            StreamingResampler(self._device_rate, SAMPLE_RATE) if self._streaming else None
+        )
         self._recovered = recovery != "none"
         self._activation_started_at = started_at
         self._stream.start()
@@ -275,6 +286,12 @@ class Recorder:
             (callback_at, getattr(time_info, "inputBufferAdcTime", 0.0), frames)
         )
         block = indata[:, 0].copy() if indata.ndim == 2 else indata.copy()
+        if self._streaming:
+            self._frames += block.shape[0]
+            assert self._streaming_resampler is not None
+            self._emit_stream_block(self._streaming_resampler.process(block))
+            return
+
         self._blocks.append(block)
         if self._on_block is not None:
             # The block is already the callback's required mono copy.  The
@@ -285,12 +302,23 @@ class Recorder:
         if self._max_frames and self._frames >= self._max_frames:
             self._capped = True
 
+    def _emit_stream_block(self, block: np.ndarray) -> None:
+        if block.size == 0:
+            return
+        self._output_frames += block.size
+        if self._on_block is not None:
+            with contextlib.suppress(Exception):
+                self._on_block(
+                    block.astype(np.float32, copy=False), SAMPLE_RATE, self._stream_epoch
+                )
+
     def stop(self) -> np.ndarray:
         """Stop capture, secure the samples, and retain the stopped stream.
 
-        Any stream/stop or sample-finalization failure invalidates the stream
-        and discards the whole uncertain capture. Calling ``stop`` while merely
-        prepared is harmless and returns an empty array.
+        Non-streaming mode returns captured samples. Streaming mode returns an
+        empty array because its samples have already gone to the block sink.
+        Any stream/stop or sample-finalization failure invalidates the stream.
+        Calling ``stop`` while merely prepared is harmless and returns empty.
         """
         if self._state is not RecorderState.CAPTURING:
             self._discard_samples()
@@ -315,10 +343,18 @@ class Recorder:
                 first_callback_at=self._first_callback_at,
             )
             self._state = RecorderState.PREPARED
-            audio = np.concatenate(self._blocks) if self._blocks else np.empty(0, dtype=np.float32)
-            if self._device_rate != SAMPLE_RATE:
-                audio = _resample_poly(audio, self._device_rate, SAMPLE_RATE)
-            audio = audio.astype(np.float32, copy=False)
+            if self._streaming:
+                assert self._streaming_resampler is not None
+                self._emit_stream_block(self._streaming_resampler.flush())
+                audio = np.empty(0, dtype=np.float32)
+            else:
+                audio = (
+                    np.concatenate(self._blocks) if self._blocks else np.empty(0, dtype=np.float32)
+                )
+                if self._device_rate != SAMPLE_RATE:
+                    audio = _resample_poly(audio, self._device_rate, SAMPLE_RATE)
+                audio = audio.astype(np.float32, copy=False)
+            output_frames = self._output_frames if self._streaming else int(audio.size)
         except Exception as exc:
             failed_frames = self._frames
             failed_overflow = self._overflow
@@ -342,7 +378,7 @@ class Recorder:
             activate_ms=self._activation_ms,
             capture_seconds=elapsed,
             input_frames=input_frames,
-            output_frames=int(audio.size),
+            output_frames=output_frames,
             overflow=overflow,
             capped=capped,
             first_callback_at=callback_clock.first_callback_at,
@@ -367,7 +403,7 @@ class Recorder:
                 "captured",
                 duration_seconds=round(elapsed, 3),
                 input_frames=input_frames,
-                output_frames=int(audio.size),
+                output_frames=output_frames,
                 rate_hz=self._device_rate,
                 channels=self._channels,
                 overflow=int(overflow),
@@ -384,7 +420,7 @@ class Recorder:
             logger.warning(
                 "recorder: input_overflow input_frames=%d output_frames=%d capped=%d",
                 input_frames,
-                audio.size,
+                output_frames,
                 int(capped),
             )
         return audio
@@ -415,6 +451,8 @@ class Recorder:
     def _discard_samples(self) -> None:
         self._blocks = []
         self._frames = 0
+        self._output_frames = 0
+        self._streaming_resampler = None
         self._capped = False
         self._overflow = False
         self._capture_started_at = None
