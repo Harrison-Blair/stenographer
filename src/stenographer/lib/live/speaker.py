@@ -37,7 +37,7 @@ class SpeakerClustering:
     speakers: list[Speaker] = field(default_factory=list)
     next_number: int = 1
 
-    def assign(self, embedding: np.ndarray) -> str | None:
+    def assign(self, embedding: np.ndarray) -> str:
         """Return the best matching speaker ID or create a new cluster."""
         if self.speakers:
             scores = [speaker.similarity(embedding) for speaker in self.speakers]
