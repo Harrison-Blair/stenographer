@@ -140,6 +140,12 @@ exclude = [
     "!/evidence/30-live-spike/V3.md",
     "!/evidence/30-live-spike/V4.md",
     "!/evidence/30-live-spike/V5.md",
+    "!/evidence/33-live-speakers/",
+    "!/evidence/33-live-speakers/V1.md",
+    "!/evidence/33-live-speakers/V2.md",
+    "!/evidence/33-live-speakers/V3.md",
+    "!/evidence/33-live-speakers/V4.md",
+    "!/evidence/33-live-speakers/VERIFIED.md",
     # GitHub Pages site; the icon and font are copied from src/ at deploy time.
     "!/site/",
     "!/site/index.html",
