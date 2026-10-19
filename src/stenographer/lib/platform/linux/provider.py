@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.key_table import KeyTable
     from stenographer.lib.platform.notifier import Notifier
     from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
+    from stenographer.lib.platform.system_audio import SystemAudioCapture
     from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer
 
 from stenographer.lib.platform.linux.support import signal_reason
@@ -130,6 +131,11 @@ class LinuxPlatform(DiagnosticsHostMixin):
 
         player = detect_player()
         return LinuxCuePlayer(player) if player is not None else None
+
+    def system_audio_capture(self) -> SystemAudioCapture:
+        from stenographer.lib.platform.linux.system_audio import LinuxSystemAudioCapture
+
+        return LinuxSystemAudioCapture()
 
     # --- process / lifecycle ---
     def asr_transport(self) -> AsrTransport:

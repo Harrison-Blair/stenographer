@@ -19,6 +19,7 @@ from stenographer.lib.platform.key_injector import KeyInjector
 from stenographer.lib.platform.key_table import KeyTable
 from stenographer.lib.platform.notifier import Notifier
 from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
+from stenographer.lib.platform.system_audio import SystemAudioCapture
 from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer, ClipboardWriter
 
 
@@ -83,6 +84,9 @@ class Platform(Protocol):
     def notifier(self) -> Notifier: ...
 
     def cue_player(self) -> CuePlayer | None: ...
+
+    # --- audio capture ---
+    def system_audio_capture(self) -> SystemAudioCapture: ...
 
     # --- process / lifecycle ---
     def asr_transport(self) -> AsrTransport:

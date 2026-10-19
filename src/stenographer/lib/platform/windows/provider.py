@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.key_table import KeyTable
     from stenographer.lib.platform.notifier import Notifier
     from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
+    from stenographer.lib.platform.system_audio import SystemAudioCapture
     from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer
 
 from stenographer.lib.platform.windows.support import _APP, _run_with_config, signal_reason
@@ -112,6 +113,9 @@ class WindowsPlatform(DiagnosticsHostMixin):
         from stenographer.lib.platform.preview_audio import PortAudioCuePlayer
 
         return PortAudioCuePlayer()
+
+    def system_audio_capture(self) -> SystemAudioCapture:
+        raise UnsupportedPlatformError("system audio capture is not available on Windows")
 
     # --- process / lifecycle ---
     def asr_transport(self) -> AsrTransport:

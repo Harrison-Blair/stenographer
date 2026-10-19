@@ -525,6 +525,54 @@ def test_the_cap_stops_buffering_without_ending_the_capture(caplog):
     assert _warnings(caplog) == ["recorder: capture_capped max_seconds=1 frames=20000"]
 
 
+def test_streaming_keeps_no_blocks_has_no_cap_and_emits_16khz_blocks():
+    received: list[np.ndarray] = []
+    rates: list[int] = []
+
+    def sink(block, rate, epoch):
+        received.append(block.copy())
+        rates.append(rate)
+
+    sounddevice = FakeSoundDevice(reject=_only(channels=1))
+    recorder = _prepared(sounddevice, max_seconds=1, streaming=True, on_block=sink)
+    recorder.start()
+
+    for _ in range(3):
+        _feed(recorder, np.full(8000, 0.25, dtype=np.float32))
+    audio = recorder.stop()
+
+    assert recorder._blocks == []
+    assert recorder._max_frames == 0
+    assert recorder.last_capture.capped is False
+    assert recorder.last_capture.input_frames == 24000
+    assert audio.size == 0
+    assert sum(block.size for block in received) == 24000
+    assert all(block.dtype == np.float32 for block in received)
+    assert rates == [16000, 16000, 16000]
+
+
+def test_streaming_resamples_continuous_fallback_rate_without_block_drift():
+    received: list[np.ndarray] = []
+
+    def sink(block, rate, epoch):
+        assert rate == 16000
+        received.append(block.copy())
+
+    sounddevice = FakeSoundDevice(reject=_only(rate=48000, channels=1))
+    recorder = _prepared(sounddevice, max_seconds=1, streaming=True, on_block=sink)
+    recorder.start()
+
+    for _ in range(3):
+        _feed(recorder, np.full(16000, 0.25, dtype=np.float32))
+    recorder.stop()
+
+    assert recorder._blocks == []
+    assert sum(block.size for block in received) == 16000
+    assert recorder.last_capture.output_frames == 16000
+    assert all(block.dtype == np.float32 for block in received)
+    assert np.mean(np.concatenate(received)[100:-100]) == pytest.approx(0.25, abs=0.02)
+
+
 def test_the_optional_block_sink_sees_mono_blocks_and_cannot_break_the_capture():
     seen: list[tuple[int, int, int]] = []
 
