@@ -165,6 +165,17 @@ def test_windows_stub_directories_honour_xdg_then_windows_conventions():
     assert plat.state_dir({"LOCALAPPDATA": "C:/Users/alice/AppData/Local"}, home) == Path(
         "C:/Users/alice/AppData/Local/stenographer"
     )
+    assert plat.data_dir({"XDG_DATA_HOME": "/xdg-data"}, home) == Path("/xdg-data/stenographer")
+    assert plat.data_dir({}, home) == Path("C:/Users/alice/AppData/Local/stenographer")
+
+
+def test_macos_stub_data_directory_honours_xdg_and_application_support():
+    from stenographer.lib.platform.macos.provider import MacOSPlatform
+
+    plat = MacOSPlatform()
+    home = Path("/Users/alice")
+    assert plat.data_dir({"XDG_DATA_HOME": "/xdg-data"}, home) == Path("/xdg-data/stenographer")
+    assert plat.data_dir({}, home) == Path("/Users/alice/Library/Application Support/stenographer")
 
 
 def test_every_provider_parses_the_shipped_default_binding():

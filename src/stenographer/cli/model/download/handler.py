@@ -114,6 +114,29 @@ def _download_asr(cfg: Config) -> int:
     return 0
 
 
+def _download_live() -> int:
+    import os
+    from pathlib import Path
+
+    from stenographer.lib.live.download import download_live_models
+    from stenographer.lib.live.errors import LiveDownloadError
+    from stenographer.lib.live.models import LIVE_MODELS
+    from stenographer.lib.platform import current_platform
+
+    data_dir = current_platform().data_dir(os.environ, Path.home())
+    model_dir = data_dir / "models" / "live"
+    try:
+        downloaded = set(download_live_models(data_dir))
+    except LiveDownloadError as exc:
+        print(f"stenographer: could not download live models: {exc}", file=sys.stderr)
+        return 1
+
+    for model in LIVE_MODELS:
+        status = "downloaded" if model.filename in downloaded else "already present"
+        print(f"stenographer: live model {model.filename} {status} at {model_dir}")
+    return 0
+
+
 def _pull_refine(cfg: Config) -> int:
     from stenographer.lib.refine.client import pull_model
     from stenographer.lib.refine.errors import RefineError
@@ -135,10 +158,16 @@ def cmd_model_download(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.cli.shared.terminal import ask_yes_no, open_console
 
     console = open_console(None, None, None)
-    asr, refine = selection(
-        args, interactive=console.interactive, refine_enabled=cfg.refine.enabled
-    )
-    explicit = bool(getattr(args, "asr", False) or getattr(args, "refine", False))
+    live = bool(getattr(args, "live", False))
+    if live and _download_live():
+        return 1
+    if live:
+        asr, refine = bool(getattr(args, "asr", False)), bool(getattr(args, "refine", False))
+    else:
+        asr, refine = selection(
+            args, interactive=console.interactive, refine_enabled=cfg.refine.enabled
+        )
+    explicit = live or bool(getattr(args, "asr", False) or getattr(args, "refine", False))
     if not explicit:
         lines = plan_lines(
             cfg,

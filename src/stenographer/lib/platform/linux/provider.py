@@ -40,6 +40,11 @@ class LinuxPlatform(DiagnosticsHostMixin):
 
         return state_dir(env, home)
 
+    def data_dir(self, env: Mapping[str, str], home: Path) -> Path:
+        from stenographer.lib.platform.linux.dirs import data_dir
+
+        return data_dir(env, home)
+
     def runtime_dir(self, env: Mapping[str, str]) -> Path:
         from stenographer.lib.platform.linux.dirs import runtime_dir
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from stenographer.lib.platform.linux.dirs import (
     config_path,
+    data_dir,
     journal_attached,
     runtime_dir,
     state_dir,
@@ -33,6 +34,14 @@ def test_resolve_state_dir_prefers_xdg_state_home():
 
 def test_resolve_state_dir_falls_back_below_home():
     assert state_dir({}, Path("/home/alice")) == Path("/home/alice/.local/state/stenographer")
+
+
+def test_resolve_data_dir_prefers_xdg_data_home():
+    assert data_dir({"XDG_DATA_HOME": "/data"}, Path("/home/alice")) == Path("/data/stenographer")
+
+
+def test_resolve_data_dir_falls_back_below_home():
+    assert data_dir({}, Path("/home/alice")) == Path("/home/alice/.local/share/stenographer")
 
 
 def test_runtime_dir_prefers_xdg_runtime_dir():

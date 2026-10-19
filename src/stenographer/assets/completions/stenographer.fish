@@ -79,6 +79,8 @@ complete -c stenographer -n '__stenographer_nested_command_is model download' -f
     -d 'Download only the speech-recognition model'
 complete -c stenographer -n '__stenographer_nested_command_is model download' -f -l refine \
     -d 'Pull only the refine model'
+complete -c stenographer -n '__stenographer_nested_command_is model download' -f -l live \
+    -d 'Download the live voice-activity and speaker models'
 
 complete -c stenographer -n '__stenographer_nested_command_needed completion' -f \
     -a 'bash zsh fish'

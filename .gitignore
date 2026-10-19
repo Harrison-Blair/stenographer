@@ -89,6 +89,16 @@
 !/docs/reference/guru/code-smells.md
 !/docs/reference/guru/refactoring-techniques.md
 
+# Task evidence required for review.
+!/evidence/
+!/evidence/30-live-spike/
+!/evidence/30-live-spike/bench.md
+!/evidence/30-live-spike/V1.md
+!/evidence/30-live-spike/V2.md
+!/evidence/30-live-spike/V3.md
+!/evidence/30-live-spike/V4.md
+!/evidence/30-live-spike/V5.md
+
 # GitHub Pages site; the icon and font are copied from src/ at deploy time.
 !/site/
 !/site/index.html

@@ -20,6 +20,8 @@ dependencies = [
     "python-xlib==0.33; sys_platform == 'linux'",
     "tomlkit>=0.13",
     "psutil>=6.0",
+    "sherpa-onnx>=1.12.26",
+    "textual>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -129,6 +131,15 @@ exclude = [
     "!/docs/reference/guru/",
     "!/docs/reference/guru/code-smells.md",
     "!/docs/reference/guru/refactoring-techniques.md",
+    # Task evidence required for review.
+    "!/evidence/",
+    "!/evidence/30-live-spike/",
+    "!/evidence/30-live-spike/bench.md",
+    "!/evidence/30-live-spike/V1.md",
+    "!/evidence/30-live-spike/V2.md",
+    "!/evidence/30-live-spike/V3.md",
+    "!/evidence/30-live-spike/V4.md",
+    "!/evidence/30-live-spike/V5.md",
     # GitHub Pages site; the icon and font are copied from src/ at deploy time.
     "!/site/",
     "!/site/index.html",
