@@ -17,6 +17,7 @@ import numpy as np
 import soundfile as sf
 
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.logging.pipeline import fmt_event
 
 log = logging.getLogger(__name__)
 _SAMPLE_RATE = 16000
@@ -139,11 +140,14 @@ class SessionWriter:
                 source: samples / _SAMPLE_RATE for source, samples in self._source_samples.items()
             }
             log.info(
-                "Saved live session folder=%s line_count=%d source_line_counts=%s audio_seconds=%s",
-                self.path,
-                len(self._lines),
-                source_lines,
-                audio_seconds,
+                fmt_event(
+                    "live",
+                    "session_saved",
+                    folder=self.path,
+                    line_count=len(self._lines),
+                    source_line_counts=source_lines,
+                    audio_seconds=audio_seconds,
+                )
             )
 
     def _write_markdown(self) -> None:
