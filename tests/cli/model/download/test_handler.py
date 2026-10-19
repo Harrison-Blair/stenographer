@@ -27,6 +27,35 @@ class _Terminal(io.StringIO):
         return True
 
 
+def test_download_parser_accepts_the_live_model_flag():
+    import argparse
+
+    from stenographer.cli.model.download.parser import register
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    register(subparsers)
+
+    assert parser.parse_args(["download", "--live"]).live is True
+
+
+def test_live_flag_does_not_select_the_legacy_models(monkeypatch, capsys):
+    from stenographer.cli.model.download import handler
+    from stenographer.lib.transcribe import download
+
+    legacy_calls: list[str] = []
+    monkeypatch.setattr(handler, "_download_live", lambda: 0)
+    monkeypatch.setattr(download, "download_model", legacy_calls.append)
+
+    result = cmd_model_download.__wrapped__(
+        argparse.Namespace(live=True, asr=False, refine=False), Config.defaults()
+    )
+
+    assert result == 0
+    assert legacy_calls == []
+    assert capsys.readouterr().out == ""
+
+
 def test_download_fetches_the_configured_model_and_names_it(monkeypatch, capsys):
     from stenographer.lib.transcribe import download
 

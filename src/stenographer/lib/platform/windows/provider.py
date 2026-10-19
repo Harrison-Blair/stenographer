@@ -49,6 +49,14 @@ class WindowsPlatform(DiagnosticsHostMixin):
         base = Path(local) if local else home / "AppData" / "Local"
         return base / _APP
 
+    def data_dir(self, env: Mapping[str, str], home: Path) -> Path:
+        xdg = env.get("XDG_DATA_HOME")
+        if xdg:
+            return Path(xdg) / _APP
+        local = env.get("LOCALAPPDATA")
+        base = Path(local) if local else home / "AppData" / "Local"
+        return base / _APP
+
     def runtime_dir(self, env: Mapping[str, str]) -> Path:
         local = env.get("LOCALAPPDATA")
         base = Path(local) if local else Path.home() / "AppData" / "Local"

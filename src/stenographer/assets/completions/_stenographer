@@ -53,7 +53,8 @@ _stenographer_impl() {
             elif [[ "${words[3]-}" == download ]]; then
                 _values 'option' '-h[show help]' '--help[show help]' \
                     '--asr[download only the speech-recognition model]' \
-                    '--refine[pull only the refine model]'
+                    '--refine[pull only the refine model]' \
+                    '--live[download the live voice-activity and speaker models]'
             fi
             ;;
         completion)

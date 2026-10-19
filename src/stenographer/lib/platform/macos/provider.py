@@ -48,6 +48,14 @@ class MacOSPlatform(DiagnosticsHostMixin):
         )
         return base / _APP
 
+    def data_dir(self, env: Mapping[str, str], home: Path) -> Path:
+        base = (
+            Path(env["XDG_DATA_HOME"])
+            if env.get("XDG_DATA_HOME")
+            else (home / "Library" / "Application Support")
+        )
+        return base / _APP
+
     def runtime_dir(self, env: Mapping[str, str]) -> Path:
         return self.state_dir(env, Path.home()) / "runtime"
 
