@@ -539,9 +539,10 @@ def test_streaming_keeps_no_blocks_has_no_cap_and_emits_16khz_blocks():
 
     for _ in range(3):
         _feed(recorder, np.full(8000, 0.25, dtype=np.float32))
+    assert recorder._blocks == []
+
     audio = recorder.stop()
 
-    assert recorder._blocks == []
     assert recorder._max_frames == 0
     assert recorder.last_capture.capped is False
     assert recorder.last_capture.input_frames == 24000
