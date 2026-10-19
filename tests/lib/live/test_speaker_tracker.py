@@ -9,9 +9,12 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import soundfile
 
+from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.speaker import SpeakerClustering
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
+from stenographer.lib.platform import current_platform
 
 
 def test_clustering_creates_a_speaker_when_no_match_reaches_threshold():
@@ -106,9 +109,7 @@ def _tracker(monkeypatch, embeddings):
 
 def test_tracker_extracts_samples_and_uses_the_default_label(monkeypatch):
     samples = np.array([0.15, -0.25, 0.4], dtype=np.float32)
-    tracker, config, streams = _tracker(
-        monkeypatch, [np.array([1.0, 0.0], dtype=np.float32)]
-    )
+    tracker, config, streams = _tracker(monkeypatch, [np.array([1.0, 0.0], dtype=np.float32)])
 
     assert tracker.assign(samples) == "speaker-1"
     assert tracker.label("speaker-1") == "Speaker 1"
@@ -143,12 +144,45 @@ def test_renaming_two_speakers_to_the_same_name_shares_the_label(monkeypatch):
 
 
 def test_rename_refuses_the_mic_and_empty_names(monkeypatch):
-    tracker, _, _ = _tracker(
-        monkeypatch, [np.array([1.0, 0.0], dtype=np.float32)]
-    )
+    tracker, _, _ = _tracker(monkeypatch, [np.array([1.0, 0.0], dtype=np.float32)])
     speaker_id = tracker.assign(np.array([0.1], dtype=np.float32))
 
     with pytest.raises(ValueError):
         tracker.rename("you", "Alice")
     with pytest.raises(ValueError):
         tracker.rename(speaker_id, "  \t ")
+
+
+def test_public_speaker_clips_cluster_with_the_real_model():
+    worktree = Path(__file__).resolve().parents[3]
+    audio_dir = worktree / "tmp" / "live_audio"
+    clip_paths = (
+        audio_dir / "speaker1_a_en_16k.wav",
+        audio_dir / "speaker1_b_en_16k.wav",
+        audio_dir / "speaker2_a_en_16k.wav",
+    )
+    missing_clips = [path.name for path in clip_paths if not path.is_file()]
+    if missing_clips:
+        pytest.skip(f"public speaker clips are absent from tmp/live_audio: {missing_clips}")
+
+    data_dir = current_platform().data_dir(
+        {"XDG_DATA_HOME": str(worktree / "tmp" / "xdg-data")}, Path.home()
+    )
+    model_path = data_dir / "models" / "live" / LIVE_MODELS[1].filename
+    if not model_path.is_file():
+        pytest.skip(f"live speaker model is absent: {model_path}")
+    pytest.importorskip("sherpa_onnx", reason="sherpa-onnx is not installed")
+
+    recordings = []
+    for path in clip_paths:
+        samples, sample_rate = soundfile.read(path, dtype="float32")
+        assert sample_rate == 16000
+        recordings.append(samples)
+
+    tracker = SpeakerTracker(model_path, threshold=0.50, num_threads=2)
+    first = tracker.assign(recordings[0])
+    second = tracker.assign(recordings[1])
+    third = tracker.assign(recordings[2])
+
+    assert first == second
+    assert third != first
