@@ -24,14 +24,14 @@ class QuitConfirm(ModalScreen[bool]):
     CSS = """
     QuitConfirm {
         align: center middle;
-        background: $background 75%;
+        background: transparent;
     }
     #quit-dialog {
         width: 64;
         height: auto;
         padding: 1 2;
         border: round $primary;
-        background: $surface;
+        background: transparent;
     }
     #quit-prompt {
         height: auto;

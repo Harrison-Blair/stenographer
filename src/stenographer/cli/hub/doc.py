@@ -14,6 +14,7 @@
 - services.py: Own recording, playback, and shared session services.
 - session_jobs.py: Reprocess saved transcripts with current models and settings.
 - sessions_view.py: Render saved-session storage, list, detail, and transcript.
+- selection.py: Render selected rows with an accent marker and no fill.
 - setup_state.py: Track wizard navigation and completion state.
 - setup_wizard.py: Render setup steps and reuse setup workflow probes.
 """

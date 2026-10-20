@@ -18,14 +18,14 @@ class ConfigPrompt(ModalScreen[str | None]):
     CSS = """
     ConfigPrompt {
         align: center middle;
-        background: $background 75%;
+        background: transparent;
     }
     #config-prompt {
         width: 72;
         height: auto;
         padding: 1 2;
         border: round $primary;
-        background: $surface;
+        background: transparent;
     }
     #config-prompt-message {
         height: auto;

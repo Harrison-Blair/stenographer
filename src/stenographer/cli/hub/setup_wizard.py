@@ -7,6 +7,10 @@ import pathlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from rich.text import Text
+
+from stenographer.cli.hub.selection import append_line
+
 if TYPE_CHECKING:
     from stenographer.cli.hub.setup_state import SetupWizard
     from stenographer.lib.config.models import Config
@@ -58,35 +62,48 @@ SETUP_STEPS = (
 )
 
 
-def render(wizard: SetupWizard, config: Config | None) -> str:
+def render(wizard: SetupWizard, config: Config | None) -> Text:
     """Render the current wizard state and the settings owned by this step."""
-    lines = ["Quick setup · steps 1-3" if wizard.quick else "Setup wizard · 6 steps", ""]
+    lines = Text()
+    append_line(lines, "Quick setup · steps 1-3" if wizard.quick else "Setup wizard · 6 steps")
+    append_line(lines, "")
     for index, step in enumerate(wizard.steps, 1):
-        if step.step_id in wizard.completed:
-            marker = "✓"
+        selected = index - 1 == wizard.index and not wizard.finished
+        if selected:
+            status = ""
+        elif step.step_id in wizard.completed:
+            status = "✓ "
         elif step.step_id in wizard.skipped:
-            marker = "-"
+            status = "- "
         else:
-            marker = "▸" if index - 1 == wizard.index and not wizard.finished else "○"
-        lines.append(f"{marker} {index} {step.title}")
+            status = "○ "
+        append_line(
+            lines,
+            f"{status}{index} {step.title}",
+            selectable=True,
+            selected=selected,
+        )
     if wizard.finished:
-        lines.extend(("", "Setup path complete."))
-        return "\n".join(lines)
+        append_line(lines, "")
+        append_line(lines, "Setup path complete.")
+        return lines
     step = wizard.step
-    lines.extend(("", f"{step.title}: {step.description}"))
+    append_line(lines, "")
+    append_line(lines, f"{step.title}: {step.description}")
     if step.config_key is not None and config is not None:
         group, _, key = step.config_key.partition(".")
         value = getattr(getattr(config, group), key)
         shown = "automatic" if value is None else str(value)
-        lines.append(f"Current {step.config_key}: {shown}")
+        append_line(lines, f"Current {step.config_key}: {shown}")
     if wizard.last_test:
-        lines.append(f"Test: {wizard.last_test}")
-    lines.extend(("", "enter next   b back   s skip   t test   e edit   D write defaults"))
+        append_line(lines, f"Test: {wizard.last_test}")
+    append_line(lines, "")
+    append_line(lines, "enter next   b back   s skip   t test   e edit   D write defaults")
     if step.step_id == "models":
-        lines.append("m download model (asks for confirmation)")
+        append_line(lines, "m download model (asks for confirmation)")
     if not wizard.quick:
-        lines.append("Q quick path (steps 1-3)")
-    return "\n".join(lines)
+        append_line(lines, "Q quick path (steps 1-3)")
+    return lines
 
 
 def test_step(step_id: str, config: Config, config_dir: pathlib.Path) -> str:

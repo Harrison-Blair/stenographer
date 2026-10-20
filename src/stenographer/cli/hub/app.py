@@ -9,6 +9,7 @@ import pathlib
 from collections.abc import Callable
 from typing import ClassVar
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -21,6 +22,7 @@ from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, build_report
 from stenographer.cli.hub.files_view import FilesPanel
 from stenographer.cli.hub.live_view import read_cpu_percent, render_live_view
+from stenographer.cli.hub.selection import append_line
 from stenographer.cli.hub.sessions_view import SessionsPanel
 from stenographer.cli.hub.setup_state import SetupWizard
 from stenographer.cli.hub.setup_wizard import render as render_setup
@@ -92,8 +94,175 @@ class HubApp(App[None]):
     ]
     CSS = """
     Screen {
-        background: #0b0d12;
-        color: #e3e6ec;
+        background: transparent;
+        color: ansi_default;
+        scrollbar-size: 0 0;
+        scrollbar-background: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-background-active: transparent;
+        scrollbar-corner-color: transparent;
+    }
+    ModalScreen {
+        background: transparent;
+        scrollbar-size: 0 0;
+        scrollbar-background: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-background-active: transparent;
+        scrollbar-corner-color: transparent;
+    }
+    Screen > .screen--selection {
+        background: transparent;
+        color: #5fd7ff;
+        text-style: bold;
+    }
+    Header, HeaderIcon, HeaderClock, HeaderTitle,
+    Footer, FooterKey, FooterLabel, Tooltip {
+        background: transparent;
+        color: ansi_default;
+    }
+    ScrollView, VerticalScroll, HorizontalScroll {
+        background: transparent;
+        background-tint: transparent;
+        scrollbar-size: 0 0;
+        scrollbar-background: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-background-active: transparent;
+        scrollbar-color: #3a4150;
+        scrollbar-color-hover: #5fd7ff;
+        scrollbar-color-active: #5fd7ff;
+        scrollbar-corner-color: transparent;
+    }
+    HeaderIcon:hover, HeaderClock:hover, FooterKey:hover {
+        background: transparent;
+        background-tint: transparent;
+    }
+    FooterKey .footer-key--key,
+    FooterKey .footer-key--description {
+        background: transparent;
+    }
+    ScrollBar {
+        background: transparent;
+    }
+    DataTable {
+        background: transparent;
+        background-tint: transparent;
+        color: ansi_default;
+    }
+    DataTable > .datatable--header,
+    DataTable > .datatable--fixed,
+    DataTable > .datatable--even-row,
+    DataTable > .datatable--odd-row,
+    DataTable > .datatable--cursor,
+    DataTable > .datatable--fixed-cursor,
+    DataTable > .datatable--header-cursor,
+    DataTable > .datatable--header-hover,
+    DataTable > .datatable--hover {
+        background: transparent;
+        background-tint: transparent;
+    }
+    DataTable.datatable--fixed-cursor,
+    DataTable:focus,
+    DataTable:focus > .datatable--header,
+    DataTable:ansi > .datatable--header,
+    DataTable:dark > .datatable--even-row,
+    DataTable:focus > .datatable--cursor,
+    DataTable:focus > .datatable--fixed-cursor,
+    DataTable:focus > .datatable--header-cursor {
+        background: transparent;
+        background-tint: transparent;
+    }
+    DataTable > .datatable--cursor,
+    DataTable > .datatable--fixed-cursor,
+    DataTable > .datatable--header-cursor,
+    DataTable:focus > .datatable--cursor,
+    DataTable:focus > .datatable--fixed-cursor,
+    DataTable:focus > .datatable--header-cursor {
+        color: #5fd7ff;
+        text-style: bold;
+    }
+    ListView, ListItem, OptionList, Select, SpeakerSelect, SelectCurrent,
+    SelectOverlay, SpeakerSelectOverlay, Input, Button {
+        background: transparent;
+        background-tint: transparent;
+        color: ansi_default;
+    }
+    Input, SelectCurrent {
+        border: round #3a4150;
+    }
+    ListView:focus {
+        background: transparent;
+        background-tint: transparent;
+        border: round #5fd7ff;
+    }
+    ListView > ListItem.-highlight,
+    ListView:focus > ListItem.-highlight,
+    ListView > ListItem.-hovered,
+    OptionList > .option-list--option-highlighted,
+    OptionList > .option-list--option-hover,
+    SpeakerSelectOverlay > .option-list--option-highlighted,
+    SpeakerSelectOverlay > .option-list--option-hover,
+    OptionList:focus > .option-list--option-highlighted,
+    SpeakerSelectOverlay:focus > .option-list--option-highlighted {
+        background: transparent;
+        color: #5fd7ff;
+        text-style: bold;
+    }
+    OptionList:focus, SelectCurrent:focus, SelectOverlay:focus,
+    SpeakerSelect:focus > SelectCurrent, SpeakerSelectOverlay:focus,
+    Input:focus {
+        background: transparent;
+        background-tint: transparent;
+        border: round #5fd7ff;
+    }
+    Input > .input--cursor, Input > .input--selection {
+        background: transparent;
+        color: #5fd7ff;
+        text-style: bold;
+    }
+    SpeakerSelect > SelectCurrent,
+    SpeakerSelect > SpeakerSelectOverlay {
+        background: transparent;
+        background-tint: transparent;
+        color: ansi_default;
+    }
+    SpeakerSelect > SpeakerSelectOverlay {
+        width: 1fr;
+        display: none;
+        height: auto;
+        max-height: 12;
+        overlay: screen;
+        constrain: none inside;
+        border: round #3a4150;
+    }
+    SpeakerSelect.-expanded > SpeakerSelectOverlay {
+        display: block;
+    }
+    Button, Button.-style-default, Button.-style-flat,
+    Button.-primary, Button.-success, Button.-warning, Button.-error {
+        background: transparent;
+        background-tint: transparent;
+        color: ansi_default;
+        border: round #3a4150;
+    }
+    Button:hover, Button:focus, Button.-active,
+    Button.-style-default:hover, Button.-style-default:focus, Button.-style-default.-active,
+    Button.-style-flat:hover, Button.-style-flat:focus, Button.-style-flat.-active,
+    Button.-primary:hover, Button.-primary:focus, Button.-primary.-active,
+    Button.-success:hover, Button.-success:focus, Button.-success.-active,
+    Button.-warning:hover, Button.-warning:focus, Button.-warning.-active,
+    Button.-error:hover, Button.-error:focus, Button.-error.-active {
+        background: transparent;
+        background-tint: transparent;
+        color: #5fd7ff;
+        text-style: bold;
+        border: round #5fd7ff;
+    }
+    * {
+        scrollbar-size: 0 0;
+        scrollbar-background: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-background-active: transparent;
+        scrollbar-corner-color: transparent;
     }
     #hub-layout {
         height: 1fr;
@@ -133,7 +302,7 @@ class HubApp(App[None]):
         copy_report: Callable[[str], None] | None = None,
         files_home: pathlib.Path | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(ansi_color=True)
         self.services = services
         self.files_panel = FilesPanel(
             home=files_home,
@@ -248,9 +417,8 @@ class HubApp(App[None]):
         screen = self._hub_screen
         if screen is None or not self.is_running or not self.is_mounted(screen):
             return
-        rows = []
+        sidebar = Text()
         for index, (section, label) in enumerate(_SECTIONS, start=1):
-            marker = ">" if section == self._section else " "
             if section == "doctor":
                 badge = (
                     f"{self._doctor_report.warn_count}W {self._doctor_report.fail_count}F"
@@ -261,8 +429,13 @@ class HubApp(App[None]):
                 )
             else:
                 badge = ""
-            rows.append(f"{marker} {index} {label:<8} {badge}")
-        screen.query_one("#sidebar", Static).update("\n".join(rows))
+            append_line(
+                sidebar,
+                f"{index} {label:<8} {badge}",
+                selectable=True,
+                selected=section == self._section,
+            )
+        screen.query_one("#sidebar", Static).update(sidebar)
 
         title = next(label for section, label in _SECTIONS if section == self._section)
         content = _PLACEHOLDERS[self._section]
