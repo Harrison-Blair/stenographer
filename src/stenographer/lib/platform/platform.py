@@ -9,6 +9,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import TextIO
 
+    from stenographer.lib.platform.ffmpeg_decoder import FfmpegDecoder
+
 
 from stenographer.lib.platform.asr_transport import AsrTransport
 from stenographer.lib.platform.cue_player import CuePlayer
@@ -87,6 +89,10 @@ class Platform(Protocol):
 
     # --- audio capture ---
     def system_audio_capture(self) -> SystemAudioCapture: ...
+
+    def ffmpeg_decoder(self) -> FfmpegDecoder:
+        """Access system ffmpeg and ffprobe for unsupported audio formats."""
+        ...
 
     # --- process / lifecycle ---
     def asr_transport(self) -> AsrTransport:

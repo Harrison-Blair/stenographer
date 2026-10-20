@@ -101,6 +101,25 @@ def test_batch_relabel_short_residue_does_not_create_speakers():
     assert len({line.label for line in relabeled}) == 1
 
 
+def test_batch_relabel_honors_a_fixed_speaker_count():
+    lines = (
+        _line(0.0, 4.0, "speaker-1", "Speaker 1"),
+        _line(5.0, 4.0, "speaker-2", "Speaker 2"),
+        _line(10.0, 4.0, "speaker-3", "Speaker 3"),
+    )
+    embeddings = (
+        np.array([1.0, 0.0], dtype=np.float32),
+        np.array([0.99, 0.1], dtype=np.float32),
+        np.array([0.0, 1.0], dtype=np.float32),
+    )
+
+    two = relabel_system_lines(lines, embeddings, speaker_count=2)
+    three = relabel_system_lines(lines, embeddings, speaker_count=3)
+
+    assert len({line.speaker_id for line in two}) == 2
+    assert len({line.speaker_id for line in three}) == 3
+
+
 def test_batch_relabel_uses_speech_time_weighted_votes_for_short_phrases():
     lines = (
         _line(0.0, 100.0, "speaker-1", "Long voice"),

@@ -32,8 +32,13 @@ def relabel_system_lines(
     minimum_duration: float = MINIMUM_SPEECH_DURATION_SECONDS,
     progress: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    speaker_count: int | None = None,
 ) -> tuple[TranscriptLine, ...] | None:
     """Relabel system phrases from the session's full set of embeddings."""
+    if speaker_count is not None and (
+        isinstance(speaker_count, bool) or not isinstance(speaker_count, int) or speaker_count < 1
+    ):
+        raise ValueError("speaker_count must be a positive integer")
     original = tuple(lines)
     vectors = np.asarray(tuple(embeddings), dtype=np.float32)
     if not original:
@@ -48,6 +53,15 @@ def relabel_system_lines(
         raise ValueError("speaker embeddings must not be empty")
     vectors = vectors / norms[:, np.newaxis]
     durations = np.asarray([max(0.0, line.end - line.start) for line in original])
+    if speaker_count is not None:
+        return _relabel_fixed(
+            original,
+            vectors,
+            durations,
+            speaker_count,
+            progress=progress,
+            should_cancel=should_cancel,
+        )
     anchor_indices = [
         index for index, duration in enumerate(durations) if duration >= minimum_duration
     ]
@@ -304,4 +318,172 @@ def relabel_system_lines(
             label=labels_by_speaker[speaker_ids[index]],
         )
         for index, line in enumerate(original)
+    )
+
+
+def _relabel_fixed(
+    lines: tuple[TranscriptLine, ...],
+    vectors: np.ndarray,
+    durations: np.ndarray,
+    speaker_count: int,
+    *,
+    progress: Callable[[int, int], None] | None,
+    should_cancel: Callable[[], bool] | None,
+) -> tuple[TranscriptLine, ...] | None:
+    """Agglomerate phrases with a dense matrix, then cut at the target count."""
+    phrase_count = len(lines)
+    target = min(speaker_count, phrase_count)
+    merge_count = phrase_count - target
+    total = max(1, phrase_count + (phrase_count - 1 if merge_count else 0))
+    if progress is not None:
+        progress(0, total)
+
+    merge_events: list[tuple[float, int, int, int]] = []
+    children: list[tuple[int, int] | None] = [None] * (2 * phrase_count - 1)
+    if merge_count:
+        similarities = np.empty((phrase_count, phrase_count), dtype=np.float32)
+        np.fill_diagonal(similarities, -np.inf)
+        active = np.ones(phrase_count, dtype=bool)
+        sizes = np.where(durations > 0, durations, 1.0).astype(np.float64)
+        slot_nodes = np.arange(phrase_count, dtype=np.intp)
+        for left in range(phrase_count):
+            if should_cancel is not None and should_cancel():
+                return None
+            scores = vectors[left + 1 :] @ vectors[left]
+            similarities[left, left + 1 :] = scores
+            similarities[left + 1 :, left] = scores
+            if progress is not None:
+                progress(left + 1, total)
+
+        chain: list[int] = []
+        next_node = phrase_count
+        active_count = phrase_count
+        done = 0
+        while active_count > 1:
+            if should_cancel is not None and should_cancel():
+                return None
+            if not chain:
+                chain.append(int(np.flatnonzero(active)[0]))
+            current = chain[-1]
+            candidates = np.where(active, similarities[current], -np.inf)
+            candidates[current] = -np.inf
+            nearest = int(np.argmax(candidates))
+            if len(chain) > 1 and nearest == chain[-2]:
+                left = chain[-2]
+                right = current
+                node = next_node
+                next_node += 1
+                children[node] = (int(slot_nodes[left]), int(slot_nodes[right]))
+                merge_events.append((float(similarities[left, right]), node, *children[node]))
+
+                merged_size = sizes[left] + sizes[right]
+                other_mask = active.copy()
+                other_mask[left] = False
+                other_mask[right] = False
+                others = np.flatnonzero(other_mask)
+                updated = (
+                    sizes[left] * similarities[left, others]
+                    + sizes[right] * similarities[right, others]
+                ) / merged_size
+                similarities[left, others] = updated
+                similarities[others, left] = updated
+                similarities[left, left] = -np.inf
+                sizes[left] = merged_size
+                active[right] = False
+                slot_nodes[left] = node
+                chain.pop()
+                chain.pop()
+                active_count -= 1
+                done += 1
+                if progress is not None:
+                    progress(phrase_count + done, total)
+            else:
+                chain.append(nearest)
+    else:
+        for completed in range(phrase_count):
+            if should_cancel is not None and should_cancel():
+                return None
+            if progress is not None:
+                progress(completed + 1, total)
+
+    if should_cancel is not None and should_cancel():
+        return None
+
+    selected = np.zeros(2 * phrase_count - 1, dtype=bool)
+    selected[:phrase_count] = True
+    parents = np.full(2 * phrase_count - 1, -1, dtype=np.intp)
+    for _score, node, left, right in sorted(merge_events, key=lambda event: event[0], reverse=True)[
+        :merge_count
+    ]:
+        selected[node] = True
+        parents[left] = node
+        parents[right] = node
+    roots = np.flatnonzero(selected & (parents == -1))
+    ranked_clusters = []
+    for root in roots:
+        members = []
+        pending_nodes = [int(root)]
+        while pending_nodes:
+            node = pending_nodes.pop()
+            branch = children[node]
+            if branch is None:
+                members.append(node)
+            else:
+                pending_nodes.extend(branch)
+        ranked_clusters.append(members)
+    ranked_clusters.sort(key=min)
+    speaker_ids: dict[int, str] = {}
+    label_weights_by_cluster: list[dict[str, float]] = []
+    renamed_labels = {
+        line.label
+        for line in lines
+        if line.label != f"Speaker {line.speaker_id.removeprefix('speaker-')}"
+    }
+    for number, members in enumerate(ranked_clusters, 1):
+        label_weights: dict[str, float] = {}
+        for index in members:
+            speaker_ids[index] = f"speaker-{number}"
+            label = lines[index].label
+            label_weights[label] = label_weights.get(label, 0.0) + durations[index]
+        label_weights_by_cluster.append(label_weights)
+
+    label_matches = sorted(
+        (
+            -speech_time,
+            cluster_index,
+            label,
+        )
+        for cluster_index, label_weights in enumerate(label_weights_by_cluster)
+        for label, speech_time in label_weights.items()
+        if label in renamed_labels
+    )
+    labels_by_cluster: dict[int, str] = {}
+    assigned_labels: set[str] = set()
+    for _negative_speech_time, cluster_index, label in label_matches:
+        if cluster_index in labels_by_cluster or label in assigned_labels:
+            continue
+        labels_by_cluster[cluster_index] = label
+        assigned_labels.add(label)
+
+    next_number = 1
+    for cluster_index in range(len(ranked_clusters)):
+        if cluster_index in labels_by_cluster:
+            continue
+        label = f"Speaker {next_number}"
+        while label in assigned_labels:
+            next_number += 1
+            label = f"Speaker {next_number}"
+        labels_by_cluster[cluster_index] = label
+        assigned_labels.add(label)
+        next_number += 1
+
+    if progress is not None:
+        progress(total, total)
+    return tuple(
+        replace(
+            line,
+            speaker_id=speaker_ids[index],
+            label=labels_by_cluster[int(speaker_ids[index].removeprefix("speaker-")) - 1],
+        )
+        for index, line in enumerate(lines)
     )
