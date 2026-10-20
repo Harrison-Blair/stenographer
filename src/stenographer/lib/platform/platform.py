@@ -98,13 +98,9 @@ class Platform(Protocol):
     def install_stop_handlers(self, handler: Callable[[str], None]) -> None:
         """Ask the host to call ``handler(reason)`` when the user stops the daemon.
 
-        ``reason`` is a short human-readable label for the log line only
-        (``"SIGTERM"``, ``"SIGINT"``, later ``"CTRL_CLOSE"``): naming the stop
-        is host vocabulary, so the provider — not the core — formats it. The
-        core's handler runs in whatever context the host delivers (a POSIX
-        signal handler, a Windows console-control thread), so a provider must
-        keep its own formatting allocation-light and exception-safe: the stop
-        must fire even when the reason cannot be named.
+        ``reason`` is a short label for the log line. The provider formats it.
+        Its handler must keep formatting allocation-light and exception-safe,
+        so the stop fires even when the reason is unknown.
         """
         ...
 

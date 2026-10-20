@@ -7,7 +7,6 @@ import importlib
 import logging
 import logging.handlers
 import os
-import re
 from io import StringIO
 
 import pytest
@@ -396,9 +395,7 @@ def test_unopenable_log_file_is_reported_with_its_path_and_errno(tmp_path):
     records = stream.getvalue()
     assert "logging: file_unavailable" in records
     assert f"path={blocked}" in records
-    # POSIX reports a file in a directory position as NotADirectoryError (20);
-    # Windows reports the same collision as FileExistsError (17).
-    assert re.search(r"error=(NotADirectoryError|FileExistsError) errno=(20|17) ", records)
+    assert "error=NotADirectoryError errno=20 " in records
     assert "fallback=stderr" in records
 
 

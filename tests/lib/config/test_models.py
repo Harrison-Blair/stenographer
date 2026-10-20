@@ -15,8 +15,7 @@ from stenographer.lib.platform import current_platform
 
 
 def test_config_error_message():
-    # Interpolate the path rather than a POSIX literal: the rendered separator
-    # is the host's, so "/x" would not match the WindowsPath spelling.
+    # Interpolate the path so the assertion follows pathlib's representation.
     path = pathlib.Path("/x")
     err = ConfigError(path, "asr.beam_size", "bad")
     assert str(err) == f"{path}: asr.beam_size: bad"

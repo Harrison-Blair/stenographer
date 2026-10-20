@@ -464,8 +464,7 @@ def test_write_default_leaves_an_identical_file_untouched(tmp_path, monkeypatch)
     """
     (tmp_path / "sub").mkdir()
     path = tmp_path / "sub" / ".." / "config.toml"
-    # Bytes, not text mode: Windows would rewrite the template's newlines as CRLF,
-    # and the preservation layer compares bytes.
+    # Write bytes because the preservation layer compares the file byte-for-byte.
     path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
     before = path.stat().st_mtime_ns
@@ -1620,11 +1619,7 @@ def test_write_default_reports_an_unusable_target_and_fails(tmp_path, monkeypatc
     assert write_default(stdout=out, stderr=err) == 1
 
     assert out.getvalue() == ""
-    # POSIX refuses the read through a non-directory; Windows reports the
-    # target as absent and refuses creation of its parent instead.
-    assert err.getvalue().startswith(
-        ("stenographer: cannot re-read ", "stenographer: cannot create ")
-    )
+    assert err.getvalue().startswith("stenographer: cannot re-read ")
     assert str(blocker) in err.getvalue()
     assert blocker.read_text(encoding="utf-8") == "not a directory\n"
 

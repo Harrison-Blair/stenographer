@@ -54,9 +54,6 @@ def test_native_modules_are_only_imported_inside_platform_boundaries():
         "pty",
         "pwd",
         "grp",
-        "winreg",
-        "msvcrt",
-        "win32api",
         "AppKit",
     }
     violations = []
@@ -71,9 +68,7 @@ def test_native_modules_are_only_imported_inside_platform_boundaries():
                 name.startswith(
                     (
                         "stenographer.lib.platform.linux",
-                        "stenographer.lib.platform.windows",
                         "stenographer.overlay.platform.linux",
-                        "stenographer.overlay.platform.windows",
                     )
                 )
                 for name in names

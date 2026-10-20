@@ -5,8 +5,8 @@
 the readiness deadline, the restart budget, and the framing in both directions.
 None of that is visible from a pure call, so each test here runs the real
 worker thread against a ``HelperProcess`` made of two real ``socket.socketpair`` pairs
-and asserts on the bytes that reached the helper's stdin. Sockets support
-selector waits on Windows as well as POSIX hosts.
+and asserts on the bytes that reached the helper's stdin. Linux socket pairs
+support the selector waits used by the supervisor.
 
 The one injected seam is ``current_platform``: the host is where a child
 process would come from, and this suite deliberately spawns none.

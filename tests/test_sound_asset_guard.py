@@ -64,7 +64,7 @@ def test_directory_guard_rejects_symlinked_assets(tmp_path: Path) -> None:
     (root / EXPECTED_PATHS[0]).unlink()
     try:
         (root / EXPECTED_PATHS[0]).symlink_to(root / EXPECTED_PATHS[1])
-    except OSError as exc:  # unprivileged Windows has no symlink permission
+    except OSError as exc:  # Some environments do not permit symlink creation.
         pytest.skip(f"symlinks unavailable: {exc}")
 
     with pytest.raises(SoundAssetGuardError, match="must not be symlinks"):

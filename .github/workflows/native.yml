@@ -23,11 +23,6 @@ jobs:
             python: .venv/bin/python
             pip: .venv/bin/pip
             exe: ''
-          - runner: windows-latest
-            target: windows-x86_64
-            python: .venv/Scripts/python.exe
-            pip: .venv/Scripts/pip.exe
-            exe: .exe
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     defaults:

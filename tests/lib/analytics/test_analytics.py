@@ -575,8 +575,8 @@ def test_first_host_cpu_percentage_cannot_include_the_previous_idle_interval():
 def test_observation_in_the_same_clock_tick_as_terminal_is_not_attributed():
     """Seen to FAIL against the strict ``observed_at > ended_at`` guard.
 
-    A 15.6 ms ``time.monotonic()`` (Windows, Python 3.12) stamps the terminal
-    checkpoint and a probe that returned after it with the same value.
+    A coarse ``time.monotonic()`` clock can stamp the terminal checkpoint and
+    a probe that returned after it with the same value.
     """
     summary = ResourceSummary(10)
     summary.ended_at = 12

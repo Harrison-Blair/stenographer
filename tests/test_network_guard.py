@@ -14,13 +14,10 @@ the address it refused would be nearly useless.
 
 from __future__ import annotations
 
-import contextlib
 import socket
 import urllib.request
 
 import pytest
-
-from tests import conftest
 
 
 def test_an_outbound_connection_is_refused_by_address():
@@ -91,7 +88,6 @@ def test_a_proxied_request_is_refused_by_its_real_destination():
     assert "proxy.invalid:3128" in str(refusal.value)
 
 
-@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="no AF_UNIX on this platform")
 def test_a_unix_socket_still_connects(tmp_path, monkeypatch):
     """Wayland, X11, PipeWire and journald all ride on this.
 
@@ -112,60 +108,9 @@ def test_a_unix_socket_still_connects(tmp_path, monkeypatch):
 
 
 def test_a_socket_pair_still_connects():
-    """On Windows this is an ``AF_INET`` connect to a loopback listener."""
+    """A local socket pair does not make an outbound connection."""
 
     first, second = socket.socketpair()
-    with first, second:
-        first.sendall(b"ok")
-        assert second.recv(2) == b"ok"
-
-
-def test_the_permit_is_live_while_a_pair_is_being_made(monkeypatch):
-    """The permit itself, tested as a property rather than as a platform.
-
-    On Linux ``socket.socketpair`` is the C ``AF_UNIX`` call and never
-    connects, so the test above it passes whether or not the permit is granted
-    — it is a canary only on Windows, where a pair really is two TCP sockets.
-    This test closes that blind spot everywhere by observing the permit
-    directly: an ``AF_INET`` connect attempted from inside the wrapper must get
-    through the guard. Whether the discard port answers is irrelevant, and
-    refused is the normal answer; being *refused by the guard* is the failure,
-    and it cannot be swallowed here because ``Failed`` is not an ``OSError``.
-    """
-
-    real = conftest._REAL_SOCKETPAIR
-    reached = []
-
-    def watching(*args, **kwargs):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.settimeout(0.05)
-            with contextlib.suppress(OSError):
-                probe.connect(("127.0.0.1", 9))
-            reached.append(True)
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(conftest, "_REAL_SOCKETPAIR", watching)
-    first, second = socket.socketpair()
-    with first, second:
-        pass
-    assert reached == [True]
-
-
-@pytest.mark.skipif(
-    not hasattr(socket, "_fallback_socketpair"),
-    reason="CPython only exposes the emulation under this name from 3.13 on",
-)
-def test_the_windows_socket_pair_emulation_still_connects(monkeypatch):
-    """Run the code Windows runs, on whichever platform is running this.
-
-    ``socket.socketpair`` on Windows *is* ``_fallback_socketpair``: no
-    ``AF_UNIX`` exists there, so a pair is two real TCP sockets on loopback.
-    Every other test here would pass on Linux with the permit removed and fail
-    only on Windows CI, which is a bad place to find out.
-    """
-
-    monkeypatch.setattr(conftest, "_REAL_SOCKETPAIR", socket._fallback_socketpair)
-    first, second = socket.socketpair(socket.AF_INET)
     with first, second:
         first.sendall(b"ok")
         assert second.recv(2) == b"ok"
