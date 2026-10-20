@@ -148,7 +148,12 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 
 - `stenographer` — open the terminal hub when stdin and stdout are terminals;
   otherwise show help. Live shows REC, MIC, and SYSTEM panels plus a sidebar
-  card with the model, compute type, and system status. Press `space` to start;
+  card with the model, compute type, and system status. Config shows a group
+  selector beside compact key/value rows, selected-setting details, and a
+  separate hotwords value area. Short lists appear in full; long lists are
+  truncated to fit with a word count. The sidebar shows the config path and
+  unsaved-change count.
+  Press `space` to start;
   use `v` for mixed or split transcripts, and `m` or `s` to toggle audio sources.
   Press `2` for Files;
   use the browser to queue files and `x` to cancel a selected job. Sessions

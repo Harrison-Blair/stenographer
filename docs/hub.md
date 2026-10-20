@@ -135,9 +135,17 @@ Live section.
 
 ## Config
 
-Config edits `config.toml` by group: hotkey, audio, ASR, live, refine,
-feedback, analytics, and delivery. It shows one shared set of ASR settings for
-dictation, Live, and Files. The default model is
+Config edits `config.toml` by the groups in the current configuration:
+hotkey, audio, ASR, refine, feedback, analytics, and delivery. It keeps the
+group selector beside compact key/value rows. A `●` marks values that differ
+from their defaults. The selected key's description and default appear at the
+bottom of the panel. The sidebar card shows the config path and the count of
+changed values. It shows one shared set of ASR settings for dictation, Live,
+and Files. Hotwords have a separate value area: an empty list shows `none`,
+short lists appear in full, and long lists are truncated to fit with a word
+count. The beam-size details cite the CPU model and context screen in the
+[transcription study](transcription-experiments.md#cpu-model-and-context-screen-2026-10-20).
+The default model is
 `deepdml/faster-whisper-large-v3-turbo-ct2`; other defaults include `int8`
 compute, beam size `1`, and VAD filtering. Model downloads are explicit. Run
 `stenographer model download --asr` to download the configured model. An

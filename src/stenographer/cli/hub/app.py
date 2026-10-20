@@ -122,12 +122,43 @@ class HubApp(App[None]):
         padding: 0 1;
         border: round #3a4150;
     }
-    #section-content {
+    #config-group-list {
+        width: 22;
+        height: 1fr;
+        margin-right: 1;
+        padding: 1 1;
+        border: round #3a4150;
+        border-title-color: ansi_default;
+        display: none;
+        overflow-y: auto;
+    }
+    #main-content {
         width: 1fr;
         height: 1fr;
         padding: 1 2;
         border: round #3a4150;
+        border-title-color: ansi_default;
+        border-title-style: bold;
         overflow-y: auto;
+    }
+    #section-content {
+        width: 1fr;
+        height: auto;
+        padding: 0;
+    }
+    #config-hotwords {
+        height: auto;
+        margin-top: 1;
+        padding-top: 1;
+        border-top: solid #3a4150;
+        display: none;
+    }
+    #config-selected-help {
+        dock: bottom;
+        height: auto;
+        margin-top: 1;
+        color: ansi_default;
+        display: none;
     }
     #setup-panel, #doctor-panel {
         width: 1fr;
@@ -362,7 +393,11 @@ class HubApp(App[None]):
             with Vertical(id="sidebar-column"):
                 yield Static("", id="sidebar", markup=False)
                 yield Static("", id="sidebar-card", markup=False)
-            yield Static("", id="section-content", markup=False)
+            yield Static("", id="config-group-list", markup=False)
+            with Vertical(id="main-content"):
+                yield Static("", id="section-content", markup=False)
+                yield Static("", id="config-hotwords", markup=False)
+                yield Static("", id="config-selected-help", markup=False)
             yield self.setup_panel
             yield self.doctor_panel
             yield self.live_view
@@ -452,6 +487,8 @@ class HubApp(App[None]):
         session = self._live_session() if self._section == "live" else None
         if self._section == "live":
             self.set_sidebar_card(self._live_sidebar_card(session), section="live")
+        elif self._section == "config" and self.config_editor is not None:
+            self.set_sidebar_card(self._config_sidebar_card(), section="config")
         elif self._section == "sessions":
             self.set_sidebar_card(self.sessions_panel.storage_summary(), section="sessions")
         elif self._section == "files":
@@ -494,18 +531,16 @@ class HubApp(App[None]):
                     details=self._doctor_details,
                 )
         section_view = screen.query_one("#section-content", Static)
+        main_content = screen.query_one("#main-content", Vertical)
+        group_list = screen.query_one("#config-group-list", Static)
+        hotwords_view = screen.query_one("#config-hotwords", Static)
+        selected_help = screen.query_one("#config-selected-help", Static)
         show_activity = self._section == "live" and self._activity_status is not None
-        section_view.display = (
-            self._section
-            not in {
-                "live",
-                "files",
-                "sessions",
-                "setup",
-                "doctor",
-            }
-            or show_activity
-        )
+        main_content.display = self._section == "config" or show_activity
+        section_view.display = main_content.display
+        group_list.display = False
+        hotwords_view.display = False
+        selected_help.display = False
         self.setup_panel.display = self._section == "setup"
         self.doctor_panel.display = self._section == "doctor"
         if self._section == "setup":
@@ -524,10 +559,25 @@ class HubApp(App[None]):
             self._refresh_files_view()
         self.sessions_panel.set_job_status(self._session_job_status)
         if self._section == "config" and self.config_editor is not None:
-            content = self.config_editor.render()
+            editor = self.config_editor
+            content = editor.render()
+            if not editor.read_only:
+                group_list.update(editor.render_groups())
+                group_list.border_title = "group"
+                group_list.display = True
+                main_content.border_title = editor.group
+                show_hotwords = editor.group == "asr" and "asr.hotwords" in editor.visible_keys
+                selected_help.update(editor.render_selected_help())
+                selected_help.display = editor.selected_key is not None
+                if show_hotwords:
+                    hotwords_view.update(editor.render_hotwords(main_content.content_size.width))
+                    hotwords_view.display = True
+            else:
+                main_content.border_title = title
+        else:
+            main_content.border_title = title
         if self._activity_status is not None:
             content = self._activity_status
-        section_view.border_title = title
         section_view.update(content)
         hints = screen.query_one("#key-hints", Static)
         if self._section == "config":
@@ -637,6 +687,18 @@ class HubApp(App[None]):
             filled = min(8, max(0, int(cpu / 100 * 8)))
             cpu_bar = f"▕{'█' * filled}{'·' * (8 - filled)}▏"
         return f"cpu {cpu_bar} {cpu_text}"
+
+    def _config_sidebar_card(self) -> Text:
+        editor = self.config_editor
+        assert editor is not None
+        count = editor.unsaved_change_count
+        suffix = "" if count == 1 else "s"
+        card = Text(f"file\n{editor.path.name}\n")
+        card.append(
+            f"{count} unsaved change{suffix}",
+            style="#ffaf5f" if count else None,
+        )
+        return card
 
     def _live_session(self):
         return getattr(self.services, "session", None)
