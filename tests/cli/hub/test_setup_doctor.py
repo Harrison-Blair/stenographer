@@ -10,7 +10,7 @@ from textual.widgets import Static
 from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, safe_warning_lines
-from stenographer.cli.hub.setup_wizard import SetupWizard
+from stenographer.cli.hub.setup_state import SetupWizard
 from stenographer.cli.shared.capabilities import Capabilities
 from stenographer.lib.config.document import ConfigDocument
 from stenographer.lib.config.models import Config
@@ -88,6 +88,13 @@ def test_build_report_groups_fake_host_checks_and_counts_warnings(monkeypatch, t
     from stenographer.overlay.platform.guidance import OverlayGuidance
 
     guidance = SimpleNamespace(
+        capability_labels={
+            "key_injector_ok": "input injector",
+            "hotkey_access_ok": "global hotkey access",
+            "has_mic": "microphone",
+            "model_cached": "ASR model cached",
+            "clipboard_ok": "clipboard",
+        },
         capability_fix_hints={"hotkey_access_ok": "Join the input group."},
         clipboard_fix_hints={},
         clipboard_fix_hint_default="Install clipboard support.",

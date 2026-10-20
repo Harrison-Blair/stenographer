@@ -160,12 +160,8 @@ def build_report(config: Config, config_path: pathlib.Path | None = None) -> Doc
             detail = "not available"
         checks.append(DoctorCheck(name, label, group, "ok" if ok else "fail", detail, fix))
 
-    for name, label in (
-        ("key_injector_ok", "/dev/uinput writable"),
-        ("hotkey_access_ok", "input group membership"),
-        ("has_mic", "microphone"),
-    ):
-        add_capability(name, label, "input and audio")
+    for name in ("key_injector_ok", "hotkey_access_ok", "has_mic"):
+        add_capability(name, host.capability_labels[name], "input and audio")
     for check in additional_checks.collect_additional_checks():
         group = "input and audio" if check.check_id == "system_capture" else "engine and desktop"
         label = {

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from stenographer.cli.hub.setup_state import SetupWizard
     from stenographer.lib.config.models import Config
 
 
@@ -19,7 +20,7 @@ class SetupStep:
     config_key: str | None = None
 
 
-_STEPS = (
+SETUP_STEPS = (
     SetupStep(
         "input_access",
         "input access",
@@ -55,68 +56,6 @@ _STEPS = (
         "Check the user service. Setup does not start or restart it.",
     ),
 )
-
-
-class SetupWizard:
-    """Track the selected setup step and the optional three-step quick path."""
-
-    def __init__(self) -> None:
-        self.index = 0
-        self.quick = False
-        self.finished = False
-        self.completed: set[str] = set()
-        self.skipped: set[str] = set()
-        self.last_test = ""
-
-    @property
-    def steps(self) -> tuple[SetupStep, ...]:
-        return _STEPS
-
-    @property
-    def step(self) -> SetupStep:
-        return _STEPS[self.index]
-
-    @property
-    def will_finish(self) -> bool:
-        return self.index == (2 if self.quick else len(_STEPS) - 1)
-
-    def next(self) -> None:
-        self._advance(skipped=False)
-
-    def skip(self) -> None:
-        self._advance(skipped=True)
-
-    def back(self) -> None:
-        if self.index:
-            self.index -= 1
-            self.finished = False
-        self.last_test = ""
-
-    def start_quick(self) -> None:
-        self.quick = True
-        self.index = 0
-        self.finished = False
-        self.completed.clear()
-        self.skipped.clear()
-        self.last_test = ""
-
-    def record_test(self, result: str) -> None:
-        self.last_test = result
-
-    def _advance(self, *, skipped: bool) -> None:
-        if self.finished:
-            return
-        step = self.step
-        if skipped:
-            self.skipped.add(step.step_id)
-        else:
-            self.completed.add(step.step_id)
-        last_index = 2 if self.quick else len(_STEPS) - 1
-        if self.index == last_index:
-            self.finished = True
-        else:
-            self.index += 1
-        self.last_test = ""
 
 
 def render(wizard: SetupWizard, config: Config | None) -> str:

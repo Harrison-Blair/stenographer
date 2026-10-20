@@ -9,5 +9,6 @@
 - dialogs.py: Confirm actions that stop work during quit.
 - handler.py: Prepare the hub and run its Textual app.
 - services.py: Own the recording and Files job lifecycles.
-- setup_wizard.py: Track setup steps and reuse setup workflow probes.
+- setup_state.py: Track wizard navigation and completion state.
+- setup_wizard.py: Render setup steps and reuse setup workflow probes.
 """
