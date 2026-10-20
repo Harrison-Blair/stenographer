@@ -12,6 +12,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from stenographer.cli.live.rename_dialog import RenameDialog
+from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.live.live_session import LiveSession
 from stenographer.lib.live.transcript_line import TranscriptLine
 
@@ -27,12 +28,13 @@ class LiveApp(App[None]):
         ("q", "stop", "Stop and save"),
         ("ctrl+c", "stop", "Stop and save"),
     ]
-    CSS = """
+    CSS = (
+        NO_BACKGROUND_CSS
+        + """
     #status {
         height: auto;
         min-height: 2;
         padding: 0 1;
-        background: $boost;
     }
     #transcript-scroll {
         height: 1fr;
@@ -44,12 +46,12 @@ class LiveApp(App[None]):
     #key-hints {
         height: 1;
         padding: 0 1;
-        background: $boost;
     }
     """
+    )
 
     def __init__(self, session: LiveSession) -> None:
-        super().__init__()
+        super().__init__(ansi_color=True)
         self._session = session
         self._session.subscribe(self._receive_line)
         self._stop_requested = False

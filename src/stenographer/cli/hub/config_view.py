@@ -6,6 +6,9 @@ from __future__ import annotations
 import pathlib
 from dataclasses import asdict, replace
 
+from rich.text import Text
+
+from stenographer.cli.hub.selection import append_line
 from stenographer.lib.config.document import ConfigDocument
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
@@ -203,9 +206,9 @@ class ConfigEditor:
         self._undo.clear()
         return result
 
-    def render(self) -> str:
+    def render(self) -> Text:
         if self.config is None:
-            return (
+            return Text(
                 f"Configuration is invalid and read-only.\n{self.error}\nFix this file: {self.path}"
             )
 
@@ -213,27 +216,29 @@ class ConfigEditor:
             f"[{name}]" if index == self.group_index else name
             for index, name in enumerate(self.groups)
         )
-        lines = [
-            f"Groups: {groups}",
-            f"File: {self.path}",
-            f"Unsaved changes: {'yes' if self.dirty else 'no'}",
+        lines = Text()
+        append_line(lines, f"Groups: {groups}")
+        append_line(lines, f"File: {self.path}")
+        append_line(lines, f"Unsaved changes: {'yes' if self.dirty else 'no'}")
+        append_line(
+            lines,
             "Changes apply to new sessions and jobs; running work keeps its current settings.",
-        ]
+        )
         if self.search_term:
-            lines.append(f"Search: {self.search_term}")
+            append_line(lines, f"Search: {self.search_term}")
         keys = self.visible_keys
         if not keys:
-            lines.append("No settings match this search.")
+            append_line(lines, "No settings match this search.")
         for index, dotted_key in enumerate(keys):
-            marker = ">" if index == self.key_index else " "
-            lines.extend(
-                (
-                    f"{marker} {dotted_key} = {self._display(self.value(dotted_key))}",
-                    f"    Default: {self._display(self.default(dotted_key))}",
-                    f"    {self.help(dotted_key)}",
-                )
+            append_line(
+                lines,
+                f"{dotted_key} = {self._display(self.value(dotted_key))}",
+                selectable=True,
+                selected=index == self.key_index,
             )
-        return "\n".join(lines)
+            append_line(lines, f"    Default: {self._display(self.default(dotted_key))}")
+            append_line(lines, f"    {self.help(dotted_key)}")
+        return lines
 
     @staticmethod
     def _parse_value(raw_value: str, current: object, dotted_key: str) -> object:

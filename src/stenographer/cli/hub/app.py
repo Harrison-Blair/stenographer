@@ -9,6 +9,7 @@ import pathlib
 from collections.abc import Callable
 from typing import ClassVar
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -21,11 +22,13 @@ from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, build_report
 from stenographer.cli.hub.files_view import FilesPanel
 from stenographer.cli.hub.live_view import read_cpu_percent, render_live_view
+from stenographer.cli.hub.selection import append_line
 from stenographer.cli.hub.sessions_view import SessionsPanel
 from stenographer.cli.hub.setup_state import SetupWizard
 from stenographer.cli.hub.setup_wizard import render as render_setup
 from stenographer.cli.hub.setup_wizard import test_step as test_setup_step
 from stenographer.cli.live.rename_dialog import RenameDialog
+from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -90,11 +93,9 @@ class HubApp(App[None]):
         ("q", "request_quit", "Quit"),
         ("ctrl+c", "request_quit", "Quit"),
     ]
-    CSS = """
-    Screen {
-        background: #0b0d12;
-        color: #e3e6ec;
-    }
+    CSS = (
+        NO_BACKGROUND_CSS
+        + """
     #hub-layout {
         height: 1fr;
         padding: 1;
@@ -119,6 +120,7 @@ class HubApp(App[None]):
         color: #a0a8b8;
     }
     """
+    )
 
     def __init__(
         self,
@@ -133,7 +135,7 @@ class HubApp(App[None]):
         copy_report: Callable[[str], None] | None = None,
         files_home: pathlib.Path | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(ansi_color=True)
         self.services = services
         self.files_panel = FilesPanel(
             home=files_home,
@@ -248,9 +250,8 @@ class HubApp(App[None]):
         screen = self._hub_screen
         if screen is None or not self.is_running or not self.is_mounted(screen):
             return
-        rows = []
+        sidebar = Text()
         for index, (section, label) in enumerate(_SECTIONS, start=1):
-            marker = ">" if section == self._section else " "
             if section == "doctor":
                 badge = (
                     f"{self._doctor_report.warn_count}W {self._doctor_report.fail_count}F"
@@ -261,8 +262,13 @@ class HubApp(App[None]):
                 )
             else:
                 badge = ""
-            rows.append(f"{marker} {index} {label:<8} {badge}")
-        screen.query_one("#sidebar", Static).update("\n".join(rows))
+            append_line(
+                sidebar,
+                f"{index} {label:<8} {badge}",
+                selectable=True,
+                selected=section == self._section,
+            )
+        screen.query_one("#sidebar", Static).update(sidebar)
 
         title = next(label for section, label in _SECTIONS if section == self._section)
         content = _PLACEHOLDERS[self._section]

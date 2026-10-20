@@ -6,11 +6,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import soundfile
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static
 
 from stenographer.cli.hub.files_entry import BrowserEntry
+from stenographer.cli.hub.selection import append_line
 
 _FORMATS = ("md", "jsonl", "srt", "txt")
 _AUDIO_SUFFIXES = {
@@ -266,7 +268,12 @@ class FilesPanel(Vertical):
     def display_text(self) -> str:
         """Return all panel content for tests and accessible text views."""
         return "\n".join(
-            (self._browser_text, self._options_text, self._queue_text, self._preview_text)
+            (
+                self._browser_text.plain,
+                self._options_text.plain,
+                self._queue_text.plain,
+                self._preview_text,
+            )
         )
 
     def _update_text(self) -> None:
@@ -284,34 +291,39 @@ class FilesPanel(Vertical):
         self._queue_text = self._render_queue()
         self._preview_text = self._render_preview()
 
-    def _render_browser(self) -> str:
-        rows = [str(self.directory)]
+    def _render_browser(self) -> Text:
+        rows = Text()
+        append_line(rows, str(self.directory))
         if self.search_term:
-            rows.append(f"search: {self.search_term}")
+            append_line(rows, f"search: {self.search_term}")
         if self.selected_paths:
-            rows.append(f"selected: {len(self.selected_paths)} file(s)")
+            append_line(rows, f"selected: {len(self.selected_paths)} file(s)")
         if not any(entry.path != self.directory.parent for entry in self.entries):
-            rows.append("No matching audio files or folders.")
+            append_line(rows, "No matching audio files or folders.")
         for index, entry in enumerate(self.entries):
-            marker = (
-                "▸" if self.focus_area == "browser" and index == self.selected_entry_index else " "
-            )
             selected = "[x]" if entry.path in self.selected_paths else "[ ]"
             name = ".." if entry.path == self.directory.parent and entry.is_dir else entry.path.name
             if entry.is_dir:
-                rows.append(f"{marker}      {name}/")
+                value = f"     {name}/"
             else:
                 duration = (
                     ""
                     if entry.duration_seconds is None
                     else self._format_clock(entry.duration_seconds)
                 )
-                rows.append(f"{marker} {selected} {name:<28} {duration}")
-        rows.extend(("", "/ search · enter queue/open · space select"))
-        return "\n".join(rows)
+                value = f"{selected} {name:<28} {duration}"
+            append_line(
+                rows,
+                value,
+                selectable=True,
+                selected=self.focus_area == "browser" and index == self.selected_entry_index,
+            )
+        append_line(rows, "")
+        append_line(rows, "/ search · enter queue/open · space select")
+        return rows
 
-    def _render_options(self) -> str:
-        rows = []
+    def _render_options(self) -> Text:
+        rows = Text()
         option_rows = (
             f"diarize       [{'x' if self.diarize else ' '}] on",
             f"speaker count {self.speaker_count if self.speaker_count is not None else 'auto'}",
@@ -320,22 +332,23 @@ class FilesPanel(Vertical):
             f"output folder {self.output_folder}",
         )
         for index, option in enumerate(option_rows):
-            marker = (
-                "▸" if self.focus_area == "options" and index == self.selected_option_index else " "
+            append_line(
+                rows,
+                option,
+                selectable=True,
+                selected=self.focus_area == "options" and index == self.selected_option_index,
             )
-            rows.append(f"{marker} {option}")
         if self.options_open:
-            rows.append("enter/space edit · o close")
+            append_line(rows, "enter/space edit · o close")
         else:
-            rows.append("o edit options")
-        return "\n".join(rows)
+            append_line(rows, "o edit options")
+        return rows
 
-    def _render_queue(self) -> str:
-        rows = []
+    def _render_queue(self) -> Text:
+        rows = Text()
         if not self.jobs:
-            rows.append("No queued jobs.")
+            append_line(rows, "No queued jobs.")
         for index, job in enumerate(self.jobs):
-            marker = "▸" if self.focus_area == "queue" and index == self.selected_job_index else " "
             path = getattr(getattr(job, "options", None), "path", Path("file"))
             progress = getattr(job, "progress", None)
             stage = getattr(progress, "stage", "transcribe")
@@ -343,11 +356,16 @@ class FilesPanel(Vertical):
             eta = getattr(progress, "eta_seconds", None)
             status = getattr(job, "state", "queued")
             eta_text = "—" if eta is None else self._format_clock(eta)
-            rows.append(f"{marker} {path.name} · {status} · {stage} · {percent}% · eta {eta_text}")
+            append_line(
+                rows,
+                f"{path.name} · {status} · {stage} · {percent}% · eta {eta_text}",
+                selectable=True,
+                selected=self.focus_area == "queue" and index == self.selected_job_index,
+            )
             error = getattr(job, "error", None)
             if error:
-                rows.append(f"  {error}")
-        return "\n".join(rows)
+                append_line(rows, f"  {error}")
+        return rows
 
     def _render_preview(self) -> str:
         job = self.selected_job

@@ -8,6 +8,10 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from rich.text import Text
+
+from stenographer.cli.hub.selection import append_line
+
 if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
 
@@ -50,31 +54,42 @@ class DoctorReport:
             0,
         )
 
-    def render(self, *, selected_index: int = 0, details: bool = False) -> str:
-        lines = [
+    def render(self, *, selected_index: int = 0, details: bool = False) -> Text:
+        lines = Text()
+        append_line(
+            lines,
             f"{self.ok_count} ok · {self.warn_count} warn · {self.fail_count} fail",
-            "",
-        ]
+        )
+        append_line(lines, "")
         for group in ("input and audio", "engine and desktop"):
-            lines.append(f"┤ {group} ├")
+            append_line(lines, f"┤ {group} ├")
             for index, check in enumerate(self.checks):
                 if check.group != group:
                     continue
-                marker = ">" if index == selected_index else " "
                 status = {"ok": "✓", "warn": "!", "fail": "x"}[check.status]
-                lines.append(f"{marker} {status} {check.label} · {check.detail}")
-            lines.append("")
+                append_line(
+                    lines,
+                    f"{status} {check.label} · {check.detail}",
+                    selectable=True,
+                    selected=index == selected_index,
+                )
+            append_line(lines, "")
         selected = self.checks[selected_index] if self.checks else None
         if details and selected is not None and selected.status in {"warn", "fail"}:
-            lines.extend((selected.label, f"Detail: {selected.detail}"))
+            append_line(lines, selected.label)
+            append_line(lines, f"Detail: {selected.detail}")
             if selected.fix:
-                lines.append(f"Fix: {selected.fix}")
-            lines.append("")
+                append_line(lines, f"Fix: {selected.fix}")
+            append_line(lines, "")
         if self.warnings:
-            lines.append("Recent warnings · log")
-            lines.extend(self.warnings)
-        lines.append("r re-check   enter details   f fix in Setup   l open log   c copy report")
-        return "\n".join(lines)
+            append_line(lines, "Recent warnings · log")
+            for warning in self.warnings:
+                append_line(lines, warning)
+        append_line(
+            lines,
+            "r re-check   enter details   f fix in Setup   l open log   c copy report",
+        )
+        return lines
 
     def report_text(self) -> str:
         lines = [

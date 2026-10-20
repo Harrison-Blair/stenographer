@@ -8,6 +8,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static
 
+from stenographer.cli.hub.selection import append_line
 from stenographer.lib.sessions.models import SessionDetail, SessionSummary
 
 
@@ -153,18 +154,14 @@ class SessionsPanel(Vertical):
         total_bytes = sum(summary.audio_size_bytes for summary in self.summaries)
         storage.update(f"{len(self.summaries)} sessions\n{self._format_size(total_bytes)} audio")
 
-        rows = []
+        rows = Text()
         for index, summary in enumerate(self.summaries):
-            marker = "▸" if index == self.selected_index else " "
             date = summary.started_at.strftime("%Y-%m-%d %H:%M")
-            row = (
-                f"{marker} {date}  {self._duration(summary.duration_seconds)}  "
-                f"{summary.speaker_count} spk"
-            )
+            row = f"{date}  {self._duration(summary.duration_seconds)}  {summary.speaker_count} spk"
             if summary.interrupted:
                 row += "  ! interrupted"
-            rows.append(row)
-        listing.update("\n".join(rows) if rows else "No saved sessions.")
+            append_line(rows, row, selectable=True, selected=index == self.selected_index)
+        listing.update(rows if rows else "No saved sessions.")
 
         summary = self.selected_summary
         detail.border_title = summary.session_id if summary is not None else "session"

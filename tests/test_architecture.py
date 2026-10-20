@@ -34,6 +34,11 @@ def test_production_has_only_responsibility_roots():
     }
 
 
+def test_shared_tui_styles_live_in_cli_shared():
+    assert not (ROOT / "cli" / "no_background_css.py").exists()
+    assert (ROOT / "cli" / "shared" / "no_background_css.py").is_file()
+
+
 def test_library_does_not_import_frontends():
     violations = []
     for path in (ROOT / "lib").rglob("*.py"):

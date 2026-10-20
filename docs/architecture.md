@@ -49,7 +49,8 @@ Commands own their prompts, terminal output, consent, and follow-up actions.
 and session controls. `cli/setup/` owns quick/default setup and calibration
 prompts; `cli/sounds/` owns interactive pack selection and preview.
 The model download and stats operations have their own subcommand packages.
-`cli/shared/` combines independent core and display capability results for reports.
+`cli/shared/` owns cross-command support for capability reports, terminal
+handling, and shared TUI styles.
 
 ## Optional overlay
 
