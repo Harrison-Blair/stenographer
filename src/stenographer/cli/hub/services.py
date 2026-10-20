@@ -37,6 +37,11 @@ class HubServices:
     def recording(self) -> bool:
         return self._session is not None
 
+    def update_config(self, config: Config) -> None:
+        """Use saved settings for new work without changing an active session."""
+
+        self._config = config
+
     @property
     def files_running(self) -> bool:
         return self.files_job is not None

@@ -82,11 +82,51 @@ def test_hub_warms_worker_before_running_the_app(monkeypatch, tmp_path):
         data_dir=lambda *_args: tmp_path,
     )
     monkeypatch.setattr(handler, "current_platform", lambda: platform)
-    monkeypatch.setattr(handler, "_run_app", lambda _services: events.append("app"))
-    cfg = SimpleNamespace(asr=object())
+    cfg = SimpleNamespace(asr=object(), feedback=SimpleNamespace(log_level="debug"))
+    config_path = tmp_path / "config.toml"
+    from stenographer.lib.config.defaults import default_toml
 
-    assert handler.cmd_hub.__wrapped__(SimpleNamespace(), cfg) == 0
-    assert events == ["spawn", "close", "app"]
+    config_path.write_text(default_toml(), encoding="utf-8")
+    monkeypatch.setattr(handler, "resolve_config_path", lambda: config_path)
+    monkeypatch.setattr(handler, "load_or_default", lambda: cfg)
+    monkeypatch.setattr(
+        handler,
+        "apply_stderr_level",
+        lambda level: events.append(f"level:{level}"),
+    )
+    monkeypatch.setattr(handler, "_run_app", lambda _services, _editor: events.append("app"))
+
+    assert handler.cmd_hub(SimpleNamespace()) == 0
+    assert events == ["level:debug", "spawn", "close", "app"]
+
+
+def test_hub_opens_invalid_config_read_only_without_starting_worker(monkeypatch, tmp_path):
+    import stenographer.cli.hub.handler as handler
+    from stenographer.lib.config.errors import ConfigError
+    from stenographer.lib.config.models import Config
+
+    path = tmp_path / "config.toml"
+    path.write_text("[stenographer.asr]\nbeam_size = 0\n", encoding="utf-8")
+    platform = SimpleNamespace()
+    monkeypatch.setattr(handler, "resolve_config_path", lambda: path)
+    monkeypatch.setattr(
+        handler,
+        "load_or_default",
+        lambda: (_ for _ in ()).throw(ConfigError(path, "asr.beam_size", "must be at least 1")),
+    )
+    monkeypatch.setattr(handler, "current_platform", lambda: platform)
+    opened = []
+    monkeypatch.setattr(
+        handler,
+        "_run_app",
+        lambda services, editor: opened.append((services, editor)),
+    )
+
+    assert handler.cmd_hub(SimpleNamespace()) == 0
+    services, editor = opened[0]
+    assert editor.read_only
+    assert str(path) in editor.render()
+    assert services._config.asr.beam_size == Config.defaults().asr.beam_size
 
 
 def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
@@ -101,7 +141,8 @@ def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
     created = []
 
     class Session:
-        def __init__(self, *_args, **_kwargs):
+        def __init__(self, config, **_kwargs):
+            self.config = config
             self.started = False
             self.stopped = False
             created.append(self)
@@ -114,7 +155,9 @@ def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
             self.stopped = True
 
     platform = SimpleNamespace(data_dir=lambda *_args: tmp_path)
-    services = HubServices(SimpleNamespace(asr=object()), platform, session_factory=Session)
+    initial_config = SimpleNamespace(asr=object())
+    next_config = SimpleNamespace(asr=object())
+    services = HubServices(initial_config, platform, session_factory=Session)
 
     assert not services.recording
     assert created == []
@@ -123,9 +166,15 @@ def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
     assert services.recording
     assert created[0].started
 
+    services.update_config(next_config)
+    assert created[0].config is initial_config
     services.stop_recording()
     assert not services.recording
     assert created[0].stopped
+
+    services.start_recording()
+    assert created[1].config is next_config
+    services.stop_recording()
 
 
 def test_hub_services_cancels_an_attached_files_job():

@@ -5,13 +5,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import pathlib
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
 
+from stenographer.cli.hub.config_dialog import ConfigPrompt
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
+from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 
 log = logging.getLogger(__name__)
@@ -45,6 +49,15 @@ class HubApp(App[None]):
         ("5", "show_setup", "Setup"),
         ("6", "show_doctor", "Doctor"),
         ("space", "start_recording", "Start recording"),
+        ("left", "previous_config_group", "Previous config group"),
+        ("right", "next_config_group", "Next config group"),
+        ("up", "previous_config_key", "Previous config key"),
+        ("down", "next_config_key", "Next config key"),
+        ("enter", "edit_config", "Edit config key"),
+        ("u", "undo_config", "Undo config change"),
+        ("shift+d", "reset_config", "Reset config key"),
+        ("/", "search_config", "Search config keys"),
+        ("ctrl+s", "save_config", "Save config"),
         ("q", "request_quit", "Quit"),
         ("ctrl+c", "request_quit", "Quit"),
     ]
@@ -77,10 +90,21 @@ class HubApp(App[None]):
     }
     """
 
-    def __init__(self, services) -> None:
+    def __init__(
+        self,
+        services,
+        *,
+        config_editor: ConfigEditor | None = None,
+        config_path: pathlib.Path | None = None,
+    ) -> None:
         super().__init__()
         self.services = services
+        self.config_editor = config_editor or (
+            ConfigEditor(config_path) if config_path is not None else None
+        )
         self._section = "live"
+        self._pending_section: str | None = None
+        self._pending_quit = False
 
     @property
     def current_section(self) -> str:
@@ -99,6 +123,12 @@ class HubApp(App[None]):
     def on_mount(self) -> None:
         self.query_one("#sidebar", Static).border_title = "stenographer"
         self._refresh_view()
+        if self.config_editor is not None and self.config_editor.read_only:
+            self.notify(
+                "Invalid configuration. Select Config to view the error and fix "
+                f"{self.config_editor.path}.",
+                severity="error",
+            )
         log.info(fmt_event("hub", "started"))
 
     def action_show_live(self) -> None:
@@ -119,11 +149,6 @@ class HubApp(App[None]):
     def action_show_doctor(self) -> None:
         self._select_section("doctor")
 
-    def _select_section(self, section: str) -> None:
-        self._section = section
-        self._refresh_view()
-        log.info(fmt_event("hub", "section_changed", section=section))
-
     def _refresh_view(self) -> None:
         rows = []
         for index, (section, label) in enumerate(_SECTIONS, start=1):
@@ -139,11 +164,176 @@ class HubApp(App[None]):
         elif self._section == "files" and self.services.files_running:
             content = "A Files job is running. Change sections without cancelling it."
         section_view = self.query_one("#section-content", Static)
+        if self._section == "config" and self.config_editor is not None:
+            content = self.config_editor.render()
         section_view.border_title = title
         section_view.update(content)
+        hints = self.query_one("#key-hints", Static)
+        if self._section == "config":
+            hints.update(
+                "enter edit   u undo   D reset   / search   ctrl+s save   ←/→ group   ↑/↓ key"
+            )
+        else:
+            hints.update("space start recording   1-6 sections   q quit")
+
+    def action_previous_config_group(self) -> None:
+        self._move_config_group(-1)
+
+    def action_next_config_group(self) -> None:
+        self._move_config_group(1)
+
+    def action_previous_config_key(self) -> None:
+        self._move_config_key(-1)
+
+    def action_next_config_key(self) -> None:
+        self._move_config_key(1)
+
+    def _move_config_group(self, offset: int) -> None:
+        if self._section == "config" and self.config_editor is not None:
+            self.config_editor.move_group(offset)
+            self._refresh_view()
+
+    def _move_config_key(self, offset: int) -> None:
+        if self._section == "config" and self.config_editor is not None:
+            self.config_editor.move_key(offset)
+            self._refresh_view()
+
+    def action_edit_config(self) -> None:
+        editor = self.config_editor
+        if self._section != "config" or editor is None:
+            return
+        key = editor.selected_key
+        if key is None or editor.read_only:
+            return
+        value = editor.value(key)
+        if value is None:
+            initial = ""
+        elif isinstance(value, tuple):
+            initial = ", ".join(map(str, value))
+        else:
+            initial = str(value)
+        self.push_screen(
+            ConfigPrompt(f"Edit {key}", initial=initial),
+            lambda result: self._apply_config_edit(key, result),
+        )
+
+    def _apply_config_edit(self, key: str, value: str | None) -> None:
+        if value is None:
+            return
+        if self.config_editor is None:
+            return
+        try:
+            self.config_editor.edit(key, value)
+        except (ValueError, TypeError, ConfigError) as exc:
+            self.notify(str(exc), severity="error")
+        self._refresh_view()
+
+    def action_undo_config(self) -> None:
+        editor = self.config_editor
+        if self._section == "config" and editor is not None and editor.undo():
+            self._refresh_view()
+
+    def action_reset_config(self) -> None:
+        editor = self.config_editor
+        if self._section != "config" or editor is None:
+            return
+        key = editor.selected_key
+        if key is not None and not editor.read_only:
+            try:
+                editor.reset(key)
+            except (ValueError, TypeError, ConfigError) as exc:
+                self.notify(str(exc), severity="error")
+            self._refresh_view()
+
+    def action_search_config(self) -> None:
+        editor = self.config_editor
+        if self._section != "config" or editor is None:
+            return
+        if editor.read_only:
+            return
+        self.push_screen(
+            ConfigPrompt("Search configuration keys", initial=""),
+            self._search_config,
+        )
+
+    def _search_config(self, term: str | None) -> None:
+        if self.config_editor is None:
+            return
+        if term is not None and not self.config_editor.search(term):
+            self.notify(f"No configuration keys match {term!r}.", severity="warning")
+        self._refresh_view()
+
+    def action_save_config(self) -> None:
+        if self._section == "config":
+            self._save_config()
+
+    def _save_config(self) -> bool:
+        editor = self.config_editor
+        if editor is None or editor.read_only:
+            return False
+        try:
+            result = editor.save()
+        except (ConfigError, ConfigPersistenceError) as exc:
+            self.notify(str(exc), severity="error")
+            self._refresh_view()
+            return False
+        if result.changed:
+            update_config = getattr(self.services, "update_config", None)
+            if update_config is not None:
+                update_config(editor.config)
+            message = f"Saved {result.path}"
+            if result.backup_path is not None:
+                message += f"; backup: {result.backup_path}"
+            self.notify(message)
+        else:
+            self.notify("Configuration is unchanged.")
+        self._refresh_view()
+        return True
+
+    def _select_section(self, section: str) -> None:
+        if (
+            self._section == "config"
+            and section != "config"
+            and self.config_editor is not None
+            and self.config_editor.dirty
+        ):
+            self._pending_section = section
+            self.push_screen(
+                ConfigPrompt(
+                    "Save or discard unsaved configuration changes?",
+                    choices=(("Save", "save"), ("Discard", "discard"), ("Stay", "stay")),
+                ),
+                self._resolve_config_navigation,
+            )
+            return
+        self._show_section(section)
+
+    def _resolve_config_navigation(self, choice: str | None) -> None:
+        section = self._pending_section
+        quitting = self._pending_quit
+        self._pending_section = None
+        self._pending_quit = False
+        if choice in {None, "stay"}:
+            return
+        if choice == "save" and not self._save_config():
+            return
+        if choice == "discard" and self.config_editor is not None:
+            self.config_editor.discard()
+        if quitting:
+            self.action_request_quit()
+        elif section is not None:
+            self._show_section(section)
+
+    def _show_section(self, section: str) -> None:
+        self._section = section
+        self._refresh_view()
+        log.info(fmt_event("hub", "section_changed", section=section))
 
     async def action_start_recording(self) -> None:
         if self._section != "live" or self.services.recording:
+            return
+        if self.config_editor is not None and self.config_editor.read_only:
+            self.notify("Fix the invalid configuration before recording.", severity="error")
             return
         try:
             await asyncio.to_thread(self.services.start_recording)
@@ -155,6 +345,20 @@ class HubApp(App[None]):
         self._refresh_view()
 
     def action_request_quit(self) -> None:
+        if (
+            self._section == "config"
+            and self.config_editor is not None
+            and self.config_editor.dirty
+        ):
+            self._pending_quit = True
+            self.push_screen(
+                ConfigPrompt(
+                    "Save or discard unsaved configuration changes?",
+                    choices=(("Save", "save"), ("Discard", "discard"), ("Stay", "stay")),
+                ),
+                self._resolve_config_navigation,
+            )
+            return
         if self.services.recording:
             log.info(fmt_event("hub", "quit_prompted", work="recording"))
             self.push_screen(
