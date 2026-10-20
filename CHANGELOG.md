@@ -13,47 +13,48 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
-Your previous clipboard item now comes back after each paste, and an Agent
-rewrite keeps the unrefined transcript in your clipboard history. The new
-`stenographer live` command records and transcribes microphone and system audio.
+## [v0.14.0] - 2026-10-19
+
+This release adds local live transcription and a more concise Agent rewrite. It
+also restores the clipboard after paste and removes macOS support.
 
 ### Added
 
-- Adds `stenographer live` for local microphone and system-audio transcription,
-  with saved audio and transcript sessions.
-- After each paste, the daemon waits `restore_delay_ms` (500 ms by default) and
-  puts back the clipboard item it saved before copying the transcript. Only
-  one type of that item is restored, preferring plain text; items a password
-  manager marks as secret are skipped. The primary selection keeps the
+- Adds `stenographer live` for local transcription from the microphone,
+  system audio, or both. It warms transcription before capture, labels system
+  speakers, lets you rename labels with `r`, and saves captured audio and
+  transcripts in a private session folder. Download its voice-activity and
+  speaker models with `stenographer model download --live`. Speaker labels can
+  over-split. In the 2026-10-19 acceptance session `20261020T011218Z`, about
+  2–3 system voices got six labels, mostly on short phrases; live transcription
+  had 0 failed phrases. Press `r` and give two labels the same name to merge
+  them in the display.
+- Restores the previous clipboard item after each paste, after the configured
+  `restore_delay_ms` (500 ms by default). The new `[stenographer.delivery]`
+  settings control `restore_clipboard`, `restore_delay_ms`, and Agent's
+  `copy_original`; only one clipboard type returns, preferring plain text, and
+  items marked as secret are skipped. The primary selection keeps the
   transcript. The daemon stays busy during the wait, and Escape no longer
-  cancels once the text is pasted.
-- When Agent rewrites the text, the unrefined transcript is copied just before
-  the rewrite, so a clipboard history lists both.
-- A new `[stenographer.delivery]` section holds `copy_original`,
-  `restore_clipboard`, and `restore_delay_ms`. Restoring needs `wl-paste`
-  (or `xclip`); without it the daemon still runs, and `stenographer doctor`
-  shows a `clipboard restore` hint.
+  cancels after the paste. Without `wl-paste` (or `xclip`), the daemon keeps
+  running and `stenographer doctor` shows a `clipboard restore` hint.
+- When Agent changes the text, copies the original transcript before the
+  rewritten text, so clipboard history keeps both.
+- Rewrites Agent dictation as concise instructions, removing fillers and
+  restarts, applying self-corrections, splitting run-ons, and formatting lists
+  of three or more steps, conditions, or parallel items as `- ` bullets. A
+  polite request can become an instruction. The prompt asks the model to keep
+  the meaning, but the app does not check that the rewrite preserves it.
+- Adds new Linux input key and button names from evdev 1.9.3 to the hotkey
+  binding table.
 
 ### Removed
 
-- Removes macOS platform support; Linux and Windows remain supported.
-
-## [v0.13.2] - 2026-09-23
-
-The Agent profile now cleans up rambling dictation instead of passing it
-through almost unchanged.
+- Removes macOS support; Linux and Windows remain supported.
 
 ### Fixed
 
-- Agent refinement removes fillers and restarts, applies self-corrections,
-  splits run-ons, and is asked to turn spoken lists into `- ` bullets without
-  needing semicolons. Its guard now checks what the edit means rather than
-  exact word order: negations and what they apply to, phase, scope, hedge,
-  and condition words, questions, names, protected tokens, quoted text, and
-  most of the spoken words must survive in roughly the spoken order, and no
-  new word, action, causal claim, or negation may appear. A polite request
-  may become an instruction. An edit that fails these
-  checks falls back to the formatted transcript.
+- Live checks that PipeWire links each capture input to the current default
+  sink's monitor before recording, and rejects misrouted capture.
 
 ## [v0.13.1] - 2026-09-21
 
