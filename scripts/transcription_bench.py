@@ -60,7 +60,17 @@ def run_metadata(manifest_path: Path, cfg: Config, profiles: list, refine: bool)
     from faster_whisper.utils import download_model
 
     root = Path(__file__).resolve().parents[1]
-    executed_modules = ("audio", "decode", "profiles", "records", "scoring", "refinement")
+    executed_modules = (
+        "audio",
+        "asr_grid",
+        "context",
+        "decode",
+        "profiles",
+        "records",
+        "scoring",
+        "refinement",
+        "real_audio",
+    )
     sources = [
         Path(__file__),
         *(root / "scripts/transcription_study" / f"{name}.py" for name in executed_modules),
@@ -270,6 +280,26 @@ def measure_clip(clip: dict, profile, cfg: Config, decoder, *, refine: bool = Fa
 
 
 def worker(args) -> int:
+    if args.grid:
+        from transcription_study.asr_grid import run_public_grid
+
+        if args.real_audio:
+            from transcription_study.real_audio import run_real_audio_grid
+
+            return run_real_audio_grid(
+                args,
+                run_metadata=run_metadata,
+                override_config=override_config,
+                digest=digest,
+            )
+        return run_public_grid(
+            args,
+            run_metadata=run_metadata,
+            override_config=override_config,
+            fingerprint=fingerprint,
+            completed_rows=completed_rows,
+            digest=digest,
+        )
     # Offline model resolution is mandatory, including dependencies using HF.
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -376,10 +406,31 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--refine", action="store_true", help="Evaluate configured loopback refinement"
     )
+    parser.add_argument(
+        "--grid", action="store_true", help="Run the cached CPU model/settings grid"
+    )
+    parser.add_argument(
+        "--models",
+        default=(
+            "medium.en,medium,large-v3,large-v3-turbo-ct2,distil-medium.en,distil-small.en,base.en"
+        ),
+        help="Grid model aliases, comma-separated",
+    )
+    parser.add_argument("--grid-limit", type=int, default=60, help="Public dev clips per setting")
+    parser.add_argument(
+        "--latency-repeats", type=int, default=5, help="Warm dictation repeats per setting"
+    )
+    parser.add_argument("--real-audio", type=Path, help="Run the final no-reference recording pass")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    if args.limit < 1 or args.max_seconds <= 0:
-        parser.error("limit and max-seconds must be positive")
+    if args.limit < 1 or args.grid_limit < 1 or args.max_seconds <= 0:
+        parser.error("limits and max-seconds must be positive")
+    if args.latency_repeats < 5:
+        parser.error("latency-repeats must be at least 5")
+    if args.real_audio and not args.grid:
+        parser.error("--real-audio requires --grid")
+    if args.real_audio and args.resume:
+        parser.error("--real-audio requires a new output file")
     if args.cpu_threads is not None and args.cpu_threads < 0:
         parser.error("cpu-threads must be nonnegative")
     if any(name not in PROFILES for name in args.profiles.split(",")):
