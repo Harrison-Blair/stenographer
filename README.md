@@ -147,9 +147,10 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 ## Common commands
 
 - `stenographer` — open the terminal hub when stdin and stdout are terminals;
-  otherwise show help. Live shows REC, MIC, and SYSTEM panels plus a model and
-  system-status card. Press `space` to start; use `v` for mixed or split
-  transcripts, and `m` or `s` to toggle audio sources. Press `2` for Files;
+  otherwise show help. Live shows REC, MIC, and SYSTEM panels plus a sidebar
+  card with the model, compute type, and system status. Press `space` to start;
+  use `v` for mixed or split transcripts, and `m` or `s` to toggle audio sources.
+  Press `2` for Files;
   use the browser to queue files and `x` to cancel a selected job. See the
   [terminal hub guide](docs/hub.md) for all sections, controls, and file formats.
 - `stenographer doctor` — check capabilities and print fixes.

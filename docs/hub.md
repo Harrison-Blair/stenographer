@@ -52,13 +52,13 @@ comments and settings that the editor does not know about.
 
 The Live section has a REC panel with elapsed time and MIC and SYSTEM panels
 with the device, waveform meter, and dBFS level. A sidebar card shows the model,
-queue, failed count, and CPU use. The transcript opens in mixed view, with one
-time-ordered stream and speaker labels. Press `v` to switch to split view:
-microphone and system lines appear in separate, captioned columns in time order.
-Press `v` again to return to mixed view. The key hints show the section keys
-`1` to `6`. Press `m` to toggle microphone input, `s` to toggle system audio,
-and `r` to rename a system speaker. System audio
-captures the current output mix, not separate applications.
+compute type, queue, failed count, and CPU use. The transcript opens in mixed
+view, with one time-ordered stream and speaker labels. Press `v` to switch to
+split view, where microphone and system lines appear in separate, captioned
+columns in time order. Press `v` again to return to mixed view. The key hints
+show the section keys `1` to `6`. Press `m` to toggle microphone input, `s` to
+toggle system audio, and `r` to rename a system speaker. System audio captures
+the current output mix, not separate applications.
 
 When you stop and save a session, stenographer runs a batch speaker-label pass
 on the saved system phrases and stores the revised labels in a new transcript

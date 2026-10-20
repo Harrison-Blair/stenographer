@@ -245,6 +245,31 @@ class HubApp(App[None]):
             hints.append(f" {description}", style="default")
         return hints
 
+    @staticmethod
+    def _format_live_key_hints(split: bool) -> Text:
+        hints = Text()
+        items = (
+            ("space", "pause/resume"),
+            ("m", "mic"),
+            ("s", "system"),
+            ("v", None),
+            ("r", "rename"),
+            ("q", "stop/save"),
+            ("1-6", "sections"),
+        )
+        for index, (key, description) in enumerate(items):
+            if index:
+                hints.append("   ", style="default")
+            hints.append(key, style="bold #5fd7ff")
+            if description is not None:
+                hints.append(f" {description}", style="default")
+                continue
+            hints.append(" view: ", style="default")
+            hints.append("mixed", style="default" if split else "bold")
+            hints.append(" / ", style="default")
+            hints.append("split", style="bold" if split else "default")
+        return hints
+
     def compose(self) -> ComposeResult:
         with Horizontal(id="hub-layout"):
             with Vertical(id="sidebar-column"):
@@ -431,17 +456,7 @@ class HubApp(App[None]):
                 )
             )
         elif self._section == "live":
-            hints.update(
-                self._format_key_hints(
-                    ("space", "pause/resume"),
-                    ("m", "mic"),
-                    ("s", "system"),
-                    ("v", "view"),
-                    ("r", "rename"),
-                    ("q", "stop/save"),
-                    ("1-6", "sections"),
-                )
-            )
+            hints.update(self._format_live_key_hints(self._live_split))
         elif self._section == "files":
             hints.update(
                 self._format_key_hints(
@@ -471,7 +486,8 @@ class HubApp(App[None]):
             screen.query_one("#sidebar-card", Static).update(content)
 
     def _live_sidebar_card(self, session) -> Text:
-        model = session.model_name if session is not None else self._current_config().asr.model
+        config = self._current_config()
+        model = session.model_name if session is not None else config.asr.model
         model = model.rsplit("/", 1)[-1].removeprefix("faster-whisper-")
         queue = session.queue_depth if session is not None else 0
         failed = session.failed_phrase_count if session is not None else 0
@@ -482,7 +498,7 @@ class HubApp(App[None]):
         else:
             filled = min(8, max(0, int(cpu / 100 * 8)))
             cpu_bar = f"▕{'█' * filled}{'·' * (8 - filled)}▏"
-        card = Text(f"engine\n{model}\nqueue {queue} · failed {failed}\n")
+        card = Text(f"engine\n{model} {config.asr.compute_type}\nqueue {queue} · failed {failed}\n")
         card.append(f"cpu {cpu_bar} {cpu_text}")
         return card
 

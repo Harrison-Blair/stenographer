@@ -48,8 +48,6 @@ class LiveView(Vertical):
         rec_status = "● REC" if active else "○ REC"
         if session is not None and session.paused:
             rec_status = "Ⅱ PAUSED"
-        rec = self.query_one("#live-rec", Vertical)
-        rec.border_title = "REC"
         self.query_one("#live-rec-status", Static).update(Text(rec_status, style="bold #ff875f"))
         self.query_one("#live-elapsed", Digits).update(self._format_time(elapsed))
 

@@ -32,7 +32,7 @@ class FakeSession:
         self.failed_phrase_count = 1
         self.elapsed_seconds = 3.0
         self.queue_depth = 2
-        self.model_name = "test-model"
+        self.model_name = "medium.en"
         self.actions = []
 
     def toggle(self, source):
@@ -154,14 +154,15 @@ def test_sidebar_card_is_section_owned_and_live_shows_engine_status():
             sidebar = app.query_one("#sidebar", Static)
             assert card.region.y > sidebar.region.y
             assert card.styles.border.top[0] == "round"
+            assert "int8" not in app.services.session.model_name
             assert "engine" in str(card.render())
-            assert "test-model" in str(card.render())
+            assert "medium.en int8" in str(card.render())
             assert "queue 2" in str(card.render())
             app.set_sidebar_card("Files queue · 3", section="files")
             await pilot.press("2")
             assert "Files queue · 3" in str(card.render())
             await pilot.press("1")
-            assert "test-model" in str(card.render())
+            assert "medium.en int8" in str(card.render())
 
     asyncio.run(exercise())
 
@@ -176,7 +177,7 @@ def test_pilot_live_mixed_and_split_views_keep_time_order():
             assert "Speaker 2" in content and "system words" in content
             assert "You" in content and "mic words" in content
             card = str(app.query_one("#sidebar-card", Static).render())
-            assert "test-model" in card
+            assert "medium.en int8" in card
             assert "queue 2 · failed 1" in card
             assert app.query_one("#live-elapsed", Digits).value == "00:00:03"
             assert "Default output" in content
@@ -242,6 +243,37 @@ def _visible_segment(app: HubApp, text: str):
             if text in segment.text:
                 return segment
     raise AssertionError(f"{text!r} is not visible")
+
+
+def test_live_rec_panel_shows_only_the_inline_rec_label():
+    async def exercise():
+        app = HubApp(FakeServices())
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.pause()
+            rec = app.query_one("#live-rec", Widget)
+            assert not rec.border_title
+            assert _screen_text(app).count("REC") == 1
+
+    asyncio.run(exercise())
+
+
+def test_live_view_hint_names_both_modes_and_bolds_the_current_mode():
+    async def exercise():
+        app = HubApp(FakeServices())
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.pause()
+            hints = app.query_one("#key-hints", Static).render()
+            assert "v view: mixed / split" in hints.plain
+            assert hints.get_style_at_offset(hints.plain.index("mixed")).bold
+            assert not hints.get_style_at_offset(hints.plain.index("split")).bold
+
+            await pilot.press("v")
+            hints = app.query_one("#key-hints", Static).render()
+            assert "v view: mixed / split" in hints.plain
+            assert not hints.get_style_at_offset(hints.plain.index("mixed")).bold
+            assert hints.get_style_at_offset(hints.plain.index("split")).bold
+
+    asyncio.run(exercise())
 
 
 def test_live_elapsed_uses_digits_widget():
