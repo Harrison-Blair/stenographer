@@ -1,59 +1,65 @@
 # VERIFIED — 104-relabel-memory
 
-Verifier run on 2026-10-20 against head `da8f4b6`, base `origin/dev` `6e80174`.
-The base source was extracted with `git archive origin/dev src` into a
-scratch folder. Each version ran with its own `PYTHONPATH` and the
-`/home/penguin/source/stenographer/.venv` interpreter.
+Second verifier run on 2026-10-20, against head `f7b797b` (repair: keep
+float64 relabel scores). The base is `origin/dev` `6e80174`. The first run
+(head `da8f4b6`) failed V2 on float32 rounding of merged scores.
+
+Method: `git archive` extracted the base (`6e80174`) and the pre-repair head
+(`da8f4b6`) into scratch folders. Each version ran with its own `PYTHONPATH`
+and the `/home/penguin/source/stenographer/.venv` interpreter.
 
 | Item | Result | Observation |
 | --- | --- | --- |
-| V1 tests red/green | pass | Base: `test_relabel.py` errors during collection (`_best_active_pair` absent). Head: 7 passed. |
-| V2 identical output | **fail** | Seeded sweep matches; a constructed input at the default threshold 0.5 gives different labels. See below. |
+| V1/V5 tests red/green | pass | Head `test_relabel.py` against base source: collection error (`ImportError`, `_best_active_pair` absent). Against pre-repair `da8f4b6` source: 1 failed (`test_default_relabel_does_not_merge_when_float64_score_is_below_threshold`), 7 passed. Head: 8 passed. |
+| V2 identical output | pass | Base vs head: 8,000 cases, 0 differences (details below). |
 | V3 real audio | pass | Clusters 4, Labels 4, Speaker 1-4 = 3222.3 / 5174.5 / 4572.4 / 1700.9 s, 360 phrases under 1.2 s. Matches task 58. |
-| V4 probes | pass | Table below. Head is well under 1 GiB and 30 s at 9,000. |
-| Gate | pass | ruff check passed; ruff format: 654 files already formatted; pytest `-m "not integration"`: 2644 passed, 2 skipped, 6 deselected; `stenographer --help` ran. |
+| V4 probes | pass | Head at 9,000 phrases: 1.916 s, 0.730 GiB. Table below. |
+| Gate | pass | `ruff check .`: all checks passed. `ruff format --check .`: 656 files already formatted. `pytest -m "not integration"`: 2645 passed, 2 skipped, 6 deselected. `stenographer --help`: exit 0. |
 
 ## V2 detail
 
-Seeded sweep: 600 seeds, 1-500 phrases each, dimensions 8/32/192, 1-5
-voices, a sustained minor voice at cosine 0.2-0.49 to a major voice,
-scattered short residue (0.3-1.1 s), renamed labels, noise 0-0.2,
-quantized and integer vectors (many exact ties and duplicates), thresholds
-0.3-0.9. Each seed ran with `speaker_count` None, 1, 2, 3, 5. For each of
-the 3,000 cases the SHA-256 of `pickle((result, progress_calls))` was the
-same for base and head (0 differences).
+Each case compared the SHA-256 of `pickle((ordered (speaker_id, label) pairs, progress calls))`.
 
-Divergence: the base compares merged-cluster scores in float64 (heap keys
-and the `score >= threshold` push check). The head stores the merged score
-in the float32 matrix first, then compares the rounded value. When a merged
-score lies in `[t - ulp/2, t)`, it rounds up to `t` in float32. The head then
-merges and the base does not. Reproduction at the default threshold 0.5,
-three phrases of 3.0, 3.0 and 6.0 s:
+- Targeted near-threshold search: 5,000 cases, 3-6 phrases, dimensions
+  3/8/32, durations 1.5-6.0 s. Phrases 0 and 1 are the top pair and merge
+  first. The threshold is `nextafter(m, +inf)`, where `m` is the float64
+  merged score against phrase 2 and `float32(m) > m`. The base kept a split
+  in 2,883 cases. Head: 0 differences. Sensitivity check: the same search
+  against pre-repair `da8f4b6` gave 107 differences.
+- Seeded sweep: seeds 0-599, 1-399 phrases, dimensions 8/32/192, 1-5 voices,
+  noise 0-0.2, optional sustained minor voice near voice 0, half-step and
+  integer quantized vectors (exact ties), duplicate vectors, short residue
+  (0.3-1.1 s), renamed labels, thresholds 0.3-0.9. Each seed ran with
+  `speaker_count` None, 1, 2, 3 and 5 (3,000 cases). 0 differences.
+- Aggregate SHA-256 for base and head:
+  `669d49d0f8b11b8a168a2260317fa5f364c372d30bcd6bfa5d6d51ba554c6af1` (same).
 
-```text
-vectors [[0.4999999403953552, 0.8660253882408142, 0.0],
-         [0.5, 0.8659821152687073, 0.008660109713673592],
-         [1.0, 0.0, 0.0]]
-merged score float64 0.4999999850988388 -> float32 0.5
-base [('speaker-1','L0'), ('speaker-1','L0'), ('speaker-2','L2')]
-head [('speaker-1','L2'), ('speaker-1','L2'), ('speaker-1','L2')]
-```
+## V4 probe
 
-A wider search (3,000 small two-group instances, threshold set just above
-each float64 merged score that float32 rounds up) gave 1,669 of 4,736
-differing outputs. Pairs whose float64 scores differ but round to the same
-float32 value can also be ordered by id instead of by score. This is a
-precision change, not an exact tie, and V2 does not state it. Possible fix:
-keep the merged scores (and `best_scores`) in float64 for comparison, or
-otherwise match the base float64 keys.
-
-## V4 probe (fresh processes, seed 95619, 192-dim, 3 voices, 2.2 s phrases)
+Fresh process per row. Seed 95619, 192 dimensions, 3 voices with pairwise
+centre cosine 0.75, noise sd 0.01, 2.2 s phrases spaced 2.3 s. Peak RSS is
+`ru_maxrss`. It includes Python, imports and input data. All runs gave one
+cluster. The head rows ran after the base probe ended, with no other probe
+running.
 
 | Version | Phrases | Time | Peak RSS |
 | --- | ---: | ---: | ---: |
-| Base | 2,000 | 8.627 s | 0.618 GiB |
-| Base | 9,000 | 314.861 s | 11.835 GiB |
-| Head | 2,000 | 0.159 s | 0.074 GiB |
-| Head | 9,000 | 1.661 s | 0.424 GiB |
+| Base `6e80174` | 2,000 | 8.857 s | 0.624 GiB |
+| Base `6e80174` | 9,000 | 340.236 s | 11.838 GiB |
+| Head `f7b797b` | 2,000 | 0.166 s | 0.093 GiB |
+| Head `f7b797b` | 9,000 | 1.916 s | 0.730 GiB |
 
-All runs produced one cluster. No audio or transcript text was written.
+## Note on requirement 1
+
+The repair stores the `anchor × anchor` matrix as float64. The brief asks
+for "at most a dense float32 similarity matrix". At 9,000 anchors the
+float64 matrix is about 0.65 GB. A float32 matrix would be about 0.32 GB.
+The pre-repair head peak was 0.42-0.43 GiB. The measured targets are met:
+peak RSS is under 1 GiB and time is under 30 s. No per-pair Python objects
+or heaps remain. Requirement 2 requires the float64 scores: the base orders
+merges by float64 keys. This verifier counts requirement 1 as met through
+the measured target. The manager can decide whether the 2× matrix size is
+acceptable.
+
+No audio or transcript text was written. The recording was read by its
+absolute path only.
