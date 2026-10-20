@@ -80,7 +80,7 @@ def render(wizard: SetupWizard, config: Config | None) -> Text:
         append_line(
             lines,
             f"{status}{index} {step.title}",
-            selectable=True,
+            selectable=selected,
             selected=selected,
         )
     if wizard.finished:

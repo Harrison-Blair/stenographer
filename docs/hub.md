@@ -25,6 +25,8 @@ Press `1` to `6` to select a section:
 The key hints at the bottom of the hub change with the selected section.
 Arrow keys move between items in Files, Sessions, and Config. Keys that have
 a meaning in more than one section perform the action for the selected section.
+Scrollbars stay visible. Their thin accent-colour thumbs are the only exception
+to the no-background rule; tracks and corners stay transparent.
 
 ## Hub lifecycle
 

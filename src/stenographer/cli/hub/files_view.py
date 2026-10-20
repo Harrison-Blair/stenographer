@@ -304,7 +304,7 @@ class FilesPanel(Vertical):
             selected = "[x]" if entry.path in self.selected_paths else "[ ]"
             name = ".." if entry.path == self.directory.parent and entry.is_dir else entry.path.name
             if entry.is_dir:
-                value = f"{name}/"
+                value = f"     {name}/"
             else:
                 duration = (
                     ""
@@ -364,7 +364,7 @@ class FilesPanel(Vertical):
             )
             error = getattr(job, "error", None)
             if error:
-                append_line(rows, error)
+                append_line(rows, f"  {error}")
         return rows
 
     def _render_preview(self) -> str:
