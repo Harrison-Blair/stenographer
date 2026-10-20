@@ -13,6 +13,7 @@ def test_real_asr_spawn_is_primed_before_textual_captures_stderr():
     source_dir = Path(__file__).parents[3] / "src"
     script = """
 import asyncio
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -61,7 +62,10 @@ handler.current_platform = lambda: SimpleNamespace(data_dir=lambda *_: root)
 handler.LiveSession = ProbeSession
 handler._run_app = lambda session: asyncio.run(run_app(session))
 args = SimpleNamespace(mic=False, system=False, device=None)
-assert handler.cmd_live.__wrapped__(args, config) == 0
+try:
+    assert handler.cmd_live.__wrapped__(args, config) == 0
+finally:
+    shutil.rmtree(root)
 """
     env = os.environ.copy()
     env["PYTHONPATH"] = str(source_dir) + os.pathsep + env.get("PYTHONPATH", "")
