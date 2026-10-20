@@ -101,6 +101,7 @@ class HubApp(App[None]):
         height: 1fr;
         padding: 1 2;
         border: round #3a4150;
+        overflow-y: auto;
     }
     #key-hints {
         height: 1;
