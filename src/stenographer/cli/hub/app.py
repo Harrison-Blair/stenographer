@@ -532,7 +532,7 @@ class HubApp(App[None]):
                 selected_help.update(editor.render_selected_help())
                 selected_help.display = editor.selected_key is not None
                 if show_hotwords:
-                    hotwords_view.update(editor.render_hotwords())
+                    hotwords_view.update(editor.render_hotwords(main_content.content_size.width))
                     hotwords_view.display = True
             else:
                 main_content.border_title = title
@@ -640,7 +640,12 @@ class HubApp(App[None]):
         assert editor is not None
         count = editor.unsaved_change_count
         suffix = "" if count == 1 else "s"
-        return Text(f"file\n{editor.path.name}\n{count} unsaved change{suffix}")
+        card = Text(f"file\n{editor.path.name}\n")
+        card.append(
+            f"{count} unsaved change{suffix}",
+            style="#ffaf5f" if count else None,
+        )
+        return card
 
     def _live_session(self):
         return getattr(self.services, "session", None)

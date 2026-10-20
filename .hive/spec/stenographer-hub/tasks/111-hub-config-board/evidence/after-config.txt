@@ -1,45 +1,45 @@
-
- ╭─ stenographer ────────╮ ╭─ group ────────────╮ ╭─ asr ───────────────────────────────────────────────────────────────────────────────────────────╮
- │                       │ │                    │ │                                                                                                 │
- │    1 Live             │ │   hotkey           │ │    model                deepdml/faster-whisper-large-v3-turbo-ct2                               │
- │    2 Files            │ │   audio            │ │    compute_type         int8                                                                    │
- │    3 Sessions         │ │ ▶ asr              │ │  ▶ beam_size            1                                                                       │
- │  ▶ 4 Config           │ │   refine           │ │    initial_prompt       (unset)                                                                 │
- │    5 Setup            │ │   feedback         │ │    vad_filter           on                                                                      │
- │    6 Doctor   0W 0F   │ │   analytics        │ │    silence_threshold    0.6                                                                     │
- │                       │ │   delivery         │ │    idle_unload_seconds  900                                                                     │
- │                       │ │                    │ │    cpu_threads          0                                                                       │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │  ─────────────────────────────────────────────────────────────────────────────────────────────  │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │  hotwords                                                                                       │
- │                       │ │                    │ │    (unset) … 0 words                                                                            │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- │                       │ │                    │ │                                                                                                 │
- ╰───────────────────────╯ │                    │ │                                                                                                 │
-                           │                    │ │                                                                                                 │
- ╭───────────────────────╮ │                    │ │                                                                                                 │
- │ file                  │ │                    │ │                                                                                                 │
- │ config.toml           │ │                    │ │  beam_size: Wider search can improve word accuracy at a latency cost. Default: 1 Bench:         │
- │ 0 unsaved changes     │ │                    │ │  docs/transcription-experiments.md, CPU model and context screen (beam 1: 10.12% WER at 1.664   │
- │                       │ │                    │ │  s; beam 5: 9.31% at 1.683 s).                                                                  │
- │                       │ │                    │ │                                                                                                 │
- ╰───────────────────────╯ ╰────────────────────╯ ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
-
-  enter edit   u undo   D reset   / search   ctrl+s save   ←/→ group   ↑/↓ key
+                                                                                                                                                      
+ ╭─ stenographer ────────╮ ╭─ group ────────────╮ ╭─ asr ───────────────────────────────────────────────────────────────────────────────────────────╮ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │    1 Live             │ │   hotkey           │ │    model                deepdml/faster-whisper-large-v3-turbo-ct2                               │ 
+ │    2 Files            │ │   audio            │ │    compute_type         int8                                                                    │ 
+ │    3 Sessions         │ │ ▶ asr              │ │  ▶ beam_size            5 ●                                                                     │ 
+ │  ▶ 4 Config           │ │   refine           │ │    initial_prompt       (unset)                                                                 │ 
+ │    5 Setup            │ │   feedback         │ │    vad_filter           on                                                                      │ 
+ │    6 Doctor   0W 0F   │ │   analytics        │ │    silence_threshold    0.6                                                                     │ 
+ │                       │ │   delivery         │ │    idle_unload_seconds  4 ●                                                                     │ 
+ │                       │ │                    │ │    cpu_threads          0                                                                       │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │  ─────────────────────────────────────────────────────────────────────────────────────────────  │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │  hotwords                                                                                       │ 
+ │                       │ │                    │ │    A01, A02, A03, A04, A05, A06, A07, A08, A09, A10, A11, A12, A13, A14, A15, A16 … 40 words ●  │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ ╰───────────────────────╯ │                    │ │                                                                                                 │ 
+                           │                    │ │                                                                                                 │ 
+ ╭───────────────────────╮ │                    │ │                                                                                                 │ 
+ │ file                  │ │                    │ │                                                                                                 │ 
+ │ config.toml           │ │                    │ │  beam_size: Wider search can improve word accuracy at a latency cost. Default: 1 Bench:         │ 
+ │ 1 unsaved change      │ │                    │ │  docs/transcription-experiments.md, CPU model and context screen (beam 1: 10.12% WER at 1.664   │ 
+ │                       │ │                    │ │  s; beam 5: 9.31% at 1.683 s).                                                                  │ 
+ │                       │ │                    │ │                                                                                                 │ 
+ ╰───────────────────────╯ ╰────────────────────╯ ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯ 
+                                                                                                                                                      
+  enter edit   u undo   D reset   / search   ctrl+s save   ←/→ group   ↑/↓ key                                                                        

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 
+from rich.cells import cell_len
 from rich.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Static
@@ -122,7 +123,8 @@ def test_config_board_layout_has_group_selector_settings_and_hotwords_panels(tmp
             assert "asr.hotwords" not in settings_text
             assert "context from recent lines" not in settings_text
             assert "hotwords" in hotwords.render().plain
-            assert "0 words" in hotwords.render().plain
+            assert "none" in hotwords.render().plain
+            assert "0 words" not in hotwords.render().plain
             assert "Cached speech-recognition model" in note.render().plain
 
             await pilot.press("down", "down")
@@ -135,7 +137,8 @@ def test_config_board_layout_has_group_selector_settings_and_hotwords_panels(tmp
             app.screen.query_one("#config-prompt-input", Input).value = "Alpha, Beta"
             await pilot.press("enter")
             assert app.config_editor.value("asr.hotwords") == "Alpha, Beta"
-            assert "Alpha, Beta … 2 words" in hotwords.render().plain
+            assert "Alpha, Beta" in hotwords.render().plain
+            assert "…" not in hotwords.render().plain
 
     asyncio.run(exercise())
 
@@ -166,13 +169,46 @@ def test_config_hotwords_value_shows_preview_and_word_count(tmp_path):
             await pilot.press("4", "right", "right")
             hotwords = app.query_one("#config-hotwords", Static)
             rendered = hotwords.render()
-            assert "Alpha, Beta, Gamma, Delta, Epsilon, Zeta, Eta, Theta … 9 words" in (
-                rendered.plain
-            )
+            assert "Alpha, Beta, Gamma, Delta, Epsilon, Zeta, Eta, Theta, Iota" in rendered.plain
+            assert "…" not in rendered.plain
             assert rendered.plain.endswith("●")
             warning = rendered.plain.index("●")
             assert rendered.get_style_at_offset(warning).rich_style.color == Color.parse("#ffaf5f")
             assert hotwords.styles.background.a == 0
+
+    asyncio.run(exercise())
+
+
+def test_config_hotwords_truncate_to_fit_the_value_line(tmp_path):
+    terms = [f"A{index:02}" for index in range(1, 41)]
+    content = default_toml().replace('hotwords = ""', f'hotwords = "{", ".join(terms)}"')
+
+    async def exercise():
+        app = HubApp(FakeServices(), config_path=_config_path(tmp_path, content))
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("4", "right", "right")
+            hotwords = app.query_one("#config-hotwords", Static)
+            line = hotwords.render().plain.splitlines()[1]
+            assert "A16" in line
+            assert "A17" not in line
+            assert line.endswith("… 40 words ●")
+            assert cell_len(line) <= hotwords.content_size.width
+
+    asyncio.run(exercise())
+
+
+def test_config_hotwords_truncate_wide_terms_to_fit_the_value_line(tmp_path):
+    term = "界" * 100
+    content = default_toml().replace('hotwords = ""', f'hotwords = "{term}"')
+
+    async def exercise():
+        app = HubApp(FakeServices(), config_path=_config_path(tmp_path, content))
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("4", "right", "right")
+            hotwords = app.query_one("#config-hotwords", Static)
+            line = hotwords.render().plain.splitlines()[1]
+            assert line.endswith("… 1 words ●")
+            assert cell_len(line) <= hotwords.content_size.width
 
     asyncio.run(exercise())
 
@@ -218,6 +254,15 @@ def test_config_selected_key_is_bold_accent_and_default_difference_has_warn_dot(
             row = next(line for line in settings.plain.splitlines() if "beam_size" in line)
             assert "▶ beam_size" in row and "5 ●" in row
             marker = settings.plain.index("▶ beam_size")
+            selected_row_start = settings.plain.rfind("\n", 0, marker) + 1
+            selected_value = settings.plain.index("5", marker + len("▶ beam_size"))
+            value_row = next(line for line in settings.plain.splitlines() if "compute_type" in line)
+            assert cell_len("▶ ") == cell_len("  ")
+            assert selected_value - selected_row_start == value_row.index("int8")
+            for offset in range(marker + len("▶ beam_size"), selected_value):
+                gap_style = settings.get_style_at_offset(offset).rich_style
+                assert gap_style.bold
+                assert gap_style.color == Color.parse("#5fd7ff")
             selected = settings.get_style_at_offset(marker).rich_style
             assert selected.bold
             assert selected.color == Color.parse("#5fd7ff")
@@ -270,6 +315,10 @@ def test_config_sidebar_card_shows_path_and_unsaved_change_count(tmp_path):
             app.config_editor.edit("asr.cpu_threads", "2")
             app._refresh_view()
             assert "2 unsaved changes" in card.render().plain
+            rendered = card.render()
+            count_offset = rendered.plain.index("2 unsaved changes")
+            count_style = rendered.get_style_at_offset(count_offset).rich_style
+            assert count_style.color == Color.parse("#ffaf5f")
 
             app.config_editor.undo()
             app._refresh_view()

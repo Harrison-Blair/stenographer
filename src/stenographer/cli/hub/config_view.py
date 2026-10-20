@@ -6,6 +6,7 @@ from __future__ import annotations
 import pathlib
 from dataclasses import asdict, replace
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from stenographer.cli.hub.selection import append_line
@@ -241,35 +242,55 @@ class ConfigEditor:
             if dotted_key == "asr.hotwords":
                 continue
             name = dotted_key.rpartition(".")[2]
-            append_line(
-                lines,
-                name,
-                selectable=True,
-                selected=index == self.key_index,
-            )
-            lines.append(" " * (name_width - len(name) + 2))
+            selected = index == self.key_index
+            if lines:
+                lines.append("\n")
+            style = "bold #5fd7ff" if selected else None
+            prefix = "▶ " if selected else "  "
+            lines.append(prefix + name + " " * (name_width - len(name) + 2), style=style)
             lines.append(self._display(self.value(dotted_key)))
             if self.value(dotted_key) != self.default(dotted_key):
                 lines.append(" ")
                 lines.append("●", style="#ffaf5f")
         return lines
 
-    def render_hotwords(self) -> Text:
+    def render_hotwords(self, width: int) -> Text:
         if self.config is None or "asr.hotwords" not in self.visible_keys:
             return Text()
         value = self.value("asr.hotwords")
         terms = [term.strip() for term in (value or "").split(",") if term.strip()]
         word_count = len((value or "").split())
-        preview = ", ".join(terms[:8]) or "(unset)"
+        changed = value != self.default("asr.hotwords")
+        content_width = max(0, width - 2 - (2 if changed else 0))
+        full_value = ", ".join(terms) or "none"
+        if cell_len(full_value) <= content_width:
+            preview = full_value
+        else:
+            suffix = f"… {word_count} words"
+            preview_width = max(0, content_width - cell_len(suffix) - 1)
+            preview_terms = []
+            for term in terms:
+                candidate = ", ".join((*preview_terms, term))
+                if cell_len(candidate) > preview_width:
+                    break
+                preview_terms.append(term)
+            preview = ", ".join(preview_terms)
+            if not preview and terms:
+                for character in terms[0]:
+                    candidate = preview + character
+                    if cell_len(candidate) > preview_width:
+                        break
+                    preview = candidate
+            preview = f"{preview} {suffix}" if preview else suffix
         key_index = self.visible_keys.index("asr.hotwords")
         lines = Text("hotwords")
         append_line(
             lines,
-            f"{preview} … {word_count} words",
+            preview,
             selectable=True,
             selected=key_index == self.key_index,
         )
-        if value != self.default("asr.hotwords"):
+        if changed:
             lines.append(" ")
             lines.append("●", style="#ffaf5f")
         return lines
