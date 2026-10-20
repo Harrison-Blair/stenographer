@@ -34,7 +34,7 @@ _OPTION_NAMES = ("diarize", "speaker count", "refine", "output format", "output 
 class FilesPanel(Vertical):
     """Hold Files-section navigation state and render its panels."""
 
-    CSS = """
+    DEFAULT_CSS = """
     FilesPanel {
         width: 1fr;
         height: 1fr;
@@ -43,12 +43,12 @@ class FilesPanel(Vertical):
         width: 1fr;
         height: 3fr;
         min-height: 8;
-        gap: 1;
     }
     #files-browser-scroll {
         width: 1fr;
         height: 1fr;
         border: round #3a4150;
+        margin-right: 1;
     }
     #files-browser {
         height: auto;
@@ -57,11 +57,13 @@ class FilesPanel(Vertical):
     #files-right {
         width: 1fr;
         height: 1fr;
-        gap: 1;
     }
     #files-options-scroll, #files-queue-scroll {
         height: 1fr;
         border: round #3a4150;
+    }
+    #files-options-scroll {
+        margin-bottom: 1;
     }
     #files-options, #files-queue {
         height: auto;
@@ -108,7 +110,7 @@ class FilesPanel(Vertical):
         self._browser_text = ""
         self._options_text = ""
         self._queue_text = ""
-        self._preview_text = ""
+        self._preview_text = Text()
         self._refresh_entries()
         self._build_text()
 
@@ -272,7 +274,7 @@ class FilesPanel(Vertical):
                 self._browser_text.plain,
                 self._options_text.plain,
                 self._queue_text.plain,
-                self._preview_text,
+                self._preview_text.plain,
             )
         )
 
@@ -280,6 +282,15 @@ class FilesPanel(Vertical):
         self._build_text()
         if not self.is_mounted or not self.app.is_running:
             return
+        preview_panel = self.query_one("#files-preview-scroll", VerticalScroll)
+        job = self.selected_job
+        if job is None:
+            result_name = ""
+        else:
+            output_path = getattr(job, "output_path", None)
+            path = getattr(getattr(job, "options", None), "path", Path("file"))
+            result_name = Path(output_path).stem if output_path is not None else path.stem
+        preview_panel.border_title = "preview" if not result_name else f"preview · {result_name}"
         self.query_one("#files-browser", Static).update(self._browser_text)
         self.query_one("#files-options", Static).update(self._options_text)
         self.query_one("#files-queue", Static).update(self._queue_text)
@@ -324,20 +335,31 @@ class FilesPanel(Vertical):
 
     def _render_options(self) -> Text:
         rows = Text()
+        speaker_count = self.speaker_count if self.speaker_count is not None else "auto"
         option_rows = (
-            f"diarize       [{'x' if self.diarize else ' '}] on",
-            f"speaker count {self.speaker_count if self.speaker_count is not None else 'auto'}",
-            f"refine        [{'x' if self.refine else ' '}] on",
-            f"output format {self.output_format} · {' / '.join(_FORMATS)}",
-            f"output folder {self.output_folder}",
+            f"speakers      [{'x' if self.diarize else ' '}] diarize   count {speaker_count}",
+            f"refine        {'on' if self.refine else 'off'}",
+            f"output        {' · '.join(_FORMATS)}",
+            f"save to       {self.output_folder}",
         )
-        for index, option in enumerate(option_rows):
-            append_line(
-                rows,
-                option,
-                selectable=True,
-                selected=self.focus_area == "options" and index == self.selected_option_index,
-            )
+        for row_index, option in enumerate(option_rows):
+            if row_index == 0:
+                selected = self.selected_option_index in {0, 1}
+            else:
+                selected = self.selected_option_index == row_index + 1
+            selected = self.focus_area == "options" and selected
+            line_start = len(rows.plain) + (1 if rows else 0) + 2
+            append_line(rows, option, selectable=True, selected=selected)
+            if row_index == 2 and not selected:
+                format_start = line_start + len("output        ")
+                active_start = format_start + sum(
+                    len(value) + 3 for value in _FORMATS[: _FORMATS.index(self.output_format)]
+                )
+                rows.stylize(
+                    "bold #5fd7ff",
+                    active_start,
+                    active_start + len(self.output_format),
+                )
         if self.options_open:
             append_line(rows, "enter/space edit · o close")
         else:
@@ -349,43 +371,86 @@ class FilesPanel(Vertical):
         if not self.jobs:
             append_line(rows, "No queued jobs.")
         for index, job in enumerate(self.jobs):
-            path = getattr(getattr(job, "options", None), "path", Path("file"))
+            options = getattr(job, "options", None)
+            path = getattr(options, "path", Path("file"))
             progress = getattr(job, "progress", None)
             stage = getattr(progress, "stage", "transcribe")
-            percent = getattr(progress, "percent", 0)
+            percent = min(100, max(0, int(getattr(progress, "percent", 0))))
             eta = getattr(progress, "eta_seconds", None)
-            status = getattr(job, "state", "queued")
             eta_text = "—" if eta is None else self._format_clock(eta)
+            state = getattr(job, "state", "queued")
             append_line(
                 rows,
-                f"{path.name} · {status} · {stage} · {percent}% · eta {eta_text}",
+                path.name,
                 selectable=True,
                 selected=self.focus_area == "queue" and index == self.selected_job_index,
             )
+            if rows:
+                rows.append("\n")
+            rows.append(self._progress_bar(percent), style="bold #5fd7ff")
+            rows.append(f" {percent}%  eta {eta_text}")
+            diarize = getattr(options, "diarize", True)
+            append_line(rows, self._render_stages(stage, state, diarize))
             error = getattr(job, "error", None)
             if error:
                 append_line(rows, f"  {error}")
         return rows
 
-    def _render_preview(self) -> str:
+    @staticmethod
+    def _progress_bar(percent: int) -> str:
+        width = 12
+        filled = round(width * percent / 100)
+        return f"▕{'█' * filled}{'·' * (width - filled)}▏"
+
+    @staticmethod
+    def _render_stages(stage: str, state: str, diarize: bool) -> str:
+        stages = ("transcribe", "diarize", "save")
+        try:
+            current_index = stages.index(stage)
+        except ValueError:
+            current_index = 0
+        rendered = []
+        for index, name in enumerate(stages):
+            if name == "diarize" and not diarize:
+                marker = "—"
+            elif state == "completed" or (state == "running" and index < current_index):
+                marker = "✓"
+            elif state == "running" and index == current_index:
+                marker = "…"
+            else:
+                marker = ""
+            rendered.append(f"{name} {marker}".rstrip())
+        return " · ".join(rendered)
+
+    def _render_preview(self) -> Text:
+        rows = Text()
         job = self.selected_job
         if job is None:
-            return "Queue a file to preview its transcript."
-        path = getattr(getattr(job, "options", None), "path", Path("file"))
-        rows = [path.stem]
+            rows.append("Queue a file to preview its transcript.")
+            return rows
         progress = getattr(job, "progress", None)
         lines = getattr(progress, "completed_lines", ())
         if not lines:
             rows.append("Transcript preview will appear here.")
         for line in lines[-8:]:
-            rows.append(
-                f"{self._format_clock(line.start)}  [{line.label}]  "
-                f"{line.text.replace(chr(10), ' ')}"
-            )
+            if rows:
+                rows.append("\n")
+            rows.append(f"{self._format_timestamp(line.start)}  ")
+            rows.append(f"{line.label}\u00a0", style="bold #5fd7ff")
+            rows.append(f" {line.text.replace(chr(10), ' ')}")
         output_path = getattr(job, "output_path", None)
         if output_path is not None:
+            if rows:
+                rows.append("\n")
             rows.append(f"saved: {Path(output_path).name}")
-        return "\n".join(rows)
+        return rows
+
+    @staticmethod
+    def _format_timestamp(seconds: float) -> str:
+        total = max(0, int(seconds))
+        hours, remainder = divmod(total, 3600)
+        minutes, second = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{second:02d}"
 
     @staticmethod
     def _format_clock(seconds: float) -> str:

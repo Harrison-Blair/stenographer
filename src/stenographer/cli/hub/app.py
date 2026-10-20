@@ -198,6 +198,7 @@ class HubApp(App[None]):
         )
         self.live_view = LiveView(id="live-view")
         self._sidebar_cards: dict[str, str | Text] = {}
+        self._files_sidebar_card_custom = False
         self._session_job_status: str | None = None
         self._pending_speaker_id: str | None = None
         self._pending_delete_session: str | None = None
@@ -363,6 +364,10 @@ class HubApp(App[None]):
         session = self._live_session() if self._section == "live" else None
         if self._section == "live":
             self.set_sidebar_card(self._live_sidebar_card(session), section="live")
+        elif self._section == "files":
+            if not self._files_sidebar_card_custom:
+                self._sidebar_cards["files"] = self._files_sidebar_card()
+            self.query_one("#sidebar-card", Static).update(self._sidebar_cards.get("files", ""))
         else:
             self.query_one("#sidebar-card", Static).update(
                 self._sidebar_cards.get(self._section, "")
@@ -467,7 +472,8 @@ class HubApp(App[None]):
                     ("space", "select"),
                     ("o", "options"),
                     ("x", "cancel"),
-                    ("e", "folder"),
+                    ("e", "open result"),
+                    ("1-6", "sections"),
                 )
             )
         else:
@@ -481,6 +487,8 @@ class HubApp(App[None]):
         """Set the shared sidebar card content for one hub section."""
         section = section or self._section
         self._sidebar_cards[section] = content
+        if section == "files":
+            self._files_sidebar_card_custom = True
         screen = self._hub_screen
         if section == self._section and screen is not None and self.is_mounted(screen):
             screen.query_one("#sidebar-card", Static).update(content)
@@ -491,6 +499,20 @@ class HubApp(App[None]):
         model = model.rsplit("/", 1)[-1].removeprefix("faster-whisper-")
         queue = session.queue_depth if session is not None else 0
         failed = session.failed_phrase_count if session is not None else 0
+        card = Text(f"engine\n{model} {config.asr.compute_type}\nqueue {queue} · failed {failed}\n")
+        card.append(self._cpu_sidebar_line())
+        return card
+
+    def _files_sidebar_card(self) -> Text:
+        config = self._current_config()
+        model = (
+            config.asr.model.rsplit("/", 1)[-1].removeprefix("faster-whisper-").removesuffix("-ct2")
+        )
+        card = Text(f"engine\n{model} {config.asr.compute_type}\n")
+        card.append(self._cpu_sidebar_line())
+        return card
+
+    def _cpu_sidebar_line(self) -> str:
         cpu = self._cpu_percent
         cpu_text = "—" if cpu is None else f"{cpu:.0f}%"
         if cpu is None:
@@ -498,9 +520,7 @@ class HubApp(App[None]):
         else:
             filled = min(8, max(0, int(cpu / 100 * 8)))
             cpu_bar = f"▕{'█' * filled}{'·' * (8 - filled)}▏"
-        card = Text(f"engine\n{model} {config.asr.compute_type}\nqueue {queue} · failed {failed}\n")
-        card.append(f"cpu {cpu_bar} {cpu_text}")
-        return card
+        return f"cpu {cpu_bar} {cpu_text}"
 
     def _live_session(self):
         return getattr(self.services, "session", None)
@@ -522,7 +542,7 @@ class HubApp(App[None]):
         self.files_panel.set_jobs(tuple(jobs))
 
     def _sample_cpu(self) -> None:
-        if self._section != "live":
+        if self._section not in {"live", "files"}:
             return
         import psutil
 
