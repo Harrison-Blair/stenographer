@@ -3,17 +3,27 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import threading
+import time
 
 import numpy as np
 
 from stenographer.lib.platform.errors import SystemAudioCaptureError
+from stenographer.lib.platform.linux.system_audio_links import (
+    has_sink_monitor_links,
+    link_inspector,
+    parse_pw_dump_output,
+    parse_pw_link_output,
+)
 from stenographer.lib.platform.system_audio import SystemAudioBlockCallback
 
 _RATE = 16000
 _BLOCK_FRAMES = 512
+_LINK_CHECK_TIMEOUT = 2.0
+_LINK_CHECK_INTERVAL = 0.1
 
 
 class LinuxSystemAudioCapture:
@@ -28,6 +38,11 @@ class LinuxSystemAudioCapture:
     def available(self) -> tuple[bool, str | None]:
         if shutil.which("pw-record") is None:
             return False, "pw-record is not installed"
+        if link_inspector() is None:
+            return (
+                False,
+                "pw-link and pw-dump are not installed; cannot verify system capture routing",
+            )
         sink, reason = self._default_sink()
         if reason is not None:
             return False, reason
@@ -41,14 +56,21 @@ class LinuxSystemAudioCapture:
         executable = shutil.which("pw-record")
         if executable is None:
             raise SystemAudioCaptureError("pw-record is not installed")
+        inspector = link_inspector()
+        if inspector is None:
+            raise SystemAudioCaptureError(
+                "pw-link and pw-dump are not installed; cannot verify system capture routing"
+            )
         sink, reason = self._default_sink()
         if reason is not None or not sink:
             raise SystemAudioCaptureError(reason or "pactl returned no default sink")
         command = [
             executable,
             "--raw",
+            "-P",
+            "{ stream.capture.sink = true, node.name = stenographer-system-capture }",
             "--target",
-            f"{sink}.monitor",
+            sink,
             "--rate",
             str(_RATE),
             "--channels",
@@ -67,17 +89,74 @@ class LinuxSystemAudioCapture:
         except OSError as exc:
             raise SystemAudioCaptureError("could not start pw-record") from exc
 
+        try:
+            self._wait_for_sink_monitor(process, sink, inspector)
+            self._discard_pending_audio(process)
+        except SystemAudioCaptureError:
+            self._terminate_process(process)
+            if process.stdout is not None:
+                process.stdout.close()
+            raise
+        except OSError as exc:
+            self._terminate_process(process)
+            if process.stdout is not None:
+                process.stdout.close()
+            raise SystemAudioCaptureError(
+                "could not discard audio captured before system link verification"
+            ) from exc
+
         self._callback = on_block
         self._stopping.clear()
         self._process = process
         self._thread = threading.Thread(target=self._read_stdout, args=(process,), daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
-        process = self._process
-        if process is None:
-            return
-        self._stopping.set()
+    def _wait_for_sink_monitor(
+        self, process: subprocess.Popen, sink: str, inspector: tuple[str, str]
+    ) -> None:
+        kind, executable = inspector
+        deadline = time.monotonic() + _LINK_CHECK_TIMEOUT
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                break
+            remaining = deadline - time.monotonic()
+            command = [executable, "-l"] if kind == "pw-link" else [executable]
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=min(remaining, 0.5),
+                )
+                if kind == "pw-link":
+                    ports, links = parse_pw_link_output(result.stdout)
+                else:
+                    ports, links = parse_pw_dump_output(result.stdout)
+                if has_sink_monitor_links(ports, links, sink):
+                    return
+            except (OSError, subprocess.SubprocessError):
+                pass
+            time.sleep(min(_LINK_CHECK_INTERVAL, max(0.0, deadline - time.monotonic())))
+        raise SystemAudioCaptureError("system capture is not linked to the sink monitor")
+
+    @staticmethod
+    def _discard_pending_audio(process: subprocess.Popen) -> None:
+        assert process.stdout is not None
+        file_descriptor = process.stdout.fileno()
+        os.set_blocking(file_descriptor, False)
+        try:
+            while True:
+                try:
+                    if not os.read(file_descriptor, 65536):
+                        break
+                except BlockingIOError:
+                    break
+        finally:
+            os.set_blocking(file_descriptor, True)
+
+    @staticmethod
+    def _terminate_process(process: subprocess.Popen) -> None:
         if process.poll() is None:
             process.terminate()
             try:
@@ -85,6 +164,13 @@ class LinuxSystemAudioCapture:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+
+    def stop(self) -> None:
+        process = self._process
+        if process is None:
+            return
+        self._stopping.set()
+        self._terminate_process(process)
         if self._thread is not None:
             self._thread.join()
         if process.stdout is not None:

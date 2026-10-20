@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
@@ -378,6 +380,61 @@ def test_unsupported_system_platform_disables_system_without_blocking_mic(monkey
     session.stop()
     assert writer.closed
     assert worker.stopped
+
+
+def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tmp_path):
+    from stenographer.lib.platform.linux.system_audio import LinuxSystemAudioCapture
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pactl = bin_dir / "pactl"
+    pactl.write_text("#!/bin/sh\nprintf 'studio\\n'\n")
+    pactl.chmod(0o755)
+    pw_record = bin_dir / "pw-record"
+    pw_record.write_text(
+        f"#!{sys.executable}\n"
+        "import os, struct, sys, time\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['PW_LIVE_PID']).write_text(str(os.getpid()))\n"
+        "sys.stdout.buffer.write(struct.pack('<512f', *([1.0] * 512)))\n"
+        "sys.stdout.buffer.flush()\n"
+        "while True: time.sleep(0.05)\n"
+    )
+    pw_record.chmod(0o755)
+    pw_link = bin_dir / "pw-link"
+    pw_link.write_text(
+        f"#!{sys.executable}\n"
+        "print('microphone:capture_FL')\n"
+        "print('  |-> stenographer-system-capture:input_FL')\n"
+        "print('microphone:capture_FR')\n"
+        "print('  |-> stenographer-system-capture:input_FR')\n"
+    )
+    pw_link.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("PW_LIVE_PID", str(tmp_path / "pid.txt"))
+
+    session, writer, _worker, _fake_system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, mic=False, start=False
+    )
+    session._system_capture = LinuxSystemAudioCapture()
+    try:
+        session.start()
+
+        assert session.source_states["system"] == "off"
+        assert (
+            session.source_reasons["system"] == "system capture is not linked to the sink monitor"
+        )
+        assert not any(source == "system" for source, _samples in writer.audio)
+    finally:
+        session.stop()
+
+    process_id = int((tmp_path / "pid.txt").read_text())
+    try:
+        os.kill(process_id, 0)
+    except ProcessLookupError:
+        pass
+    else:
+        raise AssertionError("pw-record stayed alive after the link check failed")
 
 
 def test_unavailable_system_source_stays_off_and_exposes_the_reason(monkeypatch, tmp_path):

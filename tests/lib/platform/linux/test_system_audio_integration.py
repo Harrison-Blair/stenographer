@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import time
 
 import numpy as np
@@ -10,6 +12,12 @@ import pytest
 
 from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.errors import SystemAudioCaptureError
+from stenographer.lib.platform.linux.system_audio_links import (
+    _CAPTURE_NODE,
+    has_sink_monitor_links,
+    parse_pw_dump_output,
+    parse_pw_link_output,
+)
 
 
 @pytest.mark.integration
@@ -31,10 +39,34 @@ def test_default_monitor_captures_three_seconds_of_playing_audio():
 
     capture.start(receive)
     try:
+        sink_result = subprocess.run(
+            [shutil.which("pactl") or "pactl", "get-default-sink"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        sink = sink_result.stdout.strip()
+        pw_link = shutil.which("pw-link")
+        if pw_link is not None:
+            result = subprocess.run(
+                [pw_link, "-l"], capture_output=True, text=True, check=True, timeout=5
+            )
+            ports, links = parse_pw_link_output(result.stdout)
+        else:
+            pw_dump = shutil.which("pw-dump")
+            assert pw_dump is not None
+            result = subprocess.run(
+                [pw_dump], capture_output=True, text=True, check=True, timeout=5
+            )
+            ports, links = parse_pw_dump_output(result.stdout)
+        assert has_sink_monitor_links(ports, links, sink, _CAPTURE_NODE)
         time.sleep(3)
     finally:
         capture.stop()
 
     assert not errors, errors
     assert sum(block.size for block in blocks) >= 3 * 16000
-    assert any(np.any(block) for block in blocks), "play audio during the capture"
+    samples = np.concatenate(blocks)
+    rms = float(np.sqrt(np.mean(np.square(samples))))
+    assert rms > 0.0, "play audio during the capture"
