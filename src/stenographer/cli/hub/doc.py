@@ -3,7 +3,8 @@
 
 - __init__.py: Mark the hub package.
 - app.py: Render sections and coordinate hub-level user actions.
-- doctor_view.py: Build grouped doctor checks and safe warning summaries.
+- doctor_panel.py: Render grouped checks, issue details, and recent warnings.
+- doctor_view.py: Build doctor checks and safe warning summaries.
 - config_dialog.py: Prompt for config edits, searches, and unsaved changes.
 - config_view.py: Render and validate the config draft and its saves.
 - dialogs.py: Confirm actions that stop work during quit.
@@ -15,6 +16,7 @@
 - session_jobs.py: Reprocess saved transcripts with current models and settings.
 - sessions_view.py: Render saved-session storage, list, detail, and transcript.
 - selection.py: Render selected rows with an accent marker and no fill.
+- setup_panel.py: Render the selected setup step beside the step list.
 - setup_state.py: Track wizard navigation and completion state.
-- setup_wizard.py: Render setup steps and reuse setup workflow probes.
+- setup_wizard.py: Render setup state and reuse setup workflow probes.
 """
