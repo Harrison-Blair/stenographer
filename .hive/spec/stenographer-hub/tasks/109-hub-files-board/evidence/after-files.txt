@@ -1,0 +1,45 @@
+
+ ╭─ stenographer ────────╮ ╭─ ~/Recordings ───────────────────────────────────────────╮ ╭─ options ─────────────────────────────────────────────────╮
+ │                       │ │        ../                                               │ │   speakers      [x] diarize   count auto                  │
+ │    1 Live             │ │   [ ] interview-draft.wav          41:07                 │ │   refine        [ ] cleanup pass                          │
+ │  ▶ 2 Files            │ │   [ ] podcast-ep12.mp3             1:02:15               │ │   output        md · jsonl · srt · txt                    │
+ │    3 Sessions         │ │ ▶ [ ] standup-2026-10-19.m4a       18:42                 │ │   save to       ~/.local/share/stenographer/files         │
+ │    4 Config           │ │   [ ] voice-memo-0412.ogg          2:31                  │ │ o edit options                                            │
+ │    5 Setup            │ │                                                          │ │                                                           │
+ │    6 Doctor   0W 0F   │ │                                                          │ │                                                           │
+ │                       │ │                                                          │ │                                                           │
+ │                       │ │                                                          │ │                                                           │
+ │                       │ │                                                          │ │                                                           │
+ │                       │ │                                                          │ ╰───────────────────────────────────────────────────────────╯
+ │                       │ │                                                          │
+ │                       │ │                                                          │ ╭─ queue ───────────────────────────────────────────────────╮
+ │                       │ │                                                          │ │   standup-2026-10-19.m4a                                  │
+ │                       │ │                                                          │ │ ▕███████·····▏ 58%  eta 1:40                              │
+ │                       │ │                                                          │ │ transcribe ✓ · diarize … · save                           │
+ │                       │ │                                                          │ │                                                           │
+ │                       │ │                                                          │ │                                                           │
+ │                       │ │                                                          │ │                                                           │
+ │                       │ │                                                          │ │                                                           │
+ │                       │ │                                                          │ │                                                           │
+ │                       │ │                                                          │ │                                                           │
+ │                       │ │ / search · enter queue · space select                    │ │                                                           │
+ │                       │ ╰──────────────────────────────────────────────────────────╯ ╰───────────────────────────────────────────────────────────╯
+ │                       │ ╭─ preview · standup-2026-10-19 ─────────────────────────────────────────────────────────────────────────────────────────╮
+ │                       │ │ 00:00:04  Speaker 1  synthetic fixture line one                                                                        │
+ │                       │ │ 00:00:11  Speaker 2  synthetic fixture line two                                                                        │
+ │                       │ │ 00:00:19  Speaker 1  synthetic fixture line three                                                                      │
+ │                       │ │ saved: standup-2026-10-19.md                                                                                           │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ ╰───────────────────────╯ │                                                                                                                        │
+                           │                                                                                                                        │
+ ╭───────────────────────╮ │                                                                                                                        │
+ │ engine                │ │                                                                                                                        │
+ │ large-v3-turbo int8   │ │                                                                                                                        │
+ │ cpu ▕███·····▏ 42%    │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ ╰───────────────────────╯ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  ↑/↓ move   tab focus   / search   enter queue   space select   o options   x cancel   e open result   1-6 sections
