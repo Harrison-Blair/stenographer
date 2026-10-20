@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 
-from textual.widgets import Static
+from rich.color import Color
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
 from stenographer.lib.config.defaults import default_toml
@@ -42,16 +44,118 @@ def test_config_section_shows_model_groups_values_defaults_and_help(tmp_path):
         async with app.run_test() as pilot:
             await pilot.press("4")
             content = str(app.query_one("#section-content", Static).render())
-            assert "hotkey" in content
-            assert "audio" in content
-            assert "asr" in content
-            assert "analytics" in content
-            assert "delivery" in content
+            groups = app.query_one("#config-group-list", Static).render().plain
+            group_names = [line.strip().removeprefix("▶ ").strip() for line in groups.splitlines()]
+            assert group_names == [
+                "hotkey",
+                "audio",
+                "asr",
+                "refine",
+                "feedback",
+                "analytics",
+                "delivery",
+            ]
             assert "binding" in content
             assert "KEY_RIGHTCTRL" in content
             assert "Default:" in content
             assert "Agent binding" in content
             assert "Changes apply to new sessions and jobs" in content
+
+    asyncio.run(exercise())
+
+
+def test_config_board_layout_has_group_selector_settings_and_hotwords_panels(tmp_path):
+    async def exercise():
+        app = HubApp(FakeServices(), config_path=_config_path(tmp_path))
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("4", "right", "right")
+            await pilot.pause()
+            groups = app.query_one("#config-group-list", Static)
+            settings = app.query_one("#main-content", Vertical)
+            hotwords = app.query_one("#config-hotwords", Static)
+            note = app.query_one("#config-beam-note", Static)
+            section = app.query_one("#section-content", Static)
+            assert isinstance(groups.parent, Horizontal)
+            assert groups.parent is settings.parent
+            assert hotwords.parent is settings and note.parent is settings
+            assert groups.region.x < settings.region.x
+            assert groups.region.y == settings.region.y
+            assert groups.border_title == "group"
+            assert settings.border_title == "asr"
+            assert section.region.y < hotwords.region.y < note.region.y
+            assert groups.styles.border_left[0]
+            assert settings.styles.border_left[0]
+            assert hotwords.styles.border_top[0]
+
+            group_text = groups.render()
+            assert "▶ asr" in group_text.plain
+            offset = group_text.plain.index("▶")
+            selected = next(
+                span.style.rich_style
+                for span in group_text.spans
+                if span.start <= offset < span.end
+            )
+            assert selected.bold
+            assert selected.color == Color.parse("#5fd7ff")
+            assert selected.bgcolor is None or selected.bgcolor.is_default
+            normal_offset = group_text.plain.index("hotkey")
+            normal = group_text.get_style_at_offset(normal_offset).rich_style
+            assert not normal.bold
+            assert normal.color is None or normal.color.is_default
+            assert normal.bgcolor is None or normal.bgcolor.is_default
+            group_names = [
+                line.strip().removeprefix("▶ ").strip() for line in group_text.plain.splitlines()
+            ]
+            assert group_names == [
+                "hotkey",
+                "audio",
+                "asr",
+                "refine",
+                "feedback",
+                "analytics",
+                "delivery",
+            ]
+
+            settings_text = section.render().plain
+            assert "asr.model" in settings_text
+            assert "asr.hotwords" not in settings_text
+            assert "context from recent lines" not in settings_text
+            assert "hotwords" in hotwords.render().plain
+            assert "asr.hotwords" in hotwords.render().plain
+            assert "beam_size: wider search, better words, slower" in note.render().plain
+            assert "docs/transcription-experiments.md" in note.render().plain
+            assert "CPU model and context screen" in note.render().plain
+
+            await pilot.press("down", "down", "down")
+            assert app.config_editor.selected_key == "asr.hotwords"
+            assert "▶ asr.hotwords" in hotwords.render().plain
+            await pilot.press("enter")
+            app.screen.query_one("#config-prompt-input", Input).value = "Alpha, Beta"
+            await pilot.press("enter")
+            assert app.config_editor.value("asr.hotwords") == "Alpha, Beta"
+            assert "Alpha, Beta" in hotwords.render().plain
+
+    asyncio.run(exercise())
+
+
+def test_config_sidebar_card_shows_path_and_unsaved_change_count(tmp_path):
+    async def exercise():
+        path = _config_path(tmp_path)
+        app = HubApp(FakeServices(), config_path=path)
+        async with app.run_test() as pilot:
+            await pilot.press("4")
+            card = app.query_one("#sidebar-card", Static)
+            assert "config.toml" in card.render().plain
+            assert "0 unsaved changes" in card.render().plain
+
+            app.config_editor.edit("asr.beam_size", "3")
+            app.config_editor.edit("asr.cpu_threads", "2")
+            app._refresh_view()
+            assert "2 unsaved changes" in card.render().plain
+
+            app.config_editor.undo()
+            app._refresh_view()
+            assert "1 unsaved change" in card.render().plain
 
     asyncio.run(exercise())
 

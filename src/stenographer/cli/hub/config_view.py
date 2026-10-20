@@ -92,6 +92,16 @@ class ConfigEditor:
         return self.config is not None and self.config != self._saved
 
     @property
+    def unsaved_change_count(self) -> int:
+        if self.config is None or self._saved is None:
+            return 0
+        current = asdict(self.config)
+        saved = asdict(self._saved)
+        return sum(
+            current[group][key] != saved[group][key] for group in current for key in current[group]
+        )
+
+    @property
     def groups(self) -> tuple[str, ...]:
         if self.config is None:
             return ()
@@ -206,20 +216,24 @@ class ConfigEditor:
         self._undo.clear()
         return result
 
+    def render_groups(self) -> Text:
+        groups = Text()
+        for index, name in enumerate(self.groups):
+            append_line(
+                groups,
+                name,
+                selectable=True,
+                selected=index == self.group_index,
+            )
+        return groups
+
     def render(self) -> Text:
         if self.config is None:
             return Text(
                 f"Configuration is invalid and read-only.\n{self.error}\nFix this file: {self.path}"
             )
 
-        groups = "  ".join(
-            f"[{name}]" if index == self.group_index else name
-            for index, name in enumerate(self.groups)
-        )
         lines = Text()
-        append_line(lines, f"Groups: {groups}")
-        append_line(lines, f"File: {self.path}")
-        append_line(lines, f"Unsaved changes: {'yes' if self.dirty else 'no'}")
         append_line(
             lines,
             "Changes apply to new sessions and jobs; running work keeps its current settings.",
@@ -230,6 +244,8 @@ class ConfigEditor:
         if not keys:
             append_line(lines, "No settings match this search.")
         for index, dotted_key in enumerate(keys):
+            if dotted_key == "asr.hotwords":
+                continue
             append_line(
                 lines,
                 f"{dotted_key} = {self._display(self.value(dotted_key))}",
@@ -238,6 +254,21 @@ class ConfigEditor:
             )
             append_line(lines, f"    Default: {self._display(self.default(dotted_key))}")
             append_line(lines, f"    {self.help(dotted_key)}")
+        return lines
+
+    def render_hotwords(self) -> Text:
+        if self.config is None or "asr.hotwords" not in self.visible_keys:
+            return Text()
+        lines = Text("hotwords")
+        key_index = self.visible_keys.index("asr.hotwords")
+        append_line(
+            lines,
+            f"asr.hotwords = {self._display(self.value('asr.hotwords'))}",
+            selectable=True,
+            selected=key_index == self.key_index,
+        )
+        append_line(lines, f"    Default: {self._display(self.default('asr.hotwords'))}")
+        append_line(lines, f"    {self.help('asr.hotwords')}")
         return lines
 
     @staticmethod
