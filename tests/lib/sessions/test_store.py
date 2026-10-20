@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -63,6 +64,39 @@ def test_list_and_read_sessions_returns_metrics_renames_and_activity(tmp_path):
     assert detail.activity["mic"]
     assert max(detail.activity["mic"]) > 0
     assert max(detail.activity["system"]) == 0
+
+
+def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    original_jsonl = (session / "transcript.jsonl").read_bytes()
+    original_markdown = (session / "transcript.md").read_bytes()
+    store = SessionStore(tmp_path / "sessions")
+    lines = store.read(session.name).lines
+    revised_lines = tuple(
+        replace(line, text="revised placeholder") if line.speaker_id == "speaker-1" else line
+        for line in lines
+    )
+
+    revision = store.write_revision(session.name, revised_lines, method="re-transcribe")
+
+    assert revision == "transcript.r2.jsonl"
+    assert (session / "transcript.jsonl").read_bytes() == original_jsonl
+    assert (session / "transcript.md").read_bytes() == original_markdown
+    assert json.loads((session / "session.json").read_text(encoding="utf-8")) == {
+        "current_revision": "transcript.r2.jsonl",
+        "method": "re-transcribe",
+    }
+    assert "revised placeholder" in (session / "transcript.r2.md").read_text(encoding="utf-8")
+    assert store.read(session.name).revision == revision
+
+    renamed_revision = store.rename_speaker(session.name, "speaker-1", "Bob")
+    detail = store.read(session.name)
+
+    assert renamed_revision == "transcript.r3.jsonl"
+    assert [line.label for line in detail.lines] == ["Bob", "You", "Bob"]
+    assert detail.revision == renamed_revision
+    assert (session / "transcript.jsonl").read_bytes() == original_jsonl
+    assert (session / "transcript.r2.jsonl").read_text(encoding="utf-8").count("Alice") == 2
 
 
 def test_partial_session_is_listed_and_read_without_crashing(tmp_path):
