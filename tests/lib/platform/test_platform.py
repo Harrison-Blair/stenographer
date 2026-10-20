@@ -33,7 +33,7 @@ _LINUX_ONLY_WORDS = (
 def test_current_platform_matches_host_and_is_cached():
     plat = current_platform()
     assert isinstance(plat, Platform)
-    expected = {"linux": "linux", "win32": "windows", "darwin": "macos"}[sys.platform]
+    expected = {"linux": "linux", "win32": "windows"}[sys.platform]
     assert plat.name == expected
     assert current_platform() is plat
 
@@ -99,10 +99,9 @@ def test_providers_name_a_stop_reason_without_ever_raising():
 
     import signal
 
-    from stenographer.lib.platform.macos.support import signal_reason as macos_reason
     from stenographer.lib.platform.windows.support import signal_reason as windows_reason
 
-    providers = [windows_reason, macos_reason]
+    providers = [windows_reason]
     if sys.platform.startswith("linux"):
         from stenographer.lib.platform.linux.support import signal_reason as linux_reason
 
@@ -169,15 +168,6 @@ def test_windows_stub_directories_honour_xdg_then_windows_conventions():
     assert plat.data_dir({}, home) == Path("C:/Users/alice/AppData/Local/stenographer")
 
 
-def test_macos_stub_data_directory_honours_xdg_and_application_support():
-    from stenographer.lib.platform.macos.provider import MacOSPlatform
-
-    plat = MacOSPlatform()
-    home = Path("/Users/alice")
-    assert plat.data_dir({"XDG_DATA_HOME": "/xdg-data"}, home) == Path("/xdg-data/stenographer")
-    assert plat.data_dir({}, home) == Path("/Users/alice/Library/Application Support/stenographer")
-
-
 def test_every_provider_parses_the_shipped_default_binding():
     """The guard for the Windows CI break: a provider that cannot parse the
     default binding fails here, on Linux, instead of only on the Windows runner.
@@ -193,23 +183,22 @@ def test_every_provider_parses_the_shipped_default_binding():
         assert parse_binding(default, provider.keys()), provider.name
 
 
+def test_current_platform_rejects_darwin(monkeypatch):
+    current_platform.cache_clear()
+    try:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        with pytest.raises(UnsupportedPlatformError, match="darwin"):
+            current_platform()
+    finally:
+        current_platform.cache_clear()
+
+
 def test_current_platform_dispatches_per_host_and_refuses_the_unknown(monkeypatch):
-    """The dispatch itself, exercised for the two hosts this machine is not.
-
-    Only ``sys.platform`` is steered (the branch's own input); each provider is
-    then really constructed. The cache is cleared on both sides so neither the
-    steered lookups nor the host's own provider leak between tests.
-    """
-    from stenographer.lib.platform.macos.provider import MacOSPlatform
-
+    """Exercise Windows dispatch and an unknown host without leaking the cache."""
     current_platform.cache_clear()
     try:
         monkeypatch.setattr(sys, "platform", "win32")
         assert isinstance(current_platform(), WindowsPlatform)
-
-        current_platform.cache_clear()
-        monkeypatch.setattr(sys, "platform", "darwin")
-        assert isinstance(current_platform(), MacOSPlatform)
 
         current_platform.cache_clear()
         monkeypatch.setattr(sys, "platform", "aix")
@@ -217,102 +206,6 @@ def test_current_platform_dispatches_per_host_and_refuses_the_unknown(monkeypatc
             current_platform()
     finally:
         current_platform.cache_clear()
-
-
-def test_macos_stub_conforms_and_reports_everything_unavailable():
-    """The macOS mirror of the Windows stub contract.
-
-    The stub must import and answer on every host (the Linux bundle collects
-    it), fail closed on each missing backend, and still hand doctor a complete
-    ``HostProbe`` rather than crashing it.
-    """
-    import io
-    import threading
-
-    from stenographer.lib.hotkey.errors import BindingCaptureError
-    from stenographer.lib.platform.macos.provider import MacOSPlatform
-    from stenographer.lib.platform.multiprocessing_asr_transport import MultiprocessingAsrTransport
-    from stenographer.lib.platform.null_notifier import NullNotifier
-    from stenographer.lib.platform.preview_audio import PortAudioCuePlayer
-
-    plat = MacOSPlatform()
-    assert isinstance(plat, Platform)
-    assert plat.runtime_dir({"XDG_STATE_HOME": "/xdg"}) == Path("/xdg/stenographer/runtime")
-    # The KEY_* vocabulary is core data, so the stub speaks it with no backend.
-    assert plat.keys().code("KEY_RIGHTCTRL") == 97
-    assert plat.hotkey_devices() == []
-    assert isinstance(plat.notifier(), NullNotifier)
-    # Construction is hardware-free: PortAudio is imported at playback only.
-    assert isinstance(plat.cue_player(), PortAudioCuePlayer)
-    assert isinstance(plat.asr_transport(), MultiprocessingAsrTransport)
-    assert plat.physical_core_count() is None
-    assert plat.journal_attached({"JOURNAL_STREAM": "8:123456"}) is False
-    assert plat.restart_service() == (False, "no service manager integration on macOS")
-
-    probe = plat.probe_host()
-    assert isinstance(probe, HostProbe)
-    assert not (probe.key_injector_ok or probe.hotkey_access_ok or probe.clipboard_ok)
-    assert probe.clipboard_backend == "unavailable"
-    assert probe.clipboard_read_ok is False
-    assert probe.cue_player is None
-    assert probe.service_enabled is None
-    assert probe.service_active is None
-
-    # Capture is refused in the setup flow's own vocabulary, not as a generic
-    # platform error, so quick setup reports it instead of aborting.
-    with pytest.raises(BindingCaptureError):
-        plat.capture_binding(io.StringIO(), None, timeout=1.0)
-    with pytest.raises(UnsupportedPlatformError):
-        plat.hotkey_listener(
-            chord=frozenset({97}),
-            device=None,
-            on_start=lambda: None,
-            on_stop=lambda: None,
-            lock=threading.RLock(),
-        )
-    with pytest.raises(UnsupportedPlatformError):
-        plat.key_injector()
-    with pytest.raises(UnsupportedPlatformError):
-        plat.clipboard_writer("unavailable")
-    with pytest.raises(UnsupportedPlatformError):
-        plat.clipboard_reader("unavailable")
-    with pytest.raises(UnsupportedPlatformError):
-        plat.clipboard_restorer("unavailable")
-    with pytest.raises(UnsupportedPlatformError):
-        plat.single_instance_lock()
-
-
-def test_macos_stub_returns_complete_and_non_posix_guidance():
-    """Same gate as the Windows stub: every capability key present, in macOS words."""
-    from stenographer.lib.platform.macos.provider import MacOSPlatform
-
-    g = MacOSPlatform().guidance()
-    assert isinstance(g, HostGuidance)
-    assert set(g.capability_labels) == set(REQUIRED)
-    assert set(g.capability_fix_hints) == set(REQUIRED) - {"clipboard_ok"}
-    assert g.clipboard_fix_hint_default
-    # macOS has a POSIX shell, so the config override is a shell prefix — with
-    # the path quoted, unlike the Windows `set "VAR=..."` form.
-    assert g.run_with_config("/Users/alice/my config.toml") == (
-        "STENOGRAPHER_CONFIG='/Users/alice/my config.toml' stenographer run"
-    )
-
-    prose = " ".join(
-        (
-            *g.capability_labels.values(),
-            *g.capability_fix_hints.values(),
-            g.clipboard_fix_hint_default,
-            g.service_noun,
-            g.service_installer,
-            g.service_unknown_detail,
-            g.service_start_command,
-            g.service_restart_command,
-            g.service_log_command,
-            g.hotkey_device_comment,
-        )
-    )
-    for word in _LINUX_ONLY_WORDS:
-        assert word not in prose, word
 
 
 def test_windows_stub_refuses_the_remaining_backends_and_names_its_directories():
@@ -357,14 +250,11 @@ def test_stop_handlers_really_register_and_name_the_reason_they_were_given():
     """
     import signal
 
-    from stenographer.lib.platform.macos.provider import MacOSPlatform
-
     both = (signal.SIGINT, signal.SIGTERM)
     saved = {sig: signal.getsignal(sig) for sig in both}
     try:
         for provider, expected in (
             (WindowsPlatform(), (signal.SIGINT,)),  # console-control handler pending
-            (MacOSPlatform(), both),
             (current_platform(), (signal.SIGINT,) if sys.platform == "win32" else both),
         ):
             for sig in both:
@@ -387,8 +277,6 @@ def test_stop_handlers_really_register_and_name_the_reason_they_were_given():
 def test_each_provider_resolves_the_universal_profile_bindings():
     """Agent and General use the same portable key vocabulary on every host."""
 
-    from stenographer.lib.platform.macos.provider import MacOSPlatform
-
-    for provider in (WindowsPlatform(), MacOSPlatform(), current_platform()):
+    for provider in (WindowsPlatform(), current_platform()):
         for binding in ("KEY_RIGHTCTRL", "KEY_RIGHTALT"):
             assert provider.keys().name(provider.keys().code(binding)) == binding

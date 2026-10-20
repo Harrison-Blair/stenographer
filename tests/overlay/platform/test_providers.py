@@ -22,7 +22,6 @@ from stenographer.overlay.platform import current_platform
 from stenographer.overlay.platform.guidance import OverlayGuidance
 from stenographer.overlay.platform.linux.linux_helper_transport import LinuxHelperTransport
 from stenographer.overlay.platform.linux.provider import LinuxOverlayPlatform
-from stenographer.overlay.platform.macos.provider import MacOSOverlayPlatform
 from stenographer.overlay.platform.overlay_backend_spec import OverlayBackendSpec
 from stenographer.overlay.platform.windows.provider import WindowsOverlayPlatform
 from stenographer.overlay.protocol.backend import Backend
@@ -43,7 +42,6 @@ def uncached_platform():
         ("linux", LinuxOverlayPlatform),
         ("linux2", LinuxOverlayPlatform),
         ("win32", WindowsOverlayPlatform),
-        ("darwin", MacOSOverlayPlatform),
     ],
 )
 def test_each_supported_host_resolves_to_its_own_overlay_provider(
@@ -52,6 +50,13 @@ def test_each_supported_host_resolves_to_its_own_overlay_provider(
     monkeypatch.setattr(sys, "platform", platform)
 
     assert isinstance(current_platform(), provider)
+
+
+def test_darwin_is_refused_as_an_unsupported_host(monkeypatch, uncached_platform) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    with pytest.raises(UnsupportedPlatformError, match="darwin"):
+        current_platform()
 
 
 def test_an_unknown_host_is_refused_by_name_rather_than_guessed(
@@ -96,29 +101,19 @@ def test_linux_guidance_names_both_backends_and_a_fix_for_every_x_refusal() -> N
     assert "layer-shell or XWayland" in guidance.overlay_fix_hint_default
 
 
-@pytest.mark.parametrize(
-    ("provider", "host"),
-    [(MacOSOverlayPlatform, "macOS"), (WindowsOverlayPlatform, "Windows")],
-)
-def test_a_host_without_an_overlay_refuses_to_spawn_a_helper(provider, host) -> None:
-    """Seen to matter for the supervisor: an empty backend list alone would let
-    it spawn a child that can only ever answer ``unavailable``.
-    """
-    platform = provider()
+def test_windows_without_an_overlay_refuses_to_spawn_a_helper() -> None:
+    """An empty backend list alone would let the supervisor spawn an unusable child."""
+    platform = WindowsOverlayPlatform()
 
     assert platform.overlay_backends() == ()
-    with pytest.raises(UnsupportedPlatformError, match=host):
+    with pytest.raises(UnsupportedPlatformError, match="Windows"):
         platform.helper_transport()
 
 
-@pytest.mark.parametrize(
-    ("provider", "host"),
-    [(MacOSOverlayPlatform, "macOS"), (WindowsOverlayPlatform, "Windows")],
-)
-def test_a_host_without_an_overlay_still_explains_itself_to_doctor(provider, host) -> None:
-    guidance = provider().guidance()
+def test_windows_without_an_overlay_still_explains_itself_to_doctor() -> None:
+    guidance = WindowsOverlayPlatform().guidance()
 
     assert isinstance(guidance, OverlayGuidance)
     assert guidance.overlay_backend_labels == {}
     assert guidance.overlay_fix_hints == {}
-    assert guidance.overlay_fix_hint_default == f"the overlay is not available on {host} yet"
+    assert guidance.overlay_fix_hint_default == "the overlay is not available on Windows yet"

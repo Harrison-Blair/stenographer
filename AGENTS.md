@@ -11,7 +11,7 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
   CLI workflows connect independent library engines and overlay services;
   `lib/` imports neither CLI nor overlay code. Put native code behind
   contracts in `lib/platform/` or `overlay/platform/`.
-  Core code and provider imports must remain portable across Linux, Windows, and macOS.
+  Core code and provider imports must remain portable across Linux and Windows.
 - Keep ordinary classes in their own files without standalone helpers.
   Related dataclasses may share files; related exceptions share domain
   `errors.py`. Keep errors with their domain; shared ones belong in

@@ -34,6 +34,10 @@ rewrite keeps the unrefined transcript in your clipboard history. The new
   (or `xclip`); without it the daemon still runs, and `stenographer doctor`
   shows a `clipboard restore` hint.
 
+### Removed
+
+- Removes macOS platform support; Linux and Windows remain supported.
+
 ## [v0.13.2] - 2026-09-23
 
 The Agent profile now cleans up rambling dictation instead of passing it
