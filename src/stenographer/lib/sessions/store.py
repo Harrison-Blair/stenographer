@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Iterable
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -89,6 +90,13 @@ class SessionStore:
             format,
             filename=session_id,
         )
+
+    def delete(self, session_id: str) -> None:
+        """Delete one explicitly named session folder below the sessions root."""
+        directory = session_directory(self.root, session_id)
+        if directory is None:
+            raise SessionNotFoundError(f"session not found: {session_id}")
+        shutil.rmtree(directory)
 
     def rename_speaker(self, session_id: str, speaker_id: str, name: str) -> str:
         """Save a new revision with the selected speaker's display name changed."""

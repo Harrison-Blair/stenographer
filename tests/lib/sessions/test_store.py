@@ -10,6 +10,7 @@ import numpy as np
 
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.sessions.errors import SessionNotFoundError
 from stenographer.lib.sessions.exporter import export_transcript
 from stenographer.lib.sessions.store import SessionStore
 
@@ -138,6 +139,28 @@ def test_session_and_shared_exporters_write_all_formats_privately(tmp_path):
     )
     assert direct.name == "file-result.txt"
     assert "You: file placeholder" in direct.read_text(encoding="utf-8")
+
+
+def test_delete_requires_session_id_and_does_not_follow_external_links(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    (session / "outside-link").symlink_to(outside, target_is_directory=True)
+    store = SessionStore(tmp_path / "sessions")
+
+    store.delete(session.name)
+
+    assert not session.exists()
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    try:
+        store.delete("../outside")
+    except SessionNotFoundError:
+        pass
+    else:
+        raise AssertionError("a path outside the sessions root was accepted")
+    assert sentinel.exists()
 
 
 def test_partial_session_is_listed_and_read_without_crashing(tmp_path):
