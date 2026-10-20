@@ -45,6 +45,7 @@ def test_live_command_starts_and_stops_session_without_run_lock(monkeypatch, tmp
 
     class FakeSession:
         path = Path("saved-session")
+        relabel_error = "batch clustering unavailable"
 
         def __init__(self, cfg, **kwargs):
             sessions.append((cfg, kwargs))
@@ -79,7 +80,9 @@ def test_live_command_starts_and_stops_session_without_run_lock(monkeypatch, tmp
     ]
     assert created_sessions[0].stopped
     assert events == ["start", "app", "stop"]
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "speaker relabel failed: batch clustering unavailable" in captured.err
+    output = captured.out
     assert "loading model" in output
     assert "saved-session" in output
 

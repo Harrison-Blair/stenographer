@@ -67,5 +67,8 @@ def cmd_live(args: argparse.Namespace, cfg: Config) -> int:
         log.info(fmt_event("live", "interrupted"))
     finally:
         session.stop()
+    relabel_error = getattr(session, "relabel_error", None)
+    if relabel_error:
+        print(f"stenographer: speaker relabel failed: {relabel_error}", file=sys.stderr)
     print(f"stenographer: session saved at {session.path}")
     return 0

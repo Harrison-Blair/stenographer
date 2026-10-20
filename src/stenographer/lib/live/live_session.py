@@ -20,12 +20,14 @@ from stenographer.lib.audio.recorder import Recorder
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.phrase import Phrase
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
+from stenographer.lib.live.relabel import relabel_system_lines
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.errors import SystemAudioCaptureError, UnsupportedPlatformError
+from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker import Worker
 
@@ -65,6 +67,15 @@ class LiveSession:
         speaker_model = model_dir / LIVE_MODELS[1].filename
         self._worker = Worker(cfg.asr, transport=self._platform.asr_transport())
         self._speaker_tracker = SpeakerTracker(speaker_model)
+        self._speaker_embeddings: list[np.ndarray] = []
+        self._system_line_indices: list[int] = []
+        self._stop_started = False
+        self._stop_complete = False
+        self._skip_relabel = threading.Event()
+        self._relabeling = False
+        self._relabel_progress = (0, 0)
+        self._relabel_error: str | None = None
+        self._relabel_skipped = False
         try:
             self._system_capture = self._platform.system_audio_capture()
             self._system_platform_reason = None
@@ -198,6 +209,29 @@ class LiveSession:
             return tuple(self._lines)
 
     @property
+    def relabel_error(self) -> str | None:
+        with self._lock:
+            return self._relabel_error
+
+    @property
+    def relabel_status(self) -> str:
+        with self._lock:
+            if self._relabeling:
+                done, total = self._relabel_progress
+                return f"Relabeling speakers {done}/{total} · q to skip"
+            if self._relabel_error:
+                return f"Relabeling failed: {self._relabel_error}"
+            if self._relabel_skipped:
+                return "Relabeling skipped"
+            if self._stop_started and not self._stop_complete:
+                return "Saving session audio · q to skip relabeling"
+            return ""
+
+    def skip_relabel(self) -> None:
+        """Skip the batch pass after the session audio is saved."""
+        self._skip_relabel.set()
+
+    @property
     def speakers(self) -> tuple[tuple[str, str], ...]:
         with self._lock:
             clustering = getattr(self._speaker_tracker, "_clustering", None)
@@ -263,10 +297,14 @@ class LiveSession:
         log.info(fmt_event("live", "speaker_renamed", speaker_id=speaker_id))
 
     def stop(self) -> None:
-        """Stop capture, flush phrases, drain ASR, save the session, and stop the worker."""
+        """Stop capture, save the session, and batch-relabel its system phrases."""
         with self._control_lock:
+            if self._stop_started:
+                self._skip_relabel.set()
+                return
             if self._stopped:
                 return
+            self._stop_started = True
             self._freeze_clock()
             for source in ("mic", "system"):
                 if self._active[source] or self._source_seen[source]:
@@ -283,10 +321,55 @@ class LiveSession:
             self._transcriber.join()
         try:
             self._writer.close()
+            self._relabel_saved_session()
         finally:
             self._worker.release_model()
             self._worker.shutdown()
+            with self._lock:
+                self._stop_complete = True
         log.info(fmt_event("live", "stopped", duration_seconds=round(duration, 3)))
+
+    def _relabel_saved_session(self) -> None:
+        with self._lock:
+            if not self._system_line_indices:
+                return
+            system_lines = tuple(self._lines[index] for index in self._system_line_indices)
+            embeddings = tuple(self._speaker_embeddings)
+            self._relabeling = True
+            self._relabel_progress = (0, len(system_lines))
+
+        try:
+            relabeled = relabel_system_lines(
+                system_lines,
+                embeddings,
+                progress=self._set_relabel_progress,
+                should_cancel=self._skip_relabel.is_set,
+            )
+            if relabeled is None or self._skip_relabel.is_set():
+                with self._lock:
+                    self._relabel_skipped = True
+                return
+            revised_lines = list(self.lines)
+            for index, line in zip(self._system_line_indices, relabeled, strict=True):
+                revised_lines[index] = line
+            SessionStore(self._writer.path.parent).write_revision(
+                self._writer.path.name,
+                revised_lines,
+                method="diarization",
+            )
+            with self._lock:
+                self._lines = revised_lines
+        except Exception as exc:
+            with self._lock:
+                self._relabel_error = str(exc)
+            log_failure(log, logging.WARNING, "live: relabel_failed", exc, safe=True)
+        finally:
+            with self._lock:
+                self._relabeling = False
+
+    def _set_relabel_progress(self, done: int, total: int) -> None:
+        with self._lock:
+            self._relabel_progress = done, total
 
     def _check_system_availability(self) -> None:
         try:
@@ -439,12 +522,17 @@ class LiveSession:
             result.segments and all(segment.no_speech_prob >= 0.6 for segment in result.segments)
         ):
             return
+        embedding = None
         if phrase.source == "mic":
             speaker_id = "you"
             label = "You"
         else:
             with self._lock:
-                speaker_id = self._speaker_tracker.assign(phrase.samples)
+                embedding = self._speaker_tracker.embed(phrase.samples)
+                speaker_id = self._speaker_tracker.assign_embedding(
+                    embedding,
+                    duration=phrase.end - phrase.start,
+                )
                 label = self._speaker_tracker.label(speaker_id)
         with self._lock:
             if phrase.source == "system":
@@ -461,6 +549,9 @@ class LiveSession:
             )
             self._writer.append_line(line)
             self._lines.append(line)
+            if embedding is not None:
+                self._system_line_indices.append(len(self._lines) - 1)
+                self._speaker_embeddings.append(embedding.copy())
             subscribers = tuple(self._subscribers)
         for subscriber in subscribers:
             try:
