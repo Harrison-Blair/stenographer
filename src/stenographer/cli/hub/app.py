@@ -148,6 +148,13 @@ class HubApp(App[None]):
         border: round #3a4150;
         border-title-color: ansi_default;
     }
+    #setup-detail-content {
+        height: 1fr;
+    }
+    #setup-test-status {
+        height: auto;
+        margin-top: 1;
+    }
     #doctor-groups {
         width: 1fr;
         height: 13;
