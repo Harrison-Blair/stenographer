@@ -59,6 +59,13 @@ _QUICK_REVIEW_FIELDS = (
 )
 
 
+def save_defaults(path: pathlib.Path):
+    """Write the annotated default config through the shared preservation layer."""
+    from stenographer.lib.config.document import ConfigDocument
+
+    return ConfigDocument.defaults(path).save(Config.defaults())
+
+
 def parse_optional_string(text: str, current: str | None) -> str | None:
     """Empty retains *current*; the explicit ``clear`` token unsets it."""
 
@@ -521,6 +528,22 @@ def _hotkey_devices() -> list[tuple[str, str]]:
     return current_platform().hotkey_devices()
 
 
+def parse_device_choice(
+    text: str,
+    current: str | None,
+    devices: Sequence[tuple[str, str]],
+) -> str | None:
+    """Resolve an automatic, numbered, or typed device choice. PURE."""
+    value = text.strip()
+    if not value:
+        return current
+    if value.casefold() in {_CLEAR, "auto", "automatic"}:
+        return None
+    if value.isdecimal() and 1 <= int(value) <= len(devices):
+        return devices[int(value) - 1][0]
+    return value
+
+
 def _prompt_device(
     console: Console,
     label: str,
@@ -534,21 +557,11 @@ def _prompt_device(
     else:
         console.write("  (no selectable devices found; manual entry is still available)")
 
-    def parse(text: str) -> str | None:
-        value = text.strip()
-        if not value:
-            return current
-        if value.casefold() in {_CLEAR, "auto", "automatic"}:
-            return None
-        if value.isdecimal() and 1 <= int(value) <= len(devices):
-            return devices[int(value) - 1][0]
-        return value
-
     prompt = (
         f"{label} [{_display_optional(current)}; Enter keeps, number selects, "
         "'auto' unsets, or type a value]: "
     )
-    return console.validated(prompt, parse)
+    return console.validated(prompt, lambda text: parse_device_choice(text, current, devices))
 
 
 def _parse_binding(text: str) -> str:
