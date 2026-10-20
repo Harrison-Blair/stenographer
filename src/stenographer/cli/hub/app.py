@@ -81,6 +81,7 @@ class HubApp(App[None]):
         super().__init__()
         self.services = services
         self._section = "live"
+        self._activity_status: str | None = None
 
     @property
     def current_section(self) -> str:
@@ -138,23 +139,33 @@ class HubApp(App[None]):
             content = "Recording is active. Change sections without stopping it."
         elif self._section == "files" and self.services.files_running:
             content = "A Files job is running. Change sections without cancelling it."
+        if self._activity_status is not None:
+            content = self._activity_status
         section_view = self.query_one("#section-content", Static)
         section_view.border_title = title
         section_view.update(content)
 
-    async def action_start_recording(self) -> None:
-        if self._section != "live" or self.services.recording:
+    def action_start_recording(self) -> None:
+        if self._section != "live" or self.services.recording or self._activity_status is not None:
             return
+        self._activity_status = "Starting recording..."
+        self._refresh_view()
+        self.run_worker(self._start_recording(), name="start-recording", group="hub-work")
+
+    async def _start_recording(self) -> None:
         try:
             await asyncio.to_thread(self.services.start_recording)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: recording_start_failed", exc, safe=True)
             self.notify(f"Could not start recording: {exc}", severity="error")
-            return
-        log.info(fmt_event("hub", "recording_started"))
+        else:
+            log.info(fmt_event("hub", "recording_started"))
+        self._activity_status = None
         self._refresh_view()
 
     def action_request_quit(self) -> None:
+        if self._activity_status is not None:
+            return
         if self.services.recording:
             log.info(fmt_event("hub", "quit_prompted", work="recording"))
             self.push_screen(
@@ -166,16 +177,24 @@ class HubApp(App[None]):
         else:
             self.exit()
 
-    async def _confirm_recording_quit(self, confirmed: bool | None) -> None:
+    def _confirm_recording_quit(self, confirmed: bool | None) -> None:
         log.info(fmt_event("hub", "quit_confirmed", work="recording", confirmed=bool(confirmed)))
         if not confirmed:
             return
+        self._activity_status = "Saving recording..."
+        self._refresh_view()
+        self.run_worker(self._stop_recording_and_quit(), name="save-recording", group="hub-work")
+
+    async def _stop_recording_and_quit(self) -> None:
         try:
             await asyncio.to_thread(self.services.stop_recording)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: recording_stop_failed", exc, safe=True)
             self.notify(f"Could not save the recording: {exc}", severity="error")
+            self._activity_status = None
+            self._refresh_view()
             return
+        self._activity_status = None
         self._refresh_view()
         if self.services.files_running:
             self._prompt_files_quit()
@@ -189,14 +208,22 @@ class HubApp(App[None]):
             self._confirm_files_quit,
         )
 
-    async def _confirm_files_quit(self, confirmed: bool | None) -> None:
+    def _confirm_files_quit(self, confirmed: bool | None) -> None:
         log.info(fmt_event("hub", "quit_confirmed", work="files", confirmed=bool(confirmed)))
         if not confirmed:
             return
+        self._activity_status = "Canceling Files job..."
+        self._refresh_view()
+        self.run_worker(self._cancel_files_and_quit(), name="cancel-files", group="hub-work")
+
+    async def _cancel_files_and_quit(self) -> None:
         try:
             await asyncio.to_thread(self.services.cancel_files)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
             self.notify(f"Could not cancel the Files job: {exc}", severity="error")
+            self._activity_status = None
+            self._refresh_view()
             return
+        self._activity_status = None
         self.exit()

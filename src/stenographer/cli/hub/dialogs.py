@@ -16,6 +16,8 @@ class QuitConfirm(ModalScreen[bool]):
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("y", "confirm", "Confirm"),
+        ("q", "confirm", "Confirm"),
+        ("ctrl+c", "confirm", "Confirm"),
         ("n", "cancel", "Cancel"),
         ("escape", "cancel", "Cancel"),
     ]
