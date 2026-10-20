@@ -114,8 +114,9 @@ python3 -m venv .venv
 scripts/install.sh --no-start</code></pre>
         </li>
         <li>
-          <b>Configure it</b>, and download the large-v3-turbo model, about 1.6 GB, when the wizard offers.
+          <b>Configure it</b> and download the default ASR model when the wizard offers.
           <pre><code>~/.local/bin/stenographer setup --quick</code></pre>
+          <p>The default is <code>deepdml/faster-whisper-large-v3-turbo-ct2</code>, selected from the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/transcription-experiments.md#cpu-model-and-context-screen-2026-10-20">CPU model and context screen (2026-10-20)</a>. The download is about 1.6 GB.</p>
           <p>For clearer recognition, choose the intended input with <code>stenographer devices</code>, keep a close microphone about 10–20 cm away, and raise its level only until speech is clear without clipping. A close wired headset often beats a distant microphone.</p>
         </li>
         <li>

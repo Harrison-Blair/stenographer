@@ -33,7 +33,7 @@ _FIXTURES = pathlib.Path(__file__).parents[2] / "fixtures"
 _CLIP = _FIXTURES / "speech_16k.wav"
 _HOTWORD_CLIP = _FIXTURES / "hotword_16k.wav"
 _HOTWORD_NOUN = "Anthropic"
-_MODEL_ID = "dropbox-dash/faster-whisper-large-v3-turbo"
+_MODEL_ID = "deepdml/faster-whisper-large-v3-turbo-ct2"
 
 if not _CLIP.exists():
     pytest.skip(f"fixture WAV absent: {_CLIP}", allow_module_level=True)

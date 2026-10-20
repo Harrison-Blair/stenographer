@@ -70,6 +70,23 @@ def test_download_fetches_the_configured_model_and_names_it(monkeypatch, capsys)
     assert capsys.readouterr().out == "stenographer: downloaded small.en\n"
 
 
+def test_download_without_model_override_uses_the_new_asr_default(monkeypatch, capsys):
+    from stenographer.lib.transcribe import download
+
+    requested: list[str] = []
+    monkeypatch.setattr(download, "download_model", requested.append)
+
+    result = cmd_model_download.__wrapped__(
+        argparse.Namespace(asr=True, refine=False), Config.defaults()
+    )
+
+    assert result == 0
+    assert requested == ["deepdml/faster-whisper-large-v3-turbo-ct2"]
+    assert capsys.readouterr().out == (
+        "stenographer: downloaded deepdml/faster-whisper-large-v3-turbo-ct2\n"
+    )
+
+
 def test_a_failed_download_is_not_reported_as_a_success(monkeypatch, capsys):
     from stenographer.lib.transcribe import download
 
