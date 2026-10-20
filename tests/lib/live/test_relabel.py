@@ -33,6 +33,24 @@ def _line(start: float, duration: float, speaker_id: str, label: str) -> Transcr
     )
 
 
+def test_default_relabel_does_not_merge_when_float64_score_is_below_threshold():
+    lines = (
+        _line(0.0, 3.0, "speaker-1", "L0"),
+        _line(4.0, 3.0, "speaker-2", "L1"),
+        _line(8.0, 6.0, "speaker-3", "L2"),
+    )
+    embeddings = (
+        np.array([0.4999999403953552, 0.8660253882408142, 0.0], dtype=np.float32),
+        np.array([0.5, 0.8659821152687073, 0.008660109713673592], dtype=np.float32),
+        np.array([1.0, 0.0, 0.0], dtype=np.float32),
+    )
+
+    relabeled = relabel_system_lines(lines, embeddings)
+
+    assert [line.speaker_id for line in relabeled] == ["speaker-1", "speaker-1", "speaker-2"]
+    assert [line.label for line in relabeled] == ["L0", "L0", "L2"]
+
+
 def test_batch_relabel_merges_split_voices_and_keeps_the_dominant_renamed_label():
     lines = (
         _line(0.0, 1.0, "speaker-1", "Speaker 1"),

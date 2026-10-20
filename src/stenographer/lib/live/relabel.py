@@ -99,13 +99,14 @@ def relabel_system_lines(
     anchor_vectors = vectors[anchor_indices]
     anchor_count = len(anchor_indices)
     capacity = 2 * anchor_count - 1
-    similarities = np.full((anchor_count, anchor_count), -np.inf, dtype=np.float32)
+    # Keep exact scores for ordering; round only when a later merge reads them.
+    similarities = np.full((anchor_count, anchor_count), -np.inf, dtype=np.float64)
     active = np.ones(anchor_count, dtype=bool)
     sizes = np.ones(anchor_count, dtype=np.float64)
     cluster_ids = np.arange(anchor_count, dtype=np.intp)
     left_children = np.full(capacity, -1, dtype=np.intp)
     right_children = np.full(capacity, -1, dtype=np.intp)
-    best_scores = np.full(anchor_count, -np.inf, dtype=np.float32)
+    best_scores = np.full(anchor_count, -np.inf, dtype=np.float64)
     best_neighbors = np.full(anchor_count, -1, dtype=np.intp)
     total = 2 * anchor_count + len(original)
     if progress is not None:
@@ -142,9 +143,10 @@ def relabel_system_lines(
         remaining[left] = False
         remaining[right] = False
         other_slots = np.flatnonzero(remaining)
+        # The previous matrix rounded each completed score to float32 before reuse.
         updated_scores = (
-            sizes[left] * similarities[left, other_slots]
-            + sizes[right] * similarities[right, other_slots]
+            sizes[left] * similarities[left, other_slots].astype(np.float32)
+            + sizes[right] * similarities[right, other_slots].astype(np.float32)
         ) / merged_size
         similarities[left, other_slots] = updated_scores
         similarities[other_slots, left] = updated_scores
