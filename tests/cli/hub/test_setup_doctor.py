@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+from datetime import datetime
 from types import SimpleNamespace
 
 from textual.widgets import Static
@@ -307,6 +308,84 @@ def test_setup_quit_prompts_to_save_draft_changes(tmp_path):
             await pilot.click("#choice-save")
 
         assert Config.loads(path.read_text()).audio.input_device == "test microphone"
+
+    asyncio.run(exercise())
+
+
+def test_pilot_setup_uses_bordered_step_and_hotkey_detail_panels():
+    async def exercise():
+        app = HubApp(FakeServices())
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("5")
+            app.setup_wizard.index = 2
+            app.setup_wizard.record_test("key capture passed")
+            app._refresh_view()
+
+            steps = app.query_one("#setup-steps", Static)
+            detail = app.query_one("#setup-detail", Static)
+            assert steps.styles.border.top[0] == "round"
+            assert detail.styles.border.top[0] == "round"
+            assert steps.region.x < detail.region.x
+            step_text = steps.render().plain
+            detail_text = detail.render().plain
+            assert "▶ 3 hotkey" in step_text
+            for expected in (
+                "capture target: KEY_RIGHTCTRL",
+                "mode: hybrid",
+                "hybrid threshold: 0.5 s",
+                "general binding: KEY_RIGHTALT",
+                "cancel binding: KEY_ESC",
+                "device: any keyboard",
+                "test status: key capture passed",
+            ):
+                assert expected in detail_text
+
+    asyncio.run(exercise())
+
+
+def test_pilot_doctor_uses_sidebar_summary_and_bordered_board_panels():
+    report = DoctorReport(
+        checks=(
+            DoctorCheck("mic", "microphone", "input and audio", "ok", "available", ""),
+            DoctorCheck(
+                "overlay",
+                "overlay",
+                "engine and desktop",
+                "warn",
+                "No X display.",
+                "Enable XWayland.",
+            ),
+        ),
+        warnings=("21:11:37 WARNING stenographer.overlay overlay: helper_restarting",),
+        checked_at=datetime(2026, 10, 20, 21, 23),
+    )
+
+    async def exercise():
+        app = HubApp(FakeServices())
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("6")
+            app._doctor_report = report
+            app._doctor_index = 1
+            app._refresh_view()
+            await pilot.press("enter")
+
+            inputs = app.query_one("#doctor-input-group", Static)
+            engine = app.query_one("#doctor-engine-group", Static)
+            issue = app.query_one("#doctor-issue", Static)
+            warnings = app.query_one("#doctor-warnings", Static)
+            assert all(
+                panel.styles.border.top[0] == "round" for panel in (inputs, engine, issue, warnings)
+            )
+            assert inputs.region.y == engine.region.y
+            assert inputs.region.x < engine.region.x
+            assert issue.region.y > inputs.region.y
+            assert warnings.region.y > issue.region.y
+            assert "microphone" in inputs.render().plain
+            assert "▶ ! overlay" in engine.render().plain
+            assert "Enable XWayland." in issue.render().plain
+            assert "helper_restarting" in warnings.render().plain
+            assert "1 warn" in app.query_one("#sidebar-card", Static).render().plain
+            assert "checked 21:23" in app.query_one("#sidebar-card", Static).render().plain
 
     asyncio.run(exercise())
 

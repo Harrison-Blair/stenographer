@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import pathlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from rich.text import Text
@@ -34,6 +35,7 @@ class DoctorCheck:
 class DoctorReport:
     checks: tuple[DoctorCheck, ...]
     warnings: tuple[str, ...]
+    checked_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
     @property
     def warn_count(self) -> int:
@@ -46,6 +48,15 @@ class DoctorReport:
     @property
     def ok_count(self) -> int:
         return sum(check.status == "ok" for check in self.checks)
+
+    def sidebar_summary(self) -> Text:
+        """Render the diagnostic counts and the time of this check."""
+        return Text(
+            "summary\n"
+            f"{self.ok_count} ok · {self.warn_count} warn\n"
+            f"{self.fail_count} fail\n"
+            f"checked {self.checked_at:%H:%M}"
+        )
 
     @property
     def first_issue_index(self) -> int:
