@@ -1,36 +1,35 @@
 # VERIFIED — 59-files-engine
 
-Verifier rerun on 2026-10-20 at `5d778d4`, from the worktree root, with a temporary
-`.venv` symlink to `/home/penguin/source/stenographer/.venv` and `PYTHONPATH=$PWD/src`
-(the module path was checked to resolve to this worktree). Red runs used a detached
-worktree of the base `06bd0d3` with only the new test files copied in. No microphone,
-real ffmpeg, model download, or integration test was used.
+Second verifier run on 2026-10-20 at `e14f702` (repair of the failed M2 item), from
+the worktree root. The venv was a temporary `.venv` symlink to
+`/home/penguin/source/stenographer/.venv` with `PYTHONPATH=$PWD/src`. The module path
+resolved to this worktree. Red runs and the default-path comparison used a detached
+worktree of the base `06bd0d3`. `relabel.py` on `dev` (`a1758da`) is unchanged since
+that base. The fixed-path comparison used a detached worktree of the pre-repair
+commit `5d778d4`. No microphone, real ffmpeg, model download, or integration test
+was used. Synthetic embeddings only; no audio or transcript text.
 
 | Item | Result | Observation |
 | --- | --- | --- |
-| V1 red | pass | At base: `test_ffmpeg_decoder.py`, `tests/lib/files/test_media.py`, and `test_engine.py` fail in collection (modules missing); `test_batch_relabel_honors_a_fixed_speaker_count` fails. The red run that V1 records for `test_invalid_output_format_is_rejected_before_queueing` happened mid-development, so it cannot be replayed at base (that file fails in collection there). |
+| V1 red | pass | At base with the new tests copied in: `test_ffmpeg_decoder.py`, `tests/lib/files/test_engine.py`, and `tests/lib/files/test_media.py` fail in collection. `test_batch_relabel_honors_a_fixed_speaker_count` fails (1 failed, 5 passed). |
 | V1 green | pass | The V1 green command gives 24 passed. |
-| V2 gate | pass | ruff check: all checks passed. ruff format --check: 624 files already formatted. pytest `-m "not integration"`: 2621 passed, 2 skipped, 6 deselected. `stenographer --help`: exit 0. |
-| M1 default relabel path unchanged | pass | `relabel.py` is unchanged on `dev` since the base. The diff to the default path only adds the `speaker_count` guard and the branch. The base's own `test_relabel.py` passes against HEAD (5 passed). A differential run over 40 seeded random cases (1–299 phrases, 1–5 voices, renamed labels, mixed durations) compared pickled outputs and progress calls of base and HEAD with `speaker_count=None`: the outputs are byte-identical (sha256 `96a2824c…`). The 58 V3 rule constants and code are untouched. |
-| M2 fixed-count relabel memory/time | **fail** | Synthetic 192-dim embeddings, 3 voices, 2.2 s phrases, single process, peak RSS from `ru_maxrss`. |
+| V2 / V4 gate | pass | `ruff check .`: all checks passed. `ruff format --check .`: 627 files already formatted. `pytest -m "not integration"`: 2621 passed, 2 skipped (absent public audio samples), 6 deselected. `stenographer --help`: exit 0. |
+| M1 default path identical to dev | pass | 40 seeded random cases (1–299 phrases, 1–5 voices, center similarity 0–0.8, mixed durations, renamed labels), `speaker_count` not given, outputs and progress calls pickled. Base and HEAD give the same sha256 `0746278b…40e1f8`. |
+| M2 fixed-count memory/time | pass | Fresh process per run, 192-dim embeddings, 3 voices, 2.2 s phrases, `speaker_count=3`, peak RSS from `ru_maxrss`. See the table below. The prior run measured 11.72 GiB / 155.1 s at N=9000. |
+| V3 probe | pass | The V3 fixed-count rows reproduce: 0.077 s / 0.068 GiB at N=2000 and 0.776 s / 0.402 GiB at N=9000 (V3: 0.061 s / 0.069 GiB and 0.717 s / 0.406 GiB). The 9,000-phrase default-count row was not rerun. The manager stated that the default-path memory comes from task 58 and is out of scope. |
+| V4 fixed-count output unchanged | pass | 40 seeded random cases × `speaker_count` 1–6 (240 runs). The pre-repair `5d778d4` and HEAD give the same sha256 `f5c20e4c…6986ba`. `test_relabel.py`: 6 passed. |
+| Fixed-count quality | pass | K = 2–6 orthogonal voice centers, noise σ 0.03, random voice order, durations 0.3–6 s, N ∈ {3K, 60, 400}, 10 seeds each, `speaker_count=K`. 145 of 145 runs give exactly the true partition. |
 
-## M2 probe (manager request)
+## M2 probe
 
-| N phrases | speaker_count | time | peak RSS |
-| --- | --- | --- | --- |
-| 500 | 3 | 0.2 s | 0.08 GiB |
-| 1000 | 3 | 1.0 s | 0.19 GiB |
-| 2000 | 3 | 4.8 s | 0.61 GiB |
-| 2000 | None (default) | 3.1 s | 0.26 GiB |
-| 4000 | 3 | 23.9 s | 2.35 GiB |
-| 9000 | None (default) | 108.1 s | 4.49 GiB |
-| 9000 | 3 | 155.1 s | 11.72 GiB |
+| N phrases | Voice-center similarity | speaker_count | Time | Peak RSS | Clusters |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2000 | 0.75 | 3 | 0.077 s | 0.068 GiB | 3 |
+| 4000 | 0.0 | 3 | 0.170 s | 0.147 GiB | 3 |
+| 9000 | 0.75 | 3 | 0.776 s | 0.402 GiB | 3 |
+| 9000 | 0.0 | 3 | 0.784 s | 0.402 GiB | 3 |
 
-Judgement: `_relabel_fixed` pushes all N(N-1)/2 pairs into a Python heap, with no
-threshold filter, on top of the (2N-1)^2 float32 matrix (about 1.2 GiB at N=9000).
-Its memory grows faster than the default path's, which pushes only pairs at or above
-the threshold. A 5.6 h file with a fixed speaker count needs about 12 GiB in the Files
-engine process, about 2.6x the default path. That is not usable on a common 8–16 GB
-machine, which also holds the ASR model in its child process. Files up to about 2000
-phrases (about 1.3 h) stay under 1 GiB. The default path's 4.5 GiB at N=9000 is a
-pre-existing cost of task 58 and is outside the scope of this task.
+The prior failed verdict (t59-verifier-1) recorded 11.72 GiB / 155.1 s at N=9000 for
+the fixed count. The repair replaces the all-pairs Python heap with a dense N×N
+float32 matrix and a nearest-neighbor chain. Memory is now bounded by that matrix
+(about 0.3 GiB at N=9000).
