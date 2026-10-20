@@ -6,7 +6,7 @@ from __future__ import annotations
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Static
+from textual.widgets import Rule, Static
 
 from stenographer.cli.hub.selection import append_line
 from stenographer.lib.sessions.models import SessionDetail, SessionSummary
@@ -47,6 +47,16 @@ class SessionsPanel(Vertical):
         height: auto;
         padding: 0 1;
     }
+    #sessions-detail-rule {
+        width: 1fr;
+        height: 1;
+        margin: 0 1;
+        color: #3a4150;
+    }
+    #sessions-transcript {
+        height: auto;
+        padding: 0 1;
+    }
     """
 
     def __init__(self, store=None, **kwargs) -> None:
@@ -67,7 +77,12 @@ class SessionsPanel(Vertical):
             with Vertical(id="sessions-list-column"), VerticalScroll(id="sessions-list-scroll"):
                 yield Static("", id="sessions-list", markup=False)
             with VerticalScroll(id="sessions-detail-scroll"):
+                with Horizontal(id="sessions-detail-header"):
+                    yield Static("", id="sessions-detail-title", markup=False)
+                    yield Static("", id="sessions-detail-labels", markup=False)
                 yield Static("", id="sessions-detail", markup=False)
+                yield Rule(id="sessions-detail-rule")
+                yield Static("", id="sessions-transcript", markup=False)
 
     def on_mount(self) -> None:
         self._refresh_children()
@@ -147,6 +162,10 @@ class SessionsPanel(Vertical):
         detail_panel = self.query_one("#sessions-detail-scroll", VerticalScroll)
         listing = self.query_one("#sessions-list", Static)
         detail = self.query_one("#sessions-detail", Static)
+        detail_title = self.query_one("#sessions-detail-title", Static)
+        detail_labels = self.query_one("#sessions-detail-labels", Static)
+        detail_rule = self.query_one("#sessions-detail-rule", Rule)
+        transcript = self.query_one("#sessions-transcript", Static)
         listing_panel.border_title = "saved"
 
         rows = Text()
@@ -159,7 +178,9 @@ class SessionsPanel(Vertical):
         listing.update(rows if rows else "No saved sessions.")
 
         summary = self.selected_summary
-        detail_panel.border_title = summary.session_id if summary is not None else "session"
+        detail_panel.border_title = ""
+        detail_title.update(summary.session_id if summary is not None else "session")
+        detail_labels.update("")
         if self.error is not None:
             content = self.error
         elif self.loading:
@@ -169,12 +190,28 @@ class SessionsPanel(Vertical):
                 "No saved sessions." if summary is None else "Select a session to load its detail."
             )
         else:
-            content = self._detail_text(self.detail)
+            detail_title.update(self.detail.summary.session_id)
+            detail_labels.update(self._label_status(self.detail))
+            content = self._detail_summary_text(self.detail)
+            transcript.update(self._transcript_text(self.detail))
+        detail_rule.display = self.detail is not None
+        transcript.display = self.detail is not None
+        if self.detail is None:
+            transcript.update("")
         if self.job_status is not None:
-            content += f"\n\n{self.job_status}"
+            if isinstance(content, Text):
+                content.append(f"\n\n{self.job_status}")
+            else:
+                content += f"\n\n{self.job_status}"
         detail.update(content)
 
-    def _detail_text(self, detail: SessionDetail) -> Text:
+    @staticmethod
+    def _label_status(detail: SessionDetail) -> str:
+        state = "re-labelled at stop" if detail.labels_revised else "live"
+        return f"labels: {state}"
+
+    @staticmethod
+    def _speaker_colors(detail: SessionDetail) -> dict[str, str]:
         palette = ("#ffaf5f", "#c6a8ff", "#6ee69a")
         labels = list(detail.talk_time)
         for line in detail.lines:
@@ -189,12 +226,12 @@ class SessionsPanel(Vertical):
             else:
                 colors[label] = palette[speaker_index % len(palette)]
                 speaker_index += 1
+        return colors
+
+    def _detail_summary_text(self, detail: SessionDetail) -> Text:
+        colors = self._speaker_colors(detail)
         rows = Text()
-        label_state = "re-labelled at stop" if detail.labels_revised else "live"
-        rows.append("labels: ", style="dim")
-        rows.append(label_state, style="bold #6ee69a")
-        rows.append("\n")
-        talk_labels = [label for label in labels if label in detail.talk_time]
+        talk_labels = [label for label in colors if label in detail.talk_time]
         for index, label in enumerate(talk_labels):
             if index:
                 rows.append("  ")
@@ -210,12 +247,15 @@ class SessionsPanel(Vertical):
             rows.append(f"{label}  ", style="dim")
             rows.append(self._activity_bar(detail.activity.get(source, ())), style=color)
             rows.append("\n")
-        separator_width = max(
-            1, self.query_one("#sessions-detail-scroll", VerticalScroll).region.width - 6
-        )
-        rows.append("─" * separator_width, style="dim")
-        for line in detail.lines:
-            rows.append(f"\n{self._clock(line.start)}  ", style="dim")
+        return rows
+
+    def _transcript_text(self, detail: SessionDetail) -> Text:
+        colors = self._speaker_colors(detail)
+        rows = Text()
+        for index, line in enumerate(detail.lines):
+            if index:
+                rows.append("\n")
+            rows.append(f"{self._clock(line.start)}  ", style="dim")
             rows.append(line.label, style=f"bold {colors[line.label]}")
             rows.append(f"  {line.text.replace(chr(10), ' ')}")
         return rows

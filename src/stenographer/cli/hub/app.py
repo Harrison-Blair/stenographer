@@ -164,6 +164,26 @@ class HubApp(App[None]):
         border-title-style: bold;
         overflow-y: auto;
     }
+    #sessions-list-scroll, #sessions-detail-scroll {
+        border-title-color: ansi_default;
+        border-title-style: bold;
+    }
+    #sessions-detail-header {
+        width: 1fr;
+        height: 1;
+        padding: 0 1;
+    }
+    #sessions-detail-title {
+        width: auto;
+        color: ansi_default;
+        text-style: bold;
+    }
+    #sessions-detail-labels {
+        width: 1fr;
+        color: #6ee69a;
+        text-style: bold;
+        text-align: right;
+    }
     #key-hints {
         height: 1;
         padding: 0 2;
