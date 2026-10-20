@@ -109,6 +109,20 @@ def test_linux_capture_reads_raw_float_frames_and_stops_process(tmp_path, monkey
         while not args_file.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
         assert args_file.exists()
+        assert json.loads(args_file.read_text()) == [
+            "--raw",
+            "-P",
+            "{ stream.capture.sink = true, node.name = stenographer-system-capture }",
+            "--target",
+            "studio",
+            "--rate",
+            "16000",
+            "--channels",
+            "1",
+            "--format",
+            "f32",
+            "-",
+        ]
         assert received.wait(timeout=2)
     finally:
         capture.stop()
@@ -118,20 +132,6 @@ def test_linux_capture_reads_raw_float_frames_and_stops_process(tmp_path, monkey
     assert np.count_nonzero(audio[4:]) == 0
     arrays = [block for block in blocks if isinstance(block, np.ndarray)]
     assert all(block.dtype == np.float32 and block.ndim == 1 for block in arrays)
-    assert json.loads(args_file.read_text()) == [
-        "--raw",
-        "-P",
-        "{ stream.capture.sink = true, node.name = stenographer-system-capture }",
-        "--target",
-        "studio",
-        "--rate",
-        "16000",
-        "--channels",
-        "1",
-        "--format",
-        "f32",
-        "-",
-    ]
     assert capture._thread is not None and not capture._thread.is_alive()
     assert capture._process is None
 
