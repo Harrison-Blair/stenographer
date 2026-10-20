@@ -112,6 +112,7 @@ class LiveSession:
             if self._started:
                 return
             self._worker.hold_model()
+            self._worker.warmup()
             self._run_started_at = self._monotonic()
             self._transcriber = threading.Thread(
                 target=self._transcribe_queue,

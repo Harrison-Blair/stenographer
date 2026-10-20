@@ -137,6 +137,9 @@ class FakeWorker:
     def hold_model(self):
         self.events.append("hold")
 
+    def warmup(self):
+        self.events.append("warmup")
+
     def release_model(self):
         self.events.append("release")
 
@@ -260,6 +263,15 @@ def _make_session(
     )
 
 
+def test_start_warms_the_worker_before_starting_live_sources(monkeypatch, tmp_path):
+    session, _writer, worker, system, recorder, _segmenters = _make_session(monkeypatch, tmp_path)
+
+    assert worker.events[:2] == ["hold", "warmup"]
+    assert recorder.running
+    assert system.running
+    session.stop()
+
+
 def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
     monkeypatch, tmp_path, caplog
 ):
@@ -290,7 +302,7 @@ def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
     assert writer.lines[0].start == 0.25
     assert writer.lines[0].wall == "2026-03-02T04:05:06.250000+00:00"
     assert writer.closed
-    assert worker.events == ["hold", "release", "shutdown"]
+    assert worker.events == ["hold", "warmup", "release", "shutdown"]
     assert worker.stopped
     assert len(segmenters) == 2
     assert all(segmenter.flushed for segmenter in segmenters)
