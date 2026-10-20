@@ -8,7 +8,9 @@
 - config_view.py: Render and validate the config draft and its saves.
 - dialogs.py: Confirm actions that stop work during quit.
 - handler.py: Prepare the hub and run its Textual app.
-- services.py: Own the recording and Files job lifecycles.
+- services.py: Own recording, playback, and shared session services.
+- session_jobs.py: Reprocess saved transcripts with current models and settings.
+- sessions_view.py: Render saved-session storage, list, detail, and transcript.
 - setup_state.py: Track wizard navigation and completion state.
 - setup_wizard.py: Render setup steps and reuse setup workflow probes.
 """

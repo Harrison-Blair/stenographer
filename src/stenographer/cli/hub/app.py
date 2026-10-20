@@ -17,6 +17,7 @@ from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, build_report
+from stenographer.cli.hub.sessions_view import SessionsPanel
 from stenographer.cli.hub.setup_state import SetupWizard
 from stenographer.cli.hub.setup_wizard import render as render_setup
 from stenographer.cli.hub.setup_wizard import test_step as test_setup_step
@@ -62,11 +63,15 @@ class HubApp(App[None]):
         ("enter", "edit_config", "Edit config key or show doctor details"),
         ("b", "setup_back", "Previous setup step"),
         ("s", "setup_skip", "Skip setup step"),
-        ("t", "setup_test", "Test setup step"),
+        ("t", "session_retranscribe", "Re-transcribe session or test setup step"),
         ("e", "setup_edit", "Edit setup value"),
         ("shift+q", "setup_quick", "Quick setup"),
         ("m", "setup_download_model", "Download ASR model"),
-        ("r", "doctor_recheck", "Re-check doctor"),
+        ("r", "session_rename", "Rename speaker or re-check doctor"),
+        ("p", "session_playback", "Play or stop session"),
+        ("d", "session_rediarize", "Re-diarize session"),
+        ("x", "session_export", "Export session"),
+        ("delete", "session_delete", "Delete session"),
         ("f", "doctor_fix", "Fix in Setup"),
         ("l", "doctor_open_log", "Open log"),
         ("c", "doctor_copy_report", "Copy doctor report"),
@@ -120,6 +125,12 @@ class HubApp(App[None]):
     ) -> None:
         super().__init__()
         self.services = services
+        self.sessions_panel = SessionsPanel(
+            getattr(services, "session_store", None), id="sessions-panel"
+        )
+        self._session_job_status: str | None = None
+        self._pending_speaker_id: str | None = None
+        self._pending_delete_session: str | None = None
         self.config_editor = config_editor or (
             ConfigEditor(config_path) if config_path is not None else None
         )
@@ -154,6 +165,7 @@ class HubApp(App[None]):
         with Horizontal(id="hub-layout"):
             yield Static("", id="sidebar", markup=False)
             yield Static("", id="section-content", markup=False)
+            yield self.sessions_panel
         yield Static(
             "space start recording   1-6 sections   q quit",
             id="key-hints",
@@ -172,6 +184,16 @@ class HubApp(App[None]):
         if self.config_editor is not None:
             self._request_doctor_check()
         log.info(fmt_event("hub", "started"))
+
+    def on_unmount(self) -> None:
+        stop_playback = getattr(self.services, "stop_session_playback", None)
+        if stop_playback is not None:
+            try:
+                stop_playback()
+            except Exception as exc:
+                log_failure(
+                    log, logging.ERROR, "hub: session_playback_cleanup_failed", exc, safe=False
+                )
 
     def action_show_live(self) -> None:
         self._select_section("live")
@@ -230,6 +252,9 @@ class HubApp(App[None]):
                     details=self._doctor_details,
                 )
         section_view = self.query_one("#section-content", Static)
+        section_view.display = self._section != "sessions"
+        self.sessions_panel.display = self._section == "sessions"
+        self.sessions_panel.set_job_status(self._session_job_status)
         if self._section == "config" and self.config_editor is not None:
             content = self.config_editor.render()
         section_view.border_title = title
@@ -243,6 +268,11 @@ class HubApp(App[None]):
             hints.update("enter next   b back   s skip   t test   e edit   D defaults   Q quick")
         elif self._section == "doctor":
             hints.update("r re-check   enter details   f fix in Setup   l open log   c copy report")
+        elif self._section == "sessions":
+            hints.update(
+                "↑/↓ session   p play   d re-diarize   t re-transcribe   "
+                "r rename   x export   del delete"
+            )
         else:
             hints.update("space start recording   1-6 sections   q quit")
 
@@ -253,13 +283,17 @@ class HubApp(App[None]):
         self._move_config_group(1)
 
     def action_previous_config_key(self) -> None:
-        if self._section == "doctor":
+        if self._section == "sessions":
+            self._move_session_selection(-1)
+        elif self._section == "doctor":
             self._move_doctor_check(-1)
         else:
             self._move_config_key(-1)
 
     def action_next_config_key(self) -> None:
-        if self._section == "doctor":
+        if self._section == "sessions":
+            self._move_session_selection(1)
+        elif self._section == "doctor":
             self._move_doctor_check(1)
         else:
             self._move_config_key(1)
@@ -420,6 +454,253 @@ class HubApp(App[None]):
         if section == "doctor" and self._doctor_report is None and not self._doctor_loading:
             self._request_doctor_check()
         log.info(fmt_event("hub", "section_changed", section=section))
+        if section == "sessions":
+            self._load_sessions()
+
+    def _load_sessions(self) -> None:
+        self.sessions_panel.set_loading(True)
+        self._refresh_view()
+        self.run_worker(self._read_sessions(), group="sessions-list", exclusive=True)
+
+    async def _read_sessions(self) -> None:
+        store = self.sessions_panel.store
+        if store is None:
+            self.sessions_panel.set_summaries(())
+        else:
+            try:
+                summaries = await asyncio.to_thread(store.list_sessions)
+                active_session_id = getattr(self.services, "active_session_id", None)
+                if active_session_id is not None:
+                    summaries = tuple(
+                        summary for summary in summaries if summary.session_id != active_session_id
+                    )
+            except Exception as exc:
+                log_failure(log, logging.ERROR, "hub: sessions_list_failed", exc, safe=True)
+                self.sessions_panel.set_error("Could not read saved sessions.")
+            else:
+                self.sessions_panel.set_summaries(summaries)
+        self._refresh_view()
+        session_id = self.sessions_panel.selected_session_id
+        if session_id is not None and self._section == "sessions":
+            self._load_session_detail(session_id)
+
+    def _load_session_detail(self, session_id: str) -> None:
+        if self.sessions_panel.store is None or not self.is_running:
+            return
+        self.sessions_panel.set_loading(True)
+        self._refresh_view()
+        self.run_worker(
+            self._read_session_detail(session_id),
+            group="session-detail",
+            exclusive=True,
+        )
+
+    async def _read_session_detail(self, session_id: str) -> None:
+        try:
+            detail = await asyncio.to_thread(self.sessions_panel.store.read, session_id)
+        except Exception as exc:
+            log_failure(log, logging.ERROR, "hub: session_detail_failed", exc, safe=False)
+            self.sessions_panel.set_error("Could not read this session.")
+        else:
+            self.sessions_panel.set_detail(session_id, detail)
+        self._refresh_view()
+
+    def _move_session_selection(self, offset: int) -> None:
+        if self._section != "sessions":
+            return
+        session_id = self.sessions_panel.move_selection(offset)
+        self._refresh_view()
+        if session_id is not None:
+            self._load_session_detail(session_id)
+
+    def _selected_session_id(self) -> str | None:
+        session_id = self.sessions_panel.selected_session_id
+        if session_id is None:
+            self.notify("Select a saved session first.", severity="warning")
+        return session_id
+
+    async def action_session_playback(self) -> None:
+        if self._section != "sessions":
+            return
+        session_id = self._selected_session_id()
+        toggle = getattr(self.services, "toggle_session_playback", None)
+        if session_id is None or toggle is None:
+            return
+        try:
+            await asyncio.to_thread(toggle, session_id)
+        except Exception as exc:
+            log_failure(log, logging.ERROR, "hub: session_playback_failed", exc, safe=False)
+            self.notify("Could not play this session.", severity="error")
+
+    def action_session_rediarize(self) -> None:
+        if self._section != "sessions":
+            return
+        session_id = self._selected_session_id()
+        operation = getattr(self.services, "rediarize_session", None)
+        if session_id is not None and operation is not None:
+            self._start_session_job("Re-diarizing", operation, session_id)
+
+    async def action_session_retranscribe(self) -> None:
+        if self._section == "setup":
+            await self.action_setup_test()
+            return
+        if self._section != "sessions":
+            return
+        session_id = self._selected_session_id()
+        operation = getattr(self.services, "retranscribe_session", None)
+        if session_id is not None and operation is not None:
+            self._start_session_job("Re-transcribing", operation, session_id)
+
+    def action_session_rename(self) -> None:
+        if self._section != "sessions":
+            self.action_doctor_recheck()
+            return
+        session_id = self._selected_session_id()
+        labels = self.sessions_panel.speaker_labels
+        if session_id is None or not labels:
+            self.notify("This session has no speaker to rename.", severity="warning")
+            return
+        speaker_id = next(iter(labels))
+        choices = ", ".join(f"{key} ({value})" for key, value in labels.items())
+        self.push_screen(
+            ConfigPrompt(
+                f"Rename a speaker in {session_id}. Enter its ID: {choices}",
+                initial=speaker_id,
+            ),
+            self._select_speaker_to_rename,
+        )
+
+    def _select_speaker_to_rename(self, speaker_id: str | None) -> None:
+        if speaker_id is None:
+            return
+        label = self.sessions_panel.speaker_labels.get(speaker_id)
+        if label is None:
+            self.notify("That speaker is not in this session.", severity="warning")
+            return
+        self._pending_speaker_id = speaker_id
+        self.push_screen(
+            ConfigPrompt(f"New name for {label} ({speaker_id})", initial=label),
+            self._rename_speaker,
+        )
+
+    def _rename_speaker(self, name: str | None) -> None:
+        session_id = self.sessions_panel.selected_session_id
+        speaker_id = self._pending_speaker_id
+        self._pending_speaker_id = None
+        store = self.sessions_panel.store
+        if (
+            name is None
+            or not name.strip()
+            or session_id is None
+            or speaker_id is None
+            or store is None
+        ):
+            return
+        self._start_session_job(
+            "Saving speaker name", store.rename_speaker, session_id, speaker_id, name
+        )
+
+    def action_session_export(self) -> None:
+        if self._section != "sessions":
+            return
+        session_id = self._selected_session_id()
+        if session_id is None or self.sessions_panel.store is None:
+            return
+        self.push_screen(
+            ConfigPrompt(
+                f"Export {session_id}. Enter format and output folder "
+                "(for example: md ~/Documents).",
+                initial="md ~/Documents",
+            ),
+            self._export_session,
+        )
+
+    def _export_session(self, value: str | None) -> None:
+        session_id = self.sessions_panel.selected_session_id
+        store = self.sessions_panel.store
+        if value is None or session_id is None or store is None:
+            return
+        try:
+            format_name, output_folder = value.split(maxsplit=1)
+        except ValueError:
+            self.notify(
+                "Enter md, jsonl, srt, or txt followed by an output folder.", severity="warning"
+            )
+            return
+        if format_name not in {"md", "jsonl", "srt", "txt"}:
+            self.notify("Export format must be md, jsonl, srt, or txt.", severity="warning")
+            return
+        self._start_session_job(
+            "Exporting",
+            store.export,
+            session_id,
+            pathlib.Path(output_folder).expanduser(),
+            format_name,
+        )
+
+    def action_session_delete(self) -> None:
+        if self._section != "sessions":
+            return
+        session_id = self._selected_session_id()
+        if session_id is None:
+            return
+        self._pending_delete_session = session_id
+        self.push_screen(
+            QuitConfirm(f"Delete session {session_id}? This action cannot be undone."),
+            self._confirm_session_delete,
+        )
+
+    async def _confirm_session_delete(self, confirmed: bool | None) -> None:
+        session_id = self._pending_delete_session
+        self._pending_delete_session = None
+        store = self.sessions_panel.store
+        if not confirmed or session_id is None or store is None:
+            return
+        self._start_session_job("Deleting", store.delete, session_id)
+
+    def _start_session_job(self, status: str, operation: Callable[..., object], *args) -> None:
+        if self._session_job_status is not None:
+            self.notify("A session job is already running.", severity="warning")
+            return
+        self._session_job_status = f"{status} session…"
+        self._refresh_view()
+        self.run_worker(
+            self._run_session_job(status, operation, args),
+            group="session-job",
+            exclusive=True,
+        )
+
+    async def _run_session_job(
+        self, status: str, operation: Callable[..., object], args: tuple[object, ...]
+    ) -> None:
+        try:
+            result = await asyncio.to_thread(operation, *args)
+        except Exception as exc:
+            log_failure(log, logging.ERROR, "hub: session_job_failed", exc, safe=False)
+            self.notify(
+                f"{status} failed. Check the application log for details.", severity="error"
+            )
+        else:
+            if status == "Exporting":
+                self.notify(f"Exported session to {result}.")
+            elif status == "Deleting":
+                self.notify("Session deleted.")
+            else:
+                self.notify(f"{status.removesuffix(' session…')} complete.")
+            try:
+                summaries = await asyncio.to_thread(self.sessions_panel.store.list_sessions)
+            except Exception as exc:
+                log_failure(log, logging.ERROR, "hub: sessions_list_failed", exc, safe=True)
+                self.sessions_panel.set_error("Could not read saved sessions.")
+            else:
+                self.sessions_panel.set_summaries(summaries)
+                session_id = self.sessions_panel.selected_session_id
+                if session_id is not None and self._section == "sessions":
+                    self._load_session_detail(session_id)
+        finally:
+            self._session_job_status = None
+            if self.is_running:
+                self._refresh_view()
 
     def _current_config(self) -> Config:
         editor = self.config_editor

@@ -60,6 +60,7 @@ def test_list_and_read_sessions_returns_metrics_renames_and_activity(tmp_path):
 
     assert [line.label for line in detail.lines] == ["Alice", "You", "Alice"]
     assert detail.talk_time == {"Alice": 1.5, "You": 0.5}
+    assert not detail.labels_revised
     assert set(detail.activity) == {"mic", "system"}
     assert detail.activity["mic"]
     assert max(detail.activity["mic"]) > 0
@@ -88,6 +89,7 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
     }
     assert "revised placeholder" in (session / "transcript.r2.md").read_text(encoding="utf-8")
     assert store.read(session.name).revision == revision
+    assert not store.read(session.name).labels_revised
 
     renamed_revision = store.rename_speaker(session.name, "speaker-1", "Bob")
     detail = store.read(session.name)
@@ -95,6 +97,7 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
     assert renamed_revision == "transcript.r3.jsonl"
     assert [line.label for line in detail.lines] == ["Bob", "You", "Bob"]
     assert detail.revision == renamed_revision
+    assert detail.labels_revised
     assert (session / "transcript.jsonl").read_bytes() == original_jsonl
     assert (session / "transcript.r2.jsonl").read_text(encoding="utf-8").count("Alice") == 2
 
