@@ -22,6 +22,8 @@ class FakeSession:
         self.source_states = {"mic": "on", "system": "on"}
         self.source_reasons = {"mic": None, "system": None}
         self.levels_dbfs = {"mic": -20.0, "system": -30.0}
+        self.meter_floor_dbfs = -70.0
+        self.failed_phrase_count = 0
         self.elapsed_seconds = 3.0
         self.queue_depth = 2
         self.model_name = "test-model"
@@ -118,6 +120,56 @@ def test_pilot_controls_show_lines_rename_old_lines_and_stop():
 
             await pilot.press("q")
             assert session.actions[-1] == "stop"
+
+    import asyncio
+
+    asyncio.run(exercise())
+
+
+def test_meter_maps_quiet_levels_between_the_configured_floor_and_top():
+    cases = {
+        -80.0: "·····",
+        -70.0: "·····",
+        -50.0: "█····",
+        -40.0: "██···",
+        -20.0: "████·",
+        -10.0: "█████",
+        float("-inf"): "·····",
+    }
+
+    for level, expected in cases.items():
+        assert LiveApp._format_meter(level, -70.0) == expected
+
+
+def test_pilot_refreshes_meter_from_the_latest_block_level():
+    async def exercise():
+        session = FakeSession()
+        session.levels_dbfs = {"mic": -80.0, "system": -80.0}
+        app = LiveApp(session)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            status = str(app.query_one("#status", Static).render())
+            assert "m ON [····· -80 dBFS]" in status
+
+            session.levels_dbfs["mic"] = -50.0
+            await pilot.pause(0.2)
+            status = str(app.query_one("#status", Static).render())
+            assert "m ON [█···· -50 dBFS]" in status
+
+    import asyncio
+
+    asyncio.run(exercise())
+
+
+def test_status_shows_the_failed_phrase_count():
+    async def exercise():
+        session = FakeSession()
+        session.failed_phrase_count = 2
+        app = LiveApp(session)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            status = str(app.query_one("#status", Static).render())
+            assert "failed phrases 2" in status
 
     import asyncio
 

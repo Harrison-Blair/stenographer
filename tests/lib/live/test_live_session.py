@@ -137,12 +137,17 @@ class FakeWorker:
     def hold_model(self):
         self.events.append("hold")
 
+    def warmup(self):
+        self.events.append("warmup")
+
     def release_model(self):
         self.events.append("release")
 
     def transcribe(self, samples):
         value = int(samples[0])
         self.calls.append(value)
+        if value == 5:
+            raise RuntimeError("private fake phrase detail")
         results = {
             1: TranscriptionResult(
                 "  spoken words  ",
@@ -198,6 +203,7 @@ def _make_session(
     availability=(True, None),
     platform_error=None,
     start=True,
+    feedback_floor=-45.0,
 ):
     import stenographer.lib.live.live_session as live_session
 
@@ -234,7 +240,9 @@ def _make_session(
     monkeypatch.setattr(live_session, "SpeakerTracker", FakeSpeakerTracker)
     platform = FakePlatform(system_capture, tmp_path, platform_error)
     cfg = SimpleNamespace(
-        asr=SimpleNamespace(model="test-model"), audio=SimpleNamespace(input_device=None)
+        asr=SimpleNamespace(model="test-model"),
+        audio=SimpleNamespace(input_device=None),
+        feedback=SimpleNamespace(spectrum_floor_dbfs=feedback_floor),
     )
     session = live_session.LiveSession(
         cfg,
@@ -253,6 +261,15 @@ def _make_session(
         recorder_holder["recorder"],
         segmenters,
     )
+
+
+def test_start_warms_the_worker_before_starting_live_sources(monkeypatch, tmp_path):
+    session, _writer, worker, system, recorder, _segmenters = _make_session(monkeypatch, tmp_path)
+
+    assert worker.events[:2] == ["hold", "warmup"]
+    assert recorder.running
+    assert system.running
+    session.stop()
 
 
 def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
@@ -285,7 +302,7 @@ def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
     assert writer.lines[0].start == 0.25
     assert writer.lines[0].wall == "2026-03-02T04:05:06.250000+00:00"
     assert writer.closed
-    assert worker.events == ["hold", "release", "shutdown"]
+    assert worker.events == ["hold", "warmup", "release", "shutdown"]
     assert worker.stopped
     assert len(segmenters) == 2
     assert all(segmenter.flushed for segmenter in segmenters)
@@ -406,6 +423,39 @@ def test_toggle_off_catches_up_with_silence_and_stop_shuts_sources(monkeypatch, 
     assert not system.running
     assert worker.stopped
     assert writer.closed
+
+
+def test_meter_floor_uses_the_low_frequency_profile_value(monkeypatch, tmp_path):
+    session, writer, _worker, _system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, start=False, feedback_floor=(-81.0, -65.0, -72.0)
+    )
+
+    assert session.meter_floor_dbfs == -81.0
+    session.stop()
+    assert writer.closed
+
+
+def test_missing_meter_floor_uses_minus_seventy_dbfs(monkeypatch, tmp_path):
+    session, _writer, _worker, _system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, start=False, feedback_floor=None
+    )
+
+    assert session.meter_floor_dbfs == -70.0
+    session.stop()
+
+
+def test_failed_phrase_increments_the_failure_count(monkeypatch, tmp_path, caplog):
+    session, _writer, _worker, system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, mic=False
+    )
+
+    system.emit(5)
+    session._queue.join()
+
+    assert session.failed_phrase_count == 1
+    assert session.lines == ()
+    assert "private fake phrase detail" not in caplog.text
+    session.stop()
 
 
 def test_transcript_line_values_use_the_source_session_clock():

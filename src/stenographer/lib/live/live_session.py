@@ -94,6 +94,7 @@ class LiveSession:
         self._source_samples = {"mic": 0, "system": 0}
         self._source_seen = {"mic": False, "system": False}
         self._lines: list[TranscriptLine] = []
+        self._failed_phrase_count = 0
         self._subscribers: list[Callable[[TranscriptLine], None]] = []
         self._paused = False
         self._stopped = False
@@ -111,6 +112,7 @@ class LiveSession:
             if self._started:
                 return
             self._worker.hold_model()
+            self._worker.warmup()
             self._run_started_at = self._monotonic()
             self._transcriber = threading.Thread(
                 target=self._transcribe_queue,
@@ -139,6 +141,19 @@ class LiveSession:
     @property
     def queue_depth(self) -> int:
         return self._queue.qsize()
+
+    @property
+    def meter_floor_dbfs(self) -> float:
+        feedback = getattr(self._cfg, "feedback", None)
+        floor = getattr(feedback, "spectrum_floor_dbfs", None)
+        if isinstance(floor, (tuple, list)):
+            floor = floor[0] if floor else None
+        return -70.0 if floor is None else float(floor)
+
+    @property
+    def failed_phrase_count(self) -> int:
+        with self._lock:
+            return self._failed_phrase_count
 
     @property
     def paused(self) -> bool:
@@ -411,6 +426,8 @@ class LiveSession:
                 assert isinstance(item, Phrase)
                 self._transcribe_phrase(item)
             except Exception as exc:
+                with self._lock:
+                    self._failed_phrase_count += 1
                 log_failure(log, logging.WARNING, "live: phrase_failed", exc, safe=False)
             finally:
                 self._queue.task_done()
