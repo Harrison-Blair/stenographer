@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING
 from stenographer.cli.doctor.log_status import LogStatus
 from stenographer.cli.shared.capabilities import Capabilities
 from stenographer.cli.shared.capability_probe import probe
+from stenographer.lib.diagnostics import additional_checks
+from stenographer.lib.diagnostics.additional_checks import DiagnosticCheck
 from stenographer.lib.diagnostics.capabilities import REQUIRED, missing_required
 from stenographer.overlay.capabilities.models import OverlayCapability
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
@@ -131,6 +133,7 @@ def render(
     logs: Sequence[LogStatus] | None = None,
     *,
     overlay_guidance: OverlayGuidance,
+    optional_checks: Sequence[DiagnosticCheck] = (),
 ) -> str:
     """Pure: the doctor report, with an exact fix hint per missing capability.
 
@@ -166,6 +169,19 @@ def render(
     lines.append(f"  {guidance.service_noun}: {service}")
     lines.append(f"  overlay: {format_overlay_status(caps.overlay, overlay_guidance)}")
     lines.append(f"  clipboard restore: {format_clipboard_restore_status(caps, cfg, guidance)}")
+    if optional_checks:
+        lines.extend(("", "optional capabilities:"))
+        for check in optional_checks:
+            label = {
+                "system_capture": "system capture",
+                "live_models_cached": "live models cached",
+                "ffmpeg": "ffmpeg",
+            }.get(check.check_id, check.check_id)
+            status = "ok" if check.status == "ok" else "WARN"
+            line = f"  {label}: {status} — {check.detail}"
+            if check.fix:
+                line += f" — {check.fix}"
+            lines.append(line)
     if logs is not None:
         lines.append("")
         lines.append("logs:")
@@ -188,6 +204,7 @@ def run(cfg: Config, config_path: pathlib.Path) -> int:
     from stenographer.overlay.platform import current_platform as overlay_platform
 
     caps = probe(cfg)
+    optional = additional_checks.collect_additional_checks()
     daemon_log, helper_log = log_paths()
     logs = tuple(
         _log_status(name, path) for name, path in (("daemon", daemon_log), ("helper", helper_log))
@@ -200,6 +217,7 @@ def run(cfg: Config, config_path: pathlib.Path) -> int:
             current_platform().guidance(),
             logs,
             overlay_guidance=overlay_platform().guidance(),
+            optional_checks=optional,
         )
     )
     return 78 if missing_required(caps) else 0
