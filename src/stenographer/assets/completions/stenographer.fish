@@ -32,6 +32,8 @@ end
 
 complete -c stenographer -n __stenographer_needs_command -f -a run \
     -d 'Run the dictation daemon'
+complete -c stenographer -n __stenographer_needs_command -f -a live \
+    -d 'Record and transcribe live audio'
 complete -c stenographer -n __stenographer_needs_command -f -a transcribe \
     -d 'Transcribe an audio file'
 complete -c stenographer -n __stenographer_needs_command -f -a model \
@@ -51,10 +53,21 @@ complete -c stenographer -n __stenographer_needs_command -f -s h -l help \
 complete -c stenographer -n __stenographer_needs_command -f -l version \
     -d 'Show version'
 
-for command in run transcribe model doctor devices setup sounds stats completion
+for command in run live transcribe model doctor devices setup sounds stats completion
     complete -c stenographer -n "__stenographer_command_is $command" -f -s h -l help \
         -d 'Show help'
 end
+
+complete -c stenographer -n '__stenographer_command_is live' -f -l mic \
+    -d 'Enable microphone capture'
+complete -c stenographer -n '__stenographer_command_is live' -f -l no-mic \
+    -d 'Disable microphone capture'
+complete -c stenographer -n '__stenographer_command_is live' -f -l system \
+    -d 'Enable system audio capture'
+complete -c stenographer -n '__stenographer_command_is live' -f -l no-system \
+    -d 'Disable system audio capture'
+complete -c stenographer -n '__stenographer_command_is live' -f -l device -r \
+    -d 'Select microphone input device'
 
 complete -c stenographer -n '__stenographer_command_is transcribe' -f -l raw \
     -d 'Emit the unformatted transcript'

@@ -1,0 +1,416 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Live-session coordination tests without audio hardware or ASR processes."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
+
+import numpy as np
+
+from stenographer.lib.live.phrase import Phrase
+from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+class FakeWriter:
+    def __init__(self):
+        self.path = Path("session-folder")
+        self.started_at = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
+        self.audio = []
+        self.silence = []
+        self.lines = []
+        self.renames = []
+        self.closed = False
+
+    def write_audio(self, source, samples):
+        self.audio.append((source, samples.copy()))
+
+    def write_silence(self, source, seconds):
+        self.silence.append((source, seconds))
+
+    def append_line(self, line):
+        self.lines.append(line)
+
+    def relabel(self, labels):
+        self.renames.append(dict(labels))
+
+    def close(self):
+        self.closed = True
+
+
+class FakeRecorder:
+    def __init__(self, *, on_block, **kwargs):
+        self.on_block = on_block
+        self.options = kwargs
+        self.running = False
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def close(self):
+        self.running = False
+
+    def emit(self, value):
+        self.on_block(np.asarray([value], dtype=np.float32), 16000, 1)
+
+
+class FakeSystemCapture:
+    def __init__(self, available=True, reason=None):
+        self.on_block = None
+        self.running = False
+        self.availability = available, reason
+
+    def available(self):
+        return self.availability
+
+    def start(self, on_block):
+        self.on_block = on_block
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def emit(self, value):
+        self.on_block(np.asarray([value], dtype=np.float32))
+
+
+class FakePlatform:
+    def __init__(self, system_capture, data_path, platform_error=None):
+        self._system_capture = system_capture
+        self._data_path = data_path
+        self._platform_error = platform_error
+
+    def data_dir(self, _env, _home):
+        return self._data_path
+
+    def system_audio_capture(self):
+        if self._platform_error is not None:
+            raise self._platform_error
+        return self._system_capture
+
+    def asr_transport(self):
+        return object()
+
+
+class FakeSegmenter:
+    def __init__(self, source, _model_path, **_kwargs):
+        self.source = source
+        self.flushed = False
+
+    def accept(self, block):
+        value = float(block[0])
+        return [
+            Phrase(
+                source=self.source,
+                start=0.25,
+                end=0.5,
+                samples=np.asarray([value], dtype=np.float32),
+            )
+        ]
+
+    def flush(self):
+        self.flushed = True
+        return []
+
+
+class FakeWorker:
+    def __init__(self, _cfg, *, transport):
+        assert transport is not None
+        self.events = []
+        self.calls = []
+        self.stopped = False
+
+    def hold_model(self):
+        self.events.append("hold")
+
+    def release_model(self):
+        self.events.append("release")
+
+    def transcribe(self, samples):
+        value = int(samples[0])
+        self.calls.append(value)
+        results = {
+            1: TranscriptionResult(
+                "  spoken words  ",
+                1.0,
+                [SegmentInfo(0.0, 1.0, "spoken words", 0.1)],
+            ),
+            2: TranscriptionResult(
+                "hallucinated music",
+                1.0,
+                [SegmentInfo(0.0, 1.0, "hallucinated music", 0.6)],
+            ),
+            3: TranscriptionResult("  \n", 1.0, [SegmentInfo(0.0, 1.0, "", 0.1)]),
+            4: TranscriptionResult(
+                "a phrase",
+                1.0,
+                [
+                    SegmentInfo(0.0, 0.5, "a", 0.8),
+                    SegmentInfo(0.5, 1.0, "phrase", 0.2),
+                ],
+            ),
+        }
+        return results[value]
+
+    def shutdown(self):
+        self.events.append("shutdown")
+        self.stopped = True
+
+
+class FakeSpeakerTracker:
+    def __init__(self, *_args, **_kwargs):
+        self.names = {}
+        self.speaker_ids = []
+
+    def assign(self, _samples):
+        if "speaker-1" not in self.speaker_ids:
+            self.speaker_ids.append("speaker-1")
+        return "speaker-1"
+
+    def label(self, speaker_id):
+        return "You" if speaker_id == "you" else self.names.get(speaker_id, "Speaker 1")
+
+    def rename(self, speaker_id, name):
+        self.names[speaker_id] = name.strip()
+
+
+def _make_session(
+    monkeypatch,
+    tmp_path,
+    *,
+    clock=None,
+    mic=True,
+    system=True,
+    availability=(True, None),
+    platform_error=None,
+    start=True,
+):
+    import stenographer.lib.live.live_session as live_session
+
+    writer = FakeWriter()
+    system_capture = FakeSystemCapture(*availability)
+    worker_holder = {}
+    recorder_holder = {}
+    segmenters = []
+
+    class WriterFactory:
+        @staticmethod
+        def open(_root, _started_at):
+            return writer
+
+    class WorkerFactory(FakeWorker):
+        def __init__(self, cfg, *, transport):
+            super().__init__(cfg, transport=transport)
+            worker_holder["worker"] = self
+
+    class RecorderFactory(FakeRecorder):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            recorder_holder["recorder"] = self
+
+    class SegmenterFactory(FakeSegmenter):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            segmenters.append(self)
+
+    monkeypatch.setattr(live_session, "SessionWriter", WriterFactory)
+    monkeypatch.setattr(live_session, "Worker", WorkerFactory)
+    monkeypatch.setattr(live_session, "Recorder", RecorderFactory)
+    monkeypatch.setattr(live_session, "PhraseSegmenter", SegmenterFactory)
+    monkeypatch.setattr(live_session, "SpeakerTracker", FakeSpeakerTracker)
+    platform = FakePlatform(system_capture, tmp_path, platform_error)
+    cfg = SimpleNamespace(
+        asr=SimpleNamespace(model="test-model"), audio=SimpleNamespace(input_device=None)
+    )
+    session = live_session.LiveSession(
+        cfg,
+        mic=mic,
+        system=system,
+        platform=platform,
+        monotonic=clock or FakeClock(),
+    )
+    if start:
+        session.start()
+    return (
+        session,
+        writer,
+        worker_holder["worker"],
+        system_capture,
+        recorder_holder["recorder"],
+        segmenters,
+    )
+
+
+def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
+    monkeypatch, tmp_path, caplog
+):
+    delivered = []
+    session, writer, worker, system, recorder, segmenters = _make_session(monkeypatch, tmp_path)
+    session.subscribe(delivered.append)
+
+    recorder.emit(1)
+    assert session.levels_dbfs["mic"] == 0.0
+    assert session.source_states["mic"] == "on"
+    assert session.model_name == "test-model"
+    assert recorder.options["streaming"] is True
+    assert recorder.options["max_seconds"] == 0
+    system.emit(2)
+    system.emit(3)
+    system.emit(4)
+    session.stop()
+
+    assert worker.calls == [1, 2, 3, 4]
+    assert [line.text for line in writer.lines] == ["spoken words", "a phrase"]
+    assert delivered == writer.lines
+    assert writer.lines[0].source == "mic"
+    assert writer.lines[0].speaker_id == "you"
+    assert writer.lines[0].label == "You"
+    assert writer.lines[1].source == "system"
+    assert writer.lines[1].speaker_id == "speaker-1"
+    assert writer.lines[1].label == "Speaker 1"
+    assert writer.lines[0].start == 0.25
+    assert writer.lines[0].wall == "2026-03-02T04:05:06.250000+00:00"
+    assert writer.closed
+    assert worker.events == ["hold", "release", "shutdown"]
+    assert worker.stopped
+    assert len(segmenters) == 2
+    assert all(segmenter.flushed for segmenter in segmenters)
+    assert "spoken words" not in caplog.text
+    assert "hallucinated music" not in caplog.text
+
+
+def test_pause_freezes_clock_and_silence_writes_and_rename_updates_old_lines(monkeypatch, tmp_path):
+    clock = FakeClock()
+    session, writer, _worker, system, _recorder, segmenters = _make_session(
+        monkeypatch, tmp_path, clock=clock
+    )
+    processed = Event()
+    session.subscribe(lambda _line: processed.set())
+    system.emit(4)
+    assert processed.wait(timeout=1)
+    assert session.lines[0].speaker_id == "speaker-1"
+
+    session.rename("speaker-1", "Alice")
+    assert session.lines[0].label == "Alice"
+    assert writer.renames == [{"speaker-1": "Alice"}]
+    processed.clear()
+    system.emit(4)
+    assert processed.wait(timeout=1)
+    assert session.lines[-1].label == "Alice"
+    assert writer.lines[-1].label == "Alice"
+
+    clock.now = 2.0
+    session.pause()
+    elapsed = session.elapsed_seconds
+    writes = list(writer.silence)
+    clock.now = 20.0
+    assert session.elapsed_seconds == elapsed
+    assert writer.silence == writes
+
+    session.resume()
+    clock.now = 21.0
+    session.stop()
+    assert all(segmenter.flushed for segmenter in segmenters)
+    assert session.elapsed_seconds == 3.0
+    assert writer.closed
+    assert not system.running
+
+
+def test_stop_before_start_closes_resources_without_waiting_for_a_consumer(monkeypatch, tmp_path):
+    session, writer, worker, _system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, start=False
+    )
+
+    session.stop()
+
+    assert writer.closed
+    assert worker.stopped
+
+
+def test_unsupported_system_platform_disables_system_without_blocking_mic(monkeypatch, tmp_path):
+    from stenographer.lib.platform.errors import UnsupportedPlatformError
+
+    reason = "system audio capture is not available on Windows"
+    session, writer, worker, _system, _recorder, _segmenters = _make_session(
+        monkeypatch,
+        tmp_path,
+        platform_error=UnsupportedPlatformError(reason),
+    )
+
+    assert session.source_states["mic"] == "on"
+    assert session.source_states["system"] == "off"
+    assert session.source_reasons["system"] == reason
+
+    session.toggle("system")
+    assert session.source_states["system"] == "off"
+    assert session.source_reasons["system"] == reason
+    session.stop()
+    assert writer.closed
+    assert worker.stopped
+
+
+def test_unavailable_system_source_stays_off_and_exposes_the_reason(monkeypatch, tmp_path):
+    reason = "pw-record is not installed"
+    session, writer, worker, system, _recorder, _segmenters = _make_session(
+        monkeypatch,
+        tmp_path,
+        mic=False,
+        availability=(False, reason),
+    )
+
+    assert session.source_states["system"] == "off"
+    assert session.source_reasons["system"] == reason
+    assert not system.running
+
+    session.toggle("system")
+    assert session.source_states["system"] == "off"
+    assert session.source_reasons["system"] == reason
+    assert not system.running
+
+    session.stop()
+    assert writer.closed
+    assert worker.stopped
+
+
+def test_toggle_off_catches_up_with_silence_and_stop_shuts_sources(monkeypatch, tmp_path):
+    clock = FakeClock()
+    session, writer, worker, system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, clock=clock
+    )
+    clock.now = 1.0
+    session.toggle("mic")
+    assert session.source_states["mic"] == "off"
+    assert writer.silence == [("mic", 1.0)]
+
+    clock.now = 2.0
+    session.toggle("mic")
+    assert session.source_states["mic"] == "on"
+    assert writer.silence[-1] == ("mic", 1.0)
+
+    session.stop()
+    assert not recorder.running
+    assert not system.running
+    assert worker.stopped
+    assert writer.closed
+
+
+def test_transcript_line_values_use_the_source_session_clock():
+    line = TranscriptLine(1.0, 2.0, "wall", "system", "speaker-1", "Speaker 1", "words")
+
+    assert line.start == 1.0
+    assert line.source == "system"
+    assert line.text == "words"
