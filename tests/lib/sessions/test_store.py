@@ -10,6 +10,7 @@ import numpy as np
 
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.sessions.exporter import export_transcript
 from stenographer.lib.sessions.store import SessionStore
 
 
@@ -97,6 +98,46 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
     assert detail.revision == renamed_revision
     assert (session / "transcript.jsonl").read_bytes() == original_jsonl
     assert (session / "transcript.r2.jsonl").read_text(encoding="utf-8").count("Alice") == 2
+
+
+def test_session_and_shared_exporters_write_all_formats_privately(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(tmp_path / "sessions")
+    output = tmp_path / "exports"
+
+    exported = {
+        format: store.export(session.name, output, format) for format in ("md", "jsonl", "srt", "txt")
+    }
+
+    assert set(exported) == {"md", "jsonl", "srt", "txt"}
+    assert all(path.parent == output and path.exists() for path in exported.values())
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in exported.values())
+    assert "**Alice:**" in exported["md"].read_text(encoding="utf-8")
+    json_lines = [
+        json.loads(row) for row in exported["jsonl"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["label"] for row in json_lines] == ["Alice", "You", "Alice"]
+    assert "00:00:00,000 --> 00:00:00,500" in exported["srt"].read_text(encoding="utf-8")
+    assert "[00:00:00] Alice:" in exported["txt"].read_text(encoding="utf-8")
+
+    direct = export_transcript(
+        [
+            TranscriptLine(
+                start=0.0,
+                end=0.5,
+                wall="2026-03-02T04:05:07+00:00",
+                source="mic",
+                speaker_id="you",
+                label="You",
+                text="file placeholder",
+            )
+        ],
+        output,
+        "txt",
+        filename="file-result",
+    )
+    assert direct.name == "file-result.txt"
+    assert "You: file placeholder" in direct.read_text(encoding="utf-8")
 
 
 def test_partial_session_is_listed_and_read_without_crashing(tmp_path):
