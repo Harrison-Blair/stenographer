@@ -1,6 +1,6 @@
 # VERIFIED — 111-hub-config-board
 
-Verifier: independent agent (claude-verifier), 2026-10-20, branch head `d610993`.
+Verifier: t111-verifier-1, 2026-10-20, branch head `d610993`.
 Base: `d8ad650`. The worktree has no `.venv`; every command used
 `/home/penguin/source/stenographer/.venv/bin/` with `PYTHONPATH=$PWD/src`
 (checked: `stenographer.__file__` resolves to this worktree's `src/`).
