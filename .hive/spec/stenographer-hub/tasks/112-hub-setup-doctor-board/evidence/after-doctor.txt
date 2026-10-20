@@ -1,0 +1,45 @@
+                                                                                                                                                      
+ ╭─ stenographer ────────╮ ╭─ input and audio ────────────────────────────────────────╮ ╭─ engine and desktop ──────────────────────────────────────╮ 
+ │                       │ │                                                          │ │                                                           │ 
+ │    1 Live             │ │   ✓ /dev/uinput writable · available                     │ │   ✓ ASR model cached · medium.en · cached                 │ 
+ │    2 Files            │ │   ✓ input group membership · available                   │ │   ✓ live models · vad + titanet · cached                  │ 
+ │    3 Sessions         │ │   ✓ microphone · QuadCast 2 S · available                │ │   ✓ clipboard · wl-copy, restore on · available           │ 
+ │    4 Config           │ │   ✓ system capture · Arena 7 monitor · available         │ │   ✓ systemd unit · enabled, active · active               │ 
+ │    5 Setup            │ │   ✓ audio player · canberra-gtk-play · available         │ │ ▶ ! overlay · no X display · No X display.                │ 
+ │  ▶ 6 Doctor   1W 0F   │ │                                                          │ │                                                           │ 
+ │                       │ │                                                          │ │                                                           │ 
+ │                       │ │                                                          │ │                                                           │ 
+ │                       │ │                                                          │ │                                                           │ 
+ │                       │ │                                                          │ │                                                           │ 
+ │                       │ ╰──────────────────────────────────────────────────────────╯ ╰───────────────────────────────────────────────────────────╯ 
+ │                       │                                                                                                                            
+ │                       │ ╭─ selected issue · overlay · no X display ──────────────────────────────────────────────────────────────────────────────╮ 
+ │                       │ │                                                                                                                        │ 
+ │                       │ │ WARN · overlay · no X display                                                                                          │ 
+ │                       │ │ Detail: No X display.                                                                                                  │ 
+ │                       │ │ Fix: Set DISPLAY or enable XWayland. Dictation still works without the overlay.                                        │ 
+ │                       │ │                                                                                                                        │ 
+ │                       │ │                                                                                                                        │ 
+ │                       │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
+ │                       │                                                                                                                            
+ │                       │ ╭─ recent warnings · stenographer.log ───────────────────────────────────────────────────────────────────────────────────╮ 
+ │                       │ │                                                                                                                        │ 
+ │                       │ │ 21:11:37 WARNING stenographer.overlay overlay: helper_restarting                                                       │ 
+ │                       │ │ 21:01:41 WARNING stenographer.overlay overlay: helper_restarting                                                       │ 
+ │                       │ │ 20:30:32 WARNING stenographer.overlay overlay: helper_restarting                                                       │ 
+ │                       │ │                                                                                                                        │ 
+ │                       │ │                                                                                                                        │ 
+ │                       │ │                                                                                                                        │ 
+ │                       │ │                                                                                                                        │ 
+ │                       │ │                                                                                                                        │ 
+ ╰───────────────────────╯ │                                                                                                                        │ 
+                           │                                                                                                                        │ 
+ ╭───────────────────────╮ │                                                                                                                        │ 
+ │ summary               │ │                                                                                                                        │ 
+ │ 9 ok · 1 warn         │ │                                                                                                                        │ 
+ │ 0 fail                │ │                                                                                                                        │ 
+ │ checked 21:23         │ │                                                                                                                        │ 
+ │                       │ │                                                                                                                        │ 
+ ╰───────────────────────╯ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
+                                                                                                                                                      
+  r re-check   enter details   f fix in Setup   l open log   c copy report                                                                            
