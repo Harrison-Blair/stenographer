@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -13,130 +12,18 @@ import time
 import numpy as np
 
 from stenographer.lib.platform.errors import SystemAudioCaptureError
+from stenographer.lib.platform.linux.system_audio_links import (
+    has_sink_monitor_links,
+    link_inspector,
+    parse_pw_dump_output,
+    parse_pw_link_output,
+)
 from stenographer.lib.platform.system_audio import SystemAudioBlockCallback
 
 _RATE = 16000
 _BLOCK_FRAMES = 512
 _LINK_CHECK_TIMEOUT = 2.0
 _LINK_CHECK_INTERVAL = 0.1
-_CAPTURE_NODE = "stenographer-system-capture"
-
-
-def _parse_pw_link_output(output: str) -> tuple[set[str], set[tuple[str, str]]]:
-    ports: set[str] = set()
-    links: set[tuple[str, str]] = set()
-    current_port: str | None = None
-    for line in output.splitlines():
-        if line and not line[0].isspace():
-            current_port = line.strip()
-            ports.add(current_port)
-            continue
-        fields = line.split(maxsplit=1)
-        if current_port is None or len(fields) != 2:
-            continue
-        direction, endpoint = fields
-        if direction == "|->":
-            links.add((current_port, endpoint))
-            ports.add(endpoint)
-        elif direction == "|<-":
-            links.add((endpoint, current_port))
-            ports.add(endpoint)
-    return ports, links
-
-
-def _parse_pw_dump_output(output: str) -> tuple[set[str], set[tuple[str, str]]]:
-    try:
-        objects = json.loads(output)
-    except (TypeError, ValueError):
-        return set(), set()
-    if not isinstance(objects, list):
-        return set(), set()
-
-    nodes: dict[str, str] = {}
-    ports_by_id: dict[str, tuple[str, str]] = {}
-    raw_links: list[dict] = []
-    for item in objects:
-        if not isinstance(item, dict):
-            continue
-        info = item.get("info")
-        if not isinstance(info, dict):
-            continue
-        props = info.get("props")
-        if not isinstance(props, dict):
-            props = {}
-        item_type = item.get("type")
-        item_id = str(item.get("id"))
-        if item_type == "PipeWire:Interface:Node":
-            node_name = props.get("node.name")
-            if isinstance(node_name, str):
-                nodes[item_id] = node_name
-        elif item_type == "PipeWire:Interface:Port":
-            node_id = props.get("node.id")
-            port_name = props.get("port.name")
-            if node_id is not None and isinstance(port_name, str):
-                ports_by_id[item_id] = str(node_id), port_name
-        elif item_type == "PipeWire:Interface:Link":
-            raw_links.append(info)
-
-    ports: set[str] = set()
-    links: set[tuple[str, str]] = set()
-    for info in raw_links:
-        props = info.get("props")
-        if not isinstance(props, dict):
-            props = {}
-        output_node = info.get("output-node-id", props.get("link.output.node"))
-        output_port = info.get("output-port-id", props.get("link.output.port"))
-        input_node = info.get("input-node-id", props.get("link.input.node"))
-        input_port = info.get("input-port-id", props.get("link.input.port"))
-        source = _pw_dump_endpoint(output_node, output_port, nodes, ports_by_id)
-        target = _pw_dump_endpoint(input_node, input_port, nodes, ports_by_id)
-        if source is not None and target is not None:
-            links.add((source, target))
-            ports.update((source, target))
-    ports.update(
-        f"{nodes[node_id]}:{port_name}"
-        for node_id, port_name in ports_by_id.values()
-        if node_id in nodes
-    )
-    return ports, links
-
-
-def _pw_dump_endpoint(
-    node_id: object,
-    port_id: object,
-    nodes: dict[str, str],
-    ports_by_id: dict[str, tuple[str, str]],
-) -> str | None:
-    port = ports_by_id.get(str(port_id))
-    if port is None:
-        return None
-    actual_node_id, port_name = port
-    if str(node_id) != actual_node_id or actual_node_id not in nodes:
-        return None
-    return f"{nodes[actual_node_id]}:{port_name}"
-
-
-def _link_inspector() -> tuple[str, str] | None:
-    pw_link = shutil.which("pw-link")
-    if pw_link is not None:
-        return "pw-link", pw_link
-    pw_dump = shutil.which("pw-dump")
-    if pw_dump is not None:
-        return "pw-dump", pw_dump
-    return None
-
-
-def _has_sink_monitor_links(
-    ports: set[str], links: set[tuple[str, str]], sink: str, capture_node: str = _CAPTURE_NODE
-) -> bool:
-    capture_inputs = {port for port in ports if port.startswith(f"{capture_node}:input_")}
-    if not capture_inputs:
-        return False
-    for capture_input in capture_inputs:
-        sources = {source for source, target in links if target == capture_input}
-        if not sources or any(not source.startswith(f"{sink}:monitor_") for source in sources):
-            return False
-    return True
 
 
 class LinuxSystemAudioCapture:
@@ -151,7 +38,7 @@ class LinuxSystemAudioCapture:
     def available(self) -> tuple[bool, str | None]:
         if shutil.which("pw-record") is None:
             return False, "pw-record is not installed"
-        if _link_inspector() is None:
+        if link_inspector() is None:
             return (
                 False,
                 "pw-link and pw-dump are not installed; cannot verify system capture routing",
@@ -169,7 +56,7 @@ class LinuxSystemAudioCapture:
         executable = shutil.which("pw-record")
         if executable is None:
             raise SystemAudioCaptureError("pw-record is not installed")
-        inspector = _link_inspector()
+        inspector = link_inspector()
         if inspector is None:
             raise SystemAudioCaptureError(
                 "pw-link and pw-dump are not installed; cannot verify system capture routing"
@@ -243,10 +130,10 @@ class LinuxSystemAudioCapture:
                     timeout=min(remaining, 0.5),
                 )
                 if kind == "pw-link":
-                    ports, links = _parse_pw_link_output(result.stdout)
+                    ports, links = parse_pw_link_output(result.stdout)
                 else:
-                    ports, links = _parse_pw_dump_output(result.stdout)
-                if _has_sink_monitor_links(ports, links, sink):
+                    ports, links = parse_pw_dump_output(result.stdout)
+                if has_sink_monitor_links(ports, links, sink):
                     return
             except (OSError, subprocess.SubprocessError):
                 pass

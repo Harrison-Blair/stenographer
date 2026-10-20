@@ -12,11 +12,11 @@ import pytest
 
 from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.errors import SystemAudioCaptureError
-from stenographer.lib.platform.linux.system_audio import (
+from stenographer.lib.platform.linux.system_audio_links import (
     _CAPTURE_NODE,
-    _has_sink_monitor_links,
-    _parse_pw_dump_output,
-    _parse_pw_link_output,
+    has_sink_monitor_links,
+    parse_pw_dump_output,
+    parse_pw_link_output,
 )
 
 
@@ -52,15 +52,15 @@ def test_default_monitor_captures_three_seconds_of_playing_audio():
             result = subprocess.run(
                 [pw_link, "-l"], capture_output=True, text=True, check=True, timeout=5
             )
-            ports, links = _parse_pw_link_output(result.stdout)
+            ports, links = parse_pw_link_output(result.stdout)
         else:
             pw_dump = shutil.which("pw-dump")
             assert pw_dump is not None
             result = subprocess.run(
                 [pw_dump], capture_output=True, text=True, check=True, timeout=5
             )
-            ports, links = _parse_pw_dump_output(result.stdout)
-        assert _has_sink_monitor_links(ports, links, sink, _CAPTURE_NODE)
+            ports, links = parse_pw_dump_output(result.stdout)
+        assert has_sink_monitor_links(ports, links, sink, _CAPTURE_NODE)
         time.sleep(3)
     finally:
         capture.stop()
