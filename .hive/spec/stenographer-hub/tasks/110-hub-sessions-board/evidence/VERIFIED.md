@@ -1,5 +1,31 @@
 # VERIFIED — 110 hub-sessions-board
 
+## Verifier run 3, at `d00d2c9`
+
+Environment: `/home/penguin/source/stenographer/.venv` with `PYTHONPATH=src`. Fake
+services only. No microphone, model, `live` or `run`. My capture: `verify3-sessions.png`
+(150x45 pilot; three sessions, one interrupted; the newest has five synthetic lines with
+consecutive lines from the same speaker).
+Board: `/home/penguin/source/hive/.hive/tmp/coordinator/designs/stenographer-png/Sessions.png`.
+
+| Item | Result | Observation |
+| --- | --- | --- |
+| V1 widget CSS regression | pass | Covered in run 2. `tests/cli/hub/test_sessions.py` at HEAD: 10 passed. |
+| V2 storage card, list panel, one-line rows | pass | New test `test_interrupted_session_marker_stays_on_one_line_at_board_size` with tests@HEAD and src@`64c623d`: 1 failed, `assert 3 == 2`. At HEAD: passed. In my capture each of the 3 rows takes one line (`2026-10-19 14:05  0:03  2 spk ! int.`). The list height stays 3 when the interrupted row is selected. The sidebar card shows `storage / 3 sessions / 1.1 KB audio`. |
+| V3 detail and speaker chips | pass | The title row has the session ID and a right-aligned `labels: live`. Talk-time labels, mic/sys rows, rule, transcript follow. Speakers can be told apart without colour: `Text.plain` gives `HH:MM:SS  <label>  <text>` on every line, including consecutive lines from the same speaker (`Speaker 1` x2, `You` x2, `Speaker 2`). The joined `Speaker 1fixture` in the PNG comes from rsvg-convert dropping `&#160;` (run 2 found this). |
+| V4 existing behaviour + no-background | pass | `pytest tests/cli/hub`: 75 passed. `screen.get_style_at` over all 150x45 cells: 0 cells with a painted background. The `797ed0f` merge kept task 112: against `797ed0f`, the `app.py` diff only adds lines (Sessions CSS ids and the Sessions sidebar card branch). Outside `.hive`, the branch changes only Sessions files and docs. |
+| V5 captures + board comparison | pass | `after-sessions.*` and `visual-check.md` now show and describe `! int.` on one line. My capture matches the board in panels, order, placement, sidebar card, title row, talk-time labels, mic/sys rows, rule, transcript and key hints. Fills are overridden by task 107. Minor, not a fail: the whole `labels: live` string is green; the board colours only the value. Colours are not set by the board. |
+| V6 gate | pass | `ruff check`: all checks passed. `ruff format --check`: 702 files already formatted. `pytest -m "not integration"`: 2670 passed, 2 skipped, 6 deselected. `stenographer --help`: printed. |
+| Dev merge | **fail** | `origin/dev` moved to `12f058a` (tasks 109 and 115). `git merge-tree --write-tree HEAD origin/dev` gives a conflict in `src/stenographer/cli/hub/app.py`. |
+
+## Repair needed (run 3)
+
+1. Merge `origin/dev` (`12f058a`) again. Resolve the `app.py` conflict and keep the
+   Files (109) and Doctor/Setup (115) changes. Re-run the hub suite and the gate.
+   Re-capture `after-sessions.*` if the merge changes the Sessions screen.
+
+No other findings.
+
 ## Verifier run 2, at `c33a633`
 
 Base = `d8ad650` (merge-base with dev). Environment:
