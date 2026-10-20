@@ -12,8 +12,9 @@ import numpy as np
 from stenographer.lib.live.speaker import MINIMUM_SPEECH_DURATION_SECONDS
 from stenographer.lib.live.transcript_line import TranscriptLine
 
-# 20% kept the four speech-dominant voices in the consented acceptance audio.
 _MINIMUM_CLUSTER_SPEECH_FRACTION = 0.20
+# Positive cosine evidence allows weak duplicates but keeps orthogonal voices separate.
+_MINIMUM_SMALL_CLUSTER_SIMILARITY = 0.05
 
 
 def relabel_system_lines(
@@ -132,8 +133,9 @@ def relabel_system_lines(
             return None
         member_vectors = vectors[members]
         weights = durations[members]
+        candidate_indices = list(core_clusters)
         scores = []
-        for core_index in core_indices:
+        for core_index in candidate_indices:
             similarities = member_vectors @ core_vectors[core_index]
             score = (
                 np.average(similarities, weights=weights)
@@ -141,8 +143,13 @@ def relabel_system_lines(
                 else np.mean(similarities)
             )
             scores.append(float(score))
-        chosen = core_indices[int(np.argmax(scores))]
-        core_clusters[chosen].extend(members)
+        best_candidate = int(np.argmax(scores))
+        if scores[best_candidate] >= _MINIMUM_SMALL_CLUSTER_SIMILARITY:
+            chosen = candidate_indices[best_candidate]
+            core_clusters[chosen].extend(members)
+        else:
+            core_clusters[index] = list(members)
+            core_vectors[index] = centroid(members)
         progress_done += 1
         if progress is not None:
             progress(progress_done, total)

@@ -70,6 +70,22 @@ def test_batch_relabel_assigns_renames_once_and_numbers_unnamed_clusters_by_appe
     assert sum(line.label == "Renamed voice" for line in relabeled) == 1
 
 
+def test_batch_relabel_keeps_distinct_minor_voice():
+    lines = (
+        _line(0.0, 100.0, "speaker-1", "Speaker 1"),
+        _line(101.0, 15.0, "speaker-2", "Speaker 2"),
+    )
+    embeddings = (
+        np.array([1.0, 0.0, 0.0], dtype=np.float32),
+        np.array([0.0, 0.0, 1.0], dtype=np.float32),
+    )
+
+    relabeled = relabel_system_lines(lines, embeddings, threshold=0.5)
+
+    assert relabeled[0].speaker_id != relabeled[1].speaker_id
+    assert [line.label for line in relabeled] == ["Speaker 1", "Speaker 2"]
+
+
 def test_batch_relabel_uses_speech_time_weighted_votes_for_short_phrases():
     lines = (
         _line(0.0, 100.0, "speaker-1", "Long voice"),
