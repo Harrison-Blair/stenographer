@@ -11,6 +11,7 @@ from threading import Event
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from stenographer.lib.live.phrase import Phrase
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -382,6 +383,7 @@ def test_unsupported_system_platform_disables_system_without_blocking_mic(monkey
     assert worker.stopped
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux PipeWire capture routing")
 def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tmp_path):
     from stenographer.lib.platform.linux.system_audio import LinuxSystemAudioCapture
 
