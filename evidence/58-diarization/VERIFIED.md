@@ -1,62 +1,57 @@
-# VERIFIED — 58-diarization (F3 repair re-verification)
+# VERIFIED — 58-diarization (repair 3 re-verification, F4/F5)
 
-Third independent verifier run on 2026-10-20 at `a857439`. This run checks the
-repair for finding F3 from the second run. `.venv` was a temporary symlink to
-`/home/penguin/source/stenographer/.venv`, and `PYTHONPATH=src` made the tests
-and the CLI load this worktree. The red runs used detached worktrees with this
-task's tests copied in. One was at the `dev` merge base `033be49`, and one was
-at the pre-repair head `a857439~1` (`158eb24`).
+Fourth independent verifier run, on 2026-10-20 at `b6662b9`. This run checks
+repair 3 for findings F4 and F5. `.venv` was a temporary symlink to
+`/home/penguin/source/stenographer/.venv`. `PYTHONPATH=src` made the tests and
+the CLI load this worktree. The red runs used two detached worktrees with this
+task's test files copied in. One was at the `dev` merge base `033be49`, and one
+was at the pre-repair head `ac5a804`. Previous verifier runs are in the git
+history of this file.
 
 | Item | Result | Observation |
 | --- | --- | --- |
-| V1 live and batch clustering (red/green) | pass | Base: `test_relabel.py` fails at collection, and the 3 short-phrase tracker tests fail. Pre-repair: `test_batch_relabel_keeps_distinct_minor_voice` fails (1 failed, 3 passed). Head: targeted suite 42 passed, 1 skipped. The skip is the 3-clip real-model test, which is kept but whose public clips are absent. |
-| V2 stop pass, revisions, controls (red/green) | pass | Base: 7 failed, 25 passed, 1 skipped (3 `test_live_session.py` stop tests, `test_app.py::test_second_q_skips_relabel_and_stop_progress_is_visible`, 3 tracker tests). Head: all pass. |
-| V3 real-audio check (rerun) | **fail** | Baseline: `Clusters: 457`, `Labels: 457`, which is line-for-line identical to V3.md. Fixed: `Clusters: 5`, `Labels: 5` (Speaker 1–5: 3173.0 / 5147.7 / 4549.6 / 142.3 / 1657.6 s), which is line-for-line identical to V3.md. Phrases under 1.2 s: 360. The user listened to the 12 longest phrases of the new 142.3 s `Speaker 4` (172 phrases, about 0.8 s each, spread over all 5.6 h). All 12 were existing speakers or stray noise. That makes `Speaker 4` a false split. The prior head gave 4 labels, so this is a regression. |
-| V4 gate | pass | `ruff check .` printed all checks passed. `ruff format --check .` reported 590 files formatted. `pytest -m "not integration"`: 2566 passed, 2 skipped, 6 deselected. `stenographer --help` returned rc 0. |
-| F3 repair (distinct minor voice kept) | **fail** | See F4. The 0.05 bound protects only near-orthogonal voices. |
+| V1 live and batch clustering (red/green) | pass | Base `033be49`: `test_relabel.py` fails at collection (`No module named 'stenographer.lib.live.relabel'`), and the 3 short-phrase tracker tests fail. Head: the targeted suite (`test_speaker_tracker.py`, `test_relabel.py`, `test_live_session.py`, `tests/cli/live/test_app.py`, `test_store.py`) gives 43 passed, 1 skipped. The skip is the kept 3-clip real-model test, whose public clips are absent from `tmp/live_audio`. |
+| V2 stop pass, revisions, controls (red/green) | pass | Base `033be49`, without `test_relabel.py`: 7 failed, 31 passed, 1 skipped. The 7 failures are the 3 `test_live_session.py` stop/skip/failure tests, `test_app.py::test_second_q_skips_relabel_and_stop_progress_is_visible` (no `Relabeling speakers 2/5 · q to skip` in the status line), and the 3 short-phrase tracker tests. Head: all of these pass in the 43 above. |
+| V3 real-audio check (both runs again) | pass | Baseline (`--baseline`): `Clusters: 457`, `Labels: 457`, `Phrases under 1.2 s: 360`. All 460 lines are identical to V3.md. Fixed: `Clusters: 4`, `Labels: 4`, Speaker 1–4 = 3222.3 / 5174.5 / 4572.4 / 1700.9 s, `Phrases under 1.2 s: 360`. Identical to V3.md. 4 labels matches the 4 speakers that the user confirmed. Fixed run time: 2 min 13 s, rc 0. |
+| V4 gate | pass | `ruff check .`: all checks passed. `ruff format --check .`: 590 files already formatted. `pytest -m "not integration"`: 2567 passed, 2 skipped (absent public audio fixtures), 6 deselected. `stenographer --help`: rc 0. |
+| V5 F4/F5 regressions (red/green) | pass | Pre-repair `ac5a804`: `test_batch_relabel_keeps_sustained_minor_voice_at_realistic_similarity` and `test_batch_relabel_short_residue_does_not_create_speakers` fail. The first gives 1 label instead of 2. The second gives 4 labels instead of 1. Result: 2 failed, 13 passed, 1 skipped. Head: both pass. |
 
-## Findings
+## Edge-case probes (synthetic embeddings, threshold 0.5)
 
-**F4 (F3 not repaired). The 0.05 cosine bound does not keep a realistic
-distinct minor voice separate.**
-A small cluster (under 20% of the largest cluster's speech time) is still
-folded into the nearest core cluster when its duration-weighted cosine is at
-least `_MINIMUM_SMALL_CLUSTER_SIMILARITY = 0.05`
-(`src/stenographer/lib/live/relabel.py:17`). The live rule and the
-agglomerative step treat anything below 0.50 as a different speaker.
+Voice A is `[1, 0, 0]`. Voice B is at cosine c to A.
 
-Synthetic probe at head (threshold 0.5; voice A 100 s, voice B 15 s, cosine c
-between them):
+| Probe | Result |
+| --- | --- |
+| A 100 s; B five 3 s turns every 4 s (15 s in 20 s), c = 0, 0.1, 0.2, 0.3, 0.4, 0.45, 0.49 | 2 labels for each c. **F4 repaired.** |
+| Same, c = 0.55 (above the live threshold) | 1 label (merged, as designed) |
+| A as 20 × 5 s phrases; same B, c = 0.2 / 0.3 / 0.4 / 0.49 | 2 labels for each c |
+| A 100 s; 1, 4 or 20 orthogonal 0.8 s residue phrases, 50 s apart | 1 label (`Speaker 1`) for each count. **Residue adds no label.** |
+| A 100 s; B 8 × 2 s turns every 4 s (16 s), c = 0.3 | 2 labels |
+| A 100 s; B 8 × 2 s turns every 30 s or every 60 s (16 s), c = 0.3 | **1 label: B is merged into A** |
+| A 100 s; B 15 × 2 s turns every 60 s (30 s), c = 0.3 | 2 labels, because B's 30 s is at least 20% of A's speech, so B is a core cluster |
+| No anchors: 4 phrases of 0.3–1.1 s with orthogonal embeddings | 1 label. Every phrase takes the speaker id and label of the longest phrase. |
+| No anchors: `Alice` 0.9 s, `Speaker 2` 0.7 s | Both become `Alice`, so a user rename on the longest phrase is kept |
+| No anchors: progress callback | `(0, 2)`, then `(2, 2)` |
 
-| c | 0.00 | 0.04 | 0.06 | 0.10 | 0.20 | 0.30 | 0.40 | 0.49 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| labels | 2 | 2 | 1 | 1 | 1 | 1 | 1 | 1 |
+**Known limit (by design).** A minor voice gets its own label only in one of
+two cases:
 
-Real cosines from this embedding model on the consented recording: the centroids
-of the final clusters score 0.40 to 0.66 against each other, which is the range
-for different speakers. Of the 469 small agglomerative clusters, only 3 (22.1 s
-in total) score below 0.05 against every core cluster. So a real minor speaker
-with this model would score far above 0.05 and still be merged. The regression
-test covers only cosine 0.
+- It has 15 s of phrases that are each at least 2 s long, inside one 30-second
+  window, and those phrases are at least two-thirds of its speech.
+- Its speech is at least 20% of the largest cluster's speech.
 
-**F5 (V3 regression). The repaired pass gives 5 labels on a 4-speaker
-recording, and one of them is noise.**
-The clusters below 0.05 seed a new core cluster. Later short phrases and small
-clusters then join it, and it ends up as a 142.3 s `Speaker 4` with centroid
-cosines of 0.20 to 0.24 against the other four. User listening (above) confirms
-that it is a false split, with no new voice in it. The repair therefore makes
-the stop pass worse on the one real recording without protecting realistic
-minor voices.
+A minor voice that speaks in sparse turns, for example a 2 s turn each minute,
+and has less than 20% of the main voice's speech is merged into the most
+similar voice. Its turns get that voice's label. A voice that speaks only in
+phrases shorter than 2 s cannot get its own label either.
 
-Possible repairs: base the fold bound on the live threshold or on the measured
-different-speaker range instead of 0.05. Do not let low-similarity residue or
-short phrases seed a labelled speaker (for example, require a minimum of long
-speech before a non-core cluster survives). Add a synthetic test with a minor
-voice at a realistic cosine (0.2 to 0.4). Then rerun V3 and show 4 labels.
+**Note (not a defect).** The no-anchor early return does not call
+`should_cancel`. That return is a constant-time relabel and runs no clustering,
+so a second `q` has nothing to interrupt there.
 
 ## Data handling
 
-The probe saved embeddings, durations, and phrase start times only, in the
-scratch directory, and the file was deleted afterwards. No audio, transcript
-text, or decoded text was written to evidence or logs. The listening check was
-done by the user.
+The real-audio runs printed only counts and talk times. They wrote no audio,
+transcript text, or decoded text to evidence or logs. The probes used synthetic
+vectors only. The temporary worktrees, the scratch outputs and the `.venv`
+symlink were removed after the run.
