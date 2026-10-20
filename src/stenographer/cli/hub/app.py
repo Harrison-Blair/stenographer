@@ -12,7 +12,7 @@ from typing import ClassVar
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Static
 
@@ -21,7 +21,7 @@ from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, build_report
 from stenographer.cli.hub.files_view import FilesPanel
-from stenographer.cli.hub.live_view import read_cpu_percent, render_live_view
+from stenographer.cli.hub.live_view import LiveView
 from stenographer.cli.hub.selection import append_line
 from stenographer.cli.hub.sessions_view import SessionsPanel
 from stenographer.cli.hub.setup_state import SetupWizard
@@ -100,17 +100,61 @@ class HubApp(App[None]):
         height: 1fr;
         padding: 1;
     }
-    #sidebar {
+    #sidebar-column {
         width: 25;
         height: 1fr;
         margin-right: 1;
+    }
+    #sidebar {
+        width: 1fr;
+        height: 1fr;
         padding: 1 2;
+        margin-bottom: 1;
+        border: round #3a4150;
+    }
+    #sidebar-card {
+        width: 1fr;
+        height: 7;
+        padding: 0 1;
         border: round #3a4150;
     }
     #section-content {
         width: 1fr;
         height: 1fr;
         padding: 1 2;
+        border: round #3a4150;
+        overflow-y: auto;
+    }
+    #live-view {
+        width: 1fr;
+        height: 1fr;
+    }
+    #live-top {
+        width: 1fr;
+        height: 6;
+    }
+    #live-rec, #live-mic {
+        margin-right: 1;
+    }
+    #live-rec, #live-mic, #live-system {
+        width: 1fr;
+        height: 6;
+        padding: 0 1;
+    }
+    #live-rec {
+        border: round #ff875f;
+    }
+    #live-mic {
+        border: round #5fd7ff;
+    }
+    #live-system {
+        border: round #ffaf5f;
+    }
+    #live-transcript {
+        width: 1fr;
+        height: 1fr;
+        margin-top: 1;
+        padding: 0 1;
         border: round #3a4150;
         overflow-y: auto;
     }
@@ -146,6 +190,8 @@ class HubApp(App[None]):
         self.sessions_panel = SessionsPanel(
             getattr(services, "session_store", None), id="sessions-panel"
         )
+        self.live_view = LiveView(id="live-view")
+        self._sidebar_cards: dict[str, str | Text] = {}
         self._session_job_status: str | None = None
         self._pending_speaker_id: str | None = None
         self._pending_delete_session: str | None = None
@@ -185,8 +231,11 @@ class HubApp(App[None]):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="hub-layout"):
-            yield Static("", id="sidebar", markup=False)
+            with Vertical(id="sidebar-column"):
+                yield Static("", id="sidebar", markup=False)
+                yield Static("", id="sidebar-card", markup=False)
             yield Static("", id="section-content", markup=False)
+            yield self.live_view
             yield self.files_panel
             yield self.sessions_panel
         yield Static(
@@ -270,20 +319,24 @@ class HubApp(App[None]):
             )
         screen.query_one("#sidebar", Static).update(sidebar)
 
+        session = self._live_session() if self._section == "live" else None
+        if self._section == "live":
+            self.set_sidebar_card(self._live_sidebar_card(session), section="live")
+        else:
+            self.query_one("#sidebar-card", Static).update(
+                self._sidebar_cards.get(self._section, "")
+            )
+
         title = next(label for section, label in _SECTIONS if section == self._section)
         content = _PLACEHOLDERS[self._section]
         if self._section == "live":
-            session = self._live_session()
-            if self.services.recording and session is None:
-                content = "Recording is active. Change sections without stopping it."
-            else:
-                content = render_live_view(
-                    session,
-                    model_name=self._current_config().asr.model,
-                    mic_device=self._mic_device_name(),
-                    cpu_percent=self._cpu_percent,
-                    split=self._live_split,
-                )
+            self.live_view.refresh_view(
+                session,
+                mic_device=self._mic_device_name(),
+                split=self._live_split,
+                recording_active=self.services.recording and session is None,
+            )
+            content = "" if self._activity_status is None else self._activity_status
         elif self._section == "setup":
             config = self._current_config()
             content = render_setup(self.setup_wizard, config)
@@ -300,7 +353,9 @@ class HubApp(App[None]):
                     details=self._doctor_details,
                 )
         section_view = screen.query_one("#section-content", Static)
-        section_view.display = self._section not in {"files", "sessions"}
+        show_activity = self._section == "live" and self._activity_status is not None
+        section_view.display = self._section not in {"live", "files", "sessions"} or show_activity
+        self.live_view.display = self._section == "live" and not show_activity
         self.files_panel.display = self._section == "files"
         self.sessions_panel.display = self._section == "sessions"
         if self._section == "files":
@@ -327,7 +382,10 @@ class HubApp(App[None]):
                 "r rename   x export   del delete"
             )
         elif self._section == "live":
-            hints.update("space pause/resume   m mic   s system   v view   r rename   q stop/save")
+            hints.update(
+                "space pause/resume   m mic   s system   v view   r rename   q stop/save   "
+                "1-6 sections"
+            )
         elif self._section == "files":
             hints.update(
                 "↑/↓ move · tab focus · / search · enter queue · space select · "
@@ -335,6 +393,30 @@ class HubApp(App[None]):
             )
         else:
             hints.update("space start recording   1-6 sections   q quit")
+
+    def set_sidebar_card(self, content: str | Text, *, section: str | None = None) -> None:
+        """Set the shared sidebar card content for one hub section."""
+        section = section or self._section
+        self._sidebar_cards[section] = content
+        screen = self._hub_screen
+        if section == self._section and screen is not None and self.is_mounted(screen):
+            screen.query_one("#sidebar-card", Static).update(content)
+
+    def _live_sidebar_card(self, session) -> Text:
+        model = session.model_name if session is not None else self._current_config().asr.model
+        model = model.rsplit("/", 1)[-1].removeprefix("faster-whisper-")
+        queue = session.queue_depth if session is not None else 0
+        failed = session.failed_phrase_count if session is not None else 0
+        cpu = self._cpu_percent
+        cpu_text = "—" if cpu is None else f"{cpu:.0f}%"
+        if cpu is None:
+            cpu_bar = "▕········▏"
+        else:
+            filled = min(8, max(0, int(cpu / 100 * 8)))
+            cpu_bar = f"▕{'█' * filled}{'·' * (8 - filled)}▏"
+        card = Text(f"engine\n{model}\nqueue {queue} · failed {failed}\n")
+        card.append(f"cpu {cpu_bar} {cpu_text}")
+        return card
 
     def _live_session(self):
         return getattr(self.services, "session", None)
@@ -358,7 +440,9 @@ class HubApp(App[None]):
     def _sample_cpu(self) -> None:
         if self._section != "live":
             return
-        self._cpu_percent = read_cpu_percent()
+        import psutil
+
+        self._cpu_percent = psutil.cpu_percent(interval=None)
         self._refresh_view()
 
     def action_previous_config_group(self) -> None:
