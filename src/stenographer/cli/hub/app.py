@@ -19,11 +19,13 @@ from textual.widgets import Static
 from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
+from stenographer.cli.hub.doctor_panel import DoctorPanel
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, build_report
 from stenographer.cli.hub.files_view import FilesPanel
 from stenographer.cli.hub.live_view import LiveView
 from stenographer.cli.hub.selection import append_line
 from stenographer.cli.hub.sessions_view import SessionsPanel
+from stenographer.cli.hub.setup_panel import SetupPanel
 from stenographer.cli.hub.setup_state import SetupWizard
 from stenographer.cli.hub.setup_wizard import render as render_setup
 from stenographer.cli.hub.setup_wizard import test_step as test_setup_step
@@ -158,6 +160,57 @@ class HubApp(App[None]):
         color: ansi_default;
         display: none;
     }
+    #setup-panel, #doctor-panel {
+        width: 1fr;
+        height: 1fr;
+    }
+    #setup-steps {
+        width: 34%;
+        height: 1fr;
+        padding: 1;
+        margin-right: 1;
+        border: round #3a4150;
+        border-title-color: ansi_default;
+    }
+    #setup-detail {
+        width: 1fr;
+        height: 1fr;
+        padding: 1 2;
+        border: round #3a4150;
+        border-title-color: ansi_default;
+    }
+    #doctor-groups {
+        width: 1fr;
+        height: 13;
+    }
+    #doctor-input-group, #doctor-engine-group {
+        width: 1fr;
+        height: 13;
+        padding: 1;
+        border: round #3a4150;
+        border-title-color: ansi_default;
+    }
+    #doctor-input-group {
+        margin-right: 1;
+    }
+    #doctor-issue {
+        width: 1fr;
+        height: 8;
+        margin-top: 1;
+        padding: 1;
+        border: round #3a4150;
+        border-title-color: ansi_default;
+    }
+    #doctor-warnings {
+        width: 1fr;
+        height: 1fr;
+        min-height: 5;
+        margin-top: 1;
+        padding: 1;
+        border: round #3a4150;
+        border-title-color: ansi_default;
+        overflow-y: auto;
+    }
     #live-view {
         width: 1fr;
         height: 1fr;
@@ -228,6 +281,8 @@ class HubApp(App[None]):
             getattr(services, "session_store", None), id="sessions-panel"
         )
         self.live_view = LiveView(id="live-view")
+        self.setup_panel = SetupPanel(id="setup-panel")
+        self.doctor_panel = DoctorPanel(id="doctor-panel")
         self._sidebar_cards: dict[str, str | Text] = {}
         self._session_job_status: str | None = None
         self._pending_speaker_id: str | None = None
@@ -311,6 +366,8 @@ class HubApp(App[None]):
                 yield Static("", id="section-content", markup=False)
                 yield Static("", id="config-hotwords", markup=False)
                 yield Static("", id="config-selected-help", markup=False)
+            yield self.setup_panel
+            yield self.doctor_panel
             yield self.live_view
             yield self.files_panel
             yield self.sessions_panel
@@ -400,10 +457,15 @@ class HubApp(App[None]):
             self.set_sidebar_card(self._live_sidebar_card(session), section="live")
         elif self._section == "config" and self.config_editor is not None:
             self.set_sidebar_card(self._config_sidebar_card(), section="config")
+        elif self._section == "doctor" and self._doctor_report is not None:
+            self.query_one("#sidebar-card", Static).update(self._doctor_report.sidebar_summary())
+        elif self._section == "doctor" and self._doctor_loading:
+            self.query_one("#sidebar-card", Static).update("summary\nChecking…")
         else:
             self.query_one("#sidebar-card", Static).update(
                 self._sidebar_cards.get(self._section, "")
             )
+        self.query_one("#sidebar-card", Static).display = self._section != "setup"
 
         title = next(label for section, label in _SECTIONS if section == self._section)
         content = _PLACEHOLDERS[self._section]
@@ -436,11 +498,22 @@ class HubApp(App[None]):
         hotwords_view = screen.query_one("#config-hotwords", Static)
         selected_help = screen.query_one("#config-selected-help", Static)
         show_activity = self._section == "live" and self._activity_status is not None
-        main_content.display = self._section not in {"live", "files", "sessions"} or show_activity
+        main_content.display = self._section == "config" or show_activity
         section_view.display = main_content.display
         group_list.display = False
         hotwords_view.display = False
         selected_help.display = False
+        self.setup_panel.display = self._section == "setup"
+        self.doctor_panel.display = self._section == "doctor"
+        if self._section == "setup":
+            self.setup_panel.refresh_view(self.setup_wizard, self._current_config())
+        elif self._section == "doctor":
+            self.doctor_panel.refresh_view(
+                self._doctor_report,
+                selected_index=self._doctor_index,
+                details=self._doctor_details,
+                loading=self._doctor_loading,
+            )
         self.live_view.display = self._section == "live" and not show_activity
         self.files_panel.display = self._section == "files"
         self.sessions_panel.display = self._section == "sessions"

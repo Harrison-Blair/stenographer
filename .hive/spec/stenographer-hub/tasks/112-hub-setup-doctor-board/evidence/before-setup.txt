@@ -1,0 +1,45 @@
+
+ ╭─ stenographer ────────╮ ╭─ Setup ────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │                       │ │                                                                                                                        │
+ │    1 Live             │ │  Setup wizard · 6 steps                                                                                                │
+ │    2 Files            │ │                                                                                                                        │
+ │    3 Sessions         │ │  ✓ 1 input access                                                                                                      │
+ │    4 Config           │ │  ✓ 2 microphone                                                                                                        │
+ │  > 5 Setup            │ │  ▸ 3 hotkey                                                                                                            │
+ │    6 Doctor   1W 1F   │ │  ○ 4 models                                                                                                            │
+ │                       │ │  ○ 5 sounds                                                                                                            │
+ │                       │ │  ○ 6 system service                                                                                                    │
+ │                       │ │                                                                                                                        │
+ │                       │ │  hotkey: Set the push-to-talk binding. The test validates the binding and input access.                                │
+ │                       │ │  Current hotkey.binding: KEY_RIGHTCTRL                                                                                 │
+ │                       │ │  Test: fixture key detected · 0.9 s                                                                                    │
+ │                       │ │                                                                                                                        │
+ │                       │ │  enter next   b back   s skip   t test   e edit   D write defaults                                                     │
+ │                       │ │  Q quick path (steps 1-3)                                                                                              │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ ╰───────────────────────╯ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  enter next   b back   s skip   t test   e edit   D defaults   Q quick
