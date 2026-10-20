@@ -146,7 +146,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 ## Common commands
 
 - `stenographer` — open the terminal hub when stdin and stdout are terminals;
-  otherwise show help.
+  otherwise show help. Live starts when you press `space`; use `v` for mixed or
+  split transcripts, and `m` or `s` to toggle audio sources.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
@@ -154,7 +155,10 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
 - `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
 - `stenographer run` — run the daemon in the foreground.
-- `stenographer live` — transcribe microphone and system audio in a terminal session; after `q`, it keeps each renamed label on one voice and numbers unnamed voices by first appearance. Press `q` again to skip. See the [live guide](docs/live.md).
+- `stenographer live` — open the standalone live app with its existing flags;
+  it does not open the hub. After `q`, it keeps each renamed label on one voice
+  and numbers unnamed voices by first appearance. Press `q` again to skip. See
+  the [live guide](docs/live.md).
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
 for sound packs, statistics, and configuration examples.

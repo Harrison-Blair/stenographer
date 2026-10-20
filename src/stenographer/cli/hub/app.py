@@ -17,10 +17,12 @@ from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, build_report
+from stenographer.cli.hub.live_view import read_cpu_percent, render_live_view
 from stenographer.cli.hub.sessions_view import SessionsPanel
 from stenographer.cli.hub.setup_state import SetupWizard
 from stenographer.cli.hub.setup_wizard import render as render_setup
 from stenographer.cli.hub.setup_wizard import test_step as test_setup_step
+from stenographer.cli.live.rename_dialog import RenameDialog
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -62,12 +64,13 @@ class HubApp(App[None]):
         ("down", "next_config_key", "Next config key"),
         ("enter", "edit_config", "Edit config key or show doctor details"),
         ("b", "setup_back", "Previous setup step"),
-        ("s", "setup_skip", "Skip setup step"),
+        ("s", "toggle_system", "System audio or skip setup step"),
         ("t", "session_retranscribe", "Re-transcribe session or test setup step"),
         ("e", "setup_edit", "Edit setup value"),
         ("shift+q", "setup_quick", "Quick setup"),
-        ("m", "setup_download_model", "Download ASR model"),
-        ("r", "session_rename", "Rename speaker or re-check doctor"),
+        ("m", "toggle_mic", "Microphone or download model"),
+        ("v", "toggle_live_view", "Toggle mixed or split transcript"),
+        ("r", "session_rename", "Rename session or live speaker; re-check Doctor"),
         ("p", "session_playback", "Play or stop session"),
         ("d", "session_rediarize", "Re-diarize session"),
         ("x", "session_export", "Export session"),
@@ -103,6 +106,7 @@ class HubApp(App[None]):
         height: 1fr;
         padding: 1 2;
         border: round #3a4150;
+        overflow-y: auto;
     }
     #key-hints {
         height: 1;
@@ -135,8 +139,11 @@ class HubApp(App[None]):
             ConfigEditor(config_path) if config_path is not None else None
         )
         self._section = "live"
+        self._activity_status: str | None = None
         self._pending_section: str | None = None
         self._pending_quit = False
+        self._live_split = False
+        self._cpu_percent: float | None = None
         self.setup_wizard = SetupWizard()
         self._setup_test = setup_test or self._default_setup_test
         if model_download is None:
@@ -174,6 +181,9 @@ class HubApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one("#sidebar", Static).border_title = "stenographer"
+        self._sample_cpu()
+        self.set_interval(0.1, self._refresh_live_view)
+        self.set_interval(1.0, self._sample_cpu)
         self._refresh_view()
         if self.config_editor is not None and self.config_editor.read_only:
             self.notify(
@@ -232,8 +242,18 @@ class HubApp(App[None]):
 
         title = next(label for section, label in _SECTIONS if section == self._section)
         content = _PLACEHOLDERS[self._section]
-        if self._section == "live" and self.services.recording:
-            content = "Recording is active. Change sections without stopping it."
+        if self._section == "live":
+            session = self._live_session()
+            if self.services.recording and session is None:
+                content = "Recording is active. Change sections without stopping it."
+            else:
+                content = render_live_view(
+                    session,
+                    model_name=self._current_config().asr.model,
+                    mic_device=self._mic_device_name(),
+                    cpu_percent=self._cpu_percent,
+                    split=self._live_split,
+                )
         elif self._section == "files" and self.services.files_running:
             content = "A Files job is running. Change sections without cancelling it."
         elif self._section == "setup":
@@ -257,6 +277,8 @@ class HubApp(App[None]):
         self.sessions_panel.set_job_status(self._session_job_status)
         if self._section == "config" and self.config_editor is not None:
             content = self.config_editor.render()
+        if self._activity_status is not None:
+            content = self._activity_status
         section_view.border_title = title
         section_view.update(content)
         hints = self.query_one("#key-hints", Static)
@@ -273,8 +295,27 @@ class HubApp(App[None]):
                 "↑/↓ session   p play   d re-diarize   t re-transcribe   "
                 "r rename   x export   del delete"
             )
+        elif self._section == "live":
+            hints.update("space pause/resume   m mic   s system   v view   r rename   q stop/save")
         else:
             hints.update("space start recording   1-6 sections   q quit")
+
+    def _live_session(self):
+        return getattr(self.services, "session", None)
+
+    def _mic_device_name(self) -> str:
+        device = self._current_config().audio.input_device
+        return str(device) if device else "Default input"
+
+    def _refresh_live_view(self) -> None:
+        if self._section == "live":
+            self._refresh_view()
+
+    def _sample_cpu(self) -> None:
+        if self._section != "live":
+            return
+        self._cpu_percent = read_cpu_percent()
+        self._refresh_view()
 
     def action_previous_config_group(self) -> None:
         self._move_config_group(-1)
@@ -552,8 +593,13 @@ class HubApp(App[None]):
             self._start_session_job("Re-transcribing", operation, session_id)
 
     def action_session_rename(self) -> None:
-        if self._section != "sessions":
+        if self._section == "doctor":
             self.action_doctor_recheck()
+            return
+        if self._section == "live":
+            self.action_rename_live_speaker()
+            return
+        if self._section != "sessions":
             return
         session_id = self._selected_session_id()
         labels = self.sessions_panel.speaker_labels
@@ -1004,22 +1050,111 @@ class HubApp(App[None]):
         log.info(fmt_event("hub", "doctor_report_copied"))
         self.notify("Doctor report copied.")
 
-    async def action_start_recording(self) -> None:
-        if self._section != "live" or self.services.recording:
+    def action_start_recording(self) -> None:
+        if self._section != "live" or self._activity_status is not None:
+            return
+        if self.services.recording:
+            session = self._live_session()
+            if session is None:
+                return
+            action = session.resume if session.paused else session.pause
+            status = "Resuming recording..." if session.paused else "Pausing recording..."
+            self._run_live_action(action, status=status, name="toggle-recording")
             return
         if self.config_editor is not None and self.config_editor.read_only:
             self.notify("Fix the invalid configuration before recording.", severity="error")
             return
+        self._activity_status = "Starting recording..."
+        self._refresh_view()
+        self.run_worker(self._start_recording(), name="start-recording", group="hub-work")
+
+    async def _start_recording(self) -> None:
         try:
             await asyncio.to_thread(self.services.start_recording)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: recording_start_failed", exc, safe=True)
             self.notify(f"Could not start recording: {exc}", severity="error")
+        else:
+            log.info(fmt_event("hub", "recording_started"))
+        self._activity_status = None
+        self._refresh_view()
+
+    def action_toggle_mic(self) -> None:
+        if self._section == "setup":
+            self.action_setup_download_model()
             return
-        log.info(fmt_event("hub", "recording_started"))
+        session = self._live_session()
+        if self._section == "live" and session is not None:
+            self._run_live_action(
+                lambda: session.toggle("mic"), status="Toggling microphone...", name="toggle-mic"
+            )
+
+    def action_toggle_system(self) -> None:
+        if self._section == "setup":
+            self.action_setup_skip()
+            return
+        session = self._live_session()
+        if self._section == "live" and session is not None:
+            self._run_live_action(
+                lambda: session.toggle("system"),
+                status="Toggling system audio...",
+                name="toggle-system",
+            )
+
+    def _run_live_action(self, action: Callable[[], None], *, status: str, name: str) -> None:
+        if self._activity_status is not None:
+            return
+        self._activity_status = status
+        self._refresh_view()
+        self.run_worker(self._perform_live_action(action, name), name=name, group="hub-work")
+
+    async def _perform_live_action(self, action: Callable[[], None], name: str) -> None:
+        try:
+            await asyncio.to_thread(action)
+        except Exception as exc:
+            log_failure(log, logging.ERROR, "hub: live_action_failed", exc, safe=True, action=name)
+            self.notify(f"Could not update the live session: {exc}", severity="error")
+        self._activity_status = None
+        self._refresh_view()
+
+    def action_toggle_live_view(self) -> None:
+        if self._section != "live":
+            return
+        self._live_split = not self._live_split
+        view = "split" if self._live_split else "mixed"
+        log.info(fmt_event("hub", "live_view_toggled", view=view))
+        self._refresh_view()
+
+    def action_rename_live_speaker(self) -> None:
+        if self._section == "doctor":
+            self.action_doctor_recheck()
+            return
+        session = self._live_session()
+        if self._section != "live" or session is None:
+            return
+        speakers = session.speakers
+        if not speakers:
+            self.notify("No system speakers are available to rename.")
+            return
+        self.push_screen(
+            RenameDialog(speakers),
+            lambda result: self._rename_live_speaker(session, result),
+        )
+
+    def _rename_live_speaker(self, session, value: tuple[str, str] | None) -> None:
+        if value is None:
+            return
+        speaker_id, name = value
+        try:
+            session.rename(speaker_id, name)
+        except ValueError as exc:
+            self.notify(str(exc))
+            return
         self._refresh_view()
 
     def action_request_quit(self) -> None:
+        if self._activity_status is not None:
+            return
         if (
             self._section in {"config", "setup"}
             and self.config_editor is not None
@@ -1045,16 +1180,24 @@ class HubApp(App[None]):
         else:
             self.exit()
 
-    async def _confirm_recording_quit(self, confirmed: bool | None) -> None:
+    def _confirm_recording_quit(self, confirmed: bool | None) -> None:
         log.info(fmt_event("hub", "quit_confirmed", work="recording", confirmed=bool(confirmed)))
         if not confirmed:
             return
+        self._activity_status = "Saving recording..."
+        self._refresh_view()
+        self.run_worker(self._stop_recording_and_quit(), name="save-recording", group="hub-work")
+
+    async def _stop_recording_and_quit(self) -> None:
         try:
             await asyncio.to_thread(self.services.stop_recording)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: recording_stop_failed", exc, safe=True)
             self.notify(f"Could not save the recording: {exc}", severity="error")
+            self._activity_status = None
+            self._refresh_view()
             return
+        self._activity_status = None
         self._refresh_view()
         if self.services.files_running:
             self._prompt_files_quit()
@@ -1068,14 +1211,22 @@ class HubApp(App[None]):
             self._confirm_files_quit,
         )
 
-    async def _confirm_files_quit(self, confirmed: bool | None) -> None:
+    def _confirm_files_quit(self, confirmed: bool | None) -> None:
         log.info(fmt_event("hub", "quit_confirmed", work="files", confirmed=bool(confirmed)))
         if not confirmed:
             return
+        self._activity_status = "Canceling Files job..."
+        self._refresh_view()
+        self.run_worker(self._cancel_files_and_quit(), name="cancel-files", group="hub-work")
+
+    async def _cancel_files_and_quit(self) -> None:
         try:
             await asyncio.to_thread(self.services.cancel_files)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
             self.notify(f"Could not cancel the Files job: {exc}", severity="error")
+            self._activity_status = None
+            self._refresh_view()
             return
+        self._activity_status = None
         self.exit()

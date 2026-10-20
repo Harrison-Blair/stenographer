@@ -156,6 +156,8 @@ def test_second_q_skips_relabel_and_stop_progress_is_visible():
 
             first_press = asyncio.create_task(pilot.press("q"))
             assert await asyncio.to_thread(session.stop_started.wait, 1)
+            status = str(app.query_one("#status", Static).render())
+            assert "Saving..." in status
             await pilot.press("q")
             await pilot.pause()
             assert session.skip_requested

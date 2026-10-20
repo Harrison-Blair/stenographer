@@ -36,20 +36,14 @@ This file is the design authority for the hub goal, confirmed by the user on
     defaults from the results.
 13. Open the hub on Live. Start recording only when the user presses space.
     Changing sections does not stop recording. Files jobs run one at a time
-    in the background. Ask to confirm quit only while recording; then save
-    the session.
+    in the background. Ask to confirm quit while recording, then save the
+    session. Keep the Files-job quit prompt.
 14. Drop Windows support. Keep the Platform protocol. Do this before the hub
     tasks.
 15. Use one set of ASR settings across the tool. The two profile columns on
     `Config.dc.html` are out of date.
 
-## Input and accepted assumptions
-
-User input is first class. Keys must respond at once; the input loop must not
-wait for I/O. Run slow work in a background worker. Quit must remain available
-during slow work and in modals. A quit prompt is allowed only during a
-recording. `ctrl+c` twice still exits. In a text input, `q` types a letter;
-`ctrl+c` still quits.
+## Accepted assumptions
 
 - Files reads supported formats with `soundfile`. It reads M4A and AAC through
   the system `ffmpeg` binary and a pipe. Do not use PyAV, which bundles FFmpeg
@@ -86,7 +80,7 @@ and 58 running; all other numbered tasks waiting.
 | 64 | Hub Config | 56, 60 | waiting |
 | 65 | Hub Setup and Doctor | 56, 60, 64 | waiting |
 | 66 | Hub docs and acceptance | 61, 62, 63, 65 | waiting |
-| pending | Input-first fix (`tui-input-first`) | Hub spec | pending; no ID yet |
+| 72 | Hub start, save, and cancel work in workers; `q` and `ctrl+c` confirm quit | 60, 68 | in progress |
 
 Tasks before this spec keep evidence in `evidence/<task-id>/`. New feature
 tasks keep evidence in `.hive/spec/stenographer-hub/tasks/<id>/`.

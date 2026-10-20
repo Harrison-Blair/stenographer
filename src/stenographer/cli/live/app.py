@@ -53,7 +53,6 @@ class LiveApp(App[None]):
         self._session = session
         self._session.subscribe(self._receive_line)
         self._stop_requested = False
-        self._stop_task: asyncio.Task[None] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status", markup=False)
@@ -92,13 +91,14 @@ class LiveApp(App[None]):
             return
         self.push_screen(RenameDialog(speakers), self._rename_speaker)
 
-    async def action_stop(self) -> None:
+    def action_stop(self) -> None:
         if self._stop_requested:
             self._session.skip_relabel()
             self.notify("Skipping speaker relabeling.")
             return
         self._stop_requested = True
-        self._stop_task = asyncio.create_task(self._finish_stop())
+        self._refresh_status()
+        self.run_worker(self._finish_stop(), name="stop-live", group="live-stop")
 
     async def _finish_stop(self) -> None:
         await asyncio.to_thread(self._session.stop)
@@ -129,7 +129,7 @@ class LiveApp(App[None]):
 
     def _refresh_status(self) -> None:
         elapsed = max(0, int(self._session.elapsed_seconds))
-        state = "PAUSED" if self._session.paused else "REC"
+        state = "Saving..." if self._stop_requested else "PAUSED" if self._session.paused else "REC"
         parts = [f"{state} {self._format_time(elapsed)}"]
         for key, source in (("m", "mic"), ("s", "system")):
             source_state = self._session.source_states[source].upper()

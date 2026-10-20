@@ -3,8 +3,12 @@
 # Live transcription
 
 `stenographer live` records speech from the microphone, system output, or both.
-It transcribes each phrase in a terminal interface and saves the audio and
-transcript in a private session folder. Live capture is local. The command does
+It opens the standalone live app, keeps its existing flags, and saves the audio
+and transcript in a private session folder. It does not open the hub. Bare
+`stenographer` opens the hub on Live and waits for `space` before it records.
+The hub shows the engine and source levels, a mixed speaker transcript, and a
+split view when you press `v`. Its `m` and `s` keys toggle the sources. Press
+`q` to confirm stop, save, and quit. Live capture is local. The command does
 not send audio or transcript text over the network.
 
 ## Prepare the models

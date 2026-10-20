@@ -64,6 +64,10 @@ class HubServices:
     def active_session_id(self) -> str | None:
         return None if self._session is None else self._session.path.name
 
+    @property
+    def session(self) -> LiveSession | None:
+        return self._session
+
     def update_config(self, config: Config) -> None:
         """Use saved settings for new work without changing an active session."""
 

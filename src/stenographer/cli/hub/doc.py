@@ -8,6 +8,7 @@
 - config_view.py: Render and validate the config draft and its saves.
 - dialogs.py: Confirm actions that stop work during quit.
 - handler.py: Prepare the hub and run its Textual app.
+- live_view.py: Render live recording status and mixed or split transcripts.
 - services.py: Own recording, playback, and shared session services.
 - session_jobs.py: Reprocess saved transcripts with current models and settings.
 - sessions_view.py: Render saved-session storage, list, detail, and transcript.
