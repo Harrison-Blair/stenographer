@@ -72,7 +72,10 @@ files from entering packages when a builder traverses an ignored directory.
 After changing the policy, build and verify the wheel and source distribution
 with `scripts/verify_distributions.py`, check archive contents, and verify that
 the source distribution can build a wheel. Preserve the source distribution's
-installer scripts and all required package resources.
+installer scripts and all required package resources. The Agent rewrite
+prompt's MIT attribution is packaged at
+`stenographer/assets/licenses/asd-ste100-MIT.txt` in wheels and retained under
+`src/` in source distributions.
 
 ## Draft releases
 
@@ -224,17 +227,16 @@ Use `stenographer setup` and `stenographer sounds` for configuration and
 `stenographer stats` for numeric diagnostics; restart the daemon explicitly to
 apply saved settings.
 
-The native CI workflow builds relocatable development bundles for Linux x86_64,
-Windows x86_64, macOS Intel, and macOS Apple Silicon. It runs the non-integration
-suite and frozen CLI checks. Each artifact includes `LICENSE` and
-`NATIVE-ACCEPTANCE.md`. Copy and run the complete bundle directory; there is no
-Windows/macOS installer or GUI launcher. Linux release bundles continue through
-their source distribution's installer.
+The native CI workflow builds relocatable development bundles for Linux x86_64
+and Windows x86_64. It runs the non-integration suite and frozen CLI checks.
+Each artifact includes `LICENSE` and `NATIVE-ACCEPTANCE.md`. Copy and run the
+complete bundle directory; there is no Windows installer or GUI launcher. Linux
+release bundles continue through their source distribution's installer.
 
-Windows/macOS artifacts are **unsigned development builds, not accepted release
+Windows artifacts are **unsigned development builds, not accepted release
 packages**. Their dictation and service integrations remain unavailable.
 Interactive installation, audio, keyboard, clipboard, service, and helper
-isolation checks remain separate gates. macOS signing/notarization and Windows
-signing/installation checks must pass before release readiness is claimed.
+isolation checks remain separate gates. Windows signing and installation checks
+must pass before release readiness is claimed.
 Automated checks do not capture microphone audio. See
 [native acceptance requirements](../packaging/NATIVE-ACCEPTANCE.md).

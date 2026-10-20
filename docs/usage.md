@@ -20,7 +20,8 @@ you choose it.
 
 The default ASR model is `dropbox-dash/faster-whisper-large-v3-turbo`. It is
 about 1.6 GB and is downloaded only when you explicitly choose the model
-download. Existing configurations keep their selected model.
+download. Existing configurations keep their selected model. For live capture,
+see the [live transcription guide](live.md).
 
 The configuration file is:
 
@@ -67,6 +68,43 @@ the run finishes at the next decode boundary, but the result is still discarded.
 
 Set `cancel_binding = ""` to disable this behavior, or choose another evdev
 `KEY_*` name for the binding.
+
+## Keep your clipboard
+
+The daemon puts your previous clipboard item back after each paste. It saves
+the clipboard before it copies the transcript, pastes, plays the delivered
+sound, waits `restore_delay_ms`, and then writes the saved item back. The
+primary selection keeps the transcript. The saved item is held in memory only
+until it is restored, and it is never logged.
+
+When Agent rewrites the text, the unrefined transcript is copied just before
+the rewrite. A clipboard history manager therefore lists the original, then the
+rewrite, and then your previous item again. General never copies the original.
+
+```toml
+[stenographer.delivery]
+copy_original = true      # Agent only
+restore_clipboard = true
+restore_delay_ms = 500    # 0 to 60000
+```
+
+Limits:
+
+- Only one type of the saved item comes back, preferring plain text. A copied
+  file, or an image offered together with HTML, returns as its plain-text or
+  first offered type only.
+- An item that a password manager marks as secret is not saved. The
+  transcript stays on the clipboard instead.
+- The daemon stays busy for `restore_delay_ms` after each paste. A hotkey press
+  in that window is ignored. Escape no longer cancels, because the text is
+  already pasted.
+- If an application reads the paste late and gets your previous item, increase
+  `restore_delay_ms`.
+- Saving waits at most one second and keeps at most 64 MiB. A slower or larger
+  item is not restored.
+- Restoring needs `wl-paste` from `wl-clipboard` (or `xclip` under XWayland).
+  Without it the daemon still runs and leaves the transcript on the clipboard;
+  `stenographer doctor` reports this on its `clipboard restore` line.
 
 ## Choose sound feedback
 
@@ -155,6 +193,15 @@ local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
 `structured_output = true`. Model reasoning is always disabled. See
 [docs/refine.md](refine.md) for the whole feature.
 
+## Start live transcription
+
+Run `stenographer live` to transcribe the microphone and full system mix in a
+terminal session. Download its voice and speaker models with
+`stenographer model download --live`; download the configured ASR model
+separately with `stenographer model download --asr`. See the
+[live transcription guide](live.md) for source controls, saved files, privacy,
+and limits.
+
 ## Troubleshoot a running service
 
 Start with the capability report:
@@ -177,6 +224,9 @@ Common fixes:
   write access to `/dev/uinput`; `doctor` reports the required groups/rules.
 - If delivery fails under Wayland, install `wl-copy` from `wl-clipboard`.
   `xclip` with XWayland is supported where Wayland data control is unavailable.
+- If your previous clipboard item does not come back, install `wl-paste` from
+  `wl-clipboard`, or increase `restore_delay_ms`; see
+  [Keep your clipboard](#keep-your-clipboard).
 - If a setting change has no effect, restart the user service.
 - Sound cues and desktop error notifications are optional; missing players do
   not stop dictation.

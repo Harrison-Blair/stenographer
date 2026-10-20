@@ -193,7 +193,7 @@ class _StubDeliverer:
         self.delivered: list[str] = []
         self.last_timings: DeliveryTimings | None = None
 
-    def deliver(self, text, *, on_copied=None, cancelled=None):
+    def deliver(self, text, *, original=None, on_copied=None, cancelled=None):
         self.delivered.append(text)
         if self._copy_first:
             self.last_timings = DeliveryTimings(
@@ -211,6 +211,9 @@ class _StubDeliverer:
             chord_sent=bool(self._result),
         )
         return self._result
+
+    def restore_clipboard(self) -> bool:
+        return False
 
     def close(self) -> None: ...
 

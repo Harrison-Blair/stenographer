@@ -59,7 +59,7 @@
     <section class="states" id="states" aria-label="What the pill is telling you">
       <div class="st" data-for="recording"><i class="sw rec"></i><b>Recording</b><p>The pill names Agent or General while 18 bars follow your microphone.</p></div>
       <div class="st" data-for="transcribing"><i class="sw asr"></i><b>Transcribing</b><p>faster-whisper is turning your speech into English text, on your machine.</p></div>
-      <div class="st" data-for="refining"><i class="sw refine"></i><b>Refining</b><p>Agent cleans up rambling requests to an agent; General performs ordinary transcript cleanup. The pill briefly reports Applied, Skipped, or Fallback.</p></div>
+      <div class="st" data-for="refining"><i class="sw refine"></i><b>Refining</b><p>Agent rewrites jumbled requests into concise instructions; General performs ordinary transcript cleanup. The pill briefly reports Applied, Skipped, or Fallback.</p></div>
       <div class="st" data-for="delivering"><i class="sw deliver"></i><b>Delivering</b><p>Your clipboard has the text. A paste chord is landing at your cursor.</p></div>
       <div class="st" data-for="applied"><i class="sw applied"></i><b>Applied</b><p>The selected profile was applied. Skipped and Fallback use the same brief, transcript-free result.</p></div>
       <div class="st" data-for="loading"><i class="sw load"></i><b>Loading</b><p>A border breathes while a model warms up, over whatever else is showing: the amber Loading colour for speech, the Refining colour for cleanup, taking turns one breath each if both load. It always finishes its breath before it changes or goes.</p></div>
@@ -73,9 +73,9 @@
         <li><b>Your hotkeys</b><span>Right Ctrl selects Agent; Right Alt selects General. Both can latch or be held, and Escape cancels without pasting.</span></li>
         <li><b>Your microphone</b><span>Captured through PortAudio, with a quiet-audio gate so an accidental press does not paste noise into your work.</span></li>
         <li><b>Local transcription</b><span>faster-whisper runs on your CPU or GPU. You download the model once, and only when you ask for it.</span></li>
-        <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Agent cleans up rambling agent-directed requests, usually turning spoken lists into bullets, without inventing work or changing safety-bearing details. General keeps the original cleanup behavior. Both fail open to the formatted transcript.</span></li>
-        <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key.</span></li>
-        <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. It stays on your clipboard too.</span></li>
+        <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Agent can rephrase, reorder, group ideas, and remove repetitions. Its prompt requires every distinct detail and authorization limit to survive. Agent trusts the model: it has no semantic or length-ratio checks, so names, numbers, negations, uncertainty, or authorization may change. It retains format, empty-output, truncation, and wrapper checks. General keeps its original cleanup, length, and numeral checks. Detected failures fall back to the formatted transcript.</span></li>
+        <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key. When Agent rewrites the text, the original is copied just before it, so your clipboard history keeps both.</span></li>
+        <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. About half a second later, your previous clipboard item is back.</span></li>
       </ol>
 
       <div class="two">
@@ -103,7 +103,7 @@ update_check = false</code></pre>
       <ol class="steps">
         <li>
           <b>Check your essentials.</b>
-          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. Run <code>stenographer doctor</code> and it tells you what you are missing and how to fix it.</p>
+          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. <code>wl-paste</code>, from the same package, lets it restore your previous clipboard item. Run <code>stenographer doctor</code> and it tells you what you are missing and how to fix it.</p>
         </li>
         <li>
           <b>Run the quick install</b> above, or build it yourself using the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">build guide</a>.
@@ -133,8 +133,9 @@ scripts/install.sh --no-start</code></pre>
         <table>
           <tbody>
             <tr><td><code>stenographer run</code></td><td>Run the daemon in your terminal, in the foreground.</td></tr>
+            <tr><td><code>stenographer live</code></td><td>Transcribe the microphone and full system mix in a terminal session. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/live.md">live guide</a>.</td></tr>
             <tr><td><code>stenographer transcribe FILE [--raw] [--refine]</code></td><td>Transcribe one of your audio files; add <code>--raw</code> to skip formatting, or <code>--refine</code> to clean it up.</td></tr>
-            <tr><td><code>stenographer model download</code></td><td>Download the models you configured. <code>--asr</code> or <code>--refine</code> picks one.</td></tr>
+            <tr><td><code>stenographer model download</code></td><td>Download models explicitly. Use <code>--asr</code>, <code>--refine</code>, or <code>--live</code> to select them.</td></tr>
             <tr><td><code>stenographer doctor</code></td><td>Check what your system needs and print the fixes.</td></tr>
             <tr><td><code>stenographer devices</code></td><td>List your audio input devices.</td></tr>
             <tr><td><code>stenographer setup [--quick | --default]</code></td><td>Configure everything, only the common settings, or write the annotated defaults.</td></tr>

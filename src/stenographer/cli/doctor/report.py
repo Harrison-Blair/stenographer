@@ -111,6 +111,18 @@ def format_overlay_status(capability: OverlayCapability, guidance: OverlayGuidan
     return f"unavailable — {hint}"
 
 
+def format_clipboard_restore_status(caps: Capabilities, cfg: Config, guidance: HostGuidance) -> str:
+    """Pure one-line status for the optional clipboard restore."""
+    if not cfg.delivery.restore_clipboard:
+        return "disabled"
+    if caps.clipboard_read_ok:
+        return "ok"
+    hint = guidance.clipboard_read_fix_hints.get(
+        caps.clipboard_backend, guidance.clipboard_fix_hint_default
+    )
+    return f"unavailable — {hint}"
+
+
 def render(
     caps: Capabilities,
     cfg: Config,
@@ -153,6 +165,7 @@ def render(
     service = format_service_status(caps.service_enabled, caps.service_active, guidance)
     lines.append(f"  {guidance.service_noun}: {service}")
     lines.append(f"  overlay: {format_overlay_status(caps.overlay, overlay_guidance)}")
+    lines.append(f"  clipboard restore: {format_clipboard_restore_status(caps, cfg, guidance)}")
     if logs is not None:
         lines.append("")
         lines.append("logs:")

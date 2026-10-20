@@ -17,3 +17,8 @@ def register(subparsers) -> None:
         action="store_true",
         help="Pull only the refine model through the configured Ollama host.",
     )
+    download.add_argument(
+        "--live",
+        action="store_true",
+        help="Download the live voice-activity and speaker models.",
+    )

@@ -20,6 +20,8 @@ dependencies = [
     "python-xlib==0.33; sys_platform == 'linux'",
     "tomlkit>=0.13",
     "psutil>=6.0",
+    "sherpa-onnx>=1.12.26",
+    "textual>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -78,6 +80,7 @@ exclude = [
     "!/src/stenographer/assets/fonts/Caveat-wght.ttf",
     "!/src/stenographer/assets/icons/stenographer.png",
     "!/src/stenographer/assets/keycodes.toml",
+    "!/src/stenographer/assets/licenses/asd-ste100-MIT.txt",
     "!/src/stenographer/assets/sounds/legacy/delivered.wav",
     "!/src/stenographer/assets/sounds/legacy/error.wav",
     "!/src/stenographer/assets/sounds/legacy/record_start.wav",
@@ -122,6 +125,7 @@ exclude = [
     "!/docs/building.md",
     "!/docs/cue-audition.md",
     "!/docs/refine.md",
+    "!/docs/live.md",
     "!/docs/transcription-experiments.md",
     "!/docs/usage.md",
     "!/docs/reference/",
@@ -187,6 +191,7 @@ packages = ["src/stenographer"]
 include = [
     "src/stenographer/assets/fonts/*.ttf",
     "src/stenographer/assets/fonts/*.txt",
+    "src/stenographer/assets/licenses/*.txt",
     "src/stenographer/assets/icons/*.png",
     "src/stenographer/assets/sounds/**/*.wav",
     "src/stenographer/assets/completions/*",

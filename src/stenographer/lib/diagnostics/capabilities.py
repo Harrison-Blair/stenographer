@@ -37,6 +37,7 @@ def probe(cfg: Config) -> Capabilities:
         model_cached=is_model_cached(cfg.asr.model),
         clipboard_ok=host.clipboard_ok,
         clipboard_backend=host.clipboard_backend,
+        clipboard_read_ok=host.clipboard_read_ok,
         cue_player=host.cue_player,
         service_enabled=host.service_enabled,
         service_active=host.service_active,

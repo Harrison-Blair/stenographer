@@ -13,22 +13,45 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
-## [v0.13.2] - 2026-09-23
+## [v0.14.0] - 2026-10-19
 
-The Agent profile now cleans up rambling dictation instead of passing it
-through almost unchanged.
+This release adds local live transcription and a more concise Agent rewrite. It
+also restores the clipboard after paste and removes macOS support.
 
-### Fixed
+### Added
 
-- Agent refinement removes fillers and restarts, applies self-corrections,
-  splits run-ons, and is asked to turn spoken lists into `- ` bullets without
-  needing semicolons. Its guard now checks what the edit means rather than
-  exact word order: negations and what they apply to, phase, scope, hedge,
-  and condition words, questions, names, protected tokens, quoted text, and
-  most of the spoken words must survive in roughly the spoken order, and no
-  new word, action, causal claim, or negation may appear. A polite request
-  may become an instruction. An edit that fails these
-  checks falls back to the formatted transcript.
+- Adds `stenographer live` for local transcription from the microphone,
+  system audio, or both. Before recording system audio, it checks that PipeWire
+  links capture to the default output's monitor; if not, it turns system audio
+  off and gives a reason. It warms transcription before capture, labels system
+  speakers, lets you rename labels with `r`, and saves captured audio and
+  transcripts in a private session folder. Download its voice-activity and
+  speaker models with `stenographer model download --live`. Speaker labels can
+  over-split. In the 2026-10-19 acceptance session `20261020T011218Z`, about
+  2–3 system voices got six labels, mostly on short phrases; live transcription
+  had 0 failed phrases. Press `r` and give two labels the same name to merge
+  them in the display.
+- Restores the previous clipboard item after each paste, after the configured
+  `restore_delay_ms` (500 ms by default). The new `[stenographer.delivery]`
+  settings control `restore_clipboard`, `restore_delay_ms`, and Agent's
+  `copy_original`; only one clipboard type returns, preferring plain text, and
+  items marked as secret are skipped. The primary selection keeps the
+  transcript. The daemon stays busy during the wait, and Escape no longer
+  cancels after the paste. Without `wl-paste` (or `xclip`), the daemon keeps
+  running and `stenographer doctor` shows a `clipboard restore` hint.
+- When Agent changes the text, copies the original transcript before the
+  rewritten text, so clipboard history keeps both.
+- Rewrites Agent dictation as concise instructions, removing fillers and
+  restarts, applying self-corrections, splitting run-ons, and formatting lists
+  of three or more steps, conditions, or parallel items as `- ` bullets. A
+  polite request can become an instruction. The prompt asks the model to keep
+  the meaning, but the app does not check that the rewrite preserves it.
+- Adds new Linux input key and button names from evdev 1.9.3 to the hotkey
+  binding table.
+
+### Removed
+
+- Removes macOS support; Linux and Windows remain supported.
 
 ## [v0.13.1] - 2026-09-21
 

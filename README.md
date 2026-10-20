@@ -58,7 +58,8 @@ You need Linux, Wayland, a systemd user manager, and:
 - A PortAudio-backed microphone and the system PortAudio library.
 - Read access to `/dev/input/event*`, normally through the `input` group.
 - Write access to `/dev/uinput`, through a udev rule or `uinput` group.
-- `wl-copy` from `wl-clipboard` (or `xclip` plus XWayland).
+- `wl-copy` from `wl-clipboard` (or `xclip` plus XWayland). `wl-paste`, also
+  from `wl-clipboard`, lets the daemon restore your previous clipboard item.
 
 Stenographer is English-focused. Run `stenographer doctor` for missing
 capabilities and fixes; for example, input access may require:
@@ -109,6 +110,11 @@ cancel_binding = "KEY_ESC"  # "" disables cancellation
 [stenographer.feedback]
 overlay = false
 sound_pack = "minimal-ui"
+
+[stenographer.delivery]
+copy_original = true      # Agent only
+restore_clipboard = true
+restore_delay_ms = 500    # 0 to 60000
 ```
 
 CLI saves preserve comments and settings they do not know about. Restart the
@@ -125,7 +131,11 @@ behavior. Both bindings share the configured mode:
 - Press Escape while recording or delivering to discard the audio and
   transcript. Nothing is pasted.
 
-Otherwise the transcript is pasted at your cursor and remains on the clipboard.
+Otherwise the transcript is pasted at your cursor. About half a second later
+your previous clipboard item is back on the clipboard. When Agent rewrites the
+text, the unrefined transcript is copied just before the rewrite, so a
+clipboard history keeps both. See
+[Keep your clipboard](docs/usage.md#keep-your-clipboard).
 Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
 Set `binding` (Agent) or `general_binding` to any `KEY_*` chord to rebind it.
 Agent, General, and cancel chords may not be equal or subsets of one another.
@@ -137,8 +147,9 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics.
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
-- `stenographer model download [--asr|--refine]` — fetch a model explicitly.
+- `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
 - `stenographer run` — run the daemon in the foreground.
+- `stenographer live` — transcribe microphone and system audio in a terminal session; see the [live guide](docs/live.md).
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
 for sound packs, statistics, and configuration examples.
@@ -153,18 +164,24 @@ systemctl --user restart stenographer.service
 
 ## Privacy and more
 
-The model download is explicit and dictation runs locally. Audio, transcripts,
+Model downloads are explicit and dictation runs locally. Audio, transcripts,
 configuration, and device or model names stay on your machine. Logs never
-contain transcript text or audio. The only network request that leaves your
-machine is an optional, metadata-only release check; disable it in
+contain transcript text or audio. `stenographer live` saves the requested
+audio and transcript in a private session folder; see the [live guide](docs/live.md).
+The only automatic network request that leaves your machine is an optional,
+metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
 
 A [refine](docs/refine.md) pass, on by default, provides exactly two built-in
-profiles through one local Ollama model. Agent cleans up rambling requests to
-an agent (fillers, restarts, self-corrections, usually bullets for spoken lists)
-without acting on them or changing scope, authorization, negations, hedges,
-questions, identifiers, paths, flags, quotes, numbers, or explicit tool/model
-choices.
+profiles through one local Ollama model. Agent rewrites jumbled requests into
+concise instructions. It can rephrase, reorder, group ideas, and remove
+repetitions while the prompt requires every distinct fact, reason, request,
+uncertainty, and authorization limit to survive. It never acts on the request.
+Agent trusts the model to preserve meaning: it has no semantic or length-ratio
+checks, so changed names, numbers, negations, uncertainty, or authorization can
+reach the cursor. It retains response-format, empty-output, truncation, and
+wrapper checks. Detected refinement failures deliver the original formatted
+transcript. General retains its original length and numeral checks.
 General keeps the original filler and self-correction cleanup behavior
 (`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
 machine. Turn it off or point it elsewhere in `[stenographer.refine]`; a
@@ -173,7 +190,8 @@ loads, the lifecycle pill's border breathes: in the amber Loading colour for
 the speech model and in the Refining colour for the cleanup model, taking
 turns one breath each when both are loading.
 
-Read the [user guide](docs/usage.md) for privacy settings and more examples.
+Read the [user guide](docs/usage.md) for privacy settings and more examples,
+and the [live guide](docs/live.md) for live capture and saved sessions.
 
 ## Development
 

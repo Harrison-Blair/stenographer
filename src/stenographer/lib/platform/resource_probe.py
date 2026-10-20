@@ -133,6 +133,4 @@ class ResourceProbe:
                     "gpu_utilization_percent": sum(usage) / len(usage),
                     "gpu_memory_used_bytes": sum(memory),
                 }, None
-        if sys.platform == "darwin":
-            return {}, "gpu_unavailable_shared_memory_is_not_vram"
         return {}, "native_gpu_probe_unavailable"

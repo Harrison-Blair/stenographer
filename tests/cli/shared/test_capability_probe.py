@@ -18,6 +18,7 @@ def test_probe_copies_every_core_field_and_appends_the_overlay_result(monkeypatc
         model_cached=False,
         clipboard_ok=True,
         clipboard_backend="wl-copy",
+        clipboard_read_ok=True,
         cue_player="pulse",
         service_enabled="enabled",
         service_active="active",

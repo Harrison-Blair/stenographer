@@ -38,4 +38,9 @@ MIN_REFINE_WORDS = 1
 MAX_REFINE_WORDS = 10000
 
 
+#: A minute bounds the busy window after each paste and stays far inside
+#: what ``time.sleep`` accepts.
+MAX_RESTORE_DELAY_MS = 60000
+
+
 SpectrumFloor = float | tuple[float, ...]

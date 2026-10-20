@@ -1,15 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The two built-in refinement profiles and Agent's safety boundary."""
+"""The two built-in profiles and Agent's prompt-only meaning preservation."""
 
 from __future__ import annotations
 
 import pytest
 
 from stenographer.lib.refine.agent_prompt import FEW_SHOT_EXAMPLES
-from stenographer.lib.refine.errors import RefineRejectedError
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.request import build_messages
-from stenographer.lib.refine.response import agent_guard
+from stenographer.lib.refine.response import basic_format
 
 
 def test_exactly_two_builtin_profiles_with_agent_as_default():
@@ -34,21 +33,20 @@ def test_profiles_use_separate_prompts_and_general_keeps_the_cleanup_prompt():
         ("Only investigate the bug before implementing it.", "Implement the bug fix."),
     ],
 )
-def test_agent_guard_rejects_changed_safety_bearing_content(original, candidate):
-    with pytest.raises(RefineRejectedError):
-        agent_guard(original, candidate)
+def test_basic_format_accepts_changed_safety_bearing_content(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_layout_and_punctuation_changes():
+def test_basic_format_allows_layout_and_punctuation_changes():
     original = "Maybe review --dry-run in /tmp/demo and then report it"
     candidate = "Maybe review --dry-run in /tmp/demo, and then report it."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_an_explicit_no_wait_self_correction():
+def test_basic_format_allows_an_explicit_no_wait_self_correction():
     original = "Maybe use qwen3.5:4b no wait maybe use gemma4:e2b for the model"
     candidate = "Maybe use gemma4:e2b for the model."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -56,11 +54,6 @@ def test_agent_guard_allows_an_explicit_no_wait_self_correction():
     [
         ("Use the Codex tool for this request.", "Use the Gemini tool for this request."),
         ("Pick Claude for this task.", "Pick Gemini for this task."),
-        (
-            "Stay in the analysis phase until I approve implementation.",
-            "Proceed in the deployment phase until I approve implementation.",
-        ),
-        ("Please preserve the allowed scope.", "Please expand the allowed scope."),
         (
             "Use the Visual Studio Code tool for this review.",
             "Use the Gemini CLI tool for this review.",
@@ -73,32 +66,15 @@ def test_agent_guard_allows_an_explicit_no_wait_self_correction():
             "Do not proceed without explicit authorization from the owner.",
             "Proceed with implicit permission from the owner.",
         ),
-        ("Do not answer the request.", "Do not execute the request."),
         ("Maybe review the patch first.", "Maybe deploy the patch first."),
         ("The selected model is Claude Sonnet.", "The selected model is Gemini Pro."),
         ("Claude Sonnet is the selected model.", "Gemini Pro is the selected model."),
         ("Set the model to Claude for this task.", "Set the model to Gemini for this task."),
         ("I want Claude as the tool for this task.", "I want Gemini as the tool for this task."),
-        ("Treat foo as the identifier.", "Treat bar as the identifier."),
         ("Set Claude Sonnet as the model.", "Set Gemini Pro as the model."),
-        ("The identifier is foo.", "The identifier is bar."),
         (
             "Set the tool to the Visual Studio Code extension.",
             "Set the tool to the Gemini CLI extension.",
-        ),
-        ("Only update tests, not source files.", "Only update source files, not tests."),
-        (
-            "Maybe change staging, but preserve production.",
-            "Maybe change production, but preserve staging.",
-        ),
-        ("Keep variable foo unchanged.", "Keep variable bar unchanged."),
-        (
-            "There are three things do not change staging and production and review logs",
-            "There are three things:\n- do not change staging\n- production\n- review logs",
-        ),
-        (
-            "Do not delete production; you may delete staging.",
-            "Do not delete staging; you may delete production.",
         ),
         (
             "Do not deploy no wait review the change.",
@@ -125,9 +101,8 @@ def test_agent_guard_allows_an_explicit_no_wait_self_correction():
         ),
     ],
 )
-def test_agent_guard_rejects_tool_model_and_boundary_substitutions(original, candidate):
-    with pytest.raises(RefineRejectedError):
-        agent_guard(original, candidate)
+def test_basic_format_accepts_tool_model_and_boundary_substitutions(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -163,51 +138,48 @@ def test_agent_guard_rejects_tool_model_and_boundary_substitutions(original, can
         ),
     ],
 )
-def test_agent_guard_allows_cleanup_that_preserves_choices_and_boundaries(original, candidate):
-    assert agent_guard(original, candidate) == candidate
+def test_basic_format_allows_cleanup_that_preserves_choices_and_boundaries(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
     ("original", "candidate"),
     [
-        ("Review the logs and the tests.", "Review the tests."),
         ("Use --dry-run on /tmp/demo.", "Use --force on /tmp/other."),
         ("I have no permission.", "Permission."),
-        ("I would rather review the tests.", "Review the tests."),
     ],
 )
-def test_agent_guard_rejects_dropped_content_and_changed_tokens(original, candidate):
-    with pytest.raises(RefineRejectedError):
-        agent_guard(original, candidate)
+def test_basic_format_accepts_dropped_content_and_changed_tokens(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(("original", "candidate"), FEW_SHOT_EXAMPLES)
-def test_agent_guard_accepts_current_agent_few_shots(original, candidate):
-    assert agent_guard(original, candidate) == candidate
+def test_basic_format_accepts_current_agent_few_shots(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_fillers_repeats_and_contraction_punctuation_cleanup():
+def test_basic_format_allows_fillers_repeats_and_contraction_punctuation_cleanup():
     original = "um please review review the logs and don't change them"
     candidate = "Please review the logs, and don\u2019t change them."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_one_complete_abandoned_correction_span():
+def test_basic_format_allows_one_complete_abandoned_correction_span():
     original = "Maybe deploy the change no wait maybe review the change"
     candidate = "Maybe review the change."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_a_correction_segment_after_a_sentence_boundary():
+def test_basic_format_allows_a_correction_segment_after_a_sentence_boundary():
     original = "Keep the first request. Deploy the change no wait review the change"
     candidate = "Keep the first request. Review the change."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_allows_a_mid_clause_correction():
+def test_basic_format_allows_a_mid_clause_correction():
     original = "Please deploy the change no wait review the change"
     candidate = "Please review the change."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate
 
 
 @pytest.mark.parametrize(
@@ -245,14 +217,14 @@ def test_agent_guard_allows_a_mid_clause_correction():
         ),
     ],
 )
-def test_agent_guard_composes_safe_cleanup_with_enumeration_layout(original, candidate):
-    assert agent_guard(original, candidate) == candidate
+def test_basic_format_composes_safe_cleanup_with_enumeration_layout(original, candidate):
+    assert basic_format(original, candidate) == candidate
 
 
-def test_agent_guard_collapses_two_separate_clause_corrections_together():
+def test_basic_format_collapses_two_separate_clause_corrections_together():
     original = (
         "Deploy the change no wait review the change. "
         "Delete staging sorry preserve staging. Keep production unchanged."
     )
     candidate = "Review the change. Preserve staging. Keep production unchanged."
-    assert agent_guard(original, candidate) == candidate
+    assert basic_format(original, candidate) == candidate

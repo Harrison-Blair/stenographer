@@ -26,6 +26,12 @@ def state_dir(env: Mapping[str, str], home: Path) -> Path:
     return root / _APP
 
 
+def data_dir(env: Mapping[str, str], home: Path) -> Path:
+    """Resolve the application data directory using XDG precedence."""
+    root = Path(env["XDG_DATA_HOME"]) if env.get("XDG_DATA_HOME") else home / ".local/share"
+    return root / _APP
+
+
 def runtime_dir(env: Mapping[str, str]) -> Path:
     """``$XDG_RUNTIME_DIR`` (``/run/user/<uid>`` fallback)."""
     return Path(env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")

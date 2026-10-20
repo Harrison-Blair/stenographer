@@ -7,6 +7,7 @@ sample-based input duration attached to accepted ASR results (including empty
 results), never wall time or VAD speech estimates. Missing values stay unknown.
 New stop_to_ready_ms measurements end at successful formatting, before delivery;
 older persisted values retain their historical semantics without rewriting.
+total_ms includes the clipboard restore's settle delay when a restore ran.
 """
 
 from __future__ import annotations
@@ -82,6 +83,11 @@ METRICS = frozenset(
         "refine_failed",
         "cold",
         "release_timeout",
+        "snapshot_ms",
+        "original_copied",
+        "original_copy_ms",
+        "restore_ms",
+        "restored",
         "ignored_busy_presses",
         "app_cpu_s",
         "app_rss_bytes_max",

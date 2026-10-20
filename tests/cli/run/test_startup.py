@@ -19,6 +19,7 @@ def _startup_caps(**overrides) -> Capabilities:
         "model_cached": True,
         "clipboard_ok": True,
         "clipboard_backend": "wl-copy",
+        "clipboard_read_ok": True,
         "cue_player": "pw-play",
         "service_enabled": "enabled",
         "service_active": "active",

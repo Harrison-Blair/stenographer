@@ -19,7 +19,8 @@ from stenographer.lib.platform.key_injector import KeyInjector
 from stenographer.lib.platform.key_table import KeyTable
 from stenographer.lib.platform.notifier import Notifier
 from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
-from stenographer.lib.platform.types import ClipboardWriter
+from stenographer.lib.platform.system_audio import SystemAudioCapture
+from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer, ClipboardWriter
 
 
 @runtime_checkable
@@ -40,6 +41,8 @@ class Platform(Protocol):
     def config_path(self, env: Mapping[str, str], home: Path) -> Path: ...
 
     def state_dir(self, env: Mapping[str, str], home: Path) -> Path: ...
+
+    def data_dir(self, env: Mapping[str, str], home: Path) -> Path: ...
 
     def runtime_dir(self, env: Mapping[str, str]) -> Path: ...
 
@@ -72,9 +75,18 @@ class Platform(Protocol):
 
     def clipboard_writer(self, backend: str) -> ClipboardWriter: ...
 
+    def clipboard_reader(self, backend: str) -> ClipboardReader | None:
+        """The clipboard snapshot reader, or None when the host lacks its tool."""
+        ...
+
+    def clipboard_restorer(self, backend: str) -> ClipboardRestorer: ...
+
     def notifier(self) -> Notifier: ...
 
     def cue_player(self) -> CuePlayer | None: ...
+
+    # --- audio capture ---
+    def system_audio_capture(self) -> SystemAudioCapture: ...
 
     # --- process / lifecycle ---
     def asr_transport(self) -> AsrTransport:

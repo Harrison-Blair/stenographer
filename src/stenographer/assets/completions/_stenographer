@@ -7,6 +7,7 @@ _stenographer_impl() {
     if ((CURRENT == 2)); then
         _values 'command or option' \
             'run[run the dictation daemon]' \
+            'live[record and transcribe live audio]' \
             'transcribe[transcribe an audio file]' \
             'model[manage the ASR model]' \
             'doctor[probe required capabilities]' \
@@ -23,6 +24,12 @@ _stenographer_impl() {
     case "${command}" in
         run|doctor|devices)
             _values 'option' '-h[show help]' '--help[show help]'
+            ;;
+        live)
+            _values 'option' '-h[show help]' '--help[show help]' \
+                '--mic[enable microphone capture]' '--no-mic[disable microphone capture]' \
+                '--system[enable system audio capture]' '--no-system[disable system audio capture]' \
+                '--device[select microphone input device]'
             ;;
         stats)
             _values 'action or option' summary export delete reset --source --since --until \
@@ -53,7 +60,8 @@ _stenographer_impl() {
             elif [[ "${words[3]-}" == download ]]; then
                 _values 'option' '-h[show help]' '--help[show help]' \
                     '--asr[download only the speech-recognition model]' \
-                    '--refine[pull only the refine model]'
+                    '--refine[pull only the refine model]' \
+                    '--live[download the live voice-activity and speaker models]'
             fi
             ;;
         completion)

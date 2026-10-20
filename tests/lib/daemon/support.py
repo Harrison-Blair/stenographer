@@ -223,11 +223,18 @@ class _Deliverer:
         self.delivered: list[str] = []
         self.last_timings: DeliveryTimings | None = None
 
-    def deliver(self, text: str, *, on_copied=None, cancelled=None) -> bool:
+    def deliver(self, text: str, *, original=None, on_copied=None, cancelled=None) -> bool:
         self.delivered.append(text)
         self.last_timings = DeliveryTimings(
             copy_ms=8.0, release_wait_ms=30.0, release_timeout=False
         )
+        return True
+
+    def restore_clipboard(self) -> bool:
+        if self.last_timings is not None:
+            self.last_timings = dataclasses.replace(
+                self.last_timings, restore_ms=4.0, restored=True
+            )
         return True
 
     def close(self) -> None: ...
@@ -375,6 +382,7 @@ class _Platform:
         self.notifier_double = _Notifier()
         self.clipboard_backends: list[str] = []
         self.copied: list[str] = []
+        self.reader_available = True
 
     def cue_player(self):
         return None
@@ -405,6 +413,18 @@ class _Platform:
             return True
 
         return copy
+
+    def clipboard_reader(self, backend: str):
+        return self.read_clipboard if self.reader_available else None
+
+    def clipboard_restorer(self, backend: str):
+        return self.restore_clipboard
+
+    def read_clipboard(self):
+        return None
+
+    def restore_clipboard(self, snapshot) -> bool:
+        return True
 
 
 class _TrackerPlatform(_Platform):

@@ -15,6 +15,8 @@ their existing paths in `assets/`.
 - `audio/`, `hotkey/`, and `transcribe/`: recording and measurements, binding
   vocabulary, session/cancel chord tracking, ASR workers, formatting, and
   utterance records.
+- `live/`: live phrase segmentation, speaker labels, session coordination, and
+  private audio and transcript storage.
 - `refine/`: the local-model cleanup stage between formatting and
   delivery — pure request building, response parsing and the output guard, the
   Ollama client, and the refiner behind a protocol whose null implementation is
@@ -26,7 +28,7 @@ their existing paths in `assets/`.
   telemetry, and exactly-once utterance completion. The CLI injects a status sink.
 - `analytics/`, `diagnostics/`, `logging/`, and `updates/`: numeric history,
   core capability checks and collection, private logging, and update notices.
-- `platform/`: host service contracts and lazy Linux, Windows, and macOS providers.
+- `platform/`: host service contracts and lazy Linux and Windows providers.
 
 Each ordinary class has a dedicated file without standalone helpers. Related
 records may share a file; related exceptions live in their domain's `errors.py`.
@@ -43,8 +45,9 @@ commands) or a `parser.py` owned by the command package. `cli/parser.py` and
 Handlers are resolved by import path only when their command runs.
 
 Commands own their prompts, terminal output, consent, and follow-up actions.
-`cli/run/` owns startup and its banner. `cli/setup/` owns quick/default setup and
-calibration prompts; `cli/sounds/` owns interactive pack selection and preview.
+`cli/run/` owns startup and its banner. `cli/live/` owns the live terminal UI
+and session controls. `cli/setup/` owns quick/default setup and calibration
+prompts; `cli/sounds/` owns interactive pack selection and preview.
 The model download and stats operations have their own subcommand packages.
 `cli/shared/` combines independent core and display capability results for reports.
 
@@ -59,7 +62,7 @@ remains in `lib/audio/`. Helper logging is isolated in `overlay/logging/`.
 
 `overlay/platform/` owns display providers, helper transport, availability
 information, native backends, and generated Wayland bindings. Linux still prefers
-layer-shell before XWayland. Windows and macOS still report display unavailability;
+layer-shell before XWayland. Windows still reports display unavailability;
 this reorganization adds no native platform support. Core providers expose no
 display-backend selection or display-specific guidance.
 

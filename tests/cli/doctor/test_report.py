@@ -20,6 +20,7 @@ strings is pinned by tests/platform/linux/test_guidance.py.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import pathlib
 import sys
@@ -139,6 +140,7 @@ def _caps(**overrides) -> Capabilities:
         "model_cached": True,
         "clipboard_ok": True,
         "clipboard_backend": "wl-copy",
+        "clipboard_read_ok": True,
         "cue_player": "pw-play",
         "service_enabled": "enabled",
         "service_active": "active",
@@ -571,6 +573,7 @@ def _capabilities(**overrides) -> Capabilities:
         "model_cached": True,
         "clipboard_ok": True,
         "clipboard_backend": "wl-copy",
+        "clipboard_read_ok": True,
         "cue_player": "paplay",
         "service_enabled": "enabled",
         "service_active": "active",
@@ -642,3 +645,48 @@ def test_run_replays_the_complaints_of_an_existing_log(monkeypatch, tmp_path, ca
     assert "daemon: startup_failed reason=stale" in out
     assert "daemon: started" not in out
     assert f"helper: {state / 'overlay-helper.log'} (absent)" in out
+
+
+def test_render_names_the_clipboard_restore_as_an_optional_row():
+    report = doctor.render(
+        _caps(),
+        Config.defaults(),
+        _CONFIG_PATH,
+        _GUIDANCE,
+        _LOGS,
+        overlay_guidance=_OVERLAY_GUIDANCE,
+    )
+    assert "  clipboard restore: ok" in report
+
+
+def test_render_a_missing_clipboard_reader_is_a_hint_not_a_missing_capability():
+    guidance = dataclasses.replace(
+        _GUIDANCE, clipboard_read_fix_hints={"wl-copy": "install wl-clipboard (wl-paste)"}
+    )
+    report = doctor.render(
+        _caps(clipboard_read_ok=False),
+        Config.defaults(),
+        _CONFIG_PATH,
+        guidance,
+        _LOGS,
+        overlay_guidance=_OVERLAY_GUIDANCE,
+    )
+    assert "  clipboard restore: unavailable — install wl-clipboard (wl-paste)" in report
+    assert "all required capabilities present" in report
+    assert "MISSING" not in report
+
+
+def test_render_a_clipboard_restore_turned_off_in_config_says_so():
+    cfg = Config.defaults()
+    cfg = dataclasses.replace(
+        cfg, delivery=dataclasses.replace(cfg.delivery, restore_clipboard=False)
+    )
+    report = doctor.render(
+        _caps(clipboard_read_ok=False),
+        cfg,
+        _CONFIG_PATH,
+        _GUIDANCE,
+        _LOGS,
+        overlay_guidance=_OVERLAY_GUIDANCE,
+    )
+    assert "  clipboard restore: disabled" in report

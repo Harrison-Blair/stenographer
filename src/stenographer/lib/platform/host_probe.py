@@ -16,6 +16,7 @@ class HostProbe:
     hotkey_access_ok: bool
     clipboard_ok: bool
     clipboard_backend: str
+    clipboard_read_ok: bool
     cue_player: str | None
     service_enabled: str | None
     service_active: str | None

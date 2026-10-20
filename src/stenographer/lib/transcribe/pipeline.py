@@ -163,6 +163,21 @@ def apply_delivery(
             record.stop_to_chord_ms = (observed_at - record.stopped_at) * 1000
 
 
+def apply_restore(record: UtteranceRecord | None, timings: DeliveryTimings | None) -> None:
+    """Project the clipboard snapshot, original copy and restore. PURE.
+
+    Separate from :func:`apply_delivery` so the restore, which runs after the
+    chord and the delivered cue, never recomputes ``stop_to_chord_ms``.
+    """
+    if record is None or timings is None:
+        return
+    record.snapshot_ms = timings.snapshot_ms
+    record.original_copied = timings.original_copied
+    record.original_copy_ms = timings.original_copy_ms
+    record.restore_ms = timings.restore_ms
+    record.restored = timings.restored
+
+
 def analytics_metrics(record: UtteranceRecord) -> dict[str, int | float | bool]:
     """Only measurements cross the durable-history boundary; never strings or IDs."""
     from dataclasses import fields
@@ -217,6 +232,11 @@ def summary_fields(record: UtteranceRecord) -> dict[str, object]:
         "copy_ms": _ms(record.copy_ms),
         "release_wait_ms": _ms(record.release_wait_ms),
         "release_timeout": _flag(record.release_timeout),
+        "snapshot_ms": _ms(record.snapshot_ms),
+        "original_copied": _flag(record.original_copied),
+        "original_copy_ms": _ms(record.original_copy_ms),
+        "restore_ms": _ms(record.restore_ms),
+        "restored": _flag(record.restored),
         "total_ms": _ms(record.total_ms),
     }
 

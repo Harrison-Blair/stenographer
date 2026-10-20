@@ -20,7 +20,13 @@ import pytest
 from stenographer.lib.hotkey.errors import BindingCaptureError
 from stenographer.lib.platform.host_guidance import HostGuidance
 from stenographer.lib.platform.host_probe import HostProbe
-from stenographer.lib.platform.linux.clipboard import copy_both_selections, copy_both_selections_x11
+from stenographer.lib.platform.linux.clipboard import (
+    copy_both_selections,
+    copy_both_selections_x11,
+    read_clipboard,
+    restore_clipboard,
+    restore_clipboard_x11,
+)
 from stenographer.lib.platform.linux.evdev_hotkey_listener import EvdevHotkeyListener
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
 from stenographer.lib.platform.linux.flock_single_instance_lock import FlockSingleInstanceLock
@@ -87,6 +93,18 @@ def test_provider_builds_the_output_backends():
     # mapped onto a copier that cannot work here.
     with pytest.raises(ValueError, match="ClipboardBackend"):
         plat.clipboard_writer("telepathy")
+
+
+def test_provider_builds_the_clipboard_reader_only_where_its_tool_exists(tmp_path, monkeypatch):
+    plat = LinuxPlatform()
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert plat.clipboard_reader("wl-copy") is None
+    tool = tmp_path / "wl-paste"
+    tool.write_text("#!/bin/sh\nexit 0\n")
+    tool.chmod(0o755)
+    assert plat.clipboard_reader("wl-copy") is read_clipboard
+    assert plat.clipboard_restorer("wl-copy") is restore_clipboard
+    assert plat.clipboard_restorer("x11") is restore_clipboard_x11
 
 
 def test_provider_builds_a_notifier_and_a_cue_player_from_what_is_installed(tmp_path, monkeypatch):

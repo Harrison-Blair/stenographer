@@ -291,3 +291,19 @@ def test_save_materializes_a_config_whose_directory_does_not_exist_yet(tmp_path)
     assert result.backup_path is None
     assert Config.load(path) == Config.defaults()
     assert path.read_text(encoding="utf-8").startswith("# stenographer configuration.")
+
+
+def test_render_round_trips_delivery_settings_through_the_preservation_layer():
+    defaults = Config.defaults()
+    reviewed = replace(
+        defaults,
+        delivery=replace(
+            defaults.delivery, copy_original=False, restore_clipboard=False, restore_delay_ms=250
+        ),
+    )
+
+    rendered = ConfigDocument.loads(PRESERVATION_FIXTURE).render(reviewed)
+
+    assert "# hand-written preface" in rendered
+    assert "restore_delay_ms = 250" in rendered
+    assert Config.loads(rendered) == reviewed

@@ -5,10 +5,9 @@ They contain the `stenographer` CLI/daemon and its existing helpers, with no
 settings GUI or Qt. Automated CLI startup does not establish native dictation
 acceptance.
 
-Windows and macOS provide CLI setup and numeric diagnostics; dictation and
-service integration remain unavailable until their native providers are
-implemented. Do not publish these artifacts as supported native dictation
-packages.
+Windows provides CLI setup and numeric diagnostics; dictation and service
+integration remain unavailable until its native providers are implemented. Do
+not publish these artifacts as supported native dictation packages.
 
 Before release, record real installation/uninstallation, microphone, keyboard,
 clipboard, service behavior, and helper crash isolation for each release target.
@@ -16,9 +15,8 @@ Verify dictation in hold, toggle, and hybrid modes, including the maximum-durati
 cap, and the pill's appearance, spectrum, loading animation, and disappearance.
 Inspect daemon and helper logs for numeric diagnostics without transcript or
 audio content. CI and sandbox checks never access the microphone; real-machine
-microphone checks require explicit consent. macOS Intel and Apple Silicon
-additionally require signing and notarization; Windows requires
-installation/signing verification.
+microphone checks require explicit consent. Windows requires installation and
+signing verification.
 
 Before merging `dev` into `main`, run the integration suite on a real machine:
 
@@ -28,7 +26,7 @@ STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest
 
 Development bundles are relocatable directories: copy the whole directory and
 run its `stenographer` executable (`stenographer.exe` on Windows). There is no
-Windows/macOS development installer. Linux normal releases use `install.sh`
+Windows development installer. Linux normal releases use `install.sh`
 from the accompanying source distribution. `--headless` remains accepted by the
 Linux build/install/reinstall scripts as a compatibility no-op. Removing the old
 GUI preserves configuration, analytics history, models, and logs. Managed

@@ -55,6 +55,11 @@ class UtteranceRecord:
     copy_ms: float | None = None
     release_wait_ms: float | None = None
     release_timeout: bool | None = None
+    snapshot_ms: float | None = None
+    original_copied: bool | None = None
+    original_copy_ms: float | None = None
+    restore_ms: float | None = None
+    restored: bool | None = None
     total_ms: float | None = None
     analytics_id: str | None = None
     device_name: str | None = None
