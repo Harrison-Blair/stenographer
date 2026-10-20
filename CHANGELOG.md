@@ -21,7 +21,9 @@ also restores the clipboard after paste and removes macOS support.
 ### Added
 
 - Adds `stenographer live` for local transcription from the microphone,
-  system audio, or both. It warms transcription before capture, labels system
+  system audio, or both. Before recording system audio, it checks that PipeWire
+  links capture to the default output's monitor; if not, it turns system audio
+  off and gives a reason. It warms transcription before capture, labels system
   speakers, lets you rename labels with `r`, and saves captured audio and
   transcripts in a private session folder. Download its voice-activity and
   speaker models with `stenographer model download --live`. Speaker labels can
@@ -50,11 +52,6 @@ also restores the clipboard after paste and removes macOS support.
 ### Removed
 
 - Removes macOS support; Linux and Windows remain supported.
-
-### Fixed
-
-- Live checks that PipeWire links each capture input to the current default
-  sink's monitor before recording, and rejects misrouted capture.
 
 ## [v0.13.1] - 2026-09-21
 
