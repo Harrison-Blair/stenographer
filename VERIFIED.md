@@ -43,3 +43,25 @@ git grep -n -E 'msvcrt|winreg|windll|pywin32|os\.name|APPDATA|\.exe\b|sys_platfo
 ```
 
 Verdict: fail. Either remove these or record in the evidence why each one stays.
+
+# Re-verification after repair
+
+Verifier: independent re-run on 2026-10-19 against `51d5af2` (implementation
+`412edd4`, repair `51d5af2`, base `8fa9459`). The worktree has no `.venv`, so
+`/home/penguin/source/stenographer/.venv` was used with `PYTHONPATH=src`
+(`stenographer.__file__` resolves to this worktree).
+
+| Item | Result | Observation |
+| --- | --- | --- |
+| V1 platform removal | pass | `git diff --name-status 8fa9459 HEAD` shows `D` for the six provider files; both factories select only Linux and raise `UnsupportedPlatformError`; `class Platform(Protocol)` remains in `platform.py`. |
+| V2 Windows-specific guards | pass | The V2 `rg` search has no hits (exit 1). The earlier FAIL items are fixed: `native.yml` has no `exe`/`python`/`pip` matrix keys and no `runner.os` condition; the `os.name` guards in the four named test files are removed with their assertions kept. The wide `git grep` (`os.name`, `sys.platform`, `platform.system`, `win32`, `nt`, `.exe`, `runner.os`) shows exactly the hits listed in V2.md. A `msvcrt`/`winreg`/`windll`/`pywin32`/`APPDATA`/`.exe` grep shows only Linux `sys_platform` markers in `pyproject.toml`. The `windows|win32` grep matches the list in `report.md`. |
+| V3 config compatibility | pass | CRLF legacy config script prints `CRLF legacy hotkey config loads; Right Alt Agent binding is preserved`; migration kept, docstring reworded only. |
+| V4 Linux coverage review | pass | Reasons present for each change; repair diffs checked: the `os.name` conditionals became unconditional assertions, and the skips were removed, so Linux runs the same or more assertions. |
+| V5 regression test | pass | Red: fresh base worktree at `8fa9459` with the two task test files: `2 failed`. Green on task: `2 passed`. |
+| V6 keycodes | pass | `gen_keycodes.py --check`: `keycodes up to date`. |
+| V7 CI | pass | All seven workflow YAML files parse with PyYAML; `unit (windows)` and `windows-latest` absent; `test`, `lint`, `build release binary` job names present. No workflow was run. |
+| V8 diff report | pass | `git diff --shortstat 8fa9459 412edd4`: `41 files changed, 127 insertions(+), 775 deletions(-)`, matches `report.md`. Note: `report.md` covers only `412edd4`; the full branch without evidence and `VERIFIED.md` is `45 files changed, 138 insertions(+), 803 deletions(-)` (repair adds `native.yml` and four test files, listed in V2.md). |
+| V9 gate | pass | ruff check: `All checks passed!`; ruff format: `569 files already formatted`; pytest: `2538 passed, 2 skipped, 6 deselected`; `stenographer --help` exit 0. |
+
+Verdict: pass. Integration tests, microphone, live, models, and workflows were
+not used. The temporary base worktree was removed.
