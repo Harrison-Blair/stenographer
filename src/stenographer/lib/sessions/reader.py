@@ -202,6 +202,12 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
         interrupted = True
 
     original = directory / "transcript.jsonl"
+    labels_revised = False
+    if revision != "transcript.jsonl":
+        original_lines, _ = read_transcript(original)
+        original_labels = {line.speaker_id: line.label for line in original_lines}
+        current_labels = {line.speaker_id: line.label for line in lines}
+        labels_revised = current_labels != original_labels
     try:
         if not stat.S_ISREG(original.lstat().st_mode):
             interrupted = True
@@ -260,4 +266,4 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
         audio_size_bytes=audio_sizes,
         interrupted=interrupted,
     )
-    return SessionDetail(summary, lines, talk_time, activity, revision)
+    return SessionDetail(summary, lines, talk_time, activity, revision, labels_revised)
