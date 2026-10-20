@@ -12,7 +12,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from stenographer.cli.live.rename_dialog import RenameDialog
-from stenographer.cli.no_background_css import NO_BACKGROUND_CSS
+from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.live.live_session import LiveSession
 from stenographer.lib.live.transcript_line import TranscriptLine
 

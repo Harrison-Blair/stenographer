@@ -28,7 +28,7 @@ from stenographer.cli.hub.setup_state import SetupWizard
 from stenographer.cli.hub.setup_wizard import render as render_setup
 from stenographer.cli.hub.setup_wizard import test_step as test_setup_step
 from stenographer.cli.live.rename_dialog import RenameDialog
-from stenographer.cli.no_background_css import NO_BACKGROUND_CSS
+from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
