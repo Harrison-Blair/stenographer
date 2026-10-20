@@ -135,6 +135,8 @@ class HubApp(App[None]):
         height: 1fr;
         padding: 1 2;
         border: round #3a4150;
+        border-title-color: ansi_default;
+        border-title-style: bold;
         overflow-y: auto;
     }
     #section-content {
@@ -149,7 +151,8 @@ class HubApp(App[None]):
         border-top: solid #3a4150;
         display: none;
     }
-    #config-beam-note {
+    #config-selected-help {
+        dock: bottom;
         height: auto;
         margin-top: 1;
         color: ansi_default;
@@ -307,7 +310,7 @@ class HubApp(App[None]):
             with Vertical(id="main-content"):
                 yield Static("", id="section-content", markup=False)
                 yield Static("", id="config-hotwords", markup=False)
-                yield Static("", id="config-beam-note", markup=False)
+                yield Static("", id="config-selected-help", markup=False)
             yield self.live_view
             yield self.files_panel
             yield self.sessions_panel
@@ -431,13 +434,13 @@ class HubApp(App[None]):
         main_content = screen.query_one("#main-content", Vertical)
         group_list = screen.query_one("#config-group-list", Static)
         hotwords_view = screen.query_one("#config-hotwords", Static)
-        beam_note = screen.query_one("#config-beam-note", Static)
+        selected_help = screen.query_one("#config-selected-help", Static)
         show_activity = self._section == "live" and self._activity_status is not None
         main_content.display = self._section not in {"live", "files", "sessions"} or show_activity
         section_view.display = main_content.display
         group_list.display = False
         hotwords_view.display = False
-        beam_note.display = False
+        selected_help.display = False
         self.live_view.display = self._section == "live" and not show_activity
         self.files_panel.display = self._section == "files"
         self.sessions_panel.display = self._section == "sessions"
@@ -453,15 +456,11 @@ class HubApp(App[None]):
                 group_list.display = True
                 main_content.border_title = editor.group
                 show_hotwords = editor.group == "asr" and "asr.hotwords" in editor.visible_keys
+                selected_help.update(editor.render_selected_help())
+                selected_help.display = editor.selected_key is not None
                 if show_hotwords:
                     hotwords_view.update(editor.render_hotwords())
                     hotwords_view.display = True
-                    beam_note.update(
-                        "beam_size: wider search, better words, slower. Bench: "
-                        "docs/transcription-experiments.md, CPU model and context screen "
-                        "(beam 1: 10.12% WER at 1.664 s; beam 5: 9.31% at 1.683 s)."
-                    )
-                    beam_note.display = True
             else:
                 main_content.border_title = title
         else:

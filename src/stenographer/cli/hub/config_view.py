@@ -27,11 +27,7 @@ _HELP = {
     "audio.max_recording_seconds": "Maximum length of one recording.",
     "asr.model": "Cached speech-recognition model. Downloads require a separate command.",
     "asr.compute_type": "Numeric format used by the speech-recognition model.",
-    "asr.beam_size": (
-        "Search width. On one 6.49 s public CPU clip (int8, hotwords and context off), "
-        "large-v3-turbo beam 1 scored 10.12% WER at 1.664 s median; "
-        "beam 5 scored 9.31% at 1.683 s median."
-    ),
+    "asr.beam_size": "Wider search can improve word accuracy at a latency cost.",
     "asr.hotwords": "Comma-separated names and terms to guide recognition; blank disables them.",
     "asr.initial_prompt": "Optional style or domain context for recognition.",
     "asr.vad_filter": "Skip audio that the model classifies as non-speech.",
@@ -234,42 +230,64 @@ class ConfigEditor:
             )
 
         lines = Text()
-        append_line(
-            lines,
-            "Changes apply to new sessions and jobs; running work keeps its current settings.",
-        )
         if self.search_term:
             append_line(lines, f"Search: {self.search_term}")
         keys = self.visible_keys
+        setting_keys = tuple(key for key in keys if key != "asr.hotwords")
         if not keys:
             append_line(lines, "No settings match this search.")
+        name_width = max((len(key.rpartition(".")[2]) for key in setting_keys), default=0)
         for index, dotted_key in enumerate(keys):
             if dotted_key == "asr.hotwords":
                 continue
+            name = dotted_key.rpartition(".")[2]
             append_line(
                 lines,
-                f"{dotted_key} = {self._display(self.value(dotted_key))}",
+                name,
                 selectable=True,
                 selected=index == self.key_index,
             )
-            append_line(lines, f"    Default: {self._display(self.default(dotted_key))}")
-            append_line(lines, f"    {self.help(dotted_key)}")
+            lines.append(" " * (name_width - len(name) + 2))
+            lines.append(self._display(self.value(dotted_key)))
+            if self.value(dotted_key) != self.default(dotted_key):
+                lines.append(" ")
+                lines.append("●", style="#ffaf5f")
         return lines
 
     def render_hotwords(self) -> Text:
         if self.config is None or "asr.hotwords" not in self.visible_keys:
             return Text()
-        lines = Text("hotwords")
+        value = self.value("asr.hotwords")
+        terms = [term.strip() for term in (value or "").split(",") if term.strip()]
+        word_count = len((value or "").split())
+        preview = ", ".join(terms[:8]) or "(unset)"
         key_index = self.visible_keys.index("asr.hotwords")
+        lines = Text("hotwords")
         append_line(
             lines,
-            f"asr.hotwords = {self._display(self.value('asr.hotwords'))}",
+            f"{preview} … {word_count} words",
             selectable=True,
             selected=key_index == self.key_index,
         )
-        append_line(lines, f"    Default: {self._display(self.default('asr.hotwords'))}")
-        append_line(lines, f"    {self.help('asr.hotwords')}")
+        if value != self.default("asr.hotwords"):
+            lines.append(" ")
+            lines.append("●", style="#ffaf5f")
         return lines
+
+    def render_selected_help(self) -> Text:
+        dotted_key = self.selected_key
+        if self.config is None or dotted_key is None:
+            return Text()
+        name = dotted_key.rpartition(".")[2]
+        details = Text(
+            f"{name}: {self.help(dotted_key)} Default: {self._display(self.default(dotted_key))}"
+        )
+        if dotted_key == "asr.beam_size":
+            details.append(
+                " Bench: docs/transcription-experiments.md, CPU model and context screen "
+                "(beam 1: 10.12% WER at 1.664 s; beam 5: 9.31% at 1.683 s)."
+            )
+        return details
 
     @staticmethod
     def _parse_value(raw_value: str, current: object, dotted_key: str) -> object:
