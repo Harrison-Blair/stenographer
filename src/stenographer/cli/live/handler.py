@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from stenographer.cli.shared.config import with_config
 from stenographer.lib.live.live_session import LiveSession
 from stenographer.lib.live.models import LIVE_MODELS
-from stenographer.lib.logging.pipeline import fmt_event
+from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.platform import current_platform
 
 if TYPE_CHECKING:
@@ -51,6 +51,15 @@ def cmd_live(args: argparse.Namespace, cfg: Config) -> int:
         device=args.device,
         platform=platform,
     )
+    print("stenographer: loading model for live ASR...", flush=True)
+    try:
+        session.start()
+    except Exception as exc:
+        log_failure(log, logging.ERROR, "live: model_load_failed", exc, safe=True)
+        print(f"stenographer: could not load live ASR model: {exc}", file=sys.stderr)
+        session.stop()
+        return 1
+
     log.info(fmt_event("live", "started", mic=int(args.mic), system=int(args.system)))
     try:
         _run_app(session)

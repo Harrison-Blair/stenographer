@@ -121,14 +121,17 @@ class LiveApp(App[None]):
         for key, source in (("m", "mic"), ("s", "system")):
             source_state = self._session.source_states[source].upper()
             level = self._session.levels_dbfs[source]
-            meter = self._format_meter(level)
+            meter = self._format_meter(level, self._session.meter_floor_dbfs)
             level_text = "-inf" if not math.isfinite(level) else f"{level:.0f}"
             reason = self._session.source_reasons[source]
             detail = f"{key} {source_state} [{meter} {level_text} dBFS]"
             if reason:
                 detail += f" ({reason})"
             parts.append(detail)
-        parts.append(f"{self._session.model_name}  queue {self._session.queue_depth}")
+        parts.append(
+            f"{self._session.model_name}  queue {self._session.queue_depth}  "
+            f"failed phrases {self._session.failed_phrase_count}"
+        )
         self.query_one("#status", Static).update("  |  ".join(parts))
 
     @staticmethod
@@ -139,6 +142,10 @@ class LiveApp(App[None]):
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     @staticmethod
-    def _format_meter(level_dbfs: float) -> str:
-        filled = 0 if not math.isfinite(level_dbfs) else min(5, max(0, int((level_dbfs + 60) / 12)))
+    def _format_meter(level_dbfs: float, floor_dbfs: float = -70.0) -> str:
+        filled = (
+            0
+            if not math.isfinite(level_dbfs)
+            else min(5, max(0, int((level_dbfs - floor_dbfs) / (-10.0 - floor_dbfs) * 5)))
+        )
         return "█" * filled + "·" * (5 - filled)
