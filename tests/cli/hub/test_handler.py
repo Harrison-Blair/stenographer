@@ -160,16 +160,19 @@ def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
     services = HubServices(initial_config, platform, session_factory=Session)
 
     assert not services.recording
+    assert services.session is None
     assert created == []
 
     services.start_recording()
     assert services.recording
+    assert services.session is created[0]
     assert created[0].started
 
     services.update_config(next_config)
     assert created[0].config is initial_config
     services.stop_recording()
     assert not services.recording
+    assert services.session is None
     assert created[0].stopped
 
     services.start_recording()

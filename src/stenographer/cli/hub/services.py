@@ -37,6 +37,10 @@ class HubServices:
     def recording(self) -> bool:
         return self._session is not None
 
+    @property
+    def session(self) -> LiveSession | None:
+        return self._session
+
     def update_config(self, config: Config) -> None:
         """Use saved settings for new work without changing an active session."""
 
