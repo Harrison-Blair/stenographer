@@ -422,6 +422,9 @@ def test_run_shows_optional_warnings_without_changing_exit_code(monkeypatch, cap
     assert doctor.run(Config.defaults(), _CONFIG_PATH) == 0
     assert "ffmpeg: WARN — ffmpeg is not installed" in capsys.readouterr().out
 
+    monkeypatch.setattr(doctor, "probe", lambda _config: _caps(has_mic=False))
+    assert doctor.run(Config.defaults(), _CONFIG_PATH) == 78
+
 
 def _log_line(level: str, message: str, *, utt: int = 1) -> str:
     """One line in the file sink's format (utils/logging_setup._FORMAT)."""
