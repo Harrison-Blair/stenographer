@@ -2,6 +2,8 @@
 name: native CLI checks
 
 on:
+  push:
+    branches: [dev]
   pull_request:
     branches: [dev, main]
   workflow_dispatch:

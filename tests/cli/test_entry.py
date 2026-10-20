@@ -354,6 +354,22 @@ def test_private_overlay_entry_is_absent_from_public_help(capsys):
     assert "_overlay" not in capsys.readouterr().out
 
 
+def test_cli_help_does_not_import_numpy():
+    code = (
+        "import sys\n"
+        "sys.modules['numpy'] = None\n"
+        "from stenographer.cli import main\n"
+        "raise SystemExit(main(['--help']))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage: stenographer" in result.stdout
+
+
 def test_cli_module_has_no_heavy_imports():
     # Importing the CLI (and building its parser) must not pull in the ASR,
     # audio, or evdev stacks — those belong inside subcommand handlers. Checked

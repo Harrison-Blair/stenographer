@@ -37,6 +37,15 @@ EDITED = "The server rejected the request because the credentials expired."
         ("Review the log. ", "Detailed findings. " * 100),
         ("Review the logs and report findings. " * 100, "Done."),
     ],
+    ids=[
+        "cache-failure-possible",
+        "cache-failure-possible-rephrased",
+        "codex-gemini-counts",
+        "timeout-preserved",
+        "approval-required",
+        "long-candidate",
+        "long-spoken",
+    ],
 )
 def test_agent_trusts_model_meaning_and_length_in_production(
     transport, structured, spoken, candidate
@@ -141,6 +150,7 @@ def test_wrong_structured_shapes_are_not_dictation(content):
         "hasOwnProperty prototype .. %2e%2e%2f /tmp/demo",
         "word " * 10000,
     ],
+    ids=["empty", "whitespace", "special-text", "long-text-50000"],
 )
 def test_arbitrary_user_text_is_data_in_the_request(text):
     from stenographer.lib.refine.request import build_messages
