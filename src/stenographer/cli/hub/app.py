@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Static
@@ -18,6 +19,7 @@ from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, build_report
+from stenographer.cli.hub.files_view import FilesPanel
 from stenographer.cli.hub.live_view import read_cpu_percent, render_live_view
 from stenographer.cli.hub.sessions_view import SessionsPanel
 from stenographer.cli.hub.setup_state import SetupWizard
@@ -51,7 +53,7 @@ _PLACEHOLDERS = {
 class HubApp(App[None]):
     """Show six sections while shared work continues in the service owner."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("1", "show_live", "Live"),
         ("2", "show_files", "Files"),
         ("3", "show_sessions", "Sessions"),
@@ -64,6 +66,8 @@ class HubApp(App[None]):
         ("up", "previous_config_key", "Previous config key"),
         ("down", "next_config_key", "Next config key"),
         ("enter", "edit_config", "Edit config key or show doctor details"),
+        Binding("tab", "files_next_area", "Change Files panel focus", priority=True),
+        ("o", "toggle_files_options", "Edit Files options"),
         ("b", "setup_back", "Previous setup step"),
         ("s", "toggle_system", "System audio or skip setup step"),
         ("t", "session_retranscribe", "Re-transcribe session or test setup step"),
@@ -127,9 +131,16 @@ class HubApp(App[None]):
         doctor_probe: Callable[[Config, pathlib.Path | None], DoctorReport] | None = None,
         open_log: Callable[[], bool] | None = None,
         copy_report: Callable[[str], None] | None = None,
+        files_home: pathlib.Path | None = None,
     ) -> None:
         super().__init__()
         self.services = services
+        self.files_panel = FilesPanel(
+            home=files_home,
+            output_folder=getattr(services, "files_output_folder", None),
+            id="files-panel",
+        )
+        self._files_submitting = 0
         self.sessions_panel = SessionsPanel(
             getattr(services, "session_store", None), id="sessions-panel"
         )
@@ -174,6 +185,7 @@ class HubApp(App[None]):
         with Horizontal(id="hub-layout"):
             yield Static("", id="sidebar", markup=False)
             yield Static("", id="section-content", markup=False)
+            yield self.files_panel
             yield self.sessions_panel
         yield Static(
             "space start recording   1-6 sections   q quit",
@@ -207,6 +219,12 @@ class HubApp(App[None]):
                 log_failure(
                     log, logging.ERROR, "hub: session_playback_cleanup_failed", exc, safe=False
                 )
+        close_files = getattr(self.services, "close_files", None)
+        if close_files is not None:
+            try:
+                close_files()
+            except Exception as exc:
+                log_failure(log, logging.ERROR, "hub: files_cleanup_failed", exc, safe=True)
 
     def action_show_live(self) -> None:
         self._select_section("live")
@@ -227,7 +245,8 @@ class HubApp(App[None]):
         self._select_section("doctor")
 
     def _refresh_view(self) -> None:
-        if self._hub_screen is None or not self.is_mounted(self._hub_screen):
+        screen = self._hub_screen
+        if screen is None or not self.is_running or not self.is_mounted(screen):
             return
         rows = []
         for index, (section, label) in enumerate(_SECTIONS, start=1):
@@ -243,7 +262,7 @@ class HubApp(App[None]):
             else:
                 badge = ""
             rows.append(f"{marker} {index} {label:<8} {badge}")
-        self.query_one("#sidebar", Static).update("\n".join(rows))
+        screen.query_one("#sidebar", Static).update("\n".join(rows))
 
         title = next(label for section, label in _SECTIONS if section == self._section)
         content = _PLACEHOLDERS[self._section]
@@ -259,8 +278,6 @@ class HubApp(App[None]):
                     cpu_percent=self._cpu_percent,
                     split=self._live_split,
                 )
-        elif self._section == "files" and self.services.files_running:
-            content = "A Files job is running. Change sections without cancelling it."
         elif self._section == "setup":
             config = self._current_config()
             content = render_setup(self.setup_wizard, config)
@@ -276,9 +293,12 @@ class HubApp(App[None]):
                     selected_index=self._doctor_index,
                     details=self._doctor_details,
                 )
-        section_view = self.query_one("#section-content", Static)
-        section_view.display = self._section != "sessions"
+        section_view = screen.query_one("#section-content", Static)
+        section_view.display = self._section not in {"files", "sessions"}
+        self.files_panel.display = self._section == "files"
         self.sessions_panel.display = self._section == "sessions"
+        if self._section == "files":
+            self._refresh_files_view()
         self.sessions_panel.set_job_status(self._session_job_status)
         if self._section == "config" and self.config_editor is not None:
             content = self.config_editor.render()
@@ -286,7 +306,7 @@ class HubApp(App[None]):
             content = self._activity_status
         section_view.border_title = title
         section_view.update(content)
-        hints = self.query_one("#key-hints", Static)
+        hints = screen.query_one("#key-hints", Static)
         if self._section == "config":
             hints.update(
                 "enter edit   u undo   D reset   / search   ctrl+s save   ←/→ group   ↑/↓ key"
@@ -302,6 +322,11 @@ class HubApp(App[None]):
             )
         elif self._section == "live":
             hints.update("space pause/resume   m mic   s system   v view   r rename   q stop/save")
+        elif self._section == "files":
+            hints.update(
+                "↑/↓ move · tab focus · / search · enter queue · space select · "
+                "o options · x cancel · e folder"
+            )
         else:
             hints.update("space start recording   1-6 sections   q quit")
 
@@ -315,6 +340,14 @@ class HubApp(App[None]):
     def _refresh_live_view(self) -> None:
         if self._section == "live":
             self._refresh_view()
+        elif self._section == "files":
+            self._refresh_files_view()
+
+    def _refresh_files_view(self) -> None:
+        jobs = getattr(self.services, "files_jobs", ())
+        if callable(jobs):
+            jobs = jobs()
+        self.files_panel.set_jobs(tuple(jobs))
 
     def _sample_cpu(self) -> None:
         if self._section != "live":
@@ -350,11 +383,19 @@ class HubApp(App[None]):
             self._refresh_view()
 
     def _move_config_key(self, offset: int) -> None:
-        if self._section == "config" and self.config_editor is not None:
+        if self._section == "files":
+            self.files_panel.move_selection(offset)
+        elif self._section == "config" and self.config_editor is not None:
             self.config_editor.move_key(offset)
             self._refresh_view()
 
     def action_edit_config(self) -> None:
+        if self._section == "files":
+            if self.files_panel.focus_area == "options":
+                self._edit_files_option()
+            else:
+                self._queue_selected_files()
+            return
         if self._section == "doctor":
             self._doctor_details = not self._doctor_details
             log.info(fmt_event("hub", "doctor_details_toggled", expanded=self._doctor_details))
@@ -414,6 +455,12 @@ class HubApp(App[None]):
             self._refresh_view()
 
     def action_search_config(self) -> None:
+        if self._section == "files":
+            self.push_screen(
+                ConfigPrompt("Search audio files", initial=self.files_panel.search_term),
+                self._search_files,
+            )
+            return
         editor = self.config_editor
         if self._section != "config" or editor is None:
             return
@@ -423,6 +470,165 @@ class HubApp(App[None]):
             ConfigPrompt("Search configuration keys", initial=""),
             self._search_config,
         )
+
+    def _search_files(self, term: str | None) -> None:
+        if term is not None:
+            self.files_panel.set_search(term)
+            log.info(fmt_event("hub", "files_search_updated", active=bool(term.strip())))
+
+    def action_files_next_area(self) -> None:
+        if self._section == "files" and self.screen is self._hub_screen:
+            self.files_panel.cycle_focus()
+            log.info(fmt_event("hub", "files_focus_changed", area=self.files_panel.focus_area))
+
+    def action_toggle_files_options(self) -> None:
+        if self._section == "files":
+            self.files_panel.toggle_options()
+            log.info(fmt_event("hub", "files_options_toggled", open=self.files_panel.options_open))
+
+    def _edit_files_option(self) -> None:
+        panel = self.files_panel
+        option = panel.selected_option
+        log.info(fmt_event("hub", "files_option_edit_started", option=option.replace(" ", "_")))
+        if option == "diarize":
+            panel.diarize = not panel.diarize
+            panel.refresh_display()
+        elif option == "refine":
+            panel.refine = not panel.refine
+            panel.refresh_display()
+        elif option == "output format":
+            formats = ("md", "jsonl", "srt", "txt")
+            panel.output_format = formats[(formats.index(panel.output_format) + 1) % len(formats)]
+            panel.refresh_display()
+        elif option == "speaker count":
+            count = "auto" if panel.speaker_count is None else str(panel.speaker_count)
+            self.push_screen(
+                ConfigPrompt("Speaker count (auto or a positive number)", initial=count),
+                self._set_file_speaker_count,
+            )
+        elif option == "output folder":
+            self.push_screen(
+                ConfigPrompt("Output folder", initial=str(panel.output_folder)),
+                self._set_file_output_folder,
+            )
+
+    def _set_file_speaker_count(self, value: str | None) -> None:
+        if value is None:
+            return
+        normalized = value.strip().lower()
+        try:
+            count = None if normalized == "auto" else int(normalized)
+            if count is not None and count < 1:
+                raise ValueError
+        except ValueError:
+            self.notify("Speaker count must be auto or a positive number.", severity="warning")
+            return
+        self.files_panel.speaker_count = count
+        self.files_panel.refresh_display()
+        log.info(fmt_event("hub", "files_speaker_count_changed", automatic=count is None))
+
+    def _set_file_output_folder(self, value: str | None) -> None:
+        if value is not None and value.strip():
+            self.files_panel.output_folder = pathlib.Path(value).expanduser()
+            self.files_panel.refresh_display()
+            log.info(fmt_event("hub", "files_output_folder_changed"))
+
+    def _queue_selected_files(self) -> None:
+        selected = self.files_panel.selected_entry
+        paths = self.files_panel.enter()
+        if not paths:
+            if selected is not None and selected.is_dir:
+                log.info(fmt_event("hub", "files_directory_opened"))
+            return
+        if self.config_editor is not None and self.config_editor.read_only:
+            self.notify(
+                "Fix the invalid configuration before transcribing files.", severity="error"
+            )
+            return
+        options = {
+            "diarize": self.files_panel.diarize,
+            "speaker_count": self.files_panel.speaker_count,
+            "refine": self.files_panel.refine,
+            "output_format": self.files_panel.output_format,
+            "output_folder": self.files_panel.output_folder,
+        }
+        self._files_submitting += len(paths)
+        log.info(fmt_event("hub", "files_queue_requested", count=len(paths)))
+        self._refresh_view()
+        self.run_worker(self._submit_files(paths, options), group="files-submit")
+
+    async def _submit_files(
+        self, paths: tuple[pathlib.Path, ...], options: dict[str, object]
+    ) -> None:
+        submit = getattr(self.services, "submit_file", None)
+        if submit is None:
+            self.notify("File transcription is not available.", severity="error")
+            self._files_submitting = max(0, self._files_submitting - len(paths))
+            self._refresh_view()
+            return
+        for path in paths:
+            try:
+                await asyncio.to_thread(
+                    submit,
+                    path,
+                    **options,
+                )
+            except Exception as exc:
+                log_failure(log, logging.ERROR, "hub: file_submit_failed", exc, safe=True)
+                self.notify("Could not queue this file.", severity="error")
+            finally:
+                self._files_submitting = max(0, self._files_submitting - 1)
+                self._refresh_files_view()
+        if self.is_running:
+            self._refresh_view()
+
+    def _cancel_selected_file(self) -> None:
+        if self.files_panel.focus_area != "queue":
+            self.notify("Focus the queue to select a Files job.", severity="warning")
+            return
+        job = self.files_panel.selected_job
+        if job is None:
+            self.notify("Select a Files job first.", severity="warning")
+            return
+        cancel = getattr(self.services, "cancel_file", None)
+        try:
+            cancelled = cancel(job) if cancel is not None else job.cancel()
+        except Exception as exc:
+            log_failure(log, logging.ERROR, "hub: file_cancel_failed", exc, safe=True)
+            self.notify("Could not cancel this Files job.", severity="error")
+            return
+        log.info(
+            fmt_event("hub", "files_job_cancel_requested", job_id=getattr(job, "id", "unknown"))
+        )
+        if not cancelled:
+            self.notify("This Files job has already finished.", severity="warning")
+        self._refresh_files_view()
+
+    def _open_files_result(self) -> None:
+        if self.files_panel.focus_area != "queue":
+            self.notify("Focus the queue to select a Files result.", severity="warning")
+            return
+        job = self.files_panel.selected_job
+        output_path = None if job is None else getattr(job, "output_path", None)
+        if output_path is None:
+            self.notify("This Files job has no saved result yet.", severity="warning")
+            return
+        log.info(
+            fmt_event(
+                "hub", "files_result_folder_open_requested", job_id=getattr(job, "id", "unknown")
+            )
+        )
+        opener = getattr(self.services, "open_files_result", None)
+        if opener is None:
+            self.notify("Could not open the result folder.", severity="error")
+            return
+        try:
+            opened = opener(output_path)
+        except Exception as exc:
+            log_failure(log, logging.ERROR, "hub: file_result_open_failed", exc, safe=True)
+            opened = False
+        if not opened:
+            self.notify("Could not open the result folder.", severity="warning")
 
     def _search_config(self, term: str | None) -> None:
         if self.config_editor is None:
@@ -652,6 +858,9 @@ class HubApp(App[None]):
         )
 
     def action_session_export(self) -> None:
+        if self._section == "files":
+            self._cancel_selected_file()
+            return
         if self._section != "sessions":
             return
         session_id = self._selected_session_id()
@@ -826,6 +1035,9 @@ class HubApp(App[None]):
         self._refresh_view()
 
     def action_setup_edit(self) -> None:
+        if self._section == "files":
+            self._open_files_result()
+            return
         if self._section != "setup" or self.config_editor is None:
             return
         key = self.setup_wizard.step.config_key
@@ -1056,7 +1268,22 @@ class HubApp(App[None]):
         self.notify("Doctor report copied.")
 
     def action_start_recording(self) -> None:
-        if self._section != "live" or self._activity_status is not None:
+        if self._activity_status is not None:
+            return
+        if self._section == "files":
+            if self.files_panel.focus_area == "options":
+                self._edit_files_option()
+            elif self.files_panel.focus_area == "browser":
+                self.files_panel.toggle_selected_file()
+                log.info(
+                    fmt_event(
+                        "hub",
+                        "files_selection_changed",
+                        count=len(self.files_panel.selected_paths),
+                    )
+                )
+            return
+        if self._section != "live":
             return
         if self.services.recording:
             session = self._live_session()
@@ -1157,6 +1384,9 @@ class HubApp(App[None]):
             return
         self._refresh_view()
 
+    def _files_running(self) -> bool:
+        return self._files_submitting > 0 or bool(getattr(self.services, "files_running", False))
+
     def action_request_quit(self) -> None:
         if self._activity_status is not None:
             return
@@ -1180,7 +1410,7 @@ class HubApp(App[None]):
                 QuitConfirm("Stop recording and save the session before quitting?"),
                 self._confirm_recording_quit,
             )
-        elif self.services.files_running:
+        elif self._files_running():
             self._prompt_files_quit()
         else:
             self.exit()
@@ -1204,7 +1434,7 @@ class HubApp(App[None]):
             return
         self._activity_status = None
         self._refresh_view()
-        if self.services.files_running:
+        if self._files_running():
             self._prompt_files_quit()
         else:
             self.exit()

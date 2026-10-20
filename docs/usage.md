@@ -201,6 +201,20 @@ on Live; press `space` when you want to start recording. If stdin or stdout is
 not a terminal, the command prints help. Existing subcommands, including
 `stenographer live`, keep their current behavior.
 
+In the hub, press `2` to open Files. The browser starts in your home folder.
+Use `/` to filter names in the current folder, `enter` to open a folder, and
+`space` to select files. Press `enter` to queue the selected files. The queue
+runs one file at a time and continues when you change sections.
+
+Press `o` to focus the options. Use `up` and `down` to select an option and
+`space` or `enter` to change it. Diarization starts on, refine starts off, and
+Markdown is the default format. Set the speaker count to `auto` or a positive
+number. The output folder defaults to the Stenographer data folder's `files`
+subfolder. In the queue, use `tab` to focus the selected job, `up` or `down` to
+select a job, and `x` to cancel it. The preview shows current or completed
+transcript lines with speaker labels. Press `e` on a job with a saved result to
+open its folder with `xdg-open`.
+
 ## Start live transcription
 
 Run `stenographer live` to transcribe the microphone and full system mix in a
