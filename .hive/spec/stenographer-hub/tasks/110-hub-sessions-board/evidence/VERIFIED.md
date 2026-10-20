@@ -1,5 +1,19 @@
 # VERIFIED — 110 hub-sessions-board
 
+## Verifier run 4, at `3ab527d` — PASS
+
+Merge-only repair after run 3. Environment: `/home/penguin/source/stenographer/.venv`
+with `PYTHONPATH=src`. Fake services only. No microphone, model, `live` or `run`.
+My capture: `verify4-sessions.png` (150x45 pilot; three synthetic sessions, one interrupted).
+Board: `/home/penguin/source/hive/.hive/tmp/coordinator/designs/stenographer-png/Sessions.png`.
+
+| Item | Result | Observation |
+| --- | --- | --- |
+| Dev merge | pass | `origin/dev` = `12f058a`, an ancestor of HEAD. `git merge-tree --write-tree HEAD origin/dev`: no conflict. Outside `.hive`, the diff against `origin/dev` touches only `README.md`, `docs/hub.md`, `site/index.html`, `app.py`, `sessions_view.py`, `test_sessions.py`. The `app.py` diff only adds lines (Sessions CSS ids and the Sessions sidebar-card branch), so the Files (109) and Doctor/Setup (115) code is kept unchanged. |
+| V1–V4 behaviour (Files, Doctor/Setup, Sessions) | pass | `pytest tests/cli/hub`: 89 passed. |
+| V5 re-render vs board | pass | Same as run 3: bordered `saved` list and detail panels in board order and placement; each row on one line (`2026-10-19 14:05  0:03  2 spk ! int.`); sidebar card `storage / 3 sessions / 1.1 KB audio`; title row with right-aligned `labels: live`; talk-time labels, mic/sys rows, rule, transcript; key hints. `screen.get_style_at` over all 150x45 cells: 0 painted-background cells. Fills overridden by task 107. |
+| V6 gate | pass | `ruff check`: all checks passed. `ruff format --check`: 716 files already formatted. `pytest -m "not integration"`: 2684 passed, 2 skipped, 6 deselected. `stenographer --help`: printed. |
+
 ## Verifier run 3, at `d00d2c9`
 
 Environment: `/home/penguin/source/stenographer/.venv` with `PYTHONPATH=src`. Fake
