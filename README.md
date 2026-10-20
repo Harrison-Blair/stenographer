@@ -151,8 +151,10 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   card with the model, compute type, and system status. Press `space` to start;
   use `v` for mixed or split transcripts, and `m` or `s` to toggle audio sources.
   Press `2` for Files;
-  use the browser to queue files and `x` to cancel a selected job. See the
-  [terminal hub guide](docs/hub.md) for all sections, controls, and file formats.
+  use the browser to queue files and `x` to cancel a selected job. Sessions
+  shows storage use in the sidebar and separates the session list from its
+  detail. See the [terminal hub guide](docs/hub.md) for all sections, controls,
+  and file formats.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.

@@ -224,6 +224,26 @@ class HubApp(App[None]):
         border-title-style: bold;
         overflow-y: auto;
     }
+    #sessions-list-scroll, #sessions-detail-scroll {
+        border-title-color: ansi_default;
+        border-title-style: bold;
+    }
+    #sessions-detail-header {
+        width: 1fr;
+        height: 1;
+        padding: 0 1;
+    }
+    #sessions-detail-title {
+        width: auto;
+        color: ansi_default;
+        text-style: bold;
+    }
+    #sessions-detail-labels {
+        width: 1fr;
+        color: #6ee69a;
+        text-style: bold;
+        text-align: right;
+    }
     #files-browser-scroll, #files-options-scroll, #files-queue-scroll, #files-preview-scroll {
         border-title-color: ansi_default;
         border-title-style: bold;
@@ -432,6 +452,8 @@ class HubApp(App[None]):
         session = self._live_session() if self._section == "live" else None
         if self._section == "live":
             self.set_sidebar_card(self._live_sidebar_card(session), section="live")
+        elif self._section == "sessions":
+            self.set_sidebar_card(self.sessions_panel.storage_summary(), section="sessions")
         elif self._section == "files":
             if not self._files_sidebar_card_custom:
                 self._sidebar_cards["files"] = self._files_sidebar_card()
