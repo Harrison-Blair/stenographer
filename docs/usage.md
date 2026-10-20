@@ -193,6 +193,13 @@ local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
 `structured_output = true`. Model reasoning is always disabled. See
 [docs/refine.md](refine.md) for the whole feature.
 
+## Open the terminal hub
+
+Run `stenographer` with no arguments in a terminal to open the hub. It starts
+on Live; press `space` when you want to start recording. If stdin or stdout is
+not a terminal, the command prints help. Existing subcommands, including
+`stenographer live`, keep their current behavior.
+
 ## Start live transcription
 
 Run `stenographer live` to transcribe the microphone and full system mix in a
