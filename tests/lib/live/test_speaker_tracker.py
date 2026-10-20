@@ -24,6 +24,29 @@ def test_clustering_creates_a_speaker_when_no_match_reaches_threshold():
     assert clustering.assign(np.array([0.0, 1.0], dtype=np.float32)) == "speaker-2"
 
 
+def test_short_phrase_joins_best_existing_speaker_without_updating_its_mean():
+    clustering = SpeakerClustering(threshold=0.8)
+    first = np.array([1.0, 0.0], dtype=np.float32)
+    short = np.array([0.4, np.sqrt(0.84)], dtype=np.float32)
+
+    assert clustering.assign(first, duration=1.2) == "speaker-1"
+    speaker = clustering.speakers[0]
+    mean = speaker.mean_embedding.copy()
+
+    assert clustering.assign(short, duration=0.5) == "speaker-1"
+    assert speaker.count == 1
+    np.testing.assert_array_equal(speaker.mean_embedding, mean)
+    assert len(clustering.speakers) == 1
+
+
+def test_short_phrase_with_a_very_low_score_uses_previous_system_speaker():
+    clustering = SpeakerClustering(threshold=0.9)
+
+    assert clustering.assign(np.array([1.0, 0.0], dtype=np.float32), duration=1.2) == "speaker-1"
+    assert clustering.assign(np.array([0.0, 1.0], dtype=np.float32), duration=1.2) == "speaker-2"
+    assert clustering.assign(np.array([-1.0, 0.0], dtype=np.float32), duration=0.5) == "speaker-2"
+
+
 def test_clustering_joins_the_best_speaker_above_threshold():
     clustering = SpeakerClustering(threshold=0.9)
     first = np.array([1.0, 0.0], dtype=np.float32)
