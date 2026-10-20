@@ -13,27 +13,37 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
-Adds a terminal hub for live recording, file transcription, saved sessions,
-configuration, setup, and diagnostics. It updates the default ASR model and
-removes Windows platform support.
+## [v0.15.0] - 2026-10-20
+
+This release adds a terminal hub for live recording, file transcription,
+saved sessions, configuration, setup, and diagnostics. It changes the default
+ASR model, improves speaker labels, and removes Windows support.
 
 ### Added
 
 - Opens a six-section terminal hub when `stenographer` runs in a terminal.
   Live starts only when you press `space`, and recording continues as you
-  change sections. The daemon and existing commands keep their behavior.
-- Adds a Files screen that queues audio transcription jobs, shows progress and
-  previews, and exports Markdown, JSON Lines, SubRip, or plain text. M4A and
-  AAC files need the system `ffmpeg` executable. Files jobs can use automatic
-  or fixed speaker counts.
+  change sections. The Live transcript scrolls as phrases arrive. The daemon
+  and existing commands keep their behavior.
+- Hub screens draw no background colour, so the terminal theme shows through;
+  a bold `▶` marks the selected item.
+- Adds a Files screen that queues audio transcription jobs, shows progress
+  and previews, and exports Markdown, JSON Lines, SubRip, or plain text. M4A
+  and AAC files, and other files that `soundfile` cannot read, need system
+  `ffmpeg`; Doctor warns when it is missing. Files jobs can use automatic or
+  fixed speaker counts, and speaker labels have distinct colors.
 - Adds Sessions, Config, Setup, and Doctor screens. Sessions can play,
-  re-diarize, re-transcribe, rename, export, and delete saved sessions. Config
-  keeps a timestamped backup when it saves changes.
+  re-diarize, re-transcribe, rename, export, and delete saved sessions;
+  reprocessing keeps earlier transcript revisions. The Sessions screen keeps
+  interrupted rows within the list and shows readable transcript text when a
+  final saved row is incomplete. Config keeps a timestamped backup when it
+  saves changes. Doctor shows capability warnings and fixes.
 - Re-labels saved system phrases after a live session. A minor voice gets its
-  own label only with at least 15 seconds of phrases at least 2 seconds long
-  within 30 seconds and at least two-thirds of its speech in those phrases, or
-  speech time at least 20% of the top speaker's time. Otherwise, it merges into
-  the most similar voice.
+  own label only if it has at least 15 seconds of phrases at least 2 seconds
+  long in a 30-second window, and at least two-thirds of its speech occurs in
+  those phrases, or if its speech time reaches 20% of the top speaker's
+  speech time. Otherwise, it merges into the most similar voice. Each renamed
+  label stays with only one speaker cluster.
 - Uses `deepdml/faster-whisper-large-v3-turbo-ct2` as the default ASR model
   for dictation, Live, and Files. An explicit `asr.model` in an existing
   configuration remains unchanged.
