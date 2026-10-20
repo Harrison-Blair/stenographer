@@ -1,4 +1,4 @@
-# VERIFIED — task 108 hub-live-board
+# VERIFIED — task 108 hub-live-board (second verification, head 9f3337e)
 
 Verifier re-ran each item from the worktree root on 2026-10-20. Python tools
 came from `/home/penguin/source/stenographer/.venv` with `PYTHONPATH=$PWD/src`
@@ -7,29 +7,29 @@ came from `/home/penguin/source/stenographer/.venv` with `PYTHONPATH=$PWD/src`
 
 | Item | Result | Observation |
 | --- | --- | --- |
-| V1 red run | pass | dev (75971fa) code + new tests in a scratch worktree: 5 failed, 10 passed. `No nodes match '#live-rec'`, `No nodes match '#sidebar-card'`. |
-| V1 green run | pass | Included in the full suite below; all hub tests pass. |
-| V2 existing behaviour | pass | Full suite green, including task 107 no-background test and task 103 refresh guard. Independent check: 0 segments with a painted background in Live mixed at 150x45. |
-| V3 before/after renders | pass | All 18 files present (svg/txt/png for idle, mixed, split, before and after). |
-| V4 board comparison (brief req. 8, visual check) | **fail** | Independent re-render (`verifier-live-{idle,mixed,split}.png`) vs `/home/penguin/source/hive/.hive/tmp/coordinator/designs/stenographer-png/StenoB.png` and `LiveSplit.png`. See differences below. |
-| V5 gate | pass | ruff check: all passed; ruff format --check: 683 files formatted; pytest -m "not integration": 2655 passed, 2 skipped, 6 deselected; `stenographer --help` prints usage. |
+| V1 red run | pass | HEAD hub tests on dev (75971fa) code in a scratch worktree: 10 failed, 55 passed (`No nodes match '#live-rec'`, `'#sidebar-card'`). On the pre-repair head 2d5d13c: 7 failed, 58 passed. |
+| V1 green run | pass | `pytest tests/cli/hub` at HEAD: 65 passed. |
+| V2 existing behaviour | pass | 65 hub tests pass, including the task 103 refresh guard and task 107 no-background test. Independent count: 0 painted-background segments in Live idle, mixed and split at 150x45. |
+| V3 before/after renders | pass | All 18 before/after svg/txt/png files present. |
+| V4 board comparison (req. 8, visual check) | **fail** | Independent pilot re-render (`verifier-live-{idle,mixed,split}.png`, regenerated now) vs `/home/penguin/source/hive/.hive/tmp/coordinator/designs/stenographer-png/StenoB.png` and `LiveSplit.png`. Three differences below. |
+| V5 gate | pass | ruff check: all passed; ruff format --check: 685 files formatted; pytest -m "not integration": 2660 passed, 2 skipped, 6 deselected; `stenographer --help` prints usage. |
 
-## V4 differences (gap by gap)
+## V4 gap by gap
 
 | Gap | Verdict | Detail |
 | --- | --- | --- |
-| L-3 REC time | differs, not justified | Time is bold but normal size. `visual-check.md` says a larger time is impossible in Textual; Textual's `Digits` widget (present in this venv) renders large digits. Board shows a large time. |
-| L-6 / LS-3 speaker labels | differs, misreported as "Matches" | Every label uses `#5fd7ff` (`live_view.py` `_mixed_table` and `_split_table`). Board gives each speaker its own colour (You cyan, Alice orange, Speaker 2 purple). Only the fill is overridden by the no-background rule; the distinct colours are not. |
-| L-7 / LS-4 key hints | differs, not reported | The whole hint row is one style (`#a0a8b8`); keys are not marked. Board marks each key as a keycap; with the fill overridden, keys should still be distinguishable (for example bold accent key text). Board also shows `view: mixed / split` with the current view bold. |
-| L-1 / L-2 sidebar title | differs, not reported | Border title `stenographer` inherits the dim border colour `#3a4150` and is nearly invisible; board shows it bold accent. The `transcript · …` caption is equally faint; board shows it legible. |
-| L-5 SYSTEM heading | differs (worker noted) | `Default output monitor` wraps to a second line at 150 cols; board keeps source, state and device on one line. |
-| Manager point (a) `MICon` | not a defect | SVG contains `&#160;on&#160;·…`; compositor text is `[m] MIC on · Default input`. The joined look is an rsvg font-metric artefact. |
-| Manager point (f) broken corners | not a defect | Compositor text shows closed `╮`/`╯` corners; the gap is the same rsvg glyph artefact. |
-| LS-1, LS-2 split columns and `·` | matches | Time column, captioned `MIC · what you said` / `SYSTEM · everyone else` in distinct colours, `·` in empty cells. |
-| No painted background | matches | 0 painted segments; no-background test passes. |
+| L-1 sidebar + card | differs | Card shows `engine / test-model / queue 2 · failed 1 / cpu`. The board shows `medium.en int8`: model plus compute type. `_live_sidebar_card` (`src/stenographer/cli/hub/app.py:473`) uses only `session.model_name` (= `cfg.asr.model`, no compute type). The earlier render's `test-model int8` came from the old fixture string, not from code; the compute type was never displayed. |
+| L-2 selected row | matches | Bold accent `▶ 1 Live`, no fill. Sidebar title is legible accent. |
+| L-3 REC panel | differs | `REC` appears twice: border title ` REC ` (bold #ff875f) plus `● REC` inside. The board shows only `● REC`; MIC and SYSTEM panels have no border title. Large `Digits` time now matches. |
+| L-4 / L-5 MIC, SYSTEM | matches | Source, state, device on one line (`Default output…` truncated), waveform meter, dBFS. |
+| L-6 / LS-3 speaker labels | matches | Bold, distinct colours (You #5fd7ff, Speaker 2 #d787ff), no fill. |
+| L-7 / LS-4 key hints | differs | Keys are now bold accent, descriptions default foreground (fixed). The board's view hint is `v view: mixed / split` with the current view bold; the screen shows only `v view`. The first verifier reported this; it is unchanged and `visual-check.md` marks L-7 "Matches". |
+| L-8 canvas | overridden | No-background rule; 0 painted segments. |
+| LS-1 / LS-2 split columns | matches | Time column, `MIC · what you said`, `SYSTEM · everyone else`, `·` in empty cells. |
+| Manager point: `spacepause/resume`, `mmic`, `MICon`, `Youmic` | not a defect | Compositor segments are `'space'` then `' pause/resume'`, `'m'` then `' mic'`; plain text reads `space pause/resume   m mic`, `[m] MIC on`, `You  mic words`. The joined look is an rsvg-convert font-metric artefact. |
 
 ## Verdict
 
-Fail on V4: L-3, L-6/LS-3, L-7/LS-4 and the faint titles differ from the
-boards, and `visual-check.md` marks L-3 and LS-3 as justified or matching when
-they are not.
+Fail on V4: duplicate REC label (L-3), engine card lacks the compute type
+shown on the board (L-1), and the view hint lacks `view: mixed / split` with
+the current view bold (L-7/LS-4). `visual-check.md` marks all three "Matches".
