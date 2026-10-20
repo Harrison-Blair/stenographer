@@ -23,9 +23,10 @@ ASR model, improves speaker labels, and removes Windows support.
 
 - Opens a six-section terminal hub when `stenographer` runs in a terminal.
   Live starts only when you press `space`, and recording continues as you
-  change sections. The daemon and existing commands keep their behavior.
-- Matches all six hub screens to their terminal layouts and keeps their
-  backgrounds transparent so the terminal theme shows through.
+  change sections. The Live transcript scrolls as phrases arrive. The daemon
+  and existing commands keep their behavior.
+- Hub screens draw no background colour, so the terminal theme shows through;
+  a bold `▶` marks the selected item.
 - Adds a Files screen that queues audio transcription jobs, shows progress
   and previews, and exports Markdown, JSON Lines, SubRip, or plain text. M4A
   and AAC files, and other files that `soundfile` cannot read, need system
@@ -33,8 +34,10 @@ ASR model, improves speaker labels, and removes Windows support.
   fixed speaker counts, and speaker labels have distinct colors.
 - Adds Sessions, Config, Setup, and Doctor screens. Sessions can play,
   re-diarize, re-transcribe, rename, export, and delete saved sessions;
-  reprocessing keeps earlier transcript revisions. Config keeps a timestamped
-  backup when it saves changes. Doctor shows capability warnings and fixes.
+  reprocessing keeps earlier transcript revisions. The Sessions screen keeps
+  interrupted rows within the list and shows readable transcript text when a
+  final saved row is incomplete. Config keeps a timestamped backup when it
+  saves changes. Doctor shows capability warnings and fixes.
 - Re-labels saved system phrases after a live session. A minor voice gets its
   own label only if it has at least 15 seconds of phrases at least 2 seconds
   long in a 30-second window, and at least two-thirds of its speech occurs in
@@ -49,13 +52,6 @@ ASR model, improves speaker labels, and removes Windows support.
 
 - Removes the Windows platform providers and CI jobs. Platform selection now
   reports Windows as unsupported.
-
-### Fixed
-
-- Keeps the Live transcript scrollable as phrases arrive and keeps interrupted
-  session rows within the list panel.
-- Shows readable transcript content from interrupted sessions when the final
-  saved row is incomplete.
 
 ## [v0.14.0] - 2026-10-19
 
