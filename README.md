@@ -142,6 +142,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 
 ## Common commands
 
+- `stenographer` — open the terminal hub when stdin and stdout are terminals;
+  otherwise show help.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.

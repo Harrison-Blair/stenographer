@@ -18,9 +18,14 @@ def dispatch(argv: Sequence[str] | None = None) -> int:
     another's heavy dependencies.
     """
     parser = build_parser()
-    args = parser.parse_args(argv)
+    arguments = tuple(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(arguments)
 
     if args.command is None:
+        if not arguments and sys.stdin.isatty() and sys.stdout.isatty():
+            from stenographer.cli.hub.handler import cmd_hub
+
+            return cmd_hub(args)
         parser.print_help()
         return 0
     return resolve_command(COMMANDS, args.command).load_handler()(args)
