@@ -7,6 +7,7 @@ import asyncio
 import threading
 
 import pytest
+from textual.screen import Screen
 from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
@@ -135,6 +136,56 @@ def test_pilot_slow_recording_start_keeps_hub_responsive():
             finally:
                 services.start_release.set()
                 await start_task
+
+    asyncio.run(exercise())
+
+
+def test_pilot_lifecycle_worker_finishes_after_hub_screen_unmount_without_failure():
+    async def exercise():
+        services = FakeServices()
+        services.start_entered = threading.Event()
+        services.start_release = threading.Event()
+
+        app = HubApp(services)
+        async with app.run_test() as pilot:
+            start_task = asyncio.create_task(pilot.press("space"))
+            try:
+                assert await asyncio.to_thread(services.start_entered.wait, 1)
+                worker = next(worker for worker in app.workers if worker.name == "start-recording")
+                hub_screen = app.screen
+                await app.push_screen(Screen())
+                await hub_screen.remove()
+                assert not app.is_mounted(hub_screen)
+
+                services.start_release.set()
+                await worker.wait()
+            finally:
+                services.start_release.set()
+                await start_task
+
+    asyncio.run(exercise())
+
+
+def test_pilot_app_shutdown_during_lifecycle_work_does_not_fail_refresh():
+    async def exercise():
+        services = FakeServices()
+        services.start_entered = threading.Event()
+        services.start_release = threading.Event()
+        app = HubApp(services)
+        worker = None
+        try:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                hub_screen = app.screen
+                worker = asyncio.create_task(app._start_recording())
+                assert await asyncio.to_thread(services.start_entered.wait, 1)
+                app.exit()
+            assert not app.is_mounted(hub_screen)
+        finally:
+            services.start_release.set()
+            if worker is not None:
+                await worker
+        assert services.recording
 
     asyncio.run(exercise())
 

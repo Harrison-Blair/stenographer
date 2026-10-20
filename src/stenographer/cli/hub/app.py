@@ -11,6 +11,7 @@ from typing import ClassVar
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
+from textual.screen import Screen
 from textual.widgets import Static
 
 from stenographer.cli.hub.config_dialog import ConfigPrompt
@@ -127,6 +128,7 @@ class HubApp(App[None]):
         self.config_editor = config_editor or (
             ConfigEditor(config_path) if config_path is not None else None
         )
+        self._hub_screen: Screen | None = None
         self._section = "live"
         self._activity_status: str | None = None
         self._pending_section: str | None = None
@@ -168,6 +170,7 @@ class HubApp(App[None]):
         )
 
     def on_mount(self) -> None:
+        self._hub_screen = self.screen
         self.query_one("#sidebar", Static).border_title = "stenographer"
         self._sample_cpu()
         self.set_interval(0.1, self._refresh_live_view)
@@ -202,6 +205,8 @@ class HubApp(App[None]):
         self._select_section("doctor")
 
     def _refresh_view(self) -> None:
+        if self._hub_screen is None or not self.is_mounted(self._hub_screen):
+            return
         rows = []
         for index, (section, label) in enumerate(_SECTIONS, start=1):
             marker = ">" if section == self._section else " "
