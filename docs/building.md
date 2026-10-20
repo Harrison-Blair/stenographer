@@ -55,12 +55,16 @@ recordings, downloaded models, caches, build output, and agent/editor settings
 stay ignored. Shared guidance remains in `AGENTS.md` and `CLAUDE.md`.
 The curated [code-smell reference](docs/reference/guru/code-smells.md) and
 [refactoring techniques](docs/reference/guru/refactoring-techniques.md) remain
-tracked together under `docs/reference/guru/`.
+tracked together under `docs/reference/guru/`. The tracked `.hive/spec/` tree
+holds hive specs and evidence. Git tracks it; Hatch's leading `*` excludes
+it from source distributions and wheels. PyInstaller collects only the
+application entry point, modules, and assets.
 
 For a new file type, documentation file, or asset, update both `.gitignore`
 and `[tool.hatch.build].exclude` in `pyproject.toml` before staging it. Keep
 their non-comment patterns identical and in the same order, including the
-parent-directory exceptions. Existing Python and script patterns allow new
+parent-directory exceptions, except for repository-only paths such as
+`.hive/spec/`. Existing Python and script patterns allow new
 modules automatically. Use `git check-ignore -v --no-index <path>` to inspect
 which rule applies; review `git status --short` before staging. Ignore rules
 do not remove tracked files or prevent an explicit `git add -f`.
