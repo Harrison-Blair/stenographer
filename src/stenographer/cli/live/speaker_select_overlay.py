@@ -6,6 +6,8 @@ from __future__ import annotations
 from rich.text import Text
 from textual.widgets._select import SelectOverlay
 
+from stenographer.cli.shared.speaker_colors import speaker_color
+
 
 class SpeakerSelectOverlay(SelectOverlay):
     """Add an accent marker to the highlighted speaker option."""
@@ -15,12 +17,14 @@ class SpeakerSelectOverlay(SelectOverlay):
         self._speakers = speakers
 
     def on_option_list_option_highlighted(self, event: SelectOverlay.OptionHighlighted) -> None:
-        for index, (_speaker_id, label) in enumerate(self._speakers, start=1):
+        speaker_ids = tuple(speaker_id for speaker_id, _label in self._speakers)
+        for index, (speaker_id, label) in enumerate(self._speakers, start=1):
+            color = speaker_color(speaker_id, speaker_ids)
             prompt = Text()
             if event.option_index == index:
                 prompt.append("▶ ", style="bold #5fd7ff")
-                prompt.append(label, style="bold #5fd7ff")
             else:
-                prompt.append(f"  {label}")
+                prompt.append("  ")
+            prompt.append(label, style=f"bold {color}")
             self.replace_option_prompt_at_index(index, prompt)
         event.stop()

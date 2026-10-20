@@ -58,8 +58,9 @@ def test_pilot_navigation_focus_and_recording_lifecycle():
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.current_section == "live"
-            assert "Press space to start recording" in str(
-                app.query_one("#section-content", Static).render()
+            assert "Press space to start recording" in "\n".join(
+                "".join(segment.text for segment in strip._segments)
+                for strip in app.screen._compositor.render_strips()
             )
             assert services.actions == []
 
