@@ -94,6 +94,8 @@ def run(path: Path, *, baseline: bool = False) -> None:
     talk_time: dict[str, float] = defaultdict(float)
     for line in lines:
         talk_time[line.label] += line.end - line.start
+    cluster_count = len({line.speaker_id for line in lines})
+    print(f"Clusters: {cluster_count}")
     print(f"Labels: {len(talk_time)}")
     for label, seconds in sorted(talk_time.items()):
         print(f"{label}: {seconds:.1f} s")

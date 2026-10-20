@@ -151,7 +151,7 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
 - `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
 - `stenographer run` — run the daemon in the foreground.
-- `stenographer live` — transcribe microphone and system audio in a terminal session; after `q`, it batches speaker labels. Press `q` again to skip. See the [live guide](docs/live.md).
+- `stenographer live` — transcribe microphone and system audio in a terminal session; after `q`, it keeps each renamed label on one voice and numbers unnamed voices by first appearance. Press `q` again to skip. See the [live guide](docs/live.md).
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
 for sound packs, statistics, and configuration examples.

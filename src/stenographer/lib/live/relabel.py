@@ -174,7 +174,12 @@ def relabel_system_lines(
         progress(total, total)
     ranked_clusters = sorted(clusters.values(), key=lambda members: min(members))
     speaker_ids: dict[int, str] = {}
-    cluster_labels: dict[str, str] = {}
+    label_weights_by_cluster: list[dict[str, float]] = []
+    renamed_labels = {
+        line.label
+        for line in original
+        if line.label != f"Speaker {line.speaker_id.removeprefix('speaker-')}"
+    }
     for number, members in enumerate(ranked_clusters, 1):
         label_weights: dict[str, float] = {}
         speaker_id = f"speaker-{number}"
@@ -182,13 +187,47 @@ def relabel_system_lines(
             label = original[index].label
             label_weights[label] = label_weights.get(label, 0.0) + durations[index]
             speaker_ids[index] = speaker_id
-        cluster_labels[speaker_id] = max(label_weights, key=label_weights.get)
+        label_weights_by_cluster.append(label_weights)
 
+    label_matches = sorted(
+        (
+            -speech_time,
+            cluster_index,
+            label,
+        )
+        for cluster_index, label_weights in enumerate(label_weights_by_cluster)
+        for label, speech_time in label_weights.items()
+        if label in renamed_labels
+    )
+    cluster_labels: dict[int, str] = {}
+    assigned_labels: set[str] = set()
+    for _negative_speech_time, cluster_index, label in label_matches:
+        if cluster_index in cluster_labels or label in assigned_labels:
+            continue
+        cluster_labels[cluster_index] = label
+        assigned_labels.add(label)
+
+    next_number = 1
+    for cluster_index in range(len(ranked_clusters)):
+        if cluster_index in cluster_labels:
+            continue
+        label = f"Speaker {next_number}"
+        while label in assigned_labels:
+            next_number += 1
+            label = f"Speaker {next_number}"
+        cluster_labels[cluster_index] = label
+        assigned_labels.add(label)
+        next_number += 1
+
+    labels_by_speaker = {
+        f"speaker-{cluster_index + 1}": label
+        for cluster_index, label in cluster_labels.items()
+    }
     return tuple(
         replace(
             line,
             speaker_id=speaker_ids[index],
-            label=cluster_labels[speaker_ids[index]],
+            label=labels_by_speaker[speaker_ids[index]],
         )
         for index, line in enumerate(original)
     )

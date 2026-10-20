@@ -60,10 +60,13 @@ Microphone speech appears as `You`; system speech gets labels such as
 several people under one label. Phrases shorter than 1.2 seconds reuse a known
 speaker and do not change its embedding mean. When you stop a session,
 Stenographer shows progress while it clusters the saved system phrases and
-writes a new transcript revision. Each new cluster keeps the old label that
-covers most of its speech time, including a name you gave it. Press `q` again
-during the pass to keep the live labels. If relabeling fails, the live labels
-remain and the command reports the reason. Press `r` and assign the same display
+writes a new transcript revision. Each user-renamed label can go to only one
+cluster; when a label appears in several clusters, it stays with the cluster
+with the most shared speech time. The pass numbers clusters without a user name
+`Speaker 1`, `Speaker 2`, and so on, in order of first appearance in the
+session. Press `q` again during the pass to keep the live labels. If relabeling
+fails, the live labels remain and the command reports the reason. Press `r` and
+assign the same display
 name to speakers to merge their displayed labels. This does not change their
 underlying speaker IDs. The clustering threshold is 0.50; it was tested on only
 three clips, so labels are estimates, not reliable identification.
