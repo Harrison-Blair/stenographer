@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _EVENT = re.compile(r"([a-z][a-z0-9_-]*):\s+([a-z][a-z0-9_-]*)\b")
 _TAIL_WINDOW_BYTES = 256 * 1024
+DOCTOR_STATE_GLYPHS = {"ok": "✓", "warn": "!", "fail": "✗"}
+DOCTOR_STATE_COLORS = {"ok": "#6ee69a", "warn": "#ffaf5f", "fail": "#ff5f5f"}
 
 
 @dataclass(frozen=True)
@@ -77,13 +79,14 @@ class DoctorReport:
             for index, check in enumerate(self.checks):
                 if check.group != group:
                     continue
-                status = {"ok": "✓", "warn": "!", "fail": "x"}[check.status]
-                append_line(
-                    lines,
-                    f"{status} {check.label} · {check.detail}",
-                    selectable=True,
-                    selected=index == selected_index,
-                )
+                status = DOCTOR_STATE_GLYPHS[check.status]
+                if lines:
+                    lines.append("\n")
+                selected = index == selected_index
+                style = "bold #5fd7ff" if selected else None
+                lines.append("▶ " if selected else "  ", style=style)
+                lines.append(status, style=DOCTOR_STATE_COLORS[check.status])
+                lines.append(f" {check.label} · {check.detail}", style=style)
             append_line(lines, "")
         selected = self.checks[selected_index] if self.checks else None
         if details and selected is not None and selected.status in {"warn", "fail"}:
@@ -120,11 +123,13 @@ class DoctorReport:
 
 
 def safe_warning_lines(text: str, limit: int = 10) -> tuple[str, ...]:
-    """Keep only WARNING event names; omit arbitrary log message fields."""
+    """Keep warning and error event names; omit loggers and arbitrary message fields."""
     warnings = []
     for line in text.splitlines():
         columns = line.split(maxsplit=3)
-        if len(columns) != 4 or not _DATE.fullmatch(columns[0]) or columns[2] != "WARNING":
+        if len(columns) != 4 or not _DATE.fullmatch(columns[0]):
+            continue
+        if columns[2] not in {"WARNING", "ERROR"}:
             continue
         record = re.match(r"(\S+)(?:\s+utt=\d+)?\s+(.+)", columns[3])
         if record is None:
@@ -133,7 +138,8 @@ def safe_warning_lines(text: str, limit: int = 10) -> tuple[str, ...]:
         if event is None:
             continue
         timestamp = columns[1].split(",", 1)[0]
-        warnings.append(f"{timestamp} WARNING {record.group(1)} {event[1]}: {event[2]}")
+        level = "WARN" if columns[2] == "WARNING" else "ERROR"
+        warnings.append(f"{timestamp} {level} {event[1]}: {event[2]}")
     return tuple(warnings[-limit:])
 
 
