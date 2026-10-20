@@ -13,6 +13,7 @@ from textual.widgets import Static
 
 from stenographer.cli.hub.files_entry import BrowserEntry
 from stenographer.cli.hub.selection import append_line
+from stenographer.cli.shared.speaker_colors import speaker_color
 
 _FORMATS = ("md", "jsonl", "srt", "txt")
 _AUDIO_SUFFIXES = {
@@ -458,13 +459,15 @@ class FilesPanel(Vertical):
             return rows
         progress = getattr(job, "progress", None)
         lines = getattr(progress, "completed_lines", ())
+        speaker_ids = tuple(dict.fromkeys(line.speaker_id for line in lines))
         if not lines:
             rows.append("Transcript preview will appear here.")
         for line in lines[-8:]:
             if rows:
                 rows.append("\n")
             rows.append(f"{self._format_timestamp(line.start)}  ")
-            rows.append(f"{line.label}\u00a0", style="bold #5fd7ff")
+            color = speaker_color(line.speaker_id, speaker_ids, source=line.source)
+            rows.append(f"{line.label}\u00a0", style=f"bold {color}")
             rows.append(f" {line.text.replace(chr(10), ' ')}")
         output_path = getattr(job, "output_path", None)
         if output_path is not None:

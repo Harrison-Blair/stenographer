@@ -222,6 +222,55 @@ def test_files_chosen_option_values_use_accent_color(tmp_path, value):
     asyncio.run(exercise())
 
 
+def test_files_preview_uses_distinct_shared_speaker_colors(tmp_path):
+    path = tmp_path / "standup.wav"
+    _write_audio(path)
+    job = FakeJob(path, {"diarize": True})
+    job.progress = FileJobProgress(
+        "diarize",
+        55,
+        17.5,
+        (
+            TranscriptLine(4.0, 5.0, "", "file", "speaker-1", "Speaker 1", "sample alpha"),
+            TranscriptLine(6.0, 7.0, "", "file", "speaker-2", "Speaker 2", "sample beta"),
+        ),
+    )
+    services = FakeServices(tmp_path / "exports")
+    services.engine.jobs.append(job)
+    app = HubApp(services, files_home=tmp_path)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("2")
+            app._refresh_files_view()
+            await pilot.pause()
+
+            preview = app.query_one("#files-preview", Static).render()
+            assert "Speaker 1" in preview.plain
+            assert "Speaker 2" in preview.plain
+            styles = {}
+            for label in ("Speaker 1", "Speaker 2"):
+                offset = preview.plain.index(label)
+                styles[label] = next(
+                    span.style.rich_style
+                    for span in preview.spans
+                    if span.start <= offset < span.end
+                )
+            assert styles["Speaker 1"].color != styles["Speaker 2"].color
+            assert (
+                styles["Speaker 1"].color.get_truecolor() == Color.parse("#ffaf5f").get_truecolor()
+            )
+            assert (
+                styles["Speaker 2"].color.get_truecolor() == Color.parse("#d787ff").get_truecolor()
+            )
+            assert all(style.bold for style in styles.values())
+            assert all(
+                style.bgcolor is None or style.bgcolor.is_default for style in styles.values()
+            )
+
+    asyncio.run(exercise())
+
+
 def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
     path = tmp_path / "standup.wav"
     _write_audio(path)
@@ -270,7 +319,7 @@ def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
             ).rich_style
             assert label_style.bold
             assert label_style.color is not None
-            assert label_style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
+            assert label_style.color.get_truecolor() == Color.parse("#ffaf5f").get_truecolor()
             assert label_style.bgcolor is None or label_style.bgcolor.is_default
 
             hints = app.query_one("#key-hints", Static).render().plain
