@@ -17,9 +17,11 @@ from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, build_report
+from stenographer.cli.hub.live_view import read_cpu_percent, render_live_view
 from stenographer.cli.hub.setup_state import SetupWizard
 from stenographer.cli.hub.setup_wizard import render as render_setup
 from stenographer.cli.hub.setup_wizard import test_step as test_setup_step
+from stenographer.cli.live.rename_dialog import RenameDialog
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -61,12 +63,13 @@ class HubApp(App[None]):
         ("down", "next_config_key", "Next config key"),
         ("enter", "edit_config", "Edit config key or show doctor details"),
         ("b", "setup_back", "Previous setup step"),
-        ("s", "setup_skip", "Skip setup step"),
+        ("s", "toggle_system", "System audio or skip setup step"),
         ("t", "setup_test", "Test setup step"),
         ("e", "setup_edit", "Edit setup value"),
         ("shift+q", "setup_quick", "Quick setup"),
-        ("m", "setup_download_model", "Download ASR model"),
-        ("r", "doctor_recheck", "Re-check doctor"),
+        ("m", "toggle_mic", "Microphone or download model"),
+        ("v", "toggle_live_view", "Toggle mixed or split transcript"),
+        ("r", "rename_live_speaker", "Rename speaker or re-check doctor"),
         ("f", "doctor_fix", "Fix in Setup"),
         ("l", "doctor_open_log", "Open log"),
         ("c", "doctor_copy_report", "Copy doctor report"),
@@ -126,6 +129,8 @@ class HubApp(App[None]):
         self._section = "live"
         self._pending_section: str | None = None
         self._pending_quit = False
+        self._live_split = False
+        self._cpu_percent: float | None = None
         self.setup_wizard = SetupWizard()
         self._setup_test = setup_test or self._default_setup_test
         if model_download is None:
@@ -162,6 +167,9 @@ class HubApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one("#sidebar", Static).border_title = "stenographer"
+        self._sample_cpu()
+        self.set_interval(0.1, self._refresh_live_view)
+        self.set_interval(1.0, self._sample_cpu)
         self._refresh_view()
         if self.config_editor is not None and self.config_editor.read_only:
             self.notify(
@@ -210,8 +218,18 @@ class HubApp(App[None]):
 
         title = next(label for section, label in _SECTIONS if section == self._section)
         content = _PLACEHOLDERS[self._section]
-        if self._section == "live" and self.services.recording:
-            content = "Recording is active. Change sections without stopping it."
+        if self._section == "live":
+            session = self._live_session()
+            if self.services.recording and session is None:
+                content = "Recording is active. Change sections without stopping it."
+            else:
+                content = render_live_view(
+                    session,
+                    model_name=self._current_config().asr.model,
+                    mic_device=self._mic_device_name(),
+                    cpu_percent=self._cpu_percent,
+                    split=self._live_split,
+                )
         elif self._section == "files" and self.services.files_running:
             content = "A Files job is running. Change sections without cancelling it."
         elif self._section == "setup":
@@ -243,8 +261,27 @@ class HubApp(App[None]):
             hints.update("enter next   b back   s skip   t test   e edit   D defaults   Q quick")
         elif self._section == "doctor":
             hints.update("r re-check   enter details   f fix in Setup   l open log   c copy report")
+        elif self._section == "live":
+            hints.update("space pause/resume   m mic   s system   v view   r rename   q stop/save")
         else:
             hints.update("space start recording   1-6 sections   q quit")
+
+    def _live_session(self):
+        return getattr(self.services, "session", None)
+
+    def _mic_device_name(self) -> str:
+        device = self._current_config().audio.input_device
+        return str(device) if device else "Default input"
+
+    def _refresh_live_view(self) -> None:
+        if self._section == "live":
+            self._refresh_view()
+
+    def _sample_cpu(self) -> None:
+        if self._section != "live":
+            return
+        self._cpu_percent = read_cpu_percent()
+        self._refresh_view()
 
     def action_previous_config_group(self) -> None:
         self._move_config_group(-1)
@@ -724,7 +761,15 @@ class HubApp(App[None]):
         self.notify("Doctor report copied.")
 
     async def action_start_recording(self) -> None:
-        if self._section != "live" or self.services.recording:
+        if self._section != "live":
+            return
+        if self.services.recording:
+            session = self._live_session()
+            if session is None:
+                return
+            action = session.resume if session.paused else session.pause
+            await asyncio.to_thread(action)
+            self._refresh_view()
             return
         if self.config_editor is not None and self.config_editor.read_only:
             self.notify("Fix the invalid configuration before recording.", severity="error")
@@ -736,6 +781,59 @@ class HubApp(App[None]):
             self.notify(f"Could not start recording: {exc}", severity="error")
             return
         log.info(fmt_event("hub", "recording_started"))
+        self._refresh_view()
+
+    async def action_toggle_mic(self) -> None:
+        if self._section == "setup":
+            self.action_setup_download_model()
+            return
+        session = self._live_session()
+        if self._section == "live" and session is not None:
+            await asyncio.to_thread(session.toggle, "mic")
+            self._refresh_view()
+
+    async def action_toggle_system(self) -> None:
+        if self._section == "setup":
+            self.action_setup_skip()
+            return
+        session = self._live_session()
+        if self._section == "live" and session is not None:
+            await asyncio.to_thread(session.toggle, "system")
+            self._refresh_view()
+
+    def action_toggle_live_view(self) -> None:
+        if self._section != "live":
+            return
+        self._live_split = not self._live_split
+        view = "split" if self._live_split else "mixed"
+        log.info(fmt_event("hub", "live_view_toggled", view=view))
+        self._refresh_view()
+
+    def action_rename_live_speaker(self) -> None:
+        if self._section == "doctor":
+            self.action_doctor_recheck()
+            return
+        session = self._live_session()
+        if self._section != "live" or session is None:
+            return
+        speakers = session.speakers
+        if not speakers:
+            self.notify("No system speakers are available to rename.")
+            return
+        self.push_screen(
+            RenameDialog(speakers),
+            lambda result: self._rename_live_speaker(session, result),
+        )
+
+    def _rename_live_speaker(self, session, value: tuple[str, str] | None) -> None:
+        if value is None:
+            return
+        speaker_id, name = value
+        try:
+            session.rename(speaker_id, name)
+        except ValueError as exc:
+            self.notify(str(exc))
+            return
         self._refresh_view()
 
     def action_request_quit(self) -> None:

@@ -133,9 +133,9 @@ scripts/install.sh --no-start</code></pre>
       <div class="tablewrap">
         <table>
           <tbody>
-            <tr><td><code>stenographer</code></td><td>Open the terminal hub when stdin and stdout are terminals; otherwise show help. Press <code>space</code> on Live to start recording.</td></tr>
+            <tr><td><code>stenographer</code></td><td>Open the terminal hub when stdin and stdout are terminals; otherwise show help. Live waits for <code>space</code>; use <code>m</code> and <code>s</code> to toggle sources and <code>v</code> to switch transcript views.</td></tr>
             <tr><td><code>stenographer run</code></td><td>Run the daemon in your terminal, in the foreground.</td></tr>
-            <tr><td><code>stenographer live</code></td><td>Transcribe the microphone and full system mix. After <code>q</code>, renamed labels stay on one voice and unnamed voices are numbered by first appearance; press <code>q</code> again to skip. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/live.md">live guide</a>.</td></tr>
+            <tr><td><code>stenographer live</code></td><td>Open the standalone live app with its existing flags. After <code>q</code>, renamed labels stay on one voice and unnamed voices are numbered by first appearance; press <code>q</code> again to skip. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/live.md">live guide</a>.</td></tr>
             <tr><td><code>stenographer transcribe FILE [--raw] [--refine]</code></td><td>Transcribe one of your audio files; add <code>--raw</code> to skip formatting, or <code>--refine</code> to clean it up.</td></tr>
             <tr><td><code>stenographer model download</code></td><td>Download models explicitly. Use <code>--asr</code>, <code>--refine</code>, or <code>--live</code> to select them.</td></tr>
             <tr><td><code>stenographer doctor</code></td><td>Check what your system needs and print the fixes.</td></tr>
