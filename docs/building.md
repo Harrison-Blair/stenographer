@@ -27,7 +27,8 @@ prose, no sub-bullets, and no blank lines between bullets. Wrap bullets at 79
 columns with a two-space continuation indent.
 
 A changed default or renamed option belongs under `### Added`, phrased as the
-new behavior ("Uses `faster-whisper-large-v3-turbo` as the default model").
+new behavior ("Uses
+`deepdml/faster-whisper-large-v3-turbo-ct2` as the default model").
 Internal-only work — refactoring, test coverage, packaging with no observable
 effect — is folded into the synopsis or left out, never listed as a fix. An
 `[Unreleased]` section may be empty while nothing is pending, and otherwise

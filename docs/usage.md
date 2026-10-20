@@ -18,10 +18,11 @@ check the microphone, clipboard, model, and input permissions, and offers the
 separate model download. The model is about 1.6 GB and is downloaded only when
 you choose it.
 
-The default ASR model is `dropbox-dash/faster-whisper-large-v3-turbo`. It is
-about 1.6 GB and is downloaded only when you explicitly choose the model
-download. Existing configurations keep their selected model. For live capture,
-see the [live transcription guide](live.md).
+The default ASR model is `deepdml/faster-whisper-large-v3-turbo-ct2`. The
+[CPU model and context screen (2026-10-20)](transcription-experiments.md#cpu-model-and-context-screen-2026-10-20)
+selected this model. It is about 1.6 GB and is downloaded only when you choose
+the model download. Existing configurations keep their selected model. For
+live capture, see the [live transcription guide](live.md).
 
 The configuration file is:
 

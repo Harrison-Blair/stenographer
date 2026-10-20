@@ -88,8 +88,11 @@ systemctl --user start stenographer.service
 ```
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
-offers the separate large-v3-turbo model download (about 1.6 GB). Use plain
-`setup` to review every setting, or run `stenographer model download` later.
+offers the separate ASR model download. The default is
+`deepdml/faster-whisper-large-v3-turbo-ct2`, selected from the [CPU model and
+context screen (2026-10-20)](docs/transcription-experiments.md#cpu-model-and-context-screen-2026-10-20).
+Use plain `setup` to review every setting, or run `stenographer model download`
+later.
 
 For clearer recognition, first run `stenographer devices` and select the
 intended microphone. Keep it about 10–20 cm from your mouth, aim it slightly

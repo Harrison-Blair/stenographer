@@ -377,7 +377,7 @@ def test_model_overrides_are_ephemeral_and_preserve_other_settings():
     overridden = bench.override_config(
         cfg, model="cached-model", compute_type="float32", cpu_threads=2
     )
-    assert cfg.asr.model == "dropbox-dash/faster-whisper-large-v3-turbo"
+    assert cfg.asr.model == "deepdml/faster-whisper-large-v3-turbo-ct2"
     assert cfg.asr.compute_type == "int8"
     assert overridden.asr.model == "cached-model"
     assert overridden.asr.compute_type == "float32"
