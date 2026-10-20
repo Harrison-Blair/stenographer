@@ -70,20 +70,35 @@ def test_batch_relabel_assigns_renames_once_and_numbers_unnamed_clusters_by_appe
     assert sum(line.label == "Renamed voice" for line in relabeled) == 1
 
 
-def test_batch_relabel_keeps_distinct_minor_voice():
+def test_batch_relabel_keeps_sustained_minor_voice_at_realistic_similarity():
     lines = (
         _line(0.0, 100.0, "speaker-1", "Speaker 1"),
-        _line(101.0, 15.0, "speaker-2", "Speaker 2"),
+        *(
+            _line(101.0 + index * 4.0, 3.0, f"speaker-{index + 2}", "Speaker 2")
+            for index in range(5)
+        ),
     )
-    embeddings = (
-        np.array([1.0, 0.0, 0.0], dtype=np.float32),
-        np.array([0.0, 0.0, 1.0], dtype=np.float32),
-    )
+    voice_a = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    voice_b = np.array([0.3, np.sqrt(0.91), 0.0], dtype=np.float32)
+    embeddings = (voice_a,) + (voice_b,) * 5
 
     relabeled = relabel_system_lines(lines, embeddings, threshold=0.5)
 
-    assert relabeled[0].speaker_id != relabeled[1].speaker_id
-    assert [line.label for line in relabeled] == ["Speaker 1", "Speaker 2"]
+    assert len({line.speaker_id for line in relabeled}) == 2
+    assert [line.label for line in relabeled] == ["Speaker 1"] + ["Speaker 2"] * 5
+
+
+def test_batch_relabel_short_residue_does_not_create_speakers():
+    lines = tuple(
+        _line(index * 2.0, 0.8, f"speaker-{index + 1}", f"Speaker {index + 1}")
+        for index in range(4)
+    )
+    embeddings = tuple(np.eye(4, dtype=np.float32)[index] for index in range(4))
+
+    relabeled = relabel_system_lines(lines, embeddings, threshold=0.5)
+
+    assert len({line.speaker_id for line in relabeled}) == 1
+    assert len({line.label for line in relabeled}) == 1
 
 
 def test_batch_relabel_uses_speech_time_weighted_votes_for_short_phrases():

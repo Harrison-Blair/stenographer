@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-# In the consented recording, 360 VAD phrases were shorter than 1.2 seconds.
+# 1.2 seconds separates brief fillers from phrases stable enough for live clustering.
 MINIMUM_SPEECH_DURATION_SECONDS = 1.2
+# Below this score, continuity is a safer assignment for a short phrase.
 _SHORT_PHRASE_FALLBACK_SIMILARITY = 0.25
 
 

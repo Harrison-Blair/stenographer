@@ -12,9 +12,16 @@ import numpy as np
 from stenographer.lib.live.speaker import MINIMUM_SPEECH_DURATION_SECONDS
 from stenographer.lib.live.transcript_line import TranscriptLine
 
+# A cluster with at least one fifth of the largest cluster's speech is a core voice.
 _MINIMUM_CLUSTER_SPEECH_FRACTION = 0.20
-# Positive cosine evidence allows weak duplicates but keeps orthogonal voices separate.
-_MINIMUM_SMALL_CLUSTER_SIMILARITY = 0.05
+# Two-second phrases provide sustained turns rather than brief vocal residue.
+_MINIMUM_SUSTAINED_PHRASE_SECONDS = 2.0
+# Fifteen seconds of sustained phrases provides meaningful minor-voice support.
+_MINIMUM_SUSTAINED_SPEECH_SECONDS = 15.0
+# A half-minute window groups nearby turns and rejects sparse residue.
+_SUSTAINED_SPEECH_WINDOW_SECONDS = 30.0
+# Two-thirds of a cluster's speech must come from sustained phrases.
+_MINIMUM_SUSTAINED_SPEECH_FRACTION = 2 / 3
 
 
 def relabel_system_lines(
@@ -45,7 +52,15 @@ def relabel_system_lines(
         index for index, duration in enumerate(durations) if duration >= minimum_duration
     ]
     if not anchor_indices:
-        anchor_indices = list(range(len(original)))
+        if progress is not None:
+            progress(0, len(original))
+        representative = int(np.argmax(durations))
+        speaker_id = original[representative].speaker_id
+        label = original[representative].label
+        result = tuple(replace(line, speaker_id=speaker_id, label=label) for line in original)
+        if progress is not None:
+            progress(len(original), len(original))
+        return result
 
     anchor_vectors = vectors[anchor_indices]
     anchor_count = len(anchor_indices)
@@ -126,6 +141,7 @@ def relabel_system_lines(
     core_vectors = {index: centroid(ordered_clusters[index]) for index in core_indices}
     core_clusters = {index: list(ordered_clusters[index]) for index in core_indices}
     progress_done = next_cluster
+    unassigned_indices: list[int] = []
     for index, members in enumerate(ordered_clusters):
         if index in core_clusters:
             continue
@@ -144,22 +160,40 @@ def relabel_system_lines(
             )
             scores.append(float(score))
         best_candidate = int(np.argmax(scores))
-        if scores[best_candidate] >= _MINIMUM_SMALL_CLUSTER_SIMILARITY:
-            chosen = candidate_indices[best_candidate]
-            core_clusters[chosen].extend(members)
-        else:
+        sustained_phrases = sorted(
+            (original[member].start, durations[member])
+            for member in members
+            if durations[member] >= _MINIMUM_SUSTAINED_PHRASE_SECONDS
+        )
+        sustained_window_speech = 0.0
+        right = 0
+        has_sustained_speech = False
+        for window_start, phrase_duration in sustained_phrases:
+            while (
+                right < len(sustained_phrases)
+                and sustained_phrases[right][0] < window_start + _SUSTAINED_SPEECH_WINDOW_SECONDS
+            ):
+                sustained_window_speech += sustained_phrases[right][1]
+                right += 1
+            if sustained_window_speech >= _MINIMUM_SUSTAINED_SPEECH_SECONDS:
+                has_sustained_speech = True
+                break
+            sustained_window_speech -= phrase_duration
+        # Merge a minor cluster as a whole only when it clears the live threshold.
+        if scores[best_candidate] >= threshold:
+            core_clusters[candidate_indices[best_candidate]].extend(members)
+        elif has_sustained_speech:
             core_clusters[index] = list(members)
             core_vectors[index] = centroid(members)
+        else:
+            # Unsupported phrases vote individually and cannot seed a speaker label.
+            unassigned_indices.extend(members)
         progress_done += 1
         if progress is not None:
             progress(progress_done, total)
     clusters = core_clusters
 
-    for phrase_index, duration in enumerate(durations):
-        if duration >= minimum_duration:
-            continue
-        if should_cancel is not None and should_cancel():
-            return None
+    def assign_to_best_cluster(phrase_index: int) -> None:
         scores = []
         for members in clusters.values():
             members_array = np.asarray(members, dtype=np.intp)
@@ -173,9 +207,43 @@ def relabel_system_lines(
         if scores:
             root = list(clusters)[int(np.argmax(scores))]
         clusters[root].append(phrase_index)
+
+    unassigned_indices.extend(
+        index for index, duration in enumerate(durations) if duration < minimum_duration
+    )
+    for phrase_index in unassigned_indices:
+        if should_cancel is not None and should_cancel():
+            return None
+        assign_to_best_cluster(phrase_index)
         progress_done += 1
         if progress is not None:
             progress(progress_done, total)
+
+    pruned_indices: list[int] = []
+    for cluster_index in tuple(clusters):
+        if cluster_index in core_indices:
+            continue
+        if should_cancel is not None and should_cancel():
+            return None
+        members = clusters[cluster_index]
+        speech = sum(durations[member] for member in members)
+        sustained_speech = sum(
+            durations[member]
+            for member in members
+            if durations[member] >= _MINIMUM_SUSTAINED_PHRASE_SECONDS
+        )
+        if (
+            sustained_speech >= _MINIMUM_SUSTAINED_SPEECH_SECONDS
+            and sustained_speech / speech >= _MINIMUM_SUSTAINED_SPEECH_FRACTION
+        ):
+            continue
+        pruned_indices.extend(members)
+        del clusters[cluster_index]
+
+    for phrase_index in pruned_indices:
+        if should_cancel is not None and should_cancel():
+            return None
+        assign_to_best_cluster(phrase_index)
 
     if progress is not None:
         progress(total, total)
