@@ -220,8 +220,7 @@ def relabel_system_lines(
         next_number += 1
 
     labels_by_speaker = {
-        f"speaker-{cluster_index + 1}": label
-        for cluster_index, label in cluster_labels.items()
+        f"speaker-{cluster_index + 1}": label for cluster_index, label in cluster_labels.items()
     }
     return tuple(
         replace(
