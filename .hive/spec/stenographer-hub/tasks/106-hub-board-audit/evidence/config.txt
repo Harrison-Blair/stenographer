@@ -1,0 +1,45 @@
+
+ ╭─ stenographer ────────╮ ╭─ Config ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │                       │ │                                                                                                                        │
+ │    1 Live             │ │  Groups: hotkey  audio  [asr]  refine  feedback  analytics  delivery                                                   │
+ │    2 Files            │ │  File: /tmp/stenographer-hub-audit-vtmjjhwv/config.toml                                                                │
+ │    3 Sessions         │ │  Unsaved changes: no                                                                                                   │
+ │  > 4 Config           │ │  Changes apply to new sessions and jobs; running work keeps its current settings.                                      │
+ │    5 Setup            │ │  > asr.model = deepdml/faster-whisper-large-v3-turbo-ct2                                                               │
+ │    6 Doctor   1W 1F   │ │      Default: deepdml/faster-whisper-large-v3-turbo-ct2                                                                │
+ │                       │ │      Cached speech-recognition model. Downloads require a separate command.                                            │
+ │                       │ │    asr.compute_type = int8                                                                                             │
+ │                       │ │      Default: int8                                                                                                     │
+ │                       │ │      Numeric format used by the speech-recognition model.                                                              │
+ │                       │ │    asr.beam_size = 1                                                                                                   │
+ │                       │ │      Default: 1                                                                                                        │
+ │                       │ │      Search width. On one 6.49 s public CPU clip (int8, hotwords and context off), large-v3-turbo beam 1 scored        │
+ │                       │ │  10.12% WER at 1.664 s median; beam 5 scored 9.31% at 1.683 s median.                                                  │
+ │                       │ │    asr.hotwords = (unset)                                                                                              │
+ │                       │ │      Default: (unset)                                                                                                  │
+ │                       │ │      Comma-separated names and terms to guide recognition; blank disables them.                                        │
+ │                       │ │    asr.initial_prompt = (unset)                                                                                        │
+ │                       │ │      Default: (unset)                                                                                                  │
+ │                       │ │      Optional style or domain context for recognition.                                                                 │
+ │                       │ │    asr.vad_filter = on                                                                                                 │
+ │                       │ │      Default: on                                                                                                       │
+ │                       │ │      Skip audio that the model classifies as non-speech.                                                               │
+ │                       │ │    asr.silence_threshold = 0.6                                                                                         │
+ │                       │ │      Default: 0.6                                                                                                      │
+ │                       │ │      Reject recognition results below the speech confidence threshold.                                                 │
+ │                       │ │    asr.idle_unload_seconds = 900                                                                                       │
+ │                       │ │      Default: 900                                                                                                      │
+ │                       │ │      Unload the idle recognition worker after this many seconds; zero disables it.                                     │
+ │                       │ │    asr.cpu_threads = 0                                                                                                 │
+ │                       │ │      Default: 0                                                                                                        │
+ │                       │ │      Recognition worker CPU threads; zero selects automatically.                                                       │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ │                       │ │                                                                                                                        │
+ ╰───────────────────────╯ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  enter edit   u undo   D reset   / search   ctrl+s save   ←/→ group   ↑/↓ key
