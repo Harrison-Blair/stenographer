@@ -147,8 +147,9 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics.
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
-- `stenographer model download [--asr|--refine]` — fetch a model explicitly.
+- `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
 - `stenographer run` — run the daemon in the foreground.
+- `stenographer live` — transcribe microphone and system audio in a terminal session; see the [live guide](docs/live.md).
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
 for sound packs, statistics, and configuration examples.
@@ -163,10 +164,12 @@ systemctl --user restart stenographer.service
 
 ## Privacy and more
 
-The model download is explicit and dictation runs locally. Audio, transcripts,
+Model downloads are explicit and dictation runs locally. Audio, transcripts,
 configuration, and device or model names stay on your machine. Logs never
-contain transcript text or audio. The only network request that leaves your
-machine is an optional, metadata-only release check; disable it in
+contain transcript text or audio. `stenographer live` saves the requested
+audio and transcript in a private session folder; see the [live guide](docs/live.md).
+The only automatic network request that leaves your machine is an optional,
+metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
 
 A [refine](docs/refine.md) pass, on by default, provides exactly two built-in
@@ -187,7 +190,8 @@ loads, the lifecycle pill's border breathes: in the amber Loading colour for
 the speech model and in the Refining colour for the cleanup model, taking
 turns one breath each when both are loading.
 
-Read the [user guide](docs/usage.md) for privacy settings and more examples.
+Read the [user guide](docs/usage.md) for privacy settings and more examples,
+and the [live guide](docs/live.md) for live capture and saved sessions.
 
 ## Development
 

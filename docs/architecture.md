@@ -15,6 +15,8 @@ their existing paths in `assets/`.
 - `audio/`, `hotkey/`, and `transcribe/`: recording and measurements, binding
   vocabulary, session/cancel chord tracking, ASR workers, formatting, and
   utterance records.
+- `live/`: live phrase segmentation, speaker labels, session coordination, and
+  private audio and transcript storage.
 - `refine/`: the local-model cleanup stage between formatting and
   delivery — pure request building, response parsing and the output guard, the
   Ollama client, and the refiner behind a protocol whose null implementation is
@@ -43,8 +45,9 @@ commands) or a `parser.py` owned by the command package. `cli/parser.py` and
 Handlers are resolved by import path only when their command runs.
 
 Commands own their prompts, terminal output, consent, and follow-up actions.
-`cli/run/` owns startup and its banner. `cli/setup/` owns quick/default setup and
-calibration prompts; `cli/sounds/` owns interactive pack selection and preview.
+`cli/run/` owns startup and its banner. `cli/live/` owns the live terminal UI
+and session controls. `cli/setup/` owns quick/default setup and calibration
+prompts; `cli/sounds/` owns interactive pack selection and preview.
 The model download and stats operations have their own subcommand packages.
 `cli/shared/` combines independent core and display capability results for reports.
 

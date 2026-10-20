@@ -10,21 +10,31 @@
 #   - libportaudio / pipewire / pulse libs (excluded by hook-sounddevice.py;
 #     found at runtime via rthooks/py_rth_portaudio.py)
 #   - wl-copy, canberra-gtk-play / pw-play / paplay CLIs; /dev/uinput access + `input` group
-# The ASR model (~1.5 GB) is never bundled; `stenographer model download`
-# fetches it into the HuggingFace cache (the only download path — hence certifi,
-# which the daemon-start update notice's metadata request also uses when present).
+# The ASR and live voice models are never bundled; explicit `stenographer
+# model download` commands fetch them into local model directories. Certifi is
+# optional; the update notice uses it when installed, or the system trust store.
 
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 from importlib.util import find_spec
 from pathlib import Path
 
-import certifi
 from PyInstaller.depend.bindepend import get_imports
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+
+try:
+    import certifi
+except ImportError:
+    CERTIFI_DATAS = []
+    CERTIFI_IMPORTS = []
+else:
+    CERTIFI_DATAS = [(certifi.where(), "certifi")]
+    CERTIFI_IMPORTS = ["certifi"]
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 ASSET_SRC = PROJECT_ROOT / "src" / "stenographer" / "assets"
+TEXTUAL_DATAS, TEXTUAL_BINARIES, TEXTUAL_IMPORTS = collect_all("textual")
+SHERPA_DATAS, SHERPA_BINARIES, SHERPA_IMPORTS = collect_all("sherpa_onnx")
 NATIVE_BINARIES = []
 NATIVE_IMPORTS = []
 if sys.platform == "linux":
@@ -43,18 +53,22 @@ a = Analysis(
     pathex=[str(PROJECT_ROOT / "src")],
     # Explicit collection keeps the completed PyWayland CFFI build and lets
     # PyInstaller trace its libwayland/libffi shared-library dependencies.
-    binaries=NATIVE_BINARIES,
+    binaries=[*NATIVE_BINARIES, *TEXTUAL_BINARIES, *SHERPA_BINARIES],
     datas=[
         # Sound cues plus the overlay quill, Caveat variable font, and OFL.
         (str(ASSET_SRC), "stenographer/assets"),
-        (certifi.where(), "certifi"),
+        *CERTIFI_DATAS,
+        *TEXTUAL_DATAS,
+        *SHERPA_DATAS,
         # Silero VAD model — vad_filter is always on in model.py.
         *collect_data_files("faster_whisper", includes=["assets/*.onnx"]),
     ],
     hiddenimports=[
         "sounddevice",
-        "certifi",
+        *CERTIFI_IMPORTS,
         *NATIVE_IMPORTS,
+        *TEXTUAL_IMPORTS,
+        *SHERPA_IMPORTS,
         # Heavy imports are deferred into subcommand handlers, so static
         # analysis from entry.py alone would miss most of the package.
         *collect_submodules("stenographer"),

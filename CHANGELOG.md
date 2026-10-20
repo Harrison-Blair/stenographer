@@ -14,10 +14,13 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 ## [Unreleased]
 
 Your previous clipboard item now comes back after each paste, and an Agent
-rewrite keeps the unrefined transcript in your clipboard history.
+rewrite keeps the unrefined transcript in your clipboard history. The new
+`stenographer live` command records and transcribes microphone and system audio.
 
 ### Added
 
+- Adds `stenographer live` for local microphone and system-audio transcription,
+  with saved audio and transcript sessions.
 - After each paste, the daemon waits `restore_delay_ms` (500 ms by default) and
   puts back the clipboard item it saved before copying the transcript. Only
   one type of that item is restored, preferring plain text; items a password

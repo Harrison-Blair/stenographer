@@ -20,7 +20,8 @@ you choose it.
 
 The default ASR model is `dropbox-dash/faster-whisper-large-v3-turbo`. It is
 about 1.6 GB and is downloaded only when you explicitly choose the model
-download. Existing configurations keep their selected model.
+download. Existing configurations keep their selected model. For live capture,
+see the [live transcription guide](live.md).
 
 The configuration file is:
 
@@ -191,6 +192,15 @@ local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
 `qwen3.5:4b` is the documented alternative and needs
 `structured_output = true`. Model reasoning is always disabled. See
 [docs/refine.md](refine.md) for the whole feature.
+
+## Start live transcription
+
+Run `stenographer live` to transcribe the microphone and full system mix in a
+terminal session. Download its voice and speaker models with
+`stenographer model download --live`; download the configured ASR model
+separately with `stenographer model download --asr`. See the
+[live transcription guide](live.md) for source controls, saved files, privacy,
+and limits.
 
 ## Troubleshoot a running service
 

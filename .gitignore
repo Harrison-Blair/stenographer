@@ -82,28 +82,13 @@
 !/docs/building.md
 !/docs/cue-audition.md
 !/docs/refine.md
+!/docs/live.md
 !/docs/transcription-experiments.md
 !/docs/usage.md
 !/docs/reference/
 !/docs/reference/guru/
 !/docs/reference/guru/code-smells.md
 !/docs/reference/guru/refactoring-techniques.md
-
-# Task evidence required for review.
-!/evidence/
-!/evidence/30-live-spike/
-!/evidence/30-live-spike/bench.md
-!/evidence/30-live-spike/V1.md
-!/evidence/30-live-spike/V2.md
-!/evidence/30-live-spike/V3.md
-!/evidence/30-live-spike/V4.md
-!/evidence/30-live-spike/V5.md
-!/evidence/33-live-speakers/
-!/evidence/33-live-speakers/V1.md
-!/evidence/33-live-speakers/V2.md
-!/evidence/33-live-speakers/V3.md
-!/evidence/33-live-speakers/V4.md
-!/evidence/33-live-speakers/VERIFIED.md
 
 # GitHub Pages site; the icon and font are copied from src/ at deploy time.
 !/site/
