@@ -13,12 +13,30 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
-This change removes Windows platform support and updates the default ASR model.
+Adds a terminal hub for live recording, file transcription, saved sessions,
+configuration, setup, and diagnostics. It updates the default ASR model and
+removes Windows platform support.
 
 ### Added
 
-- Uses `deepdml/faster-whisper-large-v3-turbo-ct2` as the default ASR model.
-  Existing configured model values remain unchanged.
+- Opens a six-section terminal hub when `stenographer` runs in a terminal.
+  Live starts only when you press `space`, and recording continues as you
+  change sections. The daemon and existing commands keep their behavior.
+- Adds a Files screen that queues audio transcription jobs, shows progress and
+  previews, and exports Markdown, JSON Lines, SubRip, or plain text. M4A and
+  AAC files need the system `ffmpeg` executable. Files jobs can use automatic
+  or fixed speaker counts.
+- Adds Sessions, Config, Setup, and Doctor screens. Sessions can play,
+  re-diarize, re-transcribe, rename, export, and delete saved sessions. Config
+  keeps a timestamped backup when it saves changes.
+- Re-labels saved system phrases after a live session. A minor voice gets its
+  own label only with at least 15 seconds of phrases at least 2 seconds long
+  within 30 seconds and at least two-thirds of its speech in those phrases, or
+  speech time at least 20% of the top speaker's time. Otherwise, it merges into
+  the most similar voice.
+- Uses `deepdml/faster-whisper-large-v3-turbo-ct2` as the default ASR model
+  for dictation, Live, and Files. An explicit `asr.model` in an existing
+  configuration remains unchanged.
 
 ### Removed
 
