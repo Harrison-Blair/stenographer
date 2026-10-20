@@ -267,7 +267,7 @@ def test_setup_microphone_edit_uses_workflow_device_choices(monkeypatch, tmp_pat
     asyncio.run(exercise())
 
 
-def test_setup_defaults_replace_config_and_preserve_a_backup(tmp_path):
+def test_setup_defaults_replace_config_and_preserve_a_backup(tmp_path, monkeypatch):
     async def exercise():
         path = tmp_path / "config.toml"
         defaults = Config.defaults()
@@ -283,10 +283,21 @@ def test_setup_defaults_replace_config_and_preserve_a_backup(tmp_path):
             config_editor=ConfigEditor(path),
             doctor_probe=lambda _config, _path: report,
         )
+        workers = []
+        run_worker = app.run_worker
+
+        def track_worker(*args, **kwargs):
+            worker = run_worker(*args, **kwargs)
+            if worker.group == "setup":
+                workers.append(worker)
+            return worker
+
+        monkeypatch.setattr(app, "run_worker", track_worker)
         async with app.run_test() as pilot:
             await pilot.press("5")
             await pilot.press("shift+d")
-            await pilot.pause()
+            assert len(workers) == 1
+            await workers[0].wait()
 
         saved = Config.loads(path.read_text())
         assert saved == defaults
