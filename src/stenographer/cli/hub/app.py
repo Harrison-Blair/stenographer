@@ -111,6 +111,8 @@ class HubApp(App[None]):
         padding: 1 2;
         margin-bottom: 1;
         border: round #3a4150;
+        border-title-color: #5fd7ff;
+        border-title-style: bold;
     }
     #sidebar-card {
         width: 1fr;
@@ -143,6 +145,8 @@ class HubApp(App[None]):
     }
     #live-rec {
         border: round #ff875f;
+        border-title-color: #ff875f;
+        border-title-style: bold;
     }
     #live-mic {
         border: round #5fd7ff;
@@ -156,12 +160,14 @@ class HubApp(App[None]):
         margin-top: 1;
         padding: 0 1;
         border: round #3a4150;
+        border-title-color: ansi_default;
+        border-title-style: bold;
         overflow-y: auto;
     }
     #key-hints {
         height: 1;
         padding: 0 2;
-        color: #a0a8b8;
+        color: ansi_default;
     }
     """
     )
@@ -228,6 +234,16 @@ class HubApp(App[None]):
     @property
     def current_section(self) -> str:
         return self._section
+
+    @staticmethod
+    def _format_key_hints(*items: tuple[str, str]) -> Text:
+        hints = Text()
+        for index, (key, description) in enumerate(items):
+            if index:
+                hints.append("   ", style="default")
+            hints.append(key, style="bold #5fd7ff")
+            hints.append(f" {description}", style="default")
+        return hints
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="hub-layout"):
@@ -370,29 +386,81 @@ class HubApp(App[None]):
         hints = screen.query_one("#key-hints", Static)
         if self._section == "config":
             hints.update(
-                "enter edit   u undo   D reset   / search   ctrl+s save   ←/→ group   ↑/↓ key"
+                self._format_key_hints(
+                    ("enter", "edit"),
+                    ("u", "undo"),
+                    ("D", "reset"),
+                    ("/", "search"),
+                    ("ctrl+s", "save"),
+                    ("←/→", "group"),
+                    ("↑/↓", "key"),
+                )
             )
         elif self._section == "setup":
-            hints.update("enter next   b back   s skip   t test   e edit   D defaults   Q quick")
+            hints.update(
+                self._format_key_hints(
+                    ("enter", "next"),
+                    ("b", "back"),
+                    ("s", "skip"),
+                    ("t", "test"),
+                    ("e", "edit"),
+                    ("D", "defaults"),
+                    ("Q", "quick"),
+                )
+            )
         elif self._section == "doctor":
-            hints.update("r re-check   enter details   f fix in Setup   l open log   c copy report")
+            hints.update(
+                self._format_key_hints(
+                    ("r", "re-check"),
+                    ("enter", "details"),
+                    ("f", "fix in Setup"),
+                    ("l", "open log"),
+                    ("c", "copy report"),
+                )
+            )
         elif self._section == "sessions":
             hints.update(
-                "↑/↓ session   p play   d re-diarize   t re-transcribe   "
-                "r rename   x export   del delete"
+                self._format_key_hints(
+                    ("↑/↓", "session"),
+                    ("p", "play"),
+                    ("d", "re-diarize"),
+                    ("t", "re-transcribe"),
+                    ("r", "rename"),
+                    ("x", "export"),
+                    ("del", "delete"),
+                )
             )
         elif self._section == "live":
             hints.update(
-                "space pause/resume   m mic   s system   v view   r rename   q stop/save   "
-                "1-6 sections"
+                self._format_key_hints(
+                    ("space", "pause/resume"),
+                    ("m", "mic"),
+                    ("s", "system"),
+                    ("v", "view"),
+                    ("r", "rename"),
+                    ("q", "stop/save"),
+                    ("1-6", "sections"),
+                )
             )
         elif self._section == "files":
             hints.update(
-                "↑/↓ move · tab focus · / search · enter queue · space select · "
-                "o options · x cancel · e folder"
+                self._format_key_hints(
+                    ("↑/↓", "move"),
+                    ("tab", "focus"),
+                    ("/", "search"),
+                    ("enter", "queue"),
+                    ("space", "select"),
+                    ("o", "options"),
+                    ("x", "cancel"),
+                    ("e", "folder"),
+                )
             )
         else:
-            hints.update("space start recording   1-6 sections   q quit")
+            hints.update(
+                self._format_key_hints(
+                    ("space", "start recording"), ("1-6", "sections"), ("q", "quit")
+                )
+            )
 
     def set_sidebar_card(self, content: str | Text, *, section: str | None = None) -> None:
         """Set the shared sidebar card content for one hub section."""

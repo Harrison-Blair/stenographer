@@ -11,7 +11,9 @@ from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Static
+from textual.widgets import Digits, Static
+
+from stenographer.cli.shared.speaker_colors import speaker_color
 
 if TYPE_CHECKING:
     from stenographer.lib.live.live_session import LiveSession
@@ -22,7 +24,9 @@ class LiveView(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="live-top"):
-            yield Static("", id="live-rec", markup=False)
+            with Vertical(id="live-rec"):
+                yield Static("", id="live-rec-status", markup=False)
+                yield Digits("", id="live-elapsed")
             yield Static("", id="live-mic", markup=False)
             yield Static("", id="live-system", markup=False)
         yield Static("", id="live-transcript", markup=False)
@@ -41,12 +45,13 @@ class LiveView(Vertical):
 
         elapsed = session.elapsed_seconds if session is not None else 0
         active = session is not None or recording_active
-        rec = Text()
-        rec.append("● REC" if active else "○ REC", style="bold #ff875f")
-        rec.append(f"\n{self._format_time(elapsed)}", style="bold")
+        rec_status = "● REC" if active else "○ REC"
         if session is not None and session.paused:
-            rec.append("\nPAUSED", style="bold #ff875f")
-        self.query_one("#live-rec", Static).update(rec)
+            rec_status = "Ⅱ PAUSED"
+        rec = self.query_one("#live-rec", Vertical)
+        rec.border_title = "REC"
+        self.query_one("#live-rec-status", Static).update(Text(rec_status, style="bold #ff875f"))
+        self.query_one("#live-elapsed", Digits).update(self._format_time(elapsed))
 
         for key, source, device, color in (
             ("m", "mic", mic_device, "#5fd7ff"),
@@ -58,15 +63,20 @@ class LiveView(Vertical):
             reason = session.source_reasons[source] if session is not None else None
             level_text = "-inf" if not math.isfinite(level) else f"{level:.0f}"
             panel_widget = self.query_one(f"#live-{source}", Static)
-            heading = f"[{key}] {source.upper()} {source_state} · {device}"
-            panel = Text()
-            panel.append(f"[{key}] {source.upper()}", style=f"bold {color}")
-            if len(heading) <= panel_widget.region.width - 4:
-                panel.append(f" {source_state} · {device}")
+            heading = f"[{key}] {source.upper()}"
+            state_device = f" {source_state} · "
+            panel_width = panel_widget.region.width or max(1, (self.app.size.width - 30) // 3)
+            device_width = max(1, panel_width - 4 - len(heading) - len(state_device))
+            if len(device) > device_width:
+                shortened = device[: device_width - 1].rsplit(" ", 1)[0].rstrip()
+                display_device = (shortened or device[: device_width - 1].rstrip()) + "…"
             else:
-                panel.append(f" {source_state}\n{device}")
+                display_device = device
+            panel = Text()
+            panel.append(heading, style=f"bold {color}")
+            panel.append(state_device + display_device)
             if reason:
-                panel.append(f" · {reason}")
+                panel.append(f"\n{reason}")
             panel.append("\n")
             panel.append(
                 self._waveform_meter(level, floor, active=source_state == "on"), style=color
@@ -83,7 +93,12 @@ class LiveView(Vertical):
         transcript = self.query_one("#live-transcript", Static)
         view = "split" if split else "mixed"
         transcript.border_title = f"transcript · {view} · {speaker_count} {speaker_label}"
-        table = self._split_table(lines) if split else self._mixed_table(lines)
+        speaker_ids = tuple(speaker_id for speaker_id, _label in speakers)
+        table = (
+            self._split_table(lines, speaker_ids)
+            if split
+            else self._mixed_table(lines, speaker_ids)
+        )
         if not lines:
             message = (
                 "Recording is active. Change sections without stopping it."
@@ -98,19 +113,20 @@ class LiveView(Vertical):
         transcript.update(content)
 
     @staticmethod
-    def _mixed_table(lines) -> Table:
+    def _mixed_table(lines, speaker_ids: tuple[str, ...]) -> Table:
         table = Table.grid(padding=(0, 1), expand=True)
         table.add_column(width=8, no_wrap=True)
         table.add_column(no_wrap=True)
         table.add_column(ratio=1)
         for line in lines:
-            label = Text(line.label, style="bold #5fd7ff")
+            color = speaker_color(line.speaker_id, speaker_ids, source=line.source)
+            label = Text(line.label, style=f"bold {color}")
             text = line.text.replace("\n", " ")
             table.add_row(LiveView._format_time(line.start), label, text)
         return table
 
     @staticmethod
-    def _split_table(lines) -> Table:
+    def _split_table(lines, speaker_ids: tuple[str, ...]) -> Table:
         table = Table.grid(padding=(0, 1), expand=True)
         table.add_column(width=8, no_wrap=True)
         table.add_column(ratio=1)
@@ -119,7 +135,8 @@ class LiveView(Vertical):
         system_heading = Text("SYSTEM · everyone else", style="bold #ffaf5f")
         table.add_row("", mic_heading, system_heading)
         for line in lines:
-            label = Text(line.label, style="bold #5fd7ff")
+            color = speaker_color(line.speaker_id, speaker_ids, source=line.source)
+            label = Text(line.label, style=f"bold {color}")
             cell = Text()
             cell.append_text(label)
             cell.append(f"  {line.text.replace(chr(10), ' ')}")
