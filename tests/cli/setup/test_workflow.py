@@ -276,7 +276,7 @@ def test_full_review_lists_every_section_and_field():
         "  min_speech_rms = 0.0005",
         "  max_recording_seconds = 600",
         "[asr]",
-        "  model = dropbox-dash/faster-whisper-large-v3-turbo",
+        "  model = deepdml/faster-whisper-large-v3-turbo-ct2",
         "  compute_type = int8",
         "  beam_size = 1",
         "  hotwords = automatic/unset",
@@ -1186,7 +1186,7 @@ def test_guided_setup_prints_the_doctor_report_and_succeeds(guided):
     assert code == 0
     assert "== doctor report ==" in stdout
     assert events == [
-        "cache:dropbox-dash/faster-whisper-large-v3-turbo",
+        "cache:deepdml/faster-whisper-large-v3-turbo-ct2",
         "refine-probe:http://127.0.0.1:11434",
         "probe",
     ]
@@ -1199,7 +1199,7 @@ def test_guided_setup_offers_the_download_of_an_uncached_model_and_takes_no_for_
     assert code == 0
     assert "is not cached (download is approximately 1.6 GB)" in stdout
     assert "Download it from the network now? [y/N]: " in stdout
-    assert "download:dropbox-dash/faster-whisper-large-v3-turbo" not in events
+    assert "download:deepdml/faster-whisper-large-v3-turbo-ct2" not in events
 
 
 def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
@@ -1207,7 +1207,7 @@ def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
 
     assert code == 0
     assert "Download it from the network now? [Y/n]: " in stdout
-    assert "download:dropbox-dash/faster-whisper-large-v3-turbo" in events
+    assert "download:deepdml/faster-whisper-large-v3-turbo-ct2" in events
     assert "Model download complete." in stdout
 
 
@@ -1323,7 +1323,7 @@ def test_guided_setup_reports_a_failed_refine_pull_as_an_operational_failure(gui
     assert code == 1
     assert stderr == "stenographer: refine model pull failed: boom\n"
     assert events == [
-        "cache:dropbox-dash/faster-whisper-large-v3-turbo",
+        "cache:deepdml/faster-whisper-large-v3-turbo-ct2",
         "refine-probe:http://127.0.0.1:11434",
         "refine-pull:gemma4:e2b",
         "probe",

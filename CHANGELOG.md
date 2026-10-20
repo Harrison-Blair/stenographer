@@ -13,7 +13,12 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
-This change removes Windows platform support.
+This change removes Windows platform support and updates the default ASR model.
+
+### Added
+
+- Uses `deepdml/faster-whisper-large-v3-turbo-ct2` as the default ASR model.
+  Existing configured model values remain unchanged.
 
 ### Removed
 

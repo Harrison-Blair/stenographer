@@ -10,6 +10,7 @@ import pytest
 from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 
 
 class FakeServices:
@@ -49,7 +50,10 @@ class FakeServices:
 def test_pilot_navigation_focus_and_recording_lifecycle():
     async def exercise():
         services = FakeServices()
-        app = HubApp(services)
+        doctor_report = DoctorReport(
+            (DoctorCheck("test", "test", "input and audio", "ok", "available", ""),), ()
+        )
+        app = HubApp(services, doctor_probe=lambda _config, _path: doctor_report)
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.current_section == "live"
@@ -63,9 +67,11 @@ def test_pilot_navigation_focus_and_recording_lifecycle():
             ):
                 await pilot.press(key)
                 assert app.current_section == section
+                if section == "doctor":
+                    await pilot.pause()
 
             doctor_row = str(app.query_one("#sidebar", Static).render()).splitlines()[-1]
-            assert "Doctor" in doctor_row and doctor_row.endswith("0")
+            assert "Doctor" in doctor_row and doctor_row.endswith("0W 0F")
 
             search = Input(id="test-input")
             await app.mount(search)

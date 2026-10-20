@@ -30,7 +30,7 @@ class Decoder:
             "cpu_threads": self.model.cpu_threads,
         }
 
-    def transcribe(self, samples, profile):
+    def transcribe(self, samples, profile, **decode_overrides):
         started = time.monotonic()
         cfg = self.cfg
         duration = len(samples) / SAMPLE_RATE
@@ -60,6 +60,7 @@ class Decoder:
             word_timestamps=True,
         )
         options.update(profile.decode)
+        options.update(decode_overrides)
         segments_iter, info = self.model._impl.transcribe(samples, **options)
         segments = [
             SegmentInfo(

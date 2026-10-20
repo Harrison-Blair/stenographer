@@ -31,6 +31,13 @@ class FakeSession:
         self.actions = []
         self.emit_during_stop = False
         self.stop_callback_blocked = False
+        self.relabel_status = ""
+        self.relabel_error = None
+        self.stop_started = threading.Event()
+        self.stop_finished = threading.Event()
+        self.allow_stop = threading.Event()
+        self.block_stop = False
+        self.skip_requested = False
 
     def subscribe(self, callback):
         self.callbacks.append(callback)
@@ -60,12 +67,21 @@ class FakeSession:
 
     def stop(self):
         self.actions.append("stop")
+        if self.block_stop:
+            self.stop_started.set()
+            self.allow_stop.wait(timeout=2)
         if self.emit_during_stop:
             line = TranscriptLine(1.0, 2.0, "wall", "mic", "you", "You", "words")
             callback_thread = threading.Thread(target=self.callbacks[0], args=(line,), daemon=True)
             callback_thread.start()
             callback_thread.join(timeout=0.1)
             self.stop_callback_blocked = callback_thread.is_alive()
+        self.stop_finished.set()
+
+    def skip_relabel(self):
+        self.skip_requested = True
+        self.actions.append("skip_relabel")
+        self.allow_stop.set()
 
     def emit(self, line):
         self.lines.append(line)
@@ -119,7 +135,35 @@ def test_pilot_controls_show_lines_rename_old_lines_and_stop():
             assert "01:01:01  Alice  recognized words" in transcript
 
             await pilot.press("q")
+            assert await asyncio.to_thread(session.stop_finished.wait, 1)
             assert session.actions[-1] == "stop"
+
+    import asyncio
+
+    asyncio.run(exercise())
+
+
+def test_second_q_skips_relabel_and_stop_progress_is_visible():
+    async def exercise():
+        session = FakeSession()
+        session.block_stop = True
+        session.relabel_status = "Relabeling speakers 2/5 · q to skip"
+        app = LiveApp(session)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            status = str(app.query_one("#status", Static).render())
+            assert "Relabeling speakers 2/5 · q to skip" in status
+
+            first_press = asyncio.create_task(pilot.press("q"))
+            assert await asyncio.to_thread(session.stop_started.wait, 1)
+            status = str(app.query_one("#status", Static).render())
+            assert "Saving..." in status
+            await pilot.press("q")
+            await pilot.pause()
+            assert session.skip_requested
+            await first_press
+            assert await asyncio.to_thread(session.stop_finished.wait, 1)
+            assert session.actions[-1] == "skip_relabel"
 
     import asyncio
 
@@ -183,6 +227,7 @@ def test_stop_does_not_block_the_ui_while_transcript_callbacks_finish():
         app = LiveApp(session)
         async with app.run_test() as pilot:
             await pilot.press("q")
+            assert await asyncio.to_thread(session.stop_finished.wait, 1)
             assert not session.stop_callback_blocked
 
     import asyncio
@@ -196,6 +241,7 @@ def test_ctrl_c_stops_and_saves_the_session():
         app = LiveApp(session)
         async with app.run_test() as pilot:
             await pilot.press("ctrl+c")
+            assert await asyncio.to_thread(session.stop_finished.wait, 1)
             assert session.actions[-1] == "stop"
 
     import asyncio

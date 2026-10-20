@@ -19,7 +19,12 @@ spec = importlib.util.spec_from_file_location(
 bench = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bench)
 
+from transcription_study.asr_grid import grid_settings, repeated_phrase_hallucinations  # noqa: E402
+from transcription_study.context import build_prompt, recording_groups  # noqa: E402
+from transcription_study.decode import Decoder  # noqa: E402
+from transcription_study.grid_report import render_markdown_table  # noqa: E402
 from transcription_study.profiles import select_clips  # noqa: E402
+from transcription_study.real_audio import candidate_snippets, wait_until_stable  # noqa: E402
 from transcription_study.records import Profile  # noqa: E402
 from transcription_study.scoring import normalize, score  # noqa: E402
 
@@ -104,6 +109,172 @@ def test_selection_includes_explicit_nonspeech_controls_after_speech():
 def test_selection_rejects_unknown_corpus_labels():
     with pytest.raises(ValueError, match="unsupported_corpus"):
         select_clips({"clips": [{"id": "unknown", "split": "dev", "corpus": "typo"}]}, "dev", 12)
+
+
+def test_wait_for_stable_file_restarts_window_after_size_change(tmp_path, monkeypatch):
+    from transcription_study import real_audio
+
+    path = tmp_path / "recording.wav"
+    path.write_bytes(b"first")
+    elapsed = 0.0
+    sleeps = []
+
+    def fake_monotonic():
+        return elapsed
+
+    def fake_sleep(seconds):
+        nonlocal elapsed
+        sleeps.append(seconds)
+        elapsed += seconds
+        if len(sleeps) == 1:
+            path.write_bytes(b"second")
+
+    monkeypatch.setattr(real_audio.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(real_audio.time, "sleep", fake_sleep)
+    assert wait_until_stable(path, stable_seconds=2, max_wait_seconds=10) == 6
+    assert sleeps == [2, 2]
+
+
+def test_long_audio_samples_only_known_suspicious_output_windows():
+    snippets = candidate_snippets(
+        "Safe text, then Kadian was mentioned. Later: and more. and more!"
+    )
+    assert len(snippets) == 1
+    assert "Kadian" in snippets[0]
+    assert "and more. and more" in snippets[0]
+
+
+def test_context_groups_recordings_in_order_and_never_uses_own_reference():
+    clips = [
+        {"id": "late", "meeting": "ES2002a", "capture": "Headset-0", "start_seconds": 30},
+        {"id": "other", "meeting": "ES2002a", "capture": "Headset-1", "start_seconds": 15},
+        {"id": "early", "meeting": "ES2002a", "capture": "Headset-0", "start_seconds": 10},
+        {"id": "middle", "meeting": "ES2002a", "capture": "Headset-0", "start_seconds": 20},
+        {"id": "latest", "meeting": "ES2002a", "capture": "Headset-0", "start_seconds": 40},
+    ]
+    groups = recording_groups(clips)
+    assert [[clip["id"] for clip in group] for group in groups] == [
+        ["early", "middle", "late", "latest"],
+        ["other"],
+    ]
+    prompt, source_ids = build_prompt(
+        clips[4],
+        groups[0][:3],
+        references={
+            "early": "prior one",
+            "middle": "prior two",
+            "late": "prior three",
+            "latest": "private target reference",
+        },
+        decoded={},
+        mode="reference",
+    )
+    assert prompt == "prior one prior two prior three"
+    assert source_ids == ["early", "middle", "late"]
+    assert "private target reference" not in prompt
+
+
+def test_grid_markdown_table_formats_metrics_and_labels_reference_context_upper_bound():
+    row = {
+        "model": "medium.en",
+        "setting": "beam1-hotwords-on-context-reference",
+        "beam_size": 1,
+        "hotwords": True,
+        "context": "reference",
+        "errors": 9,
+        "N": 100,
+        "wer": 0.09,
+        "latency_median_seconds": 1.2345,
+        "latency_p90_seconds": 1.5678,
+        "extra_latency_vs_default_seconds": -0.1234,
+        "latency_rtf": 0.4,
+        "rss_peak_bytes": 1073741824,
+    }
+    assert render_markdown_table([row]) == (
+        "| Model | Setting | WER | Median | p90 | Extra vs default | RTF | RSS peak |\n"
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n"
+        "| medium.en | beam 1; hotwords on; context reference (upper bound) | "
+        "9.00% (9/100) | 1.234 s | 1.568 s | -0.123 s | 0.400x | 1.00 GiB |"
+    )
+
+
+def test_grid_settings_cover_beam_hotwords_and_context_without_float32():
+    settings = grid_settings()
+    assert len(settings) == 12
+    assert {setting.beam_size for setting in settings} == {1, 5}
+    assert {setting.hotwords for setting in settings} == {False, True}
+    assert {setting.context for setting in settings} == {"off", "reference", "decoded"}
+    assert all(setting.compute_type == "int8" for setting in settings)
+    assert len({setting.id for setting in settings}) == 12
+
+
+def test_grid_decoder_forwards_temporary_settings_without_changing_config(monkeypatch):
+    import numpy as np
+    from transcription_study import decode
+
+    observed = {}
+
+    class Backend:
+        device = "cpu"
+        compute_type = "int8"
+
+        def transcribe(self, samples, **options):
+            observed.update(options)
+            return iter(()), SimpleNamespace(duration_after_vad=len(samples) / 16000)
+
+    backend = Backend()
+    model = SimpleNamespace(
+        _impl=SimpleNamespace(model=backend, transcribe=backend.transcribe), cpu_threads=2
+    )
+    monkeypatch.setattr(decode, "Model", lambda cfg: model)
+    monkeypatch.setattr(
+        decode, "_assemble", lambda *args, **kwargs: SimpleNamespace(segments=[], text="")
+    )
+    cfg = Config.defaults().asr
+    decoder = Decoder(cfg)
+    decoder.transcribe(
+        np.ones(16000, dtype=np.float32),
+        Profile("grid"),
+        beam_size=5,
+        hotwords=None,
+        initial_prompt="previous context",
+    )
+    assert observed["beam_size"] == 5
+    assert observed["hotwords"] is None
+    assert observed["initial_prompt"] == "previous context"
+    assert cfg.beam_size == 1
+    assert cfg.hotwords is None
+
+
+def test_known_repeated_phrase_counter_counts_adjacent_duplicate_occurrences():
+    assert repeated_phrase_hallucinations("And more. AND more!") == 1
+    assert repeated_phrase_hallucinations("and more. and more. and more.") == 2
+    assert repeated_phrase_hallucinations("and more, then a little more") == 0
+
+
+def test_context_decoded_mode_uses_only_last_three_prior_clips_and_resets_recording():
+    clips = [
+        {"id": str(index), "meeting": "ES2002a", "capture": "Headset-0", "start_seconds": index}
+        for index in range(5)
+    ]
+    groups = recording_groups(clips)
+    prompt, source_ids = build_prompt(
+        clips[4],
+        groups[0][:-1],
+        references={},
+        decoded={str(index): f"decoded {index}" for index in range(5)},
+        mode="decoded",
+    )
+    assert prompt == "decoded 1 decoded 2 decoded 3"
+    assert source_ids == ["1", "2", "3"]
+    with pytest.raises(ValueError, match="same recording"):
+        build_prompt(
+            clips[4],
+            [clips[0], {"id": "foreign", "meeting": "other", "capture": "Headset-0"}],
+            references={},
+            decoded={},
+            mode="reference",
+        )
 
 
 def test_resume_is_fingerprint_and_split_specific(tmp_path):
@@ -206,7 +377,7 @@ def test_model_overrides_are_ephemeral_and_preserve_other_settings():
     overridden = bench.override_config(
         cfg, model="cached-model", compute_type="float32", cpu_threads=2
     )
-    assert cfg.asr.model == "dropbox-dash/faster-whisper-large-v3-turbo"
+    assert cfg.asr.model == "deepdml/faster-whisper-large-v3-turbo-ct2"
     assert cfg.asr.compute_type == "int8"
     assert overridden.asr.model == "cached-model"
     assert overridden.asr.compute_type == "float32"
