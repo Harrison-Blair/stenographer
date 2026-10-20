@@ -33,7 +33,7 @@ class SessionStore:
         return tuple(summaries)
 
     def read(self, session_id: str) -> SessionDetail:
-        """Read the current transcript and derive talk-time and activity data."""
+        """Read the transcript and derive talk time and FLAC activity on demand."""
         directory = session_directory(self.root, session_id)
         if directory is None:
             raise SessionNotFoundError(f"session not found: {session_id}")

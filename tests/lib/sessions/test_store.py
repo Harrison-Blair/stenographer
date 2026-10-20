@@ -10,9 +10,7 @@ import numpy as np
 
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.sessions.errors import SessionNotFoundError
-from stenographer.lib.sessions.exporter import export_transcript
-from stenographer.lib.sessions.store import SessionStore
+from stenographer.lib.sessions import SessionNotFoundError, SessionStore, export_transcript
 
 
 def _line(start: float, end: float, speaker_id: str, label: str, text: str) -> TranscriptLine:
@@ -111,9 +109,8 @@ def test_session_and_shared_exporters_write_all_formats_privately(tmp_path):
     store = SessionStore(tmp_path / "sessions")
     output = tmp_path / "exports"
 
-    exported = {
-        format: store.export(session.name, output, format) for format in ("md", "jsonl", "srt", "txt")
-    }
+    formats = ("md", "jsonl", "srt", "txt")
+    exported = {format: store.export(session.name, output, format) for format in formats}
 
     assert set(exported) == {"md", "jsonl", "srt", "txt"}
     assert all(path.parent == output and path.exists() for path in exported.values())

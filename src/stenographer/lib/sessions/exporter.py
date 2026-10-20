@@ -49,9 +49,7 @@ def render_transcript(lines: Iterable[TranscriptLine], format: str) -> str:
         return "\n\n".join(cues) + ("\n" if cues else "")
     if format == "md":
         output = ["# Transcript", ""]
-        output.extend(
-            f"[{_timestamp(line.start)}] **{line.label}:** {line.text}" for line in rows
-        )
+        output.extend(f"[{_timestamp(line.start)}] **{line.label}:** {line.text}" for line in rows)
         return "\n".join(output) + "\n"
     return "".join(
         f"[{_timestamp(line.start)}] {line.label}: {' '.join(line.text.splitlines())}\n"
