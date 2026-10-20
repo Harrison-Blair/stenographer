@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from stenographer.lib.config.models import Config
+    from stenographer.lib.files.engine import FilesEngine
     from stenographer.lib.platform.platform import Platform
 
 
@@ -41,6 +42,7 @@ class HubServices:
         session_factory: Callable[..., LiveSession] = LiveSession,
         session_store: SessionStore | None = None,
         player_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
+        files_engine_factory: Callable[..., FilesEngine] | None = None,
     ) -> None:
         self._config = config
         self._platform = platform
@@ -54,6 +56,10 @@ class HubServices:
         self._player_temp_path: Path | None = None
         self._player_lock = threading.Lock()
         self._session: LiveSession | None = None
+        self._files_engine_factory = files_engine_factory
+        self._files_engine = None
+        self._files_lock = threading.Lock()
+        self._files_closed = False
         self.files_job = None
 
     @property
@@ -90,7 +96,56 @@ class HubServices:
 
     @property
     def files_running(self) -> bool:
-        return self.files_job is not None
+        return any(
+            getattr(job, "state", "queued") in {"queued", "running"} for job in self.files_jobs
+        )
+
+    @property
+    def files_jobs(self) -> tuple[object, ...]:
+        if self._files_engine is not None:
+            return tuple(self._files_engine.jobs)
+        return () if self.files_job is None else (self.files_job,)
+
+    @property
+    def files_output_folder(self) -> Path:
+        return self._platform.data_dir(os.environ, Path.home()) / "files"
+
+    def submit_file(self, path: str | Path, **options):
+        with self._files_lock:
+            if self._files_closed:
+                raise RuntimeError("Files service is closed")
+            if self._files_engine is None:
+                factory = self._files_engine_factory
+                if factory is None:
+                    from stenographer.lib.files.engine import FilesEngine
+
+                    factory = FilesEngine
+                self._files_engine = factory(self._config, platform=self._platform)
+            self.files_job = self._files_engine.submit(path, **options)
+            return self.files_job
+
+    def cancel_file(self, job) -> bool:
+        return job.cancel()
+
+    def open_files_result(self, output_path: str | Path) -> bool:
+        result_folder = Path(output_path).expanduser().parent
+        subprocess.Popen(
+            ["xdg-open", str(result_folder)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        log.info(fmt_event("hub", "files_result_folder_opened"))
+        return True
+
+    def close_files(self) -> None:
+        with self._files_lock:
+            engine = self._files_engine
+            self._files_engine = None
+            self.files_job = None
+            self._files_closed = True
+        if engine is not None:
+            engine.close()
 
     def warm_worker(self) -> None:
         """Start and close one child before Textual captures stderr."""
@@ -246,8 +301,11 @@ class HubServices:
         return mixed_path
 
     def cancel_files(self) -> None:
-        job = self.files_job
-        if job is None:
+        engine = self._files_engine
+        if engine is not None:
+            self.close_files()
             return
-        job.cancel()
-        self.files_job = None
+        job = self.files_job
+        if job is not None:
+            job.cancel()
+            self.files_job = None

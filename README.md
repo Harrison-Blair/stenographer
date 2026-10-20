@@ -147,7 +147,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 
 - `stenographer` — open the terminal hub when stdin and stdout are terminals;
   otherwise show help. Live starts when you press `space`; use `v` for mixed or
-  split transcripts, and `m` or `s` to toggle audio sources.
+  split transcripts, and `m` or `s` to toggle audio sources. Press `2` for Files;
+  use the browser to queue files and `x` to cancel a selected job.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
