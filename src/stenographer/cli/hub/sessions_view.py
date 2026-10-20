@@ -15,7 +15,7 @@ from stenographer.lib.sessions.models import SessionDetail, SessionSummary
 class SessionsPanel(Vertical):
     """Show storage totals, saved sessions, and the selected transcript."""
 
-    CSS = """
+    DEFAULT_CSS = """
     SessionsPanel {
         width: 1fr;
         height: 1fr;
@@ -23,17 +23,12 @@ class SessionsPanel(Vertical):
     #sessions-layout {
         width: 1fr;
         height: 1fr;
-        gap: 1;
     }
     #sessions-list-column {
         width: 35%;
         min-width: 24;
         height: 1fr;
-    }
-    #sessions-storage {
-        height: 5;
-        border: round #3a4150;
-        padding: 0 1;
+        margin-right: 1;
     }
     #sessions-list-scroll {
         height: 1fr;
@@ -69,10 +64,8 @@ class SessionsPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="sessions-layout"):
-            with Vertical(id="sessions-list-column"):
-                yield Static("", id="sessions-storage", markup=False)
-                with VerticalScroll(id="sessions-list-scroll"):
-                    yield Static("", id="sessions-list", markup=False)
+            with Vertical(id="sessions-list-column"), VerticalScroll(id="sessions-list-scroll"):
+                yield Static("", id="sessions-list", markup=False)
             with VerticalScroll(id="sessions-detail-scroll"):
                 yield Static("", id="sessions-detail", markup=False)
 
@@ -143,16 +136,18 @@ class SessionsPanel(Vertical):
         self.job_status = status
         self._refresh_children()
 
+    def storage_summary(self) -> str:
+        total_bytes = sum(summary.audio_size_bytes for summary in self.summaries)
+        return f"storage\n{len(self.summaries)} sessions\n{self._format_size(total_bytes)} audio"
+
     def _refresh_children(self) -> None:
         if not self.is_mounted:
             return
-        storage = self.query_one("#sessions-storage", Static)
+        listing_panel = self.query_one("#sessions-list-scroll", VerticalScroll)
+        detail_panel = self.query_one("#sessions-detail-scroll", VerticalScroll)
         listing = self.query_one("#sessions-list", Static)
         detail = self.query_one("#sessions-detail", Static)
-        storage.border_title = "storage"
-        listing.border_title = "saved"
-        total_bytes = sum(summary.audio_size_bytes for summary in self.summaries)
-        storage.update(f"{len(self.summaries)} sessions\n{self._format_size(total_bytes)} audio")
+        listing_panel.border_title = "saved"
 
         rows = Text()
         for index, summary in enumerate(self.summaries):
@@ -164,7 +159,7 @@ class SessionsPanel(Vertical):
         listing.update(rows if rows else "No saved sessions.")
 
         summary = self.selected_summary
-        detail.border_title = summary.session_id if summary is not None else "session"
+        detail_panel.border_title = summary.session_id if summary is not None else "session"
         if self.error is not None:
             content = self.error
         elif self.loading:
@@ -179,23 +174,51 @@ class SessionsPanel(Vertical):
             content += f"\n\n{self.job_status}"
         detail.update(content)
 
-    def _detail_text(self, detail: SessionDetail) -> str:
-        label_state = "re-labelled" if detail.labels_revised else "live"
-        rows = [f"labels: {label_state}"]
-        rows.extend(
-            f"{label} {self._duration(seconds)}"
-            for label, seconds in sorted(detail.talk_time.items())
+    def _detail_text(self, detail: SessionDetail) -> Text:
+        palette = ("#ffaf5f", "#c6a8ff", "#6ee69a")
+        labels = list(detail.talk_time)
+        for line in detail.lines:
+            if line.label not in labels:
+                labels.append(line.label)
+        labels.sort(key=lambda label: (label.casefold() != "you", label.casefold()))
+        colors = {}
+        speaker_index = 0
+        for label in labels:
+            if label.casefold() == "you":
+                colors[label] = "#5fd7ff"
+            else:
+                colors[label] = palette[speaker_index % len(palette)]
+                speaker_index += 1
+        rows = Text()
+        label_state = "re-labelled at stop" if detail.labels_revised else "live"
+        rows.append("labels: ", style="dim")
+        rows.append(label_state, style="bold #6ee69a")
+        rows.append("\n")
+        talk_labels = [label for label in labels if label in detail.talk_time]
+        for index, label in enumerate(talk_labels):
+            if index:
+                rows.append("  ")
+            rows.append(
+                f"{label} {self._duration(detail.talk_time[label])}",
+                style=f"bold {colors[label]}",
+            )
+        rows.append("\n")
+        for source, label, color in (
+            ("mic", "mic", "#5fd7ff"),
+            ("system", "sys", "#ffaf5f"),
+        ):
+            rows.append(f"{label}  ", style="dim")
+            rows.append(self._activity_bar(detail.activity.get(source, ())), style=color)
+            rows.append("\n")
+        separator_width = max(
+            1, self.query_one("#sessions-detail-scroll", VerticalScroll).region.width - 6
         )
-        for source in ("mic", "system"):
-            label = source if source == "mic" else "sys"
-            activity = self._activity_bar(detail.activity.get(source, ()))
-            rows.append(f"{label}  {activity}")
-        rows.append("─" * 40)
-        rows.extend(
-            f"{self._clock(line.start)}  {line.label}: {line.text.replace(chr(10), ' ')}"
-            for line in detail.lines
-        )
-        return "\n".join(rows)
+        rows.append("─" * separator_width, style="dim")
+        for line in detail.lines:
+            rows.append(f"\n{self._clock(line.start)}  ", style="dim")
+            rows.append(line.label, style=f"bold {colors[line.label]}")
+            rows.append(f"  {line.text.replace(chr(10), ' ')}")
+        return rows
 
     @staticmethod
     def _duration(seconds: float) -> str:

@@ -363,6 +363,8 @@ class HubApp(App[None]):
         session = self._live_session() if self._section == "live" else None
         if self._section == "live":
             self.set_sidebar_card(self._live_sidebar_card(session), section="live")
+        elif self._section == "sessions":
+            self.set_sidebar_card(self.sessions_panel.storage_summary(), section="sessions")
         else:
             self.query_one("#sidebar-card", Static).update(
                 self._sidebar_cards.get(self._section, "")
