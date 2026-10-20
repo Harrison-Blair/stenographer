@@ -1,48 +1,20 @@
-# VERIFIED — 107-hub-no-background
+# VERIFIED — 107-hub-no-background (re-verification after repair 82efb22)
 
-Verifier run on `fb6f861` (base `6e80174`). Tools: `/home/penguin/source/stenographer/.venv/bin/` with
-`PYTHONPATH=<worktree>/src` (the worktree has no `.venv`; imports resolved to the worktree source).
-No microphone, audio, `live`/`run`, model download or integration test was used.
+Verifier run on `82efb22` (base `6e80174`, pre-repair `c9d7955`). Tools:
+`/home/penguin/source/stenographer/.venv/bin/` with `PYTHONPATH=<worktree>/src` (the worktree has no
+`.venv`; `stenographer.__file__` resolved to the worktree source). Red runs and mutations ran in
+temporary detached worktrees, removed afterwards. No microphone, audio, `live`/`run`, model download or
+integration test was used.
 
 | Item | Result | Observation |
 | --- | --- | --- |
-| V1 regression tests | pass | Green: `tests/cli/hub/test_no_background.py` 2 passed. Red at base: both tests fail (speaker marker, `> 1 Live`). With the speaker-marker asserts removed, the background test at base reports painted cells in every label: Live idle, Live recording, Live split, Files, Sessions, Config, Setup, Doctor, Quit dialog, Config dialog, Speaker dialog, Speaker picker, stenographer live. Mutations on `fb6f861` each turn the suite red: rename dialog `background: $surface`; live `#key-hints` `$boost`; selection accent without bold; hub without `ansi_color=True`. |
-| V2 SVG evidence | **fail** | `before-list.svg` is a render of the hub **Live** section (title "Live", sidebar `> 1 Live`, engine/REC/MIC/SYSTEM panels), the same as `before-live.svg` apart from the CPU figure. No before render of a list screen exists, so requirement 5 (before/after of Live **and one list screen**) is not met. `before-live`, `after-live`, `after-list` (Files) and both standalone-live SVGs are correct: the before SVGs hold 446/96 background fills; the after SVGs have only window-chrome fills. |
-| V3 gate | pass | `ruff check .` all checks passed; `ruff format --check .` 658 files already formatted; `pytest -m "not integration"` 2645 passed, 2 skipped, 6 deselected; `stenographer --help` exit 0. |
+| V1 regression tests | pass | Green: `tests/cli/hub/test_no_background.py` 7 passed. Red at base `6e80174` (HEAD test file): 4 failed, 3 passed. The background test reports painted cells (`#0b0d12` in Live idle/recording/split, `#1b1b1b` in `stenographer live`); the cursor, scrollbar-thumb and selected-marker tests also fail. The three alignment tests pass at base, as expected. Red at `c9d7955`: 5 failed (Files `../` alignment, Setup indent, queue error indent, Input cursor, scrollbar thumb). |
+| V1 scrollbar exception (user decision) | pass | `NO_BACKGROUND_CSS` keeps `scrollbar-size: 1 1`, with transparent tracks and corners and `scrollbar-color: #5fd7ff`. On Files with 50 files, ScrollBar segments render as `default on default` (track) and `reverse #5fd7ff on default` (thumb). The test exempts only reverse segments whose cells all belong to a `ScrollBar`, and asserts that thumb cells > 0. Mutations: `#sidebar { background: #5fd7ff; }` fails the test (`'╭' has Color('#5fd7ff')`); accent scrollbar *track* fails it (`Files scrolling, row 6: ' ' has Color('#5fd7ff')`). |
+| V1 Input cursor | pass | `.input--cursor` is `background: transparent; color: #5fd7ff; text-style: bold underline`. The test checks the underline, accent colour, no bgcolor and no reverse on a blank cursor. Mutation `bold underline` → `bold reverse` fails 2 tests. |
+| V1 alignment vs base | pass | Directory rows `     {name}/` give `       ../` (base alignment); unselected Setup steps use `selectable=selected` (`○ 2 microphone`); queue errors are `  {error}`. Each test fails at `c9d7955` and passes at head. |
+| V2 SVG evidence | pass | `before-list.svg`: HubApp Files screen with base marker style (`> 2 Files`, `▸ [ ] sample.wav`), 334 filled rects. `after-list.svg`: Files with `▶ 2 Files` / `▶ [ ] sample.wav`, 1 filled rect (window chrome). Live and standalone-live before/after: 447/108 → 1 filled rect. |
+| Docs | pass | `docs/hub.md`: "Scrollbars stay visible. Their thin accent-colour thumbs are the only exception to the no-background rule; tracks and corners stay transparent." |
+| Layout rule for shared CSS | **fail** | The CSS block exists once, in `src/stenographer/cli/no_background_css.py`, imported by `cli/hub/app.py` and `cli/live/app.py`. `tests/test_architecture.py` passes (4 passed), but that test does not check the `cli/` root. AGENTS.md says production code lives in `cli/<command>/`. The only other `cli/` root modules are the entry point and parser (`entry.py`, `parser.py`, `__main__.py`). Code shared between commands lives in `cli/shared/`: docs/architecture.md names `cli/shared/`, and `cli/shared/terminal.py` is shared by `setup` and `sounds`. The module should move to `cli/shared/` (e.g. `cli/shared/no_background_css.py`). |
+| V3 gate | pass | `ruff check .` All checks passed; `ruff format --check .` 660 files already formatted; `pytest -m "not integration"` 2650 passed, 2 skipped, 6 deselected; `stenographer --help` exit 0. |
 
-## Independent render comparison (base vs head, 120×36)
-
-| Screen | bg cells base → head | border segments base → head | accent `#5fd7ff` text at head |
-| --- | --- | --- | --- |
-| hub Live | 4320 → 0 | 153 → 153 | 7 |
-| hub Files | 4320 → 0 (6 reverse → 0) | 69 → 69 | 23 |
-| hub Sessions | 4320 → 0 | 69 → 69 | 11 |
-| hub Config | 4320 → 0 | 138 → 138 | 40 |
-| hub Setup | 4320 → 0 | 138 → 138 | 23 |
-| hub Doctor | 4320 → 0 | 138 → 138 | 88 |
-| `live` app | 4320 → 0 | 0 → 0 | — |
-| `live` speaker picker | 4320 → 0 (7 reverse → 0) | 30 → 60 | 120 |
-
-Normal text renders with the terminal default foreground at head (base: `#e3e6ec` / `#e0e0e0`). Borders
-(`#3a4150`), dim text (`#a0a8b8`) and the warning accent (`#fea62b`) still render.
-
-Rename flow (keyboard, at base and head): `r` → focus picker → `enter` → `down` → `enter` → `tab` →
-type "Alice" → click Rename. Both record `('rename', 'speaker-1', 'Alice')`; the picker shows
-"Speaker 1" (no marker leaks into the selected value). `SpeakerSelect`/`SpeakerSelectOverlay` replace
-Textual's stock `Select`/`SelectOverlay` only to redraw the highlighted option as `▶` + bold accent.
-Values still come from `Select._options`.
-
-## Scope notes (do not affect the verdict on their own)
-
-- `scrollbar-size: 0 0` is set globally in both apps, so scrollbars are hidden. In Files this widens the
-  options column by 2 cells. Textual paints the scrollbar thumb as a background, so requirement 1 may
-  require this, but scroll position is no longer visible.
-- Dialog `Select`, `Input` and `Button` borders change from Textual's fill-based `tall` borders to
-  `round` line borders. The fill-based borders cannot render without a background.
-- Gutter side effects of `append_line`: Files directory rows lose their alignment with file names
-  (`        ../` → `  ../`); unselected Setup steps gain 2 cells of indent; Files queue error lines lose
-  their 2-cell indent.
-- The CSS override block (~170 lines) is duplicated verbatim in `cli/hub/app.py` and `cli/live/app.py`.
-- `Input > .input--cursor` has no fill, so the text cursor is invisible on a blank character. Focus
-  stays visible through the accent border.
-- `.hive/tmp/` (empty, untracked) remains in the worktree from the worker's renders.
+Verdict: **fail**. The only failing item is the layout of the shared CSS module. Every behavioural item passes.
