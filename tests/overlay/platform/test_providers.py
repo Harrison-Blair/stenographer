@@ -1,14 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Which overlay host each OS gets, and what that host actually offers.
+"""Which overlay provider Linux gets, and what it offers.
 
 ``current_platform`` is the single dispatch point every overlay caller reaches
 the host through, so the mapping from ``sys.platform`` to a provider class is
 the contract. It is cached for the life of the process, which makes clearing
 the cache part of the test rather than an implementation detail.
-
-The two unimplemented hosts are asserted just as strictly: an empty backend
-list and a refusing transport are what keep the supervisor from spawning a
-helper that could never draw anything.
 """
 
 from __future__ import annotations
@@ -23,7 +19,6 @@ from stenographer.overlay.platform.guidance import OverlayGuidance
 from stenographer.overlay.platform.linux.linux_helper_transport import LinuxHelperTransport
 from stenographer.overlay.platform.linux.provider import LinuxOverlayPlatform
 from stenographer.overlay.platform.overlay_backend_spec import OverlayBackendSpec
-from stenographer.overlay.platform.windows.provider import WindowsOverlayPlatform
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
@@ -41,10 +36,9 @@ def uncached_platform():
     [
         ("linux", LinuxOverlayPlatform),
         ("linux2", LinuxOverlayPlatform),
-        ("win32", WindowsOverlayPlatform),
     ],
 )
-def test_each_supported_host_resolves_to_its_own_overlay_provider(
+def test_linux_platform_aliases_resolve_to_the_overlay_provider(
     monkeypatch, uncached_platform, platform, provider
 ) -> None:
     monkeypatch.setattr(sys, "platform", platform)
@@ -56,6 +50,13 @@ def test_darwin_is_refused_as_an_unsupported_host(monkeypatch, uncached_platform
     monkeypatch.setattr(sys, "platform", "darwin")
 
     with pytest.raises(UnsupportedPlatformError, match="darwin"):
+        current_platform()
+
+
+def test_win32_is_refused_by_name(monkeypatch, uncached_platform) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    with pytest.raises(UnsupportedPlatformError, match="win32"):
         current_platform()
 
 
@@ -99,21 +100,3 @@ def test_linux_guidance_names_both_backends_and_a_fix_for_every_x_refusal() -> N
         UnavailableReason.BACKEND_DEPENDENCY_MISSING,
     }
     assert "layer-shell or XWayland" in guidance.overlay_fix_hint_default
-
-
-def test_windows_without_an_overlay_refuses_to_spawn_a_helper() -> None:
-    """An empty backend list alone would let the supervisor spawn an unusable child."""
-    platform = WindowsOverlayPlatform()
-
-    assert platform.overlay_backends() == ()
-    with pytest.raises(UnsupportedPlatformError, match="Windows"):
-        platform.helper_transport()
-
-
-def test_windows_without_an_overlay_still_explains_itself_to_doctor() -> None:
-    guidance = WindowsOverlayPlatform().guidance()
-
-    assert isinstance(guidance, OverlayGuidance)
-    assert guidance.overlay_backend_labels == {}
-    assert guidance.overlay_fix_hints == {}
-    assert guidance.overlay_fix_hint_default == "the overlay is not available on Windows yet"

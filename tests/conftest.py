@@ -16,23 +16,17 @@ from __future__ import annotations
 import os
 import pathlib
 import socket
-import threading
 
 import pytest
 
-#: Every environment variable the host providers consult when they resolve the
-#: configuration file, the state directory, or the runtime directory --- see
-#: ``lib/platform/linux/dirs.py`` and the Windows provider. All of
-#: them take precedence over the home directory, so redirecting them is enough
-#: to move every resolved path without touching ``HOME``. ``XDG_CACHE_HOME`` is
+#: XDG paths take precedence over the home directory, so redirecting them
+#: moves every resolved path without touching ``HOME``. ``XDG_CACHE_HOME`` is
 #: not read by this project but is honoured by huggingface_hub.
 _HOST_DIRECTORY_VARS = (
     "XDG_CONFIG_HOME",
     "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
     "XDG_RUNTIME_DIR",
-    "APPDATA",
-    "LOCALAPPDATA",
 )
 
 
@@ -67,19 +61,6 @@ _NETWORK_FAMILIES = frozenset({socket.AF_INET, socket.AF_INET6})
 _REAL_CONNECT = socket.socket.connect
 _REAL_CONNECT_EX = socket.socket.connect_ex
 _REAL_CREATE_CONNECTION = socket.create_connection
-_REAL_SOCKETPAIR = socket.socketpair
-
-#: Set while :func:`_socketpair` is running. CPython has no ``AF_UNIX`` on
-#: Windows, so ``socket.socketpair`` there is emulated by connecting a real
-#: ``AF_INET`` socket to a freshly bound loopback listener — an outbound
-#: connection by every measure this guard can take. The permit is thread-local
-#: and depth-counted because the emulation connects on the calling thread,
-#: inside the wrapper, so no other thread's connect can slip through it.
-_SOCKETPAIR_PERMIT = threading.local()
-
-
-def _permitted() -> bool:
-    return getattr(_SOCKETPAIR_PERMIT, "depth", 0) > 0
 
 
 def _describe(address: object) -> str:
@@ -104,13 +85,13 @@ def _refuse(address: object) -> None:
 
 
 def _connect(self, address, *args, **kwargs):
-    if self.family in _NETWORK_FAMILIES and not _permitted():
+    if self.family in _NETWORK_FAMILIES:
         _refuse(address)
     return _REAL_CONNECT(self, address, *args, **kwargs)
 
 
 def _connect_ex(self, address, *args, **kwargs):
-    if self.family in _NETWORK_FAMILIES and not _permitted():
+    if self.family in _NETWORK_FAMILIES:
         _refuse(address)
     return _REAL_CONNECT_EX(self, address, *args, **kwargs)
 
@@ -119,18 +100,8 @@ def _create_connection(address, *args, **kwargs):
     # Always an INET connection by definition, and guarded here as well as at
     # ``connect`` so the failure names the address the caller asked for rather
     # than whichever resolved address was dialled first.
-    if not _permitted():
-        _refuse(address)
+    _refuse(address)
     return _REAL_CREATE_CONNECTION(address, *args, **kwargs)
-
-
-def _socketpair(*args, **kwargs):
-    depth = getattr(_SOCKETPAIR_PERMIT, "depth", 0)
-    _SOCKETPAIR_PERMIT.depth = depth + 1
-    try:
-        return _REAL_SOCKETPAIR(*args, **kwargs)
-    finally:
-        _SOCKETPAIR_PERMIT.depth = depth
 
 
 @pytest.fixture(autouse=True)
@@ -158,7 +129,6 @@ def _block_outbound_connections(request, monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", _connect)
     monkeypatch.setattr(socket.socket, "connect_ex", _connect_ex)
     monkeypatch.setattr(socket, "create_connection", _create_connection)
-    monkeypatch.setattr(socket, "socketpair", _socketpair)
 
 
 @pytest.fixture

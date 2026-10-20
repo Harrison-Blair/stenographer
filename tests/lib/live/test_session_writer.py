@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta, timezone
@@ -56,9 +55,8 @@ def test_open_uses_utc_timestamp_restrictive_folder_and_collision_suffix(tmp_pat
 
     assert first.path == tmp_path / "sessions" / "20260302T090506Z"
     assert second.path == tmp_path / "sessions" / "20260302T090506Z-2"
-    if os.name == "posix":
-        assert first.path.stat().st_mode & 0o777 == 0o700
-        assert second.path.stat().st_mode & 0o777 == 0o700
+    assert first.path.stat().st_mode & 0o777 == 0o700
+    assert second.path.stat().st_mode & 0o777 == 0o700
 
 
 def test_write_audio_round_trips_float_samples_and_creates_private_flac(tmp_path):
@@ -75,8 +73,7 @@ def test_write_audio_round_trips_float_samples_and_creates_private_flac(tmp_path
     assert rate == 16000
     assert len(actual) == len(samples)
     np.testing.assert_allclose(actual, samples, atol=1e-6)
-    if os.name == "posix":
-        assert audio_path.stat().st_mode & 0o777 == 0o600
+    assert audio_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_write_silence_creates_requested_number_of_zero_samples(tmp_path):
@@ -123,8 +120,7 @@ def test_append_line_flushes_jsonl_and_relabel_appends_a_rename_record(tmp_path)
         first_record,
         {"type": "rename", "labels": {"speaker-1": "Alice"}},
     ]
-    if os.name == "posix":
-        assert transcript_path.stat().st_mode & 0o777 == 0o600
+    assert transcript_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_close_writes_markdown_with_duration_sources_and_final_labels(tmp_path):
@@ -149,8 +145,7 @@ def test_close_writes_markdown_with_duration_sources_and_final_labels(tmp_path):
     assert "Duration: 00:00:04" in markdown
     assert "Sources: system" in markdown
     assert "[00:00:02] **Alice:** saved phrase" in markdown
-    if os.name == "posix":
-        assert markdown_path.stat().st_mode & 0o777 == 0o600
+    assert markdown_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_close_logs_only_session_metrics_and_never_phrase_text(tmp_path, caplog):

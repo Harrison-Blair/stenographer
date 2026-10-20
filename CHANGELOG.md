@@ -13,6 +13,13 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
+This change removes Windows platform support.
+
+### Removed
+
+- Removes the Windows platform providers and CI jobs. Platform selection now
+  reports Windows as unsupported.
+
 ## [v0.14.0] - 2026-10-19
 
 This release adds local live transcription and a more concise Agent rewrite. It

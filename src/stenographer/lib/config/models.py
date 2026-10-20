@@ -189,6 +189,6 @@ class Config:
 
     @classmethod
     def write_default(cls, path: pathlib.Path) -> None:
-        # Bytes, not text mode: setup writes LF bytes, and a CRLF default on
-        # Windows would make the first setup save always rewrite the file.
+        # Bytes, not text mode: setup writes LF bytes and preserves the exact
+        # default bytes for the first setup save.
         path.write_bytes(default_toml().encode("utf-8"))

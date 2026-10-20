@@ -23,7 +23,6 @@ from __future__ import annotations
 import dataclasses
 import os
 import pathlib
-import sys
 
 import pytest
 
@@ -37,14 +36,11 @@ from stenographer.overlay.platform.guidance import OverlayGuidance
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
-# One config path for every render case. Asserted through ``str()`` because
-# ``render`` interpolates the path: the rendered separator is the host's, so a
-# POSIX literal would not match on Windows.
+# ``render`` interpolates this path, so compare its string representation.
 _CONFIG_PATH = pathlib.Path("/tmp/config.toml")
 
-# ``chmod 000`` denies nobody when the caller is root, and Windows ignores the
-# mode bits outright; the state itself is still asserted through ``LogStatus``.
-_MODE_BITS_BIND = sys.platform != "win32" and os.getuid() != 0
+# ``chmod 000`` does not deny access when the caller is root.
+_MODE_BITS_BIND = os.getuid() != 0
 
 # Log facts are an input to ``render`` too: ``run`` does the reading.
 _DAEMON_LOG = pathlib.Path("/state/stenographer.log")

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import datetime
-import os
 import pathlib
 
 import pytest
@@ -39,7 +38,6 @@ def test_backup_timestamps_are_always_utc():
     assert _timestamp(None).tzinfo is datetime.UTC
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Windows cannot remove the working directory")
 def test_a_relative_path_that_cannot_be_resolved_refuses_the_save(tmp_path, monkeypatch):
     # ``STENOGRAPHER_CONFIG`` reaches here exactly as the user wrote it, so a
     # relative path is resolved against a working directory that may be gone.
@@ -147,7 +145,6 @@ def test_an_atomic_replace_preserves_content_and_leaves_no_temporary(tmp_path, m
     assert list(tmp_path.iterdir()) == [target]
 
 
-@pytest.mark.skipif(os.name != "posix", reason="POSIX file permissions only")
 def test_an_atomic_replace_preserves_the_requested_mode(tmp_path):
     target = tmp_path / "config.toml"
     target.write_bytes(b"old")

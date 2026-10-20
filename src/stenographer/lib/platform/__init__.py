@@ -23,8 +23,4 @@ def current_platform() -> Platform:
         from stenographer.lib.platform.linux.provider import LinuxPlatform
 
         return LinuxPlatform()
-    if sys.platform == "win32":
-        from stenographer.lib.platform.windows.provider import WindowsPlatform
-
-        return WindowsPlatform()
     raise UnsupportedPlatformError(f"unsupported platform: {sys.platform}")

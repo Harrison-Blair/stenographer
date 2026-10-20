@@ -20,11 +20,6 @@ from stenographer.lib.platform.resource_probe import ResourceProbe
 
 _ARGS_LOG = "nvidia-smi.args"
 
-#: The stand-in vendor tool is a real ``/bin/sh`` script.
-_posix_shell_only = pytest.mark.skipif(
-    sys.platform == "win32", reason="the stand-in nvidia-smi is a POSIX shell script"
-)
-
 
 def _nvidia_smi(tmp_path: pathlib.Path, body: str, *, shebang: str = "#!/bin/sh") -> pathlib.Path:
     """Write a real executable ``nvidia-smi`` and put its directory on PATH."""
@@ -44,7 +39,6 @@ def _probe_with_nvidia(monkeypatch, tmp_path, body, *, shebang="#!/bin/sh") -> d
     return ResourceProbe()()
 
 
-@_posix_shell_only
 def test_gpu_metrics_are_averaged_utilization_and_summed_megabytes(monkeypatch, tmp_path):
     sample = _probe_with_nvidia(monkeypatch, tmp_path, 'echo "12, 2048"\necho "20, 1024"\necho ""')
 
@@ -53,7 +47,6 @@ def test_gpu_metrics_are_averaged_utilization_and_summed_megabytes(monkeypatch, 
     assert "gpu" not in sample["reasons"]
 
 
-@_posix_shell_only
 def test_the_gpu_query_asks_only_for_anonymous_aggregates(monkeypatch, tmp_path):
     _probe_with_nvidia(monkeypatch, tmp_path, 'echo "12, 2048"')
 
@@ -63,7 +56,6 @@ def test_the_gpu_query_asks_only_for_anonymous_aggregates(monkeypatch, tmp_path)
     ]
 
 
-@_posix_shell_only
 @pytest.mark.parametrize("body", ['echo "12"', "true", 'echo "12, 2048, 7"'])
 def test_unexpected_csv_shapes_report_unavailable_rather_than_a_number(monkeypatch, tmp_path, body):
     sample = _probe_with_nvidia(monkeypatch, tmp_path, body)
@@ -73,7 +65,6 @@ def test_unexpected_csv_shapes_report_unavailable_rather_than_a_number(monkeypat
     assert sample["reasons"]["gpu"] == "gpu_metrics_unavailable"
 
 
-@_posix_shell_only
 def test_unparseable_values_are_a_probe_failure(monkeypatch, tmp_path):
     sample = _probe_with_nvidia(monkeypatch, tmp_path, 'echo "N/A, [Not Supported]"')
 
@@ -81,21 +72,18 @@ def test_unparseable_values_are_a_probe_failure(monkeypatch, tmp_path):
     assert sample["reasons"]["gpu"] == "gpu_probe_failed"
 
 
-@_posix_shell_only
 def test_a_nonzero_exit_status_is_a_probe_failure(monkeypatch, tmp_path):
     sample = _probe_with_nvidia(monkeypatch, tmp_path, 'echo "12, 2048"\nexit 9')
 
     assert sample["reasons"]["gpu"] == "gpu_probe_failed"
 
 
-@_posix_shell_only
 def test_an_unlaunchable_vendor_tool_is_a_probe_failure(monkeypatch, tmp_path):
     sample = _probe_with_nvidia(monkeypatch, tmp_path, "true", shebang="#!/nonexistent/interpreter")
 
     assert sample["reasons"]["gpu"] == "gpu_probe_failed"
 
 
-@_posix_shell_only
 def test_a_hanging_vendor_tool_cannot_stall_the_sample(monkeypatch, tmp_path):
     started_at = time.monotonic()
 

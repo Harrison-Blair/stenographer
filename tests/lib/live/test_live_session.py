@@ -364,7 +364,7 @@ def test_stop_before_start_closes_resources_without_waiting_for_a_consumer(monke
 def test_unsupported_system_platform_disables_system_without_blocking_mic(monkeypatch, tmp_path):
     from stenographer.lib.platform.errors import UnsupportedPlatformError
 
-    reason = "system audio capture is not available on Windows"
+    reason = "system audio capture is unavailable"
     session, writer, worker, _system, _recorder, _segmenters = _make_session(
         monkeypatch,
         tmp_path,

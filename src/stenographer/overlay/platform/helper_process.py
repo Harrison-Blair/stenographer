@@ -9,10 +9,7 @@ class HelperProcess(Protocol):
 
     The supervisor owns every policy above this line (mailbox, NDJSON framing,
     readiness deadline, restart budget); the host owns pipe creation, the
-    blocking wait for helper output, and process termination — none of which
-    survives a move between OSes unchanged (``selectors.SelectSelector``
-    accepts only sockets on Windows; POSIX signal escalation has no analogue
-    there).
+    blocking wait for helper output, and process termination.
     """
 
     def write(self, data: bytes) -> None:

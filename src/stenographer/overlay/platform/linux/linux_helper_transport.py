@@ -20,8 +20,7 @@ class LinuxHelperTransport:
     would eventually block the child — so it is either the caller's file, opened
     append-only so it can share the helper's own log with the child's handler,
     or ``DEVNULL``. ``bufsize=0`` keeps every protocol record on the wire as
-    soon as it is written. Linux needs no extra ``Popen`` flags (a Windows
-    transport will want ``CREATE_NO_WINDOW``).
+    soon as it is written. Linux needs no extra ``Popen`` flags.
     """
 
     def spawn(

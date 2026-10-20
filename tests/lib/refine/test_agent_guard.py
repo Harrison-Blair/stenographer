@@ -94,8 +94,8 @@ LONG_RAMBLE_BULLETED = (
 )
 RUNON_MIXED = (
     "Okay so the first thing is the README header is out of date and you can fix that. And then "
-    "the other thing which is kind of separate is the Windows build. Don't change the Windows "
-    "build. I just want you to explain why packaging/windows.spec pulls in numpy at all."
+    "the other thing which is kind of separate is the Linux build. Don't change the Linux "
+    "build. I just want you to explain why packaging/stenographer.spec pulls in numpy at all."
 )
 
 
@@ -445,9 +445,9 @@ def test_basic_format_accepts_edits_that_change_meaning(original, candidate):
         pytest.param(
             RUNON_MIXED,
             "The first thing is the README header is out of date and you can fix that.\n\nThe "
-            "other thing, which is kind of separate, is the Windows build. Don't change the "
-            "Windows build. I just want you to explain why packaging/windows.spec pulls in numpy "
-            "at all.",
+            "other thing, which is kind of separate, is the Linux build. Don't change the "
+            "Linux build. I just want you to explain why "
+            "packaging/stenographer.spec pulls in numpy at all.",
             id="topic-shift-paragraphs",
         ),
         pytest.param(
