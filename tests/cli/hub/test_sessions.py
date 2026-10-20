@@ -92,7 +92,7 @@ def test_sessions_list_and_detail_show_storage_activity_and_transcript(tmp_path)
             assert "▶ 2026-10-20 01:12" in listing
             assert "2026-10-20 00:28" in listing
             assert "0:03  2 spk" in listing
-            assert "! interrupted" in listing
+            assert "! int." in listing
             list_widget = app.query_one("#sessions-list", Static).render()
             selected_offset = list_widget.plain.index("▶")
             selected_style = next(
@@ -167,6 +167,31 @@ def test_sessions_panels_render_borders_and_board_proportions(tmp_path):
                 "del delete",
             ):
                 assert hint in hints
+
+    asyncio.run(exercise())
+
+
+def test_interrupted_session_marker_stays_on_one_line_at_board_size(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    _write_session(sessions_root, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
+    _write_session(
+        sessions_root,
+        datetime(2026, 10, 19, 14, 5, tzinfo=UTC),
+        interrupted=True,
+    )
+    app = HubApp(FakeServices(sessions_root))
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("3")
+            await pilot.pause(0.1)
+            listing = app.query_one("#sessions-list", Static)
+            row_count = len(app.sessions_panel.summaries)
+            assert listing.region.height == row_count
+
+            await pilot.press("down")
+            await pilot.pause(0.1)
+            assert listing.region.height == row_count
 
     asyncio.run(exercise())
 

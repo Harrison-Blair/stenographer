@@ -173,7 +173,7 @@ class SessionsPanel(Vertical):
             date = summary.started_at.strftime("%Y-%m-%d %H:%M")
             row = f"{date}  {self._duration(summary.duration_seconds)}  {summary.speaker_count} spk"
             if summary.interrupted:
-                row += "  ! interrupted"
+                row += " ! int."
             append_line(rows, row, selectable=True, selected=index == self.selected_index)
         listing.update(rows if rows else "No saved sessions.")
 
