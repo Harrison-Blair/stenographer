@@ -12,7 +12,7 @@ from pathlib import Path
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions.persistence import atomic_write_private
 
-_FORMATS = {"md", "jsonl", "srt", "txt"}
+SUPPORTED_FORMATS = frozenset({"md", "jsonl", "srt", "txt"})
 _FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
@@ -33,7 +33,7 @@ def _srt_timestamp(seconds: float) -> str:
 
 def render_transcript(lines: Iterable[TranscriptLine], format: str) -> str:
     """Render transcript lines as Markdown, JSONL, SRT, or plain text."""
-    if format not in _FORMATS:
+    if format not in SUPPORTED_FORMATS:
         raise ValueError(f"unsupported transcript format: {format}")
     rows = tuple(lines)
     if format == "jsonl":
@@ -65,7 +65,7 @@ def export_transcript(
     filename: str = "transcript",
 ) -> Path:
     """Write one private transcript file in the caller's output folder."""
-    if format not in _FORMATS:
+    if format not in SUPPORTED_FORMATS:
         raise ValueError(f"unsupported transcript format: {format}")
     if _FILENAME.fullmatch(filename) is None:
         raise ValueError("filename must be one safe path component")

@@ -32,8 +32,13 @@ def relabel_system_lines(
     minimum_duration: float = MINIMUM_SPEECH_DURATION_SECONDS,
     progress: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    speaker_count: int | None = None,
 ) -> tuple[TranscriptLine, ...] | None:
     """Relabel system phrases from the session's full set of embeddings."""
+    if speaker_count is not None and (
+        isinstance(speaker_count, bool) or not isinstance(speaker_count, int) or speaker_count < 1
+    ):
+        raise ValueError("speaker_count must be a positive integer")
     original = tuple(lines)
     vectors = np.asarray(tuple(embeddings), dtype=np.float32)
     if not original:
@@ -48,6 +53,15 @@ def relabel_system_lines(
         raise ValueError("speaker embeddings must not be empty")
     vectors = vectors / norms[:, np.newaxis]
     durations = np.asarray([max(0.0, line.end - line.start) for line in original])
+    if speaker_count is not None:
+        return _relabel_fixed(
+            original,
+            vectors,
+            durations,
+            speaker_count,
+            progress=progress,
+            should_cancel=should_cancel,
+        )
     anchor_indices = [
         index for index, duration in enumerate(durations) if duration >= minimum_duration
     ]
@@ -304,4 +318,127 @@ def relabel_system_lines(
             label=labels_by_speaker[speaker_ids[index]],
         )
         for index, line in enumerate(original)
+    )
+
+
+def _relabel_fixed(
+    lines: tuple[TranscriptLine, ...],
+    vectors: np.ndarray,
+    durations: np.ndarray,
+    speaker_count: int,
+    *,
+    progress: Callable[[int, int], None] | None,
+    should_cancel: Callable[[], bool] | None,
+) -> tuple[TranscriptLine, ...] | None:
+    """Agglomerate all phrases until the requested cluster count remains."""
+    phrase_count = len(lines)
+    target = min(speaker_count, phrase_count)
+    merge_count = phrase_count - target
+    total = max(1, phrase_count + merge_count)
+    if progress is not None:
+        progress(0, total)
+    capacity = 2 * phrase_count - 1
+    similarities = np.full((capacity, capacity), -np.inf, dtype=np.float32)
+    active = np.zeros(capacity, dtype=bool)
+    active[:phrase_count] = True
+    sizes = np.zeros(capacity, dtype=np.float64)
+    sizes[:phrase_count] = np.where(durations > 0, durations, 1.0)
+    clusters = {index: [index] for index in range(phrase_count)}
+    pending: list[tuple[float, int, int]] = []
+    for left in range(phrase_count):
+        if should_cancel is not None and should_cancel():
+            return None
+        scores = vectors[left + 1 :] @ vectors[left]
+        similarities[left, left + 1 : phrase_count] = scores
+        similarities[left + 1 : phrase_count, left] = scores
+        for offset, score in enumerate(scores, start=left + 1):
+            heapq.heappush(pending, (-float(score), left, offset))
+        if progress is not None:
+            progress(left + 1, total)
+
+    next_cluster = phrase_count
+    active_count = phrase_count
+    done = 0
+    while active_count > target:
+        if should_cancel is not None and should_cancel():
+            return None
+        _negative_score, left, right = heapq.heappop(pending)
+        if not active[left] or not active[right]:
+            continue
+        merged_size = sizes[left] + sizes[right]
+        clusters[next_cluster] = sorted(clusters.pop(left) + clusters.pop(right))
+        active[left] = False
+        active[right] = False
+        active[next_cluster] = True
+        sizes[next_cluster] = merged_size
+        for other in np.flatnonzero(active[:next_cluster]):
+            score = (
+                sizes[left] * similarities[left, other] + sizes[right] * similarities[right, other]
+            ) / merged_size
+            similarities[next_cluster, other] = score
+            similarities[other, next_cluster] = score
+            heapq.heappush(pending, (-float(score), int(other), next_cluster))
+        next_cluster += 1
+        active_count -= 1
+        done += 1
+        if progress is not None:
+            progress(phrase_count + done, total)
+
+    if should_cancel is not None and should_cancel():
+        return None
+    ranked_clusters = sorted(clusters.values(), key=min)
+    speaker_ids: dict[int, str] = {}
+    label_weights_by_cluster: list[dict[str, float]] = []
+    renamed_labels = {
+        line.label
+        for line in lines
+        if line.label != f"Speaker {line.speaker_id.removeprefix('speaker-')}"
+    }
+    for number, members in enumerate(ranked_clusters, 1):
+        label_weights: dict[str, float] = {}
+        for index in members:
+            speaker_ids[index] = f"speaker-{number}"
+            label = lines[index].label
+            label_weights[label] = label_weights.get(label, 0.0) + durations[index]
+        label_weights_by_cluster.append(label_weights)
+
+    label_matches = sorted(
+        (
+            -speech_time,
+            cluster_index,
+            label,
+        )
+        for cluster_index, label_weights in enumerate(label_weights_by_cluster)
+        for label, speech_time in label_weights.items()
+        if label in renamed_labels
+    )
+    labels_by_cluster: dict[int, str] = {}
+    assigned_labels: set[str] = set()
+    for _negative_speech_time, cluster_index, label in label_matches:
+        if cluster_index in labels_by_cluster or label in assigned_labels:
+            continue
+        labels_by_cluster[cluster_index] = label
+        assigned_labels.add(label)
+
+    next_number = 1
+    for cluster_index in range(len(ranked_clusters)):
+        if cluster_index in labels_by_cluster:
+            continue
+        label = f"Speaker {next_number}"
+        while label in assigned_labels:
+            next_number += 1
+            label = f"Speaker {next_number}"
+        labels_by_cluster[cluster_index] = label
+        assigned_labels.add(label)
+        next_number += 1
+
+    if progress is not None:
+        progress(total, total)
+    return tuple(
+        replace(
+            line,
+            speaker_id=speaker_ids[index],
+            label=labels_by_cluster[int(speaker_ids[index].removeprefix("speaker-")) - 1],
+        )
+        for index, line in enumerate(lines)
     )

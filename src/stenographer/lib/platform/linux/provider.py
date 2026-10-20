@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
     from stenographer.lib.platform.asr_transport import AsrTransport
     from stenographer.lib.platform.cue_player import CuePlayer
+    from stenographer.lib.platform.ffmpeg_decoder import FfmpegDecoder
     from stenographer.lib.platform.host_guidance import HostGuidance
     from stenographer.lib.platform.host_probe import HostProbe
     from stenographer.lib.platform.hotkey_listener import HotkeyListener
@@ -136,6 +137,11 @@ class LinuxPlatform(DiagnosticsHostMixin):
         from stenographer.lib.platform.linux.system_audio import LinuxSystemAudioCapture
 
         return LinuxSystemAudioCapture()
+
+    def ffmpeg_decoder(self) -> FfmpegDecoder:
+        from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
+
+        return SubprocessFfmpegDecoder()
 
     # --- process / lifecycle ---
     def asr_transport(self) -> AsrTransport:
