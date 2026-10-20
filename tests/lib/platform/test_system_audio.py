@@ -7,7 +7,6 @@ import pytest
 
 from stenographer.lib.platform.errors import UnsupportedPlatformError
 from stenographer.lib.platform.linux.provider import LinuxPlatform
-from stenographer.lib.platform.macos.provider import MacOSPlatform
 from stenographer.lib.platform.platform import Platform
 from stenographer.lib.platform.system_audio import SystemAudioCapture
 from stenographer.lib.platform.windows.provider import WindowsPlatform
@@ -21,7 +20,6 @@ def test_linux_platform_provides_the_linux_system_audio_capture():
     assert isinstance(LinuxPlatform(), Platform)
 
 
-@pytest.mark.parametrize("provider", [MacOSPlatform(), WindowsPlatform()])
-def test_non_linux_platforms_report_system_capture_as_unsupported(provider):
+def test_windows_reports_system_capture_as_unsupported():
     with pytest.raises(UnsupportedPlatformError, match="system audio capture"):
-        provider.system_audio_capture()
+        WindowsPlatform().system_audio_capture()

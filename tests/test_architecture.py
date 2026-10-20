@@ -72,10 +72,8 @@ def test_native_modules_are_only_imported_inside_platform_boundaries():
                     (
                         "stenographer.lib.platform.linux",
                         "stenographer.lib.platform.windows",
-                        "stenographer.lib.platform.macos",
                         "stenographer.overlay.platform.linux",
                         "stenographer.overlay.platform.windows",
-                        "stenographer.overlay.platform.macos",
                     )
                 )
                 for name in names

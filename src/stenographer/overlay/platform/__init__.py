@@ -16,8 +16,4 @@ def current_platform() -> OverlayPlatform:
         from .windows.provider import WindowsOverlayPlatform
 
         return WindowsOverlayPlatform()
-    if sys.platform == "darwin":
-        from .macos.provider import MacOSOverlayPlatform
-
-        return MacOSOverlayPlatform()
     raise UnsupportedPlatformError(f"unsupported platform: {sys.platform}")

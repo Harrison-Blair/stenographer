@@ -26,16 +26,6 @@ jobs:
             python: .venv/Scripts/python.exe
             pip: .venv/Scripts/pip.exe
             exe: .exe
-          - runner: macos-15-intel
-            target: macos-x86_64
-            python: .venv/bin/python
-            pip: .venv/bin/pip
-            exe: ''
-          - runner: macos-15
-            target: macos-arm64
-            python: .venv/bin/python
-            pip: .venv/bin/pip
-            exe: ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     defaults:

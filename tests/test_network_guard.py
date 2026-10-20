@@ -95,9 +95,8 @@ def test_a_proxied_request_is_refused_by_its_real_destination():
 def test_a_unix_socket_still_connects(tmp_path, monkeypatch):
     """Wayland, X11, PipeWire and journald all ride on this.
 
-    Bound by relative name from inside ``tmp_path``: ``sun_path`` holds 104
-    bytes on macOS and 108 on Linux, and the per-user ``$TMPDIR`` pytest hands
-    out on macOS spends more than that before the leaf.
+    Bind by a short relative name to stay below Linux's 108-byte ``sun_path``
+    limit; pytest's temporary path can use much of that limit.
     """
 
     monkeypatch.chdir(tmp_path)

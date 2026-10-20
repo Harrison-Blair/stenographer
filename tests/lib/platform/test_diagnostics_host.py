@@ -1,22 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Pure provider vocabulary and real native resource observations."""
 
-from pathlib import Path
-
 from stenographer.lib.platform import current_platform
-from stenographer.lib.platform.macos.provider import MacOSPlatform
-from stenographer.lib.platform.platform import Platform
-
-
-def test_macos_paths_and_platform_contract():
-    platform = MacOSPlatform()
-    home = Path("home")
-    assert (
-        platform.config_path({}, home)
-        == home / "Library/Application Support/stenographer/config.toml"
-    )
-    assert platform.state_dir({"XDG_STATE_HOME": "state"}, home) == Path("state/stenographer")
-    assert isinstance(platform, Platform)
 
 
 def test_native_resources_have_real_process_identity():
@@ -93,4 +78,4 @@ def test_runtime_context_answers_every_diagnostics_field_about_this_host():
     assert context["python_version"].startswith(
         f"{sys.version_info.major}.{sys.version_info.minor}."
     )
-    assert context["os"] == {"linux": "Linux", "win32": "Windows", "darwin": "Darwin"}[sys.platform]
+    assert context["os"] == {"linux": "Linux", "win32": "Windows"}[sys.platform]

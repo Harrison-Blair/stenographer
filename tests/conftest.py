@@ -22,7 +22,7 @@ import pytest
 
 #: Every environment variable the host providers consult when they resolve the
 #: configuration file, the state directory, or the runtime directory --- see
-#: ``lib/platform/linux/dirs.py`` and the macOS and Windows providers. All of
+#: ``lib/platform/linux/dirs.py`` and the Windows provider. All of
 #: them take precedence over the home directory, so redirecting them is enough
 #: to move every resolved path without touching ``HOME``. ``XDG_CACHE_HOME`` is
 #: not read by this project but is honoured by huggingface_hub.

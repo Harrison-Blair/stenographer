@@ -227,17 +227,16 @@ Use `stenographer setup` and `stenographer sounds` for configuration and
 `stenographer stats` for numeric diagnostics; restart the daemon explicitly to
 apply saved settings.
 
-The native CI workflow builds relocatable development bundles for Linux x86_64,
-Windows x86_64, macOS Intel, and macOS Apple Silicon. It runs the non-integration
-suite and frozen CLI checks. Each artifact includes `LICENSE` and
-`NATIVE-ACCEPTANCE.md`. Copy and run the complete bundle directory; there is no
-Windows/macOS installer or GUI launcher. Linux release bundles continue through
-their source distribution's installer.
+The native CI workflow builds relocatable development bundles for Linux x86_64
+and Windows x86_64. It runs the non-integration suite and frozen CLI checks.
+Each artifact includes `LICENSE` and `NATIVE-ACCEPTANCE.md`. Copy and run the
+complete bundle directory; there is no Windows installer or GUI launcher. Linux
+release bundles continue through their source distribution's installer.
 
-Windows/macOS artifacts are **unsigned development builds, not accepted release
+Windows artifacts are **unsigned development builds, not accepted release
 packages**. Their dictation and service integrations remain unavailable.
 Interactive installation, audio, keyboard, clipboard, service, and helper
-isolation checks remain separate gates. macOS signing/notarization and Windows
-signing/installation checks must pass before release readiness is claimed.
+isolation checks remain separate gates. Windows signing and installation checks
+must pass before release readiness is claimed.
 Automated checks do not capture microphone audio. See
 [native acceptance requirements](../packaging/NATIVE-ACCEPTANCE.md).

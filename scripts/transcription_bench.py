@@ -164,7 +164,7 @@ def memory_usage() -> dict:
         import resource
 
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        peak_bytes = int(peak if sys.platform == "darwin" else peak * 1024)
+        peak_bytes = int(peak * 1024)
     except ImportError:
         peak_bytes = getattr(info, "peak_wset", None)
     return {
