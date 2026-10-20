@@ -1,22 +1,21 @@
-# VERIFIED — 109-hub-files-board (second verification, after e24d586)
+# VERIFIED — 109-hub-files-board (third verification, after the dev merge at a72af96)
 
-**Verdict: fail — dev merge needed.** The repair passes every item. But the
-branch conflicts with `origin/dev` (797ed0f, task 112) in
-`src/stenographer/cli/hub/app.py`, so it cannot land.
+**Verdict: pass.**
 
 Tools: `/home/penguin/source/stenographer/.venv/bin` with
-`PYTHONPATH="$PWD/src"` (the worktree has no `.venv`).
+`PYTHONPATH="$PWD/src"` (the worktree has no `.venv`). The import path
+resolves to this worktree's `src/`.
 
 | Item | Result | Observation |
 | --- | --- | --- |
-| V1 — red run at base `d8ad650` | pass | The branch `test_files.py` was copied onto a scratch worktree at `d8ad650`: 14 failed, 3 passed. |
-| V1 — red run at previous head `136ae55` | pass | The same file at `136ae55`: 12 failed, 5 passed. The new repair tests (title style ×4, browser title, clock format, accent values) fail there. |
-| V1 — green run | pass | `tests/cli/hub/test_files.py`: 17 passed. |
-| V2 — no-background tests | pass | `tests/cli/hub -k background`: 7 passed. |
-| V3 — re-render at 150x45 | pass | Verifier pilot with the test fakes. `~/Recordings` holds four silent WAVs (1122 s, 2467 s, 3735 s, 151 s). One job is running at 58 % with ETA 100 s and three synthetic lines. Output: `verifier-after-files.{svg,png}`. |
+| Merge with `origin/dev` | pass | `git merge-tree --write-tree HEAD origin/dev` (797ed0f) exits 0, so there is no conflict. In merge `e0afe20`, `app.py` keeps task 112's `SetupPanel`/`DoctorPanel` and the doctor sidebar branches. It also keeps the Files title CSS rule, the Files sidebar card, `e open result` and `1-6 sections`. |
+| V1 — red run at base `d8ad650` | pass | The branch `test_files.py` on a scratch worktree at `d8ad650`: 15 failed, 3 passed. |
+| V1 — red run at merge `e0afe20` (footer) | pass | The same file at `e0afe20`: 4 failed, 14 passed. `test_files_browser_hint_is_pinned_to_panel_bottom` fails with `NoMatches '#files-browser-hint'`. The other 3 fail because the queries changed from `VerticalScroll` to `Vertical`. The worker counted only the footer pilot (1 failed). |
+| V1 — green run | pass | `tests/cli/hub/test_files.py`: 18 passed. |
+| V2 — hub and no-background tests | pass | `tests/cli/hub`: 82 passed. `-k "setup or doctor"`: 13 passed. `-k background`: 7 passed. |
+| V3 — re-render at 150x45 | pass | Verifier pilot with the test fakes. `~/Recordings` holds four silent WAVs. One job is running at 58 % with ETA 100 s and three synthetic lines. Output: `verifier3-after-files.{svg,png}`. |
 | V4 — board comparison | pass | See the table below. |
-| V5 — gate | pass | `ruff check`: all checks passed. `ruff format --check`: 693 files already formatted. `pytest -m "not integration"`: 2674 passed, 2 skipped, 6 deselected. `stenographer --help`: exit 0. |
-| Merge with `origin/dev` | **fail** | `git merge-tree --write-tree HEAD origin/dev` reports a content conflict in `src/stenographer/cli/hub/app.py` (exit 1). |
+| V5 — gate | pass | `ruff check`: all checks passed. `ruff format --check`: 701 files already formatted. `pytest -m "not integration"`: 2677 passed, 2 skipped (public audio fixtures absent), 6 deselected. `stenographer --help`: exit 0. |
 
 Board: `/home/penguin/source/hive/.hive/tmp/coordinator/designs/stenographer-png/Files.png`
 (source `.../designs/stenographer/Files.dc.html`).
@@ -25,30 +24,21 @@ Board: `/home/penguin/source/hive/.hive/tmp/coordinator/designs/stenographer-png
 
 | Gap / element | Result | Observation |
 | --- | --- | --- |
-| F-1 sidebar card | pass | `engine`, `large-v3-turbo int8`, `cpu` bar. `profile` is omitted per decision 12 (recorded). |
-| F-2 panel borders and placement | pass | Four bordered panels: browser left, options and queue right, preview below. The separate queue panel is recorded as a difference. |
-| F-2 panel titles | pass | The SVG paints the titles with `#c5c8c6` (default foreground) in bold, not the border colour. |
-| F-2 browser title | pass | `~/Recordings` is in the title. The body starts with `../`. |
-| Browser durations | pass | `18:42`, `41:07`, `1:02:15`, `2:31`. These match the board. |
-| F-3 selected file | pass | `▶` with bold accent text, no fill. |
-| F-4 options | pass | `[x] diarize`, `auto`, `[ ] cleanup pass`, and `md` are in accent. The rows match the board. |
+| F-1 sidebar card | pass | `engine`, `large-v3-turbo int8`, and a `cpu` bar. `profile` is left out per decision 12 (recorded). |
+| F-2 panel borders and placement | pass | Four bordered panels: the browser on the left, options and queue on the right, and the preview below. The separate queue panel is a recorded difference. |
+| F-2 browser title | pass | `~/Recordings` is in the border title. The body starts with `../`. |
+| Browser hint | pass | `/ search · enter queue · space select` is on the last row inside the browser panel, as on the board. The earlier minor note is fixed. |
+| Durations | pass | `1:02:15`, `41:07`, `18:42`, `2:31`. |
+| F-3 selected file | pass | `▶` with bold accent text and no fill. |
+| F-4 options | pass | `[x] diarize`, `count auto`, `[ ] cleanup pass`, `md · jsonl · srt · txt`, and `save to` are present. The chosen values are in the accent colour. |
 | F-5 queue | pass | Bar, `58%`, `eta 1:40`, `transcribe ✓ · diarize … · save`. |
 | F-6 preview | pass | Title `preview · standup-2026-10-19`. Each line shows the time, a bold accent `Speaker N` with no fill, and the text. |
 | F-7 key hints | pass | `e open result`, `1-6 sections`. |
-| F-8 no background | pass | The SVG has no background rect other than the window frame. The no-background pilot passes. |
+| F-8 no background | pass | The only `<rect>` fill in the SVG is the window frame `#292929`. The no-background pilots pass. |
 
-## Minor notes (not blocking)
+## Notes (not blocking)
 
-- The board places the browser hint line (`/ search · enter queue · space
-  select`) at the bottom of the browser panel. The hub places it directly
-  under the file rows and reads `enter queue/open`. `visual-check.md` does
-  not record this difference.
-- In the rsvg PNG, `diarize` and `count` look joined. The SVG has the three
-  spaces, so this comes from the PNG renderer. The screen is correct.
-
-## Repair required
-
-1. Merge `origin/dev` (797ed0f) into the task branch. Resolve the
-   `src/stenographer/cli/hub/app.py` conflict, keep both the task 112 CSS and
-   the Files title rule, and run the gate again.
-2. Optional: record the browser hint placement in `visual-check.md`.
+- In the rsvg PNG, `diarize` and `count` look joined. This comes from the PNG
+  renderer, as in the second verification.
+- In the verifier render, `save to` shows a long scratch path that wraps. The
+  render used a temporary output folder. The board shows a short default path.
