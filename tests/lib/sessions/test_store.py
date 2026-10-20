@@ -100,6 +100,11 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
     assert (session / "transcript.jsonl").read_bytes() == original_jsonl
     assert (session / "transcript.r2.jsonl").read_text(encoding="utf-8").count("Alice") == 2
 
+    for _ in range(7):
+        revision = store.write_revision(session.name, detail.lines, method="relabel")
+    assert revision == "transcript.r10.jsonl"
+    assert store.read(session.name).revision == revision
+
 
 def test_session_and_shared_exporters_write_all_formats_privately(tmp_path):
     session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
@@ -163,24 +168,42 @@ def test_delete_requires_session_id_and_does_not_follow_external_links(tmp_path)
     assert sentinel.exists()
 
 
+def test_revision_and_export_paths_keep_private_permissions(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(tmp_path / "sessions")
+
+    revision = store.write_revision(session.name, store.read(session.name).lines, method="relabel")
+    exported = store.export(session.name, tmp_path / "new-export-folder", "txt")
+
+    assert session.stat().st_mode & 0o777 == 0o700
+    assert (tmp_path / "sessions").stat().st_mode & 0o777 == 0o700
+    assert (session / revision).stat().st_mode & 0o777 == 0o600
+    assert (session / revision.replace(".jsonl", ".md")).stat().st_mode & 0o777 == 0o600
+    assert (session / "session.json").stat().st_mode & 0o777 == 0o600
+    assert exported.parent.stat().st_mode & 0o777 == 0o700
+    assert exported.stat().st_mode & 0o777 == 0o600
+
+
 def test_partial_session_is_listed_and_read_without_crashing(tmp_path):
     session = tmp_path / "sessions" / "20260302T040506Z"
     session.mkdir(parents=True)
     transcript = session / "transcript.jsonl"
-    transcript.write_text(
-        json.dumps(
-            {
-                "start": 0.0,
-                "end": 0.5,
-                "wall": "2026-03-02T04:05:07+00:00",
-                "source": "mic",
-                "speaker_id": "you",
-                "label": "You",
-                "text": "placeholder",
-            }
-        )
-        + "\n{truncated",
-        encoding="utf-8",
+    transcript.write_bytes(
+        (
+            json.dumps(
+                {
+                    "start": 0.0,
+                    "end": 0.5,
+                    "wall": "2026-03-02T04:05:07+00:00",
+                    "source": "mic",
+                    "speaker_id": "you",
+                    "label": "You",
+                    "text": "placeholder",
+                }
+            )
+            + "\n{truncated\n"
+        ).encode("utf-8")
+        + b"\xff"
     )
     (session / "mic.flac").write_bytes(b"partial audio")
     store = SessionStore(tmp_path / "sessions")

@@ -18,7 +18,7 @@ from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions.models import SessionDetail, SessionSummary
 
 _SESSION_ID = re.compile(r"(?P<start>\d{8}T\d{6}Z)(?:-\d+)?\Z")
-_REVISION = re.compile(r"transcript\.r(?P<number>[2-9]\d*)\.jsonl\Z")
+_REVISION = re.compile(r"transcript\.r(?P<number>[2-9]|[1-9]\d+)\.jsonl\Z")
 _ACTIVITY_BINS = 64
 _AUDIO_SOURCES = ("mic", "system")
 
@@ -86,7 +86,7 @@ def read_transcript(path: Path) -> tuple[tuple[TranscriptLine, ...], bool]:
     try:
         if not stat.S_ISREG(path.lstat().st_mode):
             return (), True
-        stream = path.open(encoding="utf-8")
+        stream = path.open(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return (), True
     except OSError:
@@ -94,6 +94,8 @@ def read_transcript(path: Path) -> tuple[tuple[TranscriptLine, ...], bool]:
 
     with stream:
         for raw in stream:
+            if not raw.endswith("\n"):
+                interrupted = True
             try:
                 record = json.loads(raw)
                 if not isinstance(record, dict):
