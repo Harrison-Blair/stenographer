@@ -6,7 +6,7 @@
  │    3 Sessions         │ │ ▶ [ ] standup-2026-10-19.m4a       18:42                 │ │   save to       ~/.local/share/stenographer/files         │
  │    4 Config           │ │   [ ] voice-memo-0412.ogg          2:31                  │ │ o edit options                                            │
  │    5 Setup            │ │                                                          │ │                                                           │
- │    6 Doctor   0W 0F   │ │ / search · enter queue/open · space select               │ │                                                           │
+ │    6 Doctor   0W 0F   │ │                                                          │ │                                                           │
  │                       │ │                                                          │ │                                                           │
  │                       │ │                                                          │ │                                                           │
  │                       │ │                                                          │ │                                                           │
@@ -22,7 +22,7 @@
  │                       │ │                                                          │ │                                                           │
  │                       │ │                                                          │ │                                                           │
  │                       │ │                                                          │ │                                                           │
- │                       │ │                                                          │ │                                                           │
+ │                       │ │ / search · enter queue · space select                    │ │                                                           │
  │                       │ ╰──────────────────────────────────────────────────────────╯ ╰───────────────────────────────────────────────────────────╯
  │                       │ ╭─ preview · standup-2026-10-19 ─────────────────────────────────────────────────────────────────────────────────────────╮
  │                       │ │ 00:00:04  Speaker 1  synthetic fixture line one                                                                        │

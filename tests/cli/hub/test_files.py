@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 from rich.color import Color
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
@@ -108,7 +108,7 @@ def test_files_panels_have_board_layout_and_files_sidebar_card(tmp_path):
             await pilot.press("2")
             await pilot.pause()
 
-            browser = app.query_one("#files-browser-scroll", VerticalScroll)
+            browser = app.query_one("#files-browser-scroll", Vertical)
             options = app.query_one("#files-options-scroll", VerticalScroll)
             queue = app.query_one("#files-queue-scroll", VerticalScroll)
             preview = app.query_one("#files-preview-scroll", VerticalScroll)
@@ -155,9 +155,30 @@ def test_files_panel_titles_use_terminal_foreground_and_bold(tmp_path, panel_id)
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("2")
-            panel = app.query_one(panel_id, VerticalScroll)
+            panel = app.query_one(panel_id)
             assert panel.styles.border_title_color.ansi == -1
             assert panel.styles.border_title_style.bold
+
+    asyncio.run(exercise())
+
+
+def test_files_browser_hint_is_pinned_to_panel_bottom(tmp_path):
+    _write_audio(tmp_path / "standup.wav")
+    app = HubApp(FakeServices(tmp_path / "exports"), files_home=tmp_path)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("2")
+            await pilot.pause()
+
+            panel = app.query_one("#files-browser-scroll")
+            hint = app.query_one("#files-browser-hint", Static)
+            rows = app.query_one("#files-browser", Static)
+
+            assert panel.styles.border.top[0] == "round"
+            assert hint.render().plain == "/ search · enter queue · space select"
+            assert rows.region.y < hint.region.y
+            assert hint.region.bottom == panel.region.bottom - 1
 
     asyncio.run(exercise())
 
@@ -170,7 +191,7 @@ def test_files_browser_title_tracks_current_directory(tmp_path):
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("2", "enter")
-            browser = app.query_one("#files-browser-scroll", VerticalScroll)
+            browser = app.query_one("#files-browser-scroll", Vertical)
             assert browser.border_title == "~/Recordings"
 
     asyncio.run(exercise())
@@ -308,7 +329,7 @@ def test_pilot_file_browser_search_and_multi_select_queue(tmp_path):
         async with app.run_test() as pilot:
             await pilot.press("2")
             text = _panel_text(app)
-            browser = app.query_one("#files-browser-scroll", VerticalScroll)
+            browser = app.query_one("#files-browser-scroll", Vertical)
             browser_text = app.query_one("#files-browser", Static).render().plain
             assert browser.border_title == "~"
             assert str(tmp_path) not in browser_text

@@ -29,6 +29,7 @@ _AUDIO_SUFFIXES = {
     ".wma",
 }
 _OPTION_NAMES = ("diarize", "speaker count", "refine", "output format", "output folder")
+_BROWSER_HINT = "/ search · enter queue · space select"
 
 
 class FilesPanel(Vertical):
@@ -50,9 +51,17 @@ class FilesPanel(Vertical):
         border: round #3a4150;
         margin-right: 1;
     }
+    #files-browser-list {
+        height: 1fr;
+    }
     #files-browser {
         height: auto;
         padding: 0 1;
+    }
+    #files-browser-hint {
+        height: 1;
+        padding: 0 1;
+        color: ansi_default;
     }
     #files-right {
         width: 1fr;
@@ -116,8 +125,10 @@ class FilesPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="files-main"):
-            with VerticalScroll(id="files-browser-scroll", can_focus=False):
-                yield Static("", id="files-browser", markup=False)
+            with Vertical(id="files-browser-scroll"):
+                with VerticalScroll(id="files-browser-list", can_focus=False):
+                    yield Static("", id="files-browser", markup=False)
+                yield Static(_BROWSER_HINT, id="files-browser-hint", markup=False)
             with Vertical(id="files-right"):
                 with VerticalScroll(id="files-options-scroll", can_focus=False):
                     yield Static("", id="files-options", markup=False)
@@ -270,7 +281,7 @@ class FilesPanel(Vertical):
         """Return all panel content for tests and accessible text views."""
         return "\n".join(
             (
-                self._browser_text.plain,
+                f"{self._browser_text.plain}\n{_BROWSER_HINT}",
                 self._options_text.plain,
                 self._queue_text.plain,
                 self._preview_text.plain,
@@ -281,7 +292,7 @@ class FilesPanel(Vertical):
         self._build_text()
         if not self.is_mounted or not self.app.is_running:
             return
-        browser_panel = self.query_one("#files-browser-scroll", VerticalScroll)
+        browser_panel = self.query_one("#files-browser-scroll", Vertical)
         try:
             relative_directory = self.directory.relative_to(self.home)
         except ValueError:
@@ -336,8 +347,6 @@ class FilesPanel(Vertical):
                 selectable=True,
                 selected=self.focus_area == "browser" and index == self.selected_entry_index,
             )
-        append_line(rows, "")
-        append_line(rows, "/ search · enter queue/open · space select")
         return rows
 
     def _render_options(self) -> Text:
