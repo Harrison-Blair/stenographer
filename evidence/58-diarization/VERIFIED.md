@@ -1,50 +1,52 @@
-# VERIFIED — 58-diarization
+# VERIFIED — 58-diarization (repair re-verification)
 
-Independent verifier run on 2026-10-20 at `da74e74`. `.venv` was a temporary
-symlink to `/home/penguin/source/stenographer/.venv`; the CLI and tests loaded
-this worktree's `src/`. Red runs used a detached base worktree at the merge
-base with `dev`, with the task's `tests/` copied over.
+Second independent verifier run on 2026-10-20 at `f4388d7`, after the repair
+for the first run's finding F1. `.venv` was a temporary symlink to
+`/home/penguin/source/stenographer/.venv`. The tests and CLI loaded this
+worktree's `src/` through `PYTHONPATH=src`. The red runs used detached
+worktrees with this task's `tests/` copied in. One was at the `dev` merge base
+`033be49`. The other was at the pre-repair head `0324a5e`.
 
 | Item | Result | Observation |
 | --- | --- | --- |
-| V1 live and batch clustering (red/green) | pass | Base: `test_relabel.py` fails at collection; the 3 new short-phrase tests in `test_speaker_tracker.py` fail. Head: all pass. The 3-clip real-model test is kept and skips (public clips absent here too). |
-| V2 stop pass, revisions, controls (red/green) | pass | Base: the 3 new `test_live_session.py` stop tests, `test_app.py::test_second_q_skips_relabel_and_stop_progress_is_visible` and the handler test fail (8 failed, 27 passed). Head: pass. |
-| V3 real-audio check | pass (evidence consistent; not rerun) | Recorded output: 457 labels at base, 4 after the stop pass, 360 phrases under 1.2 s. Not rerun (about 5.6 h of audio). See finding F1: the script counts by label name, so it cannot show two clusters that share one label. |
-| V4 gate | pass | `ruff check .` all passed; `ruff format --check .` 590 files formatted; `pytest -m "not integration"` 2564 passed, 2 skipped, 6 deselected; `stenographer --help` prints usage. |
-| Requirement 2: rename mapping | **fail** | See F1. |
+| V1 live and batch clustering (red/green) | pass | Base: `test_relabel.py` fails at collection, and the 3 short-phrase tests in `test_speaker_tracker.py` fail. Pre-repair `0324a5e`: 2 `test_relabel.py` tests fail (labels `Speaker 4`/`Speaker 172` were kept, and `Renamed voice` was on both voices). Head: 38 passed, 1 skipped. The 3-clip real-model test is kept. It skips because its public clips are absent. |
+| V2 stop pass, revisions, controls (red/green) | pass | Base: 8 failed, 27 passed (3 `test_live_session.py` stop tests, `test_app.py::test_second_q_skips_relabel_and_stop_progress_is_visible`, the handler test, and the 3 tracker tests). Head: all pass. |
+| V3 real-audio check (rerun) | pass | Reran both commands on the consented recording, about 4 min each. Baseline: `Clusters: 457`, `Labels: 457`. Fixed: `Clusters: 4`, `Labels: 4` (Speaker 1–4: 3217.9 / 5184.4 / 4585.5 / 1682.3 s). Phrases under 1.2 s: 360. Both outputs are line-for-line identical to V3.md. Only counts and timings were printed. |
+| V4 gate | pass | `ruff check .` all passed. `ruff format --check .` reported 590 files formatted. `pytest -m "not integration"`: 2565 passed, 2 skipped, 6 deselected. `stenographer --help` prints usage (rc 0). |
+| Prior F1 (unique labels, rename mapping) | pass | Probe: voices A (10 s) and B (5 s) were both live "Speaker 1", plus 2 s of B as "Speaker 2". Result: `Speaker 1` on A and `Speaker 2` on B. With A renamed to "Alice", the result was `Alice` on A and `Speaker 1` on B. Clusters now count equal to labels in V3. |
+| Prior F2 (renumber unnamed labels) | pass | Unnamed clusters are numbered 1..N in order of first appearance. Renamed labels are kept. |
+| Requirement 2: batch pass keeps distinct voices | **fail** | See F3. |
 
 ## Findings
 
-**F1 (fails requirement 2). Two batch clusters can get the same label.**
-`relabel_system_lines` (`src/stenographer/lib/live/relabel.py`, final loop)
-gives each cluster the old label with the most speech time, with no check for
-collisions. Synthetic probe: live labelled voice A (10 s) and voice B (5 s)
-both "Speaker 1", plus 2 s of B as "Speaker 2". The batch pass split the
-voices correctly (`speaker-1`, `speaker-2`), and labelled **both** clusters
-"Speaker 1". The user sees one speaker where the batch found two. If the user
-had renamed "Speaker 1" to a name, that name now also covers a second voice,
-which is what the brief's mapping should prevent ("a name the user gave stays on the
-same voice"). `scripts/relabel_audio.py` groups talk time by `line.label`, so
-the "Labels: 4" in V3 could hide more than 4 clusters. Each old label must go
-to at most one cluster; other clusters need a fresh label.
+**F3 (fails requirement 2). The stop pass merges a distinct speaker who talks
+less than 20% as much as the top speaker.**
+`_MINIMUM_CLUSTER_SPEECH_FRACTION = 0.20` (`src/stenographer/lib/live/relabel.py:16`)
+is applied after agglomerative clustering. It marks every cluster with less
+than 20% of the largest cluster's speech time as non-core. It then joins that
+cluster to the nearest core cluster, whatever their similarity. The threshold
+does not apply to this step. The code comment says the value was chosen to keep
+4 voices in the same consented recording that V3 uses to judge the result.
+That makes V3 tuned to this one file rather than an independent check.
 
-**F2 (manager note 1; not a brief failure by itself).** With no renames, the
-pass keeps live numbers. In V3 a 4-speaker session shows "Speaker 11",
-"Speaker 172", "Speaker 2", "Speaker 22". Synthetic probe: clusters dominated by
-live "Speaker 7" and "Speaker 9" keep those names. The brief's mapping rule,
-read literally, gives this result, so it does not fail the brief alone. A user
-would expect unnamed labels renumbered 1..N in speech order, with only renamed
-labels kept. Fix it together with F1, because both are in the same
-label-assignment loop. The pass currently cannot tell a rename from a default
-label. The tracker's rename map or the default `Speaker N` pattern can supply
-that.
+Synthetic probe at head, using the default threshold 0.5:
+- Voice A had 100 s with embedding `[1,0,0]`. Voice B had 15 s with an
+  orthogonal embedding `[0,0,1]` (cosine 0). Both phrases are well above
+  1.2 s. Result: one cluster, with both lines labelled `Speaker 1`.
+- The same probe with B at 25 s: two clusters, as expected.
 
-**Manager note 3: nonblocking stop.** Kept. `action_stop` starts
-`_finish_stop` as an `asyncio` task and returns. `_finish_stop` runs
-`session.stop` in `asyncio.to_thread`. A second `q` calls `skip_relabel()`.
-The head test `test_second_q_skips_relabel_and_stop_progress_is_visible`
-covers this. Overlap with task 72 (`72-tui-input-first`): that worktree has
-no code changes yet. This task changes `action_stop`, adds `_finish_stop`,
-`_stop_requested`, `_stop_task`, a longer key-hints line, and the relabel
-status in `_refresh_status` in `src/stenographer/cli/live/app.py`. Task 72
-will touch the same key handling and hints.
+Effect: in an unbalanced conversation, the stop pass removes a real speaker.
+Examples are an interview, a lecture with questions, or a meeting with one
+main presenter. The live labels had already separated that speaker. The user
+cannot fix this with a rename. The brief asks for a batch method "with a
+threshold". The live rule for long phrases must stay as it is. No test covers
+this case. Possible repairs: use a small absolute time floor (only fold
+clusters with very little speech time), or fold a small cluster only when its
+similarity to the target is above a lower bound. Add a synthetic test for a
+distinct minor voice. Then rerun V3 to show that it still gives about 4
+labels.
+
+**Note (not a failure).** The rename detection treats a label as renamed when
+it differs from `Speaker <n>` for its own `speaker_id`. Suppose a user renames
+`speaker-3` to `Speaker 1`. That label counts as renamed and it is kept. This
+is acceptable.
