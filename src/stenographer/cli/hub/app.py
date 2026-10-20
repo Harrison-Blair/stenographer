@@ -124,6 +124,7 @@ class HubApp(App[None]):
             ConfigEditor(config_path) if config_path is not None else None
         )
         self._section = "live"
+        self._activity_status: str | None = None
         self._pending_section: str | None = None
         self._pending_quit = False
         self.setup_wizard = SetupWizard()
@@ -232,6 +233,8 @@ class HubApp(App[None]):
         section_view = self.query_one("#section-content", Static)
         if self._section == "config" and self.config_editor is not None:
             content = self.config_editor.render()
+        if self._activity_status is not None:
+            content = self._activity_status
         section_view.border_title = title
         section_view.update(content)
         hints = self.query_one("#key-hints", Static)
@@ -723,22 +726,30 @@ class HubApp(App[None]):
         log.info(fmt_event("hub", "doctor_report_copied"))
         self.notify("Doctor report copied.")
 
-    async def action_start_recording(self) -> None:
-        if self._section != "live" or self.services.recording:
+    def action_start_recording(self) -> None:
+        if self._section != "live" or self.services.recording or self._activity_status is not None:
             return
         if self.config_editor is not None and self.config_editor.read_only:
             self.notify("Fix the invalid configuration before recording.", severity="error")
             return
+        self._activity_status = "Starting recording..."
+        self._refresh_view()
+        self.run_worker(self._start_recording(), name="start-recording", group="hub-work")
+
+    async def _start_recording(self) -> None:
         try:
             await asyncio.to_thread(self.services.start_recording)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: recording_start_failed", exc, safe=True)
             self.notify(f"Could not start recording: {exc}", severity="error")
-            return
-        log.info(fmt_event("hub", "recording_started"))
+        else:
+            log.info(fmt_event("hub", "recording_started"))
+        self._activity_status = None
         self._refresh_view()
 
     def action_request_quit(self) -> None:
+        if self._activity_status is not None:
+            return
         if (
             self._section in {"config", "setup"}
             and self.config_editor is not None
@@ -764,16 +775,24 @@ class HubApp(App[None]):
         else:
             self.exit()
 
-    async def _confirm_recording_quit(self, confirmed: bool | None) -> None:
+    def _confirm_recording_quit(self, confirmed: bool | None) -> None:
         log.info(fmt_event("hub", "quit_confirmed", work="recording", confirmed=bool(confirmed)))
         if not confirmed:
             return
+        self._activity_status = "Saving recording..."
+        self._refresh_view()
+        self.run_worker(self._stop_recording_and_quit(), name="save-recording", group="hub-work")
+
+    async def _stop_recording_and_quit(self) -> None:
         try:
             await asyncio.to_thread(self.services.stop_recording)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: recording_stop_failed", exc, safe=True)
             self.notify(f"Could not save the recording: {exc}", severity="error")
+            self._activity_status = None
+            self._refresh_view()
             return
+        self._activity_status = None
         self._refresh_view()
         if self.services.files_running:
             self._prompt_files_quit()
@@ -787,14 +806,22 @@ class HubApp(App[None]):
             self._confirm_files_quit,
         )
 
-    async def _confirm_files_quit(self, confirmed: bool | None) -> None:
+    def _confirm_files_quit(self, confirmed: bool | None) -> None:
         log.info(fmt_event("hub", "quit_confirmed", work="files", confirmed=bool(confirmed)))
         if not confirmed:
             return
+        self._activity_status = "Canceling Files job..."
+        self._refresh_view()
+        self.run_worker(self._cancel_files_and_quit(), name="cancel-files", group="hub-work")
+
+    async def _cancel_files_and_quit(self) -> None:
         try:
             await asyncio.to_thread(self.services.cancel_files)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
             self.notify(f"Could not cancel the Files job: {exc}", severity="error")
+            self._activity_status = None
+            self._refresh_view()
             return
+        self._activity_status = None
         self.exit()
