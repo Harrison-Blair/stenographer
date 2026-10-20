@@ -91,8 +91,9 @@ The wizard checks your microphone, clipboard, model, and input permissions, and
 offers the separate ASR model download. The default is
 `deepdml/faster-whisper-large-v3-turbo-ct2`, selected from the [CPU model and
 context screen (2026-10-20)](docs/transcription-experiments.md#cpu-model-and-context-screen-2026-10-20).
-Use plain `setup` to review every setting, or run `stenographer model download`
-later.
+Dictation, Live, and Files use the same ASR settings. An existing explicit
+`stenographer.asr.model` value stays unchanged. Use plain `setup` to review
+every setting, or run `stenographer model download` later.
 
 For clearer recognition, first run `stenographer devices` and select the
 intended microphone. Keep it about 10–20 cm from your mouth, aim it slightly
@@ -148,7 +149,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer` — open the terminal hub when stdin and stdout are terminals;
   otherwise show help. Live starts when you press `space`; use `v` for mixed or
   split transcripts, and `m` or `s` to toggle audio sources. Press `2` for Files;
-  use the browser to queue files and `x` to cancel a selected job.
+  use the browser to queue files and `x` to cancel a selected job. See the
+  [terminal hub guide](docs/hub.md) for all sections, controls, and file formats.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
@@ -182,6 +184,10 @@ with batch speaker labels; see the [live guide](docs/live.md).
 The only automatic network request that leaves your machine is an optional,
 metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
+
+The [terminal hub](docs/hub.md) includes Live, Files, Sessions, Config, Setup,
+and Doctor. Recording starts only when you press `space`; changing sections
+does not stop a recording. Files jobs run in the background, one at a time.
 
 A [refine](docs/refine.md) pass, on by default, provides exactly two built-in
 profiles through one local Ollama model. Agent rewrites jumbled requests into

@@ -5,16 +5,20 @@
 `stenographer live` records speech from the microphone, system output, or both.
 It opens the standalone live app, keeps its existing flags, and saves the audio
 and transcript in a private session folder. It does not open the hub. Bare
-`stenographer` opens the hub on Live and waits for `space` before it records.
-The hub shows the engine and source levels, a mixed speaker transcript, and a
-split view when you press `v`. Its `m` and `s` keys toggle the sources. Press
-`q` to confirm stop, save, and quit. Live capture is local. The command does
-not send audio or transcript text over the network.
+`stenographer` opens the [terminal hub](hub.md) on Live and waits for `space`
+before it records. In the hub, recording continues when you change sections;
+`v` switches between mixed and split transcript views, and `m` and `s` toggle
+the audio sources. The hub asks you to confirm before it stops and saves a
+recording when you quit. Live capture is local. Neither command sends audio or
+transcript text over the network.
 
 ## Prepare the models
 
-Live uses your configured ASR model, plus separate voice-activity and speaker
-models. Download each model only when you choose to:
+Live uses the shared ASR settings for dictation, Live, and Files. The default
+ASR model is `deepdml/faster-whisper-large-v3-turbo-ct2`; an explicit
+`stenographer.asr.model` in an existing configuration stays unchanged. Live
+also uses separate voice-activity and speaker models. Download each model only
+when you choose to:
 
 ```sh
 stenographer model download --asr
@@ -60,20 +64,26 @@ a session. If you do not need system audio, start with `--no-system` or press
 - `q` stops the session and saves its files. Stenographer then re-labels the recognized system phrases. Press `q` again to skip this pass.
 
 Microphone speech appears as `You`; system speech gets labels such as
-`Speaker 1`. Speaker labels can split one person into multiple labels or merge
-several people under one label. Phrases shorter than 1.2 seconds reuse a known
-speaker and do not change its embedding mean. When you stop a session,
-Stenographer shows progress while it clusters the saved system phrases and
-writes a new transcript revision. Each user-renamed label can go to only one
-cluster; when a label appears in several clusters, it stays with the cluster
-with the most shared speech time. The pass numbers clusters without a user name
-`Speaker 1`, `Speaker 2`, and so on, in order of first appearance in the
-session. Press `q` again during the pass to keep the live labels. If relabeling
-fails, the live labels remain and the command reports the reason. Press `r` and
-assign the same display
-name to speakers to merge their displayed labels. This does not change their
-underlying speaker IDs. The clustering threshold is 0.50; it was tested on only
-three clips, so labels are estimates, not reliable identification.
+`Speaker 1`. Speaker labels are similarity estimates. They can split one person
+into multiple labels or merge several people under one label. Phrases shorter
+than 1.2 seconds reuse a known speaker and do not change its embedding mean.
+When you stop a session, Stenographer shows progress while it clusters the
+saved system phrases and writes a new transcript revision. A minor voice gets
+its own label only if it has at least 15 seconds of phrases that are each at
+least 2 seconds long within a 30-second window, or if it has at least 20% of
+the top speaker's speech time. The 15-second condition also requires at least
+two-thirds of that voice's speech to be in those sustained phrases. Otherwise,
+the voice is merged into the most similar speaker. Short or sparse phrases can
+remain under another speaker's label. Each user-renamed label can go to only
+one cluster; when a label appears in several clusters, it stays with the
+cluster with the most shared speech time. The pass numbers clusters without a
+user name `Speaker 1`, `Speaker 2`, and so on, in order of first appearance in
+the session. Press `q` again during the pass to keep the live labels. If
+relabeling fails, the live labels remain and the command reports the reason.
+Press `r` and assign the same display name to speakers to merge their displayed
+labels. This does not change their underlying speaker IDs. The clustering
+threshold is 0.50; it was tested on only three clips, so labels are not reliable
+identification.
 
 ## Saved session files
 
