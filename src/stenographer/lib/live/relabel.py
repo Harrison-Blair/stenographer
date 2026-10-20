@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import heapq
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 
@@ -22,6 +21,27 @@ _MINIMUM_SUSTAINED_SPEECH_SECONDS = 15.0
 _SUSTAINED_SPEECH_WINDOW_SECONDS = 30.0
 # Two-thirds of a cluster's speech must come from sustained phrases.
 _MINIMUM_SUSTAINED_SPEECH_FRACTION = 2 / 3
+
+
+def _best_active_pair(
+    active: np.ndarray,
+    best_scores: np.ndarray,
+    best_neighbors: np.ndarray,
+    cluster_ids: np.ndarray,
+) -> tuple[int, int, float]:
+    """Return the highest-scoring pair with the heap's logical-id tie order."""
+    rows = np.flatnonzero(active)
+    maximum = np.max(best_scores[rows])
+    candidates = rows[best_scores[rows] == maximum]
+    neighbors = best_neighbors[candidates]
+    left_ids = np.minimum(cluster_ids[candidates], cluster_ids[neighbors])
+    right_ids = np.maximum(cluster_ids[candidates], cluster_ids[neighbors])
+    order = np.lexsort((right_ids, left_ids))
+    left_slot = int(candidates[order[0]])
+    right_slot = int(best_neighbors[left_slot])
+    if cluster_ids[left_slot] > cluster_ids[right_slot]:
+        left_slot, right_slot = right_slot, left_slot
+    return left_slot, right_slot, float(maximum)
 
 
 def relabel_system_lines(
@@ -79,13 +99,15 @@ def relabel_system_lines(
     anchor_vectors = vectors[anchor_indices]
     anchor_count = len(anchor_indices)
     capacity = 2 * anchor_count - 1
-    similarities = np.full((capacity, capacity), -np.inf, dtype=np.float32)
-    active = np.zeros(capacity, dtype=bool)
-    active[:anchor_count] = True
-    sizes = np.zeros(capacity, dtype=np.float64)
-    sizes[:anchor_count] = 1.0
-    clusters = {index: [phrase_index] for index, phrase_index in enumerate(anchor_indices)}
-    queue: list[tuple[float, int, int]] = []
+    # Keep exact scores for ordering; round only when a later merge reads them.
+    similarities = np.full((anchor_count, anchor_count), -np.inf, dtype=np.float64)
+    active = np.ones(anchor_count, dtype=bool)
+    sizes = np.ones(anchor_count, dtype=np.float64)
+    cluster_ids = np.arange(anchor_count, dtype=np.intp)
+    left_children = np.full(capacity, -1, dtype=np.intp)
+    right_children = np.full(capacity, -1, dtype=np.intp)
+    best_scores = np.full(anchor_count, -np.inf, dtype=np.float64)
+    best_neighbors = np.full(anchor_count, -1, dtype=np.intp)
     total = 2 * anchor_count + len(original)
     if progress is not None:
         progress(0, total)
@@ -96,41 +118,90 @@ def relabel_system_lines(
         row_scores = anchor_vectors[row + 1 :] @ anchor_vectors[row]
         similarities[row, row + 1 : anchor_count] = row_scores
         similarities[row + 1 : anchor_count, row] = row_scores
-        for offset in np.flatnonzero(row_scores >= threshold):
-            column = row + 1 + int(offset)
-            heapq.heappush(queue, (-float(row_scores[offset]), row, column))
+        if row_scores.size:
+            maximum = np.max(row_scores)
+            if maximum > best_scores[row]:
+                offset = int(np.flatnonzero(row_scores == maximum)[0])
+                best_scores[row] = maximum
+                best_neighbors[row] = row + 1 + offset
         if progress is not None:
             progress(row + 1, total)
 
     next_cluster = anchor_count
-    while queue:
+    active_count = anchor_count
+    while active_count > 1:
         if should_cancel is not None and should_cancel():
             return None
-        negative_score, left, right = heapq.heappop(queue)
-        if not active[left] or not active[right] or -negative_score < threshold:
-            continue
+        left, right, score = _best_active_pair(active, best_scores, best_neighbors, cluster_ids)
+        if not score >= threshold:
+            break
 
         merged_size = sizes[left] + sizes[right]
-        members = clusters.pop(left) + clusters.pop(right)
-        clusters[next_cluster] = members
-        active[left] = False
+        left_children[next_cluster] = cluster_ids[left]
+        right_children[next_cluster] = cluster_ids[right]
+        remaining = active.copy()
+        remaining[left] = False
+        remaining[right] = False
+        other_slots = np.flatnonzero(remaining)
+        # The previous matrix rounded each completed score to float32 before reuse.
+        updated_scores = (
+            sizes[left] * similarities[left, other_slots].astype(np.float32)
+            + sizes[right] * similarities[right, other_slots].astype(np.float32)
+        ) / merged_size
+        similarities[left, other_slots] = updated_scores
+        similarities[other_slots, left] = updated_scores
+        merged_scores = similarities[left, other_slots]
+        similarities[left, left] = -np.inf
+        similarities[left, right] = -np.inf
+        similarities[right, left] = -np.inf
+        similarities[right, right] = -np.inf
+
         active[right] = False
-        active[next_cluster] = True
-        sizes[next_cluster] = merged_size
-        for other in np.flatnonzero(active[:next_cluster]):
-            score = (
-                sizes[left] * similarities[left, other] + sizes[right] * similarities[right, other]
-            ) / merged_size
-            similarities[next_cluster, other] = score
-            similarities[other, next_cluster] = score
-            if score >= threshold:
-                heapq.heappush(queue, (-float(score), int(other), next_cluster))
+        active_count -= 1
+        cluster_ids[left] = next_cluster
+        sizes[left] = merged_size
+        improved = merged_scores > best_scores[other_slots]
+        improved_slots = other_slots[improved]
+        best_scores[improved_slots] = merged_scores[improved]
+        best_neighbors[improved_slots] = left
+
+        affected_mask = active & ((best_neighbors == left) | (best_neighbors == right))
+        affected_mask[left] = True
+        affected = np.flatnonzero(affected_mask)
+        active_slots = np.flatnonzero(active)
+        for row in affected:
+            candidates = active_slots[active_slots != row]
+            if not candidates.size:
+                best_scores[row] = -np.inf
+                best_neighbors[row] = -1
+                continue
+            row_scores = similarities[row, candidates]
+            maximum = np.max(row_scores)
+            tied = candidates[row_scores == maximum]
+            partner = tied[np.argmin(cluster_ids[tied])]
+            best_scores[row] = maximum
+            best_neighbors[row] = partner
+
         next_cluster += 1
         if progress is not None:
             progress(next_cluster, total)
 
     if should_cancel is not None and should_cancel():
         return None
+
+    clusters = {}
+    for slot in np.flatnonzero(active):
+        root = int(cluster_ids[slot])
+        members = []
+        pending = [root]
+        while pending:
+            node = pending.pop()
+            if node < anchor_count:
+                members.append(anchor_indices[node])
+            else:
+                pending.append(int(right_children[node]))
+                pending.append(int(left_children[node]))
+        clusters[root] = members
 
     ordered_clusters = sorted(clusters.values(), key=min)
     cluster_times = [sum(durations[index] for index in members) for members in ordered_clusters]
