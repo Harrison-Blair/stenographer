@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
 from stenographer.cli.hub.selection import append_line
@@ -22,7 +22,9 @@ class SetupPanel(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Static("", id="setup-steps", markup=False)
-        yield Static("", id="setup-detail", markup=False)
+        with Vertical(id="setup-detail"):
+            yield Static("", id="setup-detail-content", markup=False)
+            yield Static("", id="setup-test-status", markup=False)
 
     def refresh_view(self, wizard: SetupWizard, config: Config | None) -> None:
         steps = Text()
@@ -41,15 +43,16 @@ class SetupPanel(Horizontal):
         append_line(steps, "quick: steps 1-3 only")
 
         detail = Text()
+        test_status = Text()
         if wizard.finished:
             self.query_one("#setup-steps", Static).border_title = "steps"
-            self.query_one("#setup-detail", Static).border_title = "setup complete"
+            self.query_one("#setup-detail", Vertical).border_title = "setup complete"
             append_line(detail, "Setup path complete.")
         else:
             step = wizard.step
             selected = self.query_one("#setup-steps", Static)
             selected.border_title = "steps"
-            panel = self.query_one("#setup-detail", Static)
+            panel = self.query_one("#setup-detail", Vertical)
             panel.border_title = f"{wizard.index + 1} · {step.title}"
             append_line(detail, step.description)
             if step.step_id == "hotkey":
@@ -59,7 +62,17 @@ class SetupPanel(Horizontal):
                     detail,
                     f"capture target: {hotkey.binding if hotkey is not None else 'not configured'}",
                 )
-                append_line(detail, f"mode: {hotkey.mode if hotkey is not None else 'unknown'}")
+                if detail:
+                    detail.append("\n")
+                detail.append("mode: ")
+                active_mode = hotkey.mode if hotkey is not None else ""
+                modes = ("hybrid", "hold", "toggle")
+                for index, mode in enumerate(modes):
+                    selected_mode = mode == active_mode
+                    marker = "●" if selected_mode else "○"
+                    style = "bold #5fd7ff" if selected_mode else None
+                    gap = "  " if index < len(modes) - 1 else ""
+                    detail.append(f"{marker} {mode}{gap}", style=style)
                 threshold = (
                     f"{hotkey.hybrid_threshold_seconds:g} s" if hotkey is not None else "unknown"
                 )
@@ -75,7 +88,7 @@ class SetupPanel(Horizontal):
                 value = getattr(getattr(config, group), key)
                 shown = "automatic" if value is None else str(value)
                 append_line(detail, f"Current {step.config_key}: {shown}")
-            append_line(detail, "")
-            append_line(detail, f"test status: {wizard.last_test or 'not tested'}")
+            append_line(test_status, f"test status: {wizard.last_test or 'not tested'}")
         self.query_one("#setup-steps", Static).update(steps)
-        self.query_one("#setup-detail", Static).update(detail)
+        self.query_one("#setup-detail-content", Static).update(detail)
+        self.query_one("#setup-test-status", Static).update(test_status)
