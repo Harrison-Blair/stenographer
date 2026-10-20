@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from rich.text import Text
@@ -10,10 +11,14 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
+from stenographer.cli.hub.doctor_view import DOCTOR_STATE_COLORS, DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.selection import append_line
 
 if TYPE_CHECKING:
     from stenographer.cli.hub.doctor_view import DoctorReport
+
+
+_WARNING = re.compile(r"(\d{2}:\d{2}:\d{2}) (WARN|ERROR) (.+)\Z")
 
 
 class DoctorPanel(Vertical):
@@ -43,13 +48,14 @@ class DoctorPanel(Vertical):
             if report is not None:
                 for index, check in enumerate(report.checks):
                     if check.group == group:
-                        state = {"ok": "✓", "warn": "!", "fail": "x"}[check.status]
-                        append_line(
-                            rows,
-                            f"{state} {check.label} · {check.detail}",
-                            selectable=True,
-                            selected=index == selected_index,
-                        )
+                        state = DOCTOR_STATE_GLYPHS[check.status]
+                        if rows:
+                            rows.append("\n")
+                        selected = index == selected_index
+                        row_style = "bold #5fd7ff" if selected else None
+                        rows.append("▶ " if selected else "  ", style=row_style)
+                        rows.append(f"{state} ", style=DOCTOR_STATE_COLORS[check.status])
+                        rows.append(f"{check.label} · {check.detail}", style=row_style)
             if not rows:
                 append_line(rows, "Checking system capabilities…" if loading else "No checks.")
             widget.update(rows)
@@ -60,25 +66,28 @@ class DoctorPanel(Vertical):
             if report is not None and 0 <= selected_index < len(report.checks)
             else None
         )
-        issue.border_title = (
-            "selected issue" if selected is None else f"selected issue · {selected.label}"
-        )
+        issue.border_title = "selected issue"
         issue_text = Text()
         if selected is None:
             append_line(
                 issue_text, "Checking system capabilities…" if loading else "No issue selected."
             )
         elif selected.status in {"warn", "fail"}:
-            append_line(issue_text, f"{selected.status.upper()} · {selected.label}")
+            color = DOCTOR_STATE_COLORS[selected.status]
+            issue.styles.border = ("round", color)
+            issue.border_title = ""
+            issue_text.append(f"{selected.label} unavailable", style=f"bold {color}")
             if details:
-                append_line(issue_text, f"Detail: {selected.detail}")
-                if selected.fix:
-                    append_line(issue_text, f"Fix: {selected.fix}")
+                detail_and_fix = " ".join(part for part in (selected.detail, selected.fix) if part)
+                append_line(issue_text, detail_and_fix)
             else:
                 append_line(issue_text, "Press enter for details and fix.")
         else:
+            issue.styles.border = ("round", "#3a4150")
             append_line(issue_text, f"{selected.label} · {selected.detail}")
             append_line(issue_text, "No fix required.")
+        if selected is None:
+            issue.styles.border = ("round", "#3a4150")
         issue.update(issue_text)
 
         warnings = self.query_one("#doctor-warnings", Static)
@@ -86,7 +95,18 @@ class DoctorPanel(Vertical):
         warning_text = Text()
         if report is not None and report.warnings:
             for warning in report.warnings:
-                append_line(warning_text, warning)
+                match = _WARNING.fullmatch(warning)
+                if match is None:
+                    continue
+                if warning_text:
+                    warning_text.append("\n")
+                timestamp, level, event = match.groups()
+                warning_text.append(f"{timestamp} ", style="dim")
+                warning_text.append(
+                    f"{level} ",
+                    style=DOCTOR_STATE_COLORS["warn" if level == "WARN" else "fail"],
+                )
+                warning_text.append(event)
         else:
             append_line(warning_text, "No recent warnings.")
         warnings.update(warning_text)

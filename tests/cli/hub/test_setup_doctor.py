@@ -6,6 +6,8 @@ import dataclasses
 from datetime import datetime
 from types import SimpleNamespace
 
+from rich.color import Color
+from textual.containers import Vertical
 from textual.widgets import Static
 
 from stenographer.cli.hub.app import HubApp
@@ -63,7 +65,11 @@ def test_safe_warning_lines_only_keep_warning_event_names():
 
     warnings = safe_warning_lines(text)
 
-    assert warnings == ("12:00:01 WARNING stenographer.asr asr: retry",)
+    assert warnings == (
+        "12:00:01 WARN asr: retry",
+        "12:00:02 ERROR audio: failed",
+    )
+    assert "stenographer.asr" not in "\n".join(warnings)
     assert "SENSITIVE_PAYLOAD" not in "\n".join(warnings)
 
 
@@ -75,7 +81,8 @@ def test_recent_warnings_reads_logs_and_omits_message_fields(tmp_path):
     path.write_text(line + "asr: retry transcript=SENSITIVE\n")
 
     warnings = recent_warnings((path,))
-    assert warnings == ("12:00:01 WARNING stenographer.asr asr: retry",)
+    assert warnings == ("12:00:01 WARN asr: retry",)
+    assert "stenographer.asr" not in "\n".join(warnings)
     assert "SENSITIVE" not in "\n".join(warnings)
 
 
@@ -322,23 +329,34 @@ def test_pilot_setup_uses_bordered_step_and_hotkey_detail_panels():
             app._refresh_view()
 
             steps = app.query_one("#setup-steps", Static)
-            detail = app.query_one("#setup-detail", Static)
+            detail = app.query_one("#setup-detail", Vertical)
+            content = app.query_one("#setup-detail-content", Static)
+            test_status = app.query_one("#setup-test-status", Static)
             assert steps.styles.border.top[0] == "round"
             assert detail.styles.border.top[0] == "round"
             assert steps.region.x < detail.region.x
+            assert test_status.region.y > content.region.y
             step_text = steps.render().plain
-            detail_text = detail.render().plain
+            detail_text = content.render().plain
             assert "▶ 3 hotkey" in step_text
             for expected in (
                 "capture target: KEY_RIGHTCTRL",
-                "mode: hybrid",
+                "mode: ● hybrid  ○ hold  ○ toggle",
                 "hybrid threshold: 0.5 s",
                 "general binding: KEY_RIGHTALT",
                 "cancel binding: KEY_ESC",
                 "device: any keyboard",
-                "test status: key capture passed",
             ):
                 assert expected in detail_text
+            assert test_status.render().plain == "test status: key capture passed"
+            content_render = content.render()
+            mode_style = content_render.get_style_at_offset(content_render.plain.index("● hybrid"))
+            assert mode_style.bold
+            assert (
+                mode_style.rich_style.color.get_truecolor()
+                == Color.parse("#5fd7ff").get_truecolor()
+            )
+            assert not content_render.get_style_at_offset(content_render.plain.index("○ hold")).bold
 
     asyncio.run(exercise())
 
@@ -356,7 +374,7 @@ def test_pilot_doctor_uses_sidebar_summary_and_bordered_board_panels():
                 "Enable XWayland.",
             ),
         ),
-        warnings=("21:11:37 WARNING stenographer.overlay overlay: helper_restarting",),
+        warnings=("21:11:37 WARN overlay: helper_restarting",),
         checked_at=datetime(2026, 10, 20, 21, 23),
     )
 
@@ -381,11 +399,85 @@ def test_pilot_doctor_uses_sidebar_summary_and_bordered_board_panels():
             assert issue.region.y > inputs.region.y
             assert warnings.region.y > issue.region.y
             assert "microphone" in inputs.render().plain
-            assert "▶ ! overlay" in engine.render().plain
-            assert "Enable XWayland." in issue.render().plain
+            overlay_row = next(
+                row for row in engine.render().plain.splitlines() if "overlay" in row
+            )
+            assert overlay_row.endswith("! overlay · No X display.")
+            assert overlay_row.count("No X display.") == 1
+            issue_content = issue.render()
+            issue_text = issue_content.plain
+            assert issue_text.startswith("overlay unavailable\n")
+            assert "No X display. Enable XWayland." in issue_text
+            assert "WARN ·" not in issue_text
+            assert "Detail:" not in issue_text
+            assert "Fix:" not in issue_text
+            assert issue.styles.border.top[1].hex.lower() == "#ffaf5f"
+            title_style = issue_content.get_style_at_offset(0)
+            assert title_style.bold
+            assert (
+                title_style.rich_style.color.get_truecolor()
+                == Color.parse("#ffaf5f").get_truecolor()
+            )
             assert "helper_restarting" in warnings.render().plain
+            assert "stenographer.overlay" not in warnings.render().plain
             assert "1 warn" in app.query_one("#sidebar-card", Static).render().plain
             assert "checked 21:23" in app.query_one("#sidebar-card", Static).render().plain
+
+    asyncio.run(exercise())
+
+
+def test_pilot_doctor_colors_check_glyphs_and_warning_levels():
+    report = DoctorReport(
+        checks=(
+            DoctorCheck("mic", "microphone", "engine and desktop", "ok", "QuadCast 2 S", ""),
+            DoctorCheck(
+                "capture",
+                "system capture",
+                "engine and desktop",
+                "warn",
+                "no default sink",
+                "Select a sink.",
+            ),
+            DoctorCheck(
+                "overlay",
+                "overlay",
+                "engine and desktop",
+                "fail",
+                "helper exited",
+                "Restart the overlay helper.",
+            ),
+        ),
+        warnings=(
+            "21:11:37 WARN overlay: helper_restarting",
+            "21:10:03 ERROR audio: device_lost",
+        ),
+    )
+
+    async def exercise():
+        app = HubApp(FakeServices())
+        app._doctor_report = report
+        app._doctor_index = 1
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("6")
+            app._refresh_view()
+            group = app.query_one("#doctor-engine-group", Static).render()
+            for glyph, color in (
+                ("✓", "#6ee69a"),
+                ("!", "#ffaf5f"),
+                ("✗", "#ff5f5f"),
+            ):
+                style = group.get_style_at_offset(group.plain.index(glyph))
+                assert style.rich_style.color.get_truecolor() == Color.parse(color).get_truecolor()
+
+            warnings = app.query_one("#doctor-warnings", Static).render()
+            assert "21:11:37 WARN overlay: helper_restarting" in warnings.plain
+            assert "21:10:03 ERROR audio: device_lost" in warnings.plain
+            assert "stenographer." not in warnings.plain
+            for token, color in (("WARN", "#ffaf5f"), ("ERROR", "#ff5f5f")):
+                style = warnings.get_style_at_offset(warnings.plain.index(token))
+                assert style.rich_style.color.get_truecolor() == Color.parse(color).get_truecolor()
+            time_style = warnings.get_style_at_offset(warnings.plain.index("21:11:37"))
+            assert time_style.dim
 
     asyncio.run(exercise())
 

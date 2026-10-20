@@ -8,7 +8,8 @@ import threading
 from datetime import UTC, datetime
 
 import numpy as np
-from textual.widgets import Static
+from rich.color import Color
+from textual.widgets import Rule, Static
 
 from stenographer.cli.hub.app import HubApp
 from stenographer.lib.live.session_writer import SessionWriter
@@ -79,22 +80,41 @@ def test_sessions_list_and_detail_show_storage_activity_and_transcript(tmp_path)
             await pilot.press("3")
             await pilot.pause(0.1)
 
-            storage = str(app.query_one("#sessions-storage", Static).render())
-            listing = str(app.query_one("#sessions-list", Static).render())
-            detail = str(app.query_one("#sessions-detail", Static).render())
+            storage = app.query_one("#sidebar-card", Static).render().plain
+            listing = app.query_one("#sessions-list", Static).render().plain
+            detail = app.query_one("#sessions-detail", Static).render()
+            transcript = app.query_one("#sessions-transcript", Static).render()
+            assert "storage" in storage
             assert "2 sessions" in storage
             assert "audio" in storage
             audio_bytes = sum(path.stat().st_size for path in sessions_root.glob("*/*.flac"))
             assert f"{audio_bytes:.1f} B" in storage
-            assert "2026-10-20 01:12" in listing
+            assert "▶ 2026-10-20 01:12" in listing
             assert "2026-10-20 00:28" in listing
             assert "0:03  2 spk" in listing
-            assert "! interrupted" in listing
-            assert "labels: live" in detail
-            assert "Speaker 1 0:01" in detail and "You 0:01" in detail
-            assert "mic" in detail and "sys" in detail
-            assert "first fixture line" in detail
-            assert "second fixture line" in detail
+            assert "! int." in listing
+            list_widget = app.query_one("#sessions-list", Static).render()
+            selected_offset = list_widget.plain.index("▶")
+            selected_style = next(
+                span.style.rich_style
+                for span in list_widget.spans
+                if span.start <= selected_offset < span.end
+            )
+            assert selected_style.bold
+            assert selected_style.color is not None
+            assert selected_style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
+            assert selected_style.bgcolor is None or selected_style.bgcolor.is_default
+            assert app.query_one("#sessions-detail-labels", Static).render().plain == "labels: live"
+            assert "Speaker 1 0:01" in detail.plain and "You 0:01" in detail.plain
+            assert "mic" in detail.plain and "sys" in detail.plain
+            assert "first fixture line" in transcript.plain
+            assert "second fixture line" in transcript.plain
+            speaker_offset = transcript.plain.index("Speaker 1")
+            speaker_style = next(
+                span.style for span in transcript.spans if span.start <= speaker_offset < span.end
+            )
+            assert speaker_style.bold
+            assert speaker_style.foreground.rgb == (255, 175, 95)
 
             await pilot.press("down")
             await pilot.pause(0.1)
@@ -108,6 +128,74 @@ def test_sessions_list_and_detail_show_storage_activity_and_transcript(tmp_path)
     assert latest.is_dir()
 
 
+def test_sessions_panels_render_borders_and_board_proportions(tmp_path):
+    app = HubApp(FakeServices(tmp_path / "sessions"))
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("3")
+            await pilot.pause(0.1)
+
+            listing = app.query_one("#sessions-list-scroll")
+            detail = app.query_one("#sessions-detail-scroll")
+            assert listing.styles.border.top[0] == "round"
+            assert detail.styles.border.top[0] == "round"
+            assert listing.region.x < detail.region.x
+            assert listing.region.width < detail.region.width
+            assert listing.region.y == detail.region.y
+            assert listing.region.height == detail.region.height
+            assert "storage" in app.query_one("#sidebar-card", Static).render().plain
+            assert (
+                app.query_one("#sidebar-card", Static).region.x
+                == app.query_one("#sidebar", Static).region.x
+            )
+            assert (
+                app.query_one("#sidebar-card", Static).region.y
+                > app.query_one("#sidebar", Static).region.y
+            )
+            assert listing.border_title == "saved"
+            assert detail.border_title == ""
+            assert app.query_one("#sessions-detail-title", Static).render().plain == "session"
+            assert not list(app.query("#sessions-storage"))
+            hints = app.query_one("#key-hints", Static).render().plain
+            for hint in (
+                "p play",
+                "d re-diarize",
+                "t re-transcribe",
+                "r rename",
+                "x export",
+                "del delete",
+            ):
+                assert hint in hints
+
+    asyncio.run(exercise())
+
+
+def test_interrupted_session_marker_stays_on_one_line_at_board_size(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    _write_session(sessions_root, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
+    _write_session(
+        sessions_root,
+        datetime(2026, 10, 19, 14, 5, tzinfo=UTC),
+        interrupted=True,
+    )
+    app = HubApp(FakeServices(sessions_root))
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("3")
+            await pilot.pause(0.1)
+            listing = app.query_one("#sessions-list", Static)
+            row_count = len(app.sessions_panel.summaries)
+            assert listing.region.height == row_count
+
+            await pilot.press("down")
+            await pilot.pause(0.1)
+            assert listing.region.height == row_count
+
+    asyncio.run(exercise())
+
+
 def test_active_recording_is_not_listed_as_a_saved_session(tmp_path):
     sessions_root = tmp_path / "sessions"
     active = _write_session(sessions_root, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
@@ -119,8 +207,8 @@ def test_active_recording_is_not_listed_as_a_saved_session(tmp_path):
         async with app.run_test() as pilot:
             await pilot.press("3")
             await pilot.pause(0.1)
-            storage = str(app.query_one("#sessions-storage", Static).render())
-            listing = str(app.query_one("#sessions-list", Static).render())
+            storage = app.query_one("#sidebar-card", Static).render().plain
+            listing = app.query_one("#sessions-list", Static).render().plain
             assert "0 sessions" in storage
             assert listing == "No saved sessions."
 
@@ -185,6 +273,90 @@ def test_session_playback_toggles_and_jobs_run_without_blocking_navigation(tmp_p
         services.release_job.set()
 
 
+def test_sessions_transcript_rule_fills_detail_width_on_first_layout(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    _write_session(sessions_root, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
+    app = HubApp(FakeServices(sessions_root))
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("3")
+            await pilot.pause(0.1)
+
+            detail_panel = app.query_one("#sessions-detail-scroll")
+            rule = app.query_one("#sessions-detail-rule", Rule)
+            assert rule.region.width == detail_panel.content_region.width - 2
+            assert rule.region.width > 1
+
+    asyncio.run(exercise())
+
+
+def test_sessions_border_titles_use_default_foreground_and_bold(tmp_path):
+    app = HubApp(FakeServices(tmp_path / "sessions"))
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("3")
+            await pilot.pause(0.1)
+
+            for panel_id in ("#sessions-list-scroll", "#sessions-detail-scroll"):
+                styles = app.query_one(panel_id).styles
+                assert styles.border_title_color.css == "ansi_default"
+                assert styles.border_title_style.bold
+            title_styles = app.query_one("#sessions-detail-title", Static).styles
+            assert title_styles.color.css == "ansi_default"
+            assert title_styles.text_style.bold
+
+    asyncio.run(exercise())
+
+
+def test_session_label_status_is_right_aligned_on_the_title_row(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    _write_session(sessions_root, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
+    app = HubApp(FakeServices(sessions_root))
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("3")
+            await pilot.pause(0.1)
+
+            title = app.query_one("#sessions-detail-title", Static)
+            labels = app.query_one("#sessions-detail-labels", Static)
+            assert title.render().plain == app.sessions_panel.selected_session_id
+            assert labels.render().plain == "labels: live"
+            assert title.region.y == labels.region.y
+            assert labels.styles.text_align == "right"
+
+    asyncio.run(exercise())
+
+
+def test_sessions_transcript_rows_render_after_rule_with_synthetic_text(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    _write_session(sessions_root, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
+    app = HubApp(FakeServices(sessions_root))
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("3")
+            await pilot.pause(0.1)
+
+            rule = app.query_one("#sessions-detail-rule", Rule)
+            transcript = app.query_one("#sessions-transcript", Static)
+            assert rule.region.y < transcript.region.y
+            rendered = transcript.render()
+            assert "00:00:01" in rendered.plain
+            assert "Speaker 1" in rendered.plain
+            assert "first fixture line" in rendered.plain
+            speaker_offset = rendered.plain.index("Speaker 1")
+            speaker_style = next(
+                span.style for span in rendered.spans if span.start <= speaker_offset < span.end
+            )
+            assert speaker_style.bold
+            assert speaker_style.foreground.rgb == (255, 175, 95)
+
+    asyncio.run(exercise())
+
+
 def test_session_rename_export_and_delete_use_confirmed_session(tmp_path):
     sessions_root = tmp_path / "sessions"
     session = _write_session(
@@ -205,9 +377,11 @@ def test_session_rename_export_and_delete_use_confirmed_session(tmp_path):
             await pilot.press("enter")
             await pilot.press("ctrl+a", "ctrl+k", *tuple("Alice"), "enter")
             await pilot.pause(0.1)
-            renamed_detail = str(app.query_one("#sessions-detail", Static).render())
+            renamed_detail = app.query_one("#sessions-detail", Static).render().plain
             assert "Alice" in renamed_detail
-            assert "labels: re-labelled" in renamed_detail
+            assert app.query_one("#sessions-detail-labels", Static).render().plain == (
+                "labels: re-labelled at stop"
+            )
 
             await pilot.press("x")
             await pilot.press("ctrl+a", "ctrl+k", *tuple(f"md {output}"), "enter")

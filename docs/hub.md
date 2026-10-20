@@ -113,11 +113,12 @@ it. The output format cycles through its four choices. Speaker count accepts
 
 ## Sessions
 
-Sessions lists saved live sessions, their duration, speaker count, and storage
-use. Select a session with the up and down arrows. The detail view shows each
-speaker's talk time, microphone and system activity, whether labels were
-revised, and the transcript. The active recording does not appear in this list
-until it has been saved.
+Sessions shows storage count and audio size in the sidebar card. Its saved
+session list and selected-session detail use separate bordered panels. The list
+shows each session's duration and speaker count. Select a session with the up
+and down arrows. The detail view shows each speaker's talk time, microphone
+and system activity, whether labels were revised, and the transcript. The
+active recording does not appear in this list until it has been saved.
 
 | Key | Action |
 | --- | --- |
