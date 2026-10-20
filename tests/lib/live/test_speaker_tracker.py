@@ -24,6 +24,14 @@ def test_clustering_creates_a_speaker_when_no_match_reaches_threshold():
     assert clustering.assign(np.array([0.0, 1.0], dtype=np.float32)) == "speaker-2"
 
 
+def test_short_phrases_reuse_the_first_seed_speaker():
+    clustering = SpeakerClustering(threshold=0.9)
+
+    assert clustering.assign(np.array([1.0, 0.0], dtype=np.float32), duration=0.5) == "speaker-1"
+    assert clustering.assign(np.array([0.0, 1.0], dtype=np.float32), duration=0.5) == "speaker-1"
+    assert len(clustering.speakers) == 1
+
+
 def test_short_phrase_joins_best_existing_speaker_without_updating_its_mean():
     clustering = SpeakerClustering(threshold=0.8)
     first = np.array([1.0, 0.0], dtype=np.float32)

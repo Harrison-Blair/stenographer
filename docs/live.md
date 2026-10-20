@@ -53,14 +53,20 @@ a session. If you do not need system audio, start with `--no-system` or press
 - `m` turns microphone capture on or off.
 - `s` turns system audio capture on or off.
 - `r` opens the speaker rename screen.
-- `q` stops the session and saves its files.
+- `q` stops the session and saves its files. Stenographer then re-labels the recognized system phrases. Press `q` again to skip this pass.
 
 Microphone speech appears as `You`; system speech gets labels such as
 `Speaker 1`. Speaker labels can split one person into multiple labels or merge
-several people under one label. Press `r` and assign the same display name to
-speakers to merge their displayed labels. This does not change their underlying
-speaker IDs. The clustering threshold is 0.50; it was tested on only three
-clips, so labels are estimates, not reliable identification.
+several people under one label. Phrases shorter than 1.2 seconds reuse a known
+speaker and do not change its embedding mean. When you stop a session,
+Stenographer shows progress while it clusters the saved system phrases and
+writes a new transcript revision. Each new cluster keeps the old label that
+covers most of its speech time, including a name you gave it. Press `q` again
+during the pass to keep the live labels. If relabeling fails, the live labels
+remain and the command reports the reason. Press `r` and assign the same display
+name to speakers to merge their displayed labels. This does not change their
+underlying speaker IDs. The clustering threshold is 0.50; it was tested on only
+three clips, so labels are estimates, not reliable identification.
 
 ## Saved session files
 

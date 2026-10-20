@@ -53,16 +53,17 @@ def test_batch_relabel_merges_split_voices_and_keeps_the_dominant_renamed_label(
 
 def test_batch_relabel_uses_speech_time_weighted_votes_for_short_phrases():
     lines = (
-        _line(0.0, 10.0, "speaker-1", "Long voice"),
-        _line(12.0, 10.0, "speaker-2", "Long voice"),
-        _line(24.0, 1.2, "speaker-3", "Brief voice"),
-        _line(26.0, 0.5, "speaker-4", "Short live label"),
+        _line(0.0, 100.0, "speaker-1", "Long voice"),
+        _line(102.0, 1.2, "speaker-2", "Long voice"),
+        _line(104.0, 25.0, "speaker-3", "Brief voice"),
+        _line(130.0, 0.5, "speaker-4", "Short live label"),
     )
     toward_a = np.array([0.8, 0.6, 0.0], dtype=np.float32)
-    toward_b = np.array([0.9, -np.sqrt(0.19), 0.0], dtype=np.float32)
-    embeddings = (toward_a, toward_a.copy(), toward_b, np.array([1.0, 0.0, 0.0]))
+    same_cluster = np.array([0.6, 0.8, 0.0], dtype=np.float32)
+    toward_b = np.array([0.75, 0.0, np.sqrt(0.4375)], dtype=np.float32)
+    embeddings = (toward_a, same_cluster, toward_b, np.array([1.0, 0.0, 0.0]))
 
-    relabeled = relabel_system_lines(lines, embeddings, threshold=0.5)
+    relabeled = relabel_system_lines(lines, embeddings, threshold=0.9)
 
     assert relabeled[-1].speaker_id == relabeled[0].speaker_id
     assert relabeled[-1].label == "Long voice"

@@ -151,7 +151,7 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
 - `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
 - `stenographer run` — run the daemon in the foreground.
-- `stenographer live` — transcribe microphone and system audio in a terminal session; see the [live guide](docs/live.md).
+- `stenographer live` — transcribe microphone and system audio in a terminal session; after `q`, it batches speaker labels. Press `q` again to skip. See the [live guide](docs/live.md).
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
 for sound packs, statistics, and configuration examples.
@@ -169,7 +169,8 @@ systemctl --user restart stenographer.service
 Model downloads are explicit and dictation runs locally. Audio, transcripts,
 configuration, and device or model names stay on your machine. Logs never
 contain transcript text or audio. `stenographer live` saves the requested
-audio and transcript in a private session folder; see the [live guide](docs/live.md).
+audio and transcript in a private session folder, then saves a new revision
+with batch speaker labels; see the [live guide](docs/live.md).
 The only automatic network request that leaves your machine is an optional,
 metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-# In the consented recording, 335 VAD phrases were shorter than 1.2 seconds.
+# In the consented recording, 360 VAD phrases were shorter than 1.2 seconds.
 MINIMUM_SPEECH_DURATION_SECONDS = 1.2
 _SHORT_PHRASE_FALLBACK_SIMILARITY = 0.25
 

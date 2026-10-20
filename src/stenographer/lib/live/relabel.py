@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import heapq
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 
@@ -10,6 +11,9 @@ import numpy as np
 
 from stenographer.lib.live.speaker import MINIMUM_SPEECH_DURATION_SECONDS
 from stenographer.lib.live.transcript_line import TranscriptLine
+
+# 20% kept the four speech-dominant voices in the consented acceptance audio.
+_MINIMUM_CLUSTER_SPEECH_FRACTION = 0.20
 
 
 def relabel_system_lines(
@@ -42,35 +46,107 @@ def relabel_system_lines(
     if not anchor_indices:
         anchor_indices = list(range(len(original)))
 
-    parents = list(range(len(anchor_indices)))
-
-    def find(index: int) -> int:
-        while parents[index] != index:
-            parents[index] = parents[parents[index]]
-            index = parents[index]
-        return index
-
-    def union(left: int, right: int) -> None:
-        left_root = find(left)
-        right_root = find(right)
-        if left_root != right_root:
-            parents[right_root] = left_root
-
     anchor_vectors = vectors[anchor_indices]
     anchor_count = len(anchor_indices)
+    capacity = 2 * anchor_count - 1
+    similarities = np.full((capacity, capacity), -np.inf, dtype=np.float32)
+    active = np.zeros(capacity, dtype=bool)
+    active[:anchor_count] = True
+    sizes = np.zeros(capacity, dtype=np.float64)
+    sizes[:anchor_count] = 1.0
+    clusters = {index: [phrase_index] for index, phrase_index in enumerate(anchor_indices)}
+    queue: list[tuple[float, int, int]] = []
+    total = 2 * anchor_count + len(original)
+    if progress is not None:
+        progress(0, total)
+
     for row in range(anchor_count):
         if should_cancel is not None and should_cancel():
             return None
-        similarities = anchor_vectors[row + 1 :] @ anchor_vectors[row]
-        for offset in np.flatnonzero(similarities >= threshold):
-            union(row, row + 1 + int(offset))
+        row_scores = anchor_vectors[row + 1 :] @ anchor_vectors[row]
+        similarities[row, row + 1 : anchor_count] = row_scores
+        similarities[row + 1 : anchor_count, row] = row_scores
+        for offset in np.flatnonzero(row_scores >= threshold):
+            column = row + 1 + int(offset)
+            heapq.heappush(queue, (-float(row_scores[offset]), row, column))
         if progress is not None:
-            progress(row + 1, anchor_count)
+            progress(row + 1, total)
 
-    clusters: dict[int, list[int]] = {}
-    for position, phrase_index in enumerate(anchor_indices):
-        root = find(position)
-        clusters.setdefault(root, []).append(phrase_index)
+    next_cluster = anchor_count
+    while queue:
+        if should_cancel is not None and should_cancel():
+            return None
+        negative_score, left, right = heapq.heappop(queue)
+        if not active[left] or not active[right] or -negative_score < threshold:
+            continue
+
+        merged_size = sizes[left] + sizes[right]
+        members = clusters.pop(left) + clusters.pop(right)
+        clusters[next_cluster] = members
+        active[left] = False
+        active[right] = False
+        active[next_cluster] = True
+        sizes[next_cluster] = merged_size
+        for other in np.flatnonzero(active[:next_cluster]):
+            score = (
+                sizes[left] * similarities[left, other] + sizes[right] * similarities[right, other]
+            ) / merged_size
+            similarities[next_cluster, other] = score
+            similarities[other, next_cluster] = score
+            if score >= threshold:
+                heapq.heappush(queue, (-float(score), int(other), next_cluster))
+        next_cluster += 1
+        if progress is not None:
+            progress(next_cluster, total)
+
+    if should_cancel is not None and should_cancel():
+        return None
+
+    ordered_clusters = sorted(clusters.values(), key=min)
+    cluster_times = [sum(durations[index] for index in members) for members in ordered_clusters]
+    minimum_cluster_time = max(cluster_times) * _MINIMUM_CLUSTER_SPEECH_FRACTION
+    core_indices = [
+        index for index, duration in enumerate(cluster_times) if duration >= minimum_cluster_time
+    ]
+    if not core_indices:
+        core_indices = [int(np.argmax(cluster_times))]
+
+    def centroid(members: list[int]) -> np.ndarray:
+        member_vectors = vectors[members]
+        weights = durations[members]
+        mean = (
+            np.average(member_vectors, axis=0, weights=weights)
+            if np.sum(weights) > 0
+            else np.mean(member_vectors, axis=0)
+        )
+        norm = np.linalg.norm(mean)
+        return mean / norm if norm > 0 else member_vectors[0]
+
+    core_vectors = {index: centroid(ordered_clusters[index]) for index in core_indices}
+    core_clusters = {index: list(ordered_clusters[index]) for index in core_indices}
+    progress_done = next_cluster
+    for index, members in enumerate(ordered_clusters):
+        if index in core_clusters:
+            continue
+        if should_cancel is not None and should_cancel():
+            return None
+        member_vectors = vectors[members]
+        weights = durations[members]
+        scores = []
+        for core_index in core_indices:
+            similarities = member_vectors @ core_vectors[core_index]
+            score = (
+                np.average(similarities, weights=weights)
+                if np.sum(weights) > 0
+                else np.mean(similarities)
+            )
+            scores.append(float(score))
+        chosen = core_indices[int(np.argmax(scores))]
+        core_clusters[chosen].extend(members)
+        progress_done += 1
+        if progress is not None:
+            progress(progress_done, total)
+    clusters = core_clusters
 
     for phrase_index, duration in enumerate(durations):
         if duration >= minimum_duration:
@@ -81,13 +157,21 @@ def relabel_system_lines(
         for members in clusters.values():
             members_array = np.asarray(members, dtype=np.intp)
             similarities = vectors[members_array] @ vectors[phrase_index]
-            weighted = np.maximum(similarities, 0.0) * durations[members_array]
-            scores.append(float(np.sum(weighted)))
+            weights = durations[members_array]
+            if np.sum(weights) > 0:
+                scores.append(float(np.average(similarities, weights=weights)))
+            else:
+                scores.append(float(np.mean(similarities)))
         root = next(iter(clusters))
         if scores:
             root = list(clusters)[int(np.argmax(scores))]
         clusters[root].append(phrase_index)
+        progress_done += 1
+        if progress is not None:
+            progress(progress_done, total)
 
+    if progress is not None:
+        progress(total, total)
     ranked_clusters = sorted(clusters.values(), key=lambda members: min(members))
     speaker_ids: dict[int, str] = {}
     cluster_labels: dict[str, str] = {}
