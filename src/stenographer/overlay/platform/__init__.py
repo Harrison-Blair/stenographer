@@ -12,8 +12,4 @@ def current_platform() -> OverlayPlatform:
         from .linux.provider import LinuxOverlayPlatform
 
         return LinuxOverlayPlatform()
-    if sys.platform == "win32":
-        from .windows.provider import WindowsOverlayPlatform
-
-        return WindowsOverlayPlatform()
     raise UnsupportedPlatformError(f"unsupported platform: {sys.platform}")

@@ -33,8 +33,8 @@ def test_resolve_cpu_threads_caps_at_eight():
 
 
 def test_resolve_cpu_threads_falls_back_when_host_cannot_count():
-    # None is the host saying "cannot tell" (no affinity call, unreadable
-    # topology, Windows stub) — never a guess derived from logical CPUs.
+    # None is the host saying "cannot tell" (no affinity call or unreadable
+    # topology) — never a guess derived from logical CPUs.
     assert resolve_cpu_threads(0, None) == 4
 
 

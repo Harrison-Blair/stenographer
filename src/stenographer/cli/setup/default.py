@@ -5,10 +5,9 @@ from __future__ import annotations
 
 from typing import TextIO
 
+from stenographer.cli.setup.workflow import save_defaults
 from stenographer.cli.shared.terminal import open_console, report_save
-from stenographer.lib.config.document import ConfigDocument
 from stenographer.lib.config.errors import ConfigPersistenceError
-from stenographer.lib.config.models import Config
 
 
 def write_default(
@@ -28,7 +27,7 @@ def write_default(
     console = open_console(None, stdout, stderr)
     path = resolve_config_path(create_parent=False)
     try:
-        result = ConfigDocument.defaults(path).save(Config.defaults())
+        result = save_defaults(path)
     except ConfigPersistenceError as exc:
         console.error(str(exc))
         return 1

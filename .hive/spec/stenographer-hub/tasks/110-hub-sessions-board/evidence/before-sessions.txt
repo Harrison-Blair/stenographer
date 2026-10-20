@@ -1,0 +1,45 @@
+                                                                                                                                                      
+ ╭─ stenographer ────────╮ 3 sessions                                                   labels: re-labelled                                           
+ │                       │ 3.9 MB audio                                                 Speaker 1 1:48                                                
+ │    1 Live             │ ▶ 2026-10-20 01:12  2:31  3 spk                              Speaker 2 0:29                                                
+ │    2 Files            │   2026-10-20 00:28  0:41  2 spk                              You 0:14                                                      
+ │  ▶ 3 Sessions         │   2026-10-20 00:14  0:29  1 spk                              mic  ▁▁█▁                                                     
+ │    4 Config           │                                                              sys  ▃▆█▆                                                     
+ │    5 Setup            │                                                              ────────────────────────────────────────                      
+ │    6 Doctor   0W 0F   │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ ╰───────────────────────╯                                                                                                                            
+                                                                                                                                                      
+ ╭───────────────────────╮                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ │                       │                                                                                                                            
+ ╰───────────────────────╯                                                                                                                            
+                                                                                                                                                      
+  ↑/↓ session   p play   d re-diarize   t re-transcribe   r rename   x export   del delete                                                            

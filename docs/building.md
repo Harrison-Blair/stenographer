@@ -27,7 +27,8 @@ prose, no sub-bullets, and no blank lines between bullets. Wrap bullets at 79
 columns with a two-space continuation indent.
 
 A changed default or renamed option belongs under `### Added`, phrased as the
-new behavior ("Uses `faster-whisper-large-v3-turbo` as the default model").
+new behavior ("Uses
+`deepdml/faster-whisper-large-v3-turbo-ct2` as the default model").
 Internal-only work — refactoring, test coverage, packaging with no observable
 effect — is folded into the synopsis or left out, never listed as a fix. An
 `[Unreleased]` section may be empty while nothing is pending, and otherwise
@@ -55,12 +56,16 @@ recordings, downloaded models, caches, build output, and agent/editor settings
 stay ignored. Shared guidance remains in `AGENTS.md` and `CLAUDE.md`.
 The curated [code-smell reference](docs/reference/guru/code-smells.md) and
 [refactoring techniques](docs/reference/guru/refactoring-techniques.md) remain
-tracked together under `docs/reference/guru/`.
+tracked together under `docs/reference/guru/`. The tracked `.hive/spec/` tree
+holds hive specs and evidence. Git tracks it; Hatch's leading `*` excludes
+it from source distributions and wheels. PyInstaller collects only the
+application entry point, modules, and assets.
 
 For a new file type, documentation file, or asset, update both `.gitignore`
 and `[tool.hatch.build].exclude` in `pyproject.toml` before staging it. Keep
 their non-comment patterns identical and in the same order, including the
-parent-directory exceptions. Existing Python and script patterns allow new
+parent-directory exceptions, except for repository-only paths such as
+`.hive/spec/`. Existing Python and script patterns allow new
 modules automatically. Use `git check-ignore -v --no-index <path>` to inspect
 which rule applies; review `git status --short` before staging. Ignore rules
 do not remove tracked files or prevent an explicit `git add -f`.
@@ -227,16 +232,11 @@ Use `stenographer setup` and `stenographer sounds` for configuration and
 `stenographer stats` for numeric diagnostics; restart the daemon explicitly to
 apply saved settings.
 
-The native CI workflow builds relocatable development bundles for Linux x86_64
-and Windows x86_64. It runs the non-integration suite and frozen CLI checks.
-Each artifact includes `LICENSE` and `NATIVE-ACCEPTANCE.md`. Copy and run the
-complete bundle directory; there is no Windows installer or GUI launcher. Linux
-release bundles continue through their source distribution's installer.
+The native CI workflow builds a relocatable development bundle for Linux x86_64.
+It runs the non-integration suite and frozen CLI checks. The artifact includes
+`LICENSE` and `NATIVE-ACCEPTANCE.md`. Copy and run the complete bundle directory.
+Linux release bundles continue through their source distribution's installer.
 
-Windows artifacts are **unsigned development builds, not accepted release
-packages**. Their dictation and service integrations remain unavailable.
 Interactive installation, audio, keyboard, clipboard, service, and helper
-isolation checks remain separate gates. Windows signing and installation checks
-must pass before release readiness is claimed.
-Automated checks do not capture microphone audio. See
-[native acceptance requirements](../packaging/NATIVE-ACCEPTANCE.md).
+isolation checks remain separate gates. Automated checks do not capture
+microphone audio. See [native acceptance requirements](../packaging/NATIVE-ACCEPTANCE.md).

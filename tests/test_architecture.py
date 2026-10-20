@@ -34,6 +34,11 @@ def test_production_has_only_responsibility_roots():
     }
 
 
+def test_shared_tui_styles_live_in_cli_shared():
+    assert not (ROOT / "cli" / "no_background_css.py").exists()
+    assert (ROOT / "cli" / "shared" / "no_background_css.py").is_file()
+
+
 def test_library_does_not_import_frontends():
     violations = []
     for path in (ROOT / "lib").rglob("*.py"):
@@ -54,9 +59,6 @@ def test_native_modules_are_only_imported_inside_platform_boundaries():
         "pty",
         "pwd",
         "grp",
-        "winreg",
-        "msvcrt",
-        "win32api",
         "AppKit",
     }
     violations = []
@@ -71,9 +73,7 @@ def test_native_modules_are_only_imported_inside_platform_boundaries():
                 name.startswith(
                     (
                         "stenographer.lib.platform.linux",
-                        "stenographer.lib.platform.windows",
                         "stenographer.overlay.platform.linux",
-                        "stenographer.overlay.platform.windows",
                     )
                 )
                 for name in names

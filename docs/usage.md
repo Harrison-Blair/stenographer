@@ -18,10 +18,11 @@ check the microphone, clipboard, model, and input permissions, and offers the
 separate model download. The model is about 1.6 GB and is downloaded only when
 you choose it.
 
-The default ASR model is `dropbox-dash/faster-whisper-large-v3-turbo`. It is
-about 1.6 GB and is downloaded only when you explicitly choose the model
-download. Existing configurations keep their selected model. For live capture,
-see the [live transcription guide](live.md).
+The default ASR model is `deepdml/faster-whisper-large-v3-turbo-ct2`. The
+[CPU model and context screen (2026-10-20)](transcription-experiments.md#cpu-model-and-context-screen-2026-10-20)
+selected this model. It is about 1.6 GB and is downloaded only when you choose
+the model download. Existing configurations keep their selected model. For
+live capture, see the [live transcription guide](live.md).
 
 The configuration file is:
 
@@ -192,6 +193,27 @@ local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
 `qwen3.5:4b` is the documented alternative and needs
 `structured_output = true`. Model reasoning is always disabled. See
 [docs/refine.md](refine.md) for the whole feature.
+
+## Open the terminal hub
+
+Run `stenographer` with no arguments in a terminal to open the hub. It starts
+on Live; press `space` when you want to start recording. If stdin or stdout is
+not a terminal, the command prints help. Existing subcommands, including
+`stenographer live`, keep their current behavior.
+
+In the hub, press `2` to open Files. The browser starts in your home folder.
+Use `/` to filter names in the current folder, `enter` to open a folder, and
+`space` to select files. Press `enter` to queue the selected files. The queue
+runs one file at a time and continues when you change sections.
+
+Press `o` to focus the options. Use `up` and `down` to select an option and
+`space` or `enter` to change it. Diarization starts on, refine starts off, and
+Markdown is the default format. Set the speaker count to `auto` or a positive
+number. The output folder defaults to the Stenographer data folder's `files`
+subfolder. In the queue, use `tab` to focus the selected job, `up` or `down` to
+select a job, and `x` to cancel it. The preview shows current or completed
+transcript lines with speaker labels. Press `e` on a job with a saved result to
+open its folder with `xdg-open`.
 
 ## Start live transcription
 

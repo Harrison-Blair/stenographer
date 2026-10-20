@@ -7,14 +7,16 @@ import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from stenographer.lib.live.phrase import Phrase
+from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
 
 
@@ -28,28 +30,39 @@ class FakeClock:
 
 class FakeWriter:
     def __init__(self):
-        self.path = Path("session-folder")
+        self.path = Path()
         self.started_at = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
         self.audio = []
         self.silence = []
         self.lines = []
         self.renames = []
         self.closed = False
+        self._writer = None
+
+    def open(self, root, _started_at):
+        self._writer = SessionWriter.open(root, self.started_at)
+        self.path = self._writer.path
+        self.started_at = self._writer.started_at
 
     def write_audio(self, source, samples):
         self.audio.append((source, samples.copy()))
+        self._writer.write_audio(source, samples)
 
     def write_silence(self, source, seconds):
         self.silence.append((source, seconds))
+        self._writer.write_silence(source, seconds)
 
     def append_line(self, line):
         self.lines.append(line)
+        self._writer.append_line(line)
 
     def relabel(self, labels):
         self.renames.append(dict(labels))
+        self._writer.relabel(labels)
 
     def close(self):
         self.closed = True
+        self._writer.close()
 
 
 class FakeRecorder:
@@ -184,10 +197,16 @@ class FakeSpeakerTracker:
         self.names = {}
         self.speaker_ids = []
 
-    def assign(self, _samples):
+    def embed(self, _samples):
+        return np.array([1.0, 0.0], dtype=np.float32)
+
+    def assign_embedding(self, _embedding, *, duration=None):
         if "speaker-1" not in self.speaker_ids:
             self.speaker_ids.append("speaker-1")
         return "speaker-1"
+
+    def assign(self, samples):
+        return self.assign_embedding(self.embed(samples))
 
     def label(self, speaker_id):
         return "You" if speaker_id == "you" else self.names.get(speaker_id, "Speaker 1")
@@ -218,7 +237,8 @@ def _make_session(
 
     class WriterFactory:
         @staticmethod
-        def open(_root, _started_at):
+        def open(root, started_at):
+            writer.open(root, started_at)
             return writer
 
     class WorkerFactory(FakeWorker):
@@ -313,6 +333,95 @@ def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
     assert "hallucinated music" not in caplog.text
 
 
+def test_stop_relabels_the_saved_session_revision_and_preserves_a_rename(monkeypatch, tmp_path):
+    session, writer, _worker, system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, mic=False
+    )
+    processed = Event()
+    session.subscribe(lambda _line: processed.set())
+
+    system.emit(4)
+    assert processed.wait(timeout=1)
+    session.rename("speaker-1", "Alice")
+    session.stop()
+
+    detail = SessionStore(writer.path.parent).read(writer.path.name)
+
+    assert writer.closed
+    assert detail.revision == "transcript.r2.jsonl"
+    assert [line.label for line in detail.lines] == ["Alice"]
+
+
+def test_second_stop_request_skips_relabel_and_keeps_the_live_revision(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    started = Event()
+    release = Event()
+    original_relabel = live_session.relabel_system_lines
+
+    def wait_for_skip(lines, embeddings, **kwargs):
+        started.set()
+        release.wait(timeout=1)
+        if kwargs["should_cancel"]():
+            return None
+        return original_relabel(lines, embeddings, **kwargs)
+
+    monkeypatch.setattr(live_session, "relabel_system_lines", wait_for_skip)
+    session, writer, _worker, system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, mic=False
+    )
+    processed = Event()
+    session.subscribe(lambda _line: processed.set())
+    system.emit(4)
+    assert processed.wait(timeout=1)
+    failures = []
+
+    def stop_session():
+        try:
+            session.stop()
+        except Exception as exc:
+            failures.append(exc)
+
+    stop_thread = Thread(target=stop_session)
+    stop_thread.start()
+    assert started.wait(timeout=1)
+    assert session.relabel_status == "Relabeling speakers 0/1 · q to skip"
+    session.skip_relabel()
+    release.set()
+    stop_thread.join(timeout=1)
+    detail = SessionStore(writer.path.parent).read(writer.path.name)
+
+    assert not stop_thread.is_alive()
+    assert failures == []
+    assert session.relabel_status == "Relabeling skipped"
+    assert detail.revision == "transcript.jsonl"
+    assert [line.label for line in detail.lines] == ["Speaker 1"]
+
+
+def test_relabel_failure_keeps_live_labels_and_exposes_the_reason(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    def fail_relabel(*_args, **_kwargs):
+        raise RuntimeError("batch clustering unavailable")
+
+    monkeypatch.setattr(live_session, "relabel_system_lines", fail_relabel)
+    session, writer, _worker, system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, mic=False
+    )
+    processed = Event()
+    session.subscribe(lambda _line: processed.set())
+
+    system.emit(4)
+    assert processed.wait(timeout=1)
+    session.stop()
+    detail = SessionStore(writer.path.parent).read(writer.path.name)
+
+    assert session.relabel_error == "batch clustering unavailable"
+    assert session.relabel_status == "Relabeling failed: batch clustering unavailable"
+    assert detail.revision == "transcript.jsonl"
+    assert [line.label for line in detail.lines] == ["Speaker 1"]
+
+
 def test_pause_freezes_clock_and_silence_writes_and_rename_updates_old_lines(monkeypatch, tmp_path):
     clock = FakeClock()
     session, writer, _worker, system, _recorder, segmenters = _make_session(
@@ -364,7 +473,7 @@ def test_stop_before_start_closes_resources_without_waiting_for_a_consumer(monke
 def test_unsupported_system_platform_disables_system_without_blocking_mic(monkeypatch, tmp_path):
     from stenographer.lib.platform.errors import UnsupportedPlatformError
 
-    reason = "system audio capture is not available on Windows"
+    reason = "system audio capture is unavailable"
     session, writer, worker, _system, _recorder, _segmenters = _make_session(
         monkeypatch,
         tmp_path,

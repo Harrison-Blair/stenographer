@@ -113,7 +113,7 @@ class Config:
             ),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
             asr=AsrConfig(
-                model="dropbox-dash/faster-whisper-large-v3-turbo",
+                model="deepdml/faster-whisper-large-v3-turbo-ct2",
                 compute_type="int8",
                 beam_size=1,
                 hotwords=None,
@@ -189,6 +189,6 @@ class Config:
 
     @classmethod
     def write_default(cls, path: pathlib.Path) -> None:
-        # Bytes, not text mode: setup writes LF bytes, and a CRLF default on
-        # Windows would make the first setup save always rewrite the file.
+        # Bytes, not text mode: setup writes LF bytes and preserves the exact
+        # default bytes for the first setup save.
         path.write_bytes(default_toml().encode("utf-8"))

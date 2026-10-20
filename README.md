@@ -88,8 +88,12 @@ systemctl --user start stenographer.service
 ```
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
-offers the separate large-v3-turbo model download (about 1.6 GB). Use plain
-`setup` to review every setting, or run `stenographer model download` later.
+offers the separate ASR model download. The default is
+`deepdml/faster-whisper-large-v3-turbo-ct2`, selected from the [CPU model and
+context screen (2026-10-20)](docs/transcription-experiments.md#cpu-model-and-context-screen-2026-10-20).
+Dictation, Live, and Files use the same ASR settings. An existing explicit
+`stenographer.asr.model` value stays unchanged. Use plain `setup` to review
+every setting, or run `stenographer model download` later.
 
 For clearer recognition, first run `stenographer devices` and select the
 intended microphone. Keep it about 10–20 cm from your mouth, aim it slightly
@@ -142,6 +146,20 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 
 ## Common commands
 
+- `stenographer` — open the terminal hub when stdin and stdout are terminals;
+  otherwise show help. Live shows REC, MIC, and SYSTEM panels plus a sidebar
+  card with the model, compute type, and system status. Config shows a group
+  selector beside compact key/value rows, selected-setting details, and a
+  separate hotwords value area. Short lists appear in full; long lists are
+  truncated to fit with a word count. The sidebar shows the config path and
+  unsaved-change count.
+  Press `space` to start;
+  use `v` for mixed or split transcripts, and `m` or `s` to toggle audio sources.
+  Press `2` for Files;
+  use the browser to queue files and `x` to cancel a selected job. Sessions
+  shows storage use in the sidebar and separates the session list from its
+  detail. See the [terminal hub guide](docs/hub.md) for all sections, controls,
+  and file formats.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
@@ -149,7 +167,10 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
 - `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
 - `stenographer run` — run the daemon in the foreground.
-- `stenographer live` — transcribe microphone and system audio in a terminal session; see the [live guide](docs/live.md).
+- `stenographer live` — open the standalone live app with its existing flags;
+  it does not open the hub. After `q`, it keeps each renamed label on one voice
+  and numbers unnamed voices by first appearance. Press `q` again to skip. See
+  the [live guide](docs/live.md).
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
 for sound packs, statistics, and configuration examples.
@@ -167,10 +188,15 @@ systemctl --user restart stenographer.service
 Model downloads are explicit and dictation runs locally. Audio, transcripts,
 configuration, and device or model names stay on your machine. Logs never
 contain transcript text or audio. `stenographer live` saves the requested
-audio and transcript in a private session folder; see the [live guide](docs/live.md).
+audio and transcript in a private session folder, then saves a new revision
+with batch speaker labels; see the [live guide](docs/live.md).
 The only automatic network request that leaves your machine is an optional,
 metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
+
+The [terminal hub](docs/hub.md) includes Live, Files, Sessions, Config, Setup,
+and Doctor. Recording starts only when you press `space`; changing sections
+does not stop a recording. Files jobs run in the background, one at a time.
 
 A [refine](docs/refine.md) pass, on by default, provides exactly two built-in
 profiles through one local Ollama model. Agent rewrites jumbled requests into

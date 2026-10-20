@@ -23,8 +23,12 @@ class SpeakerTracker:
         self._clustering = SpeakerClustering(threshold)
         self._names: dict[str, str] = {}
 
-    def assign(self, samples: np.ndarray) -> str:
+    def assign(self, samples: np.ndarray, *, duration: float | None = None) -> str:
         """Return the speaker ID for an audio phrase."""
+        return self.assign_embedding(self.embed(samples), duration=duration)
+
+    def embed(self, samples: np.ndarray) -> np.ndarray:
+        """Return the speaker embedding for an audio phrase."""
         stream = self._extractor.create_stream()
         waveform = np.ascontiguousarray(samples, dtype=np.float32)
         stream.accept_waveform(sample_rate=16000, waveform=waveform)
@@ -32,8 +36,11 @@ class SpeakerTracker:
         if not self._extractor.is_ready(stream):
             seconds = len(waveform) / 16000
             raise ValueError(f"Speaker embedding model rejected a {seconds:.1f}s phrase")
-        embedding = np.asarray(self._extractor.compute(stream), dtype=np.float32)
-        return self._clustering.assign(embedding)
+        return np.asarray(self._extractor.compute(stream), dtype=np.float32)
+
+    def assign_embedding(self, embedding: np.ndarray, *, duration: float | None = None) -> str:
+        """Return the speaker ID for a precomputed embedding."""
+        return self._clustering.assign(embedding, duration=duration)
 
     def label(self, speaker_id: str) -> str:
         """Return the display label for a speaker ID."""

@@ -12,6 +12,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from stenographer.cli.live.rename_dialog import RenameDialog
+from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.live.live_session import LiveSession
 from stenographer.lib.live.transcript_line import TranscriptLine
 
@@ -27,12 +28,13 @@ class LiveApp(App[None]):
         ("q", "stop", "Stop and save"),
         ("ctrl+c", "stop", "Stop and save"),
     ]
-    CSS = """
+    CSS = (
+        NO_BACKGROUND_CSS
+        + """
     #status {
         height: auto;
         min-height: 2;
         padding: 0 1;
-        background: $boost;
     }
     #transcript-scroll {
         height: 1fr;
@@ -44,21 +46,23 @@ class LiveApp(App[None]):
     #key-hints {
         height: 1;
         padding: 0 1;
-        background: $boost;
     }
     """
+    )
 
     def __init__(self, session: LiveSession) -> None:
-        super().__init__()
+        super().__init__(ansi_color=True)
         self._session = session
         self._session.subscribe(self._receive_line)
+        self._stop_requested = False
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status", markup=False)
         with VerticalScroll(id="transcript-scroll"):
             yield Static("", id="transcript", markup=False)
         yield Static(
-            "space pause/resume   m mic   s system   r rename   q stop/save", id="key-hints"
+            "space pause/resume   m mic   s system   r rename   q stop/save · q again skip relabel",
+            id="key-hints",
         )
 
     def on_mount(self) -> None:
@@ -89,8 +93,19 @@ class LiveApp(App[None]):
             return
         self.push_screen(RenameDialog(speakers), self._rename_speaker)
 
-    async def action_stop(self) -> None:
+    def action_stop(self) -> None:
+        if self._stop_requested:
+            self._session.skip_relabel()
+            self.notify("Skipping speaker relabeling.")
+            return
+        self._stop_requested = True
+        self._refresh_status()
+        self.run_worker(self._finish_stop(), name="stop-live", group="live-stop")
+
+    async def _finish_stop(self) -> None:
         await asyncio.to_thread(self._session.stop)
+        if self._session.relabel_error:
+            self.notify(f"Speaker relabeling failed: {self._session.relabel_error}")
         self.exit()
 
     def _rename_speaker(self, value: tuple[str, str] | None) -> None:
@@ -116,7 +131,7 @@ class LiveApp(App[None]):
 
     def _refresh_status(self) -> None:
         elapsed = max(0, int(self._session.elapsed_seconds))
-        state = "PAUSED" if self._session.paused else "REC"
+        state = "Saving..." if self._stop_requested else "PAUSED" if self._session.paused else "REC"
         parts = [f"{state} {self._format_time(elapsed)}"]
         for key, source in (("m", "mic"), ("s", "system")):
             source_state = self._session.source_states[source].upper()
@@ -132,6 +147,8 @@ class LiveApp(App[None]):
             f"{self._session.model_name}  queue {self._session.queue_depth}  "
             f"failed phrases {self._session.failed_phrase_count}"
         )
+        if self._session.relabel_status:
+            parts.append(self._session.relabel_status)
         self.query_one("#status", Static).update("  |  ".join(parts))
 
     @staticmethod

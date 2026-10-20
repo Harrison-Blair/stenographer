@@ -276,7 +276,7 @@ def test_full_review_lists_every_section_and_field():
         "  min_speech_rms = 0.0005",
         "  max_recording_seconds = 600",
         "[asr]",
-        "  model = dropbox-dash/faster-whisper-large-v3-turbo",
+        "  model = deepdml/faster-whisper-large-v3-turbo-ct2",
         "  compute_type = int8",
         "  beam_size = 1",
         "  hotwords = automatic/unset",
@@ -464,8 +464,7 @@ def test_write_default_leaves_an_identical_file_untouched(tmp_path, monkeypatch)
     """
     (tmp_path / "sub").mkdir()
     path = tmp_path / "sub" / ".." / "config.toml"
-    # Bytes, not text mode: Windows would rewrite the template's newlines as CRLF,
-    # and the preservation layer compares bytes.
+    # Write bytes because the preservation layer compares the file byte-for-byte.
     path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
     before = path.stat().st_mtime_ns
@@ -1187,7 +1186,7 @@ def test_guided_setup_prints_the_doctor_report_and_succeeds(guided):
     assert code == 0
     assert "== doctor report ==" in stdout
     assert events == [
-        "cache:dropbox-dash/faster-whisper-large-v3-turbo",
+        "cache:deepdml/faster-whisper-large-v3-turbo-ct2",
         "refine-probe:http://127.0.0.1:11434",
         "probe",
     ]
@@ -1200,7 +1199,7 @@ def test_guided_setup_offers_the_download_of_an_uncached_model_and_takes_no_for_
     assert code == 0
     assert "is not cached (download is approximately 1.6 GB)" in stdout
     assert "Download it from the network now? [y/N]: " in stdout
-    assert "download:dropbox-dash/faster-whisper-large-v3-turbo" not in events
+    assert "download:deepdml/faster-whisper-large-v3-turbo-ct2" not in events
 
 
 def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
@@ -1208,7 +1207,7 @@ def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
 
     assert code == 0
     assert "Download it from the network now? [Y/n]: " in stdout
-    assert "download:dropbox-dash/faster-whisper-large-v3-turbo" in events
+    assert "download:deepdml/faster-whisper-large-v3-turbo-ct2" in events
     assert "Model download complete." in stdout
 
 
@@ -1324,7 +1323,7 @@ def test_guided_setup_reports_a_failed_refine_pull_as_an_operational_failure(gui
     assert code == 1
     assert stderr == "stenographer: refine model pull failed: boom\n"
     assert events == [
-        "cache:dropbox-dash/faster-whisper-large-v3-turbo",
+        "cache:deepdml/faster-whisper-large-v3-turbo-ct2",
         "refine-probe:http://127.0.0.1:11434",
         "refine-pull:gemma4:e2b",
         "probe",
@@ -1620,11 +1619,7 @@ def test_write_default_reports_an_unusable_target_and_fails(tmp_path, monkeypatc
     assert write_default(stdout=out, stderr=err) == 1
 
     assert out.getvalue() == ""
-    # POSIX refuses the read through a non-directory; Windows reports the
-    # target as absent and refuses creation of its parent instead.
-    assert err.getvalue().startswith(
-        ("stenographer: cannot re-read ", "stenographer: cannot create ")
-    )
+    assert err.getvalue().startswith("stenographer: cannot re-read ")
     assert str(blocker) in err.getvalue()
     assert blocker.read_text(encoding="utf-8") == "not a directory\n"
 

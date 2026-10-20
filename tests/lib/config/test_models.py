@@ -15,8 +15,7 @@ from stenographer.lib.platform import current_platform
 
 
 def test_config_error_message():
-    # Interpolate the path rather than a POSIX literal: the rendered separator
-    # is the host's, so "/x" would not match the WindowsPath spelling.
+    # Interpolate the path so the assertion follows pathlib's representation.
     path = pathlib.Path("/x")
     err = ConfigError(path, "asr.beam_size", "bad")
     assert str(err) == f"{path}: asr.beam_size: bad"
@@ -34,7 +33,7 @@ def test_defaults_match_spec():
     assert d.audio.input_device is None
     assert d.audio.min_speech_rms == 0.0005
     assert d.audio.max_recording_seconds == 600
-    assert d.asr.model == "dropbox-dash/faster-whisper-large-v3-turbo"
+    assert d.asr.model == "deepdml/faster-whisper-large-v3-turbo-ct2"
     assert d.asr.compute_type == "int8"
     assert d.asr.beam_size == 1
     assert d.asr.hotwords is None
@@ -50,6 +49,28 @@ def test_defaults_match_spec():
     assert d.feedback.spectrum_floor_dbfs == -45.0
     assert d.feedback.sound_pack == "minimal-ui"
     assert d.feedback.log_level == "info"
+
+
+def test_load_keeps_an_explicit_legacy_asr_model(tmp_path):
+    p = tmp_path / "config.toml"
+    original = '[stenographer.asr]\nmodel = "dropbox-dash/faster-whisper-large-v3-turbo"\n'
+    p.write_text(original)
+
+    cfg = Config.load(p)
+
+    assert cfg.asr.model == "dropbox-dash/faster-whisper-large-v3-turbo"
+    assert p.read_text() == original
+
+
+def test_load_uses_the_new_default_when_asr_model_is_unset(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('[stenographer.asr]\ncompute_type = "float16"\nbeam_size = 3\n')
+
+    cfg = Config.load(p)
+
+    assert cfg.asr.model == "deepdml/faster-whisper-large-v3-turbo-ct2"
+    assert cfg.asr.compute_type == "float16"
+    assert cfg.asr.beam_size == 3
 
 
 def test_write_default_round_trips(tmp_path):

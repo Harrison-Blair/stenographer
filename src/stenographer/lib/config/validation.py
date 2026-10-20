@@ -86,10 +86,10 @@ def _validate_binding_overlap(
 def _migrate_hotkey_defaults(merged: dict, overlay: dict, path: pathlib.Path) -> None:
     """Give old partial configs a non-conflicting General chord.
 
-    Before profiles, ``binding`` could itself be Right Alt (notably on
-    Windows). It remains the Agent binding after upgrade. When no explicit
-    General binding exists, select the normal Right Alt default unless it
-    overlaps Agent or cancel, then use the first conservative fallback.
+    Before profiles, ``binding`` could itself be Right Alt. Keep it as the
+    Agent binding after upgrade. If no explicit General binding exists, select
+    the normal Right Alt default unless it overlaps Agent or cancel. Then use
+    the first conservative fallback.
     """
 
     raw_hotkey = overlay.get("hotkey")

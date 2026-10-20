@@ -78,4 +78,4 @@ def test_runtime_context_answers_every_diagnostics_field_about_this_host():
     assert context["python_version"].startswith(
         f"{sys.version_info.major}.{sys.version_info.minor}."
     )
-    assert context["os"] == {"linux": "Linux", "win32": "Windows"}[sys.platform]
+    assert context["os"] == "Linux"

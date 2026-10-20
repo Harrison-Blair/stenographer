@@ -28,7 +28,7 @@ their existing paths in `assets/`.
   telemetry, and exactly-once utterance completion. The CLI injects a status sink.
 - `analytics/`, `diagnostics/`, `logging/`, and `updates/`: numeric history,
   core capability checks and collection, private logging, and update notices.
-- `platform/`: host service contracts and lazy Linux and Windows providers.
+- `platform/`: host service contracts and the lazy Linux provider.
 
 Each ordinary class has a dedicated file without standalone helpers. Related
 records may share a file; related exceptions live in their domain's `errors.py`.
@@ -49,7 +49,8 @@ Commands own their prompts, terminal output, consent, and follow-up actions.
 and session controls. `cli/setup/` owns quick/default setup and calibration
 prompts; `cli/sounds/` owns interactive pack selection and preview.
 The model download and stats operations have their own subcommand packages.
-`cli/shared/` combines independent core and display capability results for reports.
+`cli/shared/` owns cross-command support for capability reports, terminal
+handling, and shared TUI styles.
 
 ## Optional overlay
 
@@ -61,10 +62,9 @@ ordering. `overlay/supervision/` owns mailbox, restart, and timeout policy;
 remains in `lib/audio/`. Helper logging is isolated in `overlay/logging/`.
 
 `overlay/platform/` owns display providers, helper transport, availability
-information, native backends, and generated Wayland bindings. Linux still prefers
-layer-shell before XWayland. Windows still reports display unavailability;
-this reorganization adds no native platform support. Core providers expose no
-display-backend selection or display-specific guidance.
+information, native backends, and generated Wayland bindings. Linux prefers
+layer-shell before XWayland. Core providers expose no display-backend selection
+or display-specific guidance.
 
 ## Verification and packaging
 
