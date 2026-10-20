@@ -127,7 +127,6 @@ class FilesPanel(Vertical):
             yield Static("", id="files-preview", markup=False)
 
     def on_mount(self) -> None:
-        self.query_one("#files-browser-scroll", VerticalScroll).border_title = "browser"
         self.query_one("#files-options-scroll", VerticalScroll).border_title = "options"
         self.query_one("#files-queue-scroll", VerticalScroll).border_title = "queue"
         self.query_one("#files-preview-scroll", VerticalScroll).border_title = "preview"
@@ -282,6 +281,15 @@ class FilesPanel(Vertical):
         self._build_text()
         if not self.is_mounted or not self.app.is_running:
             return
+        browser_panel = self.query_one("#files-browser-scroll", VerticalScroll)
+        try:
+            relative_directory = self.directory.relative_to(self.home)
+        except ValueError:
+            browser_panel.border_title = str(self.directory)
+        else:
+            browser_panel.border_title = (
+                "~" if relative_directory == Path(".") else f"~/{relative_directory}"
+            )
         preview_panel = self.query_one("#files-preview-scroll", VerticalScroll)
         job = self.selected_job
         if job is None:
@@ -304,7 +312,6 @@ class FilesPanel(Vertical):
 
     def _render_browser(self) -> Text:
         rows = Text()
-        append_line(rows, str(self.directory))
         if self.search_term:
             append_line(rows, f"search: {self.search_term}")
         if self.selected_paths:
@@ -336,9 +343,13 @@ class FilesPanel(Vertical):
     def _render_options(self) -> Text:
         rows = Text()
         speaker_count = self.speaker_count if self.speaker_count is not None else "auto"
+        diarize_marker = "x" if self.diarize else " "
+        refine_marker = "x" if self.refine else " "
+        diarize_choice = f"[{diarize_marker}] diarize"
+        refine_choice = f"[{refine_marker}] cleanup pass"
         option_rows = (
-            f"speakers      [{'x' if self.diarize else ' '}] diarize   count {speaker_count}",
-            f"refine        {'on' if self.refine else 'off'}",
+            f"speakers      {diarize_choice}   count {speaker_count}",
+            f"refine        {refine_choice}",
             f"output        {' · '.join(_FORMATS)}",
             f"save to       {self.output_folder}",
         )
@@ -350,7 +361,15 @@ class FilesPanel(Vertical):
             selected = self.focus_area == "options" and selected
             line_start = len(rows.plain) + (1 if rows else 0) + 2
             append_line(rows, option, selectable=True, selected=selected)
-            if row_index == 2 and not selected:
+            if row_index == 0:
+                choice_start = line_start + len("speakers      ")
+                rows.stylize("#5fd7ff", choice_start, choice_start + len(diarize_choice))
+                count_start = line_start + option.index(str(speaker_count))
+                rows.stylize("#5fd7ff", count_start, count_start + len(str(speaker_count)))
+            elif row_index == 1:
+                choice_start = line_start + len("refine        ")
+                rows.stylize("#5fd7ff", choice_start, choice_start + len(refine_choice))
+            elif row_index == 2:
                 format_start = line_start + len("output        ")
                 active_start = format_start + sum(
                     len(value) + 3 for value in _FORMATS[: _FORMATS.index(self.output_format)]
@@ -455,5 +474,9 @@ class FilesPanel(Vertical):
     @staticmethod
     def _format_clock(seconds: float) -> str:
         total = max(0, int(seconds))
+        if total >= 3600:
+            hours, remainder = divmod(total, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
         minutes, remainder = divmod(total, 60)
-        return f"{minutes:02d}:{remainder:02d}"
+        return f"{minutes}:{remainder:02d}"

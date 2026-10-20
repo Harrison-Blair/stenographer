@@ -164,6 +164,10 @@ class HubApp(App[None]):
         border-title-style: bold;
         overflow-y: auto;
     }
+    #files-browser-scroll, #files-options-scroll, #files-queue-scroll, #files-preview-scroll {
+        border-title-color: ansi_default;
+        border-title-style: bold;
+    }
     #key-hints {
         height: 1;
         padding: 0 2;

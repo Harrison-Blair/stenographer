@@ -8,12 +8,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import soundfile as sf
 from rich.color import Color
 from textual.containers import VerticalScroll
 from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.files_view import FilesPanel
 from stenographer.lib.files.models import FileJobProgress
 from stenographer.lib.live.transcript_line import TranscriptLine
 
@@ -138,6 +140,67 @@ def test_files_panels_have_board_layout_and_files_sidebar_card(tmp_path):
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize(
+    "panel_id",
+    (
+        "#files-browser-scroll",
+        "#files-options-scroll",
+        "#files-queue-scroll",
+        "#files-preview-scroll",
+    ),
+)
+def test_files_panel_titles_use_terminal_foreground_and_bold(tmp_path, panel_id):
+    app = HubApp(FakeServices(tmp_path / "exports"), files_home=tmp_path)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("2")
+            panel = app.query_one(panel_id, VerticalScroll)
+            assert panel.styles.border_title_color.ansi == -1
+            assert panel.styles.border_title_style.bold
+
+    asyncio.run(exercise())
+
+
+def test_files_browser_title_tracks_current_directory(tmp_path):
+    recordings = tmp_path / "Recordings"
+    recordings.mkdir()
+    app = HubApp(FakeServices(tmp_path / "exports"), files_home=tmp_path)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("2", "enter")
+            browser = app.query_one("#files-browser-scroll", VerticalScroll)
+            assert browser.border_title == "~/Recordings"
+
+    asyncio.run(exercise())
+
+
+def test_files_browser_durations_use_board_clock_format():
+    assert FilesPanel._format_clock(151) == "2:31"
+    assert FilesPanel._format_clock(3735) == "1:02:15"
+
+
+@pytest.mark.parametrize("value", ("[x] diarize", "auto", "[ ] cleanup pass", "md"))
+def test_files_chosen_option_values_use_accent_color(tmp_path, value):
+    app = HubApp(FakeServices(tmp_path / "exports"), files_home=tmp_path)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("2")
+            rendered = app.query_one("#files-options", Static).render()
+            assert value in rendered.plain
+            start = rendered.plain.index(value)
+            styles = [
+                span.style.rich_style for span in rendered.spans if span.start <= start < span.end
+            ]
+            assert styles, f"{value!r} is not styled with the accent color"
+            assert styles[0].color is not None
+            assert styles[0].color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
+
+    asyncio.run(exercise())
+
+
 def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
     path = tmp_path / "standup.wav"
     _write_audio(path)
@@ -158,7 +221,7 @@ def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
 
             options = app.query_one("#files-options", Static).render()
             assert "[x] diarize" in options.plain and "count auto" in options.plain
-            assert "refine        off" in options.plain
+            assert "refine        [ ] cleanup pass" in options.plain
             assert "output        md · jsonl · srt · txt" in options.plain
             assert "save to" in options.plain
             assert "[ ] on" not in options.plain
@@ -171,7 +234,7 @@ def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
             assert format_style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
 
             content = _panel_text(app)
-            assert "55%" in content and "▕" in content and "eta 00:17" in content
+            assert "55%" in content and "▕" in content and "eta 0:17" in content
             assert "transcribe ✓ · diarize … · save" in content
 
             preview_panel = app.query_one("#files-preview-scroll", VerticalScroll)
@@ -245,9 +308,12 @@ def test_pilot_file_browser_search_and_multi_select_queue(tmp_path):
         async with app.run_test() as pilot:
             await pilot.press("2")
             text = _panel_text(app)
-            assert str(tmp_path) in text
-            assert "alpha.wav" in text and "00:02" in text
-            assert "beta.wav" in text and "00:03" in text
+            browser = app.query_one("#files-browser-scroll", VerticalScroll)
+            browser_text = app.query_one("#files-browser", Static).render().plain
+            assert browser.border_title == "~"
+            assert str(tmp_path) not in browser_text
+            assert "alpha.wav" in text and "0:02" in text
+            assert "beta.wav" in text and "0:03" in text
 
             await pilot.press("/")
             search = app.screen.query_one("#config-prompt-input", Input)
@@ -314,7 +380,7 @@ def test_pilot_file_options_can_be_changed(tmp_path):
             assert app.files_panel.output_folder == output_folder
             options = app.query_one("#files-options", Static).render().plain
             assert "speakers      [ ] diarize   count 2" in options
-            assert "refine        on" in options
+            assert "refine        [x] cleanup pass" in options
             assert "output        md · jsonl · srt · txt" in options
 
     asyncio.run(exercise())
