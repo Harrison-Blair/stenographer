@@ -5,8 +5,20 @@ from __future__ import annotations
 
 import numpy as np
 
-from stenographer.lib.live.relabel import relabel_system_lines
+from stenographer.lib.live.relabel import _best_active_pair, relabel_system_lines
 from stenographer.lib.live.transcript_line import TranscriptLine
+
+
+def test_best_active_pair_preserves_global_heap_tie_order():
+    active = np.array([True, True, True, True])
+    best_scores = np.array([0.9, 0.9, 0.9, 0.9], dtype=np.float32)
+    best_neighbors = np.array([1, 0, 3, 2])
+    cluster_ids = np.array([10, 2, 8, 9])
+
+    left, right, score = _best_active_pair(active, best_scores, best_neighbors, cluster_ids)
+
+    assert (left, right) == (1, 0)
+    assert score == float(np.float32(0.9))
 
 
 def _line(start: float, duration: float, speaker_id: str, label: str) -> TranscriptLine:
