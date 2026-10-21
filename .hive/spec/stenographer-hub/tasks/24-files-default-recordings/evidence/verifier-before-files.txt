@@ -1,0 +1,12 @@
+directory: <tmp>/home
+browser title: ~
+       ../
+▶      Music/
+/ search · enter queue · space select
+  speakers      [x] diarize   count auto
+  refine        [ ] cleanup pass
+  output        md · jsonl · srt · txt
+  save to       <tmp>/data/stenographer/files
+o edit options
+No queued jobs.
+Queue a file to preview its transcript.
