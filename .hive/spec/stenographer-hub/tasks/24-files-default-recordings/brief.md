@@ -18,6 +18,16 @@ starts at `Path.home()`. Live sessions are saved under
 
 1. The Files browser opens in `<data_dir>/sessions` by default.
 
+## Design
+
+No approved board. User waiver, 2026-10-21 (through the coordinator), for
+tasks 24 and 25 only: this change does not alter a layout, so the
+approved-board comparison is waived. The verifier's independent before and
+after renders of each changed screen (pilot `save_screenshot()` SVG, text and
+PNG, synthetic data only) count as the visual approval. Keep those renders in
+the evidence. The plain-text check still applies: each state must have a glyph or
+word and must not rely on colour alone. Future UI tasks still need an approved board.
+
 ## Requirements
 
 1. The browser's start directory is `<data_dir>/sessions`, resolved through the
