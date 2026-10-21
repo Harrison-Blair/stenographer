@@ -166,3 +166,41 @@ def test_batch_relabel_uses_speech_time_weighted_votes_for_short_phrases():
 
     assert relabeled[-1].speaker_id == relabeled[0].speaker_id
     assert relabeled[-1].label == "Long voice"
+
+
+def test_room_prefix_numbers_mic_clusters_as_room_speakers_and_keeps_renames():
+    lines = (
+        _line(0.0, 3.0, "room-1", "Room 1"),
+        _line(4.0, 3.0, "room-2", "Dana"),
+        _line(8.0, 3.0, "room-3", "Room 3"),
+        _line(12.0, 3.0, "room-4", "Room 4"),
+    )
+    embeddings = (
+        np.array([1.0, 0.0], dtype=np.float32),
+        np.array([0.0, 1.0], dtype=np.float32),
+        np.array([0.99, 0.1], dtype=np.float32),
+        np.array([0.1, 0.99], dtype=np.float32),
+    )
+
+    relabeled = relabel_system_lines(lines, embeddings, threshold=0.8, label_prefix="Room")
+
+    assert [line.speaker_id for line in relabeled] == ["room-1", "room-2", "room-1", "room-2"]
+    assert [line.label for line in relabeled] == ["Room 1", "Dana", "Room 1", "Dana"]
+
+
+def test_room_prefix_applies_to_a_fixed_speaker_count():
+    lines = (
+        _line(0.0, 3.0, "room-1", "Room 1"),
+        _line(4.0, 3.0, "room-2", "Room 2"),
+        _line(8.0, 3.0, "room-3", "Room 3"),
+    )
+    embeddings = (
+        np.array([1.0, 0.0], dtype=np.float32),
+        np.array([0.0, 1.0], dtype=np.float32),
+        np.array([0.99, 0.1], dtype=np.float32),
+    )
+
+    relabeled = relabel_system_lines(lines, embeddings, speaker_count=2, label_prefix="Room")
+
+    assert [line.speaker_id for line in relabeled] == ["room-1", "room-2", "room-1"]
+    assert [line.label for line in relabeled] == ["Room 1", "Room 2", "Room 1"]

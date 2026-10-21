@@ -169,8 +169,10 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer run` — run the daemon in the foreground.
 - `stenographer live` — open the standalone live app with its existing flags;
   it does not open the hub. After `q`, it keeps each renamed label on one voice
-  and numbers unnamed voices by first appearance. Press `q` again to skip. See
-  the [live guide](docs/live.md).
+  and numbers unnamed voices by first appearance. Press `q` again to skip.
+  `--diarize-mic` (or `live.diarize_mic = true`) labels the people on one
+  microphone `Room 1`, `Room 2`, and so on instead of `You`. See the
+  [live guide](docs/live.md).
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
 for sound packs, statistics, and configuration examples.

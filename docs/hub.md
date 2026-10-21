@@ -57,11 +57,20 @@ view, with one time-ordered stream and speaker labels. Press `v` to switch to
 split view, where microphone and system lines appear in separate, captioned
 columns in time order. Press `v` again to return to mixed view. The key hints
 show the section keys `1` to `6`. Press `m` to toggle microphone input, `s` to
-toggle system audio, and `r` to rename a system speaker. System audio captures
+toggle system audio, and `r` to rename a speaker. System audio captures
 the current output mix, not separate applications.
 
+When `live.diarize_mic` is on in Config, a new recording labels microphone
+speakers `Room 1`, `Room 2`, and so on, apart from the system speakers
+(`Speaker 1`, ...). `r` lists room speakers with the system speakers. The
+setting applies when a recording starts; Live has no toggle for it. With the
+setting off, microphone lines are `You`. See
+[separate the speakers in a room](live.md#separate-the-speakers-in-a-room) for
+its limits.
+
 When you stop and save a session, stenographer runs a batch speaker-label pass
-on the saved system phrases and stores the revised labels in a new transcript
+on the saved system phrases, and separately on the microphone phrases when
+microphone diarization is on, and stores the revised labels in a new transcript
 revision. This pass also runs when you confirm quit during a recording. Speaker
 labels are similarity estimates, not reliable identity checks. A minor voice
 gets its own label only if it has at least 15 seconds of phrases that are each
@@ -131,12 +140,15 @@ active recording does not appear in this list until it has been saved.
 
 Re-diarization and re-transcription write new transcript revisions and keep
 previous revisions. Re-labeling uses the same speaker similarity limits as the
-Live section.
+Live section. Re-diarization relabels microphone lines as `Room N` speakers only
+for a session recorded with microphone diarization (`"diarize_mic": true` in its
+`session.json`). For other sessions, including older ones, it relabels system
+lines only and microphone lines stay `You`. `r` can rename room speakers.
 
 ## Config
 
 Config edits `config.toml` by the groups in the current configuration:
-hotkey, audio, ASR, refine, feedback, analytics, and delivery. It keeps the
+hotkey, audio, ASR, live, refine, feedback, analytics, and delivery. It keeps the
 group selector beside compact key/value rows. A `●` marks values that differ
 from their defaults. The selected key's description and default appear at the
 bottom of the panel. The sidebar card shows the config path and the count of

@@ -48,6 +48,36 @@ stenographer live --no-mic
 disable them. The `m` and `s` keys also toggle the microphone and system audio
 while a session is open.
 
+### Separate the speakers in a room
+
+When several people share one microphone, turn on microphone diarization:
+
+```sh
+stenographer live --diarize-mic
+```
+
+`--diarize-mic` and `--no-diarize-mic` override the
+`stenographer.live.diarize_mic` setting (default `false`) for one session.
+The hub Live section uses the setting; change it on the hub Config board.
+You cannot change it during a session.
+
+With the setting on, microphone speakers get labels such as `Room 1` and
+`Room 2` (speaker IDs `room-1`, `room-2`). System speakers keep `Speaker 1`,
+`Speaker 2`. Microphone and system voices are never clustered together, so a
+room voice and a system voice never share a label. When you stop, the same
+relabel pass runs on the microphone phrases separately from the system
+phrases. Press `r` to rename a room speaker. With the setting off, every
+microphone line is `You`.
+
+Limits:
+
+- Labels are per phrase. Voice-activity detection splits phrases at pauses, so
+  a speaker change without a pause stays in one phrase under one label.
+- Room labels are similarity estimates, like system labels. They can split one
+  person or merge several people.
+- System audio that leaks into the microphone can appear as a room speaker. Use
+  headphones to avoid this.
+
 System capture records the full mix from the current default output sink. It
 does not capture separate applications. It requires PipeWire, `pw-record`, and
 `pactl`. The command does not follow a change to the default output sink during
@@ -61,10 +91,11 @@ a session. If you do not need system audio, start with `--no-system` or press
 - `m` turns microphone capture on or off.
 - `s` turns system audio capture on or off.
 - `r` opens the speaker rename screen.
-- `q` stops the session and saves its files. Stenographer then re-labels the recognized system phrases. Press `q` again to skip this pass.
+- `q` stops the session and saves its files. Stenographer then re-labels the recognized system phrases, and the microphone phrases when microphone diarization is on. Press `q` again to skip this pass.
 
-Microphone speech appears as `You`; system speech gets labels such as
-`Speaker 1`. Speaker labels are similarity estimates. They can split one person
+Microphone speech appears as `You`, or as `Room 1`, `Room 2`, and so on with
+[microphone diarization](#separate-the-speakers-in-a-room); system speech gets
+labels such as `Speaker 1`. Speaker labels are similarity estimates. They can split one person
 into multiple labels or merge several people under one label. Phrases shorter
 than 1.2 seconds reuse a known speaker and do not change its embedding mean.
 When you stop a session, Stenographer shows progress while it clusters the
@@ -103,6 +134,8 @@ created only for sources that were active during the session:
   `text` fields. Speaker rename events are also recorded.
 - `transcript.md` is written when the session stops. It contains the saved
   transcript and the final display labels.
+- `session.json` records the current transcript revision. A session recorded
+  with microphone diarization has it from the start, with `"diarize_mic": true`.
 
 These files are user data requested by the `live` command. `live` writes
 transcript text and audio only to this session folder. Logs and analytics do

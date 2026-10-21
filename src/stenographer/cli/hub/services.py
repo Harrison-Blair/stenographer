@@ -166,7 +166,11 @@ class HubServices:
                 "live voice models are missing; run `stenographer model download --live` "
                 f"(missing: {', '.join(missing)})"
             )
-        session = self._session_factory(self._config, platform=self._platform)
+        session = self._session_factory(
+            self._config,
+            diarize_mic=self._config.live.diarize_mic,
+            platform=self._platform,
+        )
         self._session = session
         try:
             session.start()

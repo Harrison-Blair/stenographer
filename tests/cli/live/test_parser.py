@@ -54,3 +54,23 @@ def test_live_help_lists_source_and_device_flags(capsys):
     assert "--system" in help_text
     assert "--no-system" in help_text
     assert "--device" in help_text
+
+
+def test_live_parser_diarize_mic_defaults_to_the_config_and_accepts_both_flags():
+    parser = _parser()
+
+    assert parser.parse_args(["live"]).diarize_mic is None
+    assert parser.parse_args(["live", "--diarize-mic"]).diarize_mic is True
+    assert parser.parse_args(["live", "--no-diarize-mic"]).diarize_mic is False
+    assert parser.parse_args(["live", "--diarize-mic", "--no-diarize-mic"]).diarize_mic is False
+
+
+def test_live_help_lists_mic_diarization_flags(capsys):
+    parser = _parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["live", "--help"])
+
+    help_text = capsys.readouterr().out
+    assert "--diarize-mic" in help_text
+    assert "--no-diarize-mic" in help_text

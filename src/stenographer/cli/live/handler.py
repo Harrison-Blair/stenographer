@@ -49,6 +49,7 @@ def cmd_live(args: argparse.Namespace, cfg: Config) -> int:
         mic=args.mic,
         system=args.system,
         device=args.device,
+        diarize_mic=cfg.live.diarize_mic if args.diarize_mic is None else args.diarize_mic,
         platform=platform,
     )
     print("stenographer: loading model for live ASR...", flush=True)

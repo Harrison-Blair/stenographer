@@ -52,6 +52,7 @@ def test_config_section_shows_model_groups_values_defaults_and_help(tmp_path):
                 "hotkey",
                 "audio",
                 "asr",
+                "live",
                 "refine",
                 "feedback",
                 "analytics",
@@ -112,6 +113,7 @@ def test_config_board_layout_has_group_selector_settings_and_hotwords_panels(tmp
                 "hotkey",
                 "audio",
                 "asr",
+                "live",
                 "refine",
                 "feedback",
                 "analytics",
@@ -343,6 +345,25 @@ def test_edit_undo_and_reset_use_validated_config_values(tmp_path):
             assert app.config_editor.config.asr.beam_size == Config.defaults().asr.beam_size
             assert not app.config_editor.dirty
             assert Config.load(path).asr.beam_size == Config.defaults().asr.beam_size
+
+    asyncio.run(exercise())
+
+
+def test_config_live_group_edits_and_saves_mic_diarization(tmp_path):
+    async def exercise():
+        path = _config_path(tmp_path)
+        app = HubApp(FakeServices(), config_path=path)
+        async with app.run_test() as pilot:
+            await pilot.press("4", "/")
+            await pilot.press(*tuple("live.diarize_mic"), "enter")
+            assert app.config_editor.selected_key == "live.diarize_mic"
+            details = app.query_one("#config-selected-help", Static).render().plain
+            assert "microphone" in details
+            await pilot.press("enter")
+            await pilot.press("ctrl+a", "ctrl+k", *tuple("true"), "enter")
+            assert app.config_editor.config.live.diarize_mic is True
+            await pilot.press("ctrl+s")
+            assert Config.load(path).live.diarize_mic is True
 
     asyncio.run(exercise())
 

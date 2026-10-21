@@ -306,3 +306,16 @@ def test_render_round_trips_delivery_settings_through_the_preservation_layer():
     assert "# hand-written preface" in rendered
     assert "restore_delay_ms = 250" in rendered
     assert Config.loads(rendered) == reviewed
+
+
+def test_render_round_trips_live_settings_through_the_preservation_layer():
+    defaults = Config.defaults()
+    reviewed = replace(defaults, live=replace(defaults.live, diarize_mic=True))
+
+    rendered = ConfigDocument.loads(PRESERVATION_FIXTURE).render(reviewed)
+
+    assert "# hand-written preface" in rendered
+    assert "# keep this inline comment" in rendered
+    assert "[stenographer.live]" in rendered
+    assert "diarize_mic = true" in rendered
+    assert Config.loads(rendered) == reviewed

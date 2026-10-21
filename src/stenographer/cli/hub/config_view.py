@@ -37,6 +37,10 @@ _HELP = {
         "Unload the idle recognition worker after this many seconds; zero disables it."
     ),
     "asr.cpu_threads": "Recognition worker CPU threads; zero selects automatically.",
+    "live.diarize_mic": (
+        "Separate the speakers on the microphone as Room 1, Room 2, and so on; "
+        "off labels every microphone line You."
+    ),
     "refine.enabled": "Use the local text-refinement service when available.",
     "refine.host": "Refinement service URL. A remote host receives transcript text.",
     "refine.model": "Model name used by the local refinement service.",

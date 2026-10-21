@@ -61,6 +61,18 @@ def list_session_ids(root: Path) -> list[str]:
     return sorted(ids, key=lambda value: (session_started_at(value), value), reverse=True)
 
 
+def session_metadata(directory: Path) -> dict:
+    """Return the session.json object, or an empty one when it is absent or unreadable."""
+    metadata_path = directory / "session.json"
+    try:
+        if not stat.S_ISREG(metadata_path.lstat().st_mode):
+            return {}
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
 def current_revision(directory: Path) -> tuple[str, Path, bool]:
     metadata_path = directory / "session.json"
     try:
@@ -266,4 +278,12 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
         audio_size_bytes=audio_sizes,
         interrupted=interrupted,
     )
-    return SessionDetail(summary, lines, talk_time, activity, revision, labels_revised)
+    return SessionDetail(
+        summary,
+        lines,
+        talk_time,
+        activity,
+        revision,
+        labels_revised,
+        diarize_mic=session_metadata(directory).get("diarize_mic") is True,
+    )

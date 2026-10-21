@@ -83,6 +83,13 @@ class DeliveryConfig:
 
 
 @dataclass(frozen=True)
+class LiveConfig:
+    """Live-session options; mic diarization separates the speakers in one room."""
+
+    diarize_mic: bool = False
+
+
+@dataclass(frozen=True)
 class AnalyticsConfig:
     enabled: bool = True
     resource_profiling: bool = True
@@ -97,6 +104,7 @@ class Config:
     refine: RefineConfig = RefineConfig()
     analytics: AnalyticsConfig = AnalyticsConfig()
     delivery: DeliveryConfig = DeliveryConfig()
+    live: LiveConfig = LiveConfig()
 
     @classmethod
     def defaults(cls) -> Config:
@@ -169,7 +177,16 @@ class Config:
             raise ConfigError(path, "stenographer", f"must be a table, got {type(table).__name__}")
         merged = _merge(asdict(cls.defaults()), table)
         _migrate_hotkey_defaults(merged, table, path)
-        for name in ("hotkey", "audio", "asr", "feedback", "refine", "analytics", "delivery"):
+        for name in (
+            "hotkey",
+            "audio",
+            "asr",
+            "feedback",
+            "refine",
+            "analytics",
+            "delivery",
+            "live",
+        ):
             if not isinstance(merged[name], dict):
                 raise ConfigError(path, name, f"must be a table, got {type(merged[name]).__name__}")
         return cls(
@@ -185,6 +202,9 @@ class Config:
                 ),
             ),
             delivery=_build_delivery(merged["delivery"], path),
+            live=LiveConfig(
+                diarize_mic=_Reader(merged["live"], path, "live").bool("diarize_mic"),
+            ),
         )
 
     @classmethod

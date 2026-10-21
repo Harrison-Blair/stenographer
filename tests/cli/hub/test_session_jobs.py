@@ -110,6 +110,84 @@ def test_rediarize_uses_task_pass_and_saves_a_renamed_revision(tmp_path):
     assert (session / "transcript.jsonl").is_file()
 
 
+class VoiceSpeakerTracker:
+    """Embed each saved phrase from its start time: two voices alternate."""
+
+    def __init__(self, _model_path):
+        self.vectors = iter(
+            np.array(vector, dtype=np.float32)
+            for vector in ([1.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 1.0], [1.0, 0.0])
+        )
+
+    def embed(self, _samples):
+        return next(self.vectors)
+
+
+def _write_room_session(root: Path, *, diarized: bool) -> Path:
+    writer = SessionWriter.open(root.parent, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
+    if diarized:
+        writer.mark_mic_diarized()
+    writer.write_audio("mic", np.full(16_000 * 12, 0.1, dtype=np.float32))
+    writer.write_audio("system", np.full(16_000 * 12, 0.1, dtype=np.float32))
+    writer.append_line(
+        TranscriptLine(0.0, 2.0, "", "system", "speaker-1", "Speaker 1", "fixture line")
+    )
+    speaker = ("room-1", "Room 1") if diarized else ("you", "You")
+    for start in (2.0, 5.0, 8.0):
+        writer.append_line(TranscriptLine(start, start + 2.5, "", "mic", *speaker, "fixture line"))
+    writer.close()
+    return writer.path
+
+
+def _jobs(tmp_path, store, tracker):
+    model_path = tmp_path / "models" / "live" / LIVE_MODELS[1].filename
+    model_path.parent.mkdir(parents=True)
+    model_path.touch()
+    return SessionJobs(
+        store, Config.defaults(), FakePlatform(tmp_path), speaker_tracker_factory=tracker
+    )
+
+
+def test_rediarize_relabels_mic_lines_as_room_speakers_when_the_session_was_diarized(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=True)
+    store = SessionStore(sessions_root)
+
+    _jobs(tmp_path, store, VoiceSpeakerTracker).rediarize(session.name)
+
+    detail = store.read(session.name)
+    assert [(line.source, line.speaker_id, line.label) for line in detail.lines] == [
+        ("system", "speaker-1", "Speaker 1"),
+        ("mic", "room-1", "Room 1"),
+        ("mic", "room-2", "Room 2"),
+        ("mic", "room-2", "Room 2"),
+    ]
+    assert detail.diarize_mic is True
+
+
+def test_rediarize_leaves_mic_lines_as_you_in_sessions_without_the_flag(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=False)
+    store = SessionStore(sessions_root)
+    embedded = []
+
+    class CountingTracker(VoiceSpeakerTracker):
+        def embed(self, samples):
+            embedded.append(len(samples))
+            return super().embed(samples)
+
+    _jobs(tmp_path, store, CountingTracker).rediarize(session.name)
+
+    detail = store.read(session.name)
+    assert [(line.source, line.label) for line in detail.lines] == [
+        ("system", "Speaker 1"),
+        ("mic", "You"),
+        ("mic", "You"),
+        ("mic", "You"),
+    ]
+    assert len(embedded) == 1
+
+
 def test_retranscribe_uses_current_asr_and_saves_new_text_revision(tmp_path):
     sessions_root = tmp_path / "sessions"
     session = _write_session(sessions_root)

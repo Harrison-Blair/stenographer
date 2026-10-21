@@ -1,0 +1,36 @@
+
+ ╭─ stenographer ────────╮ ╭─ group ────────────╮ ╭─ live ────────────────────────────────────────────────────────────╮
+ │                       │ │                    │ │                                                                   │
+ │    1 Live             │ │   hotkey           │ │  Search: live.diarize_mic                                         │
+ │    2 Files            │ │   audio            │ │  ▶ diarize_mic  on ●                                              │
+ │    3 Sessions         │ │   asr              │ │                                                                   │
+ │  ▶ 4 Config           │ │ ▶ live             │ │                                                                   │
+ │    5 Setup            │ │   refine           │ │                                                                   │
+ │    6 Doctor   3W 1F   │ │   feedback         │ │                                                                   │
+ │                       │ │   analytics        │ │                                                                   │
+ │                       │ │   delivery         │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ │                       │ │                    │ │                                                                   │
+ ╰───────────────────────╯ │                    │ │                                                                   │
+                           │                    │ │                                                                   │
+ ╭───────────────────────╮ │                    │ │                                                                   │
+ │ file                  │ │                    │ │                                                                   │
+ │ config.toml           │ │                    │ │  diarize_mic: Separate the speakers on the microphone as Room 1,  │
+ │ 0 unsaved changes     │ │                    │ │  Room 2, and so on; off labels every microphone line You.         │
+ │                       │ │                    │ │  Default: off                                                     │
+ │                       │ │                    │ │                                                                   │
+ ╰───────────────────────╯ ╰────────────────────╯ ╰───────────────────────────────────────────────────────────────────╯
+
+  enter edit   u undo   D reset   / search   ctrl+s save   ←/→ group   ↑/↓ key

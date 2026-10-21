@@ -13,15 +13,29 @@ from stenographer.lib.live.speaker import SpeakerClustering
 class SpeakerTracker:
     """Extract phrase embeddings, assign IDs, and manage speaker labels."""
 
-    def __init__(self, model_path: str | Path, threshold: float = 0.50, num_threads: int = 2):
+    def __init__(
+        self,
+        model_path: str | Path,
+        threshold: float = 0.50,
+        num_threads: int = 2,
+        *,
+        label_prefix: str = "Speaker",
+    ):
         import sherpa_onnx
 
         config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(
             model=str(model_path), num_threads=num_threads, debug=False, provider="cpu"
         )
         self._extractor = sherpa_onnx.SpeakerEmbeddingExtractor(config)
-        self._clustering = SpeakerClustering(threshold)
+        self._label_prefix = label_prefix
+        self._id_prefix = f"{label_prefix.lower()}-"
+        self._clustering = SpeakerClustering(threshold, id_prefix=label_prefix.lower())
         self._names: dict[str, str] = {}
+
+    @property
+    def speaker_ids(self) -> tuple[str, ...]:
+        """Return the known speaker IDs in order of appearance."""
+        return tuple(speaker.speaker_id for speaker in self._clustering.speakers)
 
     def assign(self, samples: np.ndarray, *, duration: float | None = None) -> str:
         """Return the speaker ID for an audio phrase."""
@@ -46,7 +60,8 @@ class SpeakerTracker:
         """Return the display label for a speaker ID."""
         if speaker_id == "you":
             return "You"
-        return self._names.get(speaker_id, f"Speaker {speaker_id.removeprefix('speaker-')}")
+        number = speaker_id.removeprefix(self._id_prefix)
+        return self._names.get(speaker_id, f"{self._label_prefix} {number}")
 
     def rename(self, speaker_id: str, name: str) -> None:
         """Set a display label for a speaker ID."""
