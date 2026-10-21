@@ -304,6 +304,7 @@ class HubApp(App[None]):
         self.services = services
         self.files_panel = FilesPanel(
             home=files_home,
+            start=getattr(services, "files_start_folder", None),
             output_folder=getattr(services, "files_output_folder", None),
             id="files-panel",
         )

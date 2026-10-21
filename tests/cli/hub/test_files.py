@@ -197,6 +197,65 @@ def test_files_browser_title_tracks_current_directory(tmp_path):
     asyncio.run(exercise())
 
 
+def _recordings_app(tmp_path, monkeypatch, *, with_sessions: bool):
+    from stenographer.cli.hub.services import HubServices
+    from stenographer.lib.config.models import Config
+    from stenographer.lib.platform import current_platform
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    sessions = tmp_path / "data" / "stenographer" / "sessions"
+    if with_sessions:
+        (sessions / "20261021T120000Z").mkdir(parents=True)
+    home = tmp_path / "home"
+    home.mkdir()
+    services = HubServices(Config.defaults(), current_platform())
+    return HubApp(services, files_home=home), home, sessions
+
+
+def test_files_browser_starts_in_recordings_folder(tmp_path, monkeypatch):
+    app, _home, sessions = _recordings_app(tmp_path, monkeypatch, with_sessions=True)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("2")
+            assert app.files_panel.directory == sessions
+            assert "20261021T120000Z/" in _panel_text(app)
+            browser = app.query_one("#files-browser-scroll", Vertical)
+            assert browser.border_title == str(sessions)
+            assert app.files_panel.output_folder == tmp_path / "data" / "stenographer" / "files"
+            await pilot.press("up", "enter")
+            assert app.files_panel.directory == sessions.parent
+
+    asyncio.run(exercise())
+
+
+def test_files_browser_falls_back_to_home_without_recordings_folder(tmp_path, monkeypatch):
+    app, home, sessions = _recordings_app(tmp_path, monkeypatch, with_sessions=False)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("2")
+            assert app.files_panel.directory == home
+            browser = app.query_one("#files-browser-scroll", Vertical)
+            assert browser.border_title == "~"
+            assert app.files_panel.output_folder == tmp_path / "data" / "stenographer" / "files"
+            assert not sessions.exists()
+
+    asyncio.run(exercise())
+
+
+def test_files_output_folder_fallback_ignores_start_folder(tmp_path):
+    home = tmp_path / "home"
+    start = tmp_path / "sessions"
+    home.mkdir()
+    start.mkdir()
+
+    panel = FilesPanel(home=home, start=start)
+
+    assert panel.directory == start
+    assert panel.output_folder == home / ".local/share/stenographer/files"
+
+
 def test_files_browser_durations_use_board_clock_format():
     assert FilesPanel._format_clock(151) == "2:31"
     assert FilesPanel._format_clock(3735) == "1:02:15"
