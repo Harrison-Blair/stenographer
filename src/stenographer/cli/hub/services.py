@@ -110,6 +110,10 @@ class HubServices:
     def files_output_folder(self) -> Path:
         return self._platform.data_dir(os.environ, Path.home()) / "files"
 
+    @property
+    def files_start_folder(self) -> Path:
+        return self._platform.data_dir(os.environ, Path.home()) / "sessions"
+
     def submit_file(self, path: str | Path, **options):
         with self._files_lock:
             if self._files_closed:

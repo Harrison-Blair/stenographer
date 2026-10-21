@@ -85,6 +85,13 @@ use `ffmpeg`. Stenographer does not bundle FFmpeg. Install it with your system
 package manager. Doctor reports when `ffmpeg` is missing, and a file job that
 needs it cannot start without it.
 
+The browser opens in the folder where Live saves recordings:
+`$XDG_DATA_HOME/stenographer/sessions/`, or
+`~/.local/share/stenographer/sessions/` when `XDG_DATA_HOME` is unset. Each
+session folder holds `mic.flac` and `system.flac`. When that folder does not
+exist yet, the browser opens in your home folder. Select `..` to move up from
+either one; the browser title shows the current folder.
+
 Select one or more files in the browser and press `enter` to queue them. Jobs
 run one at a time in the background. The queue shows each job's state, stage,
 progress, and estimated time remaining. Select a job to see its transcript
