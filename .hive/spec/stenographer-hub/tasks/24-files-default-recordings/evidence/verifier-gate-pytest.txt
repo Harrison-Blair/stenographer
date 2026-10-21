@@ -189,4 +189,4 @@ tests/test_sound_asset_guard.py ...............                          [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/lib/live/test_phrase_segmenter.py:120: Silero VAD model is absent: /home/penguin/.local/share/stenographer/models/live/silero_vad.onnx
 SKIPPED [1] tests/lib/live/test_speaker_tracker.py:197: public speaker clips are absent from tmp/live_audio: ['speaker1_a_en_16k.wav', 'speaker1_b_en_16k.wav', 'speaker2_a_en_16k.wav']
-========== 2697 passed, 2 skipped, 6 deselected in 151.28s (0:02:31) ===========
+========== 2697 passed, 2 skipped, 6 deselected in 145.77s (0:02:25) ===========
