@@ -64,8 +64,6 @@ exclude = [
     "!/BUILD.md",
     "!/AGENTS.md",
     "!/CLAUDE.md",
-    # Temporary Bark Pro handoff prompt; a later commit deletes it.
-    "!/FIX.md",
     # Application code, including lib/ and generated platform bindings.
     "!/src/",
     "!/src/stenographer/",
