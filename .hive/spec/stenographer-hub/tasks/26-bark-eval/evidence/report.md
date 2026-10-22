@@ -17,7 +17,9 @@ Base commit `f5a0fc86ca1650c9531df75e6a570f9783c7b3e8` (`dev`).
   quiet. It also uses about 1.25 GB RSS against 2.06 GB. turbo's CPU time here
   is about 3 times the project's 2026-10-20 screen, and that gap is unresolved
   (§3c). Against the earlier figure, Bark is still 3-6 times faster.
-- **Clean removes fillers reliably** (0 filler words in every run). On
+- **Clean removes fillers reliably** (0 filler words in every run on the
+  private excerpts; 1 filler word per run on the public corpus, against 36 in
+  the references). On
   multi-speaker system audio, however, Clean keeps only 80 % of Pro's
   non-filler words and blanks 5-8 phrases that Pro transcribes. On the public
   corpus it keeps 98 %.
