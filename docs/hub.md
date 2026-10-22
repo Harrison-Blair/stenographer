@@ -51,8 +51,8 @@ comments and settings that the editor does not know about.
 ## Live
 
 The Live section has a REC panel with elapsed time and MIC and SYSTEM panels
-with the device, waveform meter, and dBFS level. A sidebar card shows the model,
-compute type, queue, failed count, and CPU use. The transcript opens in mixed
+with the device, waveform meter, and dBFS level. A sidebar card shows the
+engine (`bark-pro-int8`), queue, failed count, and CPU use. The transcript opens in mixed
 view, with one time-ordered stream and speaker labels. Press `v` to switch to
 split view, where microphone and system lines appear in separate, captioned
 columns in time order. Press `v` again to return to mixed view. The key hints
@@ -160,16 +160,9 @@ group selector beside compact key/value rows. A `●` marks values that differ
 from their defaults. The selected key's description and default appear at the
 bottom of the panel. The sidebar card shows the config path and the count of
 changed values. It shows one shared set of ASR settings for dictation, Live,
-and Files. Hotwords have a separate value area: an empty list shows `none`,
-short lists appear in full, and long lists are truncated to fit with a word
-count. The beam-size details cite the CPU model and context screen in the
-[transcription study](transcription-experiments.md#cpu-model-and-context-screen-2026-10-20).
-The default model is
-`deepdml/faster-whisper-large-v3-turbo-ct2`; other defaults include `int8`
-compute, beam size `1`, and VAD filtering. Model downloads are explicit. Run
-`stenographer model download --asr` to download the configured model. An
-existing configuration with an explicit `stenographer.asr.model` keeps that
-value when the default changes.
+and Files: `idle_unload_seconds` and `cpu_threads`. Model downloads are
+explicit. Run `stenographer model download --asr` to build the speech model;
+see [build the speech model](usage.md#build-the-speech-model).
 
 | Key | Action |
 | --- | --- |

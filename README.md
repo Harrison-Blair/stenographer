@@ -47,8 +47,9 @@ curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/sc
 ```
 
 This verifies and installs the latest prebuilt bundle and user service. It
-leaves the service stopped so you can configure it and download the model. No
-Python or build tools are needed. For another architecture or a local build,
+leaves the service stopped so you can configure it and build the model. The
+install needs no Python or build tools; the later model build needs the system
+`python3-venv` package. For another architecture or a local build,
 see [docs/building.md](docs/building.md).
 
 ## Requirements
@@ -60,6 +61,8 @@ You need Linux, Wayland, a systemd user manager, and:
 - Write access to `/dev/uinput`, through a udev rule or `uinput` group.
 - `wl-copy` from `wl-clipboard` (or `xclip` plus XWayland). `wl-paste`, also
   from `wl-clipboard`, lets the daemon restore your previous clipboard item.
+- `python3-venv`, once, for the speech-model build. On Ubuntu, run
+  `sudo apt install python3-venv`.
 
 Stenographer is English-focused. Run `stenographer doctor` for missing
 capabilities and fixes; for example, input access may require:
@@ -88,12 +91,28 @@ systemctl --user start stenographer.service
 ```
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
-offers the separate ASR model download. The default is
-`deepdml/faster-whisper-large-v3-turbo-ct2`, selected from the [CPU model and
-context screen (2026-10-20)](docs/transcription-experiments.md#cpu-model-and-context-screen-2026-10-20).
-Dictation, Live, and Files use the same ASR settings. An existing explicit
-`stenographer.asr.model` value stays unchanged. Use plain `setup` to review
-every setting, or run `stenographer model download` later.
+offers the separate ASR model download. Use plain `setup` to review every
+setting.
+
+## Speech model
+
+Dictation, Live, and Files use one speech model: Underdog Bark 3.0 Pro by
+Conway Research. It runs as int8 ONNX through sherpa-onnx, on the CPU only.
+Stenographer does not host the model. Build it once on your machine:
+
+```sh
+sudo apt install python3-venv     # once; stenographer never runs sudo
+stenographer model download --asr
+```
+
+The command downloads the pinned source weights and converter packages (about
+1.6 GB), checks their sha256, and converts the model to int8 ONNX on your
+machine. It also downloads the Silero voice-activity model. It needs 10 GiB of
+free disk and about 10.2 GiB of RAM while it converts. On the test machine it
+took about 2 minutes. The installed model uses about 653 MiB. A machine with
+less RAM can run out of memory during the conversion. Speech-model settings
+from earlier releases stay in your config file and are ignored; see the
+[changelog](CHANGELOG.md).
 
 For clearer recognition, first run `stenographer devices` and select the
 intended microphone. Keep it about 10–20 cm from your mouth, aim it slightly
@@ -148,11 +167,9 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 
 - `stenographer` — open the terminal hub when stdin and stdout are terminals;
   otherwise show help. Live shows REC, MIC, and SYSTEM panels plus a sidebar
-  card with the model, compute type, and system status. Config shows a group
-  selector beside compact key/value rows, selected-setting details, and a
-  separate hotwords value area. Short lists appear in full; long lists are
-  truncated to fit with a word count. The sidebar shows the config path and
-  unsaved-change count.
+  card with the engine, queue, and CPU use. Config shows a group selector
+  beside compact key/value rows and selected-setting details. The sidebar
+  shows the config path and unsaved-change count.
   Press `space` to start;
   use `v` for mixed or split transcripts, and `m` or `s` to toggle audio sources.
   Press `2` for Files;
@@ -226,10 +243,24 @@ and the [live guide](docs/live.md) for live capture and saved sessions.
 
 See [docs/building.md](docs/building.md) for standalone builds and contributor
 checks. See [docs/architecture.md](docs/architecture.md) for code boundaries.
-The [transcription-quality study](docs/transcription-experiments.md) contains
-public-audio benchmark runners, measured results, and a microphone experiment
-catalog. These diagnostics do not change the installed dictation settings.
+The [transcription-quality study](docs/transcription-experiments.md) records
+earlier public-audio measurements and a microphone experiment catalog. It is
+history; the speech model it measured is no longer used.
 
 ## License
 
 GPL-3.0-or-later.
+
+### Third-party models
+
+Stenographer ships no model weights. You download each model explicitly. The
+attribution files are in
+[`src/stenographer/assets/licenses/`](src/stenographer/assets/licenses/).
+
+| Model | Authors | License | Use |
+| --- | --- | --- | --- |
+| [Underdog Bark 3.0 Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro) | Conway Research | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Speech recognition. Converted to ONNX and quantized to int8 (weight-only) on your machine by stenographer. |
+| [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | NVIDIA | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
+| [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) | Moondream | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
+| [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Live, and Files. |
+| [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | NVIDIA | NeMo Toolkit license ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) | Speaker labels in Live and Files. |
