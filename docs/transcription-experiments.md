@@ -2,6 +2,12 @@
 
 # Transcription-quality experiments
 
+> [!NOTE]
+> 2026-10-22: This file is history. Stenographer now uses Underdog Bark 3.0
+> Pro (int8 ONNX, sherpa-onnx, CPU) for dictation, Live, and Files, chosen in
+> the [Bark evaluation report](../.hive/spec/stenographer-hub/tasks/26-bark-eval/evidence/report.md).
+> The Whisper models and the bench and study scripts named below were removed.
+
 Campaign: 2026-09-12. Scope: public recordings, offline recognition, a two-hour
 initial screen, and at most 20 GB of explicit downloads. Deliverables are this
 report and reproducible diagnostic runners. The installed daemon, application

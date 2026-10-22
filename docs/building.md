@@ -27,8 +27,8 @@ prose, no sub-bullets, and no blank lines between bullets. Wrap bullets at 79
 columns with a two-space continuation indent.
 
 A changed default or renamed option belongs under `### Added`, phrased as the
-new behavior ("Uses
-`deepdml/faster-whisper-large-v3-turbo-ct2` as the default model").
+new behavior ("Uses Underdog Bark 3.0 Pro for dictation, Live, and
+Files").
 Internal-only work — refactoring, test coverage, packaging with no observable
 effect — is folded into the synopsis or left out, never listed as a fix. An
 `[Unreleased]` section may be empty while nothing is pending, and otherwise
@@ -80,7 +80,10 @@ the source distribution can build a wheel. Preserve the source distribution's
 installer scripts and all required package resources. The Agent rewrite
 prompt's MIT attribution is packaged at
 `stenographer/assets/licenses/asd-ste100-MIT.txt` in wheels and retained under
-`src/` in source distributions.
+`src/` in source distributions. The model attribution files
+(`underdog-bark-3.0-pro-NOTICE.txt`, `silero-vad-MIT.txt`, and
+`titanet-small-NOTICE.txt`) sit in the same folder, as do the Bark Pro
+converter and its venv lock under `stenographer/assets/convert/`.
 
 ## Draft releases
 
@@ -208,9 +211,12 @@ The target system must provide:
   order (degrades to silent if absent).
 - **`/dev/uinput` write access** and membership in the **`input` group** —
   paste chord and hotkey capture.
-- **The ASR model** (~1.6 GB) — never bundled. Fetch it once with
-  `dist/stenographer/stenographer model download`. `certifi` supplies HTTPS
-  trust for explicit downloads and the metadata-only update notice.
+- **The ASR model** — never bundled. Build it once with
+  `dist/stenographer/stenographer model download --asr` (about 1.6 GB
+  download, 10 GiB free disk, about 10.2 GiB RAM, CPU only). The build needs
+  `python3-venv` (`sudo apt install python3-venv`) for its temporary
+  converter venv. `certifi` supplies HTTPS trust for explicit downloads and
+  the metadata-only update notice.
 
 `dist/stenographer/stenographer doctor` reports exactly what is missing
 (exit 78 when a required capability is absent).

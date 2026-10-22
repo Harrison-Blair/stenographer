@@ -181,9 +181,9 @@ The default is `gemma4:e2b`. It is chosen by `scripts/refine_bench.py`, which
 runs a fixed corpus of dictated speech past each candidate and scores the
 result for meaning fidelity: does it drop a clause, respell a name, change a
 number, or answer a question it was supposed to leave alone. `gemma4:e2b` was
-the only model measured that never did. It holds about 1.7 GB of VRAM, which
-leaves room for the Whisper model on an 8 GB card, and takes roughly 2 seconds
-for a short utterance and 5 seconds for a long one once warm.
+the only model measured that never did. It holds about 1.7 GB of VRAM (the
+speech model runs on the CPU) and takes roughly 2 seconds for a short
+utterance and 5 seconds for a long one once warm.
 
 The documented second choice is `qwen3.5:4b`, which produces the best long-form
 output of the field but needs the schema:

@@ -14,19 +14,20 @@ transcript text over the network.
 
 ## Prepare the models
 
-Live uses the shared ASR settings for dictation, Live, and Files. The default
-ASR model is `deepdml/faster-whisper-large-v3-turbo-ct2`; an explicit
-`stenographer.asr.model` in an existing configuration stays unchanged. Live
-also uses separate voice-activity and speaker models. Download each model only
-when you choose to:
+Live uses the same speech model as dictation and Files: Underdog Bark 3.0
+Pro, int8 ONNX on the CPU. Live also uses separate voice-activity and speaker
+models. Download each model only when you choose to:
 
 ```sh
 stenographer model download --asr
 stenographer model download --live
 ```
 
-`--asr` downloads the configured speech-recognition model. `--live` downloads
-the Silero voice-activity model and the English speaker model. `live` does not
+`--asr` builds the speech model on your machine and downloads the Silero
+voice-activity model. It needs `python3-venv`, 10 GiB of free disk, and about
+10.2 GiB of RAM; see [build the speech model](usage.md#build-the-speech-model).
+`--live` downloads the Silero voice-activity model and the English speaker
+model. `live` does not
 download models for you.
 
 ## Start a session
@@ -144,9 +145,8 @@ for other Stenographer network behavior.
 
 ## Limits
 
-A Whisper decode takes about two seconds per phrase with the default model in
-the measured CPU benchmark. Microphone and system phrases share one processing
-queue, so a backlog can delay lines. Running `stenographer run` and
+Each phrase is decoded on the CPU. Microphone and system phrases share one
+processing queue, so a backlog can delay lines. Running `stenographer run` and
 `stenographer live` together is supported. Each command loads its own copy of
 the configured ASR model, and both can compete for CPU time.
 

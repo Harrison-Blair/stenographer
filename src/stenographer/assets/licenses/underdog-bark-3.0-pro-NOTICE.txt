@@ -1,0 +1,31 @@
+Underdog Bark 3.0 Pro (ConwayResearch/Underdog-Bark-3.0-Pro), part of the Bark 3.0 family
+
+This model derives from:
+
+  nvidia/parakeet-tdt-0.6b-v3, (c) NVIDIA Corporation, CC-BY-4.0
+    https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+  moondream/parakeet-ultra, (c) Moondream, CC-BY-4.0
+    https://huggingface.co/moondream/parakeet-ultra
+
+License: https://creativecommons.org/licenses/by/4.0/
+
+Changes: post-trained and compressed by Conway Research. The FastConformer encoder architecture, TDT decoder,
+tokenizer and feature-extractor configuration derive from the models above and remain under CC-BY-4.0.
+
+---
+
+Attribution in stenographer
+
+Source: ConwayResearch/Underdog-Bark-3.0-Pro at revision
+4b5c51e04aa8d16dda9ecdff71bc29f7360149e4, NOTICE file as published at that
+revision (verbatim above).
+https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro
+
+License: Creative Commons Attribution 4.0 International (CC-BY-4.0).
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Converted to ONNX and quantized to int8 (weight-only) on the user's machine by stenographer.
+
+stenographer does not ship or host these model weights. `stenographer model
+download --asr` fetches the source weights at the pinned revision and converts
+them on your machine.

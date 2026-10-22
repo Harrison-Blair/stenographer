@@ -20,6 +20,8 @@
 !/BUILD.md
 !/AGENTS.md
 !/CLAUDE.md
+# Temporary Bark Pro handoff prompt; a later commit deletes it.
+!/FIX.md
 
 # Application code, including lib/ and generated platform bindings.
 !/src/
@@ -39,6 +41,9 @@
 !/src/stenographer/assets/icons/stenographer.png
 !/src/stenographer/assets/keycodes.toml
 !/src/stenographer/assets/licenses/asd-ste100-MIT.txt
+!/src/stenographer/assets/licenses/silero-vad-MIT.txt
+!/src/stenographer/assets/licenses/titanet-small-NOTICE.txt
+!/src/stenographer/assets/licenses/underdog-bark-3.0-pro-NOTICE.txt
 !/src/stenographer/assets/sounds/legacy/delivered.wav
 !/src/stenographer/assets/sounds/legacy/error.wav
 !/src/stenographer/assets/sounds/legacy/record_start.wav

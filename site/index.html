@@ -36,7 +36,7 @@
           <pre><code>curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start</code></pre>
           <button type="button" id="copy" class="copy" aria-label="Copy the quick-install command">Copy</button>
         </div>
-        <p class="fine">You need Linux on x86_64 or AArch64, a Wayland session, and a systemd user manager. The script downloads the latest release, verifies it against <code>SHA256SUMS</code>, and installs the user service for you. You do not need Python or build tools; the model download is a separate choice.</p>
+        <p class="fine">You need Linux on x86_64 or AArch64, a Wayland session, and a systemd user manager. The script downloads the latest release, verifies it against <code>SHA256SUMS</code>, and installs the user service for you. You do not need Python or build tools to install. The model build is a separate choice, and it needs your system <code>python3-venv</code> package.</p>
         <div class="cta">
           <a class="btn" href="#install">Install</a>
           <a class="btn ghost" href="https://github.com/Harrison-Blair/stenographer#readme">Read the README</a>
@@ -59,7 +59,7 @@
 
     <section class="states" id="states" aria-label="What the pill is telling you">
       <div class="st" data-for="recording"><i class="sw rec"></i><b>Recording</b><p>The pill names Agent or General while 18 bars follow your microphone.</p></div>
-      <div class="st" data-for="transcribing"><i class="sw asr"></i><b>Transcribing</b><p>faster-whisper is turning your speech into English text, on your machine.</p></div>
+      <div class="st" data-for="transcribing"><i class="sw asr"></i><b>Transcribing</b><p>Underdog Bark 3.0 Pro is turning your speech into English text, on your CPU.</p></div>
       <div class="st" data-for="refining"><i class="sw refine"></i><b>Refining</b><p>Agent rewrites jumbled requests into concise instructions; General performs ordinary transcript cleanup. The pill briefly reports Applied, Skipped, or Fallback.</p></div>
       <div class="st" data-for="delivering"><i class="sw deliver"></i><b>Delivering</b><p>Your clipboard has the text. A paste chord is landing at your cursor.</p></div>
       <div class="st" data-for="applied"><i class="sw applied"></i><b>Applied</b><p>The selected profile was applied. Skipped and Fallback use the same brief, transcript-free result.</p></div>
@@ -73,7 +73,7 @@
       <ol class="pipe">
         <li><b>Your hotkeys</b><span>Right Ctrl selects Agent; Right Alt selects General. Both can latch or be held, and Escape cancels without pasting.</span></li>
         <li><b>Your microphone</b><span>Captured through PortAudio, with a quiet-audio gate so an accidental press does not paste noise into your work.</span></li>
-        <li><b>Local transcription</b><span>faster-whisper runs on your CPU or GPU. You download the model once, and only when you ask for it.</span></li>
+        <li><b>Local transcription</b><span>Underdog Bark 3.0 Pro by Conway Research runs on your CPU through sherpa-onnx. You build the model once on your machine, and only when you ask for it.</span></li>
         <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Agent can rephrase, reorder, group ideas, and remove repetitions. Its prompt requires every distinct detail and authorization limit to survive. Agent trusts the model: it has no semantic or length-ratio checks, so names, numbers, negations, uncertainty, or authorization may change. It retains format, empty-output, truncation, and wrapper checks. General keeps its original cleanup, length, and numeral checks. Detected failures fall back to the formatted transcript.</span></li>
         <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key. When Agent rewrites the text, the original is copied just before it, so your clipboard history keeps both.</span></li>
         <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. About half a second later, your previous clipboard item is back.</span></li>
@@ -115,9 +115,9 @@ python3 -m venv .venv
 scripts/install.sh --no-start</code></pre>
         </li>
         <li>
-          <b>Configure it</b> and download the default ASR model when the wizard offers.
+          <b>Configure it</b> and build the speech model when the wizard offers.
           <pre><code>~/.local/bin/stenographer setup --quick</code></pre>
-          <p>The default is <code>deepdml/faster-whisper-large-v3-turbo-ct2</code>, selected from the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/transcription-experiments.md#cpu-model-and-context-screen-2026-10-20">CPU model and context screen (2026-10-20)</a>. The download is about 1.6 GB. An explicit <code>stenographer.asr.model</code> in an existing config stays unchanged.</p>
+          <p>The build needs <code>python3-venv</code> once. Run <code>sudo apt install python3-venv</code> yourself, then build the model with <code>stenographer model download --asr</code>. It downloads about 1.6 GB, converts the model to int8 ONNX on your machine, and needs 10 GiB of free disk and about 10.2 GiB of RAM while it runs. On the test machine it took about 2 minutes. Speech-model settings from earlier releases stay in your config and are ignored.</p>
           <p>For clearer recognition, choose the intended input with <code>stenographer devices</code>, keep a close microphone about 10–20 cm away, and raise its level only until speech is clear without clipping. A close wired headset often beats a distant microphone.</p>
         </li>
         <li>
@@ -134,7 +134,7 @@ scripts/install.sh --no-start</code></pre>
       <div class="tablewrap">
         <table>
           <tbody>
-            <tr><td><code>stenographer</code></td><td>Open the six-section terminal hub when stdin and stdout are terminals; otherwise show help. Live has REC, MIC, and SYSTEM panels, a sidebar card with the model, compute type, and system status, and mixed or split transcript views. Config shows a group selector beside compact key/value rows, selected-setting details, and a separate hotwords value area. Short hotword lists appear in full; long lists are truncated to fit with a word count. The sidebar card shows the config path and unsaved-change count. Press <code>space</code> to start, <code>m</code> and <code>s</code> to toggle sources, and <code>v</code> to switch views. Files opens on your saved Live recordings (or your home folder before the first recording), queues audio jobs, shows progress and previews, and exports transcripts. Sessions shows storage count and audio size in the sidebar, with separate list and detail panels. M4A and AAC input needs the system <code>ffmpeg</code> executable. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/hub.md">hub guide</a>.</td></tr>
+            <tr><td><code>stenographer</code></td><td>Open the six-section terminal hub when stdin and stdout are terminals; otherwise show help. Live has REC, MIC, and SYSTEM panels, a sidebar card with the engine, queue, and CPU use, and mixed or split transcript views. Config shows a group selector beside compact key/value rows and selected-setting details. The sidebar card shows the config path and unsaved-change count. Press <code>space</code> to start, <code>m</code> and <code>s</code> to toggle sources, and <code>v</code> to switch views. Files opens on your saved Live recordings (or your home folder before the first recording), queues audio jobs, shows progress and previews, and exports transcripts. Sessions shows storage count and audio size in the sidebar, with separate list and detail panels. M4A and AAC input needs the system <code>ffmpeg</code> executable. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/hub.md">hub guide</a>.</td></tr>
             <tr><td><code>stenographer run</code></td><td>Run the daemon in your terminal, in the foreground.</td></tr>
             <tr><td><code>stenographer live</code></td><td>Open the standalone live app with its existing flags. After <code>q</code>, renamed labels stay on one voice and unnamed voices are numbered by first appearance; press <code>q</code> again to skip. When several people share your microphone, <code>--diarize-mic</code> (or <code>live.diarize_mic = true</code>) labels them <code>Room 1</code>, <code>Room 2</code>, and so on instead of <code>You</code>. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/live.md">live guide</a>.</td></tr>
             <tr><td><code>stenographer transcribe FILE [--raw] [--refine]</code></td><td>Transcribe one of your audio files; add <code>--raw</code> to skip formatting, or <code>--refine</code> to clean it up.</td></tr>
@@ -162,7 +162,7 @@ scripts/install.sh --no-start</code></pre>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/transcription-experiments.md">Transcription study</a>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/LICENSE">GPL-3.0-or-later</a>
     </div>
-    <div class="fine">Linux and Wayland only for now, and English only. The wordmark and pill label are set in Caveat, used under the <a href="assets/Caveat-OFL.txt">SIL Open Font License</a>. Your browser loads nothing from third parties on this page.</div>
+    <div class="fine">Linux and Wayland only for now, and English only. The wordmark and pill label are set in Caveat, used under the <a href="assets/Caveat-OFL.txt">SIL Open Font License</a>. The speech model is Underdog Bark 3.0 Pro by Conway Research (CC BY 4.0), built from NVIDIA and Moondream Parakeet models; see the <a href="https://github.com/Harrison-Blair/stenographer#third-party-models">third-party models</a>. Your browser loads nothing from third parties on this page.</div>
   </footer>
 
   <script src="pill.js"></script>
