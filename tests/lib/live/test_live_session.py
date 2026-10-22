@@ -171,20 +171,21 @@ class FakeWorker:
             1: TranscriptionResult(
                 "  spoken words  ",
                 1.0,
-                [SegmentInfo(0.0, 1.0, "spoken words", 0.1)],
+                [SegmentInfo(0.0, 1.0, "spoken words")],
             ),
+            # Bark has no no-speech estimate: a phrase with text is always kept.
             2: TranscriptionResult(
-                "hallucinated music",
+                "quiet music words",
                 1.0,
-                [SegmentInfo(0.0, 1.0, "hallucinated music", 0.6)],
+                [SegmentInfo(0.0, 1.0, "quiet music words")],
             ),
-            3: TranscriptionResult("  \n", 1.0, [SegmentInfo(0.0, 1.0, "", 0.1)]),
+            3: TranscriptionResult("  \n", 1.0, [SegmentInfo(0.0, 1.0, "")]),
             4: TranscriptionResult(
                 "a phrase",
                 1.0,
                 [
-                    SegmentInfo(0.0, 0.5, "a", 0.8),
-                    SegmentInfo(0.5, 1.0, "phrase", 0.2),
+                    SegmentInfo(0.0, 0.5, "a"),
+                    SegmentInfo(0.5, 1.0, "phrase"),
                 ],
             ),
         }
@@ -320,7 +321,7 @@ def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
     session.stop()
 
     assert worker.calls == [1, 2, 3, 4]
-    assert [line.text for line in writer.lines] == ["spoken words", "a phrase"]
+    assert [line.text for line in writer.lines] == ["spoken words", "quiet music words", "a phrase"]
     assert delivered == writer.lines
     assert writer.lines[0].source == "mic"
     assert writer.lines[0].speaker_id == "you"
@@ -336,7 +337,7 @@ def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
     assert len(segmenters) == 2
     assert all(segmenter.flushed for segmenter in segmenters)
     assert "spoken words" not in caplog.text
-    assert "hallucinated music" not in caplog.text
+    assert "quiet music words" not in caplog.text
 
 
 def test_stop_relabels_the_saved_session_revision_and_preserves_a_rename(monkeypatch, tmp_path):

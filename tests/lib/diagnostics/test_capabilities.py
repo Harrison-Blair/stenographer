@@ -7,7 +7,7 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.diagnostics import capabilities
 from stenographer.lib.diagnostics.capability_result import Capabilities
 from stenographer.lib.platform.host_probe import HostProbe
-from stenographer.lib.transcribe import download
+from stenographer.lib.transcribe import bark_download
 
 
 def test_probe_uses_model_cache_service_and_keeps_display_optional(monkeypatch):
@@ -27,15 +27,16 @@ def test_probe_uses_model_cache_service_and_keeps_display_optional(monkeypatch):
     monkeypatch.setattr(capabilities, "_has_mic", lambda: True)
     requested = []
 
-    def model_cached(model):
-        requested.append(model)
+    def model_cached(*args, **kwargs):
+        requested.append((args, kwargs))
         return True
 
-    monkeypatch.setattr(download, "is_model_cached", model_cached)
+    monkeypatch.setattr(bark_download, "is_model_cached", model_cached)
     config = Config.defaults()
     result = capabilities.probe(config)
 
-    assert requested == [config.asr.model]
+    # The Bark probe takes no model id: one model, one fixed directory.
+    assert requested == [((), {})]
     assert result.model_cached is True
     assert result.clipboard_backend == "test-clipboard"
     # Restoring the clipboard is a convenience: its reader is never required.

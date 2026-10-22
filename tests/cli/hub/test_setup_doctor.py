@@ -239,7 +239,10 @@ def test_pilot_setup_keys_and_confirmed_model_download():
             await pilot.press("m")
             await pilot.press("y")
             await pilot.pause()
-            assert calls == [Config.defaults().asr.model]
+            # The hub downloads the one Bark model, never the Whisper config key.
+            from stenographer.lib.transcribe.bark_download import MODEL_DIRNAME
+
+            assert calls == [MODEL_DIRNAME]
 
     asyncio.run(exercise())
 
@@ -543,3 +546,29 @@ def test_pilot_doctor_rechecks_shows_badge_and_routes_fix_to_setup():
             assert app.setup_wizard.step.step_id == "microphone"
 
     asyncio.run(exercise())
+
+
+def test_the_models_step_probes_the_installed_bark_model(monkeypatch, tmp_path):
+    # The root conftest does not redirect XDG_DATA_HOME; never touch the real one.
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    import json
+    import os
+    from pathlib import Path
+
+    from stenographer.cli.hub.setup_wizard import test_step
+    from stenographer.lib.platform import current_platform
+    from stenographer.lib.transcribe import bark_download
+    from stenographer.lib.transcribe.bark_pins import BARK_PRO_PINS
+
+    config = Config.defaults()
+    assert test_step("models", config, tmp_path).startswith("ASR model not cached")
+
+    root = bark_download.model_dir(current_platform().data_dir(os.environ, Path.home()))
+    root.mkdir(parents=True)
+    hashes = {name: "0" * 64 for name in bark_download.CONVERTED_FILES}
+    for name in hashes:
+        (root / name).write_bytes(b"")
+    manifest = bark_download.build_manifest(BARK_PRO_PINS, hashes)
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert test_step("models", config, tmp_path).startswith("ASR model cached")

@@ -126,9 +126,9 @@ def test_step(step_id: str, config: Config, config_dir: pathlib.Path) -> str:
         access = "available" if host.hotkey_access_ok else "unavailable"
         return f"{config.hotkey.binding} is valid; hotkey access {access}"
     if step_id == "models":
-        from stenographer.lib.transcribe.download import is_model_cached
+        from stenographer.lib.transcribe import bark_download
 
-        cached = is_model_cached(config.asr.model)
+        cached = bark_download.is_model_cached()
         from stenographer.lib.diagnostics.additional_checks import live_models_check
 
         live = live_models_check()

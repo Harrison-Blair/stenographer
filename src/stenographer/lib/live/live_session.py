@@ -542,9 +542,7 @@ class LiveSession:
     def _transcribe_phrase(self, phrase: Phrase) -> None:
         result: TranscriptionResult = self._worker.transcribe(phrase.samples)
         text = result.text.strip()
-        if not text or (
-            result.segments and all(segment.no_speech_prob >= 0.6 for segment in result.segments)
-        ):
+        if not text:
             return
         embedding = None
         tracker = self._trackers.get(phrase.source)

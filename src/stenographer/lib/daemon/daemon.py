@@ -139,8 +139,11 @@ class Daemon:
         status: StatusSink | None = None,
         platform: Platform | None = None,
     ) -> Daemon:
+        from pathlib import Path
+
         from stenographer.lib.config.paths import resolve_config_path
         from stenographer.lib.hotkey.binding import parse_binding
+        from stenographer.lib.transcribe.dictation_vad import dictation_speech
 
         plat = platform if platform is not None else current_platform()
         feedback = Feedback(
@@ -257,6 +260,10 @@ class Daemon:
             cancelled=daemon._cancel_pending,
             cancel_state=lambda: cancel_state(shutting_down=daemon._stop_event.is_set()),
             copy_original=cfg.delivery.copy_original,
+            speech_filter=lambda samples: dictation_speech(
+                samples,
+                plat.data_dir(os.environ, Path.home()) / "models" / "live" / "silero_vad.onnx",
+            ),
         )
         return daemon
 

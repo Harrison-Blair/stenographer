@@ -27,14 +27,14 @@ def _has_mic() -> bool:
 
 def probe(cfg: Config) -> Capabilities:
     """Read-only environment probe: no writes, no network, no device opens."""
-    from stenographer.lib.transcribe.download import is_model_cached
+    from stenographer.lib.transcribe import bark_download
 
     host = current_platform().probe_host()
     return Capabilities(
         key_injector_ok=host.key_injector_ok,
         hotkey_access_ok=host.hotkey_access_ok,
         has_mic=_has_mic(),
-        model_cached=is_model_cached(cfg.asr.model),
+        model_cached=bark_download.is_model_cached(),
         clipboard_ok=host.clipboard_ok,
         clipboard_backend=host.clipboard_backend,
         clipboard_read_ok=host.clipboard_read_ok,

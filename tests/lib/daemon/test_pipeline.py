@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 
+import numpy as np
 import pytest
 
 from stenographer.lib.contracts.overlay_state import OverlayState
@@ -108,6 +109,42 @@ def test_the_pill_stays_up_from_release_until_the_paste_lands():
         OverlayState.DELIVERING,
         OverlayState.HIDDEN,
     ]
+
+
+def test_a_capture_without_vad_speech_is_never_decoded(daemon_logs):
+    # Dictation silence is the VAD's verdict now: no speech region means no
+    # decode at all, and the run ends silent with nothing delivered.
+    daemon = _daemon(
+        result=TranscriptionResult(text="must not appear", duration_seconds=1.0),
+        speech_filter=lambda _samples: np.empty(0, dtype=np.float32),
+    )
+    try:
+        _run_utterance(daemon)
+    finally:
+        daemon.stop()
+
+    assert daemon._worker.utterances == []
+    assert daemon._deliverer.delivered == []
+    line = _summary(daemon_logs)
+    assert "outcome=SILENT" in line
+    assert "gate=pass" in line
+    assert "decode_ms=" not in line
+
+
+def test_only_the_vad_speech_reaches_the_decoder():
+    kept = np.full(8000, 0.03, dtype=np.float32)
+    daemon = _daemon(
+        result=TranscriptionResult(text="one", duration_seconds=0.5, vad_seconds=0.5),
+        speech_filter=lambda _samples: kept,
+    )
+    try:
+        _run_utterance(daemon)
+    finally:
+        daemon.stop()
+
+    [decoded] = daemon._worker.samples
+    assert decoded is kept
+    assert len(daemon._deliverer.delivered) == 1
 
 
 def test_a_gate_rejection_still_takes_the_pill_down():
