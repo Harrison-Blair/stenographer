@@ -28,6 +28,7 @@ from stenographer.lib.transcribe.pipeline import (
     log_gate,
     transcript_text,
 )
+from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker_policy import classify_worker_failure
 
 if TYPE_CHECKING:
@@ -38,7 +39,6 @@ if TYPE_CHECKING:
     from stenographer.lib.daemon.telemetry import UtteranceTelemetry
     from stenographer.lib.delivery.deliverer import Deliverer
     from stenographer.lib.refine.text_refiner import TextRefiner
-    from stenographer.lib.transcribe.results import TranscriptionResult
     from stenographer.lib.transcribe.utterance_record import UtteranceRecord
     from stenographer.lib.transcribe.worker import Worker
 
@@ -70,8 +70,11 @@ class UtterancePipeline:
         cancelled: Callable[[], bool],
         cancel_state: Callable[[], OverlayState],
         copy_original: bool = True,
+        speech_filter: Callable[[np.ndarray], np.ndarray] | None = None,
     ) -> None:
         self._min_speech_rms = min_speech_rms
+        # The dictation VAD: the speech the decoder may see. None keeps it all.
+        self._speech_filter = speech_filter
         self._worker = worker
         self._deliverer = deliverer
         self._refiner = refiner if refiner is not None else NullRefiner()
@@ -109,28 +112,33 @@ class UtterancePipeline:
                 return outcome_name
             if record is not None:
                 record.cold = not self._worker.is_model_ready
-            try:
-                result = self._worker.transcribe(samples, utterance)
-            except WorkerError as exc:
-                self._apply_worker_timings(record)
-                if self._cancelled():
-                    outcome_name = "CANCELLED"
-                    self._publish_state(self._cancel_state())
+            speech = samples if self._speech_filter is None else self._speech_filter(samples)
+            if speech.size == 0:
+                # No VAD speech: no decode, and the empty result ends the run silent.
+                result = TranscriptionResult(text="", duration_seconds=0.0)
+            else:
+                try:
+                    result = self._worker.transcribe(speech, utterance)
+                except WorkerError as exc:
+                    self._apply_worker_timings(record)
+                    if self._cancelled():
+                        outcome_name = "CANCELLED"
+                        self._publish_state(self._cancel_state())
+                        return outcome_name
+                    # Pathological rejections contain audited counts only. Other
+                    # worker errors may carry decoder output and must stay private.
+                    log_failure(
+                        log,
+                        logging.WARNING,
+                        "pipeline: transcription_failed",
+                        exc,
+                        safe=isinstance(exc, WorkerPathologicalError),
+                    )
+                    if record is not None:
+                        record.failure = classify_worker_failure(exc)
+                    self._fail("transcription failed")
                     return outcome_name
-                # Pathological rejections contain audited counts only. Other
-                # worker errors may carry decoder output and must stay private.
-                log_failure(
-                    log,
-                    logging.WARNING,
-                    "pipeline: transcription_failed",
-                    exc,
-                    safe=isinstance(exc, WorkerPathologicalError),
-                )
-                if record is not None:
-                    record.failure = classify_worker_failure(exc)
-                self._fail("transcription failed")
-                return outcome_name
-            self._apply_worker_timings(record)
+                self._apply_worker_timings(record)
             apply_recognition(record, result)
             self._telemetry.checkpoint(record, "accepted_recognition")
             if self._cancelled():

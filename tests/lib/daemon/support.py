@@ -123,6 +123,7 @@ class _Worker:
         self._error = error
         self.last_timings: WorkerTimings | None = None
         self.utterances: list[int | None] = []
+        self.samples: list[np.ndarray] = []
         self.is_model_ready = False
         self.transcribe_started = threading.Event()
         self.transcribe_release = threading.Event()
@@ -138,6 +139,7 @@ class _Worker:
 
     def transcribe(self, samples: np.ndarray, utterance: int | None = None) -> TranscriptionResult:
         self.utterances.append(utterance)
+        self.samples.append(samples)
         self.transcribe_started.set()
         if self.block_transcribe:
             self.transcribe_release.wait(timeout=10.0)
@@ -240,7 +242,9 @@ class _Deliverer:
     def close(self) -> None: ...
 
 
-def _daemon(*, result=None, error=None, samples=_SPEECH, mode="hold", refiner=None) -> Daemon:
+def _daemon(
+    *, result=None, error=None, samples=_SPEECH, mode="hold", refiner=None, speech_filter=None
+) -> Daemon:
     cfg = _no_network_cfg()
     cfg = dataclasses.replace(cfg, hotkey=dataclasses.replace(cfg.hotkey, mode=mode))
     daemon = Daemon(
@@ -264,6 +268,7 @@ def _daemon(*, result=None, error=None, samples=_SPEECH, mode="hold", refiner=No
         play_cue=lambda name: _play_cue(daemon._feedback, name),
         cancelled=daemon._cancel_pending,
         cancel_state=lambda: cancel_state(shutting_down=daemon._stop_event.is_set()),
+        speech_filter=speech_filter,
     )
     return daemon
 

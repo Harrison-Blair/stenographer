@@ -19,7 +19,6 @@ class SegmentInfo:
     start: float
     end: float
     text: str
-    no_speech_prob: float
     words: list[WordInfo] = field(default_factory=list)
 
 

@@ -333,9 +333,21 @@ class HubApp(App[None]):
         self.setup_wizard = SetupWizard()
         self._setup_test = setup_test or self._default_setup_test
         if model_download is None:
-            from stenographer.lib.transcribe.download import download_model
 
-            model_download = download_model
+            def model_download(_model: str) -> None:
+                # The same installs as `stenographer model download --asr`.
+                import os
+
+                from stenographer.lib.live.download import download_live_models
+                from stenographer.lib.live.models import LIVE_MODELS
+                from stenographer.lib.platform import current_platform
+                from stenographer.lib.transcribe.bark_download import download_bark_pro
+
+                data_dir = current_platform().data_dir(os.environ, pathlib.Path.home())
+                download_bark_pro(data_dir)
+                vad = tuple(m for m in LIVE_MODELS if m.filename == "silero_vad.onnx")
+                download_live_models(data_dir, models=vad)
+
         self._model_download = model_download
         self._doctor_probe = doctor_probe or build_report
         if open_log is None:
@@ -1502,7 +1514,9 @@ class HubApp(App[None]):
     def action_setup_download_model(self) -> None:
         if self._section != "setup" or self.setup_wizard.step.step_id != "models":
             return
-        self._pending_model = self._current_config().asr.model
+        from stenographer.lib.transcribe.bark_download import MODEL_DIRNAME
+
+        self._pending_model = MODEL_DIRNAME
         log.info(fmt_event("hub", "setup_model_download_prompted"))
         self.push_screen(
             QuitConfirm(f"Download ASR model {self._pending_model} now?"),
