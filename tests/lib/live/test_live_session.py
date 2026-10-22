@@ -764,6 +764,32 @@ def test_stop_relabels_mic_lines_separately_with_the_room_prefix(monkeypatch, tm
     assert detail.diarize_mic is True
 
 
+def test_stop_relabel_progress_counts_once_across_system_and_mic(monkeypatch, tmp_path):
+    session, _writer, _worker, system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
+    )
+    processed = _wait_for_lines(session, 3)
+    recorder.emit(1)
+    recorder.emit(4)
+    system.emit(1)
+    assert processed.wait(timeout=1)
+    statuses = []
+    record_status = session._set_relabel_progress
+
+    def observe(done, total):
+        record_status(done, total)
+        statuses.append(session.relabel_status)
+
+    session._set_relabel_progress = observe
+    session.stop()
+
+    counts = [tuple(int(part) for part in status.split()[2].split("/")) for status in statuses]
+    assert counts
+    assert {total for _done, total in counts} == {3}
+    assert [done for done, _total in counts] == sorted(done for done, _total in counts)
+    assert counts[-1] == (3, 3)
+
+
 def test_rename_updates_a_room_speaker_and_its_existing_lines(monkeypatch, tmp_path):
     session, writer, _worker, _system, recorder, _segmenters = _make_session(
         monkeypatch, tmp_path, system=False, tracker=VoiceSpeakerTracker, diarize_mic=True

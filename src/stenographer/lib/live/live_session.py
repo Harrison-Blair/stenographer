@@ -352,16 +352,20 @@ class LiveSession:
             ]
             if not passes:
                 return
+            total = sum(len(lines) for _, _, lines, _ in passes)
             self._relabeling = True
-            self._relabel_progress = (0, sum(len(lines) for _, _, lines, _ in passes))
+            self._relabel_progress = (0, total)
 
         try:
             revised_lines = list(self.lines)
+            offset = 0
             for source, indices, lines, embeddings in passes:
                 relabeled = relabel_system_lines(
                     lines,
                     embeddings,
-                    progress=self._set_relabel_progress,
+                    progress=lambda done, _total, offset=offset: self._set_relabel_progress(
+                        offset + done, total
+                    ),
                     should_cancel=self._skip_relabel.is_set,
                     label_prefix=_LABEL_PREFIXES[source],
                 )
@@ -371,6 +375,7 @@ class LiveSession:
                     return
                 for index, line in zip(indices, relabeled, strict=True):
                     revised_lines[index] = line
+                offset += len(lines)
             SessionStore(self._writer.path.parent).write_revision(
                 self._writer.path.name,
                 revised_lines,
