@@ -89,6 +89,12 @@ a session. If you do not need system audio, start with `--no-system` or press
 
 - `space` pauses or resumes capture. Paused time does not advance the session
   clock.
+- `up` and `down` scroll one line. `pageup` and `pagedown` scroll one page.
+  `home` moves to the start; `end` moves to the latest line. The mouse wheel
+  also scrolls the transcript.
+- The transcript follows new lines while it is at the bottom. When you scroll
+  up, new lines do not move the view. Scroll to the bottom or press `end` to
+  follow new lines again.
 - `m` turns microphone capture on or off.
 - `s` turns system audio capture on or off.
 - `r` opens the speaker rename screen.

@@ -129,6 +129,10 @@ def test_config_board_layout_has_group_selector_settings_and_help_panels(tmp_pat
             await pilot.press("down")
             assert app.config_editor.selected_key == "asr.cpu_threads"
             assert "Recognition worker CPU threads" in note.render().plain
+            await pilot.press("up")
+            assert app.config_editor.selected_key == "asr.idle_unload_seconds"
+            await pilot.press("down")
+            assert app.config_editor.selected_key == "asr.cpu_threads"
 
     asyncio.run(exercise())
 

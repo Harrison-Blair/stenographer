@@ -71,6 +71,10 @@ class HubApp(App[None]):
         ("right", "next_config_group", "Next config group"),
         ("up", "previous_config_key", "Previous config key"),
         ("down", "next_config_key", "Next config key"),
+        ("pageup", "live_transcript_page_up", "Scroll transcript up one page"),
+        ("pagedown", "live_transcript_page_down", "Scroll transcript down one page"),
+        ("home", "live_transcript_home", "Scroll to transcript start"),
+        ("end", "live_transcript_end", "Scroll to latest transcript line"),
         ("enter", "edit_config", "Edit config key or show doctor details"),
         Binding("tab", "files_next_area", "Change Files panel focus", priority=True),
         ("o", "toggle_files_options", "Edit Files options"),
@@ -249,6 +253,10 @@ class HubApp(App[None]):
         border-title-style: bold;
         overflow-y: auto;
     }
+    #transcript-scroll-content {
+        width: 1fr;
+        height: auto;
+    }
     #sessions-list-scroll, #sessions-detail-scroll {
         border-title-color: ansi_default;
         border-title-style: bold;
@@ -380,6 +388,9 @@ class HubApp(App[None]):
             ("v", None),
             ("r", "rename"),
             ("q", "stop/save"),
+            ("↑/↓", "line"),
+            ("PgUp/Dn", "page"),
+            ("Home/End", "top/bot"),
             ("1-6", "sections"),
         )
         for index, (key, description) in enumerate(items):
@@ -728,7 +739,9 @@ class HubApp(App[None]):
         self._move_config_group(1)
 
     def action_previous_config_key(self) -> None:
-        if self._section == "sessions":
+        if self._section == "live":
+            self.live_view.query_one("#live-transcript").scroll_line(-1)
+        elif self._section == "sessions":
             self._move_session_selection(-1)
         elif self._section == "doctor":
             self._move_doctor_check(-1)
@@ -736,7 +749,9 @@ class HubApp(App[None]):
             self._move_config_key(-1)
 
     def action_next_config_key(self) -> None:
-        if self._section == "sessions":
+        if self._section == "live":
+            self.live_view.query_one("#live-transcript").scroll_line(1)
+        elif self._section == "sessions":
             self._move_session_selection(1)
         elif self._section == "doctor":
             self._move_doctor_check(1)
@@ -1717,6 +1732,22 @@ class HubApp(App[None]):
             self.notify(f"Could not update the live session: {exc}", severity="error")
         self._activity_status = None
         self._refresh_view()
+
+    def action_live_transcript_page_up(self) -> None:
+        if self._section == "live":
+            self.live_view.query_one("#live-transcript").scroll_page(-1)
+
+    def action_live_transcript_page_down(self) -> None:
+        if self._section == "live":
+            self.live_view.query_one("#live-transcript").scroll_page(1)
+
+    def action_live_transcript_home(self) -> None:
+        if self._section == "live":
+            self.live_view.query_one("#live-transcript").scroll_top()
+
+    def action_live_transcript_end(self) -> None:
+        if self._section == "live":
+            self.live_view.query_one("#live-transcript").scroll_bottom()
 
     def action_toggle_live_view(self) -> None:
         if self._section != "live":

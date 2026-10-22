@@ -14,6 +14,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Digits, Static
 
 from stenographer.cli.shared.speaker_colors import speaker_color
+from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 
 if TYPE_CHECKING:
     from stenographer.lib.live.live_session import LiveSession
@@ -29,7 +30,7 @@ class LiveView(Vertical):
                 yield Digits("", id="live-elapsed")
             yield Static("", id="live-mic", markup=False)
             yield Static("", id="live-system", markup=False)
-        yield Static("", id="live-transcript", markup=False)
+        yield TranscriptScroll(id="live-transcript", can_focus=False)
 
     def refresh_view(
         self,
@@ -88,9 +89,11 @@ class LiveView(Vertical):
         speakers = session.speakers if session is not None else ()
         speaker_count = len(speakers)
         speaker_label = "speaker" if speaker_count == 1 else "speakers"
-        transcript = self.query_one("#live-transcript", Static)
+        transcript = self.query_one("#live-transcript", TranscriptScroll)
         view = "split" if split else "mixed"
-        transcript.border_title = f"transcript · {view} · {speaker_count} {speaker_label}"
+        transcript.border_title = (
+            f"transcript · {view}" if split else f"transcript · {speaker_count} {speaker_label}"
+        )
         speaker_ids = tuple(speaker_id for speaker_id, _label in speakers)
         table = (
             self._split_table(lines, speaker_ids)
@@ -108,7 +111,7 @@ class LiveView(Vertical):
             content = Group(table, Text(message)) if split else Text(message)
         else:
             content = table
-        transcript.update(content)
+        transcript.update_content(content)
 
     @staticmethod
     def _mixed_table(lines, speaker_ids: tuple[str, ...]) -> Table:

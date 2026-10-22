@@ -170,8 +170,9 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   card with the engine, queue, and CPU use. Config shows a group selector
   beside compact key/value rows and selected-setting details. The sidebar
   shows the config path and unsaved-change count.
-  Press `space` to start;
-  use `v` for mixed or split transcripts, and `m` or `s` to toggle audio sources.
+  Press `space` to start; use `v` for mixed or split transcripts, and `m` or
+  `s` to toggle audio sources. Scroll Live with `up`/`down`, `pageup`/`pagedown`,
+  `home`/`end`, or the mouse wheel; the view follows new lines at the bottom.
   Press `2` for Files;
   the browser opens in your saved Live recordings, so queue files there and use
   `x` to cancel a selected job. Sessions
