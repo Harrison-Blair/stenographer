@@ -45,7 +45,10 @@ This task removes what is left of Whisper. Do not change docs, README or site
 7. Free space: raise the `model download --asr` minimum from 8 GiB to 10 GiB in code,
    its test and the spec's Download section (real peaks: 6.91 GiB and 7.52 GiB).
 8. Gate extra (spec): `grep -rn "faster_whisper\|faster-whisper\|ctranslate2\|huggingface_hub"`
-   over `src/`, `tests/`, `packaging/` and `pyproject.toml` finds nothing. Show also that
+   over `src/`, `tests/`, `packaging/` and `pyproject.toml` finds nothing, except
+   `src/stenographer/assets/convert/constraints.txt` (manager decision 2026-10-22: it is the
+   sha256-pinned lock of the temporary converter venv; transformers needs huggingface_hub
+   there, and changing it would void the task 32 output pins). Show also that
    `grep -rn "compute_type\|beam_size\|hotwords\|initial_prompt\|vad_filter\|silence_threshold"`
    over `src/` finds nothing, and over `tests/` finds only the old-config tests.
 9. Build check: run the existing allowlist check (docs/building.md) if there is one.

@@ -310,7 +310,10 @@ class AsrConfig:
   a public test clip through `Model.transcribe` (no microphone).
 - **C** also shows that `grep -rn "faster_whisper\|faster-whisper\|ctranslate2\|huggingface_hub"`
   over `src/`, `tests/`, `scripts/`, `packaging/` and `pyproject.toml`
-  finds nothing, and that `scripts/transcription_bench.py`,
+  finds nothing, except `src/stenographer/assets/convert/constraints.txt`
+  (manager decision 2026-10-22: it is the sha256-pinned lock of the
+  temporary converter venv, transformers needs `huggingface_hub` there, and
+  changing it would void the task 32 output pins), and that `scripts/transcription_bench.py`,
   `scripts/live_bench.py`, `scripts/transcription_study/asr_grid.py`,
   `scripts/transcription_study/download_models.py` and their tests are
   gone. `docs/transcription-experiments.md` keeps the 2026-10-20 results.
