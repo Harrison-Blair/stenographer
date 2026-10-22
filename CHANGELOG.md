@@ -13,9 +13,13 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
-This is a breaking change. Underdog Bark 3.0 Pro by Conway Research replaces
-Whisper as the only speech model in dictation, Live, and Files. You build it
-once on your machine with `stenographer model download --asr`.
+## [v0.16.0] - 2026-10-22
+
+This is a breaking change: Underdog Bark 3.0 Pro by Conway Research replaces
+Whisper as the only speech model in dictation, Live, and Files, and you build
+it once on your machine with `stenographer model download --asr`. Live can
+also label several speakers who share one microphone, and the hub Files
+browser opens in your recordings.
 
 ### Added
 
@@ -23,8 +27,9 @@ once on your machine with `stenographer model download --asr`.
   dictation, Live, and Files.
 - Builds the model with `stenographer model download --asr`: it downloads the
   pinned Conway Research weights and converter packages (about 1.6 GB),
-  checks every sha256, and converts the model on your machine. It also
-  downloads the Silero voice-activity model. It needs `python3-venv`
+  checks every sha256, and converts the model on your machine. The converted
+  model is the same on any CPU, so its sha256 check passes on every machine.
+  It also downloads the Silero voice-activity model. It needs `python3-venv`
   (`sudo apt install python3-venv`, once), 10 GiB of free disk, and about
   10.2 GiB of RAM while it converts.
 - Doctor warns when `python3 -m venv` would fail.
@@ -33,7 +38,21 @@ once on your machine with `stenographer model download --asr`.
 - Keeps fillers in every mode; refine still cleans dictations of 10 or more
   words.
 - Ships attribution for Bark 3.0 Pro, Silero VAD, and TitaNet in
-  `assets/licenses/` and a README "Third-party models" section.
+  `src/stenographer/assets/licenses/` and a README "Third-party models"
+  section.
+- Adds optional microphone diarization to Live with the
+  `stenographer.live.diarize_mic` setting (default off), which you can change
+  on the hub Config board. `stenographer live --diarize-mic` and
+  `--no-diarize-mic` override it for one session. Microphone speakers get
+  labels such as `Room 1` and `Room 2`, apart from the system `Speaker N`
+  labels, and `r` renames them. With the setting off, every microphone line
+  stays `You`.
+- Sessions re-diarization relabels microphone lines as `Room N` speakers for
+  a session recorded with microphone diarization. For other sessions it
+  relabels system lines only.
+- The hub Files browser opens in the folder where Live saves recordings
+  (`<data_dir>/sessions`), and in your home folder when that folder does not
+  exist yet.
 
 ### Removed
 
@@ -43,7 +62,8 @@ once on your machine with `stenographer model download --asr`.
   `initial_prompt`, `vad_filter`, and `silence_threshold`. Old keys in your
   config are ignored and saves keep them unchanged. `idle_unload_seconds` and
   `cpu_threads` remain.
-- Removes the Config hotwords area and the Live compute-type field.
+- Removes the Config hotwords area and the removed ASR fields. The Live and
+  Files engine cards no longer show a compute type.
 - Removes the transcription and live bench scripts and the Whisper study
   scripts.
 
