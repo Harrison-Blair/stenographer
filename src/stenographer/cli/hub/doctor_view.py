@@ -169,6 +169,7 @@ def build_report(config: Config, config_path: pathlib.Path | None = None) -> Doc
     from stenographer.lib.diagnostics import additional_checks
     from stenographer.lib.logging.pipeline import log_paths
     from stenographer.lib.platform import current_platform
+    from stenographer.lib.transcribe.bark_download import MODEL_NAME
     from stenographer.overlay.platform import current_platform as overlay_platform
     from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
@@ -221,7 +222,7 @@ def build_report(config: Config, config_path: pathlib.Path | None = None) -> Doc
             "Install a supported cue player, such as pw-play.",
         )
     )
-    add_capability("model_cached", f"ASR model cached · {config.asr.model}", "engine and desktop")
+    add_capability("model_cached", f"ASR model cached · {MODEL_NAME}", "engine and desktop")
     add_capability("clipboard_ok", f"clipboard · {caps.clipboard_backend}", "engine and desktop")
     service_detail = cli_doctor.format_service_status(
         caps.service_enabled, caps.service_active, host

@@ -28,6 +28,7 @@ from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.errors import SystemAudioCaptureError, UnsupportedPlatformError
 from stenographer.lib.sessions import SessionStore
+from stenographer.lib.transcribe.bark_download import MODEL_DIRNAME
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker import Worker
 
@@ -122,7 +123,6 @@ class LiveSession:
         self._elapsed_before_run = 0.0
         self._run_started_at: float | None = None
         self._transcriber: threading.Thread | None = None
-        self._model_name = cfg.asr.model
         if system and self._system_capture is not None:
             self._check_system_availability()
 
@@ -156,7 +156,7 @@ class LiveSession:
 
     @property
     def model_name(self) -> str:
-        return self._model_name
+        return MODEL_DIRNAME
 
     @property
     def queue_depth(self) -> int:

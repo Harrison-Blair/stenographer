@@ -182,7 +182,6 @@ def _plan_cfg():
     defaults = Config.defaults()
     return dataclasses.replace(
         defaults,
-        asr=dataclasses.replace(defaults.asr, model="small.en"),
         refine=dataclasses.replace(defaults.refine, model="some:tag"),
     )
 
@@ -194,7 +193,7 @@ def test_the_confirmation_states_both_models_their_sizes_and_the_host():
 
     assert lines == [
         "download and convert the ASR model Underdog Bark 3.0 Pro "
-        "(about 1.6 GB download, 8 GiB free disk while it converts)",
+        "(about 1.6 GB download, 10 GiB free disk while it converts)",
         "download the refine model some:tag (about 3.4 GB) via http://127.0.0.1:11434",
     ]
     assert plan_lines(cfg, asr=True, refine=False, refine_size=None) == lines[:1]

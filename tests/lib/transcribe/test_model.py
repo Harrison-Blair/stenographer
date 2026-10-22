@@ -32,7 +32,7 @@ def test_resolve_cpu_threads_uses_physical_core_count():
 
 
 def test_resolve_cpu_threads_caps_at_eight():
-    # CTranslate2 scales badly past eight threads, so a big machine is capped.
+    # The automatic choice never asks for more than eight threads.
     assert resolve_cpu_threads(0, 16) == 8
 
 

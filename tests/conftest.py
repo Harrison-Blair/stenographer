@@ -21,7 +21,7 @@ import pytest
 
 #: XDG paths take precedence over the home directory, so redirecting them
 #: moves every resolved path without touching ``HOME``. ``XDG_CACHE_HOME`` is
-#: not read by this project but is honoured by huggingface_hub.
+#: not read by this project; redirecting it keeps third-party caches out too.
 _HOST_DIRECTORY_VARS = (
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",

@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import logging
 import pathlib
+import warnings
+from dataclasses import asdict
 
 import pytest
 
@@ -17,9 +20,9 @@ from stenographer.lib.platform import current_platform
 def test_config_error_message():
     # Interpolate the path so the assertion follows pathlib's representation.
     path = pathlib.Path("/x")
-    err = ConfigError(path, "asr.beam_size", "bad")
-    assert str(err) == f"{path}: asr.beam_size: bad"
-    assert err.key == "asr.beam_size"
+    err = ConfigError(path, "asr.cpu_threads", "bad")
+    assert str(err) == f"{path}: asr.cpu_threads: bad"
+    assert err.key == "asr.cpu_threads"
 
 
 def test_defaults_match_spec():
@@ -33,13 +36,6 @@ def test_defaults_match_spec():
     assert d.audio.input_device is None
     assert d.audio.min_speech_rms == 0.0005
     assert d.audio.max_recording_seconds == 600
-    assert d.asr.model == "deepdml/faster-whisper-large-v3-turbo-ct2"
-    assert d.asr.compute_type == "int8"
-    assert d.asr.beam_size == 1
-    assert d.asr.hotwords is None
-    assert d.asr.initial_prompt is None
-    assert d.asr.vad_filter is True
-    assert d.asr.silence_threshold == 0.6
     assert d.asr.idle_unload_seconds == 900
     assert d.asr.cpu_threads == 0
     assert d.feedback.volume == 0.6
@@ -51,26 +47,34 @@ def test_defaults_match_spec():
     assert d.feedback.log_level == "info"
 
 
-def test_load_keeps_an_explicit_legacy_asr_model(tmp_path):
+#: An ASR section as a Whisper-era release wrote it, with every removed key.
+#: ``compute_type = "auto"`` was a valid CTranslate value the old
+#: validator rejected; a removed key is not validated at all.
+OLD_WHISPER_ASR = """\
+[stenographer.asr]
+model = "distil-whisper/distil-large-v3"
+compute_type = "auto"          # int8 | int8_float16 | float16 | float32 | default
+beam_size = 5
+hotwords = "Kubernetes, Ada"   # proper nouns
+initial_prompt = "Technical dictation."
+vad_filter = false
+silence_threshold = 0.4        # post-decode no-speech-probability gate
+idle_unload_seconds = 120
+cpu_threads = 4
+"""
+
+
+def test_an_old_whisper_config_loads_without_error_or_warning(tmp_path, caplog):
     p = tmp_path / "config.toml"
-    original = '[stenographer.asr]\nmodel = "dropbox-dash/faster-whisper-large-v3-turbo"\n'
-    p.write_text(original)
+    p.write_text(OLD_WHISPER_ASR)
 
-    cfg = Config.load(p)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cfg = Config.load(p)
 
-    assert cfg.asr.model == "dropbox-dash/faster-whisper-large-v3-turbo"
-    assert p.read_text() == original
-
-
-def test_load_uses_the_new_default_when_asr_model_is_unset(tmp_path):
-    p = tmp_path / "config.toml"
-    p.write_text('[stenographer.asr]\ncompute_type = "float16"\nbeam_size = 3\n')
-
-    cfg = Config.load(p)
-
-    assert cfg.asr.model == "deepdml/faster-whisper-large-v3-turbo-ct2"
-    assert cfg.asr.compute_type == "float16"
-    assert cfg.asr.beam_size == 3
+    assert asdict(cfg.asr) == {"idle_unload_seconds": 120, "cpu_threads": 4}
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+    assert p.read_text() == OLD_WHISPER_ASR
 
 
 def test_write_default_round_trips(tmp_path):
@@ -122,13 +126,13 @@ def test_default_template_ships_the_two_universal_profile_bindings():
 
 
 def test_loads_validates_without_a_file():
-    assert Config.loads("[stenographer.asr]\nbeam_size = 4\n").asr.beam_size == 4
+    assert Config.loads("[stenographer.asr]\ncpu_threads = 4\n").asr.cpu_threads == 4
 
 
 def test_loads_uses_supplied_path_in_errors():
     path = pathlib.Path("reviewed-config.toml")
     with pytest.raises(ConfigError) as exc:
-        Config.loads("[stenographer.asr]\nbeam_size = 0\n", path)
+        Config.loads("[stenographer.asr]\ncpu_threads = 65\n", path)
     assert exc.value.path == path
 
 
@@ -142,10 +146,10 @@ def test_load_or_default_writes_missing_file(tmp_path, monkeypatch):
 
 def test_partial_override_leaves_other_keys(tmp_path):
     p = tmp_path / "config.toml"
-    p.write_text("[stenographer.asr]\nbeam_size = 5\n")
+    p.write_text("[stenographer.asr]\ncpu_threads = 5\n")
     cfg = Config.load(p)
-    assert cfg.asr.beam_size == 5
-    assert cfg.asr.model == Config.defaults().asr.model
+    assert cfg.asr.cpu_threads == 5
+    assert cfg.asr.idle_unload_seconds == Config.defaults().asr.idle_unload_seconds
     assert cfg.hotkey == Config.defaults().hotkey
     assert cfg.feedback == Config.defaults().feedback
 
@@ -263,14 +267,11 @@ def test_empty_string_is_unset(tmp_path):
     p.write_text(
         '[stenographer.hotkey]\ndevice = ""\ncancel_binding = ""\n'
         '[stenographer.audio]\ninput_device = ""\n'
-        '[stenographer.asr]\nhotwords = ""\ninitial_prompt = ""\n'
     )
     cfg = Config.load(p)
     assert cfg.hotkey.device is None
     assert cfg.hotkey.cancel_binding is None
     assert cfg.audio.input_device is None
-    assert cfg.asr.hotwords is None
-    assert cfg.asr.initial_prompt is None
 
 
 def test_unknown_keys_ignored(tmp_path):
@@ -282,11 +283,9 @@ def test_unknown_keys_ignored(tmp_path):
 @pytest.mark.parametrize(
     ("toml_text", "key"),
     [
-        ('[stenographer.asr]\ncompute_type = "int4"\n', "asr.compute_type"),
-        ("[stenographer.asr]\nbeam_size = 0\n", "asr.beam_size"),
-        ('[stenographer.asr]\nbeam_size = "x"\n', "asr.beam_size"),
-        ("[stenographer.asr]\nsilence_threshold = 2\n", "asr.silence_threshold"),
         ("[stenographer.asr]\ncpu_threads = 100\n", "asr.cpu_threads"),
+        ('[stenographer.asr]\ncpu_threads = "x"\n', "asr.cpu_threads"),
+        ("[stenographer.asr]\nidle_unload_seconds = -1\n", "asr.idle_unload_seconds"),
         ("[stenographer.feedback]\nvolume = -1\n", "feedback.volume"),
         ('[stenographer.feedback]\nmute = "no"\n', "feedback.mute"),
         ('[stenographer.feedback]\noverlay = "yes"\n', "feedback.overlay"),

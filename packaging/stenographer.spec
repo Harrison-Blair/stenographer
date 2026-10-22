@@ -20,7 +20,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 from PyInstaller.depend.bindepend import get_imports
-from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 try:
     import certifi
@@ -61,8 +61,6 @@ a = Analysis(
         *CERTIFI_DATAS,
         *TEXTUAL_DATAS,
         *SHERPA_DATAS,
-        # Silero VAD model — vad_filter is always on in model.py.
-        *collect_data_files("faster_whisper", includes=["assets/*.onnx"]),
     ],
     hiddenimports=[
         "sounddevice",

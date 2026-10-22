@@ -7,7 +7,6 @@ import pathlib
 from itertools import combinations
 
 from stenographer.lib.config.constants import (
-    ALLOWED_COMPUTE_TYPES,
     ALLOWED_HOTKEY_MODES,
     ALLOWED_LOG_LEVELS,
     ALLOWED_REFINE_SCHEMES,
@@ -136,13 +135,6 @@ def _build_audio(table: dict, path: pathlib.Path) -> AudioConfig:
 def _build_asr(table: dict, path: pathlib.Path) -> AsrConfig:
     r = _Reader(table, path, "asr")
     return AsrConfig(
-        model=r.str("model"),
-        compute_type=r.choice("compute_type", ALLOWED_COMPUTE_TYPES),
-        beam_size=r.ranged_int("beam_size", 1, 10),
-        hotwords=r.optional_str("hotwords"),
-        initial_prompt=r.optional_str("initial_prompt"),
-        vad_filter=r.bool("vad_filter"),
-        silence_threshold=r.ranged_number("silence_threshold", 0.0, 1.0),
         idle_unload_seconds=r.ranged_int("idle_unload_seconds", 0, 86400),
         cpu_threads=r.ranged_int("cpu_threads", 0, 64),
     )

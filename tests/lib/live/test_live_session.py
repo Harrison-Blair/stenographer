@@ -269,7 +269,7 @@ def _make_session(
     monkeypatch.setattr(live_session, "SpeakerTracker", tracker or FakeSpeakerTracker)
     platform = FakePlatform(system_capture, tmp_path, platform_error)
     cfg = SimpleNamespace(
-        asr=SimpleNamespace(model="test-model"),
+        asr=SimpleNamespace(),
         audio=SimpleNamespace(input_device=None),
         feedback=SimpleNamespace(spectrum_floor_dbfs=feedback_floor),
     )
@@ -312,7 +312,7 @@ def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
     recorder.emit(1)
     assert session.levels_dbfs["mic"] == 0.0
     assert session.source_states["mic"] == "on"
-    assert session.model_name == "test-model"
+    assert session.model_name == "bark-pro-int8"
     assert recorder.options["streaming"] is True
     assert recorder.options["max_seconds"] == 0
     system.emit(2)

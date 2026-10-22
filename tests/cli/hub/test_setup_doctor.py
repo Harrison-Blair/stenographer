@@ -52,6 +52,19 @@ def test_setup_wizard_navigation_skip_and_quick_path():
     assert wizard.finished
 
 
+def test_the_models_step_names_the_bark_model_and_no_config_key():
+    from stenographer.cli.hub.setup_wizard import render
+
+    wizard = SetupWizard()
+    while wizard.step.step_id != "models":
+        wizard.next()
+
+    shown = render(wizard, Config.defaults()).plain
+
+    assert "Underdog Bark 3.0 Pro" in shown
+    assert "Current " not in shown
+
+
 def test_safe_warning_lines_only_keep_warning_event_names():
     text = "\n".join(
         (
@@ -161,6 +174,7 @@ def test_build_report_groups_fake_host_checks_and_counts_warnings(monkeypatch, t
 
     assert checks["hotkey_access_ok"].status == "fail"
     assert checks["hotkey_access_ok"].fix == "Join the input group."
+    assert checks["model_cached"].label == "ASR model cached · Underdog Bark 3.0 Pro"
     assert checks["system_capture"].group == "input and audio"
     assert checks["ffmpeg"].group == "engine and desktop"
     assert checks["ffmpeg"].status == "warn"

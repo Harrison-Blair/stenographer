@@ -5,11 +5,6 @@ from __future__ import annotations
 
 import re
 
-ALLOWED_COMPUTE_TYPES: frozenset[str] = frozenset(
-    {"int8", "int8_float16", "float16", "float32", "default"}
-)
-
-
 ALLOWED_HOTKEY_MODES: frozenset[str] = frozenset({"hold", "toggle", "hybrid"})
 
 

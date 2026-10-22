@@ -106,13 +106,13 @@ def test_hub_opens_invalid_config_read_only_without_starting_worker(monkeypatch,
     from stenographer.lib.config.models import Config
 
     path = tmp_path / "config.toml"
-    path.write_text("[stenographer.asr]\nbeam_size = 0\n", encoding="utf-8")
+    path.write_text("[stenographer.asr]\ncpu_threads = 100\n", encoding="utf-8")
     platform = SimpleNamespace()
     monkeypatch.setattr(handler, "resolve_config_path", lambda: path)
     monkeypatch.setattr(
         handler,
         "load_or_default",
-        lambda: (_ for _ in ()).throw(ConfigError(path, "asr.beam_size", "must be at least 1")),
+        lambda: (_ for _ in ()).throw(ConfigError(path, "asr.cpu_threads", "must be in [0, 64]")),
     )
     monkeypatch.setattr(handler, "current_platform", lambda: platform)
     opened = []
@@ -126,7 +126,7 @@ def test_hub_opens_invalid_config_read_only_without_starting_worker(monkeypatch,
     services, editor = opened[0]
     assert editor.read_only
     assert str(path) in editor.render()
-    assert services._config.asr.beam_size == Config.defaults().asr.beam_size
+    assert services._config.asr.cpu_threads == Config.defaults().asr.cpu_threads
 
 
 def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):

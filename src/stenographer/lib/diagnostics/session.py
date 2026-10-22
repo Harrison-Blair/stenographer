@@ -31,7 +31,7 @@ def _create_session(cfg: Config, platform: Platform, *, pids: Callable[[], Seque
         "cpu_threads": resolve_cpu_threads(cfg.asr.cpu_threads, platform.physical_core_count()),
     }
     with contextlib.suppress(PackageNotFoundError):
-        context["runtime_version"] = version("faster-whisper")
+        context["runtime_version"] = version("sherpa-onnx")
     probe = (
         platform.resource_probe()
         if cfg.analytics.resource_profiling and cfg.analytics.enabled
