@@ -61,7 +61,7 @@ async def run_app(_session):
 handler.current_platform = lambda: SimpleNamespace(data_dir=lambda *_: root)
 handler.LiveSession = ProbeSession
 handler._run_app = lambda session: asyncio.run(run_app(session))
-args = SimpleNamespace(mic=False, system=False, device=None)
+args = SimpleNamespace(mic=False, system=False, device=None, diarize_mic=None)
 try:
     assert handler.cmd_live.__wrapped__(args, config) == 0
 finally:

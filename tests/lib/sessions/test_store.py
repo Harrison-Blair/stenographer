@@ -216,3 +216,27 @@ def test_partial_session_is_listed_and_read_without_crashing(tmp_path):
     assert detail.summary.interrupted
     assert len(detail.lines) == 1
     assert detail.activity["mic"] == ()
+
+
+def test_mic_diarization_flag_survives_revisions_and_old_sessions_read_false(tmp_path):
+    started = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
+    old = _write_session(tmp_path, started)
+    writer = SessionWriter.open(tmp_path, started + timedelta(minutes=1))
+    writer.mark_mic_diarized()
+    writer.write_audio("mic", np.full(16000, 0.25, dtype=np.float32))
+    writer.append_line(_line(0.0, 0.5, "you", "Room 1", "first placeholder"))
+    writer.close()
+    store = SessionStore(tmp_path / "sessions")
+
+    assert store.read(old.name).diarize_mic is False
+    marked = store.read(writer.path.name)
+    assert marked.diarize_mic is True
+    assert not marked.summary.interrupted
+    assert (writer.path / "session.json").stat().st_mode & 0o777 == 0o600
+
+    store.rename_speaker(writer.path.name, "you", "Dana")
+
+    renamed = store.read(writer.path.name)
+    assert renamed.revision == "transcript.r2.jsonl"
+    assert renamed.diarize_mic is True
+    assert store.read(old.name).diarize_mic is False

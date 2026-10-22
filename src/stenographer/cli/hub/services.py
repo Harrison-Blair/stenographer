@@ -110,6 +110,10 @@ class HubServices:
     def files_output_folder(self) -> Path:
         return self._platform.data_dir(os.environ, Path.home()) / "files"
 
+    @property
+    def files_start_folder(self) -> Path:
+        return self._platform.data_dir(os.environ, Path.home()) / "sessions"
+
     def submit_file(self, path: str | Path, **options):
         with self._files_lock:
             if self._files_closed:
@@ -166,7 +170,11 @@ class HubServices:
                 "live voice models are missing; run `stenographer model download --live` "
                 f"(missing: {', '.join(missing)})"
             )
-        session = self._session_factory(self._config, platform=self._platform)
+        session = self._session_factory(
+            self._config,
+            diarize_mic=self._config.live.diarize_mic,
+            platform=self._platform,
+        )
         self._session = session
         try:
             session.start()

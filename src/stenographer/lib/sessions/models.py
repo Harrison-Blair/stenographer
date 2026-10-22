@@ -27,3 +27,4 @@ class SessionDetail:
     activity: dict[str, tuple[float, ...]]
     revision: str
     labels_revised: bool = False
+    diarize_mic: bool = False

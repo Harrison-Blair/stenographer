@@ -20,7 +20,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 from PyInstaller.depend.bindepend import get_imports
-from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 try:
     import certifi
@@ -55,13 +55,12 @@ a = Analysis(
     # PyInstaller trace its libwayland/libffi shared-library dependencies.
     binaries=[*NATIVE_BINARIES, *TEXTUAL_BINARIES, *SHERPA_BINARIES],
     datas=[
-        # Sound cues plus the overlay quill, Caveat variable font, and OFL.
+        # Sound cues, the overlay quill, Caveat variable font and OFL, and the
+        # Bark Pro converter script and its venv lock (assets/convert/).
         (str(ASSET_SRC), "stenographer/assets"),
         *CERTIFI_DATAS,
         *TEXTUAL_DATAS,
         *SHERPA_DATAS,
-        # Silero VAD model — vad_filter is always on in model.py.
-        *collect_data_files("faster_whisper", includes=["assets/*.onnx"]),
     ],
     hiddenimports=[
         "sounddevice",

@@ -107,6 +107,21 @@ def ffmpeg_check() -> DiagnosticCheck:
     return DiagnosticCheck("ffmpeg", "ok", "ffmpeg is installed", "")
 
 
+def python_venv_check(python: str | None = None) -> DiagnosticCheck:
+    """Check that the system Python 3 can make the temporary venv of the ASR model build."""
+    from stenographer.lib.transcribe import bark_download
+
+    python = bark_download.SYSTEM_PYTHON if python is None else python
+    if not bark_download.venv_available(python):
+        return DiagnosticCheck(
+            "python_venv",
+            "warn",
+            f"`{python} -m venv` would fail; `stenographer model download --asr` needs it",
+            "Run `sudo apt install python3-venv`.",
+        )
+    return DiagnosticCheck("python_venv", "ok", f"`{python} -m venv` works", "")
+
+
 def collect_additional_checks(
     *, live_model_dir: pathlib.Path | None = None
 ) -> tuple[DiagnosticCheck, ...]:
@@ -115,4 +130,5 @@ def collect_additional_checks(
         system_capture_check(),
         live_models_check(live_model_dir),
         ffmpeg_check(),
+        python_venv_check(),
     )

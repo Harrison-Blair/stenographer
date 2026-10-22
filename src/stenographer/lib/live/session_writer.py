@@ -18,6 +18,7 @@ import soundfile as sf
 
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event
+from stenographer.lib.sessions.persistence import atomic_write_private
 
 log = logging.getLogger(__name__)
 _SAMPLE_RATE = 16000
@@ -122,6 +123,15 @@ class SessionWriter:
                 json.dumps({"type": "rename", "labels": changes}, ensure_ascii=False) + "\n"
             )
             self._jsonl.flush()
+
+    def mark_mic_diarized(self) -> None:
+        """Record in session.json that microphone lines carry Room speaker labels."""
+        metadata = {"current_revision": "transcript.jsonl", "diarize_mic": True}
+        with self._lock:
+            atomic_write_private(
+                self.path / "session.json",
+                (json.dumps(metadata, sort_keys=True) + "\n").encode("utf-8"),
+            )
 
     def close(self) -> None:
         with self._lock:

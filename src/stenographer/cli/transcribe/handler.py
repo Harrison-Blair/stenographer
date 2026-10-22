@@ -85,11 +85,10 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
         print(f"stenographer: file not found: {path}", file=sys.stderr)
         return 2
 
-    from stenographer.lib.transcribe import model
-    from stenographer.lib.transcribe.download import is_model_cached
+    from stenographer.lib.transcribe import bark_download, model
 
-    if not is_model_cached(cfg.asr.model):
-        return _fatal("ASR model not found; run `stenographer model download`")
+    if not bark_download.is_model_cached():
+        return _fatal("ASR model not found; run `stenographer model download --asr`")
 
     import soundfile
 

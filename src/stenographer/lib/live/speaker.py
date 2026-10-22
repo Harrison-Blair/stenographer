@@ -42,6 +42,7 @@ class SpeakerClustering:
     speakers: list[Speaker] = field(default_factory=list)
     next_number: int = 1
     previous_speaker_id: str | None = None
+    id_prefix: str = "speaker"
 
     def assign(self, embedding: np.ndarray, *, duration: float | None = None) -> str:
         """Return the best matching speaker ID or create a new cluster."""
@@ -67,7 +68,7 @@ class SpeakerClustering:
                 self.previous_speaker_id = speaker.speaker_id
                 return speaker.speaker_id
 
-        speaker_id = f"speaker-{self.next_number}"
+        speaker_id = f"{self.id_prefix}-{self.next_number}"
         self.next_number += 1
         self.speakers.append(Speaker(speaker_id, embedding.copy()))
         self.previous_speaker_id = speaker_id

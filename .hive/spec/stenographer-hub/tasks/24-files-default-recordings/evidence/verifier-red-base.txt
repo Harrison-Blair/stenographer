@@ -1,0 +1,81 @@
+F.F                                                                      [100%]
+=================================== FAILURES ===================================
+________________ test_files_browser_starts_in_recordings_folder ________________
+
+tmp_path = PosixPath('/tmp/pytest-of-penguin/pytest-52/test_files_browser_starts_in_r0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7a2d381b8b00>
+
+    def test_files_browser_starts_in_recordings_folder(tmp_path, monkeypatch):
+        app, _home, sessions = _recordings_app(tmp_path, monkeypatch, with_sessions=True)
+    
+        async def exercise():
+            async with app.run_test(size=(150, 45)) as pilot:
+                await pilot.press("2")
+                assert app.files_panel.directory == sessions
+                assert "20261021T120000Z/" in _panel_text(app)
+                browser = app.query_one("#files-browser-scroll", Vertical)
+                assert browser.border_title == str(sessions)
+                assert app.files_panel.output_folder == tmp_path / "data" / "stenographer" / "files"
+                await pilot.press("up", "enter")
+                assert app.files_panel.directory == sessions.parent
+    
+>       asyncio.run(exercise())
+
+tests/cli/hub/test_files.py:229: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/home/penguin/.pyenv/versions/3.14.7/lib/python3.14/asyncio/runners.py:205: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/home/penguin/.pyenv/versions/3.14.7/lib/python3.14/asyncio/runners.py:128: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/penguin/.pyenv/versions/3.14.7/lib/python3.14/asyncio/base_events.py:720: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("2")
+>           assert app.files_panel.directory == sessions
+E           AssertionError: assert PosixPath('/tmp/pytest-of-penguin/pytest-52/test_files_browser_starts_in_r0/home') == PosixPath('/tmp/pytest-of-penguin/pytest-52/test_files_browser_starts_in_r0/data/stenographer/sessions')
+E            +  where PosixPath('/tmp/pytest-of-penguin/pytest-52/test_files_browser_starts_in_r0/home') = FilesPanel(id='files-panel').directory
+E            +    where FilesPanel(id='files-panel') = HubApp(title='HubApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'ansi', 'dark'}).files_panel
+
+tests/cli/hub/test_files.py:221: AssertionError
+____________ test_files_output_folder_fallback_ignores_start_folder ____________
+
+tmp_path = PosixPath('/tmp/pytest-of-penguin/pytest-52/test_files_output_folder_fallb0')
+
+    def test_files_output_folder_fallback_ignores_start_folder(tmp_path):
+        home = tmp_path / "home"
+        start = tmp_path / "sessions"
+        home.mkdir()
+        start.mkdir()
+    
+>       panel = FilesPanel(home=home, start=start)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/cli/hub/test_files.py:253: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = FilesPanel()
+home = PosixPath('/tmp/pytest-of-penguin/pytest-52/test_files_output_folder_fallb0/home')
+output_folder = None
+kwargs = {'start': PosixPath('/tmp/pytest-of-penguin/pytest-52/test_files_output_folder_fallb0/sessions')}
+
+    def __init__(
+        self,
+        *,
+        home: Path | None = None,
+        output_folder: Path | None = None,
+        **kwargs,
+    ) -> None:
+>       super().__init__(**kwargs)
+E       TypeError: Widget.__init__() got an unexpected keyword argument 'start'
+
+.hive/tmp/reverify24/base/src/stenographer/cli/hub/files_view.py:101: TypeError
+=========================== short test summary info ============================
+FAILED tests/cli/hub/test_files.py::test_files_browser_starts_in_recordings_folder
+FAILED tests/cli/hub/test_files.py::test_files_output_folder_fallback_ignores_start_folder
+2 failed, 1 passed, 19 deselected in 1.74s

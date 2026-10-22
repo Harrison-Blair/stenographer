@@ -14,15 +14,11 @@ min_speech_rms = 0.0005        # pre-decode energy gate; 0 disables the gate
 max_recording_seconds = 600
 
 [stenographer.asr]
-model = "deepdml/faster-whisper-large-v3-turbo-ct2"
-compute_type = "int8"          # int8 | int8_float16 | float16 | float32 | default
-beam_size = 1
-hotwords = ""                  # proper nouns; full models only (distil models drop words)
-initial_prompt = ""            # style/domain context prepended to decoding
-vad_filter = true
-silence_threshold = 0.6        # post-decode no-speech-probability gate
 idle_unload_seconds = 900      # kill the idle worker child; 0 disables
 cpu_threads = 0                # 0 = auto (physical cores, capped at 8)
+
+[stenographer.live]
+diarize_mic = false            # label room voices on the mic as Room 1, Room 2, ...; off = "You"
 
 [stenographer.feedback]
 volume = 0.6

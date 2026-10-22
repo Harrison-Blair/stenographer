@@ -14,7 +14,7 @@ from stenographer.cli.live.speaker_select import SpeakerSelect
 
 
 class RenameDialog(ModalScreen[tuple[str, str] | None]):
-    """Choose a system speaker and enter its display name."""
+    """Choose a system or room speaker and enter its display name."""
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "cancel", "Cancel")]
     CSS = """
@@ -39,7 +39,7 @@ class RenameDialog(ModalScreen[tuple[str, str] | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="rename-dialog"):
-            yield Label("Rename system speaker")
+            yield Label("Rename speaker")
             yield SpeakerSelect(
                 self._speakers,
                 prompt="Choose a speaker",

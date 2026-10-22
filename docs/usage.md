@@ -15,14 +15,37 @@ stenographer setup
 
 For common settings only, use `stenographer setup --quick`. The wizard can
 check the microphone, clipboard, model, and input permissions, and offers the
-separate model download. The model is about 1.6 GB and is downloaded only when
-you choose it.
+separate model download. Nothing is downloaded until you choose it.
 
-The default ASR model is `deepdml/faster-whisper-large-v3-turbo-ct2`. The
-[CPU model and context screen (2026-10-20)](transcription-experiments.md#cpu-model-and-context-screen-2026-10-20)
-selected this model. It is about 1.6 GB and is downloaded only when you choose
-the model download. Existing configurations keep their selected model. For
-live capture, see the [live transcription guide](live.md).
+## Build the speech model
+
+Dictation, Live, and Files use Underdog Bark 3.0 Pro by Conway Research. It
+runs as int8 ONNX through sherpa-onnx, on the CPU only. Stenographer does not
+host the model; you build it once on your machine:
+
+```sh
+sudo apt install python3-venv     # once on each machine
+stenographer model download --asr
+```
+
+The command checks that `python3 -m venv` works and that 10 GiB of disk is
+free before it uses the network. It then makes a temporary venv, installs the
+pinned converter packages, downloads the pinned source weights (about 1.6 GB
+with the packages), and checks each sha256. It converts the model to int8 ONNX,
+checks the output sha256, installs it, and deletes the venv and the source
+weights. It also downloads the Silero voice-activity model. The conversion
+needs about 10.2 GiB of RAM; a machine with less RAM can run out of memory.
+On the test machine the whole command took about 2 minutes. The installed
+model uses about 653 MiB. A model that is already installed is not built
+again. `stenographer doctor` warns when `python3 -m venv` would fail.
+
+The ASR settings are `idle_unload_seconds` and `cpu_threads` in
+`[stenographer.asr]`. Speech-model settings from earlier releases may stay in
+your config file. Stenographer ignores them and saves keep them unchanged; you
+can delete them by hand. The speech model keeps fillers such as "um" in every
+mode; [refine](refine.md) removes them from dictations of 10 or more words (the
+default `min_words`). For live capture,
+see the [live transcription guide](live.md).
 
 The configuration file is:
 
@@ -155,7 +178,7 @@ stenographer stats delete --since 2026-09-01 --until 2026-09-07 --yes
 ```
 
 Preview removal of all sources with `stenographer stats reset`; add `--yes` to
-confirm. No audio, transcript, prompt, or hotword text is retained in these
+confirm. No audio, transcript, or prompt text is retained in these
 records. Disable collection with:
 
 ```toml
@@ -201,10 +224,12 @@ on Live; press `space` when you want to start recording. If stdin or stdout is
 not a terminal, the command prints help. Existing subcommands, including
 `stenographer live`, keep their current behavior.
 
-In the hub, press `2` to open Files. The browser starts in your home folder.
-Use `/` to filter names in the current folder, `enter` to open a folder, and
-`space` to select files. Press `enter` to queue the selected files. The queue
-runs one file at a time and continues when you change sections.
+In the hub, press `2` to open Files. The browser starts in the folder where
+Live saves your recordings, or in your home folder when that folder does not
+exist yet; see [the hub guide](hub.md) for the paths. Use `/` to filter names
+in the current folder, `enter` to open a folder, and `space` to select files.
+Press `enter` to queue the selected files. The queue runs one file at a time
+and continues when you change sections.
 
 Press `o` to focus the options. Use `up` and `down` to select an option and
 `space` or `enter` to change it. Diarization starts on, refine starts off, and
@@ -219,10 +244,24 @@ open its folder with `xdg-open`.
 
 Run `stenographer live` to transcribe the microphone and full system mix in a
 terminal session. Download its voice and speaker models with
-`stenographer model download --live`; download the configured ASR model
-separately with `stenographer model download --asr`. See the
+`stenographer model download --live`; build the ASR model separately with
+`stenographer model download --asr`. See the
 [live transcription guide](live.md) for source controls, saved files, privacy,
 and limits.
+
+To separate several speakers who share one microphone, turn on microphone
+diarization in the config:
+
+```toml
+[stenographer.live]
+diarize_mic = true   # default false: every microphone line is "You"
+```
+
+Microphone speakers then get labels such as `Room 1` and `Room 2`, separate
+from the system `Speaker N` labels. `stenographer live --diarize-mic` and
+`--no-diarize-mic` override the setting for one session. The hub Live section
+uses the setting. See
+[separate the speakers in a room](live.md#separate-the-speakers-in-a-room).
 
 ## Troubleshoot a running service
 
@@ -241,7 +280,7 @@ journalctl --user -u stenographer.service -f
 
 Common fixes:
 
-- If the model is missing, run `stenographer model download`.
+- If the model is missing, run `stenographer model download --asr`.
 - If the keyboard is unavailable, check read access to `/dev/input/event*` and
   write access to `/dev/uinput`; `doctor` reports the required groups/rules.
 - If delivery fails under Wayland, install `wl-copy` from `wl-clipboard`.

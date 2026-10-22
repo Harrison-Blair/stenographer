@@ -68,6 +68,10 @@ complete -c stenographer -n '__stenographer_command_is live' -f -l no-system \
     -d 'Disable system audio capture'
 complete -c stenographer -n '__stenographer_command_is live' -f -l device -r \
     -d 'Select microphone input device'
+complete -c stenographer -n '__stenographer_command_is live' -f -l diarize-mic \
+    -d 'Label microphone speakers as Room N'
+complete -c stenographer -n '__stenographer_command_is live' -f -l no-diarize-mic \
+    -d 'Label every microphone line You'
 
 complete -c stenographer -n '__stenographer_command_is transcribe' -f -l raw \
     -d 'Emit the unformatted transcript'

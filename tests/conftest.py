@@ -21,9 +21,10 @@ import pytest
 
 #: XDG paths take precedence over the home directory, so redirecting them
 #: moves every resolved path without touching ``HOME``. ``XDG_CACHE_HOME`` is
-#: not read by this project but is honoured by huggingface_hub.
+#: not read by this project; redirecting it keeps third-party caches out too.
 _HOST_DIRECTORY_VARS = (
     "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
     "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
     "XDG_RUNTIME_DIR",
@@ -37,10 +38,11 @@ def _isolate_host_directories(request, monkeypatch, tmp_path_factory):
     A unit test that reaches a real code path — ``stenographer transcribe``
     opening an analytics session, ``doctor`` naming a log, anything resolving
     the configuration path — otherwise writes into the user's own
-    ``~/.local/state/stenographer`` and ``~/.config/stenographer``. That
-    happened: file-sourced analytics rows from suite runs accumulated in the
-    real database. Tests marked ``integration`` are exempt, because using the
-    real host state is exactly what they are for.
+    ``~/.local/state/stenographer``, ``~/.config/stenographer`` and
+    ``~/.local/share/stenographer``. That happened: file-sourced analytics rows
+    from suite runs accumulated in the real database, and stub model files
+    landed in the real data dir. Tests marked ``integration`` are exempt,
+    because using the real host state is exactly what they are for.
     """
 
     if request.node.get_closest_marker("integration") is not None:

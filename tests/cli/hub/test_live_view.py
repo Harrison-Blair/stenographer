@@ -154,15 +154,12 @@ def test_sidebar_card_is_section_owned_and_live_shows_engine_status():
             sidebar = app.query_one("#sidebar", Static)
             assert card.region.y > sidebar.region.y
             assert card.styles.border.top[0] == "round"
-            assert "int8" not in app.services.session.model_name
-            assert "engine" in str(card.render())
-            assert "medium.en int8" in str(card.render())
-            assert "queue 2" in str(card.render())
+            assert "engine\nmedium.en\nqueue 2" in str(card.render())
             app.set_sidebar_card("Files queue · 3", section="files")
             await pilot.press("2")
             assert "Files queue · 3" in str(card.render())
             await pilot.press("1")
-            assert "medium.en int8" in str(card.render())
+            assert "engine\nmedium.en\n" in str(card.render())
 
     asyncio.run(exercise())
 
@@ -177,7 +174,7 @@ def test_pilot_live_mixed_and_split_views_keep_time_order():
             assert "Speaker 2" in content and "system words" in content
             assert "You" in content and "mic words" in content
             card = str(app.query_one("#sidebar-card", Static).render())
-            assert "medium.en int8" in card
+            assert "engine\nmedium.en\n" in card
             assert "queue 2 · failed 1" in card
             assert app.query_one("#live-elapsed", Digits).value == "00:00:03"
             assert "Default output" in content
@@ -213,6 +210,39 @@ def test_pilot_live_renames_a_speaker_and_updates_existing_lines():
             content = _screen_text(app)
             assert ("rename", "speaker-2", "Alice") in services.session.actions
             assert "Alice" in content and "system words" in content
+
+    asyncio.run(exercise())
+
+
+def test_pilot_live_lists_and_renames_room_speakers():
+    async def exercise():
+        services = FakeServices()
+        session = services.session
+        session.lines = [
+            TranscriptLine(1.0, 1.5, "wall", "mic", "room-1", "Room 1", "first room words"),
+            TranscriptLine(2.0, 2.5, "wall", "mic", "room-2", "Room 2", "second room words"),
+        ]
+        session.speakers = (("room-1", "Room 1"), ("room-2", "Room 2"))
+        app = HubApp(services)
+        async with app.run_test() as pilot:
+            content = _screen_text(app)
+            assert "Room 1" in content and "Room 2" in content
+            await pilot.press("r")
+            select = app.screen.query_one("#speaker-select", Select)
+            listed = [speaker_id for speaker_id, _label in app.screen._speakers]
+            assert listed == ["room-1", "room-2"]
+            await pilot.pause()
+            dialog_text = _screen_text(app)
+            assert "Rename speaker" in dialog_text
+            assert "system speaker" not in dialog_text
+            select.value = "room-2"
+            app.screen.query_one("#speaker-name", Input).value = "Dana"
+            await pilot.click("#rename-submit")
+            await pilot.pause()
+
+            content = _screen_text(app)
+            assert ("rename", "room-2", "Dana") in session.actions
+            assert "Dana" in content and "Room 1" in content
 
     asyncio.run(exercise())
 

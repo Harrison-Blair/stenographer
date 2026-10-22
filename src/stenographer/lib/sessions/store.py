@@ -14,7 +14,12 @@ from stenographer.lib.sessions.errors import SessionNotFoundError
 from stenographer.lib.sessions.exporter import export_transcript, render_transcript
 from stenographer.lib.sessions.models import SessionDetail, SessionSummary
 from stenographer.lib.sessions.persistence import atomic_write_private
-from stenographer.lib.sessions.reader import list_session_ids, read_session, session_directory
+from stenographer.lib.sessions.reader import (
+    list_session_ids,
+    read_session,
+    session_directory,
+    session_metadata,
+)
 
 
 class SessionStore:
@@ -74,7 +79,11 @@ class SessionStore:
         markdown = render_transcript(revised, "md").encode("utf-8")
         atomic_write_private(directory / filename, jsonl)
         atomic_write_private(directory / markdown_name, markdown)
-        metadata = {"current_revision": filename, "method": method.strip()}
+        metadata = {
+            **session_metadata(directory),
+            "current_revision": filename,
+            "method": method.strip(),
+        }
         atomic_write_private(
             directory / "session.json",
             (json.dumps(metadata, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"),

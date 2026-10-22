@@ -52,6 +52,19 @@ def test_setup_wizard_navigation_skip_and_quick_path():
     assert wizard.finished
 
 
+def test_the_models_step_names_the_bark_model_and_no_config_key():
+    from stenographer.cli.hub.setup_wizard import render
+
+    wizard = SetupWizard()
+    while wizard.step.step_id != "models":
+        wizard.next()
+
+    shown = render(wizard, Config.defaults()).plain
+
+    assert "Underdog Bark 3.0 Pro" in shown
+    assert "Current " not in shown
+
+
 def test_safe_warning_lines_only_keep_warning_event_names():
     text = "\n".join(
         (
@@ -161,6 +174,7 @@ def test_build_report_groups_fake_host_checks_and_counts_warnings(monkeypatch, t
 
     assert checks["hotkey_access_ok"].status == "fail"
     assert checks["hotkey_access_ok"].fix == "Join the input group."
+    assert checks["model_cached"].label == "ASR model cached · Underdog Bark 3.0 Pro"
     assert checks["system_capture"].group == "input and audio"
     assert checks["ffmpeg"].group == "engine and desktop"
     assert checks["ffmpeg"].status == "warn"
@@ -239,7 +253,10 @@ def test_pilot_setup_keys_and_confirmed_model_download():
             await pilot.press("m")
             await pilot.press("y")
             await pilot.pause()
-            assert calls == [Config.defaults().asr.model]
+            # The hub downloads the one Bark model, never the Whisper config key.
+            from stenographer.lib.transcribe.bark_download import MODEL_DIRNAME
+
+            assert calls == [MODEL_DIRNAME]
 
     asyncio.run(exercise())
 
@@ -267,7 +284,7 @@ def test_setup_microphone_edit_uses_workflow_device_choices(monkeypatch, tmp_pat
     asyncio.run(exercise())
 
 
-def test_setup_defaults_replace_config_and_preserve_a_backup(tmp_path):
+def test_setup_defaults_replace_config_and_preserve_a_backup(tmp_path, monkeypatch):
     async def exercise():
         path = tmp_path / "config.toml"
         defaults = Config.defaults()
@@ -283,10 +300,21 @@ def test_setup_defaults_replace_config_and_preserve_a_backup(tmp_path):
             config_editor=ConfigEditor(path),
             doctor_probe=lambda _config, _path: report,
         )
+        workers = []
+        run_worker = app.run_worker
+
+        def track_worker(*args, **kwargs):
+            worker = run_worker(*args, **kwargs)
+            if worker.group == "setup":
+                workers.append(worker)
+            return worker
+
+        monkeypatch.setattr(app, "run_worker", track_worker)
         async with app.run_test() as pilot:
             await pilot.press("5")
             await pilot.press("shift+d")
-            await pilot.pause()
+            assert len(workers) == 1
+            await workers[0].wait()
 
         saved = Config.loads(path.read_text())
         assert saved == defaults
@@ -532,3 +560,29 @@ def test_pilot_doctor_rechecks_shows_badge_and_routes_fix_to_setup():
             assert app.setup_wizard.step.step_id == "microphone"
 
     asyncio.run(exercise())
+
+
+def test_the_models_step_probes_the_installed_bark_model(monkeypatch, tmp_path):
+    # The root conftest does not redirect XDG_DATA_HOME; never touch the real one.
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    import json
+    import os
+    from pathlib import Path
+
+    from stenographer.cli.hub.setup_wizard import test_step
+    from stenographer.lib.platform import current_platform
+    from stenographer.lib.transcribe import bark_download
+    from stenographer.lib.transcribe.bark_pins import BARK_PRO_PINS
+
+    config = Config.defaults()
+    assert test_step("models", config, tmp_path).startswith("ASR model not cached")
+
+    root = bark_download.model_dir(current_platform().data_dir(os.environ, Path.home()))
+    root.mkdir(parents=True)
+    hashes = {name: "0" * 64 for name in bark_download.CONVERTED_FILES}
+    for name in hashes:
+        (root / name).write_bytes(b"")
+    manifest = bark_download.build_manifest(BARK_PRO_PINS, hashes)
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert test_step("models", config, tmp_path).startswith("ASR model cached")

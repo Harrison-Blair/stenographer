@@ -26,6 +26,7 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
     time, staying healthy after a caught error. The model is built lazily on the
     first load request so the child inherits the local-cache-only load."""
     from stenographer.lib.logging.pipeline import configure_worker_logging
+    from stenographer.lib.transcribe.bark_download import MODEL_DIRNAME
     from stenographer.lib.transcribe.model import Model
     from stenographer.lib.transcribe.worker_policy import classify_error, error_is_safe_to_render
 
@@ -55,8 +56,7 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
                 fmt_event(
                     "worker",
                     "child_started",
-                    model=cfg.model,
-                    compute_type=cfg.compute_type,
+                    model=MODEL_DIRNAME,
                     cpu_threads=model.cpu_threads,
                 )
             )

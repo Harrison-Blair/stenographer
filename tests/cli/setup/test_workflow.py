@@ -29,7 +29,6 @@ from stenographer.cli.setup.workflow import (
     parse_bool,
     parse_choice,
     parse_number,
-    parse_optional_string,
     parse_quick_review_action,
     parse_review_action,
     quick_review_lines,
@@ -72,12 +71,6 @@ def _tryout(**overrides) -> list[str]:
     config = overrides.pop("config", Config.defaults())
     state.update(overrides)
     return quick_tryout_lines(config, _CONFIG_PATH, _GUIDANCE, **state)
-
-
-def test_optional_string_retains_clears_and_replaces():
-    assert parse_optional_string("", "current") == "current"
-    assert parse_optional_string(" clear ", "current") is None
-    assert parse_optional_string("replacement", None) == "replacement"
 
 
 def test_choice_retains_and_is_case_insensitive():
@@ -258,7 +251,7 @@ def test_field_display_names_unset_values_and_calibrated_profiles():
     assert field_display(None, "device") == "automatic/unset"
     assert field_display(-45.0, "spectrum_floor_dbfs") == "-45.0"
     assert field_display((-45.0,) * 18, "spectrum_floor_dbfs") == "calibrated 18-band profile"
-    assert field_display((1.0, 2.0), "hotwords") == "(1.0, 2.0)"
+    assert field_display((1.0, 2.0), "values") == "(1.0, 2.0)"
 
 
 def test_full_review_lists_every_section_and_field():
@@ -276,13 +269,6 @@ def test_full_review_lists_every_section_and_field():
         "  min_speech_rms = 0.0005",
         "  max_recording_seconds = 600",
         "[asr]",
-        "  model = deepdml/faster-whisper-large-v3-turbo-ct2",
-        "  compute_type = int8",
-        "  beam_size = 1",
-        "  hotwords = automatic/unset",
-        "  initial_prompt = automatic/unset",
-        "  vad_filter = True",
-        "  silence_threshold = 0.6",
         "  idle_unload_seconds = 900",
         "  cpu_threads = 0",
         "[feedback]",
@@ -542,29 +528,6 @@ def key_vocabulary(monkeypatch):
     return Plat
 
 
-def test_prompt_string_keeps_the_current_value_on_enter_and_replaces_it_otherwise():
-    keep = _console("\n")
-    assert setup._prompt_string(keep, "Model", "medium.en") == "medium.en"
-    assert keep.stdout.getvalue() == "Model [medium.en]: "
-
-    replace = _console("  small.en  \n")
-    assert setup._prompt_string(replace, "Model", "medium.en") == "small.en"
-
-
-def test_prompt_optional_names_the_clear_token_and_unsets_on_it():
-    console = _console("clear\n")
-
-    assert setup._prompt_optional(console, "Hotwords", "kubernetes") is None
-    assert console.stdout.getvalue() == ("Hotwords [kubernetes; Enter keeps, 'clear' unsets]: ")
-
-
-def test_prompt_optional_shows_an_unset_value_as_automatic():
-    console = _console("evdev\n")
-
-    assert setup._prompt_optional(console, "Hotwords", None) == "evdev"
-    assert "Hotwords [automatic/unset;" in console.stdout.getvalue()
-
-
 def test_prompt_choice_lists_every_choice_and_retries_until_one_matches():
     console = _console("latch\ntoggle\n")
 
@@ -582,15 +545,15 @@ def test_prompt_choice_lists_every_choice_and_retries_until_one_matches():
 def test_prompt_bool_marks_the_current_answer(current, marker, answer, expected):
     console = _console(answer)
 
-    assert setup._prompt_bool(console, "VAD filter", current) is expected
-    assert console.stdout.getvalue() == f"VAD filter (yes/no) {marker}: "
+    assert setup._prompt_bool(console, "Mute cues", current) is expected
+    assert console.stdout.getvalue() == f"Mute cues (yes/no) {marker}: "
 
 
 def test_prompt_number_states_its_bounds_and_retries_until_one_fits():
     console = _console("99\n7\n")
 
-    assert setup._prompt_number(console, "Beam size", 1, 1, 10, integer=True) == 7
-    assert console.stdout.getvalue().startswith("Beam size [1; 1..10]: ")
+    assert setup._prompt_number(console, "CPU threads", 1, 1, 10, integer=True) == 7
+    assert console.stdout.getvalue().startswith("CPU threads [1; 1..10]: ")
     assert console.stderr.getvalue() == "stenographer: must be in [1, 10]\n"
 
 
@@ -688,20 +651,16 @@ def test_edit_audio_asks_the_device_gate_and_recording_limit(device_menus):
     )
 
 
-def test_edit_asr_asks_every_recognition_key_in_order():
-    console = _console("small.en\nfloat16\n5\nevdev\nA prompt.\nno\n0.25\n60\n4\n")
+def test_edit_asr_asks_only_the_two_recognition_keys_in_order():
+    console = _console("60\n4\n")
 
     asr = setup._edit_asr(console, Config.defaults()).asr
 
-    assert asr.model == "small.en"
-    assert asr.compute_type == "float16"
-    assert asr.beam_size == 5
-    assert asr.hotwords == "evdev"
-    assert asr.initial_prompt == "A prompt."
-    assert asr.vad_filter is False
-    assert asr.silence_threshold == 0.25
     assert asr.idle_unload_seconds == 60
     assert asr.cpu_threads == 4
+    assert console.stdout.getvalue() == (
+        "\nASR\nIdle unload seconds [900; 0..86400]: CPU threads (0 = auto) [0; 0..64]: "
+    )
 
 
 def test_choose_floor_keeps_the_current_response_without_touching_the_microphone():
@@ -779,7 +738,7 @@ def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_
 #: Enter keeps every value; the wizard asks five sections then the review.
 #: The trailing answer is explicit "no" to "Enable transcript refinement",
 #: which now defaults to yes, so the wizard never reaches the Ollama probe.
-_KEEP_EVERYTHING = "\n" * 23 + "keep\n" + "no\n"
+_KEEP_EVERYTHING = "\n" * 16 + "keep\n" + "no\n"
 
 
 def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
@@ -790,7 +749,7 @@ def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
     console = _console(
         "KEY_F9\n\n1\ntoggle\n\n"  # Agent, General, device, mode, threshold
         "auto\n\n120\n"  # audio
-        "\n\n5\nevdev\n\nno\n\n\n\n"  # asr
+        "\n4\n"  # asr
         "0.9\n\n\n\nlegacy\ndebug\nkeep\n"  # feedback
         "no\n"  # refine: turn off
         "\n"  # review: save
@@ -803,9 +762,7 @@ def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
     assert config.hotkey.mode == "toggle"
     assert config.audio.input_device is None
     assert config.audio.max_recording_seconds == 120
-    assert config.asr.beam_size == 5
-    assert config.asr.hotwords == "evdev"
-    assert config.asr.vad_filter is False
+    assert config.asr.cpu_threads == 4
     assert config.feedback.volume == 0.9
     assert config.feedback.sound_pack == "legacy"
     assert config.feedback.log_level == "debug"
@@ -1084,7 +1041,7 @@ def guided(monkeypatch):
     from stenographer.lib import platform as platform_module
     from stenographer.lib.diagnostics import capabilities as diagnostics
     from stenographer.lib.refine import client as refine_client
-    from stenographer.lib.transcribe import download
+    from stenographer.lib.transcribe import bark_download
     from stenographer.overlay import platform as overlay_platform_module
 
     events: list[str] = []
@@ -1109,14 +1066,14 @@ def guided(monkeypatch):
         probed = _caps() if caps is None else caps
         used_config = Config.defaults() if config is None else config
 
-        def is_model_cached(name):
-            events.append(f"cache:{name}")
+        def is_model_cached(data_dir):
+            events.append(f"cache:{data_dir}")
             if cache_error is not None:
                 raise cache_error
             return cached
 
-        def download_model(name):
-            events.append(f"download:{name}")
+        def download_bark_pro(data_dir, *, on_step):
+            events.append(f"download:{data_dir}")
             if download_error is not None:
                 raise download_error
 
@@ -1144,6 +1101,9 @@ def guided(monkeypatch):
             def guidance(self):
                 return _GUIDANCE
 
+            def data_dir(self, env, home):
+                return pathlib.Path("/data")
+
             def restart_service(self):
                 events.append("restart")
                 return restart
@@ -1152,8 +1112,8 @@ def guided(monkeypatch):
             def guidance(self):
                 return "overlay-guidance"
 
-        monkeypatch.setattr(download, "is_model_cached", is_model_cached)
-        monkeypatch.setattr(download, "download_model", download_model)
+        monkeypatch.setattr(bark_download, "is_model_cached", is_model_cached)
+        monkeypatch.setattr(bark_download, "download_bark_pro", download_bark_pro)
         monkeypatch.setattr(capability_probe, "probe", probe)
         monkeypatch.setattr(diagnostics, "missing_required", lambda caps: list(missing))
         monkeypatch.setattr(
@@ -1186,7 +1146,7 @@ def test_guided_setup_prints_the_doctor_report_and_succeeds(guided):
     assert code == 0
     assert "== doctor report ==" in stdout
     assert events == [
-        "cache:deepdml/faster-whisper-large-v3-turbo-ct2",
+        "cache:/data",
         "refine-probe:http://127.0.0.1:11434",
         "probe",
     ]
@@ -1197,17 +1157,20 @@ def test_guided_setup_offers_the_download_of_an_uncached_model_and_takes_no_for_
     code, stdout, _, events = guided(cached=False, answers="\n", changed=False)
 
     assert code == 0
-    assert "is not cached (download is approximately 1.6 GB)" in stdout
-    assert "Download it from the network now? [y/N]: " in stdout
-    assert "download:deepdml/faster-whisper-large-v3-turbo-ct2" not in events
+    assert (
+        "is not installed. stenographer builds it on this machine (download is approximately 1.6 GB"
+        in stdout
+    )
+    assert "Download and convert it now? [y/N]: " in stdout
+    assert "download:/data" not in events
 
 
 def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
     code, stdout, _, events = guided(cached=False, answers="\n", changed=False, quick=True)
 
     assert code == 0
-    assert "Download it from the network now? [Y/n]: " in stdout
-    assert "download:deepdml/faster-whisper-large-v3-turbo-ct2" in events
+    assert "Download and convert it now? [Y/n]: " in stdout
+    assert "download:/data" in events
     assert "Model download complete." in stdout
 
 
@@ -1233,7 +1196,7 @@ def test_guided_setup_reports_an_unreadable_model_cache_and_still_offers_the_dow
 
     assert code == 1
     assert stderr == "stenographer: could not inspect the model cache: cache permission denied\n"
-    assert "is not cached" in stdout
+    assert "is not installed" in stdout
 
 
 def test_guided_setup_stops_when_the_capability_probe_itself_fails(guided):
@@ -1323,7 +1286,7 @@ def test_guided_setup_reports_a_failed_refine_pull_as_an_operational_failure(gui
     assert code == 1
     assert stderr == "stenographer: refine model pull failed: boom\n"
     assert events == [
-        "cache:deepdml/faster-whisper-large-v3-turbo-ct2",
+        "cache:/data",
         "refine-probe:http://127.0.0.1:11434",
         "refine-pull:gemma4:e2b",
         "probe",
@@ -1571,7 +1534,7 @@ def test_a_rejected_save_is_reported_and_fails(setup_run, tmp_path):
     from stenographer.lib.config.errors import ConfigError
 
     def refuse(config):
-        raise ConfigError(tmp_path / "config.toml", "asr.model", "must be non-empty")
+        raise ConfigError(tmp_path / "config.toml", "refine.model", "must be non-empty")
 
     code, _, stderr = setup_run(
         document=_document_double(tmp_path, save=refuse),
@@ -1579,7 +1542,7 @@ def test_a_rejected_save_is_reported_and_fails(setup_run, tmp_path):
     )
 
     assert code == 1
-    assert stderr.endswith("asr.model: must be non-empty\n")
+    assert stderr.endswith("refine.model: must be non-empty\n")
 
 
 def test_an_interrupted_save_reports_the_interruption(setup_run, tmp_path):

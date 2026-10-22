@@ -1,0 +1,10 @@
+       ../
+▶      Music/
+/ search · enter queue · space select
+  speakers      [x] diarize   count auto
+  refine        [ ] cleanup pass
+  output        md · jsonl · srt · txt
+  save to       /home/penguin/source/hive/projects/stenographer/worktrees/24-files-default-recordings/.hive/tmp/reverify24/data/stenographer/files
+o edit options
+No queued jobs.
+Queue a file to preview its transcript.

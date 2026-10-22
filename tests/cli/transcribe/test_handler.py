@@ -26,7 +26,7 @@ REFINED = "I think we should ship it on Friday."
 
 def _spoken_clip(monkeypatch, tmp_path, text: str):
     """A real WAV plus a decoder that returns *text*, so only refine is a double."""
-    from stenographer.lib.transcribe import download, model
+    from stenographer.lib.transcribe import bark_download, model
 
     path = tmp_path / "clip.wav"
     soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
@@ -43,7 +43,7 @@ def _spoken_clip(monkeypatch, tmp_path, text: str):
         def close(self):
             pass
 
-    monkeypatch.setattr(download, "is_model_cached", lambda name: True)
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
     monkeypatch.setattr(model, "Model", ModelDouble)
     return path
 
@@ -57,7 +57,7 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
     capsys,
 ):
     from stenographer.cli.transcribe.handler import cmd_transcribe
-    from stenographer.lib.transcribe import download, model
+    from stenographer.lib.transcribe import bark_download, model
 
     path = tmp_path / "clip.wav"
     soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
@@ -94,7 +94,7 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
                 # Cleanup must not replace the application-owned primary error.
                 raise close_error
 
-    monkeypatch.setattr(download, "is_model_cached", lambda name: True)
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
     monkeypatch.setattr(model, "Model", ModelDouble)
     args = argparse.Namespace(file=str(path), raw=False)
 
@@ -151,10 +151,10 @@ def test_a_missing_file_is_refused_before_the_model_cache_is_consulted(
     capsys,
 ):
     from stenographer.cli.transcribe.handler import cmd_transcribe
-    from stenographer.lib.transcribe import download
+    from stenographer.lib.transcribe import bark_download
 
     consulted: list[str] = []
-    monkeypatch.setattr(download, "is_model_cached", lambda name: consulted.append(name) or True)
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: consulted.append("probe") or True)
     path = tmp_path / "absent.wav"
 
     args = argparse.Namespace(file=str(path), raw=False)
@@ -172,12 +172,13 @@ def test_an_uncached_model_is_refused_with_the_download_instruction(
     tmp_path,
     capsys,
 ):
+    # The real Bark probe over an empty data dir: no model installed. The root
+    # conftest does not redirect XDG_DATA_HOME, so this test does.
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     from stenographer.cli.transcribe.handler import cmd_transcribe
-    from stenographer.lib.transcribe import download
 
     path = tmp_path / "clip.wav"
     soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
-    monkeypatch.setattr(download, "is_model_cached", lambda name: False)
 
     args = argparse.Namespace(file=str(path), raw=False)
 
@@ -185,18 +186,18 @@ def test_an_uncached_model_is_refused_with_the_download_instruction(
 
     captured = capsys.readouterr()
     assert captured.err == (
-        "stenographer: ASR model not found; run `stenographer model download`\n"
+        "stenographer: ASR model not found; run `stenographer model download --asr`\n"
     )
     assert captured.out == ""
 
 
 def test_audio_that_cannot_be_decoded_is_refused_with_its_path(monkeypatch, tmp_path, capsys):
     from stenographer.cli.transcribe.handler import cmd_transcribe
-    from stenographer.lib.transcribe import download
+    from stenographer.lib.transcribe import bark_download
 
     path = tmp_path / "clip.wav"
     path.write_bytes(b"RIFF not really a wave file at all")
-    monkeypatch.setattr(download, "is_model_cached", lambda name: True)
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
 
     args = argparse.Namespace(file=str(path), raw=False)
 
@@ -212,7 +213,7 @@ def test_a_close_failure_surfaces_when_the_run_itself_succeeded(monkeypatch, tmp
     leaked native handle was reported as a clean transcription."""
 
     from stenographer.cli.transcribe.handler import cmd_transcribe
-    from stenographer.lib.transcribe import download, model
+    from stenographer.lib.transcribe import bark_download, model
 
     path = tmp_path / "clip.wav"
     soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
@@ -232,7 +233,7 @@ def test_a_close_failure_surfaces_when_the_run_itself_succeeded(monkeypatch, tmp
         def close(self):
             raise close_error
 
-    monkeypatch.setattr(download, "is_model_cached", lambda name: True)
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
     monkeypatch.setattr(model, "Model", ModelDouble)
     args = argparse.Namespace(file=str(path), raw=False)
 
@@ -254,7 +255,7 @@ def test_a_close_failure_surfaces_when_the_run_itself_succeeded(monkeypatch, tmp
 
 def test_a_model_that_never_loads_is_summarized_without_a_close(monkeypatch, tmp_path, caplog):
     from stenographer.cli.transcribe.handler import cmd_transcribe
-    from stenographer.lib.transcribe import download, model
+    from stenographer.lib.transcribe import bark_download, model
 
     path = tmp_path / "clip.wav"
     soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
@@ -263,7 +264,7 @@ def test_a_model_that_never_loads_is_summarized_without_a_close(monkeypatch, tmp
     def refuse(cfg):
         raise load_error
 
-    monkeypatch.setattr(download, "is_model_cached", lambda name: True)
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
     monkeypatch.setattr(model, "Model", refuse)
     args = argparse.Namespace(file=str(path), raw=False)
 

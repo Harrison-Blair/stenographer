@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Batch-cluster live system phrases and preserve renamed labels."""
+"""Batch-cluster live phrases of one source and preserve renamed labels."""
 
 from __future__ import annotations
 
@@ -53,8 +53,13 @@ def relabel_system_lines(
     progress: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
     speaker_count: int | None = None,
+    label_prefix: str = "Speaker",
 ) -> tuple[TranscriptLine, ...] | None:
-    """Relabel system phrases from the session's full set of embeddings."""
+    """Relabel one source's phrases from the session's full set of embeddings.
+
+    Clusters get IDs ``<prefix>-N`` and labels ``<Prefix> N`` from *label_prefix*:
+    ``Speaker`` for system audio, ``Room`` for a diarized microphone.
+    """
     if speaker_count is not None and (
         isinstance(speaker_count, bool) or not isinstance(speaker_count, int) or speaker_count < 1
     ):
@@ -81,6 +86,7 @@ def relabel_system_lines(
             speaker_count,
             progress=progress,
             should_cancel=should_cancel,
+            label_prefix=label_prefix,
         )
     anchor_indices = [
         index for index, duration in enumerate(durations) if duration >= minimum_duration
@@ -335,14 +341,15 @@ def relabel_system_lines(
     ranked_clusters = sorted(clusters.values(), key=lambda members: min(members))
     speaker_ids: dict[int, str] = {}
     label_weights_by_cluster: list[dict[str, float]] = []
+    id_prefix = f"{label_prefix.lower()}-"
     renamed_labels = {
         line.label
         for line in original
-        if line.label != f"Speaker {line.speaker_id.removeprefix('speaker-')}"
+        if line.label != f"{label_prefix} {line.speaker_id.removeprefix(id_prefix)}"
     }
     for number, members in enumerate(ranked_clusters, 1):
         label_weights: dict[str, float] = {}
-        speaker_id = f"speaker-{number}"
+        speaker_id = f"{id_prefix}{number}"
         for index in members:
             label = original[index].label
             label_weights[label] = label_weights.get(label, 0.0) + durations[index]
@@ -371,16 +378,16 @@ def relabel_system_lines(
     for cluster_index in range(len(ranked_clusters)):
         if cluster_index in cluster_labels:
             continue
-        label = f"Speaker {next_number}"
+        label = f"{label_prefix} {next_number}"
         while label in assigned_labels:
             next_number += 1
-            label = f"Speaker {next_number}"
+            label = f"{label_prefix} {next_number}"
         cluster_labels[cluster_index] = label
         assigned_labels.add(label)
         next_number += 1
 
     labels_by_speaker = {
-        f"speaker-{cluster_index + 1}": label for cluster_index, label in cluster_labels.items()
+        f"{id_prefix}{cluster_index + 1}": label for cluster_index, label in cluster_labels.items()
     }
     return tuple(
         replace(
@@ -400,6 +407,7 @@ def _relabel_fixed(
     *,
     progress: Callable[[int, int], None] | None,
     should_cancel: Callable[[], bool] | None,
+    label_prefix: str,
 ) -> tuple[TranscriptLine, ...] | None:
     """Agglomerate phrases with a dense matrix, then cut at the target count."""
     phrase_count = len(lines)
@@ -505,15 +513,16 @@ def _relabel_fixed(
     ranked_clusters.sort(key=min)
     speaker_ids: dict[int, str] = {}
     label_weights_by_cluster: list[dict[str, float]] = []
+    id_prefix = f"{label_prefix.lower()}-"
     renamed_labels = {
         line.label
         for line in lines
-        if line.label != f"Speaker {line.speaker_id.removeprefix('speaker-')}"
+        if line.label != f"{label_prefix} {line.speaker_id.removeprefix(id_prefix)}"
     }
     for number, members in enumerate(ranked_clusters, 1):
         label_weights: dict[str, float] = {}
         for index in members:
-            speaker_ids[index] = f"speaker-{number}"
+            speaker_ids[index] = f"{id_prefix}{number}"
             label = lines[index].label
             label_weights[label] = label_weights.get(label, 0.0) + durations[index]
         label_weights_by_cluster.append(label_weights)
@@ -540,10 +549,10 @@ def _relabel_fixed(
     for cluster_index in range(len(ranked_clusters)):
         if cluster_index in labels_by_cluster:
             continue
-        label = f"Speaker {next_number}"
+        label = f"{label_prefix} {next_number}"
         while label in assigned_labels:
             next_number += 1
-            label = f"Speaker {next_number}"
+            label = f"{label_prefix} {next_number}"
         labels_by_cluster[cluster_index] = label
         assigned_labels.add(label)
         next_number += 1
@@ -554,7 +563,7 @@ def _relabel_fixed(
         replace(
             line,
             speaker_id=speaker_ids[index],
-            label=labels_by_cluster[int(speaker_ids[index].removeprefix("speaker-")) - 1],
+            label=labels_by_cluster[int(speaker_ids[index].removeprefix(id_prefix)) - 1],
         )
         for index, line in enumerate(lines)
     )

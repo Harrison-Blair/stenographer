@@ -39,15 +39,14 @@ pytestmark = pytest.mark.integration
 
 _FIXTURES = pathlib.Path(__file__).parents[2] / "fixtures"
 _CLIP = _FIXTURES / "speech_16k.wav"
-_MODEL_ID = "deepdml/faster-whisper-large-v3-turbo-ct2"
 
 if not _CLIP.exists():
     pytest.skip(f"fixture WAV absent: {_CLIP}", allow_module_level=True)
 
-from huggingface_hub import try_to_load_from_cache  # noqa: E402
+from stenographer.lib.transcribe import bark_download  # noqa: E402
 
-if try_to_load_from_cache(_MODEL_ID, "config.json") is None:
-    pytest.skip(f"model not cached: {_MODEL_ID}", allow_module_level=True)
+if not bark_download.is_model_cached():
+    pytest.skip(f"model not installed: {bark_download.MODEL_DIRNAME}", allow_module_level=True)
 
 import soundfile  # noqa: E402
 
@@ -111,9 +110,10 @@ def test_warmup_loads_before_first_decode_and_lifecycle_is_ordered():
         worker.shutdown()
 
 
-def test_failed_real_model_load_still_reports_loading_finished():
-    base = Config.defaults()
-    cfg = dataclasses.replace(base.asr, model="invalid/nonexistent-stenographer-smoke-model")
+def test_failed_real_model_load_still_reports_loading_finished(tmp_path, monkeypatch):
+    # The child inherits this environment, so it finds no model to load.
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    cfg = Config.defaults().asr
     events: list[str] = []
     worker = Worker(
         cfg,

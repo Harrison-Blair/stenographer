@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import os
 import pathlib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, TextIO
@@ -28,7 +29,6 @@ from stenographer.cli.shared.terminal import (
     restart_service,
 )
 from stenographer.lib.config.constants import (
-    ALLOWED_COMPUTE_TYPES,
     ALLOWED_LOG_LEVELS,
     ALLOWED_REFINE_SCHEMES,
     MAX_REFINE_WORDS,
@@ -64,17 +64,6 @@ def save_defaults(path: pathlib.Path):
     from stenographer.lib.config.document import ConfigDocument
 
     return ConfigDocument.defaults(path).save(Config.defaults())
-
-
-def parse_optional_string(text: str, current: str | None) -> str | None:
-    """Empty retains *current*; the explicit ``clear`` token unsets it."""
-
-    value = text.strip()
-    if not value:
-        return current
-    if value.casefold() == _CLEAR:
-        return None
-    return value
 
 
 def parse_choice(text: str, current: str, choices: Iterable[str]) -> str:
@@ -361,18 +350,6 @@ def quick_tryout_lines(
     return lines
 
 
-def _prompt_string(console: Console, label: str, current: str) -> str:
-    def parse(text: str) -> str:
-        return text.strip() or current
-
-    return str(console.validated(f"{label} [{current}]: ", parse))
-
-
-def _prompt_optional(console: Console, label: str, current: str | None) -> str | None:
-    prompt = f"{label} [{_display_optional(current)}; Enter keeps, '{_CLEAR}' unsets]: "
-    return console.validated(prompt, lambda text: parse_optional_string(text, current))
-
-
 def _prompt_choice(console: Console, label: str, current: str, choices: Sequence[str]) -> str:
     joined = "/".join(choices)
     prompt = f"{label} ({joined}) [{current}]: "
@@ -647,19 +624,6 @@ def _edit_asr(console: Console, config: Config) -> Config:
     console.write("\nASR")
     asr = dataclasses.replace(
         config.asr,
-        model=_prompt_string(console, "Model", config.asr.model),
-        compute_type=_prompt_choice(
-            console, "Compute type", config.asr.compute_type, tuple(sorted(ALLOWED_COMPUTE_TYPES))
-        ),
-        beam_size=int(
-            _prompt_number(console, "Beam size", config.asr.beam_size, 1, 10, integer=True)
-        ),
-        hotwords=_prompt_optional(console, "Hotwords", config.asr.hotwords),
-        initial_prompt=_prompt_optional(console, "Initial prompt", config.asr.initial_prompt),
-        vad_filter=_prompt_bool(console, "VAD filter", config.asr.vad_filter),
-        silence_threshold=float(
-            _prompt_number(console, "Silence threshold", config.asr.silence_threshold, 0.0, 1.0)
-        ),
         idle_unload_seconds=int(
             _prompt_number(
                 console,
@@ -905,29 +869,31 @@ def _guided_setup(
     from stenographer.cli.shared.capability_probe import probe
     from stenographer.lib.diagnostics.capabilities import missing_required
     from stenographer.lib.platform import current_platform
-    from stenographer.lib.transcribe import download as model
+    from stenographer.lib.transcribe import bark_download
     from stenographer.overlay.platform import current_platform as overlay_platform
 
     guidance = current_platform().guidance()
     operational_failure = False
+    data_dir = current_platform().data_dir(os.environ, pathlib.Path.home())
     try:
-        cached = model.is_model_cached(config.asr.model)
+        cached = bark_download.is_model_cached(data_dir)
     except Exception as exc:
         console.error(f"could not inspect the model cache: {exc}")
         cached = False
         operational_failure = True
     if not cached:
         console.write(
-            f"\nModel {config.asr.model} is not cached (download is approximately 1.6 GB)."
+            "\nThe ASR model Underdog Bark 3.0 Pro is not installed. stenographer builds it on "
+            "this machine (download is approximately 1.6 GB; needs 10 GiB free disk)."
         )
-        if ask_yes_no(console, "Download it from the network now?", default=quick):
+        if ask_yes_no(console, "Download and convert it now?", default=quick):
             try:
-                model.download_model(config.asr.model)
+                bark_download.download_bark_pro(data_dir, on_step=console.write)
             except Exception as exc:
                 console.error(f"model download failed: {exc}")
                 operational_failure = True
             else:
-                console.write("Model download complete.")
+                console.write(f"Model download complete. {bark_download.ATTRIBUTION}.")
 
     if config.refine.enabled:
         operational_failure |= _offer_refine_pull(console, config, quick=quick)

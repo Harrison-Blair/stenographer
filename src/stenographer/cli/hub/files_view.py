@@ -95,6 +95,7 @@ class FilesPanel(Vertical):
         self,
         *,
         home: Path | None = None,
+        start: Path | None = None,
         output_folder: Path | None = None,
         **kwargs,
     ) -> None:
@@ -102,7 +103,8 @@ class FilesPanel(Vertical):
         self.home = Path(home or Path.home()).expanduser()
         if not self.home.is_dir():
             self.home = Path.home()
-        self.directory = self.home
+        start = Path(start or self.home).expanduser()
+        self.directory = start if start.is_dir() else self.home
         self.output_folder = Path(output_folder or self.home / ".local/share/stenographer/files")
         self.diarize = True
         self.speaker_count: int | None = None

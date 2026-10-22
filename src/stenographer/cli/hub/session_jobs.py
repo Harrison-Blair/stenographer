@@ -50,10 +50,18 @@ class SessionJobs:
 
     def rediarize(self, session_id: str) -> str:
         detail = self._store.read(session_id)
-        system_lines = [
-            line for line in detail.lines if line.source == "system" and line.end > line.start
-        ]
-        if system_lines:
+        # Mic lines are relabeled only in sessions recorded with mic diarization.
+        prefixes = {"system": "Speaker", **({"mic": "Room"} if detail.diarize_mic else {})}
+        indices = {
+            source: [
+                index
+                for index, line in enumerate(detail.lines)
+                if line.source == source and line.end > line.start
+            ]
+            for source in prefixes
+        }
+        lines = list(detail.lines)
+        if any(indices.values()):
             model_path = (
                 self._platform.data_dir(os.environ, Path.home())
                 / "models"
@@ -63,22 +71,20 @@ class SessionJobs:
             if not model_path.is_file():
                 raise FileNotFoundError(f"speaker model is missing: {model_path}")
             tracker = self._speaker_tracker_factory(model_path)
-            embeddings = [
-                tracker.embed(self._audio_segment(session_id, line)) for line in system_lines
-            ]
-            relabeled = relabel_system_lines(system_lines, embeddings)
-            if relabeled is None:
-                raise RuntimeError("speaker relabeling was cancelled")
-            lines = list(detail.lines)
-            system_indices = [
-                index
-                for index, line in enumerate(detail.lines)
-                if line.source == "system" and line.end > line.start
-            ]
-            for index, revised in zip(system_indices, relabeled, strict=True):
-                lines[index] = revised
-        else:
-            lines = detail.lines
+            for source, source_indices in indices.items():
+                if not source_indices:
+                    continue
+                source_lines = [detail.lines[index] for index in source_indices]
+                embeddings = [
+                    tracker.embed(self._audio_segment(session_id, line)) for line in source_lines
+                ]
+                relabeled = relabel_system_lines(
+                    source_lines, embeddings, label_prefix=prefixes[source]
+                )
+                if relabeled is None:
+                    raise RuntimeError("speaker relabeling was cancelled")
+                for index, revised in zip(source_indices, relabeled, strict=True):
+                    lines[index] = revised
         return self._store.write_revision(session_id, lines, method="diarization")
 
     def retranscribe(self, session_id: str) -> str:

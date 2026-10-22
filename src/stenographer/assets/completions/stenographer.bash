@@ -18,7 +18,7 @@ _stenographer() {
             mapfile -t COMPREPLY < <(compgen -W '-h --help' -- "${cur}")
             ;;
         live)
-            mapfile -t COMPREPLY < <(compgen -W '-h --help --mic --no-mic --system --no-system --device' -- "${cur}")
+            mapfile -t COMPREPLY < <(compgen -W '-h --help --mic --no-mic --system --no-system --device --diarize-mic --no-diarize-mic' -- "${cur}")
             ;;
         stats)
             mapfile -t COMPREPLY < <(compgen -W 'summary export delete reset --source --since --until --model --app-version --device --outcome --format --output --yes --help -h' -- "${cur}")

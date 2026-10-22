@@ -40,13 +40,6 @@ class AudioConfig:
 
 @dataclass(frozen=True)
 class AsrConfig:
-    model: str
-    compute_type: str
-    beam_size: int
-    hotwords: str | None
-    initial_prompt: str | None
-    vad_filter: bool
-    silence_threshold: float
     idle_unload_seconds: int
     cpu_threads: int
 
@@ -83,6 +76,13 @@ class DeliveryConfig:
 
 
 @dataclass(frozen=True)
+class LiveConfig:
+    """Live-session options; mic diarization separates the speakers in one room."""
+
+    diarize_mic: bool = False
+
+
+@dataclass(frozen=True)
 class AnalyticsConfig:
     enabled: bool = True
     resource_profiling: bool = True
@@ -97,6 +97,7 @@ class Config:
     refine: RefineConfig = RefineConfig()
     analytics: AnalyticsConfig = AnalyticsConfig()
     delivery: DeliveryConfig = DeliveryConfig()
+    live: LiveConfig = LiveConfig()
 
     @classmethod
     def defaults(cls) -> Config:
@@ -112,17 +113,7 @@ class Config:
                 general_binding="KEY_RIGHTALT",
             ),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
-            asr=AsrConfig(
-                model="deepdml/faster-whisper-large-v3-turbo-ct2",
-                compute_type="int8",
-                beam_size=1,
-                hotwords=None,
-                initial_prompt=None,
-                vad_filter=True,
-                silence_threshold=0.6,
-                idle_unload_seconds=900,
-                cpu_threads=0,
-            ),
+            asr=AsrConfig(idle_unload_seconds=900, cpu_threads=0),
             feedback=FeedbackConfig(
                 volume=0.6,
                 mute=False,
@@ -169,7 +160,16 @@ class Config:
             raise ConfigError(path, "stenographer", f"must be a table, got {type(table).__name__}")
         merged = _merge(asdict(cls.defaults()), table)
         _migrate_hotkey_defaults(merged, table, path)
-        for name in ("hotkey", "audio", "asr", "feedback", "refine", "analytics", "delivery"):
+        for name in (
+            "hotkey",
+            "audio",
+            "asr",
+            "feedback",
+            "refine",
+            "analytics",
+            "delivery",
+            "live",
+        ):
             if not isinstance(merged[name], dict):
                 raise ConfigError(path, name, f"must be a table, got {type(merged[name]).__name__}")
         return cls(
@@ -185,6 +185,9 @@ class Config:
                 ),
             ),
             delivery=_build_delivery(merged["delivery"], path),
+            live=LiveConfig(
+                diarize_mic=_Reader(merged["live"], path, "live").bool("diarize_mic"),
+            ),
         )
 
     @classmethod

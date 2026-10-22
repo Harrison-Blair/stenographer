@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 
 from stenographer.cli.hub.selection import append_line
+from stenographer.lib.transcribe.bark_download import MODEL_NAME
 
 if TYPE_CHECKING:
     from stenographer.cli.hub.setup_state import SetupWizard
@@ -45,8 +46,8 @@ SETUP_STEPS = (
     SetupStep(
         "models",
         "models",
-        "Check cached speech and live models. Downloads need a separate confirmation.",
-        "asr.model",
+        f"Check the cached speech model ({MODEL_NAME}) and the live models. "
+        "Downloads need a separate confirmation.",
     ),
     SetupStep(
         "sounds",
@@ -126,9 +127,9 @@ def test_step(step_id: str, config: Config, config_dir: pathlib.Path) -> str:
         access = "available" if host.hotkey_access_ok else "unavailable"
         return f"{config.hotkey.binding} is valid; hotkey access {access}"
     if step_id == "models":
-        from stenographer.lib.transcribe.download import is_model_cached
+        from stenographer.lib.transcribe import bark_download
 
-        cached = is_model_cached(config.asr.model)
+        cached = bark_download.is_model_cached()
         from stenographer.lib.diagnostics.additional_checks import live_models_check
 
         live = live_models_check()

@@ -110,6 +110,7 @@ def test_phrase_segmenter_uses_d6_vad_values_cuts_long_phrases_and_flushes(monke
     assert segmenter.flush() == []
 
 
+@pytest.mark.integration
 def test_phrase_segmenter_with_real_vad_finds_task_one_turns_when_assets_are_present():
     data_dir = current_platform().data_dir(os.environ, Path.home())
     model_path = data_dir / "models" / "live" / LIVE_MODELS[0].filename

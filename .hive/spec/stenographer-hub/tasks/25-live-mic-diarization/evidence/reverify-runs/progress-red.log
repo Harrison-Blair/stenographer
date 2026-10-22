@@ -1,0 +1,50 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/penguin/source/hive/projects/stenographer/worktrees/25-live-mic-diarization
+configfile: pyproject.toml
+plugins: platformdirs-4.13.5, anyio-4.14.2, cov-7.1.0
+collected 1 item
+
+tests/lib/live/test_live_session.py F                                    [100%]
+
+=================================== FAILURES ===================================
+_________ test_stop_relabel_progress_counts_once_across_system_and_mic _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7429495e0180>
+tmp_path = PosixPath('/tmp/pytest-of-penguin/pytest-72/test_stop_relabel_progress_cou0')
+
+    def test_stop_relabel_progress_counts_once_across_system_and_mic(monkeypatch, tmp_path):
+        session, _writer, _worker, system, recorder, _segmenters = _make_session(
+            monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
+        )
+        processed = _wait_for_lines(session, 3)
+        recorder.emit(1)
+        recorder.emit(4)
+        system.emit(1)
+        assert processed.wait(timeout=1)
+        statuses = []
+        record_status = session._set_relabel_progress
+    
+        def observe(done, total):
+            record_status(done, total)
+            statuses.append(session.relabel_status)
+    
+        session._set_relabel_progress = observe
+        session.stop()
+    
+        counts = [tuple(int(part) for part in status.split()[2].split("/")) for status in statuses]
+        assert counts
+>       assert {total for _done, total in counts} == {3}
+E       assert {1, 2} == {3}
+E         
+E         Extra items in the left set:
+E         1
+E         2
+E         Extra items in the right set:
+E         3
+E         Use -v to get more diff
+
+tests/lib/live/test_live_session.py:788: AssertionError
+=========================== short test summary info ============================
+FAILED tests/lib/live/test_live_session.py::test_stop_relabel_progress_counts_once_across_system_and_mic
+============================== 1 failed in 0.54s ===============================

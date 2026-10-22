@@ -19,7 +19,7 @@
   var script = [
     { s: "hidden", ms: 1400, cap: "idle · nothing on screen" },
     { s: "recording", ms: 3400, cap: "you hold the key · 18 bars follow your voice" },
-    { s: "transcribing", ms: 1500, cap: "faster-whisper, on your machine" },
+    { s: "transcribing", ms: 1500, cap: "Bark Pro, on your CPU" },
     { s: "refining", ms: 1100, cap: "on by default · a local model tidies what you said" },
     { s: "delivering", ms: 900, cap: "your clipboard, then Shift+Insert at your cursor" },
     { s: "applied", ms: 1200, cap: "profile applied · no transcript content shown" }

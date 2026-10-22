@@ -1,0 +1,23 @@
+..F                                                                      [100%]
+=================================== FAILURES ===================================
+____________ test_files_output_folder_fallback_ignores_start_folder ____________
+
+tmp_path = PosixPath('/tmp/pytest-of-penguin/pytest-55/test_files_output_folder_fallb0')
+
+    def test_files_output_folder_fallback_ignores_start_folder(tmp_path):
+        home = tmp_path / "home"
+        start = tmp_path / "sessions"
+        home.mkdir()
+        start.mkdir()
+    
+        panel = FilesPanel(home=home, start=start)
+    
+        assert panel.directory == start
+>       assert panel.output_folder == home / ".local/share/stenographer/files"
+E       AssertionError: assert PosixPath('/tmp/pytest-of-penguin/pytest-55/test_files_output_folder_fallb0/sessions/.local/share/stenographer/files') == (PosixPath('/tmp/pytest-of-penguin/pytest-55/test_files_output_folder_fallb0/home') / '.local/share/stenographer/files')
+E        +  where PosixPath('/tmp/pytest-of-penguin/pytest-55/test_files_output_folder_fallb0/sessions/.local/share/stenographer/files') = FilesPanel().output_folder
+
+tests/cli/hub/test_files.py:256: AssertionError
+=========================== short test summary info ============================
+FAILED tests/cli/hub/test_files.py::test_files_output_folder_fallback_ignores_start_folder
+1 failed, 2 passed, 19 deselected in 1.90s

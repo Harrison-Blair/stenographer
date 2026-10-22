@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+from importlib.metadata import version
 
 from stenographer.lib.analytics.store import Store
 from stenographer.lib.config.models import Config
@@ -82,6 +83,7 @@ def test_an_enabled_session_records_the_host_context_it_was_given(tmp_path):
     assert record["context"]["os"] == "test"
     assert record["context"]["architecture"] == "test64"
     assert record["context"]["cpu_threads"] == 2
+    assert record["context"]["runtime_version"] == version("sherpa-onnx")
     assert collection.health["enabled"] is True
 
 

@@ -118,7 +118,6 @@ CONTEXT_KEYS = frozenset(
         "runtime_version",
         "os_version",
         "python_version",
-        "compute_type",
         "cpu_threads",
         "os",
         "architecture",

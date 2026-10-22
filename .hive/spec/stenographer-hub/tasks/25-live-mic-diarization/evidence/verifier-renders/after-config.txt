@@ -1,0 +1,36 @@
+                                                                                                                          
+ ╭─ stenographer ────────╮ ╭─ group ────────────╮ ╭─ hotkey ────────────────────────────────────────────────────────────╮ 
+ │                       │ │                    │ │                                                                     │ 
+ │    1 Live             │ │ ▶ hotkey           │ │  ▶ binding                   KEY_RIGHTCTRL                          │ 
+ │    2 Files            │ │   audio            │ │    device                    (unset)                                │ 
+ │    3 Sessions         │ │   asr              │ │    cancel_binding            KEY_ESC                                │ 
+ │  ▶ 4 Config           │ │   live             │ │    mode                      hybrid                                 │ 
+ │    5 Setup            │ │   refine           │ │    hybrid_threshold_seconds  0.5                                    │ 
+ │    6 Doctor   3W 1F   │ │   feedback         │ │    general_binding           KEY_RIGHTALT                           │ 
+ │                       │ │   analytics        │ │                                                                     │ 
+ │                       │ │   delivery         │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ │                       │ │                    │ │                                                                     │ 
+ ╰───────────────────────╯ │                    │ │                                                                     │ 
+                           │                    │ │                                                                     │ 
+ ╭───────────────────────╮ │                    │ │                                                                     │ 
+ │ file                  │ │                    │ │                                                                     │ 
+ │ after.toml            │ │                    │ │                                                                     │ 
+ │ 0 unsaved changes     │ │                    │ │  binding: Agent binding for cleanup of agent-directed dictation.    │ 
+ │                       │ │                    │ │  Default: KEY_RIGHTCTRL                                             │ 
+ │                       │ │                    │ │                                                                     │ 
+ ╰───────────────────────╯ ╰────────────────────╯ ╰─────────────────────────────────────────────────────────────────────╯ 
+                                                                                                                          
+  enter edit   u undo   D reset   / search   ctrl+s save   ←/→ group   ↑/↓ key                                            

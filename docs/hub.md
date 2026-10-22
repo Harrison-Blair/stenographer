@@ -51,17 +51,26 @@ comments and settings that the editor does not know about.
 ## Live
 
 The Live section has a REC panel with elapsed time and MIC and SYSTEM panels
-with the device, waveform meter, and dBFS level. A sidebar card shows the model,
-compute type, queue, failed count, and CPU use. The transcript opens in mixed
+with the device, waveform meter, and dBFS level. A sidebar card shows the
+engine (`bark-pro-int8`), queue, failed count, and CPU use. The transcript opens in mixed
 view, with one time-ordered stream and speaker labels. Press `v` to switch to
 split view, where microphone and system lines appear in separate, captioned
 columns in time order. Press `v` again to return to mixed view. The key hints
 show the section keys `1` to `6`. Press `m` to toggle microphone input, `s` to
-toggle system audio, and `r` to rename a system speaker. System audio captures
+toggle system audio, and `r` to rename a speaker. System audio captures
 the current output mix, not separate applications.
 
+When `live.diarize_mic` is on in Config, a new recording labels microphone
+speakers `Room 1`, `Room 2`, and so on, apart from the system speakers
+(`Speaker 1`, ...). `r` lists room speakers with the system speakers. The
+setting applies when a recording starts; Live has no toggle for it. With the
+setting off, microphone lines are `You`. See
+[separate the speakers in a room](live.md#separate-the-speakers-in-a-room) for
+its limits.
+
 When you stop and save a session, stenographer runs a batch speaker-label pass
-on the saved system phrases and stores the revised labels in a new transcript
+on the saved system phrases, and separately on the microphone phrases when
+microphone diarization is on, and stores the revised labels in a new transcript
 revision. This pass also runs when you confirm quit during a recording. Speaker
 labels are similarity estimates, not reliable identity checks. A minor voice
 gets its own label only if it has at least 15 seconds of phrases that are each
@@ -84,6 +93,13 @@ the system `ffmpeg` executable; other files that `soundfile` cannot read also
 use `ffmpeg`. Stenographer does not bundle FFmpeg. Install it with your system
 package manager. Doctor reports when `ffmpeg` is missing, and a file job that
 needs it cannot start without it.
+
+The browser opens in the folder where Live saves recordings:
+`$XDG_DATA_HOME/stenographer/sessions/`, or
+`~/.local/share/stenographer/sessions/` when `XDG_DATA_HOME` is unset. Each
+session folder holds `mic.flac` and `system.flac`. When that folder does not
+exist yet, the browser opens in your home folder. Select `..` to move up from
+either one; the browser title shows the current folder.
 
 Select one or more files in the browser and press `enter` to queue them. Jobs
 run one at a time in the background. The queue shows each job's state, stage,
@@ -131,26 +147,22 @@ active recording does not appear in this list until it has been saved.
 
 Re-diarization and re-transcription write new transcript revisions and keep
 previous revisions. Re-labeling uses the same speaker similarity limits as the
-Live section.
+Live section. Re-diarization relabels microphone lines as `Room N` speakers only
+for a session recorded with microphone diarization (`"diarize_mic": true` in its
+`session.json`). For other sessions, including older ones, it relabels system
+lines only and microphone lines stay `You`. `r` can rename room speakers.
 
 ## Config
 
 Config edits `config.toml` by the groups in the current configuration:
-hotkey, audio, ASR, refine, feedback, analytics, and delivery. It keeps the
+hotkey, audio, ASR, live, refine, feedback, analytics, and delivery. It keeps the
 group selector beside compact key/value rows. A `●` marks values that differ
 from their defaults. The selected key's description and default appear at the
 bottom of the panel. The sidebar card shows the config path and the count of
 changed values. It shows one shared set of ASR settings for dictation, Live,
-and Files. Hotwords have a separate value area: an empty list shows `none`,
-short lists appear in full, and long lists are truncated to fit with a word
-count. The beam-size details cite the CPU model and context screen in the
-[transcription study](transcription-experiments.md#cpu-model-and-context-screen-2026-10-20).
-The default model is
-`deepdml/faster-whisper-large-v3-turbo-ct2`; other defaults include `int8`
-compute, beam size `1`, and VAD filtering. Model downloads are explicit. Run
-`stenographer model download --asr` to download the configured model. An
-existing configuration with an explicit `stenographer.asr.model` keeps that
-value when the default changes.
+and Files: `idle_unload_seconds` and `cpu_threads`. Model downloads are
+explicit. Run `stenographer model download --asr` to build the speech model;
+see [build the speech model](usage.md#build-the-speech-model).
 
 | Key | Action |
 | --- | --- |
