@@ -69,34 +69,36 @@ dictation, `stenographer live` and Files. faster-whisper leaves the project.
     release.
 13. **Boards.** Text-only screen changes (Config rows, banner) need no
     approved board.
-14. **Venv source (Q1, decided 2026-10-21).** `/usr/bin/python3 -m venv`
-    fails on this machine (Ubuntu 24.04 without `python3.12-venv`, no
-    `ensurepip`). The prerequisite is the Ubuntu package `python3-venv`
-    (`sudo apt install python3-venv`), once on each machine. The user runs
-    the apt step. Agents never run sudo.
+14. **Venv source (Q1, decided 2026-10-21).** The prerequisite is the
+    Ubuntu package `python3-venv` (`sudo apt install python3-venv`), once on
+    each machine. The user runs the apt step. Agents never run sudo.
+    - Status: the apt step is done on this machine (user, 2026-10-21). The
+      coordinator checked that `/usr/bin/python3 -m venv` creates a venv
+      with pip 24.0 on Python 3.12. Each other machine still needs the apt
+      step before its first `model download --asr`. `FIX.md` names it.
     - `model download --asr` first checks that `python3 -m venv` works. If
       it does not, it prints that fix and stops: non-zero exit, nothing
       downloaded.
     - Doctor warns when `python3 -m venv` would fail.
     - `FIX.md` names the apt step for the user to run.
+15. **Study scripts (Q2, decided 2026-10-21).** Delete
+    `scripts/transcription_study/asr_grid.py`,
+    `scripts/transcription_study/download_models.py` and their tests. They
+    import faster-whisper. The 2026-10-20 results stay in
+    `docs/transcription-experiments.md`. Task C does it.
+16. **huggingface_hub leaves (decided 2026-10-21).** Its only user is
+    `lib/transcribe/download.py` (the Whisper cache probe and
+    `snapshot_download`). Task C removes the dependency. The new download
+    fetches pinned HTTPS URLs with `urllib`, as `lib/live/download.py` does.
 
 ## Open questions
 
-- **Q2: other faster-whisper users (OPEN, found by task S).**
-  `scripts/transcription_study/asr_grid.py` and
-  `scripts/transcription_study/download_models.py` import faster-whisper.
-  Decision 10 does not name them. Decision 1 removes faster-whisper
-  completely, so these scripts break. The manager asks the user: delete
-  them, or keep them as study history that needs a separate environment.
+None. Every question is decided (see decisions 14-16).
 
 ## Assumptions of this spec
 
 These follow from the decisions. The manager may override them.
 
-- **huggingface_hub leaves too.** Its only user is
-  `lib/transcribe/download.py` (the Whisper cache probe and
-  `snapshot_download`). The new download fetches pinned HTTPS URLs with
-  `urllib`, as `lib/live/download.py` does. Task C removes the dependency.
 - **Source URLs.** Each source file comes from
   `https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro/resolve/<rev>/<file>`.
   No Hugging Face cache is used.
@@ -281,9 +283,9 @@ class AsrConfig:
 | Task | Content | Depends on |
 | --- | --- | --- |
 | S (31) | This spec | none |
-| A | Converter asset, pins module, download, free-space and venv checks, Doctor venv warning, manifest, `is_model_cached`. Two conversions to prove determinism; record output sha256. | S |
+| A | Converter asset, pins module, download, free-space and venv checks, Doctor venv warning, manifest, `is_model_cached`. Two conversions to prove determinism; record output sha256. | S, and the user's `python3-venv` apt step on the machine that runs A (done on this machine, 2026-10-21; decision 14) |
 | B | sherpa backend, token-to-word mapping, 0.25 s pad, dictation VAD, removal of `no_speech_prob` gates | A |
-| C | `AsrConfig` cleanup; remove faster-whisper, huggingface_hub, CTranslate2 handling, Whisper keys, bench scripts and their tests; packaging spec; Config, Setup and Doctor rows | B |
+| C | `AsrConfig` cleanup; remove faster-whisper, huggingface_hub, CTranslate2 handling, Whisper keys, bench scripts (`scripts/transcription_bench.py`, `scripts/live_bench.py`) and study scripts (`scripts/transcription_study/asr_grid.py`, `scripts/transcription_study/download_models.py`) and their tests; packaging spec; Config, Setup and Doctor rows | B |
 | D | README (usage and Third-party models), `docs/` (usage, live, building, transcription-experiments), `site/`, NOTICE files, `FIX.md` (names the `python3-venv` apt step) | A, B, C |
 
 ### Gate per task
@@ -304,7 +306,11 @@ class AsrConfig:
   `stenographer model download --asr` run. B also shows one real decode of
   a public test clip through `Model.transcribe` (no microphone).
 - **C** also shows that `grep -rn "faster_whisper\|faster-whisper\|ctranslate2\|huggingface_hub"`
-  over `src/`, `tests/`, `packaging/` and `pyproject.toml` finds nothing.
+  over `src/`, `tests/`, `scripts/`, `packaging/` and `pyproject.toml`
+  finds nothing, and that `scripts/transcription_bench.py`,
+  `scripts/live_bench.py`, `scripts/transcription_study/asr_grid.py`,
+  `scripts/transcription_study/download_models.py` and their tests are
+  gone. `docs/transcription-experiments.md` keeps the 2026-10-20 results.
 - **D:** the AGENTS.md gate plus `scripts/check_site.sh`. Each removed key
   and each Whisper reference is gone from user docs, except history notes.
 - No task uses the microphone. A dictation trial on the real mic happens
