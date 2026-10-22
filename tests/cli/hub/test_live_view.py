@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from rich.color import Color
+from textual.events import MouseScrollDown
 from textual.widget import Widget
 from textual.widgets import Digits, Input, Select, Static
 
@@ -111,7 +112,7 @@ def test_pilot_live_has_board_panels_and_captioned_split_columns():
             app._refresh_view()
             await pilot.pause()
             mixed = _screen_text(app)
-            assert "transcript · mixed · 2 speakers" in mixed
+            assert "transcript · 2 speakers" in mixed
             assert app.query_one("#live-elapsed", Digits).value == "00:00:03"
             assert "[m] MIC" in mixed and "Default input" in mixed
             assert "[s] SYSTEM" in mixed and "Default output" in mixed
@@ -170,7 +171,7 @@ def test_pilot_live_mixed_and_split_views_keep_time_order():
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.pause()
             content = _screen_text(app)
-            assert "transcript · mixed · 2 speakers" in content
+            assert "transcript · 2 speakers" in content
             assert "Speaker 2" in content and "system words" in content
             assert "You" in content and "mic words" in content
             card = str(app.query_one("#sidebar-card", Static).render())
@@ -182,7 +183,7 @@ def test_pilot_live_mixed_and_split_views_keep_time_order():
 
             await pilot.press("v")
             split = _screen_text(app)
-            assert "transcript · split · 2 speakers" in split
+            assert "transcript · split" in split
             assert "MIC · what you said" in split
             assert "SYSTEM · everyone else" in split
             rows = [
@@ -378,6 +379,8 @@ def test_live_key_hints_style_keys_and_descriptions_without_fills():
         app = HubApp(FakeServices())
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.pause()
+            hints = app.query_one("#key-hints", Static).render().plain
+            assert "↑/↓ line" in hints and "PgUp/Dn page" in hints and "Home/End top/bot" in hints
             key = _visible_segment(app, "space")
             description = _visible_segment(app, "pause/resume")
             assert key.style.bold
@@ -385,6 +388,66 @@ def test_live_key_hints_style_keys_and_descriptions_without_fills():
             assert key.style.bgcolor is None or key.style.bgcolor.is_default
             assert description.style.color is None or description.style.color.is_default
             assert description.style.bgcolor is None or description.style.bgcolor.is_default
+
+    asyncio.run(exercise())
+
+
+def test_live_transcript_scrolls_in_mixed_and_split_views_and_follows_new_lines():
+    async def exercise():
+        services = FakeServices()
+        session = services.session
+        session.lines = [
+            TranscriptLine(
+                float(index), float(index + 1), "wall", "mic", "you", "You", f"line {index}"
+            )
+            for index in range(40)
+        ]
+        app = HubApp(services)
+        async with app.run_test(size=(120, 20)) as pilot:
+            await pilot.pause()
+            scroll = app.query_one("#live-transcript")
+            assert scroll.max_scroll_y > 0
+            assert scroll.scroll_y == scroll.max_scroll_y
+
+            await pilot.press("home")
+            await pilot.press("pagedown")
+            page_position = scroll.scroll_y
+            assert page_position > 1
+            await pilot.press("pageup")
+            assert scroll.scroll_y < page_position
+            await pilot._post_mouse_events([MouseScrollDown], widget=scroll)
+            await pilot.pause()
+            assert scroll.scroll_y > 0
+
+            await pilot.press("home")
+            await pilot.press("down")
+            assert scroll.scroll_y == 1
+            held_position = scroll.scroll_y
+            await pilot.pause(0.25)
+            assert scroll.scroll_y == held_position
+            session.lines.append(
+                TranscriptLine(40.0, 41.0, "wall", "mic", "you", "You", "new line")
+            )
+            app._refresh_view()
+            await pilot.pause()
+            assert scroll.scroll_y == held_position
+
+            await pilot.press("end")
+            await pilot.press("v")
+            assert scroll.scroll_y == scroll.max_scroll_y
+            await pilot.press("home")
+            await pilot.press("down")
+            assert scroll.scroll_y == 1
+            await pilot.press("end")
+            session.lines.append(
+                TranscriptLine(
+                    41.0, 42.0, "wall", "system", "speaker-2", "Speaker 2", "latest line"
+                )
+            )
+            app._refresh_view()
+            await pilot.pause()
+            assert scroll.scroll_y == scroll.max_scroll_y
+            assert "transcript · split" in str(scroll.border_title)
 
     asyncio.run(exercise())
 
@@ -398,7 +461,7 @@ def test_live_sidebar_and_transcript_titles_are_legible():
             assert sidebar_title.style.bold
             assert sidebar_title.style.color == Color.parse("#5fd7ff")
 
-            transcript_title = _visible_segment(app, "transcript · mixed · 2 speakers")
+            transcript_title = _visible_segment(app, "transcript · 2 speakers")
             assert transcript_title.style.bold
             assert transcript_title.style.color is None or transcript_title.style.color.is_default
 

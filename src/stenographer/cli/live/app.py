@@ -8,11 +8,11 @@ import math
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from stenographer.cli.live.rename_dialog import RenameDialog
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
+from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.live.live_session import LiveSession
 from stenographer.lib.live.transcript_line import TranscriptLine
 
@@ -27,6 +27,12 @@ class LiveApp(App[None]):
         ("r", "rename", "Rename speaker"),
         ("q", "stop", "Stop and save"),
         ("ctrl+c", "stop", "Stop and save"),
+        ("up", "transcript_up", "Scroll transcript up"),
+        ("down", "transcript_down", "Scroll transcript down"),
+        ("pageup", "transcript_page_up", "Scroll transcript up one page"),
+        ("pagedown", "transcript_page_down", "Scroll transcript down one page"),
+        ("home", "transcript_home", "Scroll to transcript start"),
+        ("end", "transcript_end", "Scroll to latest transcript line"),
     ]
     CSS = (
         NO_BACKGROUND_CSS
@@ -40,8 +46,9 @@ class LiveApp(App[None]):
         height: 1fr;
         padding: 1 2;
     }
-    #transcript {
+    #transcript-scroll-content {
         width: 1fr;
+        height: auto;
     }
     #key-hints {
         height: 1;
@@ -58,10 +65,9 @@ class LiveApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status", markup=False)
-        with VerticalScroll(id="transcript-scroll"):
-            yield Static("", id="transcript", markup=False)
+        yield TranscriptScroll(id="transcript-scroll", can_focus=False)
         yield Static(
-            "space pause/resume   m mic   s system   r rename   q stop/save · q again skip relabel",
+            "↑/↓ line PgUp/Dn page Home/End · space pause · m/s · r rename · q save (again skip)",
             id="key-hints",
         )
 
@@ -127,7 +133,31 @@ class LiveApp(App[None]):
             f"{self._format_time(line.start)}  {line.label}  {line.text}"
             for line in self._session.lines
         )
-        self.query_one("#transcript", Static).update(rendered)
+        self.query_one("#transcript-scroll", TranscriptScroll).update_content(rendered)
+
+    def action_transcript_up(self) -> None:
+        self._scroll_transcript_line(-1)
+
+    def action_transcript_down(self) -> None:
+        self._scroll_transcript_line(1)
+
+    def action_transcript_page_up(self) -> None:
+        self._scroll_transcript_page(-1)
+
+    def action_transcript_page_down(self) -> None:
+        self._scroll_transcript_page(1)
+
+    def action_transcript_home(self) -> None:
+        self.query_one("#transcript-scroll", TranscriptScroll).scroll_top()
+
+    def action_transcript_end(self) -> None:
+        self.query_one("#transcript-scroll", TranscriptScroll).scroll_bottom()
+
+    def _scroll_transcript_line(self, offset: int) -> None:
+        self.query_one("#transcript-scroll", TranscriptScroll).scroll_line(offset)
+
+    def _scroll_transcript_page(self, offset: int) -> None:
+        self.query_one("#transcript-scroll", TranscriptScroll).scroll_page(offset)
 
     def _refresh_status(self) -> None:
         elapsed = max(0, int(self._session.elapsed_seconds))

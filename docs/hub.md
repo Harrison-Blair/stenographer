@@ -55,10 +55,16 @@ with the device, waveform meter, and dBFS level. A sidebar card shows the
 engine (`bark-pro-int8`), queue, failed count, and CPU use. The transcript opens in mixed
 view, with one time-ordered stream and speaker labels. Press `v` to switch to
 split view, where microphone and system lines appear in separate, captioned
-columns in time order. Press `v` again to return to mixed view. The key hints
-show the section keys `1` to `6`. Press `m` to toggle microphone input, `s` to
-toggle system audio, and `r` to rename a speaker. System audio captures
-the current output mix, not separate applications.
+columns in time order. Press `v` again to return to mixed view. Use `up` and
+`down` to scroll one line, `pageup` and `pagedown` to scroll one page, and
+`home` and `end` to move to the top and bottom. The mouse wheel also scrolls
+the transcript. New lines stay in view while the transcript is at the bottom.
+If you scroll up, refreshes do not move the view; press `end` or scroll to the
+bottom to follow new lines again. These keys scroll only in Live; `up` and
+`down` keep their section-specific actions elsewhere. The key hints show the
+section keys `1` to `6`. Press `m` to toggle microphone input, `s` to toggle
+system audio, and `r` to rename a speaker. System audio captures the current
+output mix, not separate applications.
 
 When `live.diarize_mic` is on in Config, a new recording labels microphone
 speakers `Room 1`, `Room 2`, and so on, apart from the system speakers

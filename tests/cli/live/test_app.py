@@ -7,6 +7,7 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 
+from textual.events import MouseScrollDown
 from textual.widgets import Select, Static
 
 from stenographer.cli.live.app import LiveApp
@@ -121,7 +122,7 @@ def test_pilot_controls_show_lines_rename_old_lines_and_stop():
             )
             session.emit(line)
             await pilot.pause()
-            transcript = str(app.query_one("#transcript", Static).render())
+            transcript = str(app.query_one("#transcript-scroll-content", Static).render())
             assert "01:01:01  Speaker 1  recognized words" in transcript
 
             await pilot.press("r")
@@ -130,7 +131,7 @@ def test_pilot_controls_show_lines_rename_old_lines_and_stop():
             app.screen.query_one("#speaker-name").value = "Alice"
             await pilot.click("#rename-submit")
             await pilot.pause()
-            transcript = str(app.query_one("#transcript", Static).render())
+            transcript = str(app.query_one("#transcript-scroll-content", Static).render())
             assert ("rename", "speaker-1", "Alice") in session.actions
             assert "01:01:01  Alice  recognized words" in transcript
 
@@ -243,6 +244,57 @@ def test_ctrl_c_stops_and_saves_the_session():
             await pilot.press("ctrl+c")
             assert await asyncio.to_thread(session.stop_finished.wait, 1)
             assert session.actions[-1] == "stop"
+
+    import asyncio
+
+    asyncio.run(exercise())
+
+
+def test_transcript_scrolls_and_keeps_follow_state_when_lines_arrive():
+    async def exercise():
+        session = FakeSession()
+        session.lines = [
+            TranscriptLine(
+                float(index), float(index + 1), "wall", "mic", "speaker-1", "You", f"line {index}"
+            )
+            for index in range(40)
+        ]
+        app = LiveApp(session)
+        async with app.run_test(size=(100, 16)) as pilot:
+            await pilot.pause()
+            hints = app.query_one("#key-hints", Static).render().plain
+            assert "↑/↓ line" in hints and "PgUp/Dn page" in hints and "Home/End" in hints
+            scroll = app.query_one("#transcript-scroll")
+            assert scroll.max_scroll_y > 0
+            assert scroll.scroll_y == scroll.max_scroll_y
+
+            await pilot.press("home")
+            await pilot.press("pagedown")
+            page_position = scroll.scroll_y
+            assert page_position > 1
+            await pilot.press("pageup")
+            assert scroll.scroll_y < page_position
+            await pilot._post_mouse_events([MouseScrollDown], widget=scroll)
+            await pilot.pause()
+            assert scroll.scroll_y > 0
+            await pilot.press("home")
+            await pilot.press("down")
+            assert scroll.scroll_y == 1
+            held_position = scroll.scroll_y
+            session.lines.append(
+                TranscriptLine(40.0, 41.0, "wall", "mic", "speaker-1", "You", "new line")
+            )
+            app._refresh_transcript()
+            await pilot.pause()
+            assert scroll.scroll_y == held_position
+
+            await pilot.press("end")
+            session.lines.append(
+                TranscriptLine(41.0, 42.0, "wall", "mic", "speaker-1", "You", "latest line")
+            )
+            app._refresh_transcript()
+            await pilot.pause()
+            assert scroll.scroll_y == scroll.max_scroll_y
 
     import asyncio
 
