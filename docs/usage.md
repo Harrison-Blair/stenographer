@@ -224,10 +224,12 @@ on Live; press `space` when you want to start recording. If stdin or stdout is
 not a terminal, the command prints help. Existing subcommands, including
 `stenographer live`, keep their current behavior.
 
-In the hub, press `2` to open Files. The browser starts in your home folder.
-Use `/` to filter names in the current folder, `enter` to open a folder, and
-`space` to select files. Press `enter` to queue the selected files. The queue
-runs one file at a time and continues when you change sections.
+In the hub, press `2` to open Files. The browser starts in the folder where
+Live saves your recordings, or in your home folder when that folder does not
+exist yet; see [the hub guide](hub.md) for the paths. Use `/` to filter names
+in the current folder, `enter` to open a folder, and `space` to select files.
+Press `enter` to queue the selected files. The queue runs one file at a time
+and continues when you change sections.
 
 Press `o` to focus the options. Use `up` and `down` to select an option and
 `space` or `enter` to change it. Diarization starts on, refine starts off, and
