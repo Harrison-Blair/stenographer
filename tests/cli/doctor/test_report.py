@@ -203,6 +203,14 @@ def test_render_without_log_facts_omits_logs_section():
     assert "\nlogs:" not in report
 
 
+def test_render_names_the_bark_model():
+    report = doctor.render(
+        _caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE, overlay_guidance=_OVERLAY_GUIDANCE
+    )
+
+    assert "\nmodel: Underdog Bark 3.0 Pro\n" in report
+
+
 def test_render_missing_capability_carries_fix_hint():
     caps = _caps(model_cached=False, clipboard_ok=False)
     report = doctor.render(

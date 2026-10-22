@@ -34,6 +34,7 @@ from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
+from stenographer.lib.transcribe.bark_download import MODEL_DIRNAME
 
 log = logging.getLogger(__name__)
 
@@ -145,13 +146,6 @@ class HubApp(App[None]):
         width: 1fr;
         height: auto;
         padding: 0;
-    }
-    #config-hotwords {
-        height: auto;
-        margin-top: 1;
-        padding-top: 1;
-        border-top: solid #3a4150;
-        display: none;
     }
     #config-selected-help {
         dock: bottom;
@@ -409,7 +403,6 @@ class HubApp(App[None]):
             yield Static("", id="config-group-list", markup=False)
             with Vertical(id="main-content"):
                 yield Static("", id="section-content", markup=False)
-                yield Static("", id="config-hotwords", markup=False)
                 yield Static("", id="config-selected-help", markup=False)
             yield self.setup_panel
             yield self.doctor_panel
@@ -546,13 +539,11 @@ class HubApp(App[None]):
         section_view = screen.query_one("#section-content", Static)
         main_content = screen.query_one("#main-content", Vertical)
         group_list = screen.query_one("#config-group-list", Static)
-        hotwords_view = screen.query_one("#config-hotwords", Static)
         selected_help = screen.query_one("#config-selected-help", Static)
         show_activity = self._section == "live" and self._activity_status is not None
         main_content.display = self._section == "config" or show_activity
         section_view.display = main_content.display
         group_list.display = False
-        hotwords_view.display = False
         selected_help.display = False
         self.setup_panel.display = self._section == "setup"
         self.doctor_panel.display = self._section == "doctor"
@@ -579,12 +570,8 @@ class HubApp(App[None]):
                 group_list.border_title = "group"
                 group_list.display = True
                 main_content.border_title = editor.group
-                show_hotwords = editor.group == "asr" and "asr.hotwords" in editor.visible_keys
                 selected_help.update(editor.render_selected_help())
                 selected_help.display = editor.selected_key is not None
-                if show_hotwords:
-                    hotwords_view.update(editor.render_hotwords(main_content.content_size.width))
-                    hotwords_view.display = True
             else:
                 main_content.border_title = title
         else:
@@ -673,21 +660,15 @@ class HubApp(App[None]):
             screen.query_one("#sidebar-card", Static).update(content)
 
     def _live_sidebar_card(self, session) -> Text:
-        config = self._current_config()
-        model = session.model_name if session is not None else config.asr.model
-        model = model.rsplit("/", 1)[-1].removeprefix("faster-whisper-")
+        model = session.model_name if session is not None else MODEL_DIRNAME
         queue = session.queue_depth if session is not None else 0
         failed = session.failed_phrase_count if session is not None else 0
-        card = Text(f"engine\n{model} {config.asr.compute_type}\nqueue {queue} · failed {failed}\n")
+        card = Text(f"engine\n{model}\nqueue {queue} · failed {failed}\n")
         card.append(self._cpu_sidebar_line())
         return card
 
     def _files_sidebar_card(self) -> Text:
-        config = self._current_config()
-        model = (
-            config.asr.model.rsplit("/", 1)[-1].removeprefix("faster-whisper-").removesuffix("-ct2")
-        )
-        card = Text(f"engine\n{model} {config.asr.compute_type}\n")
+        card = Text(f"engine\n{MODEL_DIRNAME}\n")
         card.append(self._cpu_sidebar_line())
         return card
 

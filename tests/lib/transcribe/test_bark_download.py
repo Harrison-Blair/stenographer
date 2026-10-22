@@ -214,11 +214,11 @@ def test_a_manifest_cannot_point_outside_the_model_directory(tmp_path):
 # --- pure rules and the real venv probe ---
 
 
-def test_free_space_rule_needs_at_least_eight_gib():
-    # The measured end-to-end peak on 2026-10-21 was 6.91 GiB (7,422,359,945 bytes).
-    assert bark_download.MIN_FREE_BYTES == 8 * 1024**3
-    assert has_free_space(8 * 1024**3) is True
-    assert has_free_space(8 * 1024**3 - 1) is False
+def test_free_space_rule_needs_at_least_ten_gib():
+    # Real end-to-end peaks: 6.91 GiB (2026-10-21) and 7.52 GiB.
+    assert bark_download.MIN_FREE_BYTES == 10 * 1024**3
+    assert has_free_space(10 * 1024**3) is True
+    assert has_free_space(10 * 1024**3 - 1) is False
 
 
 def test_venv_probe_passes_for_a_python_with_venv_and_ensurepip():

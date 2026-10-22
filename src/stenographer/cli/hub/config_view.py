@@ -6,7 +6,6 @@ from __future__ import annotations
 import pathlib
 from dataclasses import asdict, replace
 
-from rich.cells import cell_len
 from rich.text import Text
 
 from stenographer.cli.hub.selection import append_line
@@ -26,13 +25,6 @@ _HELP = {
     "audio.input_device": "Audio input device name or index; blank uses the default.",
     "audio.min_speech_rms": "Ignore audio below this speech energy level; zero disables the gate.",
     "audio.max_recording_seconds": "Maximum length of one recording.",
-    "asr.model": "Cached speech-recognition model. Downloads require a separate command.",
-    "asr.compute_type": "Numeric format used by the speech-recognition model.",
-    "asr.beam_size": "Wider search can improve word accuracy at a latency cost.",
-    "asr.hotwords": "Comma-separated names and terms to guide recognition; blank disables them.",
-    "asr.initial_prompt": "Optional style or domain context for recognition.",
-    "asr.vad_filter": "Skip audio that the model classifies as non-speech.",
-    "asr.silence_threshold": "Reject recognition results below the speech confidence threshold.",
     "asr.idle_unload_seconds": (
         "Unload the idle recognition worker after this many seconds; zero disables it."
     ),
@@ -238,13 +230,10 @@ class ConfigEditor:
         if self.search_term:
             append_line(lines, f"Search: {self.search_term}")
         keys = self.visible_keys
-        setting_keys = tuple(key for key in keys if key != "asr.hotwords")
         if not keys:
             append_line(lines, "No settings match this search.")
-        name_width = max((len(key.rpartition(".")[2]) for key in setting_keys), default=0)
+        name_width = max((len(key.rpartition(".")[2]) for key in keys), default=0)
         for index, dotted_key in enumerate(keys):
-            if dotted_key == "asr.hotwords":
-                continue
             name = dotted_key.rpartition(".")[2]
             selected = index == self.key_index
             if lines:
@@ -258,61 +247,14 @@ class ConfigEditor:
                 lines.append("●", style="#ffaf5f")
         return lines
 
-    def render_hotwords(self, width: int) -> Text:
-        if self.config is None or "asr.hotwords" not in self.visible_keys:
-            return Text()
-        value = self.value("asr.hotwords")
-        terms = [term.strip() for term in (value or "").split(",") if term.strip()]
-        word_count = len((value or "").split())
-        changed = value != self.default("asr.hotwords")
-        content_width = max(0, width - 2 - (2 if changed else 0))
-        full_value = ", ".join(terms) or "none"
-        if cell_len(full_value) <= content_width:
-            preview = full_value
-        else:
-            suffix = f"… {word_count} words"
-            preview_width = max(0, content_width - cell_len(suffix) - 1)
-            preview_terms = []
-            for term in terms:
-                candidate = ", ".join((*preview_terms, term))
-                if cell_len(candidate) > preview_width:
-                    break
-                preview_terms.append(term)
-            preview = ", ".join(preview_terms)
-            if not preview and terms:
-                for character in terms[0]:
-                    candidate = preview + character
-                    if cell_len(candidate) > preview_width:
-                        break
-                    preview = candidate
-            preview = f"{preview} {suffix}" if preview else suffix
-        key_index = self.visible_keys.index("asr.hotwords")
-        lines = Text("hotwords")
-        append_line(
-            lines,
-            preview,
-            selectable=True,
-            selected=key_index == self.key_index,
-        )
-        if changed:
-            lines.append(" ")
-            lines.append("●", style="#ffaf5f")
-        return lines
-
     def render_selected_help(self) -> Text:
         dotted_key = self.selected_key
         if self.config is None or dotted_key is None:
             return Text()
         name = dotted_key.rpartition(".")[2]
-        details = Text(
+        return Text(
             f"{name}: {self.help(dotted_key)} Default: {self._display(self.default(dotted_key))}"
         )
-        if dotted_key == "asr.beam_size":
-            details.append(
-                " Bench: docs/transcription-experiments.md, CPU model and context screen "
-                "(beam 1: 10.12% WER at 1.664 s; beam 5: 9.31% at 1.683 s)."
-            )
-        return details
 
     @staticmethod
     def _parse_value(raw_value: str, current: object, dotted_key: str) -> object:

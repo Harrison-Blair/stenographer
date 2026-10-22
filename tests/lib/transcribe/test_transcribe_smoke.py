@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Integration smoke suite for the batch transcribe path.
 
-Four real, non-mocked checks:
+Three real, non-mocked checks:
 
   * equivalence  — the public ``transcribe`` command produces the same text as
     the surviving model.Model + format.format_transcript API on the same
@@ -10,9 +10,8 @@ Four real, non-mocked checks:
     the source mono 16 kHz recording.
   * read errors  — corrupt files and directories fail concisely before model
     construction.
-  * hotwords     — a proper noun set in asr.hotwords is honored in the decode.
 
-The model-based checks really load the large-v3-turbo model and decode a
+The model-based checks really load the Bark Pro int8 model and decode a
 machine-supplied clip; nothing is mocked. The whole module is collected only
 with STENOGRAPHER_INTEGRATION=1, and skipped further unless the model is cached
 locally and the fixture WAV is present — so the default unit run never touches
@@ -21,7 +20,6 @@ the network or the ASR stack.
 
 from __future__ import annotations
 
-import dataclasses
 import pathlib
 
 import numpy as np
@@ -31,17 +29,14 @@ pytestmark = pytest.mark.integration
 
 _FIXTURES = pathlib.Path(__file__).parents[2] / "fixtures"
 _CLIP = _FIXTURES / "speech_16k.wav"
-_HOTWORD_CLIP = _FIXTURES / "hotword_16k.wav"
-_HOTWORD_NOUN = "Anthropic"
-_MODEL_ID = "deepdml/faster-whisper-large-v3-turbo-ct2"
 
 if not _CLIP.exists():
     pytest.skip(f"fixture WAV absent: {_CLIP}", allow_module_level=True)
 
-from huggingface_hub import try_to_load_from_cache  # noqa: E402
+from stenographer.lib.transcribe import bark_download  # noqa: E402
 
-if try_to_load_from_cache(_MODEL_ID, "config.json") is None:
-    pytest.skip(f"model not cached: {_MODEL_ID}", allow_module_level=True)
+if not bark_download.is_model_cached():
+    pytest.skip(f"model not installed: {bark_download.MODEL_DIRNAME}", allow_module_level=True)
 
 import soundfile  # noqa: E402
 
@@ -61,7 +56,6 @@ def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
     config.Config.write_default(config_path)
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
     cfg = config.Config.load(config_path)
-    assert cfg.asr.model == _MODEL_ID  # hotwords require the full, non-distil model
 
     m = model.Model(cfg.asr)
     try:
@@ -120,26 +114,3 @@ def test_cli_transcribe_read_failure_is_concise(input_kind, tmp_path, monkeypatc
     assert captured.out == ""
     assert captured.err.startswith(f"stenographer: cannot read {input_path}:")
     assert captured.err.count("\n") == 1
-
-
-def test_hotword_is_honored():
-    clip = _HOTWORD_CLIP if _HOTWORD_CLIP.exists() else _CLIP
-    if clip is _CLIP:
-        pytest.skip(f"hotword fixture absent: {_HOTWORD_CLIP}")
-
-    from stenographer import config
-    from stenographer.lib.transcribe import model
-
-    samples = _read(clip)
-    base = config.Config.defaults()
-    cfg = dataclasses.replace(base, asr=dataclasses.replace(base.asr, hotwords=_HOTWORD_NOUN))
-    m = model.Model(cfg.asr)
-    try:
-        text = m.transcribe(samples).text
-    finally:
-        m.close()
-
-    # End-to-end proof the hotword plumbing reaches the decoder and the noun
-    # survives. A discriminating without-hotword decode (noun absent/wrong) is
-    # left to manual hotword validation on the dev machine.
-    assert _HOTWORD_NOUN.lower() in text.lower()

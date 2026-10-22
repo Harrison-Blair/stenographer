@@ -145,7 +145,7 @@ def test_rejected_configuration_reports_the_key_error_and_exits_seventy_eight(
     monkeypatch,
 ):
     path = tmp_path / "config.toml"
-    path.write_text("[stenographer.asr]\nbeam_size = 99\n", encoding="utf-8")
+    path.write_text("[stenographer.asr]\ncpu_threads = 99\n", encoding="utf-8")
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
     console = Console(io.StringIO(), io.StringIO(), io.StringIO())
 
@@ -156,7 +156,7 @@ def test_rejected_configuration_reports_the_key_error_and_exits_seventy_eight(
     )
 
     assert code == 78
-    assert "beam_size" in console.stderr.getvalue()
+    assert "cpu_threads" in console.stderr.getvalue()
     assert console.stdout.getvalue() == ""
 
 

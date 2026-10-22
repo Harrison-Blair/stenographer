@@ -9,23 +9,17 @@ from stenographer.lib.diagnostics.collection import Collection
 from stenographer.lib.diagnostics.context import technical_context
 
 
-def test_technical_context_never_retains_user_paths_or_prompt():
+def test_technical_context_never_retains_user_paths():
     cfg = Config.defaults()
-    cfg = replace(
-        cfg,
-        asr=replace(
-            cfg.asr,
-            model="/private/model",
-            hotwords="private words",
-            initial_prompt="secret prompt",
-        ),
-        audio=replace(cfg.audio, input_device="C:\\private\\device"),
-    )
+    cfg = replace(cfg, audio=replace(cfg.audio, input_device="C:\\private\\device"))
     context = technical_context(cfg)
-    assert context["model"] == "local_model"
     assert context["device"] == "configured_device"
     assert "private" not in str(context)
-    assert "secret" not in str(context)
+
+
+def test_technical_context_names_the_bark_model_and_no_whisper_setting():
+    context = technical_context(Config.defaults())
+    assert context == {"model": "bark-pro-int8", "device": "default", "mode": "hybrid"}
 
 
 def test_bad_checkpoint_cannot_prevent_terminal_persistence(

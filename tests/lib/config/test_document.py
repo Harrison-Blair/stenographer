@@ -25,9 +25,9 @@ PRESERVATION_FIXTURE = """\
 answer = 42 # unrelated inline comment
 
 [stenographer.asr]
-# model choice comment
-beam_size = 3 # keep this inline comment
-silence_threshold = 6e-1 # preserve equivalent hand formatting
+# thread choice comment
+cpu_threads = 3 # keep this inline comment
+idle_unload_seconds = 0x384 # preserve equivalent hand formatting
 mystery = "preserve me"
 
 [stenographer.hotkey] # deliberately after ASR
@@ -37,15 +37,15 @@ binding = "KEY_F8"
 
 def test_render_preserves_comments_order_and_unknown_content():
     source = ConfigDocument.loads(PRESERVATION_FIXTURE)
-    reviewed = replace(source.config, asr=replace(source.config.asr, beam_size=5))
+    reviewed = replace(source.config, asr=replace(source.config.asr, cpu_threads=5))
 
     rendered = source.render(reviewed)
 
     assert "# hand-written preface" in rendered
     assert "answer = 42 # unrelated inline comment" in rendered
-    assert "# model choice comment" in rendered
-    assert "beam_size = 5 # keep this inline comment" in rendered
-    assert "silence_threshold = 6e-1 # preserve equivalent hand formatting" in rendered
+    assert "# thread choice comment" in rendered
+    assert "cpu_threads = 5 # keep this inline comment" in rendered
+    assert "idle_unload_seconds = 0x384 # preserve equivalent hand formatting" in rendered
     assert 'mystery = "preserve me"' in rendered
     assert rendered.index("[stenographer.asr]") < rendered.index("[stenographer.hotkey]")
     assert Config.loads(rendered) == reviewed
@@ -64,17 +64,7 @@ def test_render_materializes_every_known_key():
         "general_binding",
     ]
     assert list(root["audio"]) == ["input_device", "min_speech_rms", "max_recording_seconds"]
-    assert list(root["asr"]) == [
-        "model",
-        "compute_type",
-        "beam_size",
-        "hotwords",
-        "initial_prompt",
-        "vad_filter",
-        "silence_threshold",
-        "idle_unload_seconds",
-        "cpu_threads",
-    ]
+    assert list(root["asr"]) == ["idle_unload_seconds", "cpu_threads"]
     assert list(root["feedback"]) == [
         "volume",
         "mute",
@@ -84,7 +74,7 @@ def test_render_materializes_every_known_key():
         "sound_pack",
         "log_level",
     ]
-    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 25
+    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 18
 
 
 def test_render_encodes_optional_strings_as_empty_strings():
@@ -94,8 +84,6 @@ def test_render_encodes_optional_strings_as_empty_strings():
     assert root["hotkey"]["device"] == ""
     assert root["hotkey"]["cancel_binding"] == "KEY_ESC"
     assert root["audio"]["input_device"] == ""
-    assert root["asr"]["hotwords"] == ""
-    assert root["asr"]["initial_prompt"] == ""
 
 
 def test_render_round_trips_nondefault_production_config():
@@ -117,13 +105,6 @@ def test_render_round_trips_nondefault_production_config():
         ),
         asr=replace(
             defaults.asr,
-            model="local/model",
-            compute_type="float32",
-            beam_size=7,
-            hotwords="Ada, Babbage",
-            initial_prompt="Technical dictation.",
-            vad_filter=False,
-            silence_threshold=0.25,
             idle_unload_seconds=0,
             cpu_threads=4,
         ),
@@ -163,7 +144,7 @@ def test_defaults_document_renders_the_annotated_template_verbatim(tmp_path):
     """Seen to FAIL against a writer built on ``ConfigDocument.load`` (the
     hand-written comment survived and none of the annotations appeared)."""
     path = tmp_path / "config.toml"
-    path.write_text("[stenographer.asr]\nbeam_size = 3 # mine\n", encoding="utf-8")
+    path.write_text("[stenographer.asr]\ncpu_threads = 3 # mine\n", encoding="utf-8")
 
     rendered = ConfigDocument.defaults(path).render(Config.defaults())
 
@@ -187,7 +168,7 @@ def test_load_reports_an_unreadable_path_without_inventing_defaults(tmp_path):
 
 def test_load_reports_a_file_that_is_not_utf8(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_bytes(b'[stenographer.asr]\nhotwords = "caf\xe9"\n')
+    path.write_bytes(b'[stenographer.audio]\ninput_device = "caf\xe9"\n')
 
     with pytest.raises(ConfigError) as failure:
         ConfigDocument.load(path)
@@ -219,7 +200,7 @@ def test_save_keeps_removed_whisper_keys_byte_for_byte(tmp_path):
     # neither add removed keys nor touch the ones the user still has.
     old_asr = (
         "[stenographer.asr]\n"
-        'model = "deepdml/faster-whisper-large-v3-turbo-ct2"\n'
+        'model = "distil-whisper/distil-large-v3"\n'
         'compute_type = "auto"          # whisper-only value\n'
         "beam_size = 5\n"
         "vad_filter = true\n"

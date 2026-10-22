@@ -25,8 +25,8 @@ def test_rejected_configuration_is_reported_verbatim_and_never_reaches_the_handl
     def refuse() -> Config:
         raise ConfigError(
             pathlib.PurePosixPath("/cfg/config.toml"),
-            "asr.beam_size",
-            "must be 1-10",
+            "asr.cpu_threads",
+            "must be 0-64",
         )
 
     monkeypatch.setattr(paths, "load_or_default", refuse)
@@ -40,7 +40,7 @@ def test_rejected_configuration_is_reported_verbatim_and_never_reaches_the_handl
     assert handler(argparse.Namespace()) == 78
     assert calls == []
     assert capsys.readouterr().err == (
-        "stenographer: /cfg/config.toml: asr.beam_size: must be 1-10\n"
+        "stenographer: /cfg/config.toml: asr.cpu_threads: must be 0-64\n"
     )
 
 

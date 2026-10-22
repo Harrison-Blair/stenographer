@@ -28,10 +28,11 @@ if TYPE_CHECKING:
 
     from stenographer.lib.platform.command_runner import CommandRunner
 
+MODEL_NAME = "Underdog Bark 3.0 Pro"
 MODEL_DIRNAME = "bark-pro-int8"
 SYSTEM_PYTHON = "/usr/bin/python3"
-#: Measured end-to-end peak on 2026-10-21: 6.91 GiB (7,422,359,945 bytes).
-MIN_FREE_BYTES = 8 * 1024**3
+#: Real end-to-end peaks: 6.91 GiB (7,422,359,945 bytes, 2026-10-21) and 7.52 GiB.
+MIN_FREE_BYTES = 10 * 1024**3
 MANIFEST_SCHEMA = 1
 CONVERTED_FILES = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")
 NOTICE_MODIFICATION = (

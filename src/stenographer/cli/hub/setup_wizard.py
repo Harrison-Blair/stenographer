@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 
 from stenographer.cli.hub.selection import append_line
+from stenographer.lib.transcribe.bark_download import MODEL_NAME
 
 if TYPE_CHECKING:
     from stenographer.cli.hub.setup_state import SetupWizard
@@ -45,8 +46,8 @@ SETUP_STEPS = (
     SetupStep(
         "models",
         "models",
-        "Check cached speech and live models. Downloads need a separate confirmation.",
-        "asr.model",
+        f"Check the cached speech model ({MODEL_NAME}) and the live models. "
+        "Downloads need a separate confirmation.",
     ),
     SetupStep(
         "sounds",

@@ -127,14 +127,7 @@ def test_files_panels_have_board_layout_and_files_sidebar_card(tmp_path):
 
             card = str(app.query_one("#sidebar-card", Static).render())
             assert "engine" in card
-            model = (
-                app._current_config()
-                .asr.model.rsplit("/", 1)[-1]
-                .removeprefix("faster-whisper-")
-                .removesuffix("-ct2")
-            )
-            assert model in card
-            assert app._current_config().asr.compute_type in card
+            assert "engine\nbark-pro-int8\n" in card
             assert "cpu" in card
 
     asyncio.run(exercise())

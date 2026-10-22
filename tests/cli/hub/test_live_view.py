@@ -154,15 +154,12 @@ def test_sidebar_card_is_section_owned_and_live_shows_engine_status():
             sidebar = app.query_one("#sidebar", Static)
             assert card.region.y > sidebar.region.y
             assert card.styles.border.top[0] == "round"
-            assert "int8" not in app.services.session.model_name
-            assert "engine" in str(card.render())
-            assert "medium.en int8" in str(card.render())
-            assert "queue 2" in str(card.render())
+            assert "engine\nmedium.en\nqueue 2" in str(card.render())
             app.set_sidebar_card("Files queue · 3", section="files")
             await pilot.press("2")
             assert "Files queue · 3" in str(card.render())
             await pilot.press("1")
-            assert "medium.en int8" in str(card.render())
+            assert "engine\nmedium.en\n" in str(card.render())
 
     asyncio.run(exercise())
 
@@ -177,7 +174,7 @@ def test_pilot_live_mixed_and_split_views_keep_time_order():
             assert "Speaker 2" in content and "system words" in content
             assert "You" in content and "mic words" in content
             card = str(app.query_one("#sidebar-card", Static).render())
-            assert "medium.en int8" in card
+            assert "engine\nmedium.en\n" in card
             assert "queue 2 · failed 1" in card
             assert app.query_one("#live-elapsed", Digits).value == "00:00:03"
             assert "Default output" in content

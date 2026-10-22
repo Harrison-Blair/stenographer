@@ -379,7 +379,7 @@ def test_cli_module_has_no_heavy_imports():
         "import sys\n"
         "import stenographer.cli.entry as cli\n"
         "cli.build_parser()\n"
-        "heavy = [n for n in ('faster_whisper', 'sounddevice', 'evdev', 'pywayland', 'Xlib')\n"
+        "heavy = [n for n in ('sherpa_onnx', 'sounddevice', 'evdev', 'pywayland', 'Xlib')\n"
         "         if n in sys.modules]\n"
         "print(','.join(heavy))\n"
     )

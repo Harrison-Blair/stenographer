@@ -29,7 +29,6 @@ from stenographer.cli.shared.terminal import (
     restart_service,
 )
 from stenographer.lib.config.constants import (
-    ALLOWED_COMPUTE_TYPES,
     ALLOWED_LOG_LEVELS,
     ALLOWED_REFINE_SCHEMES,
     MAX_REFINE_WORDS,
@@ -65,17 +64,6 @@ def save_defaults(path: pathlib.Path):
     from stenographer.lib.config.document import ConfigDocument
 
     return ConfigDocument.defaults(path).save(Config.defaults())
-
-
-def parse_optional_string(text: str, current: str | None) -> str | None:
-    """Empty retains *current*; the explicit ``clear`` token unsets it."""
-
-    value = text.strip()
-    if not value:
-        return current
-    if value.casefold() == _CLEAR:
-        return None
-    return value
 
 
 def parse_choice(text: str, current: str, choices: Iterable[str]) -> str:
@@ -362,18 +350,6 @@ def quick_tryout_lines(
     return lines
 
 
-def _prompt_string(console: Console, label: str, current: str) -> str:
-    def parse(text: str) -> str:
-        return text.strip() or current
-
-    return str(console.validated(f"{label} [{current}]: ", parse))
-
-
-def _prompt_optional(console: Console, label: str, current: str | None) -> str | None:
-    prompt = f"{label} [{_display_optional(current)}; Enter keeps, '{_CLEAR}' unsets]: "
-    return console.validated(prompt, lambda text: parse_optional_string(text, current))
-
-
 def _prompt_choice(console: Console, label: str, current: str, choices: Sequence[str]) -> str:
     joined = "/".join(choices)
     prompt = f"{label} ({joined}) [{current}]: "
@@ -648,19 +624,6 @@ def _edit_asr(console: Console, config: Config) -> Config:
     console.write("\nASR")
     asr = dataclasses.replace(
         config.asr,
-        model=_prompt_string(console, "Model", config.asr.model),
-        compute_type=_prompt_choice(
-            console, "Compute type", config.asr.compute_type, tuple(sorted(ALLOWED_COMPUTE_TYPES))
-        ),
-        beam_size=int(
-            _prompt_number(console, "Beam size", config.asr.beam_size, 1, 10, integer=True)
-        ),
-        hotwords=_prompt_optional(console, "Hotwords", config.asr.hotwords),
-        initial_prompt=_prompt_optional(console, "Initial prompt", config.asr.initial_prompt),
-        vad_filter=_prompt_bool(console, "VAD filter", config.asr.vad_filter),
-        silence_threshold=float(
-            _prompt_number(console, "Silence threshold", config.asr.silence_threshold, 0.0, 1.0)
-        ),
         idle_unload_seconds=int(
             _prompt_number(
                 console,
@@ -921,7 +884,7 @@ def _guided_setup(
     if not cached:
         console.write(
             "\nThe ASR model Underdog Bark 3.0 Pro is not installed. stenographer builds it on "
-            "this machine (download is approximately 1.6 GB; needs 8 GiB free disk)."
+            "this machine (download is approximately 1.6 GB; needs 10 GiB free disk)."
         )
         if ask_yes_no(console, "Download and convert it now?", default=quick):
             try:

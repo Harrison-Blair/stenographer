@@ -30,6 +30,7 @@ from stenographer.cli.shared.capability_probe import probe
 from stenographer.lib.diagnostics import additional_checks
 from stenographer.lib.diagnostics.additional_checks import DiagnosticCheck
 from stenographer.lib.diagnostics.capabilities import REQUIRED, missing_required
+from stenographer.lib.transcribe.bark_download import MODEL_NAME
 from stenographer.overlay.capabilities.models import OverlayCapability
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
@@ -142,7 +143,7 @@ def render(
     """
     lines = [
         f"config: {config_path}",
-        f"model: {cfg.asr.model}",
+        f"model: {MODEL_NAME}",
         f"hotkey binding: {cfg.hotkey.binding}",
         f"hotkey cancel binding: {cfg.hotkey.cancel_binding or '<disabled>'}",
         "",

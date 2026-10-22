@@ -2,9 +2,7 @@
 """The startup banner: every configured key is reported, and prose is never logged.
 
 The banner is the only record of what the daemon was actually configured with,
-so each of its six lines is asserted field by field. ``asr.hotwords`` and
-``asr.initial_prompt`` are the two keys that can hold arbitrary user prose;
-they must appear only as sizes.
+so each of its six lines is asserted field by field.
 """
 
 from __future__ import annotations
@@ -108,8 +106,8 @@ def test_banner_reports_build_backends_and_every_configured_key(caplog):
     assert f"general_binding={cfg.hotkey.general_binding}" in lines["config_hotkey"]
     assert f"mode={cfg.hotkey.mode}" in lines["config_hotkey"]
     assert f"min_speech_rms={cfg.audio.min_speech_rms}" in lines["config_audio"]
-    assert f"model={cfg.asr.model}" in lines["config_asr"]
-    assert f"beam_size={cfg.asr.beam_size}" in lines["config_asr"]
+    assert "model=bark-pro-int8" in lines["config_asr"]
+    assert f"idle_unload_seconds={cfg.asr.idle_unload_seconds}" in lines["config_asr"]
     assert f"sound_pack={cfg.feedback.sound_pack}" in lines["config_feedback"]
     assert f"log_level={cfg.feedback.log_level}" in lines["config_feedback"]
     assert f"enabled={int(cfg.analytics.enabled)}" in lines["config_analytics"]
@@ -148,24 +146,11 @@ def test_banner_reports_a_calibrated_profile_as_its_own_values(caplog):
     assert "spectrum_floor_dbfs=-61,-60.5" in lines["config_feedback"]
 
 
-def test_banner_reports_user_prose_only_as_sizes(caplog):
-    defaults = Config.defaults()
-    cfg = dataclasses.replace(
-        defaults,
-        asr=dataclasses.replace(
-            defaults.asr,
-            hotwords="Kubernetes stenographer evdev",
-            initial_prompt="A private note about my employer.",
-        ),
-    )
+def test_banner_asr_line_reports_exactly_the_model_and_the_two_asr_keys(caplog):
+    lines = _banner(caplog, Config.defaults(), _capabilities(), _platform(6))
 
-    lines = _banner(caplog, cfg, _capabilities())
-
-    assert "hotwords_words=3" in lines["config_asr"]
-    assert "initial_prompt_chars=33" in lines["config_asr"]
-    for line in lines.values():
-        assert "Kubernetes" not in line
-        assert "employer" not in line
+    fields = [part.partition("=")[0] for part in lines["config_asr"].split()[2:]]
+    assert fields == ["model", "idle_unload_seconds", "cpu_threads", "resolved_cpu_threads"]
 
 
 def test_banner_reports_the_resolved_thread_count_from_the_host_core_count(caplog):

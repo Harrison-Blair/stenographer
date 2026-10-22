@@ -91,7 +91,7 @@ def test_metrics_reject_content_and_invalid_numbers(values):
 
 
 def test_context_rejects_private_fields():
-    for name in ("transcript", "hotwords", "file_path", "prompt", "serial", "credential"):
+    for name in ("transcript", "vocabulary", "file_path", "prompt", "serial", "credential"):
         with pytest.raises(ValueError):
             clean_context({name: "private"})
     assert clean_context({"device": "USB mic", "cpu_threads": 4}) == {

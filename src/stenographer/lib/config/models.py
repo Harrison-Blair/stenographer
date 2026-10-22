@@ -40,13 +40,6 @@ class AudioConfig:
 
 @dataclass(frozen=True)
 class AsrConfig:
-    model: str
-    compute_type: str
-    beam_size: int
-    hotwords: str | None
-    initial_prompt: str | None
-    vad_filter: bool
-    silence_threshold: float
     idle_unload_seconds: int
     cpu_threads: int
 
@@ -120,17 +113,7 @@ class Config:
                 general_binding="KEY_RIGHTALT",
             ),
             audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
-            asr=AsrConfig(
-                model="deepdml/faster-whisper-large-v3-turbo-ct2",
-                compute_type="int8",
-                beam_size=1,
-                hotwords=None,
-                initial_prompt=None,
-                vad_filter=True,
-                silence_threshold=0.6,
-                idle_unload_seconds=900,
-                cpu_threads=0,
-            ),
+            asr=AsrConfig(idle_unload_seconds=900, cpu_threads=0),
             feedback=FeedbackConfig(
                 volume=0.6,
                 mute=False,

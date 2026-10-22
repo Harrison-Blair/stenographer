@@ -50,11 +50,10 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
     forces every question back to the reporter, so this is written before the
     startup gate can refuse — a refused start is exactly when it is wanted.
 
-    ``asr.hotwords`` and ``asr.initial_prompt`` are the only config values that
-    hold arbitrary user prose; they are reported as sizes. Everything else is
-    the user's own settings, which rule 6 does not restrict.
+    Every value is the user's own settings, which rule 6 does not restrict.
     """
     from stenographer._version import __version__
+    from stenographer.lib.transcribe.bark_download import MODEL_DIRNAME
     from stenographer.lib.transcribe.decode import resolve_cpu_threads
 
     version = sys.version_info
@@ -103,13 +102,7 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
         fmt_event(
             "banner",
             "config_asr",
-            model=asr.model,
-            compute_type=asr.compute_type,
-            beam_size=asr.beam_size,
-            hotwords_words=len((asr.hotwords or "").split()),
-            initial_prompt_chars=len(asr.initial_prompt or ""),
-            vad_filter=_shown(asr.vad_filter),
-            silence_threshold=asr.silence_threshold,
+            model=MODEL_DIRNAME,
             idle_unload_seconds=asr.idle_unload_seconds,
             cpu_threads=asr.cpu_threads,
             resolved_cpu_threads=resolve_cpu_threads(asr.cpu_threads, plat.physical_core_count()),
