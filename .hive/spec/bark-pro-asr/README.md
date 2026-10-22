@@ -29,7 +29,7 @@ dictation, `stenographer live` and Files. faster-whisper leaves the project.
    nothing and publishes nothing.
 4. **Download.** `stenographer model download --asr` does these steps in
    order:
-   1. Check free disk space (8 GiB; task A measured a 6.91 GiB peak).
+   1. Check free disk space (10 GiB; real peaks were 6.91 GiB and 7.52 GiB).
    2. Create a temporary venv with the system Python 3.
    3. Install pinned CPU-only torch and pinned transformers, onnx,
       onnxruntime and numpy into it.
@@ -199,11 +199,11 @@ no partial `bark-pro-int8/`.
 - `stenographer model download --asr` installs Pro and also fetches
   `silero_vad.onnx` through the existing live download path.
 - Free space: before the venv, check the filesystem of
-  `<data_dir>/models/asr/`. Require at least 8 GiB free. Task A measured
-  the peak of one real download on this machine: 6.91 GiB (7,422,359,945
-  bytes) for the venv, the BF16 source, the fp32 intermediates and the
-  int8 output (decided 2026-10-21; was 6 GiB). Fail before any network
-  call when it is short.
+  `<data_dir>/models/asr/`. Require at least 10 GiB free. The real peaks
+  of the venv, the BF16 source, the fp32 intermediates and the int8 output
+  were 6.91 GiB (7,422,359,945 bytes, task A) and 7.52 GiB (task 48 raised
+  the floor from 8 GiB; it was 6 GiB before 2026-10-21). Fail before any
+  network call when it is short.
 - Order of failure checks: venv check (decision 14), free space, package
   install, source sha256, converter exit code, output sha256. The venv and
   free-space checks run before any network call. Each failure prints one
