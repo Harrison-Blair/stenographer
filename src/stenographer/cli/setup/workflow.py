@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import os
 import pathlib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, TextIO
@@ -905,29 +906,31 @@ def _guided_setup(
     from stenographer.cli.shared.capability_probe import probe
     from stenographer.lib.diagnostics.capabilities import missing_required
     from stenographer.lib.platform import current_platform
-    from stenographer.lib.transcribe import download as model
+    from stenographer.lib.transcribe import bark_download
     from stenographer.overlay.platform import current_platform as overlay_platform
 
     guidance = current_platform().guidance()
     operational_failure = False
+    data_dir = current_platform().data_dir(os.environ, pathlib.Path.home())
     try:
-        cached = model.is_model_cached(config.asr.model)
+        cached = bark_download.is_model_cached(data_dir)
     except Exception as exc:
         console.error(f"could not inspect the model cache: {exc}")
         cached = False
         operational_failure = True
     if not cached:
         console.write(
-            f"\nModel {config.asr.model} is not cached (download is approximately 1.6 GB)."
+            "\nThe ASR model Underdog Bark 3.0 Pro is not installed. stenographer builds it on "
+            "this machine (download is approximately 1.6 GB; needs 8 GiB free disk)."
         )
-        if ask_yes_no(console, "Download it from the network now?", default=quick):
+        if ask_yes_no(console, "Download and convert it now?", default=quick):
             try:
-                model.download_model(config.asr.model)
+                bark_download.download_bark_pro(data_dir, on_step=console.write)
             except Exception as exc:
                 console.error(f"model download failed: {exc}")
                 operational_failure = True
             else:
-                console.write("Model download complete.")
+                console.write(f"Model download complete. {bark_download.ATTRIBUTION}.")
 
     if config.refine.enabled:
         operational_failure |= _offer_refine_pull(console, config, quick=quick)

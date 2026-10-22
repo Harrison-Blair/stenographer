@@ -31,6 +31,8 @@
 !/src/stenographer/assets/completions/_stenographer
 !/src/stenographer/assets/completions/stenographer.bash
 !/src/stenographer/assets/completions/stenographer.fish
+!/src/stenographer/assets/convert/bark_pro_to_sherpa.py
+!/src/stenographer/assets/convert/constraints.txt
 !/src/stenographer/assets/default_config.toml.in
 !/src/stenographer/assets/fonts/Caveat-OFL.txt
 !/src/stenographer/assets/fonts/Caveat-wght.ttf

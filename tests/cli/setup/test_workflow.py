@@ -1084,7 +1084,7 @@ def guided(monkeypatch):
     from stenographer.lib import platform as platform_module
     from stenographer.lib.diagnostics import capabilities as diagnostics
     from stenographer.lib.refine import client as refine_client
-    from stenographer.lib.transcribe import download
+    from stenographer.lib.transcribe import bark_download
     from stenographer.overlay import platform as overlay_platform_module
 
     events: list[str] = []
@@ -1109,14 +1109,14 @@ def guided(monkeypatch):
         probed = _caps() if caps is None else caps
         used_config = Config.defaults() if config is None else config
 
-        def is_model_cached(name):
-            events.append(f"cache:{name}")
+        def is_model_cached(data_dir):
+            events.append(f"cache:{data_dir}")
             if cache_error is not None:
                 raise cache_error
             return cached
 
-        def download_model(name):
-            events.append(f"download:{name}")
+        def download_bark_pro(data_dir, *, on_step):
+            events.append(f"download:{data_dir}")
             if download_error is not None:
                 raise download_error
 
@@ -1144,6 +1144,9 @@ def guided(monkeypatch):
             def guidance(self):
                 return _GUIDANCE
 
+            def data_dir(self, env, home):
+                return pathlib.Path("/data")
+
             def restart_service(self):
                 events.append("restart")
                 return restart
@@ -1152,8 +1155,8 @@ def guided(monkeypatch):
             def guidance(self):
                 return "overlay-guidance"
 
-        monkeypatch.setattr(download, "is_model_cached", is_model_cached)
-        monkeypatch.setattr(download, "download_model", download_model)
+        monkeypatch.setattr(bark_download, "is_model_cached", is_model_cached)
+        monkeypatch.setattr(bark_download, "download_bark_pro", download_bark_pro)
         monkeypatch.setattr(capability_probe, "probe", probe)
         monkeypatch.setattr(diagnostics, "missing_required", lambda caps: list(missing))
         monkeypatch.setattr(
@@ -1186,7 +1189,7 @@ def test_guided_setup_prints_the_doctor_report_and_succeeds(guided):
     assert code == 0
     assert "== doctor report ==" in stdout
     assert events == [
-        "cache:deepdml/faster-whisper-large-v3-turbo-ct2",
+        "cache:/data",
         "refine-probe:http://127.0.0.1:11434",
         "probe",
     ]
@@ -1197,17 +1200,20 @@ def test_guided_setup_offers_the_download_of_an_uncached_model_and_takes_no_for_
     code, stdout, _, events = guided(cached=False, answers="\n", changed=False)
 
     assert code == 0
-    assert "is not cached (download is approximately 1.6 GB)" in stdout
-    assert "Download it from the network now? [y/N]: " in stdout
-    assert "download:deepdml/faster-whisper-large-v3-turbo-ct2" not in events
+    assert (
+        "is not installed. stenographer builds it on this machine (download is approximately 1.6 GB"
+        in stdout
+    )
+    assert "Download and convert it now? [y/N]: " in stdout
+    assert "download:/data" not in events
 
 
 def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
     code, stdout, _, events = guided(cached=False, answers="\n", changed=False, quick=True)
 
     assert code == 0
-    assert "Download it from the network now? [Y/n]: " in stdout
-    assert "download:deepdml/faster-whisper-large-v3-turbo-ct2" in events
+    assert "Download and convert it now? [Y/n]: " in stdout
+    assert "download:/data" in events
     assert "Model download complete." in stdout
 
 
@@ -1233,7 +1239,7 @@ def test_guided_setup_reports_an_unreadable_model_cache_and_still_offers_the_dow
 
     assert code == 1
     assert stderr == "stenographer: could not inspect the model cache: cache permission denied\n"
-    assert "is not cached" in stdout
+    assert "is not installed" in stdout
 
 
 def test_guided_setup_stops_when_the_capability_probe_itself_fails(guided):
@@ -1323,7 +1329,7 @@ def test_guided_setup_reports_a_failed_refine_pull_as_an_operational_failure(gui
     assert code == 1
     assert stderr == "stenographer: refine model pull failed: boom\n"
     assert events == [
-        "cache:deepdml/faster-whisper-large-v3-turbo-ct2",
+        "cache:/data",
         "refine-probe:http://127.0.0.1:11434",
         "refine-pull:gemma4:e2b",
         "probe",

@@ -176,6 +176,7 @@ def render(
                 "system_capture": "system capture",
                 "live_models_cached": "live models cached",
                 "ffmpeg": "ffmpeg",
+                "python_venv": "python3 venv",
             }.get(check.check_id, check.check_id)
             status = "ok" if check.status == "ok" else "WARN"
             line = f"  {label}: {status} — {check.detail}"

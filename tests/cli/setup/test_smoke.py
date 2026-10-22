@@ -28,7 +28,7 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.diagnostics.capabilities import missing_required
 from stenographer.lib.platform.linux.probe import service_status
-from stenographer.lib.transcribe import download as model
+from stenographer.lib.transcribe import bark_download
 from stenographer.overlay.spectrum.calibration import calibrate_spectrum_profile
 
 pytestmark = pytest.mark.integration
@@ -119,8 +119,8 @@ def test_real_quick_setup_persists_and_runs_guided_checks(tmp_path, monkeypatch)
     if os.environ.get("STENOGRAPHER_QUICK_SETUP_SMOKE") != "1":
         pytest.skip("set STENOGRAPHER_QUICK_SETUP_SMOKE=1 and keep the room quiet")
     defaults = Config.defaults()
-    if not model.is_model_cached(defaults.asr.model):
-        pytest.skip(f"model is not cached: {defaults.asr.model}")
+    if not bark_download.is_model_cached():
+        pytest.skip("the Bark Pro model is not installed")
 
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))

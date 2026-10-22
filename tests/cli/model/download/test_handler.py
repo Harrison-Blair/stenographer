@@ -39,69 +39,94 @@ def test_download_parser_accepts_the_live_model_flag():
     assert parser.parse_args(["download", "--live"]).live is True
 
 
-def test_live_flag_does_not_select_the_legacy_models(monkeypatch, capsys):
+def test_live_flag_does_not_select_the_asr_model(monkeypatch, capsys):
     from stenographer.cli.model.download import handler
-    from stenographer.lib.transcribe import download
+    from stenographer.lib.transcribe import bark_download
 
-    legacy_calls: list[str] = []
+    asr_calls: list[object] = []
     monkeypatch.setattr(handler, "_download_live", lambda: 0)
-    monkeypatch.setattr(download, "download_model", legacy_calls.append)
+    monkeypatch.setattr(bark_download, "download_bark_pro", lambda *a, **kw: asr_calls.append(a))
 
     result = cmd_model_download.__wrapped__(
         argparse.Namespace(live=True, asr=False, refine=False), Config.defaults()
     )
 
     assert result == 0
-    assert legacy_calls == []
+    assert asr_calls == []
     assert capsys.readouterr().out == ""
 
 
-def test_download_fetches_the_configured_model_and_names_it(monkeypatch, capsys):
-    from stenographer.lib.transcribe import download
+@pytest.fixture
+def asr_seams(monkeypatch, tmp_path):
+    """Fake the Bark build and the VAD fetch; record what each one was asked to do."""
+    from stenographer.lib.live import download as live_download
+    from stenographer.lib.transcribe import bark_download
 
-    requested: list[str] = []
-    monkeypatch.setattr(download, "download_model", requested.append)
-    defaults = Config.defaults()
-    cfg = dataclasses.replace(defaults, asr=dataclasses.replace(defaults.asr, model="small.en"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    calls: list[str] = []
+    state = {"built": True, "error": None, "vad": ("silero_vad.onnx",)}
 
-    assert cmd_model_download.__wrapped__(argparse.Namespace(), cfg) == 0
+    def build(data_dir, *, on_step):
+        calls.append(f"bark:{data_dir}")
+        on_step("converting to int8 ONNX (several minutes)")
+        if state["error"] is not None:
+            raise state["error"]
+        return state["built"]
 
-    assert requested == ["small.en"]
-    assert capsys.readouterr().out == "stenographer: downloaded small.en\n"
+    def live(data_dir, *, models):
+        calls.append(f"live:{','.join(m.filename for m in models)}")
+        return state["vad"]
+
+    monkeypatch.setattr(bark_download, "download_bark_pro", build)
+    monkeypatch.setattr(live_download, "download_live_models", live)
+    return calls, state, tmp_path / "stenographer"
 
 
-def test_download_without_model_override_uses_the_new_asr_default(monkeypatch, capsys):
-    from stenographer.lib.transcribe import download
-
-    requested: list[str] = []
-    monkeypatch.setattr(download, "download_model", requested.append)
+def test_asr_builds_bark_pro_prints_the_attribution_and_fetches_only_the_vad(asr_seams, capsys):
+    calls, _, data_dir = asr_seams
 
     result = cmd_model_download.__wrapped__(
         argparse.Namespace(asr=True, refine=False), Config.defaults()
     )
 
     assert result == 0
-    assert requested == ["deepdml/faster-whisper-large-v3-turbo-ct2"]
-    assert capsys.readouterr().out == (
-        "stenographer: downloaded deepdml/faster-whisper-large-v3-turbo-ct2\n"
+    assert calls == [f"bark:{data_dir}", "live:silero_vad.onnx"]
+    out = capsys.readouterr().out
+    assert out == (
+        "stenographer: converting to int8 ONNX (several minutes)\n"
+        f"stenographer: ASR model installed at {data_dir}/models/asr/bark-pro-int8\n"
+        "stenographer: Underdog Bark 3.0 Pro by Conway Research (CC BY 4.0), "
+        "converted to int8 ONNX on this machine\n"
+        "stenographer: VAD model silero_vad.onnx downloaded\n"
     )
 
 
-def test_a_failed_download_is_not_reported_as_a_success(monkeypatch, capsys):
-    from stenographer.lib.transcribe import download
+def test_asr_reports_a_present_model_without_rebuilding_claims(asr_seams, capsys):
+    _, state, _ = asr_seams
+    state["built"], state["vad"] = False, ()
 
-    class UnreachableError(RuntimeError):
-        pass
+    assert cmd_model_download.__wrapped__(argparse.Namespace(), Config.defaults()) == 0
 
-    def fail(model_id):
-        raise UnreachableError("no route to host")
+    out = capsys.readouterr().out
+    assert "ASR model already present at" in out
+    assert "VAD model silero_vad.onnx already present" in out
 
-    monkeypatch.setattr(download, "download_model", fail)
 
-    with pytest.raises(UnreachableError):
-        cmd_model_download.__wrapped__(argparse.Namespace(), Config.defaults())
+def test_a_failed_asr_build_is_not_reported_as_a_success(asr_seams, capsys):
+    from stenographer.lib.transcribe.errors import BarkDownloadError
 
-    assert capsys.readouterr().out == ""
+    calls, state, _ = asr_seams
+    state["error"] = BarkDownloadError("Free-space check failed: free some disk space")
+
+    assert cmd_model_download.__wrapped__(argparse.Namespace(), Config.defaults()) == 1
+
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "stenographer: could not install the ASR model: "
+        "Free-space check failed: free some disk space\n"
+    )
+    assert "installed at" not in captured.out
+    assert [call for call in calls if call.startswith("live")] == []
 
 
 def test_neither_flag_without_a_terminal_keeps_the_historical_asr_only_behavior():
@@ -168,7 +193,8 @@ def test_the_confirmation_states_both_models_their_sizes_and_the_host():
     lines = plan_lines(cfg, asr=True, refine=True, refine_size="about 3.4 GB")
 
     assert lines == [
-        "download the ASR model small.en (about 1.6 GB)",
+        "download and convert the ASR model Underdog Bark 3.0 Pro "
+        "(about 1.6 GB download, 8 GiB free disk while it converts)",
         "download the refine model some:tag (about 3.4 GB) via http://127.0.0.1:11434",
     ]
     assert plan_lines(cfg, asr=True, refine=False, refine_size=None) == lines[:1]
@@ -217,11 +243,11 @@ def test_a_stray_enter_declines_the_combined_offer_instead_of_starting_it(monkey
     confirmation now defaults to declining, not accepting."""
     from stenographer.cli.shared import terminal
     from stenographer.lib.refine import client
-    from stenographer.lib.transcribe import download
+    from stenographer.lib.transcribe import bark_download
 
-    asr_calls: list[str] = []
+    asr_calls: list[object] = []
     refine_calls: list[str] = []
-    monkeypatch.setattr(download, "download_model", asr_calls.append)
+    monkeypatch.setattr(bark_download, "download_bark_pro", lambda *a, **kw: asr_calls.append(a))
     monkeypatch.setattr(client, "pull_model", lambda host, model, **kw: refine_calls.append(model))
     monkeypatch.setattr(client, "installed_model_bytes", lambda host, model: None)
 

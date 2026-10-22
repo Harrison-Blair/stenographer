@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from typing import TextIO
 
     from stenographer.lib.platform.asr_transport import AsrTransport
+    from stenographer.lib.platform.command_runner import CommandRunner
     from stenographer.lib.platform.cue_player import CuePlayer
     from stenographer.lib.platform.ffmpeg_decoder import FfmpegDecoder
     from stenographer.lib.platform.host_guidance import HostGuidance
@@ -142,6 +143,13 @@ class LinuxPlatform(DiagnosticsHostMixin):
         from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
 
         return SubprocessFfmpegDecoder()
+
+    def command_runner(self) -> CommandRunner:
+        from stenographer.lib.platform.linux.subprocess_command_runner import (
+            SubprocessCommandRunner,
+        )
+
+        return SubprocessCommandRunner()
 
     # --- process / lifecycle ---
     def asr_transport(self) -> AsrTransport:
