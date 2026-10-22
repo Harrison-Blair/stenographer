@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import logging
 import pathlib
+import warnings
+from dataclasses import asdict
 
 import pytest
 
@@ -71,6 +74,36 @@ def test_load_uses_the_new_default_when_asr_model_is_unset(tmp_path):
     assert cfg.asr.model == "deepdml/faster-whisper-large-v3-turbo-ct2"
     assert cfg.asr.compute_type == "float16"
     assert cfg.asr.beam_size == 3
+
+
+#: An ASR section as a Whisper-era release wrote it, with every removed key.
+#: ``compute_type = "auto"`` was a valid faster-whisper value the old
+#: validator rejected; a removed key is not validated at all.
+OLD_WHISPER_ASR = """\
+[stenographer.asr]
+model = "Systran/faster-whisper-small"
+compute_type = "auto"          # int8 | int8_float16 | float16 | float32 | default
+beam_size = 5
+hotwords = "Kubernetes, Ada"   # proper nouns
+initial_prompt = "Technical dictation."
+vad_filter = false
+silence_threshold = 0.4        # post-decode no-speech-probability gate
+idle_unload_seconds = 120
+cpu_threads = 4
+"""
+
+
+def test_an_old_whisper_config_loads_without_error_or_warning(tmp_path, caplog):
+    p = tmp_path / "config.toml"
+    p.write_text(OLD_WHISPER_ASR)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cfg = Config.load(p)
+
+    assert asdict(cfg.asr) == {"idle_unload_seconds": 120, "cpu_threads": 4}
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+    assert p.read_text() == OLD_WHISPER_ASR
 
 
 def test_write_default_round_trips(tmp_path):

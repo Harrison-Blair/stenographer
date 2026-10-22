@@ -214,6 +214,34 @@ def test_save_writes_the_reviewed_config_and_keeps_the_previous_bytes(tmp_path):
     assert not list(tmp_path.glob("*.tmp"))
 
 
+def test_save_keeps_removed_whisper_keys_byte_for_byte(tmp_path):
+    # An older release wrote no hotwords or silence_threshold; a save must
+    # neither add removed keys nor touch the ones the user still has.
+    old_asr = (
+        "[stenographer.asr]\n"
+        'model = "deepdml/faster-whisper-large-v3-turbo-ct2"\n'
+        'compute_type = "auto"          # whisper-only value\n'
+        "beam_size = 5\n"
+        "vad_filter = true\n"
+        "idle_unload_seconds = 900      # kill the idle worker child; 0 disables\n"
+        "cpu_threads = 0                # 0 = auto (physical cores, capped at 8)\n"
+    )
+    path = tmp_path / "config.toml"
+    path.write_bytes(old_asr.encode("utf-8"))
+    document = ConfigDocument.load(path)
+    reviewed = replace(document.config, asr=replace(document.config.asr, cpu_threads=4))
+
+    document.save(reviewed)
+
+    expected = old_asr.replace("cpu_threads = 0  ", "cpu_threads = 4  ")
+    saved = path.read_text(encoding="utf-8")
+    assert saved.startswith(expected)
+    assert "[stenographer.asr]" not in saved[len(expected) :]
+    for removed in ("hotwords", "initial_prompt", "silence_threshold"):
+        assert removed not in saved
+    assert Config.load(path) == reviewed
+
+
 def test_save_of_unchanged_bytes_writes_nothing_at_all(tmp_path):
     path = tmp_path / "config.toml"
     Config.write_default(path)
