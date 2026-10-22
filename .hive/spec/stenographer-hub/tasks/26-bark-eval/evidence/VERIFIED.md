@@ -1,91 +1,104 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Independent verification: 26-bark-eval
 
-Date: 2026-10-22. Verifier: `t26-verifier-1`.
-Worker commit: `1259a26`.
+Date: 2026-10-22. Verifier: `t26-verifier-2`.
+Reviewed commit: `e6a9c2a`. Previous verdict: fail at `09d739e`.
 
-## Scope and verdict
+## Verdict
 
-**Fail:** the summary says Clean has “0 filler words in every run”.
-The public-corpus table in report §3a and `raw/analysis.md` both give
-**1 filler word** for each of the three Clean configurations. Restrict the
-summary's zero-filler claim to the private excerpts, or correct its count.
-No production change is needed.
+**Pass within the manager's research-review scope.** The correction restricts
+zero fillers to the private excerpts. All three Clean configurations have
+one filler word on the public corpus and zero on the private excerpts.
+The summary, report §3a, and `raw/analysis.md` now agree.
 
-The manager narrowed verification to one repeated measurement, privacy,
-license attribution, and consistency with `raw/`. I repeated the CPU latency
-comparison. I did not repeat the full workload, GPU measurements, conversion,
-or public-corpus inference. No UI change or production change is present.
-Production test gates and red/green feature tests do not apply to this research
-report.
+The manager authorised a report/raw consistency review and at most one new
+measurement. I repeated Pro's public-corpus CPU micro measurement. I did not
+repeat the full inference workload, GPU runs, export, or third-party vetting.
+The previous verifier independently repeated the Pro/turbo CPU comparison
+(Pro 358 ms; turbo 5,463 ms), and passed privacy and attribution.
 
-| Item | Result | Observation |
+| Verification item | Result | Observation |
 | --- | --- | --- |
-| Repeat one measurement: Pro sherpa int8 versus turbo CPU latency | pass | Same public 2.99 s clip, 8 threads, median of 10 decodes after one warm-up: Pro 358.0 ms; turbo 5,463.5 ms; turbo/Pro 15.3. The CPU advantage repeats. Timing differs from the worker's 291–304 ms and 5,329–5,587 ms; these timings are observations, not fixed performance guarantees. |
-| No committed private audio or transcript text | pass | All 28 files added since base `f5a0fc8` are UTF-8 text. No audio or binary file was added. Reviewed report, evidence notes, raw tables and logs; micro JSON files contain metrics and metadata only. A normalized 10-word overlap scan against all private hypotheses in the eight scratch result files found zero matches in the added files. This scan supplements inspection; it cannot prove absence of every possible short fragment. |
-| License and attribution | pass | Both cached model cards state CC-BY-4.0. Both NOTICE files name Conway Research, NVIDIA and Moondream and retain the earlier modification statement. The cached third-party LICENSE §3(a) supports the report's attribution checklist. Its README states the ONNX/int8 modifications; its NOTICE matches Clean's. Proposed README, site, model documentation and packaged NOTICE placements address attribution. The asset allowlists and wheel inclusion patterns exist. No weights are distributed by this task. |
-| Report claims match raw evidence | fail | Rebuilding the numerical analysis from the eight existing scratch result JSONs reproduced committed `raw/analysis.md` byte for byte. The detailed WER, speed, agreement and timestamp tables agree with that evidence, and the repeated-latency table agrees with the micro JSONs. The summary's unqualified zero-filler claim contradicts the public-corpus counts above. |
-| Research boundaries | pass | Branch changes contain only the task brief and evidence. No download, venv creation, microphone use, model export, or script execution from the velddev repository occurred during verification. Existing model files and environments were used. Scratch assets are preserved for the manager's cleanup after landing. |
+| Corrected Clean filler claim | pass | Independently counted normalized fillers from all eight existing result JSONs: each Clean corpus run has 1; each Clean private run has 0. The public references contain 36. |
+| V1: runtime path | pass | Existing run log and result tables contain both sherpa and transformers paths for both Bark models. Pro's sherpa run repeated successfully using only existing files. Scratch venv is 6.1 GB. The three int8 files total about 655 MB; Pro/Clean sizes differ by 280, 1, and 1 bytes. No new dependency is required for the measured sherpa path. |
+| V2: fit and timestamps | pass | Re-ran the source query below: live and Files use phrase start/end and phrase duration for lines and speaker assignment. Whisper-specific no-speech gating remains in decode and live. Raw timestamp tables support valid word times for all measured runs and the Pro/Clean 10 ms median, 90 ms p90 matched-word offset. Dictation suitability remains an inference pending consented testing. |
+| V3: accuracy, speed and memory | pass | Rebuilt analysis from the eight existing scratch JSONs; output matches committed raw/analysis.md byte for byte. Compared report WER, latency, RSS/VRAM, agreement, word counts and timestamps with raw tables and run log. Compared every repeated-latency row with raw/micro JSONs. One new Pro micro run returned 304 ms for the 2.99 s clip and 593 ms for the 7.99 s clip. |
+| Additional report numerical claims | pass | Independently recomputed the fidelity table, including insertions against empty reference hypotheses: 101/120, 98/120, 120/120 and 105/120 corpus exact counts; corpus WERs 1.53, 2.08, 0.00 and 1.20%; excerpt WERs 12.09, 12.58, 1.15 and 7.28%. Clean/Pro non-filler word-count ratios are 0.9832 on corpus and 0.7958 on excerpts. Clean blanks 8 transformers phrases and 5 sherpa phrases where Pro has at least 3 words. |
+| V4: attribution | pass | Rechecked cached model-card license statements and NOTICE attribution to Conway Research, NVIDIA and Moondream. Clean and velddev NOTICE files are identical. License §3(a) supports the attribution checklist; proposed asset allowlists and wheel include paths exist. Qualification about Adapted Material remains below. |
+| V5: recommendation and integration estimate | pass | Recommendations follow the reported CPU, corpus and content-loss observations. Packaging already collects sherpa_onnx. Hosting, silence gating and Whisper settings are identified as open decisions. The file-count estimate is a planning estimate, not an implementation acceptance result. |
+| Privacy and research boundaries | pass | All 29 changed files from base f5a0fc8 are UTF-8 text under the task brief/evidence paths. No production file or binary was changed. A normalized 10-word overlap scan against private hypotheses in all eight result JSONs found zero matches in committed changes. No private transcript was printed or committed. |
 
-## Repeated measurement commands
+## New measurement
 
-Run from the worktree root. Offline environment flags were added to prevent
-Hub access. These are the committed benchmark runners, without code changes.
-The sherpa and turbo runners use the existing production environment, as the
-report specifies. The analysis uses the existing scratch environment.
+Executed from the worktree root, using the committed runner unchanged:
 
 ```sh
 BENCH_MICRO=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   /home/penguin/source/stenographer/.venv/bin/python -I \
   .hive/spec/stenographer-hub/tasks/26-bark-eval/evidence/bench/run_sherpa.py \
   pro-sherpa-int8-cpu .scratch/models/bark-pro-sherpa 0.25 \
-  .scratch/results/micro/verifier-pro-sherpa.json
+  .scratch/results/micro/verifier2-pro.json
+```
 
-BENCH_MICRO=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
-  /home/penguin/source/stenographer/.venv/bin/python -I \
-  .hive/spec/stenographer-hub/tasks/26-bark-eval/evidence/bench/run_whisper.py \
-  cpu /home/penguin/.cache/huggingface/hub/models--dropbox-dash--faster-whisper-large-v3-turbo/snapshots/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/ \
-  .scratch/results/micro/verifier-turbo.json
+Exit status: 0. sherpa-onnx 1.13.8, CPU, 8 threads, 0.25 s leading padding.
+One warm-up followed by ten decodes per clip; medians:
 
+| Metric | Observation |
+| --- | ---: |
+| Model load | 1.958 s |
+| ami-ES2002a-D-29, 2.99 s | 304.399 ms |
+| libri-clean-1580-141084-0041, 7.99 s | 593.217 ms |
+| Peak RSS | 1,249.293 MiB |
+| Load average start → end | 1.69 → 3.84 |
+
+These observations agree with the report's CPU performance range. Performance
+is not a fixed acceptance threshold.
+
+## Analysis and source checks
+
+```sh
 cd .scratch/results
 ../venv/bin/python -I \
   ../../.hive/spec/stenographer-hub/tasks/26-bark-eval/evidence/bench/analyze.py \
   turbo-ct2-cuda.json turbo-ct2-cpu.json pro-hf-cuda.json pro-hf-cpu.json \
   pro-sherpa-int8-cpu.json clean-hf-cuda.json clean-hf-cpu.json \
-  clean-sherpa-int8-cpu.json > verifier-analysis.md
-cmp verifier-analysis.md \
+  clean-sherpa-int8-cpu.json | cmp - \
   ../../.hive/spec/stenographer-hub/tasks/26-bark-eval/evidence/raw/analysis.md
 ```
 
-Both benchmark commands exited 0. `cmp` exited 0 with no output. The scratch
-Python invocation printed prefix warnings for its relative executable path;
-the analysis completed successfully. An initial environment path probe used
-`../../venv/bin/python --version` from the results directory and failed because
-that path does not exist; the analysis command above used the correct path.
+`cmp` exited 0 with no output. Python printed relative-prefix warnings but
+completed the analysis. No analysis output file was created.
 
-| Observation | Pro sherpa int8 | turbo CPU |
-| --- | ---: | ---: |
-| Model load, s | 2.491 | 3.882 |
-| 2.99 s clip median, ms (`ami-ES2002a-D-29`) | 358.032 | 5,463.495 |
-| 7.99 s clip median, ms (`libri-clean-1580-141084-0041`) | 754.805 | 5,429.123 |
-| Peak RSS, MiB | 1,261.473 | 2,070.586 |
-| Load average, start → end | 5.51 → 7.37 | 6.34 → 9.05 |
+From the worktree root, re-ran V2's source query:
 
-Versions reported by the runners: sherpa-onnx 1.13.8; faster-whisper 1.2.1;
-CTranslate2 4.8.1. Pro uses 0.25 s leading padding. Turbo uses int8, beam 1
-and VAD filtering. The benchmark also measures its standard 8 s clip; this
-is part of the same micro run, not a second inference workload.
+```sh
+git grep -n 'no_speech_prob\|phrase.start\|phrase.end' src/stenographer/lib
+```
 
-No private hypotheses were printed or copied to this evidence. Temporary
-verification outputs were removed after their numerical results and exact
-analysis match were recorded here. Pre-existing `.scratch` data was preserved.
+Files lines 228 and 239–240, and live lines 534 and 542–543, confirm the
+phrase-duration and line-timestamp claims. Decode line 75 and live line 522
+confirm the model-specific silence gate. Also inspected the license statements,
+NOTICE files, LICENSE §3(a), asset inclusion rules and packaging collection.
 
-## Limits and attribution qualification
+## Qualifications and limits
 
-This verdict does not establish statistical significance on the small corpus,
-repeat GPU results, or establish microphone dictation quality. CC-BY-4.0
-§2(a)(4) says that technical format modifications alone do not produce Adapted
-Material. The report calls an ONNX export Adapted Material categorically;
-that classification needs care. Sharing either original or modified weights
-still triggers §3(a), so this qualification does not change its attribution
-checklist. This verification is not legal advice.
+- Report §3a's fidelity table includes insertions for empty references;
+  analyze.py's pooled agreement matrix excludes empty-reference pairs. Both
+  sets reproduce their reported values. These are different aggregation rules.
+- CC-BY-4.0 §2(a)(4) says technical format modifications alone do not produce
+  Adapted Material. The report categorically calls an ONNX export Adapted
+  Material. Retain this qualification when interpreting that sentence.
+  Sharing either original or modified weights still triggers §3(a), so the
+  practical attribution checklist is unchanged. This is not legal advice.
+- The small corpus does not establish statistical significance. Private audio
+  has no reference transcript; agreement does not establish correctness.
+- Historical hardware, model download/401 observations, conversion internals,
+  third-party static vetting and quiet-machine conditions were not recreated.
+  Their report descriptions were reviewed against the available evidence and
+  prior verification; this verdict makes no new live claim about them.
+- No UI or production feature changed. Production gates and feature red/green
+  tests do not apply to this research-only review.
+- No download, new venv, microphone, daemon/settings change or velddev script
+  execution occurred. No pre-existing scratch asset was deleted. The sole
+  new scratch result was removed after recording its metrics here. Existing
+  scratch assets remain for manager-authorised cleanup.
