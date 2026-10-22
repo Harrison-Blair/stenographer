@@ -69,9 +69,11 @@ BARK_PRO_PINS = BarkPins(
         "numpy": "2.5.4",
     },
     constraints_sha256="eb6c43606d3a4e9c6bf68e680633030e22c28928a51ee7b421918f9395d45da7",
-    # Two identical locked conversions on 2026-10-21 (task 32 evidence V7).
+    # Two identical locked conversions on 2026-10-21 (task 32 evidence V7). The encoder
+    # pin is from 2026-10-22, after the converter stopped computing CPU-dependent float32
+    # constants: identical at torch AVX-512, AVX2 and scalar kernel levels, Python 3.14.
     outputs={
-        "encoder.int8.onnx": "f111c3ad95637239021cc25b3166c0b6dbb64ab93854f8e9246d56e38b13a29e",
+        "encoder.int8.onnx": "d7546039a6c229883b5ab560a7a6e42619e984c32efba7303e5e921d4554407a",
         "decoder.int8.onnx": "7c6ce4acf9282c323a5097467699fe2f2863142cff677b84426dc90fde7bd73f",
         "joiner.int8.onnx": "21674f569e8f102d6c5e10c222fabea73cafb171bace666f33bb2a1b4d0067a2",
         "tokens.txt": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",

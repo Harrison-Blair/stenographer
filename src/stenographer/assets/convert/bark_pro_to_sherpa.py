@@ -26,9 +26,11 @@ does not match the vocabulary).
 from __future__ import annotations
 
 import json
+import logging
 import random
 import shutil
 import sys
+from decimal import Decimal, localcontext
 from pathlib import Path
 
 PRO_REPO = "ConwayResearch/Underdog-Bark-3.0-Pro"
@@ -97,6 +99,8 @@ def _convert(src: Path, out: Path) -> int:
     from torch import nn
     from transformers import ParakeetForTDT
 
+    # The quantizer logs one INFO line per graph node, thousands in all, and buries errors.
+    logging.getLogger("onnxruntime.quantization.matmul_nbits_quantizer").setLevel(logging.WARNING)
     random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)
@@ -122,6 +126,29 @@ def _convert(src: Path, out: Path) -> int:
         ).transpose(1, 2)
         return wrapper
 
+    def fold_norm(conv, norm):
+        """Fold eval BatchNorm into the depthwise conv in float64, rounded once to float32.
+
+        The exporter's own fold runs in float32 and rounds differently per CPU and torch
+        build; IEEE float64 mul, div and sqrt give the same bytes on every machine.
+        """
+        scale = norm.weight.double() / torch.sqrt(norm.running_var.double() + norm.eps)
+        bias = 0.0 if conv.bias is None else conv.bias.double()
+        bias = (bias - norm.running_mean.double()) * scale + norm.bias.double()
+        conv.weight = nn.Parameter((conv.weight.double() * scale[:, None, None]).float())
+        conv.bias = nn.Parameter(bias.float())
+        return nn.Identity()
+
+    def exact_inv_freq(size):
+        """transformers' 1 / 10000 ** (i / size) table, correctly rounded to float32.
+
+        transformers computes it with float32 pow, whose last bits vary with the CPU
+        kernel; Decimal power is correctly rounded, so the bytes are the same everywhere.
+        """
+        with localcontext(prec=40):
+            values = [float(1 / Decimal(10000) ** (Decimal(i) / size)) for i in range(0, size, 2)]
+        return torch.tensor(values, dtype=torch.float64).float()
+
     tmp = out / TMP_DIRNAME
     raw, fp32 = tmp / "raw", tmp / "fp32"
     raw.mkdir(parents=True)
@@ -133,6 +160,10 @@ def _convert(src: Path, out: Path) -> int:
     for layer in model.encoder.layers:
         for name in ("pointwise_conv1", "pointwise_conv2"):
             setattr(layer.conv, name, pointwise(getattr(layer.conv, name)))
+        with torch.no_grad():
+            layer.conv.norm = fold_norm(layer.conv.depthwise_conv, layer.conv.norm)
+    positions = model.encoder.encode_positions
+    positions.inv_freq.copy_(exact_inv_freq(2 * positions.inv_freq.numel()))
 
     def encode(audio_signal, length):  # (N, 128, T) f32, (N,) i64
         x = audio_signal.transpose(1, 2)
