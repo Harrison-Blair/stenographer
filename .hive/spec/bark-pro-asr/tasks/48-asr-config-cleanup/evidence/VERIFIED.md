@@ -1,20 +1,21 @@
 # Independent verification — task 48
 
-Code reviewed: `abec65e` on `task/48-asr-config-cleanup`.
+Code reviewed: `a9b18f6` on `task/48-asr-config-cleanup`.
+This verification supersedes the previous failed verdict. All items below were
+run again after the brief and spec accepted the converter-lock exception.
 Base for red runs: `9f77deb`. Platform: Linux, worktree `.venv`, Python 3.14.7.
 
-## Verdict: fail
+## Verdict: pass
 
-Requirement 8 requires zero dependency-grep matches. The exact grep returns:
+The exact dependency grep returns only the exception now named in both the
+brief and the spec:
 
 ```text
 src/stenographer/assets/convert/constraints.txt:14:huggingface_hub==2.2.0
 ```
 
-V8 records a manager-approved exception, but the brief and spec do not name
-that exception. During this verification, the manager confirmed that this
-must be recorded as a failure. The manager will update the brief and assign
-a worker to update the spec's task C gate. No source repair is claimed here.
+The temporary converter environment keeps this pin. The application has no
+remaining dependency on this package.
 
 ## Verification items
 
@@ -23,13 +24,13 @@ a worker to update the spec's task C gate. No source repair is claimed here.
 | V1 / requirement 1: config schema, ranges, template | pass | Reviewed models, validation, constants and template. Only `idle_unload_seconds` and `cpu_threads` remain. Ranges remain 0–86400 and 0–64. Config tests pass; `ALLOWED_COMPUTE_TYPES` grep has no matches. |
 | V2 / requirement 2: old config load and preservation | pass | Both named old-config tests fail against base and pass against task code. A separate save check using an old accepted `compute_type` fails against base because it adds `hotwords`; it passes against task code and preserves the existing ASR bytes except the requested CPU change. |
 | V3 / requirement 3: removed-key surfaces | pass | Reran hub Config, Setup, Doctor, banner, diagnostics, live-session and download-plan tests. Ten surface regressions fail against base and pass against task code. Source grep finds no removed keys. Completion matches are only the unrelated `stats --model` filter. |
-| V4 / requirement 4: dependencies and packaging | pass | `pyproject.toml` drops both application dependencies. Packaging removes the old ONNX collection. No CTranslate2 handling remains. Installed package grep has no matches. The converter lock exception fails V8 separately. |
+| V4 / requirement 4: dependencies and packaging | pass | `pyproject.toml` drops both application dependencies. Packaging removes the old ONNX collection. No CTranslate2 handling remains. Installed package grep has no matches. The converter lock pin is the permitted V8 exception. |
 | V5 / requirement 5: old downloader | pass | Old downloader and its unit test are absent. `transcribe.download` / `transcribe import download` grep finds no remaining caller. |
-| V6 / requirement 6: scripts and retained modules | pass | All named obsolete scripts are absent, including the already-absent transcription benchmark. Retained script tests: 50 passed. Moonshine and `select_clips` import successfully; Moonshine `--help` succeeds. Collection: 2778 tests, no errors. |
+| V6 / requirement 6: scripts and retained modules | pass | All named obsolete scripts are absent, including the already-absent transcription benchmark. Retained script tests: 50 passed. Moonshine and `select_clips` import successfully; Moonshine `--help` succeeds. Running the venv Python through `scripts/../.venv` emitted prefix-path warnings; the import succeeded. Collection: 2778 tests, no errors. |
 | V7 / requirement 7: 10 GiB floor | pass | Threshold and plan regressions fail against base (8 GiB), then pass against task code (10 GiB). Spec Download section and initial download step require 10 GiB; 8 GiB remains only as history. |
-| V8 / requirement 8: zero-match greps | fail | Dependency grep returns the converter lock pin shown above. Removed-key grep over source returns nothing; test source matches occur only in the two old-config regression tests. Binary cache matches also refer to those tests. |
+| V8 / requirement 8: contract greps | pass | Dependency grep returns only the permitted converter lock pin shown above. Removed-key grep over source returns nothing; test source matches occur only in the two old-config regression tests. Binary cache matches also refer to those tests. |
 | V9 / requirement 9: build allowlists | pass | No dedicated allowlist checker is documented. Compared Git rules with Hatch excludes: only the four documented repository-only `.hive/` rules differ. Remaining rules have identical order. No policy changes on branch. No PyInstaller build was run. |
-| V10: repository gate | pass | Ruff check passes; format check reports 813 files formatted; pytest reports 2770 passed, 1 skipped, 7 deselected; CLI help succeeds. Neither named timing flake failed. |
+| V10: repository gate | pass | Ruff check passes; format check reports 814 files formatted; pytest reports 2770 passed, 1 skipped, 7 deselected; CLI help succeeds. Neither named timing flake failed. |
 
 ## Red and green runs
 
@@ -56,13 +57,15 @@ The base no longer has faster-whisper installed, so the diagnostic session
 regression fails with missing `runtime_version`, rather than the worker's
 old version-string difference. The old backend looks up the removed runtime.
 
-Green command, using the task source and full modules containing those tests:
+Green command: `.venv/bin/python -m pytest -q --tb=short` with the same
+14 test node IDs listed above, without the base-source `PYTHONPATH` override.
+Result: **14 passed in 1.79s**. Red: **14 failed in 3.61s**.
 
-```sh
-.venv/bin/pytest -q tests/lib/config/test_models.py tests/lib/config/test_document.py tests/lib/diagnostics/test_collection.py tests/lib/diagnostics/test_session.py tests/cli/doctor/test_report.py tests/cli/hub/test_setup_doctor.py tests/cli/run/test_banner.py tests/cli/setup/test_workflow.py tests/lib/live/test_live_session.py tests/cli/hub/test_config.py tests/lib/transcribe/test_bark_download.py tests/cli/model/download/test_handler.py
-```
-
-Result: **419 passed in 28.29s**.
+The additional save regression used a scratch copy of
+`tests/lib/config/test_document.py`, with only `compute_type = "auto"`
+changed to `compute_type = "int8"`. The base run reached the save and failed
+because it added `hotwords`. The task-code run passed (1 passed in 0.07s).
+No repository test or implementation file was changed.
 
 ## Exact gate rerun
 
@@ -70,9 +73,9 @@ Result: **419 passed in 28.29s**.
 .venv/bin/ruff check .
 All checks passed!
 .venv/bin/ruff format --check .
-813 files already formatted
+814 files already formatted
 .venv/bin/pytest -m "not integration"
-2770 passed, 1 skipped, 7 deselected in 108.62s
+2770 passed, 1 skipped, 7 deselected in 110.94s
 .venv/bin/stenographer --help
 Successful usage output and command list; exit 0.
 ```
@@ -93,6 +96,12 @@ find src -name '*.onnx'
 grep -rn 'silero_vad.onnx' src/
 grep -rn 'transcribe.download\|transcribe import download\|ALLOWED_COMPUTE_TYPES' src/ tests/ scripts/
 ```
+
+Additional reruns: `tests/scripts` reports 50 passed in 0.52s;
+`pytest --collect-only -q` reports 2778 tests in 1.16s. All required deleted
+paths are absent. The allowlist comparison reports 125 Git rules and 121
+Hatch rules, with identical order after the four documented `.hive/` rules
+are excluded. Installed dependency grep has no matches.
 
 No Silero packaging reference or source ONNX file remains. The download handler
 and hub select the pinned `LIVE_MODELS` entry. The daemon opens
