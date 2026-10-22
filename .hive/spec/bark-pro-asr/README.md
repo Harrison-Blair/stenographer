@@ -29,7 +29,7 @@ dictation, `stenographer live` and Files. faster-whisper leaves the project.
    nothing and publishes nothing.
 4. **Download.** `stenographer model download --asr` does these steps in
    order:
-   1. Check free disk space (about 4-5 GB temporary).
+   1. Check free disk space (8 GiB; task A measured a 6.91 GiB peak).
    2. Create a temporary venv with the system Python 3.
    3. Install pinned CPU-only torch and pinned transformers, onnx,
       onnxruntime and numpy into it.
@@ -199,8 +199,11 @@ no partial `bark-pro-int8/`.
 - `stenographer model download --asr` installs Pro and also fetches
   `silero_vad.onnx` through the existing live download path.
 - Free space: before the venv, check the filesystem of
-  `<data_dir>/models/asr/`. Require at least 6 GiB free (4-5 GB temporary
-  plus margin). Fail before any network call when it is short.
+  `<data_dir>/models/asr/`. Require at least 8 GiB free. Task A measured
+  the peak of one real download on this machine: 6.91 GiB (7,422,359,945
+  bytes) for the venv, the BF16 source, the fp32 intermediates and the
+  int8 output (decided 2026-10-21; was 6 GiB). Fail before any network
+  call when it is short.
 - Order of failure checks: venv check (decision 14), free space, package
   install, source sha256, converter exit code, output sha256. The venv and
   free-space checks run before any network call. Each failure prints one
@@ -323,3 +326,8 @@ class AsrConfig:
 - sherpa-onnx on GPU is out of scope (the PyPI wheel is CPU-only).
 - The report measured Pro on public speech and system audio, not on
   microphone dictation.
+- The conversion peaks at 10.2 GiB RSS on this machine. Machines with less
+  RAM may run out of memory during `model download --asr`. There is no RAM
+  check; task D documents the RAM need.
+- Times on this machine (16 threads): the conversion takes about 31 s; the
+  whole `model download --asr` takes 1 min 41 s.
