@@ -55,7 +55,8 @@ a = Analysis(
     # PyInstaller trace its libwayland/libffi shared-library dependencies.
     binaries=[*NATIVE_BINARIES, *TEXTUAL_BINARIES, *SHERPA_BINARIES],
     datas=[
-        # Sound cues plus the overlay quill, Caveat variable font, and OFL.
+        # Sound cues, the overlay quill, Caveat variable font and OFL, and the
+        # Bark Pro converter script and its venv lock (assets/convert/).
         (str(ASSET_SRC), "stenographer/assets"),
         *CERTIFI_DATAS,
         *TEXTUAL_DATAS,

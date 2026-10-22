@@ -1600,6 +1600,7 @@ class HubApp(App[None]):
             "model_cached": "models",
             "live_models_cached": "models",
             "ffmpeg": "models",
+            "python_venv": "models",
             "cue_player": "sounds",
             "system_service": "system_service",
         }

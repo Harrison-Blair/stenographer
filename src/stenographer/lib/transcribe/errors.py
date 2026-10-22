@@ -37,3 +37,9 @@ class WorkerTimeoutError(WorkerError):
 
 class _WorkerTimeoutError(WorkerTimeoutError):
     """An internal phase deadline expired while the child remained alive."""
+
+
+class BarkDownloadError(RuntimeError):
+    """A step of the Bark Pro download, conversion or install failed.
+
+    The message names the step and the fix."""

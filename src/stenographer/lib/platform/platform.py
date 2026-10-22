@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import TextIO
 
+    from stenographer.lib.platform.command_runner import CommandRunner
     from stenographer.lib.platform.ffmpeg_decoder import FfmpegDecoder
 
 
@@ -92,6 +93,10 @@ class Platform(Protocol):
 
     def ffmpeg_decoder(self) -> FfmpegDecoder:
         """Access system ffmpeg and ffprobe for unsupported audio formats."""
+        ...
+
+    def command_runner(self) -> CommandRunner:
+        """Run host commands to completion, for the explicit ASR model build."""
         ...
 
     # --- process / lifecycle ---

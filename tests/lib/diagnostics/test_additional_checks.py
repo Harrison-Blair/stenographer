@@ -81,3 +81,29 @@ def test_system_capture_check_reports_a_failed_default_sink_probe(monkeypatch, t
     assert check.status == "warn"
     assert "default sink" in check.detail.casefold()
     assert check.fix
+
+
+def test_python_venv_check_passes_for_a_python_that_can_make_a_venv():
+    import sys
+
+    check = additional_checks.python_venv_check(sys.executable)
+
+    assert check.check_id == "python_venv"
+    assert check.status == "ok"
+
+
+def test_python_venv_check_warns_with_the_apt_fix_when_venv_would_fail(tmp_path):
+    # A python3 whose stdlib lacks ensurepip, as on Ubuntu without python3-venv.
+    _executable(tmp_path, "python3", "exit 1")
+
+    check = additional_checks.python_venv_check(str(tmp_path / "python3"))
+
+    assert check.status == "warn"
+    assert "model download --asr" in check.detail
+    assert check.fix == "Run `sudo apt install python3-venv`."
+
+
+def test_python_venv_check_is_collected_for_doctor():
+    ids = [check.check_id for check in additional_checks.collect_additional_checks()]
+
+    assert "python_venv" in ids
