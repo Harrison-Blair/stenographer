@@ -9,7 +9,7 @@ import pytest
 
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
-from stenographer.lib.config.models import AnalyticsConfig, Config, DeliveryConfig
+from stenographer.lib.config.models import AnalyticsConfig, Config, DeliveryConfig, LiveConfig
 from stenographer.lib.config.paths import load_or_default
 from stenographer.lib.platform import current_platform
 
@@ -447,3 +447,44 @@ def test_default_template_documents_the_delivery_section(tmp_path):
     assert "[stenographer.delivery]" in text
     assert "restore_delay_ms = 500" in text
     assert Config.load(p).delivery == DeliveryConfig()
+
+
+def test_live_mic_diarization_defaults_off_without_rewriting_old_files(tmp_path):
+    path = tmp_path / "config.toml"
+    content = "[stenographer.feedback]\nmute = true # preserved\n"
+    path.write_text(content)
+
+    cfg = Config.load(path)
+
+    assert cfg.live == LiveConfig(diarize_mic=False)
+    assert Config.defaults().live.diarize_mic is False
+    assert path.read_text() == content
+
+
+def test_live_mic_diarization_loads_from_its_section():
+    cfg = Config.loads("[stenographer.live]\ndiarize_mic = true\n")
+
+    assert cfg.live.diarize_mic is True
+
+
+@pytest.mark.parametrize("line", ['diarize_mic = "yes"', "diarize_mic = 1"])
+def test_invalid_live_settings_raise(line):
+    with pytest.raises(ConfigError) as error:
+        Config.loads(f"[stenographer.live]\n{line}\n")
+    assert error.value.key == "live.diarize_mic"
+
+
+def test_a_scalar_live_section_raises():
+    with pytest.raises(ConfigError) as error:
+        Config.loads("[stenographer]\nlive = 1\n")
+    assert error.value.key == "live"
+
+
+def test_default_template_documents_the_live_section(tmp_path):
+    p = tmp_path / "config.toml"
+    Config.write_default(p)
+    text = p.read_text()
+
+    assert "[stenographer.live]" in text
+    assert "diarize_mic = false" in text
+    assert Config.load(p).live == LiveConfig()

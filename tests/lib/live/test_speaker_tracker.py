@@ -92,7 +92,7 @@ def test_clustering_never_reuses_speaker_numbers():
     ]
 
 
-def _tracker(monkeypatch, embeddings):
+def _tracker(monkeypatch, embeddings, **options):
     vectors = iter(embeddings)
     config_values = {}
     streams = []
@@ -134,7 +134,7 @@ def _tracker(monkeypatch, embeddings):
             SpeakerEmbeddingExtractor=FakeExtractor,
         ),
     )
-    tracker = SpeakerTracker("speaker.onnx", threshold=0.5, num_threads=2)
+    tracker = SpeakerTracker("speaker.onnx", threshold=0.5, num_threads=2, **options)
     return tracker, config_values, streams
 
 
@@ -217,3 +217,30 @@ def test_public_speaker_clips_cluster_with_the_real_model():
 
     assert first == second
     assert third != first
+
+
+def test_clustering_id_prefix_keeps_room_ids_apart_from_system_ids():
+    clustering = SpeakerClustering(threshold=0.5, id_prefix="room")
+
+    assert clustering.assign(np.array([1.0, 0.0], dtype=np.float32)) == "room-1"
+    assert clustering.assign(np.array([0.0, 1.0], dtype=np.float32)) == "room-2"
+
+
+def test_room_tracker_labels_and_renames_room_speakers(monkeypatch):
+    tracker, _, _ = _tracker(
+        monkeypatch,
+        [
+            np.array([1.0, 0.0], dtype=np.float32),
+            np.array([0.0, 1.0], dtype=np.float32),
+        ],
+        label_prefix="Room",
+    )
+    first = tracker.assign(np.array([0.1], dtype=np.float32))
+    second = tracker.assign(np.array([0.2], dtype=np.float32))
+
+    tracker.rename(second, "Dana")
+
+    assert (first, second) == ("room-1", "room-2")
+    assert tracker.speaker_ids == ("room-1", "room-2")
+    assert tracker.label(first) == "Room 1"
+    assert tracker.label(second) == "Dana"

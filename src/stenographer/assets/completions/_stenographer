@@ -29,7 +29,9 @@ _stenographer_impl() {
             _values 'option' '-h[show help]' '--help[show help]' \
                 '--mic[enable microphone capture]' '--no-mic[disable microphone capture]' \
                 '--system[enable system audio capture]' '--no-system[disable system audio capture]' \
-                '--device[select microphone input device]'
+                '--device[select microphone input device]' \
+                '--diarize-mic[label microphone speakers as Room N]' \
+                '--no-diarize-mic[label every microphone line You]'
             ;;
         stats)
             _values 'action or option' summary export delete reset --source --since --until \

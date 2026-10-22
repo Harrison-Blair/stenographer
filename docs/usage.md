@@ -224,6 +224,20 @@ separately with `stenographer model download --asr`. See the
 [live transcription guide](live.md) for source controls, saved files, privacy,
 and limits.
 
+To separate several speakers who share one microphone, turn on microphone
+diarization in the config:
+
+```toml
+[stenographer.live]
+diarize_mic = true   # default false: every microphone line is "You"
+```
+
+Microphone speakers then get labels such as `Room 1` and `Room 2`, separate
+from the system `Speaker N` labels. `stenographer live --diarize-mic` and
+`--no-diarize-mic` override the setting for one session. The hub Live section
+uses the setting. See
+[separate the speakers in a room](live.md#separate-the-speakers-in-a-room).
+
 ## Troubleshoot a running service
 
 Start with the capability report:

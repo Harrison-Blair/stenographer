@@ -1,0 +1,36 @@
+ REC 00:00:00  |  m ON [█████ 12 dBFS]  |  s ON [█████ 0 dBFS]  |  test-model  queue 0  failed phrases 0                  
+                                                                                                                          
+                                                                                                                          
+  00:00:00  Room 1  spoken words                                                                                          
+  00:00:00  Room 2  a phrase                                                                                              
+  00:00:00  Speaker 1  spoken words                                                                                       
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+                                                                                                                          
+ space pause/resume   m mic   s system   r rename   q stop/save · q again skip relabel                                    

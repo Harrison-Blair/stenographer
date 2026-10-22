@@ -40,6 +40,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 _SAMPLE_RATE = 16000
 _STOP = object()
+# Mic and system voices are clustered apart, so their labels never share a number space.
+_LABEL_PREFIXES = {"system": "Speaker", "mic": "Room"}
 
 
 class LiveSession:
@@ -52,6 +54,7 @@ class LiveSession:
         mic: bool = True,
         system: bool = True,
         device: str | int | None = None,
+        diarize_mic: bool = False,
         platform: Platform | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:
@@ -62,13 +65,19 @@ class LiveSession:
         self._started_at = datetime.now(UTC)
         data_dir = self._platform.data_dir(os.environ, Path.home())
         self._writer = SessionWriter.open(data_dir, self._started_at)
+        if diarize_mic:
+            self._writer.mark_mic_diarized()
         model_dir = data_dir / "models" / "live"
         vad_model = model_dir / LIVE_MODELS[0].filename
         speaker_model = model_dir / LIVE_MODELS[1].filename
         self._worker = Worker(cfg.asr, transport=self._platform.asr_transport())
-        self._speaker_tracker = SpeakerTracker(speaker_model)
-        self._speaker_embeddings: list[np.ndarray] = []
-        self._system_line_indices: list[int] = []
+        self._trackers = {"system": SpeakerTracker(speaker_model)}
+        if diarize_mic:
+            self._trackers["mic"] = SpeakerTracker(speaker_model, label_prefix="Room")
+        self._speaker_embeddings: dict[str, list[np.ndarray]] = {
+            source: [] for source in self._trackers
+        }
+        self._speaker_line_indices: dict[str, list[int]] = {source: [] for source in self._trackers}
         self._stop_started = False
         self._stop_complete = False
         self._skip_relabel = threading.Event()
@@ -234,12 +243,10 @@ class LiveSession:
     @property
     def speakers(self) -> tuple[tuple[str, str], ...]:
         with self._lock:
-            clustering = getattr(self._speaker_tracker, "_clustering", None)
-            speaker_ids = getattr(self._speaker_tracker, "speaker_ids", None)
-            if speaker_ids is None:
-                speaker_ids = [speaker.speaker_id for speaker in clustering.speakers]
             return tuple(
-                (speaker_id, self._speaker_tracker.label(speaker_id)) for speaker_id in speaker_ids
+                (speaker_id, tracker.label(speaker_id))
+                for tracker in self._trackers.values()
+                for speaker_id in tracker.speaker_ids
             )
 
     def toggle(self, source: str) -> None:
@@ -285,10 +292,12 @@ class LiveSession:
             log.info(fmt_event("live", "resumed", duration_seconds=round(self.elapsed_seconds, 3)))
 
     def rename(self, speaker_id: str, name: str) -> None:
-        """Rename one system speaker and update its existing transcript lines."""
+        """Rename one system or room speaker and update its existing transcript lines."""
+        source = "mic" if "mic" in self._trackers and speaker_id.startswith("room-") else "system"
+        tracker = self._trackers[source]
         with self._lock:
-            self._speaker_tracker.rename(speaker_id, name)
-            label = self._speaker_tracker.label(speaker_id)
+            tracker.rename(speaker_id, name)
+            label = tracker.label(speaker_id)
             self._lines = [
                 replace(line, label=label) if line.speaker_id == speaker_id else line
                 for line in self._lines
@@ -297,7 +306,7 @@ class LiveSession:
         log.info(fmt_event("live", "speaker_renamed", speaker_id=speaker_id))
 
     def stop(self) -> None:
-        """Stop capture, save the session, and batch-relabel its system phrases."""
+        """Stop capture, save the session, and batch-relabel its speaker phrases."""
         with self._control_lock:
             if self._stop_started:
                 self._skip_relabel.set()
@@ -331,27 +340,42 @@ class LiveSession:
 
     def _relabel_saved_session(self) -> None:
         with self._lock:
-            if not self._system_line_indices:
+            passes = [
+                (
+                    source,
+                    tuple(indices),
+                    tuple(self._lines[index] for index in indices),
+                    tuple(self._speaker_embeddings[source]),
+                )
+                for source, indices in self._speaker_line_indices.items()
+                if indices
+            ]
+            if not passes:
                 return
-            system_lines = tuple(self._lines[index] for index in self._system_line_indices)
-            embeddings = tuple(self._speaker_embeddings)
+            total = sum(len(lines) for _, _, lines, _ in passes)
             self._relabeling = True
-            self._relabel_progress = (0, len(system_lines))
+            self._relabel_progress = (0, total)
 
         try:
-            relabeled = relabel_system_lines(
-                system_lines,
-                embeddings,
-                progress=self._set_relabel_progress,
-                should_cancel=self._skip_relabel.is_set,
-            )
-            if relabeled is None or self._skip_relabel.is_set():
-                with self._lock:
-                    self._relabel_skipped = True
-                return
             revised_lines = list(self.lines)
-            for index, line in zip(self._system_line_indices, relabeled, strict=True):
-                revised_lines[index] = line
+            offset = 0
+            for source, indices, lines, embeddings in passes:
+                relabeled = relabel_system_lines(
+                    lines,
+                    embeddings,
+                    progress=lambda done, _total, offset=offset: self._set_relabel_progress(
+                        offset + done, total
+                    ),
+                    should_cancel=self._skip_relabel.is_set,
+                    label_prefix=_LABEL_PREFIXES[source],
+                )
+                if relabeled is None or self._skip_relabel.is_set():
+                    with self._lock:
+                        self._relabel_skipped = True
+                    return
+                for index, line in zip(indices, relabeled, strict=True):
+                    revised_lines[index] = line
+                offset += len(lines)
             SessionStore(self._writer.path.parent).write_revision(
                 self._writer.path.name,
                 revised_lines,
@@ -523,20 +547,21 @@ class LiveSession:
         ):
             return
         embedding = None
-        if phrase.source == "mic":
+        tracker = self._trackers.get(phrase.source)
+        if tracker is None:
             speaker_id = "you"
             label = "You"
         else:
             with self._lock:
-                embedding = self._speaker_tracker.embed(phrase.samples)
-                speaker_id = self._speaker_tracker.assign_embedding(
+                embedding = tracker.embed(phrase.samples)
+                speaker_id = tracker.assign_embedding(
                     embedding,
                     duration=phrase.end - phrase.start,
                 )
-                label = self._speaker_tracker.label(speaker_id)
+                label = tracker.label(speaker_id)
         with self._lock:
-            if phrase.source == "system":
-                label = self._speaker_tracker.label(speaker_id)
+            if tracker is not None:
+                label = tracker.label(speaker_id)
             wall = (self._writer.started_at + timedelta(seconds=phrase.start)).isoformat()
             line = TranscriptLine(
                 start=phrase.start,
@@ -550,8 +575,8 @@ class LiveSession:
             self._writer.append_line(line)
             self._lines.append(line)
             if embedding is not None:
-                self._system_line_indices.append(len(self._lines) - 1)
-                self._speaker_embeddings.append(embedding.copy())
+                self._speaker_line_indices[phrase.source].append(len(self._lines) - 1)
+                self._speaker_embeddings[phrase.source].append(embedding.copy())
             subscribers = tuple(self._subscribers)
         for subscriber in subscribers:
             try:

@@ -60,6 +60,9 @@ class FakeWriter:
         self.renames.append(dict(labels))
         self._writer.relabel(labels)
 
+    def mark_mic_diarized(self):
+        self._writer.mark_mic_diarized()
+
     def close(self):
         self.closed = True
         self._writer.close()
@@ -226,6 +229,8 @@ def _make_session(
     platform_error=None,
     start=True,
     feedback_floor=-45.0,
+    tracker=None,
+    **session_options,
 ):
     import stenographer.lib.live.live_session as live_session
 
@@ -260,7 +265,7 @@ def _make_session(
     monkeypatch.setattr(live_session, "Worker", WorkerFactory)
     monkeypatch.setattr(live_session, "Recorder", RecorderFactory)
     monkeypatch.setattr(live_session, "PhraseSegmenter", SegmenterFactory)
-    monkeypatch.setattr(live_session, "SpeakerTracker", FakeSpeakerTracker)
+    monkeypatch.setattr(live_session, "SpeakerTracker", tracker or FakeSpeakerTracker)
     platform = FakePlatform(system_capture, tmp_path, platform_error)
     cfg = SimpleNamespace(
         asr=SimpleNamespace(model="test-model"),
@@ -273,6 +278,7 @@ def _make_session(
         system=system,
         platform=platform,
         monotonic=clock or FakeClock(),
+        **session_options,
     )
     if start:
         session.start()
@@ -632,3 +638,205 @@ def test_transcript_line_values_use_the_source_session_clock():
     assert line.start == 1.0
     assert line.source == "system"
     assert line.text == "words"
+
+
+class VoiceSpeakerTracker:
+    """Give each fake phrase value its own voice and number voices per prefix."""
+
+    def __init__(self, *_args, label_prefix="Speaker", **_kwargs):
+        self.prefix = label_prefix
+        self.voices = {}
+        self.names = {}
+
+    @property
+    def speaker_ids(self):
+        return tuple(self.voices.values())
+
+    def embed(self, samples):
+        return np.array([1.0, 0.0] if samples[0] == 1 else [0.0, 1.0], dtype=np.float32)
+
+    def assign_embedding(self, embedding, *, duration=None):
+        key = tuple(float(value) for value in embedding)
+        if key not in self.voices:
+            self.voices[key] = f"{self.prefix.lower()}-{len(self.voices) + 1}"
+        return self.voices[key]
+
+    def label(self, speaker_id):
+        if speaker_id == "you":
+            return "You"
+        number = speaker_id.removeprefix(f"{self.prefix.lower()}-")
+        return self.names.get(speaker_id, f"{self.prefix} {number}")
+
+    def rename(self, speaker_id, name):
+        if speaker_id not in self.voices.values():
+            raise ValueError(f"Unknown speaker ID: {speaker_id}")
+        self.names[speaker_id] = name.strip()
+
+
+def _wait_for_lines(session, count):
+    processed = Event()
+
+    def seen(_line):
+        if len(session.lines) >= count:
+            processed.set()
+
+    session.subscribe(seen)
+    return processed
+
+
+def test_mic_phrases_stay_you_when_mic_diarization_is_off(monkeypatch, tmp_path):
+    session, writer, _worker, _system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, system=False, tracker=VoiceSpeakerTracker
+    )
+    processed = _wait_for_lines(session, 2)
+
+    recorder.emit(1)
+    recorder.emit(4)
+    assert processed.wait(timeout=1)
+    session.stop()
+
+    assert [(line.speaker_id, line.label) for line in writer.lines] == [
+        ("you", "You"),
+        ("you", "You"),
+    ]
+    assert session.speakers == ()
+    assert not (writer.path / "session.json").exists()
+    assert SessionStore(writer.path.parent).read(writer.path.name).diarize_mic is False
+
+
+def test_mic_diarization_labels_room_speakers_apart_from_system_speakers(monkeypatch, tmp_path):
+    session, writer, _worker, system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
+    )
+    processed = _wait_for_lines(session, 3)
+
+    recorder.emit(1)
+    recorder.emit(4)
+    system.emit(1)
+    assert processed.wait(timeout=1)
+
+    assert [(line.source, line.speaker_id, line.label) for line in writer.lines] == [
+        ("mic", "room-1", "Room 1"),
+        ("mic", "room-2", "Room 2"),
+        ("system", "speaker-1", "Speaker 1"),
+    ]
+    assert set(session.speakers) == {
+        ("room-1", "Room 1"),
+        ("room-2", "Room 2"),
+        ("speaker-1", "Speaker 1"),
+    }
+    session.stop()
+    assert SessionStore(writer.path.parent).read(writer.path.name).diarize_mic is True
+
+
+def test_stop_relabels_mic_lines_separately_with_the_room_prefix(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    original_relabel = live_session.relabel_system_lines
+    passes = []
+
+    def record_pass(lines, embeddings, **kwargs):
+        lines = tuple(lines)
+        passes.append(({line.source for line in lines}, kwargs.get("label_prefix", "Speaker")))
+        return original_relabel(lines, embeddings, **kwargs)
+
+    monkeypatch.setattr(live_session, "relabel_system_lines", record_pass)
+    session, writer, _worker, system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
+    )
+    processed = _wait_for_lines(session, 3)
+    recorder.emit(1)
+    recorder.emit(4)
+    system.emit(4)
+    assert processed.wait(timeout=1)
+    session.stop()
+
+    detail = SessionStore(writer.path.parent).read(writer.path.name)
+
+    assert sorted(passes, key=lambda item: item[1]) == [({"mic"}, "Room"), ({"system"}, "Speaker")]
+    assert detail.revision == "transcript.r2.jsonl"
+    # Every fake phrase is shorter than an anchor, so each pass keeps one voice.
+    assert [(line.source, line.speaker_id, line.label) for line in detail.lines] == [
+        ("mic", "room-1", "Room 1"),
+        ("mic", "room-1", "Room 1"),
+        ("system", "speaker-1", "Speaker 1"),
+    ]
+    assert detail.diarize_mic is True
+
+
+def test_stop_relabel_progress_counts_once_across_system_and_mic(monkeypatch, tmp_path):
+    session, _writer, _worker, system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
+    )
+    processed = _wait_for_lines(session, 3)
+    recorder.emit(1)
+    recorder.emit(4)
+    system.emit(1)
+    assert processed.wait(timeout=1)
+    statuses = []
+    record_status = session._set_relabel_progress
+
+    def observe(done, total):
+        record_status(done, total)
+        statuses.append(session.relabel_status)
+
+    session._set_relabel_progress = observe
+    session.stop()
+
+    counts = [tuple(int(part) for part in status.split()[2].split("/")) for status in statuses]
+    assert counts
+    assert {total for _done, total in counts} == {3}
+    assert [done for done, _total in counts] == sorted(done for done, _total in counts)
+    assert counts[-1] == (3, 3)
+
+
+def test_rename_updates_a_room_speaker_and_its_existing_lines(monkeypatch, tmp_path):
+    session, writer, _worker, _system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, system=False, tracker=VoiceSpeakerTracker, diarize_mic=True
+    )
+    processed = _wait_for_lines(session, 2)
+    recorder.emit(1)
+    recorder.emit(4)
+    assert processed.wait(timeout=1)
+
+    session.rename("room-2", "Dana")
+
+    assert [line.label for line in session.lines] == ["Room 1", "Dana"]
+    assert writer.renames == [{"room-2": "Dana"}]
+    assert ("room-2", "Dana") in session.speakers
+    session.stop()
+
+
+def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    started = Event()
+    release = Event()
+
+    def wait_for_skip(lines, embeddings, **kwargs):
+        started.set()
+        release.wait(timeout=1)
+        return None if kwargs["should_cancel"]() else tuple(lines)
+
+    monkeypatch.setattr(live_session, "relabel_system_lines", wait_for_skip)
+    session, writer, _worker, system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
+    )
+    processed = _wait_for_lines(session, 3)
+    recorder.emit(1)
+    recorder.emit(4)
+    system.emit(1)
+    assert processed.wait(timeout=1)
+    stop_thread = Thread(target=session.stop)
+    stop_thread.start()
+    assert started.wait(timeout=1)
+    assert session.relabel_status == "Relabeling speakers 0/3 · q to skip"
+    session.skip_relabel()
+    release.set()
+    stop_thread.join(timeout=1)
+    detail = SessionStore(writer.path.parent).read(writer.path.name)
+
+    assert not stop_thread.is_alive()
+    assert session.relabel_status == "Relabeling skipped"
+    assert detail.revision == "transcript.jsonl"
+    assert [line.label for line in detail.lines] == ["Room 1", "Room 2", "Speaker 1"]

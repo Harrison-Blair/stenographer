@@ -30,3 +30,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--no-system", dest="system", action="store_false", help="Disable system audio capture."
     )
     live.add_argument("--device", metavar="DEV", help="Use DEV as the microphone input device.")
+    live.add_argument(
+        "--diarize-mic",
+        dest="diarize_mic",
+        action="store_true",
+        default=None,
+        help="Label microphone speakers as Room 1, Room 2, ... (default: live.diarize_mic).",
+    )
+    live.add_argument(
+        "--no-diarize-mic",
+        dest="diarize_mic",
+        action="store_false",
+        help="Label every microphone line You.",
+    )

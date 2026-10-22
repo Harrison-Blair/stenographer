@@ -1739,7 +1739,7 @@ class HubApp(App[None]):
             return
         speakers = session.speakers
         if not speakers:
-            self.notify("No system speakers are available to rename.")
+            self.notify("No speakers are available to rename.")
             return
         self.push_screen(
             RenameDialog(speakers),
