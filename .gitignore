@@ -4,10 +4,6 @@
 
 # Ignore everything unless an approved path below allows it.
 *
-!/.hive/
-/.hive/*
-!/.hive/spec/
-!/.hive/spec/**
 
 # Root project metadata and shared guidance.
 !/.gitignore
