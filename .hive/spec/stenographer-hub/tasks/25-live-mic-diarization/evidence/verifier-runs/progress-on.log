@@ -1,9 +1,0 @@
-Relabeling speakers 0/1 · q to skip
-Relabeling speakers 1/1 · q to skip
-Relabeling speakers 0/2 · q to skip
-Relabeling speakers 2/2 · q to skip
-Traceback (most recent call last):
-  File "/home/penguin/source/hive/projects/stenographer/worktrees/25-live-mic-diarization/.hive/spec/stenographer-hub/tasks/25-live-mic-diarization/evidence/check_progress.py", line 39, in <module>
-    assert not any("0/" in status for status in observations[2:]), (
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: Progress resets after the first source is complete
