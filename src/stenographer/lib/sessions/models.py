@@ -17,6 +17,9 @@ class SessionSummary:
     speaker_count: int
     audio_size_bytes: int
     interrupted: bool
+    kind: str = "rec"
+    source_name: str | None = None
+    label_state: str = "live"
 
 
 @dataclass(frozen=True)
