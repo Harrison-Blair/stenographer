@@ -27,8 +27,10 @@ from stenographer.lib.sessions.reader import (
     current_revision,
     list_session_ids,
     read_session,
+    read_transcript,
     session_directory,
     session_metadata,
+    session_started_at,
     source_file_path,
 )
 from stenographer.lib.sessions.session_locks import SessionLocks
@@ -42,6 +44,7 @@ class SessionStore:
 
     def __init__(self, sessions_root: str | Path) -> None:
         self.root = Path(sessions_root).expanduser().resolve(strict=False)
+        self._search_texts: dict[str, tuple[tuple[str, int], tuple[str, ...]]] = {}
 
     def list_sessions(self) -> tuple[SessionSummary, ...]:
         """Return session summaries, newest first."""
@@ -51,6 +54,25 @@ class SessionStore:
             if directory is not None:
                 summaries.append(read_session(directory, session_id, with_activity=False).summary)
         return tuple(summaries)
+
+    def search(self, query: str) -> tuple[str, ...]:
+        """Return the IDs of sessions whose title or current transcript holds the query.
+
+        The match ignores case, and the IDs come newest first. A blank query matches every
+        session. The text of each current revision stays only in memory, keyed by session ID,
+        revision file, and its ``mtime_ns``. An unreadable session is skipped.
+        """
+        session_ids = list_session_ids(self.root)
+        for gone in self._search_texts.keys() - set(session_ids):
+            del self._search_texts[gone]
+        if not query.strip():
+            return tuple(session_ids)
+        needle = query.casefold()
+        return tuple(
+            session_id
+            for session_id in session_ids
+            if any(needle in text for text in self._searchable_texts(session_id))
+        )
 
     def read(self, session_id: str) -> SessionDetail:
         """Read the transcript and derive talk time and FLAC activity on demand."""
@@ -272,6 +294,31 @@ class SessionStore:
             return self.write_revision(
                 session_id, renamed, method="rename", expected_revision=detail.revision
             )
+
+    def _searchable_texts(self, session_id: str) -> tuple[str, ...]:
+        directory = session_directory(self.root, session_id)
+        if directory is None:
+            return ()
+        try:
+            revision, path, _ = current_revision(directory)
+            key = (revision, path.lstat().st_mtime_ns)
+            path.open("rb").close()
+        except OSError:
+            self._search_texts.pop(session_id, None)
+            return ()
+        cached = self._search_texts.get(session_id)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        metadata = session_metadata(directory)
+        if metadata.get("kind") == "file":
+            name = metadata.get("source_name")
+            titles = (name,) if isinstance(name, str) else ()
+        else:
+            titles = (session_id, session_started_at(session_id).strftime("%Y-%m-%d %H:%M"))
+        lines, _ = read_transcript(path)
+        texts = tuple(text.casefold() for text in (*titles, *(line.text for line in lines)))
+        self._search_texts[session_id] = (key, texts)
+        return texts
 
     @staticmethod
     def _next_revision_name(directory: Path) -> str:
