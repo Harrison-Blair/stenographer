@@ -48,7 +48,7 @@ class FakeServices:
         self.files_running = False
 
 
-def test_pilot_navigation_focus_and_recording_lifecycle():
+def test_pilot_shell_navigation_focus_and_recording_lifecycle():
     async def exercise():
         services = FakeServices()
         doctor_report = DoctorReport(
@@ -57,30 +57,30 @@ def test_pilot_navigation_focus_and_recording_lifecycle():
         app = HubApp(services, doctor_probe=lambda _config, _path: doctor_report)
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.current_section == "live"
+            assert app.current_mode == "record"
             assert "Press space to start recording" in "\n".join(
                 "".join(segment.text for segment in strip._segments)
                 for strip in app.screen._compositor.render_strips()
             )
             assert services.actions == []
 
-            for key, section in zip(
-                "23456", ("files", "sessions", "config", "setup", "doctor"), strict=True
-            ):
+            for key, screen in zip("23", ("library", "settings"), strict=True):
                 await pilot.press(key)
-                assert app.current_section == section
-                if section == "doctor":
-                    await pilot.pause()
+                assert app.current_mode == screen
+            for key in "456":
+                await pilot.press(key)
+                assert app.current_mode == "settings"
+            await pilot.pause()
 
-            doctor_row = str(app.query_one("#sidebar", Static).render()).splitlines()[-1]
-            assert "Doctor" in doctor_row and doctor_row.endswith("0W 0F")
+            settings_row = str(app.screen.query_one("#sidebar", Static).render()).splitlines()[-1]
+            assert settings_row.split() == ["▶", "3", "Settings"]
 
             search = Input(id="test-input")
-            await app.mount(search)
+            await app.screen.mount(search)
             search.focus()
             await pilot.press("2")
             assert search.value == "2"
-            assert app.current_section == "doctor"
+            assert app.current_mode == "settings"
 
             search.blur()
             await pilot.press("1")
@@ -89,9 +89,9 @@ def test_pilot_navigation_focus_and_recording_lifecycle():
             assert services.recording
 
             services.files_running = True
-            await pilot.press("4")
             await pilot.press("3")
-            assert app.current_section == "sessions"
+            await pilot.press("2")
+            assert app.current_mode == "library"
             assert services.actions == ["start-recording"]
             assert services.recording
             assert services.files_running
@@ -106,7 +106,10 @@ def test_pilot_quit_asks_before_saving_a_recording():
         app = HubApp(services)
         async with app.run_test() as pilot:
             await pilot.press("ctrl+c")
-            assert "recording" in str(app.screen.query_one("#quit-prompt", Static).render()).lower()
+            prompt = str(app.screen.query_one("#quit-prompt", Static).render())
+            assert prompt == "Stop recording and save before quitting?"
+            assert str(app.screen.query_one("#cancel-quit").label) == "[n] Keep recording"
+            assert str(app.screen.query_one("#confirm-quit").label) == "[y] Save and quit"
             await pilot.click("#cancel-quit")
             assert services.actions == []
             assert services.recording
@@ -130,10 +133,10 @@ def test_pilot_slow_recording_start_keeps_hub_responsive():
             try:
                 assert await asyncio.to_thread(services.start_entered.wait, 1)
                 await asyncio.sleep(0.05)
-                content = str(app.query_one("#section-content", Static).render())
+                content = str(app.record_screen.query_one("#section-content", Static).render())
                 assert "Starting recording..." in content
                 await pilot.press("2")
-                assert app.current_section == "files"
+                assert app.current_mode == "library"
             finally:
                 services.start_release.set()
                 await start_task
@@ -178,7 +181,7 @@ def test_pilot_app_shutdown_during_lifecycle_work_does_not_fail_refresh():
             async with app.run_test() as pilot:
                 await pilot.pause()
                 hub_screen = app.screen
-                worker = asyncio.create_task(app._start_recording())
+                worker = asyncio.create_task(app.record_screen.start_recording())
                 assert await asyncio.to_thread(services.start_entered.wait, 1)
                 app.exit()
             assert not app.is_mounted(hub_screen)
@@ -204,10 +207,10 @@ def test_pilot_slow_recording_save_keeps_hub_responsive():
             try:
                 assert await asyncio.to_thread(services.stop_entered.wait, 1)
                 await asyncio.sleep(0.05)
-                content = str(app.query_one("#section-content", Static).render())
+                content = str(app.record_screen.query_one("#section-content", Static).render())
                 assert "Saving recording..." in content
-                await pilot.press("3")
-                assert app.current_section == "sessions"
+                await pilot.press("2")
+                assert app.current_mode == "library"
             finally:
                 services.stop_release.set()
                 await confirm_task
@@ -228,10 +231,10 @@ def test_pilot_slow_files_cancel_keeps_hub_responsive():
             try:
                 assert await asyncio.to_thread(services.cancel_entered.wait, 1)
                 await asyncio.sleep(0.05)
-                content = str(app.query_one("#section-content", Static).render())
+                content = str(app.record_screen.query_one("#section-content", Static).render())
                 assert "Canceling Files job..." in content
-                await pilot.press("4")
-                assert app.current_section == "config"
+                await pilot.press("3")
+                assert app.current_mode == "settings"
             finally:
                 services.cancel_release.set()
                 await cancel_task

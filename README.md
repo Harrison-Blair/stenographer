@@ -166,18 +166,18 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 ## Common commands
 
 - `stenographer` — open the terminal hub when stdin and stdout are terminals;
-  otherwise show help. Live shows REC, MIC, and SYSTEM panels plus a sidebar
-  card with the engine, queue, and CPU use. Config shows a group selector
-  beside compact key/value rows and selected-setting details. The sidebar
-  shows the config path and unsaved-change count.
-  Press `space` to start; use `v` for mixed or split transcripts, and `m` or
-  `s` to toggle audio sources. Scroll Live with `up`/`down`, `pageup`/`pagedown`,
-  `home`/`end`, or the mouse wheel; the view follows new lines at the bottom.
-  Press `2` for Files;
-  the browser opens in your saved Live recordings, so queue files there and use
-  `x` to cancel a selected job. Sessions
-  shows storage use in the sidebar and separates the session list from its
-  detail. See the [terminal hub guide](docs/hub.md) for all sections, controls,
+  otherwise show help. The hub has three screens: press `1` for Record, `2`
+  for Library, and `3` for Settings, and `?` for the keys of each screen. A
+  sidebar on each screen shows navigation badges, an engine card with the
+  model state and CPU and memory use, and one context card.
+  On Record, press `space` to start; use `v` for mixed or split transcripts,
+  and `m` or `s` to toggle audio sources. Scroll with `up`/`down`,
+  `pageup`/`pagedown`, `home`/`end`, or the mouse wheel; the view follows new
+  lines at the bottom. Library lists saved sessions; press `n` there to open
+  Files, whose browser opens in your saved recordings, so queue files there
+  and use `x` to cancel a selected job. Settings has the General, Audio,
+  Recognition, Live, and Checks tabs; Checks runs the system checks and setup
+  tests. See the [terminal hub guide](docs/hub.md) for all screens, controls,
   and file formats.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
@@ -215,8 +215,8 @@ The only automatic network request that leaves your machine is an optional,
 metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
 
-The [terminal hub](docs/hub.md) includes Live, Files, Sessions, Config, Setup,
-and Doctor. Recording starts only when you press `space`; changing sections
+The [terminal hub](docs/hub.md) has three screens: Record, Library, and
+Settings. Recording starts only when you press `space`; changing screens
 does not stop a recording. Files jobs run in the background, one at a time.
 
 A [refine](docs/refine.md) pass, on by default, provides exactly two built-in

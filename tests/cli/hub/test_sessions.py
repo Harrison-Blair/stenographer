@@ -79,15 +79,15 @@ def test_sessions_list_and_detail_show_storage_activity_and_transcript(tmp_path)
 
     async def exercise():
         async with app.run_test() as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
 
-            storage = app.query_one("#sidebar-card", Static).render().plain
-            listing = app.query_one("#sessions-list", Static).render().plain
-            detail = app.query_one("#sessions-detail", Static).render()
-            transcript = app.query_one("#sessions-transcript", Static).render()
-            assert "storage" in storage
-            assert "2 sessions" in storage
+            storage = app.screen.query_one("#sidebar-card", Static).render().plain
+            listing = app.screen.query_one("#sessions-list", Static).render().plain
+            detail = app.screen.query_one("#sessions-detail", Static).render()
+            transcript = app.screen.query_one("#sessions-transcript", Static).render()
+            assert app.screen.query_one("#sidebar-context").border_title == "storage"
+            assert "2 entries" in storage
             assert "audio" in storage
             audio_bytes = sum(path.stat().st_size for path in sessions_root.glob("*/*.flac"))
             assert f"{audio_bytes:.1f} B" in storage
@@ -95,7 +95,7 @@ def test_sessions_list_and_detail_show_storage_activity_and_transcript(tmp_path)
             assert "2026-10-20 00:28" in listing
             assert "0:03  2 spk" in listing
             assert "! int." in listing
-            list_widget = app.query_one("#sessions-list", Static).render()
+            list_widget = app.screen.query_one("#sessions-list", Static).render()
             selected_offset = list_widget.plain.index("▶")
             selected_style = next(
                 span.style.rich_style
@@ -106,7 +106,10 @@ def test_sessions_list_and_detail_show_storage_activity_and_transcript(tmp_path)
             assert selected_style.color is not None
             assert selected_style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
             assert selected_style.bgcolor is None or selected_style.bgcolor.is_default
-            assert app.query_one("#sessions-detail-labels", Static).render().plain == "labels: live"
+            assert (
+                app.screen.query_one("#sessions-detail-labels", Static).render().plain
+                == "labels: live"
+            )
             assert "Speaker 1 0:01" in detail.plain and "You 0:01" in detail.plain
             assert "mic" in detail.plain and "sys" in detail.plain
             assert "first fixture line" in transcript.plain
@@ -120,11 +123,11 @@ def test_sessions_list_and_detail_show_storage_activity_and_transcript(tmp_path)
 
             await pilot.press("down")
             await pilot.pause(0.1)
-            assert app.sessions_panel.selected_session_id == older.name
-            assert "sys  no audio" in str(app.query_one("#sessions-detail", Static).render())
+            assert app.library_screen.sessions_panel.selected_session_id == older.name
+            assert "sys  no audio" in str(app.screen.query_one("#sessions-detail", Static).render())
             await pilot.press("up")
             await pilot.pause(0.1)
-            assert app.sessions_panel.selected_session_id == latest.name
+            assert app.library_screen.sessions_panel.selected_session_id == latest.name
 
     asyncio.run(exercise())
     assert latest.is_dir()
@@ -135,31 +138,33 @@ def test_sessions_panels_render_borders_and_board_proportions(tmp_path):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
 
-            listing = app.query_one("#sessions-list-scroll")
-            detail = app.query_one("#sessions-detail-scroll")
+            listing = app.screen.query_one("#sessions-list-scroll")
+            detail = app.screen.query_one("#sessions-detail-scroll")
             assert listing.styles.border.top[0] == "round"
             assert detail.styles.border.top[0] == "round"
             assert listing.region.x < detail.region.x
             assert listing.region.width < detail.region.width
             assert listing.region.y == detail.region.y
             assert listing.region.height == detail.region.height
-            assert "storage" in app.query_one("#sidebar-card", Static).render().plain
+            assert app.screen.query_one("#sidebar-context").border_title == "storage"
             assert (
-                app.query_one("#sidebar-card", Static).region.x
-                == app.query_one("#sidebar", Static).region.x
+                app.screen.query_one("#sidebar-card", Static).region.x
+                == app.screen.query_one("#sidebar", Static).region.x
             )
             assert (
-                app.query_one("#sidebar-card", Static).region.y
-                > app.query_one("#sidebar", Static).region.y
+                app.screen.query_one("#sidebar-card", Static).region.y
+                > app.screen.query_one("#sidebar", Static).region.y
             )
             assert listing.border_title == "saved"
             assert detail.border_title == ""
-            assert app.query_one("#sessions-detail-title", Static).render().plain == "session"
-            assert not list(app.query("#sessions-storage"))
-            hints = app.query_one("#key-hints", Static).render().plain
+            assert (
+                app.screen.query_one("#sessions-detail-title", Static).render().plain == "session"
+            )
+            assert not list(app.screen.query("#sessions-storage"))
+            hints = app.screen.query_one("#key-hints", Static).render().plain
             for hint in (
                 "p play",
                 "d re-diarize",
@@ -185,10 +190,10 @@ def test_interrupted_session_marker_stays_on_one_line_at_board_size(tmp_path):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
-            listing = app.query_one("#sessions-list", Static)
-            row_count = len(app.sessions_panel.summaries)
+            listing = app.screen.query_one("#sessions-list", Static)
+            row_count = len(app.library_screen.sessions_panel.summaries)
             assert listing.region.height == row_count
 
             await pilot.press("down")
@@ -207,11 +212,11 @@ def test_active_recording_is_not_listed_as_a_saved_session(tmp_path):
 
     async def exercise():
         async with app.run_test() as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
-            storage = app.query_one("#sidebar-card", Static).render().plain
-            listing = app.query_one("#sessions-list", Static).render().plain
-            assert "0 sessions" in storage
+            storage = app.screen.query_one("#sidebar-card", Static).render().plain
+            listing = app.screen.query_one("#sessions-list", Static).render().plain
+            assert "0 entries" in storage
             assert listing == "No saved sessions."
 
     asyncio.run(exercise())
@@ -228,7 +233,7 @@ def test_session_playback_toggles_and_jobs_run_without_blocking_navigation(tmp_p
 
     async def exercise():
         async with app.run_test() as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
             await pilot.press("p", "p")
             assert services.actions[:2] == [
@@ -239,16 +244,16 @@ def test_session_playback_toggles_and_jobs_run_without_blocking_navigation(tmp_p
             await pilot.press("d")
             await pilot.pause(0.05)
             assert services.job_started.is_set()
-            assert "Re-diarizing" in str(app.query_one("#sessions-detail", Static).render())
+            assert "Re-diarizing" in str(app.screen.query_one("#sessions-detail", Static).render())
             await pilot.press("1")
-            assert app.current_section == "live"
+            assert app.current_mode == "record"
             services.release_job.set()
-            await pilot.press("3")
+            await pilot.press("2")
             for _ in range(20):
                 await pilot.pause(0.02)
-                if app._session_job_status is None:
+                if app.library_screen.job_status is None:
                     break
-            assert app._session_job_status is None
+            assert app.library_screen.job_status is None
             assert services.session_store.read(session.name).revision == "transcript.r2.jsonl"
 
             services.job_started.clear()
@@ -259,9 +264,9 @@ def test_session_playback_toggles_and_jobs_run_without_blocking_navigation(tmp_p
             services.release_job.set()
             for _ in range(20):
                 await pilot.pause(0.02)
-                if app._session_job_status is None:
+                if app.library_screen.job_status is None:
                     break
-            assert app._session_job_status is None
+            assert app.library_screen.job_status is None
             detail = services.session_store.read(session.name)
             assert detail.revision == "transcript.r3.jsonl"
             assert services.actions[-2:] == [
@@ -282,11 +287,11 @@ def test_sessions_transcript_rule_fills_detail_width_on_first_layout(tmp_path):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
 
-            detail_panel = app.query_one("#sessions-detail-scroll")
-            rule = app.query_one("#sessions-detail-rule", Rule)
+            detail_panel = app.screen.query_one("#sessions-detail-scroll")
+            rule = app.screen.query_one("#sessions-detail-rule", Rule)
             assert rule.region.width == detail_panel.content_region.width - 2
             assert rule.region.width > 1
 
@@ -298,14 +303,14 @@ def test_sessions_border_titles_use_default_foreground_and_bold(tmp_path):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
 
             for panel_id in ("#sessions-list-scroll", "#sessions-detail-scroll"):
-                styles = app.query_one(panel_id).styles
+                styles = app.screen.query_one(panel_id).styles
                 assert styles.border_title_color.css == "ansi_default"
                 assert styles.border_title_style.bold
-            title_styles = app.query_one("#sessions-detail-title", Static).styles
+            title_styles = app.screen.query_one("#sessions-detail-title", Static).styles
             assert title_styles.color.css == "ansi_default"
             assert title_styles.text_style.bold
 
@@ -319,12 +324,12 @@ def test_session_label_status_is_right_aligned_on_the_title_row(tmp_path):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
 
-            title = app.query_one("#sessions-detail-title", Static)
-            labels = app.query_one("#sessions-detail-labels", Static)
-            assert title.render().plain == app.sessions_panel.selected_session_id
+            title = app.screen.query_one("#sessions-detail-title", Static)
+            labels = app.screen.query_one("#sessions-detail-labels", Static)
+            assert title.render().plain == app.library_screen.sessions_panel.selected_session_id
             assert labels.render().plain == "labels: live"
             assert title.region.y == labels.region.y
             assert labels.styles.text_align == "right"
@@ -339,11 +344,11 @@ def test_sessions_transcript_rows_render_after_rule_with_synthetic_text(tmp_path
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
 
-            rule = app.query_one("#sessions-detail-rule", Rule)
-            transcript = app.query_one("#sessions-transcript", Static)
+            rule = app.screen.query_one("#sessions-detail-rule", Rule)
+            transcript = app.screen.query_one("#sessions-transcript", Static)
             assert rule.region.y < transcript.region.y
             rendered = transcript.render()
             assert "00:00:01" in rendered.plain
@@ -371,7 +376,7 @@ def test_session_rename_export_and_delete_use_confirmed_session(tmp_path):
 
     async def exercise():
         async with app.run_test() as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.pause(0.1)
             await pilot.press("r")
             speaker_id = app.screen.query_one("#config-prompt-input")
@@ -379,9 +384,9 @@ def test_session_rename_export_and_delete_use_confirmed_session(tmp_path):
             await pilot.press("enter")
             await pilot.press("ctrl+a", "ctrl+k", *tuple("Alice"), "enter")
             await pilot.pause(0.1)
-            renamed_detail = app.query_one("#sessions-detail", Static).render().plain
+            renamed_detail = app.screen.query_one("#sessions-detail", Static).render().plain
             assert "Alice" in renamed_detail
-            assert app.query_one("#sessions-detail-labels", Static).render().plain == (
+            assert app.screen.query_one("#sessions-detail-labels", Static).render().plain == (
                 "labels: re-labelled at stop"
             )
 

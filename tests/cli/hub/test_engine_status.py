@@ -389,7 +389,7 @@ def test_engine_reads_the_files_engine_that_hub_services_create(tmp_path):
     assert services.files_engine is None
 
 
-def test_engine_sampler_feeds_the_hub_cpu_sidebar_line(tmp_path):
+def test_engine_sampler_feeds_the_sidebar_engine_card(tmp_path):
     import asyncio
 
     from textual.widgets import Static
@@ -412,15 +412,15 @@ def test_engine_sampler_feeds_the_hub_cpu_sidebar_line(tmp_path):
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("2")
             await pilot.pause()
-            card = str(app.query_one("#sidebar-card", Static).render())
-            assert "cpu ▕········▏ —" in card
+            gauge = app.screen.query_one("#engine-cpu-all", Static)
+            assert str(gauge.render()) == "    all      — ▕········▏"
 
             # 1000 jiffies pass, 250 of them idle: 75 % busy.
             clock.now += 1.0
             proc.system(2_000, 750)
-            app._sample_cpu()
+            app._sample_engine()
             await pilot.pause()
-            card = str(app.query_one("#sidebar-card", Static).render())
-            assert "cpu ▕██████··▏ 75%" in card
+            gauge = app.screen.query_one("#engine-cpu-all", Static)
+            assert str(gauge.render()) == "    all    75% ▕██████··▏"
 
     asyncio.run(exercise())

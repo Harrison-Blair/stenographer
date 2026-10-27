@@ -10,6 +10,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from stenographer.cli.hub.widgets.button import HubButton
+
 
 class QuitConfirm(ModalScreen[bool]):
     """Ask before the hub stops work and exits."""
@@ -46,16 +48,20 @@ class QuitConfirm(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, confirm: str = "Confirm", cancel: str = "Cancel") -> None:
         super().__init__()
         self._message = message
+        self._confirm = confirm
+        self._cancel = cancel
 
     def compose(self) -> ComposeResult:
         with Vertical(id="quit-dialog"):
             yield Static(self._message, id="quit-prompt", markup=False)
             with Horizontal(id="quit-buttons"):
-                yield Button("Confirm", id="confirm-quit", variant="error")
-                yield Button("Cancel", id="cancel-quit")
+                yield Button(HubButton.label_text(self._cancel, "n"), id="cancel-quit")
+                yield Button(
+                    HubButton.label_text(self._confirm, "y"), id="confirm-quit", variant="error"
+                )
 
     def on_mount(self) -> None:
         self.query_one("#cancel-quit", Button).focus()

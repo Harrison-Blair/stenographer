@@ -82,7 +82,7 @@ def _write_audio(path: Path, seconds: int = 2) -> None:
 
 
 def _panel_text(app: HubApp) -> str:
-    return app.files_panel.display_text()
+    return app.library_screen.files_panel.display_text()
 
 
 async def _wait_for(pilot, predicate) -> None:
@@ -93,21 +93,21 @@ async def _wait_for(pilot, predicate) -> None:
     assert predicate()
 
 
-def test_files_panels_have_board_layout_and_files_sidebar_card(tmp_path):
+def test_files_panels_have_board_layout_and_the_engine_card(tmp_path):
     _write_audio(tmp_path / "standup.wav")
     app = HubApp(FakeServices(tmp_path / "exports"), files_home=tmp_path)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("2")
+            await pilot.press("2", "n")
             await pilot.pause()
 
-            browser = app.query_one("#files-browser-scroll", Vertical)
-            options = app.query_one("#files-options-scroll", VerticalScroll)
-            queue = app.query_one("#files-queue-scroll", VerticalScroll)
-            preview = app.query_one("#files-preview-scroll", VerticalScroll)
-            main = app.query_one("#files-main")
-            right = app.query_one("#files-right")
+            browser = app.screen.query_one("#files-browser-scroll", Vertical)
+            options = app.screen.query_one("#files-options-scroll", VerticalScroll)
+            queue = app.screen.query_one("#files-queue-scroll", VerticalScroll)
+            preview = app.screen.query_one("#files-preview-scroll", VerticalScroll)
+            main = app.screen.query_one("#files-main")
+            right = app.screen.query_one("#files-right")
 
             for panel in (browser, options, queue, preview):
                 assert panel.styles.border.top[0] == "round"
@@ -117,12 +117,14 @@ def test_files_panels_have_board_layout_and_files_sidebar_card(tmp_path):
             assert abs(browser.region.width - right.region.width) <= 1
             assert abs(options.region.height - queue.region.height) <= 1
             assert main.region.height > preview.region.height
-            assert abs(main.region.height * 2 - preview.region.height * 3) <= 3
+            # A 3:2 split of the column, within the one row that layout rounding takes.
+            column = main.region.height + preview.region.height
+            assert abs(main.region.height - column * 3 / 5) < 1
 
-            card = str(app.query_one("#sidebar-card", Static).render())
-            assert "engine" in card
-            assert "engine\nbark-pro-int8\n" in card
-            assert "cpu" in card
+            assert app.library_screen.files_open
+            assert not app.library_screen.sessions_panel.display
+            model = app.screen.query_one("#engine-model", Static).render()
+            assert str(model) == "bark-pro-int8"
 
     asyncio.run(exercise())
 
@@ -141,8 +143,8 @@ def test_files_panel_titles_use_terminal_foreground_and_bold(tmp_path, panel_id)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("2")
-            panel = app.query_one(panel_id)
+            await pilot.press("2", "n")
+            panel = app.screen.query_one(panel_id)
             assert panel.styles.border_title_color.ansi == -1
             assert panel.styles.border_title_style.bold
 
@@ -155,12 +157,12 @@ def test_files_browser_hint_is_pinned_to_panel_bottom(tmp_path):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("2")
+            await pilot.press("2", "n")
             await pilot.pause()
 
-            panel = app.query_one("#files-browser-scroll")
-            hint = app.query_one("#files-browser-hint", Static)
-            rows = app.query_one("#files-browser", Static)
+            panel = app.screen.query_one("#files-browser-scroll")
+            hint = app.screen.query_one("#files-browser-hint", Static)
+            rows = app.screen.query_one("#files-browser", Static)
 
             assert panel.styles.border.top[0] == "round"
             assert hint.render().plain == "/ search · enter queue · space select"
@@ -177,8 +179,8 @@ def test_files_browser_title_tracks_current_directory(tmp_path):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("2", "enter")
-            browser = app.query_one("#files-browser-scroll", Vertical)
+            await pilot.press("2", "n", "enter")
+            browser = app.screen.query_one("#files-browser-scroll", Vertical)
             assert browser.border_title == "~/Recordings"
 
     asyncio.run(exercise())
@@ -204,13 +206,13 @@ def test_files_browser_starts_in_recordings_folder(tmp_path, monkeypatch):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("2")
-            assert app.files_panel.directory == sessions
+            await pilot.press("2", "n")
+            assert app.library_screen.files_panel.directory == sessions
             assert "20261021T120000Z/" in _panel_text(app)
-            browser = app.query_one("#files-browser-scroll", Vertical)
+            browser = app.screen.query_one("#files-browser-scroll", Vertical)
             assert browser.border_title == str(sessions)
             await pilot.press("up", "enter")
-            assert app.files_panel.directory == sessions.parent
+            assert app.library_screen.files_panel.directory == sessions.parent
 
     asyncio.run(exercise())
 
@@ -220,9 +222,9 @@ def test_files_browser_falls_back_to_home_without_recordings_folder(tmp_path, mo
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("2")
-            assert app.files_panel.directory == home
-            browser = app.query_one("#files-browser-scroll", Vertical)
+            await pilot.press("2", "n")
+            assert app.library_screen.files_panel.directory == home
+            browser = app.screen.query_one("#files-browser-scroll", Vertical)
             assert browser.border_title == "~"
             assert not sessions.exists()
 
@@ -240,8 +242,8 @@ def test_files_chosen_option_values_use_accent_color(tmp_path, value):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("2")
-            rendered = app.query_one("#files-options", Static).render()
+            await pilot.press("2", "n")
+            rendered = app.screen.query_one("#files-options", Static).render()
             assert value in rendered.plain
             start = rendered.plain.index(value)
             styles = [
@@ -273,11 +275,11 @@ def test_files_preview_uses_distinct_shared_speaker_colors(tmp_path):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("2")
-            app._refresh_files_view()
+            await pilot.press("2", "n")
+            app.library_screen.refresh_files()
             await pilot.pause()
 
-            preview = app.query_one("#files-preview", Static).render()
+            preview = app.screen.query_one("#files-preview", Static).render()
             assert "Speaker 1" in preview.plain
             assert "Speaker 2" in preview.plain
             styles = {}
@@ -316,11 +318,11 @@ def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("2")
-            app._refresh_files_view()
+            await pilot.press("2", "n")
+            app.library_screen.refresh_files()
             await pilot.pause()
 
-            options = app.query_one("#files-options", Static).render()
+            options = app.screen.query_one("#files-options", Static).render()
             assert "[x] diarize" in options.plain and "count auto" in options.plain
             assert "refine        [ ] cleanup pass" in options.plain
             assert "output" not in options.plain
@@ -331,9 +333,9 @@ def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
             assert "55%" in content and "▕" in content and "eta 0:17" in content
             assert "transcribe ✓ · diarize … · save" in content
 
-            preview_panel = app.query_one("#files-preview-scroll", VerticalScroll)
+            preview_panel = app.screen.query_one("#files-preview-scroll", VerticalScroll)
             assert preview_panel.border_title == "preview · standup"
-            preview = app.query_one("#files-preview", Static).render()
+            preview = app.screen.query_one("#files-preview", Static).render()
             assert "00:00:04" in preview.plain and "Speaker 1" in preview.plain
             assert "Speaker 1\u00a0 fixture words" in preview.plain
             label_style = next(
@@ -346,9 +348,9 @@ def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
             assert label_style.color.get_truecolor() == Color.parse("#ffaf5f").get_truecolor()
             assert label_style.bgcolor is None or label_style.bgcolor.is_default
 
-            hints = app.query_one("#key-hints", Static).render().plain
+            hints = app.screen.query_one("#key-hints", Static).render().plain
             assert "open result" not in hints
-            assert "1-6 sections" in hints
+            assert hints.endswith("esc back · 1 2 3 screens · ? help · q quit")
 
     asyncio.run(exercise())
 
@@ -393,10 +395,10 @@ def test_pilot_file_browser_search_and_multi_select_queue(tmp_path):
 
     async def exercise():
         async with app.run_test() as pilot:
-            await pilot.press("2")
+            await pilot.press("2", "n")
             text = _panel_text(app)
-            browser = app.query_one("#files-browser-scroll", Vertical)
-            browser_text = app.query_one("#files-browser", Static).render().plain
+            browser = app.screen.query_one("#files-browser-scroll", Vertical)
+            browser_text = app.screen.query_one("#files-browser", Static).render().plain
             assert browser.border_title == "~"
             assert str(tmp_path) not in browser_text
             assert "alpha.wav" in text and "0:02" in text
@@ -438,11 +440,11 @@ def test_pilot_file_browser_enters_subfolders_and_parent(tmp_path):
 
     async def exercise():
         async with app.run_test() as pilot:
-            await pilot.press("2", "enter")
-            assert app.files_panel.directory == recordings
-            assert app.files_panel.selected_entry.path == recordings / "inside.wav"
+            await pilot.press("2", "n", "enter")
+            assert app.library_screen.files_panel.directory == recordings
+            assert app.library_screen.files_panel.selected_entry.path == recordings / "inside.wav"
             await pilot.press("up", "enter")
-            assert app.files_panel.directory == tmp_path
+            assert app.library_screen.files_panel.directory == tmp_path
 
     asyncio.run(exercise())
 
@@ -453,16 +455,16 @@ def test_pilot_file_options_can_be_changed(tmp_path):
 
     async def exercise():
         async with app.run_test() as pilot:
-            await pilot.press("2", "o", "space", "down", "enter")
+            await pilot.press("2", "n", "o", "space", "down", "enter")
             speaker_count = app.screen.query_one("#config-prompt-input", Input)
             speaker_count.value = "2"
             await pilot.press("enter")
             await pilot.press("down", "space")
 
-            assert not app.files_panel.diarize
-            assert app.files_panel.speaker_count == 2
-            assert app.files_panel.refine
-            options = app.query_one("#files-options", Static).render().plain
+            assert not app.library_screen.files_panel.diarize
+            assert app.library_screen.files_panel.speaker_count == 2
+            assert app.library_screen.files_panel.refine
+            options = app.screen.query_one("#files-options", Static).render().plain
             assert "speakers      [ ] diarize   count 2" in options
             assert "refine        [x] cleanup pass" in options
             assert "output" not in options
@@ -478,7 +480,7 @@ def test_pilot_queue_progress_preview_and_cancel(tmp_path):
 
     async def exercise():
         async with app.run_test() as pilot:
-            await pilot.press("2", "space", "down", "space", "enter")
+            await pilot.press("2", "n", "space", "down", "space", "enter")
             await _wait_for(pilot, lambda: len(services.engine.jobs) == 2)
             await pilot.press("tab", "up")
             first, second = services.engine.jobs
@@ -489,8 +491,8 @@ def test_pilot_queue_progress_preview_and_cancel(tmp_path):
             await pilot.pause(0.05)
             assert services.files_running
             assert not first.cancelled and not second.cancelled
-            await pilot.press("2")
-            app._refresh_files_view()
+            await pilot.press("2", "n")
+            app.library_screen.refresh_files()
             text = _panel_text(app)
             assert "55%" in text and "diarize" in text and "17" in text
             assert "Speaker 1" in text and "fixture line" in text

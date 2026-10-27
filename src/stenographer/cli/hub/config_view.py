@@ -14,7 +14,6 @@ from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
 from stenographer.lib.config.save_result import SaveResult
 
-_GROUP_ORDER = ("hotkey", "audio", "asr", "live", "refine", "feedback", "analytics", "delivery")
 _HELP = {
     "hotkey.binding": "Agent binding for cleanup of agent-directed dictation.",
     "hotkey.device": "Input device for the hotkey; blank uses the system default.",
@@ -66,7 +65,7 @@ class ConfigEditor:
         self.config: Config | None = None
         self._saved: Config | None = None
         self._undo: list[Config] = []
-        self.group_index = 0
+        self.shown_keys: frozenset[str] | None = None
         self.key_index = 0
         self.search_term = ""
         try:
@@ -96,30 +95,22 @@ class ConfigEditor:
         )
 
     @property
-    def groups(self) -> tuple[str, ...]:
+    def all_keys(self) -> tuple[str, ...]:
+        """Return every dotted key in the order of the configuration model."""
         if self.config is None:
             return ()
-        values = asdict(self.config)
-        return tuple(group for group in _GROUP_ORDER if group in values)
-
-    @property
-    def group(self) -> str:
-        return self.groups[self.group_index]
+        return tuple(
+            f"{group}.{key}" for group, section in asdict(self.config).items() for key in section
+        )
 
     @property
     def visible_keys(self) -> tuple[str, ...]:
-        if self.config is None:
-            return ()
-        keys = tuple(
-            f"{group}.{key}"
-            for group, section in asdict(self.config).items()
-            for key in section
-            if not self.search_term or self.search_term.casefold() in f"{group}.{key}".casefold()
-        )
+        keys = self.all_keys
         if self.search_term:
-            return keys
-        prefix = f"{self.group}."
-        return tuple(key for key in keys if key.startswith(prefix))
+            return tuple(key for key in keys if self.search_term.casefold() in key.casefold())
+        if self.shown_keys is not None:
+            return tuple(key for key in keys if key in self.shown_keys)
+        return keys
 
     @property
     def selected_key(self) -> str | None:
@@ -129,11 +120,18 @@ class ConfigEditor:
         self.key_index = max(0, min(self.key_index, len(keys) - 1))
         return keys[self.key_index]
 
-    def move_group(self, offset: int) -> None:
-        if self.groups:
-            self.search_term = ""
-            self.group_index = (self.group_index + offset) % len(self.groups)
-            self.key_index = 0
+    def show_keys(self, keys: tuple[str, ...]) -> None:
+        """Show only ``keys`` (one settings tab) and select the first one."""
+        self.shown_keys = frozenset(keys)
+        self.search_term = ""
+        self.key_index = 0
+
+    def select(self, dotted_key: str) -> None:
+        """Select a shown key; an unknown or hidden key raises ``KeyError``."""
+        keys = self.visible_keys
+        if dotted_key not in keys:
+            raise KeyError(dotted_key)
+        self.key_index = keys.index(dotted_key)
 
     def move_key(self, offset: int) -> None:
         count = len(self.visible_keys)
@@ -143,9 +141,7 @@ class ConfigEditor:
     def search(self, term: str) -> bool:
         self.search_term = term.strip()
         self.key_index = 0
-        matches = self.visible_keys
-        if matches:
-            self.group_index = self.groups.index(matches[0].partition(".")[0])
+        if self.visible_keys:
             return True
         self.search_term = ""
         return False
@@ -209,17 +205,6 @@ class ConfigEditor:
         self._saved = self.config
         self._undo.clear()
         return result
-
-    def render_groups(self) -> Text:
-        groups = Text()
-        for index, name in enumerate(self.groups):
-            append_line(
-                groups,
-                name,
-                selectable=True,
-                selected=index == self.group_index,
-            )
-        return groups
 
     def render(self) -> Text:
         if self.config is None:

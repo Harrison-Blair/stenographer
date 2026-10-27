@@ -7,13 +7,11 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from rich.color import Color
-from textual.containers import Vertical
 from textual.widgets import Static
 
 from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, safe_warning_lines
-from stenographer.cli.hub.setup_state import SetupWizard
 from stenographer.cli.shared.capabilities import Capabilities
 from stenographer.lib.config.document import ConfigDocument
 from stenographer.lib.config.models import Config
@@ -24,45 +22,6 @@ from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 class FakeServices:
     recording = False
     files_running = False
-
-
-def test_setup_wizard_navigation_skip_and_quick_path():
-    wizard = SetupWizard()
-
-    assert [step.step_id for step in wizard.steps] == [
-        "input_access",
-        "microphone",
-        "hotkey",
-        "models",
-        "sounds",
-        "system_service",
-    ]
-    wizard.next()
-    wizard.back()
-    assert wizard.step.step_id == "input_access"
-    wizard.skip()
-    assert wizard.step.step_id == "microphone"
-
-    wizard.start_quick()
-    assert wizard.quick
-    assert wizard.step.step_id == "input_access"
-    wizard.next()
-    wizard.next()
-    wizard.next()
-    assert wizard.finished
-
-
-def test_the_models_step_names_the_bark_model_and_no_config_key():
-    from stenographer.cli.hub.setup_wizard import render
-
-    wizard = SetupWizard()
-    while wizard.step.step_id != "models":
-        wizard.next()
-
-    shown = render(wizard, Config.defaults()).plain
-
-    assert "Underdog Bark 3.0 Pro" in shown
-    assert "Current " not in shown
 
 
 def test_safe_warning_lines_only_keep_warning_event_names():
@@ -219,31 +178,34 @@ def test_doctor_report_groups_checks_and_shows_warning_details():
     assert "PRIVATE" not in report.report_text()
 
 
-def test_pilot_setup_keys_and_confirmed_model_download():
+async def _open_checks(pilot):
+    await pilot.press("3", "left")
+    await pilot.pause()
+
+
+def test_pilot_checks_test_key_and_confirmed_model_download():
     async def exercise():
         calls = []
+        report = DoctorReport(
+            (DoctorCheck("has_mic", "microphone", "input and audio", "warn", "none", "x"),), ()
+        )
         app = HubApp(
             FakeServices(),
             setup_test=lambda step_id, _config: f"tested {step_id}",
             model_download=lambda model: calls.append(model),
+            doctor_probe=lambda _config, _path: report,
         )
         async with app.run_test() as pilot:
-            await pilot.press("5")
+            await _open_checks(pilot)
+            assert app.settings_screen.tab == "checks"
             await pilot.press("t")
-            await pilot.pause()
-            assert "tested input_access" in str(app.query_one("#section-content", Static).render())
+            for _ in range(50):
+                if app.checks_tab.test_status:
+                    break
+                await pilot.pause(0.01)
+            status = app.screen.query_one("#checks-test-status", Static).render()
+            assert str(status) == "test: tested microphone"
 
-            await pilot.press("enter")
-            await pilot.press("s")
-            assert app.setup_wizard.step.step_id == "hotkey"
-            await pilot.press("shift+q")
-            assert app.setup_wizard.quick
-            assert app.setup_wizard.step.step_id == "input_access"
-            await pilot.press("enter", "enter", "enter")
-            assert app.setup_wizard.finished
-
-            app.setup_wizard.index = 3
-            app.setup_wizard.finished = False
             await pilot.press("m")
             assert calls == []
             prompt = str(app.screen.query_one("#quit-prompt", Static).render())
@@ -261,30 +223,7 @@ def test_pilot_setup_keys_and_confirmed_model_download():
     asyncio.run(exercise())
 
 
-def test_setup_microphone_edit_uses_workflow_device_choices(monkeypatch, tmp_path):
-    async def exercise():
-        from stenographer.cli.setup import workflow
-
-        monkeypatch.setattr(workflow, "_audio_devices", lambda: [("2", "2: USB mic")])
-        path = tmp_path / "config.toml"
-        app = HubApp(
-            FakeServices(),
-            config_editor=ConfigEditor(path),
-            doctor_probe=lambda _config, _path: DoctorReport((), ()),
-        )
-        async with app.run_test() as pilot:
-            await pilot.press("5")
-            await pilot.press("enter")
-            await pilot.press("e")
-            await pilot.pause()
-            await pilot.press("1", "enter")
-
-        assert app.config_editor.config.audio.input_device == "2"
-
-    asyncio.run(exercise())
-
-
-def test_setup_defaults_replace_config_and_preserve_a_backup(tmp_path, monkeypatch):
+def test_checks_defaults_replace_config_and_preserve_a_backup(tmp_path, monkeypatch):
     async def exercise():
         path = tmp_path / "config.toml"
         defaults = Config.defaults()
@@ -311,7 +250,7 @@ def test_setup_defaults_replace_config_and_preserve_a_backup(tmp_path, monkeypat
 
         monkeypatch.setattr(app, "run_worker", track_worker)
         async with app.run_test() as pilot:
-            await pilot.press("5")
+            await _open_checks(pilot)
             await pilot.press("shift+d")
             assert len(workers) == 1
             await workers[0].wait()
@@ -325,7 +264,7 @@ def test_setup_defaults_replace_config_and_preserve_a_backup(tmp_path, monkeypat
     asyncio.run(exercise())
 
 
-def test_setup_quit_prompts_to_save_draft_changes(tmp_path):
+def test_settings_quit_prompts_to_save_draft_changes(tmp_path):
     async def exercise():
         path = tmp_path / "config.toml"
         editor = ConfigEditor(path)
@@ -336,7 +275,7 @@ def test_setup_quit_prompts_to_save_draft_changes(tmp_path):
             doctor_probe=lambda _config, _path: DoctorReport((), ()),
         )
         async with app.run_test() as pilot:
-            await pilot.press("5")
+            await _open_checks(pilot)
             await pilot.press("q")
             prompt = str(app.screen.query_one("#config-prompt-message", Static).render()).casefold()
             assert "save or discard" in prompt
@@ -347,49 +286,7 @@ def test_setup_quit_prompts_to_save_draft_changes(tmp_path):
     asyncio.run(exercise())
 
 
-def test_pilot_setup_uses_bordered_step_and_hotkey_detail_panels():
-    async def exercise():
-        app = HubApp(FakeServices())
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("5")
-            app.setup_wizard.index = 2
-            app.setup_wizard.record_test("key capture passed")
-            app._refresh_view()
-
-            steps = app.query_one("#setup-steps", Static)
-            detail = app.query_one("#setup-detail", Vertical)
-            content = app.query_one("#setup-detail-content", Static)
-            test_status = app.query_one("#setup-test-status", Static)
-            assert steps.styles.border.top[0] == "round"
-            assert detail.styles.border.top[0] == "round"
-            assert steps.region.x < detail.region.x
-            assert test_status.region.y > content.region.y
-            step_text = steps.render().plain
-            detail_text = content.render().plain
-            assert "▶ 3 hotkey" in step_text
-            for expected in (
-                "capture target: KEY_RIGHTCTRL",
-                "mode: ● hybrid  ○ hold  ○ toggle",
-                "hybrid threshold: 0.5 s",
-                "general binding: KEY_RIGHTALT",
-                "cancel binding: KEY_ESC",
-                "device: any keyboard",
-            ):
-                assert expected in detail_text
-            assert test_status.render().plain == "test status: key capture passed"
-            content_render = content.render()
-            mode_style = content_render.get_style_at_offset(content_render.plain.index("● hybrid"))
-            assert mode_style.bold
-            assert (
-                mode_style.rich_style.color.get_truecolor()
-                == Color.parse("#5fd7ff").get_truecolor()
-            )
-            assert not content_render.get_style_at_offset(content_render.plain.index("○ hold")).bold
-
-    asyncio.run(exercise())
-
-
-def test_pilot_doctor_uses_sidebar_summary_and_bordered_board_panels():
+def test_pilot_checks_use_sidebar_summary_and_bordered_board_panels():
     report = DoctorReport(
         checks=(
             DoctorCheck("mic", "microphone", "input and audio", "ok", "available", ""),
@@ -407,18 +304,16 @@ def test_pilot_doctor_uses_sidebar_summary_and_bordered_board_panels():
     )
 
     async def exercise():
-        app = HubApp(FakeServices())
+        app = HubApp(FakeServices(), doctor_probe=lambda _config, _path: report)
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("6")
-            app._doctor_report = report
-            app._doctor_index = 1
-            app._refresh_view()
+            await _open_checks(pilot)
+            assert app.checks_tab.index == 1
             await pilot.press("enter")
 
-            inputs = app.query_one("#doctor-input-group", Static)
-            engine = app.query_one("#doctor-engine-group", Static)
-            issue = app.query_one("#doctor-issue", Static)
-            warnings = app.query_one("#doctor-warnings", Static)
+            inputs = app.screen.query_one("#doctor-input-group", Static)
+            engine = app.screen.query_one("#doctor-engine-group", Static)
+            issue = app.screen.query_one("#doctor-issue", Static)
+            warnings = app.screen.query_one("#doctor-warnings", Static)
             assert all(
                 panel.styles.border.top[0] == "round" for panel in (inputs, engine, issue, warnings)
             )
@@ -448,13 +343,15 @@ def test_pilot_doctor_uses_sidebar_summary_and_bordered_board_panels():
             )
             assert "helper_restarting" in warnings.render().plain
             assert "stenographer.overlay" not in warnings.render().plain
-            assert "1 warn" in app.query_one("#sidebar-card", Static).render().plain
-            assert "checked 21:23" in app.query_one("#sidebar-card", Static).render().plain
+            card = app.screen.query_one("#sidebar-card", Static).render().plain
+            assert app.screen.query_one("#sidebar-context").border_title == "checks"
+            assert "1 pass · 1 warn · 0 fail" in card
+            assert f"last run {app.checks_tab.ran_at:%H:%M}" in card
 
     asyncio.run(exercise())
 
 
-def test_pilot_doctor_colors_check_glyphs_and_warning_levels():
+def test_pilot_checks_color_check_glyphs_and_warning_levels():
     report = DoctorReport(
         checks=(
             DoctorCheck("mic", "microphone", "engine and desktop", "ok", "QuadCast 2 S", ""),
@@ -482,13 +379,10 @@ def test_pilot_doctor_colors_check_glyphs_and_warning_levels():
     )
 
     async def exercise():
-        app = HubApp(FakeServices())
-        app._doctor_report = report
-        app._doctor_index = 1
+        app = HubApp(FakeServices(), doctor_probe=lambda _config, _path: report)
         async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("6")
-            app._refresh_view()
-            group = app.query_one("#doctor-engine-group", Static).render()
+            await _open_checks(pilot)
+            group = app.screen.query_one("#doctor-engine-group", Static).render()
             for glyph, color in (
                 ("✓", "#6ee69a"),
                 ("!", "#ffaf5f"),
@@ -497,7 +391,7 @@ def test_pilot_doctor_colors_check_glyphs_and_warning_levels():
                 style = group.get_style_at_offset(group.plain.index(glyph))
                 assert style.rich_style.color.get_truecolor() == Color.parse(color).get_truecolor()
 
-            warnings = app.query_one("#doctor-warnings", Static).render()
+            warnings = app.screen.query_one("#doctor-warnings", Static).render()
             assert "21:11:37 WARN overlay: helper_restarting" in warnings.plain
             assert "21:10:03 ERROR audio: device_lost" in warnings.plain
             assert "stenographer." not in warnings.plain
@@ -510,7 +404,7 @@ def test_pilot_doctor_colors_check_glyphs_and_warning_levels():
     asyncio.run(exercise())
 
 
-def test_pilot_doctor_rechecks_shows_badge_and_routes_fix_to_setup():
+def test_pilot_checks_rerun_badges_and_fix_opens_the_setting(tmp_path):
     async def exercise():
         calls = []
         report = DoctorReport(
@@ -534,19 +428,21 @@ def test_pilot_doctor_rechecks_shows_badge_and_routes_fix_to_setup():
             ),
             warnings=(),
         )
+        path = tmp_path / "config.toml"
         app = HubApp(
             FakeServices(),
+            config_editor=ConfigEditor(path),
             doctor_probe=lambda _config, _path: calls.append("probe") or report,
             open_log=lambda: calls.append("log"),
             copy_report=lambda text: calls.append(("copy", text)),
         )
         async with app.run_test() as pilot:
-            await pilot.press("6")
-            await pilot.pause()
-            doctor_row = str(app.query_one("#sidebar", Static).render()).splitlines()[-1]
-            assert "1W 1F" in doctor_row
+            await _open_checks(pilot)
+            settings_row = str(app.screen.query_one("#sidebar", Static).render()).splitlines()[-1]
+            assert settings_row.endswith("1 F")
+            assert str(app.screen.query_one("#tab-checks").label) == "Checks ●2"
             await pilot.press("enter")
-            rendered = str(app.query_one("#section-content", Static).render())
+            rendered = str(app.screen.query_one("#doctor-issue", Static).render())
             assert "Connect a microphone." in rendered
             await pilot.press("r")
             await pilot.pause()
@@ -556,8 +452,9 @@ def test_pilot_doctor_rechecks_shows_badge_and_routes_fix_to_setup():
             assert "log" in calls
             assert any(isinstance(call, tuple) and call[0] == "copy" for call in calls)
             await pilot.press("f")
-            assert app.current_section == "setup"
-            assert app.setup_wizard.step.step_id == "microphone"
+            assert app.current_mode == "settings"
+            assert app.settings_screen.tab == "audio"
+            assert app.config_editor.selected_key == "audio.input_device"
 
     asyncio.run(exercise())
 
@@ -569,7 +466,7 @@ def test_the_models_step_probes_the_installed_bark_model(monkeypatch, tmp_path):
     import os
     from pathlib import Path
 
-    from stenographer.cli.hub.setup_wizard import test_step
+    from stenographer.cli.hub.setup_test import test_step
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.lib.transcribe.bark_pins import BARK_PRO_PINS
