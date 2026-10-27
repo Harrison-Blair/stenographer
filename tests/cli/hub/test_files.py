@@ -26,7 +26,7 @@ class FakeJob:
         self.options = SimpleNamespace(path=path, **options)
         self.state = "queued"
         self.progress = FileJobProgress("transcribe", 0, None, ())
-        self.output_path = None
+        self.session_id = None
         self.error = None
         self.cancelled = False
 
@@ -55,10 +55,8 @@ class FakeFilesEngine:
 class FakeServices:
     def __init__(self, output_folder: Path):
         self.engine = FakeFilesEngine()
-        self.files_output_folder = output_folder
         self.recording = False
         self.active_session_id = None
-        self.opened_folders = []
 
     @property
     def files_jobs(self):
@@ -73,10 +71,6 @@ class FakeServices:
 
     def cancel_file(self, job):
         return job.cancel()
-
-    def open_files_result(self, output_path: Path):
-        self.opened_folders.append(output_path.parent)
-        return True
 
     def cancel_files(self):
         for job in self.engine.jobs:
@@ -215,7 +209,6 @@ def test_files_browser_starts_in_recordings_folder(tmp_path, monkeypatch):
             assert "20261021T120000Z/" in _panel_text(app)
             browser = app.query_one("#files-browser-scroll", Vertical)
             assert browser.border_title == str(sessions)
-            assert app.files_panel.output_folder == tmp_path / "data" / "stenographer" / "files"
             await pilot.press("up", "enter")
             assert app.files_panel.directory == sessions.parent
 
@@ -231,22 +224,9 @@ def test_files_browser_falls_back_to_home_without_recordings_folder(tmp_path, mo
             assert app.files_panel.directory == home
             browser = app.query_one("#files-browser-scroll", Vertical)
             assert browser.border_title == "~"
-            assert app.files_panel.output_folder == tmp_path / "data" / "stenographer" / "files"
             assert not sessions.exists()
 
     asyncio.run(exercise())
-
-
-def test_files_output_folder_fallback_ignores_start_folder(tmp_path):
-    home = tmp_path / "home"
-    start = tmp_path / "sessions"
-    home.mkdir()
-    start.mkdir()
-
-    panel = FilesPanel(home=home, start=start)
-
-    assert panel.directory == start
-    assert panel.output_folder == home / ".local/share/stenographer/files"
 
 
 def test_files_browser_durations_use_board_clock_format():
@@ -254,7 +234,7 @@ def test_files_browser_durations_use_board_clock_format():
     assert FilesPanel._format_clock(3735) == "1:02:15"
 
 
-@pytest.mark.parametrize("value", ("[x] diarize", "auto", "[ ] cleanup pass", "md"))
+@pytest.mark.parametrize("value", ("[x] diarize", "auto", "[ ] cleanup pass"))
 def test_files_chosen_option_values_use_accent_color(tmp_path, value):
     app = HubApp(FakeServices(tmp_path / "exports"), files_home=tmp_path)
 
@@ -330,7 +310,6 @@ def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
     job.state = "running"
     line = TranscriptLine(4.0, 5.0, "", "file", "speaker-1", "Speaker 1", "fixture words")
     job.progress = FileJobProgress("diarize", 55, 17.5, (line,))
-    job.output_path = tmp_path / "exports" / "standup.md"
     services = FakeServices(tmp_path / "exports")
     services.engine.jobs.append(job)
     app = HubApp(services, files_home=tmp_path)
@@ -344,16 +323,9 @@ def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
             options = app.query_one("#files-options", Static).render()
             assert "[x] diarize" in options.plain and "count auto" in options.plain
             assert "refine        [ ] cleanup pass" in options.plain
-            assert "output        md · jsonl · srt · txt" in options.plain
-            assert "save to" in options.plain
+            assert "output" not in options.plain
+            assert "save to" not in options.plain
             assert "[ ] on" not in options.plain
-            format_offset = options.plain.index("output        ") + len("output        ")
-            format_style = next(
-                span.style for span in options.spans if span.start <= format_offset < span.end
-            ).rich_style
-            assert format_style.bold
-            assert format_style.color is not None
-            assert format_style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
 
             content = _panel_text(app)
             assert "55%" in content and "▕" in content and "eta 0:17" in content
@@ -375,13 +347,13 @@ def test_files_options_queue_preview_and_key_hints_match_board(tmp_path):
             assert label_style.bgcolor is None or label_style.bgcolor.is_default
 
             hints = app.query_one("#key-hints", Static).render().plain
-            assert "e open result" in hints
+            assert "open result" not in hints
             assert "1-6 sections" in hints
 
     asyncio.run(exercise())
 
 
-def test_hub_services_create_the_file_engine_lazily_and_close_it(tmp_path, monkeypatch):
+def test_hub_services_create_the_file_engine_lazily_and_close_it(tmp_path):
     from stenographer.cli.hub.services import HubServices
     from stenographer.lib.config.models import Config
 
@@ -398,23 +370,16 @@ def test_hub_services_create_the_file_engine_lazily_and_close_it(tmp_path, monke
 
     assert services.files_jobs == ()
     assert not services.files_running
-    assert services.files_output_folder == tmp_path / "files"
-    job = services.submit_file(tmp_path / "voice.wav", output_format="srt")
+    assert not hasattr(services, "files_output_folder")
+    job = services.submit_file(tmp_path / "voice.wav", diarize=False)
     assert len(engines) == 1
     assert services.files_jobs == (job,)
     assert services.files_running
-    assert engines[0].submitted == [(tmp_path / "voice.wav", {"output_format": "srt"})]
+    assert engines[0].submitted == [(tmp_path / "voice.wav", {"diarize": False})]
 
     assert services.cancel_file(job)
     assert not services.files_running
-    launched = []
-    monkeypatch.setattr(
-        "stenographer.cli.hub.services.subprocess.Popen",
-        lambda command, **options: launched.append((command, options)),
-    )
-    output_path = tmp_path / "exports" / "voice.srt"
-    assert services.open_files_result(output_path)
-    assert launched[0][0] == ["xdg-open", str(output_path.parent)]
+    assert not hasattr(services, "open_files_result")
     services.close_files()
     assert engines[0].closed
     assert services.files_jobs == ()
@@ -457,7 +422,10 @@ def test_pilot_file_browser_search_and_multi_select_queue(tmp_path):
             ]
             assert all(options["diarize"] for _, options in services.engine.submitted)
             assert all(not options["refine"] for _, options in services.engine.submitted)
-            assert all(options["output_format"] == "md" for _, options in services.engine.submitted)
+            assert all(
+                set(options) == {"diarize", "speaker_count", "refine"}
+                for _, options in services.engine.submitted
+            )
 
     asyncio.run(exercise())
 
@@ -482,7 +450,6 @@ def test_pilot_file_browser_enters_subfolders_and_parent(tmp_path):
 def test_pilot_file_options_can_be_changed(tmp_path):
     services = FakeServices(tmp_path / "exports")
     app = HubApp(services, files_home=tmp_path)
-    output_folder = tmp_path / "custom-output"
 
     async def exercise():
         async with app.run_test() as pilot:
@@ -490,25 +457,20 @@ def test_pilot_file_options_can_be_changed(tmp_path):
             speaker_count = app.screen.query_one("#config-prompt-input", Input)
             speaker_count.value = "2"
             await pilot.press("enter")
-            await pilot.press("down", "space", "down", "space", "down", "enter")
-            folder = app.screen.query_one("#config-prompt-input", Input)
-            folder.value = str(output_folder)
-            await pilot.press("enter")
+            await pilot.press("down", "space")
 
             assert not app.files_panel.diarize
             assert app.files_panel.speaker_count == 2
             assert app.files_panel.refine
-            assert app.files_panel.output_format == "jsonl"
-            assert app.files_panel.output_folder == output_folder
             options = app.query_one("#files-options", Static).render().plain
             assert "speakers      [ ] diarize   count 2" in options
             assert "refine        [x] cleanup pass" in options
-            assert "output        md · jsonl · srt · txt" in options
+            assert "output" not in options
 
     asyncio.run(exercise())
 
 
-def test_pilot_queue_progress_preview_cancel_and_open_result_folder(tmp_path):
+def test_pilot_queue_progress_preview_and_cancel(tmp_path):
     _write_audio(tmp_path / "alpha.wav")
     _write_audio(tmp_path / "beta.wav")
     services = FakeServices(tmp_path / "exports")
@@ -533,11 +495,8 @@ def test_pilot_queue_progress_preview_cancel_and_open_result_folder(tmp_path):
             assert "55%" in text and "diarize" in text and "17" in text
             assert "Speaker 1" in text and "fixture line" in text
 
-            output_path = tmp_path / "exports" / "alpha.md"
             first.state = "completed"
-            first.output_path = output_path
-            await pilot.press("e")
-            assert services.opened_folders == [output_path.parent]
+            first.session_id = "20261021T120000Z"
             await pilot.press("down", "x")
             assert second.cancelled
 

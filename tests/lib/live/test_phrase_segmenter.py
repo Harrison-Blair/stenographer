@@ -30,6 +30,10 @@ class FakeVad:
         self._flushed = list(flushed)
         self.accepted: list[np.ndarray] = []
         self.did_flush = False
+        self.speech = False
+
+    def is_speech_detected(self) -> bool:
+        return self.speech
 
     def empty(self) -> bool:
         return not self._segments
@@ -108,6 +112,16 @@ def test_phrase_segmenter_uses_d6_vad_values_cuts_long_phrases_and_flushes(monke
     assert all(isinstance(phrase, Phrase) and phrase.source == "mic" for phrase in phrases)
     assert all(phrase.samples.dtype == np.float32 for phrase in (*active_phrases, *final_phrases))
     assert segmenter.flush() == []
+
+
+def test_phrase_segmenter_reports_the_detector_speech_state(monkeypatch):
+    vad = FakeVad(active=[], flushed=[])
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", FakeSherpa(vad))
+    segmenter = PhraseSegmenter("mic", Path("silero_vad.onnx"))
+
+    assert segmenter.speech_detected is False
+    vad.speech = True
+    assert segmenter.speech_detected is True
 
 
 @pytest.mark.integration

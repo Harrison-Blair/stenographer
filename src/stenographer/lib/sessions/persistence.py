@@ -27,3 +27,19 @@ def atomic_write_private(path: Path, content: bytes) -> None:
         if temporary is not None:
             with contextlib.suppress(OSError):
                 temporary.unlink()
+
+
+def write_private_temporary(directory: Path, name: str, content: bytes) -> Path:
+    """Write content to a private temporary file in directory and return its path."""
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=directory)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(0o600)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return temporary

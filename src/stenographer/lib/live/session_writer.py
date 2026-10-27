@@ -59,7 +59,9 @@ class SessionWriter:
             except FileExistsError:
                 suffix += 1
         os.chmod(path, 0o700)
-        return cls(path, started_at)
+        writer = cls(path, started_at)
+        writer._write_metadata({"current_revision": "transcript.jsonl", "kind": "rec"})
+        return writer
 
     def write_audio(self, source: str, samples: np.ndarray) -> None:
         with self._lock:
@@ -126,12 +128,15 @@ class SessionWriter:
 
     def mark_mic_diarized(self) -> None:
         """Record in session.json that microphone lines carry Room speaker labels."""
-        metadata = {"current_revision": "transcript.jsonl", "diarize_mic": True}
+        metadata = {"current_revision": "transcript.jsonl", "diarize_mic": True, "kind": "rec"}
         with self._lock:
-            atomic_write_private(
-                self.path / "session.json",
-                (json.dumps(metadata, sort_keys=True) + "\n").encode("utf-8"),
-            )
+            self._write_metadata(metadata)
+
+    def _write_metadata(self, metadata: dict) -> None:
+        atomic_write_private(
+            self.path / "session.json",
+            (json.dumps(metadata, sort_keys=True) + "\n").encode("utf-8"),
+        )
 
     def close(self) -> None:
         with self._lock:

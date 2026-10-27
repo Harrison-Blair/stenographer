@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import UTC, datetime
@@ -129,6 +130,7 @@ class FakeSegmenter:
     def __init__(self, source, _model_path, **_kwargs):
         self.source = source
         self.flushed = False
+        self.speech_detected = False
 
     def accept(self, block):
         value = float(block[0])
@@ -429,6 +431,38 @@ def test_relabel_failure_keeps_live_labels_and_exposes_the_reason(monkeypatch, t
     assert [line.label for line in detail.lines] == ["Speaker 1"]
 
 
+def test_relabel_stale_revision_keeps_a_rename_saved_during_the_pass(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    original_relabel = live_session.relabel_system_lines
+    holder = {}
+
+    def rename_during_pass(lines, embeddings, **kwargs):
+        writer = holder["writer"]
+        SessionStore(writer.path.parent).rename_speaker(writer.path.name, "speaker-1", "Alice")
+        return original_relabel(lines, embeddings, **kwargs)
+
+    monkeypatch.setattr(live_session, "relabel_system_lines", rename_during_pass)
+    session, writer, _worker, system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, mic=False
+    )
+    holder["writer"] = writer
+    processed = Event()
+    session.subscribe(lambda _line: processed.set())
+
+    system.emit(4)
+    assert processed.wait(timeout=1)
+    session.stop()
+    detail = SessionStore(writer.path.parent).read(writer.path.name)
+
+    assert detail.revision == "transcript.r2.jsonl"
+    assert [(line.speaker_id, line.label, line.text) for line in detail.lines] == [
+        ("speaker-1", "Alice", "a phrase")
+    ]
+    assert "changed since it was read" in session.relabel_error
+    assert [(line.speaker_id, line.label) for line in session.lines] == [("speaker-1", "Speaker 1")]
+
+
 def test_pause_freezes_clock_and_silence_writes_and_rename_updates_old_lines(monkeypatch, tmp_path):
     clock = FakeClock()
     session, writer, _worker, system, _recorder, segmenters = _make_session(
@@ -701,7 +735,7 @@ def test_mic_phrases_stay_you_when_mic_diarization_is_off(monkeypatch, tmp_path)
         ("you", "You"),
     ]
     assert session.speakers == ()
-    assert not (writer.path / "session.json").exists()
+    assert "diarize_mic" not in json.loads((writer.path / "session.json").read_text())
     assert SessionStore(writer.path.parent).read(writer.path.name).diarize_mic is False
 
 

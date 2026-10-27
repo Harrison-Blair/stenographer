@@ -19,8 +19,10 @@ from stenographer.lib.sessions.models import SessionDetail, SessionSummary
 
 _SESSION_ID = re.compile(r"(?P<start>\d{8}T\d{6}Z)(?:-\d+)?\Z")
 _REVISION = re.compile(r"transcript\.r(?P<number>[2-9]|[1-9]\d+)\.jsonl\Z")
+_SOURCE_FILE = re.compile(r"source\.[A-Za-z0-9]{1,8}\Z")
 _ACTIVITY_BINS = 64
 _AUDIO_SOURCES = ("mic", "system")
+_SOURCE_ORDER = {"mic": 0, "system": 1}
 
 
 def session_started_at(session_id: str) -> datetime | None:
@@ -71,6 +73,29 @@ def session_metadata(directory: Path) -> dict:
     except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
     return metadata if isinstance(metadata, dict) else {}
+
+
+def source_file_path(directory: Path, metadata: dict) -> Path | None:
+    """Return the copied source of a file session, or None when the field is invalid."""
+    name = metadata.get("source_file")
+    if not isinstance(name, str) or _SOURCE_FILE.fullmatch(name) is None:
+        return None
+    candidate = directory / name
+    try:
+        if not stat.S_ISREG(candidate.lstat().st_mode):
+            return None
+    except OSError:
+        return None
+    return candidate
+
+
+def _label_state(revision: str, metadata: dict) -> str:
+    if revision == "transcript.jsonl":
+        return "live"
+    method = metadata.get("method")
+    if method == "diarization":
+        return "relabeled"
+    return method if isinstance(method, str) and method else "revised"
 
 
 def current_revision(directory: Path) -> tuple[str, Path, bool]:
@@ -156,7 +181,7 @@ def read_transcript(path: Path) -> tuple[tuple[TranscriptLine, ...], bool]:
     return tuple(
         sorted(
             (replace(line, label=renames.get(line.speaker_id, line.label)) for line in lines),
-            key=lambda line: (line.start, line.end),
+            key=lambda line: (line.start, _SOURCE_ORDER.get(line.source, 2), line.end),
         )
     ), interrupted
 
@@ -234,11 +259,30 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
                 if not (pair.with_suffix(".jsonl").is_file() and pair.with_suffix(".md").is_file()):
                     interrupted = True
 
+    metadata = session_metadata(directory)
+    kind = "file" if metadata.get("kind") == "file" else "rec"
     source_ids = {line.source for line in lines}
     audio_sizes = 0
     durations: list[float] = []
     activity: dict[str, tuple[float, ...]] = {}
-    for source in _AUDIO_SOURCES:
+    if kind == "file":
+        source = source_file_path(directory, metadata)
+        if source is None:
+            interrupted = True
+        else:
+            try:
+                audio_sizes = source.lstat().st_size
+            except OSError:
+                interrupted = True
+        probe_duration = metadata.get("duration_seconds")
+        if (
+            isinstance(probe_duration, (int, float))
+            and not isinstance(probe_duration, bool)
+            and math.isfinite(probe_duration)
+            and probe_duration >= 0
+        ):
+            durations.append(float(probe_duration))
+    for source in _AUDIO_SOURCES if kind == "rec" else ():
         audio_path = directory / f"{source}.flac"
         audio_info = _audio_info(audio_path)
         if audio_info is None:
@@ -277,6 +321,13 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
         speaker_count=len({line.speaker_id for line in lines}),
         audio_size_bytes=audio_sizes,
         interrupted=interrupted,
+        kind=kind,
+        source_name=(
+            metadata["source_name"]
+            if kind == "file" and isinstance(metadata.get("source_name"), str)
+            else None
+        ),
+        label_state=_label_state(revision, metadata),
     )
     return SessionDetail(
         summary,
@@ -285,5 +336,5 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
         activity,
         revision,
         labels_revised,
-        diarize_mic=session_metadata(directory).get("diarize_mic") is True,
+        diarize_mic=metadata.get("diarize_mic") is True,
     )
