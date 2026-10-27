@@ -46,6 +46,13 @@ class _Reader:
             raise self._err(key, f"expected string, got {type(value).__name__}: {value!r}")
         return value
 
+    def str_list(self, key: str) -> list[str]:
+        """A TOML array of strings; the tuple is a merged dataclass default."""
+        value = self.table.get(key)
+        if not isinstance(value, list | tuple) or not all(isinstance(item, str) for item in value):
+            raise self._err(key, f"expected a list of strings, got {type(value).__name__}")
+        return list(value)
+
     def _in_range(self, key: str, value: float, lo: float, hi: float) -> None:
         if not lo <= value <= hi:
             raise self._err(key, f"must be in [{lo}, {hi}], got {value}")

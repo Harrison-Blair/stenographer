@@ -45,6 +45,7 @@ def build_refiner(
         min_words=cfg.min_words,
         structured_output=cfg.structured_output,
         keep_alive=keep_alive_for(idle_unload_seconds),
+        vocabulary=cfg.vocabulary,
         on_model_loading=on_model_loading,
         on_model_loading_finished=on_model_loading_finished,
     )

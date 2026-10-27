@@ -285,6 +285,7 @@ def test_full_review_lists_every_section_and_field():
         "  model = gemma4:e2b",
         "  min_words = 10",
         "  structured_output = False",
+        "  vocabulary = ()",
     ]
 
 

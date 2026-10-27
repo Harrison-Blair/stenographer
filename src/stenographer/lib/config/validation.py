@@ -12,6 +12,8 @@ from stenographer.lib.config.constants import (
     ALLOWED_REFINE_SCHEMES,
     MAX_REFINE_WORDS,
     MAX_RESTORE_DELAY_MS,
+    MAX_VOCABULARY_TERM_CHARS,
+    MAX_VOCABULARY_TERMS,
     MIN_REFINE_WORDS,
     SOUND_PACK_PATTERN,
 )
@@ -186,7 +188,31 @@ def _build_refine(table: dict, path: pathlib.Path) -> RefineConfig:
         model=model,
         min_words=r.ranged_int("min_words", MIN_REFINE_WORDS, MAX_REFINE_WORDS),
         structured_output=r.bool("structured_output"),
+        vocabulary=_vocabulary(r, path),
     )
+
+
+def _vocabulary(r: _Reader, path: pathlib.Path) -> tuple[str, ...]:
+    """Trimmed refine terms. Errors name the term's position, never its text."""
+
+    key = "refine.vocabulary"
+    terms = tuple(term.strip() for term in r.str_list("vocabulary"))
+    if len(terms) > MAX_VOCABULARY_TERMS:
+        raise ConfigError(path, key, f"must hold at most {MAX_VOCABULARY_TERMS} terms")
+    seen: set[str] = set()
+    for position, term in enumerate(terms, start=1):
+        if not term:
+            raise ConfigError(path, key, f"term {position} must be non-empty")
+        if "\n" in term or "\r" in term:
+            raise ConfigError(path, key, f"term {position} must not hold a line break")
+        if len(term) > MAX_VOCABULARY_TERM_CHARS:
+            limit = MAX_VOCABULARY_TERM_CHARS
+            raise ConfigError(path, key, f"term {position} must have at most {limit} characters")
+        folded = term.casefold()
+        if folded in seen:
+            raise ConfigError(path, key, f"term {position} repeats an earlier term")
+        seen.add(folded)
+    return terms
 
 
 def _build_delivery(table: dict, path: pathlib.Path) -> DeliveryConfig:
