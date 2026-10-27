@@ -459,9 +459,7 @@ def test_relabel_stale_revision_keeps_a_rename_saved_during_the_pass(monkeypatch
         ("speaker-1", "Alice", "a phrase")
     ]
     assert "changed since it was read" in session.relabel_error
-    assert [(line.speaker_id, line.label) for line in session.lines] == [
-        ("speaker-1", "Speaker 1")
-    ]
+    assert [(line.speaker_id, line.label) for line in session.lines] == [("speaker-1", "Speaker 1")]
 
 
 def test_pause_freezes_clock_and_silence_writes_and_rename_updates_old_lines(monkeypatch, tmp_path):

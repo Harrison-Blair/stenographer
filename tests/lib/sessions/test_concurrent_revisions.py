@@ -198,9 +198,7 @@ def test_concurrent_safe_injected_failure_leaves_the_session_byte_identical(
 
 
 @pytest.mark.parametrize("cancel_at", (1, 2, 3, 4))
-def test_concurrent_safe_cancel_at_each_step_leaves_the_session_byte_identical(
-    tmp_path, cancel_at
-):
+def test_concurrent_safe_cancel_at_each_step_leaves_the_session_byte_identical(tmp_path, cancel_at):
     session = _session(tmp_path)
     store = SessionStore(tmp_path / "sessions")
     detail = store.read(session.name)
