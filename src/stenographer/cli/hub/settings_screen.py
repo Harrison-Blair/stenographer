@@ -121,8 +121,10 @@ class SettingsScreen(HubScreen):
 
     def compose_body(self) -> ComposeResult:
         with Horizontal(id="settings-tabs"):
-            for name, label, _keys in SETTINGS_TABS:
-                tab = HubButton(label, action=f"select_tab('{name}')", id=f"tab-{name}")
+            for name, _label, _keys in SETTINGS_TABS:
+                tab = HubButton(
+                    self.tab_label(name), action=f"select_tab('{name}')", id=f"tab-{name}"
+                )
                 tab.add_class("-tab")
                 yield tab
             yield Static("←→ tab", id="settings-tabs-hint", markup=False)
@@ -174,11 +176,26 @@ class SettingsScreen(HubScreen):
         self.checks_tab.display = self.tab == "checks"
         self.query_one("#config-body").display = self.tab != "checks"
         for name, _label, _keys in SETTINGS_TABS:
-            self.query_one(f"#tab-{name}", HubButton).set_class(name == self.tab, "-selected")
+            tab = self.query_one(f"#tab-{name}", HubButton)
+            tab.set_class(name == self.tab, "-selected")
+            tab.set_label(self.tab_label(name))
         if self.tab == "checks":
             self.checks_tab.focus()
         else:
             self.set_focus(None)
+
+    def tab_label(self, tab: str) -> Text:
+        """Return the printed tab label: ``▶`` marks the active tab without colour.
+
+        Each other tab keeps two blank cells there, so a tab change moves no tab.
+        """
+        label = Text("▶ " if tab == self.tab else "  ")
+        label.append(next(text for name, text, _keys in SETTINGS_TABS if name == tab))
+        if tab == "checks" and self.check_badge is not None:
+            count, tone = self.check_badge
+            label.append(" ")
+            label.append(f"●{count}", style=StatusToken.TONES[tone])
+        return label
 
     def open_setting(self, dotted_key: str) -> None:
         """Select the tab of a dotted key and its row."""
@@ -194,12 +211,7 @@ class SettingsScreen(HubScreen):
     def refresh_body(self) -> None:
         app = self.app
         editor = app.config_editor
-        label = Text("Checks")
-        if self.check_badge is not None:
-            count, tone = self.check_badge
-            label.append(" ")
-            label.append(f"●{count}", style=StatusToken.TONES[tone])
-        self.query_one("#tab-checks", HubButton).set_label(label)
+        self.query_one("#tab-checks", HubButton).set_label(self.tab_label("checks"))
         if self.tab == "checks":
             self.checks_tab.refresh_view()
             app.set_context_card("settings", self.checks_tab.summary_card(), title="checks")

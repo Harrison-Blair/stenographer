@@ -200,7 +200,8 @@ it. Speaker count accepts `auto` or a positive integer.
 ## Settings
 
 Settings has five tabs: General, Audio, Recognition, Live, and Checks. Press
-`left` and `right`, or click a tab, to change the tab. The first four tabs edit
+`left` and `right`, or click a tab, to change the tab. A `▶` marks the active
+tab. The first four tabs edit
 `config.toml`:
 
 | Tab | Settings |

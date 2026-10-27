@@ -440,7 +440,7 @@ def test_pilot_checks_rerun_badges_and_fix_opens_the_setting(tmp_path):
             await _open_checks(pilot)
             settings_row = str(app.screen.query_one("#sidebar", Static).render()).splitlines()[-1]
             assert settings_row.endswith("1 F")
-            assert str(app.screen.query_one("#tab-checks").label) == "Checks ●2"
+            assert str(app.screen.query_one("#tab-checks").label) == "▶ Checks ●2"
             await pilot.press("enter")
             rendered = str(app.screen.query_one("#doctor-issue", Static).render())
             assert "Connect a microphone." in rendered

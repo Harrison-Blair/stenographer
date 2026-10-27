@@ -8,6 +8,7 @@ from typing import ClassVar
 
 import pytest
 from rich.color import Color
+from rich.console import Console
 from textual.app import App
 from textual.binding import Binding
 from textual.widgets import Static
@@ -225,5 +226,59 @@ def test_help_rows_name_keys_and_skip_hidden_bindings():
             assert rows["?"] == "Help for this screen"
             assert rows["1"] == "Record screen"
             assert "tab" not in rows and "ctrl+p" not in rows
+
+    asyncio.run(exercise())
+
+
+def _plain_rows(app: App) -> list[str]:
+    """Return the plain text of each composited row: no colour, no style."""
+    return [strip.text for strip in app.screen._compositor.render_strips()]
+
+
+def test_widget_field_marks_the_focused_row_with_a_glyph():
+    from stenographer.cli.hub.widgets.field import Field
+
+    def plain(field: Field) -> str:
+        return "".join(segment.text for segment in Console().render(field.row())).rstrip()
+
+    rows = {
+        (focused, changed): plain(Field("Model", "qwen3:4b", changed=changed, focused=focused))
+        for focused in (False, True)
+        for changed in (False, True)
+    }
+    assert rows[(True, False)].startswith("▶  Model")
+    assert rows[(True, True)].startswith("▶● Model")
+    assert rows[(False, True)].startswith(" ● Model")
+    assert rows[(False, False)].startswith("   Model")
+
+
+@pytest.mark.parametrize("dialog", ["quit", "config"])
+def test_widget_dialog_marks_the_focused_button_with_a_glyph(dialog):
+    from stenographer.cli.hub.config_dialog import ConfigPrompt
+    from stenographer.cli.hub.dialogs import QuitConfirm
+
+    async def exercise():
+        app = WidgetApp()
+        async with app.run_test(size=(100, 30)) as pilot:
+            if dialog == "quit":
+                app.push_screen(QuitConfirm("Quit now?", confirm="Quit", cancel="Stay"))
+                labels = ("[n] Stay", "[y] Quit")
+            else:
+                choices = (("Save", "save"), ("Discard", "discard"), ("Stay", "stay"))
+                app.push_screen(ConfigPrompt("Unsaved?", choices=choices))
+                labels = ("Save", "Discard", "Stay")
+            await pilot.pause()
+            text = "\n".join(_plain_rows(app))
+            focused = app.focused.label.plain.strip().removeprefix("▶").strip()
+            assert text.count("▶") == 1, text
+            assert f"▶ {focused}" in text, text
+            await pilot.press("tab")
+            await pilot.pause()
+            text = "\n".join(_plain_rows(app))
+            moved = app.focused.label.plain.strip().removeprefix("▶").strip()
+            assert moved != focused
+            assert text.count("▶") == 1, text
+            assert f"▶ {moved}" in text, text
+            assert {focused, moved} <= set(labels)
 
     asyncio.run(exercise())

@@ -108,8 +108,8 @@ def test_pilot_quit_asks_before_saving_a_recording():
             await pilot.press("ctrl+c")
             prompt = str(app.screen.query_one("#quit-prompt", Static).render())
             assert prompt == "Stop recording and save before quitting?"
-            assert str(app.screen.query_one("#cancel-quit").label) == "[n] Keep recording"
-            assert str(app.screen.query_one("#confirm-quit").label) == "[y] Save and quit"
+            assert str(app.screen.query_one("#cancel-quit").label) == "▶ [n] Keep recording"
+            assert str(app.screen.query_one("#confirm-quit").label) == "  [y] Save and quit"
             await pilot.click("#cancel-quit")
             assert services.actions == []
             assert services.recording

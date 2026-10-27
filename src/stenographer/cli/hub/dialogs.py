@@ -11,6 +11,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.focus_button import FocusButton
 
 
 class QuitConfirm(ModalScreen[bool]):
@@ -58,8 +59,8 @@ class QuitConfirm(ModalScreen[bool]):
         with Vertical(id="quit-dialog"):
             yield Static(self._message, id="quit-prompt", markup=False)
             with Horizontal(id="quit-buttons"):
-                yield Button(HubButton.label_text(self._cancel, "n"), id="cancel-quit")
-                yield Button(
+                yield FocusButton(HubButton.label_text(self._cancel, "n"), id="cancel-quit")
+                yield FocusButton(
                     HubButton.label_text(self._confirm, "y"), id="confirm-quit", variant="error"
                 )
 

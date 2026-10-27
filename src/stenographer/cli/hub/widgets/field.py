@@ -11,10 +11,10 @@ _ACCENT_BOLD = "bold #5fd7ff"
 
 
 class Field(Static):
-    """Show a settings row; ``●`` marks an unsaved change.
+    """Show a settings row; ``▶`` marks the focused row and ``●`` an unsaved change.
 
-    Every label reserves the two-character dot slot, so labels align whether
-    or not a row changed. Help fills the right column and wraps.
+    Every label reserves the two-character slot of both marks, so labels align
+    whether or not a row is focused or changed. Help fills the right column and wraps.
     """
 
     DEFAULT_CSS = """
@@ -54,7 +54,10 @@ class Field(Static):
         table.add_column(ratio=1)
         style = _ACCENT_BOLD if self.focused else None
         table.add_row(
-            Text("●" if self.changed else "", style="#ffaf5f"),
+            Text.assemble(
+                ("▶" if self.focused else " ", _ACCENT_BOLD),
+                ("●" if self.changed else " ", "#ffaf5f"),
+            ),
             Text(self.label, style=style),
             self.control if isinstance(self.control, Text) else Text(self.control, style=style),
             Text(self.help_text, style="#8b93a1"),

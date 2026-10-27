@@ -10,6 +10,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
+from stenographer.cli.hub.widgets.focus_button import FocusButton
+
 
 class ConfigPrompt(ModalScreen[str | None]):
     """Show a text input or a save/discard prompt and return its choice."""
@@ -60,7 +62,7 @@ class ConfigPrompt(ModalScreen[str | None]):
             if self._choices:
                 with Horizontal(id="config-prompt-buttons"):
                     for label, value in self._choices:
-                        yield Button(label, id=f"choice-{value}")
+                        yield FocusButton(label, id=f"choice-{value}")
 
     def on_mount(self) -> None:
         if self._initial is not None:

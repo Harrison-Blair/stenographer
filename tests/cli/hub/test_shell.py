@@ -295,10 +295,10 @@ def test_shell_set_check_summary_sets_badge_checks_tab_label_and_checks_card():
             await pilot.press("3")
             app.set_check_summary(4, 2, 1, datetime(2026, 10, 27, 13, 3))
             assert _nav_rows(app)[2].endswith("1 F")
-            assert str(app.screen.query_one("#tab-checks").label) == "Checks ●3"
+            assert str(app.screen.query_one("#tab-checks").label) == "  Checks ●3"
             await pilot.pause()
             tab = app.screen.query_one("#tab-checks")
-            assert tab.content_size.width >= len("Checks ●3"), "the tab grows with its label"
+            assert tab.content_size.width >= len("  Checks ●3"), "the tab grows with its label"
 
             await pilot.press("left")
             await pilot.pause()
@@ -306,7 +306,7 @@ def test_shell_set_check_summary_sets_badge_checks_tab_label_and_checks_card():
             assert app.screen.query_one("#sidebar-context").border_title == "checks"
             assert card.startswith("1 pass · 1 warn · 0 fail\nlast run ")
             assert _nav_rows(app)[2].endswith("1 W")
-            assert str(app.screen.query_one("#tab-checks").label) == "Checks ●1"
+            assert str(app.screen.query_one("#tab-checks").label) == "▶ Checks ●1"
 
     asyncio.run(exercise())
 
@@ -457,5 +457,39 @@ def test_shell_quit_asks_while_recording_from_each_screen(screen):
             await pilot.press("n")
             assert app.is_running
             assert app.current_mode == screen
+
+    asyncio.run(exercise())
+
+
+def _screen_rows(app: HubApp) -> list[str]:
+    """Return the plain text of each composited row: no colour, no style."""
+    return [strip.text for strip in app.screen._compositor.render_strips()]
+
+
+def _tab_bar_rows(app: HubApp) -> list[str]:
+    region = app.screen.query_one("#settings-tabs").region
+    rows = _screen_rows(app)[region.y : region.bottom]
+    return [row[region.x : region.right] for row in rows]
+
+
+@pytest.mark.parametrize("tab", ["general", "recognition", "checks"])
+def test_shell_settings_tab_bar_marks_the_active_tab_in_plain_text(tab):
+    labels = {"general": "General", "audio": "Audio", "recognition": "Recognition"}
+    labels |= {"live": "Live", "checks": "Checks"}
+
+    async def exercise():
+        app = HubApp(IdleServices(), doctor_probe=lambda _config, _path: _report("ok"))
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("3")
+            app.settings_screen.select_tab(tab)
+            await pilot.pause()
+            text = "\n".join(_tab_bar_rows(app))
+            assert text.count("▶") == 1, text
+            assert f"▶ {labels[tab]}" in text, text
+            widths = [app.screen.query_one(f"#tab-{name}").outer_size.width for name in labels]
+            app.settings_screen.select_tab("live" if tab != "live" else "audio")
+            await pilot.pause()
+            moved = [app.screen.query_one(f"#tab-{name}").outer_size.width for name in labels]
+            assert moved == widths, "a tab change does not move the other tabs"
 
     asyncio.run(exercise())
