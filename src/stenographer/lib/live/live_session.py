@@ -215,6 +215,16 @@ class LiveSession:
         return MODEL_DIRNAME
 
     @property
+    def process_ids(self) -> tuple[int, ...]:
+        """Return the ASR worker child of this session, if it runs."""
+        return self._worker.process_ids
+
+    @property
+    def idle_unload_deadline(self) -> float | None:
+        """Return the monotonic time of the idle unload of its worker, or ``None``."""
+        return self._worker.idle_unload_deadline
+
+    @property
     def queue_depth(self) -> int:
         return self._queue.qsize()
 

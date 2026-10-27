@@ -17,6 +17,7 @@ import pytest
 from stenographer.lib.live.phrase import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
 
@@ -124,6 +125,9 @@ class FakePlatform:
 
     def asr_transport(self):
         return object()
+
+    def process_counters(self):
+        return NullProcessCounters()
 
 
 class FakeSegmenter:
@@ -933,3 +937,14 @@ def test_relabel_progress_counts_phrases_from_the_real_work_units_of_both_passes
     assert all(0 <= value <= 7 for value in done)
     assert observed[-1] == (7, 7)
     assert session.relabel_progress is None
+
+
+def test_live_session_exposes_its_worker_pids_and_idle_unload_deadline(monkeypatch, tmp_path):
+    session, _writer, worker, _system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, start=False
+    )
+    worker.process_ids = (4321,)
+    worker.idle_unload_deadline = 12.5
+
+    assert session.process_ids == (4321,)
+    assert session.idle_unload_deadline == 12.5

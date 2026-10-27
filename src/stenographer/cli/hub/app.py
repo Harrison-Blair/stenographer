@@ -21,6 +21,7 @@ from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_panel import DoctorPanel
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, build_report
+from stenographer.cli.hub.engine_sampler import EngineSampler
 from stenographer.cli.hub.files_view import FilesPanel
 from stenographer.cli.hub.live_view import LiveView
 from stenographer.cli.hub.selection import append_line
@@ -301,6 +302,7 @@ class HubApp(App[None]):
         open_log: Callable[[], bool] | None = None,
         copy_report: Callable[[str], None] | None = None,
         files_home: pathlib.Path | None = None,
+        engine_sampler: EngineSampler | None = None,
     ) -> None:
         super().__init__(ansi_color=True)
         self.services = services
@@ -330,7 +332,7 @@ class HubApp(App[None]):
         self._pending_section: str | None = None
         self._pending_quit = False
         self._live_split = False
-        self._cpu_percent: float | None = None
+        self.engine_sampler = engine_sampler or EngineSampler(services)
         self.setup_wizard = SetupWizard()
         self._setup_test = setup_test or self._default_setup_test
         if model_download is None:
@@ -682,7 +684,7 @@ class HubApp(App[None]):
         return card
 
     def _cpu_sidebar_line(self) -> str:
-        cpu = self._cpu_percent
+        cpu = self.engine_sampler.cpu_all_percent
         cpu_text = "—" if cpu is None else f"{cpu:.0f}%"
         if cpu is None:
             cpu_bar = "▕········▏"
@@ -723,12 +725,9 @@ class HubApp(App[None]):
         self.files_panel.set_jobs(tuple(jobs))
 
     def _sample_cpu(self) -> None:
-        if self._section not in {"live", "files"}:
-            return
-        import psutil
-
-        self._cpu_percent = psutil.cpu_percent(interval=None)
-        self._refresh_view()
+        self.engine_sampler.sample()
+        if self._section in {"live", "files"}:
+            self._refresh_view()
 
     def action_previous_config_group(self) -> None:
         self._move_config_group(-1)

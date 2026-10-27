@@ -18,6 +18,7 @@ import soundfile
 from stenographer.lib.config.models import Config
 from stenographer.lib.files.engine import FilesEngine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
+from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.transcribe.results import TranscriptionResult
 
 
@@ -409,6 +410,9 @@ class FakeHubPlatform:
     def asr_transport(self):
         return "fake-transport"
 
+    def process_counters(self):
+        return NullProcessCounters()
+
 
 @pytest.mark.parametrize(
     ("name", "copied"),
@@ -756,3 +760,20 @@ def test_revision_job_stale_revision_keeps_a_rename_made_during_the_job(tmp_path
         (1.5, "system", "speaker-2", "Speaker 2", "charlie"),
     ]
     assert not (session / "transcript.r3.jsonl").exists()
+
+
+def test_engine_exposes_its_worker_pids_and_idle_unload_deadline(tmp_path):
+    process = FakeAsrProcess()
+    engine = _engine(tmp_path, process)
+    try:
+        assert engine.process_ids == ()
+        assert engine.idle_unload_deadline is None
+        job = engine.submit(_audio(tmp_path / "voice.wav"), diarize=False)
+        assert job.wait(5) == "completed"
+
+        assert engine.process_ids == (713,)
+        assert engine.idle_unload_deadline is not None
+    finally:
+        engine.close()
+    assert engine.process_ids == ()
+    assert engine.idle_unload_deadline is None

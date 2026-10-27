@@ -21,6 +21,7 @@ from stenographer.lib.platform.hotkey_listener import HotkeyListener
 from stenographer.lib.platform.key_injector import KeyInjector
 from stenographer.lib.platform.key_table import KeyTable
 from stenographer.lib.platform.notifier import Notifier
+from stenographer.lib.platform.process_counters import ProcessCounters
 from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
 from stenographer.lib.platform.system_audio import SystemAudioCapture
 from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer, ClipboardWriter
@@ -123,6 +124,10 @@ class Platform(Protocol):
         topology says so rather than guessing, so the core can apply its
         documented fallback instead of an inflated logical-CPU number.
         """
+        ...
+
+    def process_counters(self) -> ProcessCounters:
+        """CPU and memory counters that a UI loop may read once per second."""
         ...
 
     def journal_attached(self, env: Mapping[str, str]) -> bool:

@@ -107,3 +107,27 @@ def test_process_resident_bytes_use_statm_pages(tmp_path):
 
     assert read_process_resident_bytes(42, tmp_path, page_size=4096) == 300 * 4096
     assert read_process_resident_bytes(43, tmp_path, page_size=4096) is None
+
+
+def test_linux_platform_cpu_counters_read_this_process_from_proc():
+    import os
+
+    from stenographer.lib.platform.linux.provider import LinuxPlatform
+
+    counters = LinuxPlatform().process_counters()
+
+    assert counters.process_cpu_ticks(os.getpid()) >= 0
+    assert counters.process_resident_bytes(os.getpid()) > 0
+    total, idle = counters.system_cpu_times()
+    assert total >= idle > 0
+    assert counters.clock_ticks > 0
+
+
+def test_null_process_counters_report_no_cpu_or_memory():
+    from stenographer.lib.platform.null_process_counters import NullProcessCounters
+
+    counters = NullProcessCounters()
+
+    assert counters.system_cpu_times() is None
+    assert counters.process_cpu_ticks(1) is None
+    assert counters.process_resident_bytes(1) is None

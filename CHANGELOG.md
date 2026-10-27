@@ -34,6 +34,12 @@ and the Files output format and output folder options are gone.
   opened the result folder. Earlier results in the `files/` folder stay where
   they are.
 
+### Fixed
+
+- The speaker relabel progress after you stop a recording counts phrases from
+  0 to the phrase total. It no longer goes past the total or steps back
+  between the system and microphone passes.
+
 ## [v0.16.0] - 2026-10-22
 
 This is a breaking change: Underdog Bark 3.0 Pro by Conway Research replaces
