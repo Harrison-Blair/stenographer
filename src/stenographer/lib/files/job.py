@@ -7,7 +7,6 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from stenographer.lib.files.models import FileJobOptions, FileJobProgress
@@ -32,7 +31,7 @@ class FileJob:
         self._finished = threading.Event()
         self._state = "queued"
         self._error: str | None = None
-        self._output_path: Path | None = None
+        self._session_id: str | None = None
         self._started_at: float | None = None
         self._progress = FileJobProgress("transcribe", 0, None, ())
         self._progress_listeners: list[Callable[[FileJobProgress], None]] = []
@@ -53,9 +52,10 @@ class FileJob:
             return self._error
 
     @property
-    def output_path(self) -> Path | None:
+    def session_id(self) -> str | None:
+        """Return the session that holds the result once the job completes."""
         with self._lock:
-            return self._output_path
+            return self._session_id
 
     @property
     def started_at(self) -> float | None:
@@ -135,9 +135,9 @@ class FileJob:
             log.info(fmt_event("files", "job_stage", job_id=self.id, stage=stage))
         self._notify_progress(listeners, progress)
 
-    def _complete(self, output_path: Path, lines: tuple[TranscriptLine, ...]) -> None:
+    def _complete(self, session_id: str, lines: tuple[TranscriptLine, ...]) -> None:
         with self._lock:
-            self._output_path = output_path
+            self._session_id = session_id
             self._progress = FileJobProgress("save", 100, 0.0, lines)
             self._state = "completed"
             self._finished.set()
