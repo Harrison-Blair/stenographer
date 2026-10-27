@@ -129,6 +129,7 @@ class FakeSegmenter:
     def __init__(self, source, _model_path, **_kwargs):
         self.source = source
         self.flushed = False
+        self.speech_detected = False
 
     def accept(self, block):
         value = float(block[0])
