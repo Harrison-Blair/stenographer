@@ -96,7 +96,9 @@ _CONFIG_ACTIONS = frozenset(
 _ACCENT_BOLD = "bold #5fd7ff"
 _DIM = "#8b93a1"
 _DEFAULT_DEVICE = {"audio.input_device": "Default input", "hotkey.device": "Default device"}
-# The left edge of the control column of a Field row: dot slot, gap, label, gap.
+# The control column of a settings row is wider than the Field default, so
+# "[enter] Edit list… 200 terms" fits. Its left edge: dot slot, gap, label, gap.
+_CONTROL_WIDTH = 30
 _CONTROL_OFFSET = 2 + 1 + Field.LABEL_WIDTH + 1
 
 
@@ -157,12 +159,9 @@ class SettingsScreen(HubScreen):
         margin: 0 0 1 0;
         color: #3a4150;
     }
-    SettingsScreen #config-input {
-        height: 1;
-    }
     SettingsScreen #config-actions {
-        height: 3;
-        padding: 1 2 0 2;
+        height: 2;
+        padding: 0 2;
         border-top: solid #3a4150;
     }
     SettingsScreen #config-applies {
@@ -344,6 +343,7 @@ class SettingsScreen(HubScreen):
                     widgets.append(Rule())
                 continue
             field = Field(editor.label(key), "")
+            field.CONTROL_WIDTH = _CONTROL_WIDTH
             self._rows[key] = field
             widgets.append(field)
         container.mount_all(widgets)
@@ -353,7 +353,9 @@ class SettingsScreen(HubScreen):
         for key, field in self._rows.items():
             focused = key == selected
             help_text = editor.help(key)
-            if focused and editor.kind(key) != "list":
+            if key == self.editing:
+                help_text = "editing · enter keeps · esc cancels"
+            elif focused and editor.kind(key) != "list":
                 help_text += f" · default {self._value_text(editor, key, editor.default(key))}"
             field.help_text = help_text
             field.set_value(
@@ -370,7 +372,7 @@ class SettingsScreen(HubScreen):
         kind = editor.kind(key)
         value = editor.value(key)
         if kind == "toggle":
-            return Text("(●) on" if value else "( ) off", style=style)
+            return Text("(●) on" if value else "( ) off", style=style, justify="right")
         if kind == "number":
             text = Text(str(value), style=style, justify="right")
             unit = editor.unit(key)
@@ -380,10 +382,12 @@ class SettingsScreen(HubScreen):
         if kind == "list":
             count = len(value)
             noun = "term" if count == 1 else "terms"
-            return Text(f"[enter] Edit list… {count} {noun}", style=style or "#5fd7ff")
+            return Text(
+                f"[enter] Edit list… {count} {noun}", style=style or "#5fd7ff", justify="right"
+            )
         text = self._value_text(editor, key, value)
         if kind in {"choice", "device"}:
-            text += " ▾"
+            return Text(f"{text} ▾", style=style, justify="right")
         return Text(text, style=style)
 
     def _value_text(self, editor: ConfigEditor, key: str, value: object) -> str:
@@ -558,9 +562,15 @@ class SettingsScreen(HubScreen):
         editor_input = Input(
             initial, type=input_type, compact=True, select_on_focus=False, id="config-input"
         )
-        editor_input.styles.width = Field.CONTROL_WIDTH
+        # Inline styles: the app stylesheet gives each Input a border, and a
+        # row input stays on the one line of its row.
+        editor_input.styles.border = ("none", "black")
+        editor_input.styles.height = 1
+        editor_input.styles.padding = 0
+        editor_input.styles.width = _CONTROL_WIDTH
         editor_input.styles.margin = (0, 0, 0, _CONTROL_OFFSET)
         self.editing = key
+        self.app.refresh_view()
         await field.mount(editor_input)
         editor_input.focus()
         editor_input.cursor_position = len(initial)

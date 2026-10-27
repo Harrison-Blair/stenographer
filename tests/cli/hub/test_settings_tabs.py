@@ -411,3 +411,20 @@ def test_settings_footer_and_buttons_print_their_keys(tmp_path):
             assert "space toggle" in hints and "D reset" in hints
 
     asyncio.run(exercise())
+
+
+def test_settings_click_selects_a_row_and_a_second_click_edits_it(tmp_path):
+    async def exercise():
+        app = _app(tmp_path)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open(pilot, "recognition")
+            await pilot.click(_field(app, "CPU threads"))
+            await pilot.pause()
+            assert app.config_editor.selected_key == "asr.cpu_threads"
+            assert not app.screen.query(Input)
+            await pilot.click(_field(app, "CPU threads"))
+            await pilot.pause()
+            assert app.settings_screen.editing == "asr.cpu_threads"
+            assert isinstance(app.screen.focused, Input)
+
+    asyncio.run(exercise())

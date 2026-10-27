@@ -40,6 +40,9 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
         ("enter", "done", "Done"),
     ]
     DEFAULT_CSS = """
+    VocabularyDialog > #dialog-frame {
+        width: 84;
+    }
     VocabularyDialog #vocab-input {
         display: none;
         margin-top: 1;
