@@ -44,6 +44,21 @@ def _best_active_pair(
     return left_slot, right_slot, float(maximum)
 
 
+def relabel_work_units(
+    lines: Iterable[TranscriptLine],
+    *,
+    minimum_duration: float = MINIMUM_SPEECH_DURATION_SECONDS,
+) -> int:
+    """Return the progress total that ``relabel_system_lines`` reports for *lines*.
+
+    A caller learns it before the pass starts. It holds for the default pass
+    without a fixed speaker count.
+    """
+    original = tuple(lines)
+    anchors = sum(1 for line in original if max(0.0, line.end - line.start) >= minimum_duration)
+    return 2 * anchors + len(original)
+
+
 def relabel_system_lines(
     lines: Iterable[TranscriptLine],
     embeddings: Iterable[np.ndarray],
@@ -114,7 +129,7 @@ def relabel_system_lines(
     right_children = np.full(capacity, -1, dtype=np.intp)
     best_scores = np.full(anchor_count, -np.inf, dtype=np.float64)
     best_neighbors = np.full(anchor_count, -1, dtype=np.intp)
-    total = 2 * anchor_count + len(original)
+    total = relabel_work_units(original, minimum_duration=minimum_duration)
     if progress is not None:
         progress(0, total)
 

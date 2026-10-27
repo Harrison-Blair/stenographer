@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.key_injector import KeyInjector
     from stenographer.lib.platform.key_table import KeyTable
     from stenographer.lib.platform.notifier import Notifier
+    from stenographer.lib.platform.process_counters import ProcessCounters
     from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
     from stenographer.lib.platform.system_audio import SystemAudioCapture
     from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer
@@ -178,6 +179,11 @@ class LinuxPlatform(DiagnosticsHostMixin):
         from stenographer.lib.platform.linux.cpu import physical_core_count
 
         return physical_core_count()
+
+    def process_counters(self) -> ProcessCounters:
+        from stenographer.lib.platform.linux.proc_counters import LinuxProcessCounters
+
+        return LinuxProcessCounters()
 
     def journal_attached(self, env: Mapping[str, str]) -> bool:
         from stenographer.lib.platform.linux.dirs import journal_attached

@@ -21,7 +21,7 @@ from stenographer.lib.audio.recorder import Recorder
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.phrase import Phrase
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
-from stenographer.lib.live.relabel import relabel_system_lines
+from stenographer.lib.live.relabel import relabel_system_lines, relabel_work_units
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -215,6 +215,16 @@ class LiveSession:
         return MODEL_DIRNAME
 
     @property
+    def process_ids(self) -> tuple[int, ...]:
+        """Return the ASR worker child of this session, if it runs."""
+        return self._worker.process_ids
+
+    @property
+    def idle_unload_deadline(self) -> float | None:
+        """Return the monotonic time of the idle unload of its worker, or ``None``."""
+        return self._worker.idle_unload_deadline
+
+    @property
     def queue_depth(self) -> int:
         return self._queue.qsize()
 
@@ -277,6 +287,12 @@ class LiveSession:
     def relabel_error(self) -> str | None:
         with self._lock:
             return self._relabel_error
+
+    @property
+    def relabel_progress(self) -> tuple[int, int] | None:
+        """Return ``(done, total)`` phrases of the running relabel pass, or ``None``."""
+        with self._lock:
+            return self._relabel_progress if self._relabeling else None
 
     @property
     def relabel_status(self) -> str:
@@ -413,15 +429,21 @@ class LiveSession:
             self._relabeling = True
             self._relabel_progress = (0, total)
 
+        # Progress counts phrases: each pass reports work units, and every pass
+        # total is known up front, so the phrase count never falls or overshoots.
+        units = [relabel_work_units(lines) for _, _, lines, _ in passes]
+        total_units = sum(units)
         try:
             revised_lines = list(self.lines)
             offset = 0
-            for source, indices, lines, embeddings in passes:
+            for (source, indices, lines, embeddings), pass_units in zip(passes, units, strict=True):
                 relabeled = relabel_system_lines(
                     lines,
                     embeddings,
-                    progress=lambda done, _total, offset=offset: self._set_relabel_progress(
-                        offset + done, total
+                    progress=lambda done, _total, offset=offset, pass_units=pass_units: (
+                        self._set_relabel_progress(
+                            total * (offset + min(done, pass_units)) // total_units, total
+                        )
                     ),
                     should_cancel=self._skip_relabel.is_set,
                     label_prefix=_LABEL_PREFIXES[source],
@@ -432,7 +454,7 @@ class LiveSession:
                     return
                 for index, line in zip(indices, relabeled, strict=True):
                     revised_lines[index] = line
-                offset += len(lines)
+                offset += pass_units
             SessionStore(self._writer.path.parent).write_revision(
                 self._writer.path.name,
                 revised_lines,
@@ -451,7 +473,7 @@ class LiveSession:
 
     def _set_relabel_progress(self, done: int, total: int) -> None:
         with self._lock:
-            self._relabel_progress = done, total
+            self._relabel_progress = max(done, self._relabel_progress[0]), total
 
     def _check_system_availability(self) -> None:
         try:
