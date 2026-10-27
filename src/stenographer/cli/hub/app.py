@@ -100,43 +100,6 @@ class HubApp(App[None]):
         border-title-color: ansi_default;
         overflow-y: auto;
     }
-    #live-view {
-        width: 1fr;
-        height: 1fr;
-    }
-    #live-top {
-        width: 1fr;
-        height: 6;
-    }
-    #live-rec, #live-mic {
-        margin-right: 1;
-    }
-    #live-rec, #live-mic, #live-system {
-        width: 1fr;
-        height: 6;
-        padding: 0 1;
-    }
-    #live-rec {
-        border: round #ff875f;
-        border-title-color: #ff875f;
-        border-title-style: bold;
-    }
-    #live-mic {
-        border: round #5fd7ff;
-    }
-    #live-system {
-        border: round #ffaf5f;
-    }
-    #live-transcript {
-        width: 1fr;
-        height: 1fr;
-        margin-top: 1;
-        padding: 0 1;
-        border: round #3a4150;
-        border-title-color: ansi_default;
-        border-title-style: bold;
-        overflow-y: auto;
-    }
     #transcript-scroll-content {
         width: 1fr;
         height: auto;
@@ -491,6 +454,8 @@ class HubApp(App[None]):
                 ),
                 self._confirm_recording_quit,
             )
+        elif getattr(self.services, "stopping_sessions", ()):
+            self._prompt_relabel_quit()
         elif self.library_screen.files_running:
             self._prompt_files_quit()
         else:
@@ -516,6 +481,33 @@ class HubApp(App[None]):
             return
         self.activity_status = None
         self.refresh_view()
+        if getattr(self.services, "stopping_sessions", ()):
+            self._prompt_relabel_quit()
+        elif self.library_screen.files_running:
+            self._prompt_files_quit()
+        else:
+            self.exit()
+
+    def _prompt_relabel_quit(self) -> None:
+        log.info(fmt_event("hub", "quit_prompted", work="relabel"))
+        self.push_screen(
+            QuitConfirm("Relabel is still running. Quit and keep the live labels?"),
+            self._confirm_relabel_quit,
+        )
+
+    def _confirm_relabel_quit(self, confirmed: bool | None) -> None:
+        log.info(fmt_event("hub", "quit_confirmed", work="relabel", confirmed=bool(confirmed)))
+        if not confirmed:
+            return
+        self.activity_status = "Saving recordings..."
+        self.refresh_view()
+        self.run_worker(self._skip_relabels_and_quit(), name="skip-relabels", group="hub-work")
+
+    async def _skip_relabels_and_quit(self) -> None:
+        # Each stop still finishes writing its files; only the relabel passes end early.
+        await asyncio.to_thread(self.services.skip_relabels)
+        await asyncio.to_thread(self.services.wait_for_stops)
+        self.activity_status = None
         if self.library_screen.files_running:
             self._prompt_files_quit()
         else:

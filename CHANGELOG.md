@@ -37,6 +37,12 @@ screens, Record, Library, and Settings, in place of its six sections.
   tabs). Each screen has a sidebar with navigation badges, an engine card with
   the model state and CPU and memory use, and a context card. Press `?` for the
   keys of the current screen, and click a control to run its key.
+- Record stops and saves with `enter` and stays open: the speaker relabel pass
+  runs in the background, `space` records again, and `o` opens the saved
+  session in Library. Spectrum meters show 18 bands, the level and peak, and a
+  speech light. `d` chooses the input device for the next recordings of this
+  run without changing `config.toml`. The speakers card shows talk time, and a
+  speaker of a saved session can be renamed.
 
 ### Removed
 

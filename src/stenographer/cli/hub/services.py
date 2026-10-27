@@ -43,6 +43,7 @@ class HubServices:
         session_store: SessionStore | None = None,
         player_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
         files_engine_factory: Callable[..., FilesEngine] | None = None,
+        device_query: Callable[[], list[tuple[str, str]]] | None = None,
     ) -> None:
         self._config = config
         self._platform = platform
@@ -61,6 +62,13 @@ class HubServices:
         self._files_lock = threading.Lock()
         self._files_closed = False
         self.files_job = None
+        self._device_query = device_query
+        self._stopping: list[LiveSession] = []
+        self._stops_changed = threading.Condition()
+        self.last_saved: LiveSession | None = None
+        self.next_sources = {"mic": True, "system": True}
+        self.next_device: str | None = None
+        self.next_device_label: str | None = None
 
     @property
     def recording(self) -> bool:
@@ -164,6 +172,9 @@ class HubServices:
             self._config,
             diarize_mic=self._config.live.diarize_mic,
             platform=self._platform,
+            mic=self.next_sources["mic"],
+            system=self.next_sources["system"],
+            device=self.next_device,
         )
         self._session = session
         try:
@@ -174,11 +185,62 @@ class HubServices:
             raise
 
     def stop_recording(self) -> None:
-        session = self._session
-        if session is None:
-            return
-        session.stop()
-        self._session = None
+        session = self.begin_stop()
+        if session is not None:
+            self.finish_stop(session)
+
+    @property
+    def stopping_sessions(self) -> tuple[LiveSession, ...]:
+        """Return the sessions whose stop runs, in stop order."""
+        with self._stops_changed:
+            return tuple(self._stopping)
+
+    def begin_stop(self) -> LiveSession | None:
+        """End the recording at once; the caller runs ``finish_stop`` in the background."""
+        with self._stops_changed:
+            session = self._session
+            if session is None:
+                return None
+            self._session = None
+            self._stopping.append(session)
+            self.last_saved = session
+        return session
+
+    def finish_stop(self, session: LiveSession) -> None:
+        """Save the session and run its relabel pass; it leaves the stopping list at the end."""
+        try:
+            session.stop()
+        finally:
+            with self._stops_changed:
+                self._stopping.remove(session)
+                self._stops_changed.notify_all()
+
+    def skip_relabels(self) -> None:
+        """Skip the relabel pass of each stopping session; each keeps its live labels."""
+        for session in self.stopping_sessions:
+            session.skip_relabel()
+
+    def wait_for_stops(self, timeout: float | None = None) -> bool:
+        """Wait until no stop runs; return false when the timeout ends first."""
+        with self._stops_changed:
+            return self._stops_changed.wait_for(lambda: not self._stopping, timeout)
+
+    def toggle_next_source(self, source: str) -> None:
+        """Turn a source of the next recording on or off."""
+        self.next_sources[source] = not self.next_sources[source]
+
+    def input_devices(self) -> list[tuple[str, str]]:
+        """Return the input devices as ``(value, label)`` pairs; empty when none can record."""
+        if self._device_query is not None:
+            return self._device_query()
+        from stenographer.lib.audio.probe import input_device_choices, query_devices
+
+        return input_device_choices(query_devices().devices)
+
+    def choose_device(self, value: str | None, label: str | None) -> None:
+        """Use a device for the next recordings of this run; ``None`` uses the saved setting."""
+        self.next_device = value
+        self.next_device_label = label
 
     def rediarize_session(self, session_id: str) -> str:
         return self.session_jobs.rediarize(session_id)
