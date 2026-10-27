@@ -110,8 +110,33 @@ either one; the browser title shows the current folder.
 Select one or more files in the browser and press `enter` to queue them. Jobs
 run one at a time in the background. The queue shows each job's state, stage,
 progress, and estimated time remaining. Select a job to see its transcript
-preview. Press `x` while the queue has focus to cancel the selected job; press
-`e` to open the folder for a saved result.
+preview. Press `x` while the queue has focus to cancel the selected job.
+
+Each job saves its result in the sessions folder, next to your recordings:
+
+- **Another file:** the job makes a new session folder named by the UTC time
+  the job started, for example `20261027T153000Z` (when that name exists, it
+  adds one second). The folder holds a private copy of the file as
+  `source.<ext>`, `transcript.jsonl`, `transcript.md`, and `session.json` with
+  `"kind": "file"`, the original file name, and the duration. `<ext>` is the
+  original suffix in lower case when it has 1 to 8 letters or digits, else
+  `bin`.
+- **`mic.flac` or `system.flac` of a recording:** the job saves a new
+  transcript revision of that recording. The revision holds the new lines of
+  that source and the current lines of the other source, ordered by start
+  time. New speakers get IDs such as `mic-file-r3-1` and the labels `Room 1`
+  (mic) or `Speaker 1` (system); without diarization, mic lines are `You`.
+  Earlier renames of the replaced source do not carry over.
+- **`source.<ext>` of a file session:** the job saves a new transcript
+  revision that replaces all lines.
+
+A path outside the sessions folder, a symlink that leads out of it, or a file in
+a subfolder of a session makes a new session. A cancelled or failed job
+removes the folder that it made, and a revision job that stops leaves the
+session unchanged. When the session changes while a revision job runs (for
+example, a speaker rename), the job fails and keeps the newer revision.
+Earlier results in the old `files/` folder stay where they are; the hub does
+not read, move, or delete them.
 
 The options are:
 
@@ -120,18 +145,12 @@ The options are:
   A number requests a fixed speaker count for that Files job.
 - **Refine:** apply the configured text-refinement service. This is off by
   default for Files jobs.
-- **Output format:** choose Markdown (`md`), JSON Lines (`jsonl`), SubRip
-  subtitles (`srt`), or plain text (`txt`). Markdown is the default.
-- **Output folder:** choose where to save the result. The default is
-  `$XDG_DATA_HOME/stenographer/files/`, or
-  `~/.local/share/stenographer/files/` when `XDG_DATA_HOME` is unset.
 
 Press `tab` to move focus between the browser, queue, and options. In the
 browser, press `/` to search, `space` to select a file, and `enter` to open a
 folder or queue the selected files. In Options, press `o` to open or close the
 panel; use the arrow keys to choose a setting and `enter` or `space` to edit
-it. The output format cycles through its four choices. Speaker count accepts
-`auto` or a positive integer.
+it. Speaker count accepts `auto` or a positive integer.
 
 ## Sessions
 
