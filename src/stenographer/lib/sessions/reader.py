@@ -22,6 +22,7 @@ _REVISION = re.compile(r"transcript\.r(?P<number>[2-9]|[1-9]\d+)\.jsonl\Z")
 _SOURCE_FILE = re.compile(r"source\.[A-Za-z0-9]{1,8}\Z")
 _ACTIVITY_BINS = 64
 _AUDIO_SOURCES = ("mic", "system")
+_SOURCE_ORDER = {"mic": 0, "system": 1}
 
 
 def session_started_at(session_id: str) -> datetime | None:
@@ -180,7 +181,7 @@ def read_transcript(path: Path) -> tuple[tuple[TranscriptLine, ...], bool]:
     return tuple(
         sorted(
             (replace(line, label=renames.get(line.speaker_id, line.label)) for line in lines),
-            key=lambda line: (line.start, line.end),
+            key=lambda line: (line.start, _SOURCE_ORDER.get(line.source, 2), line.end),
         )
     ), interrupted
 

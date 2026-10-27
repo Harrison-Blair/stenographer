@@ -520,8 +520,8 @@ def test_mic_source_job_writes_a_revision_and_keeps_system_lines_and_renames(tmp
 
         store.rename_speaker(session.name, "mic-file-r3-1", "Dana")
         assert [(row[2], row[3]) for row in _rows(store, session.name)] == [
-            ("speaker-1", "Alice"),
             ("mic-file-r3-1", "Dana"),
+            ("speaker-1", "Alice"),
             ("mic-file-r3-1", "Dana"),
             ("speaker-2", "Speaker 2"),
         ]

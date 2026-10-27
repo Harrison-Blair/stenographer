@@ -199,3 +199,23 @@ def test_source_audio_refuses_a_recording(tmp_path):
 
     with pytest.raises(SessionSourceError, match="not a file session"):
         SessionStore(tmp_path / "sessions").source_audio(session.name)
+
+
+def test_reader_orders_equal_start_times_mic_first_then_by_end(tmp_path):
+    session = _recording(tmp_path)
+    store = SessionStore(tmp_path / "sessions")
+    store.write_revision(
+        session.name,
+        [
+            _line(0.0, 1.0, "system", "system-1", "Sys"),
+            _line(0.0, 3.0, "mic", "mic-2", "Long"),
+            _line(0.0, 2.0, "mic", "mic-1", "Short"),
+            _line(1.0, 1.5, "system", "system-2", "Next"),
+        ],
+        method="file-transcribe",
+        expected_revision="transcript.jsonl",
+    )
+
+    lines = store.read(session.name).lines
+
+    assert [line.speaker_id for line in lines] == ["mic-1", "mic-2", "system-1", "system-2"]
