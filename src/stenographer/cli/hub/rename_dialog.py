@@ -28,7 +28,7 @@ class RenameDialog(Dialog[tuple[str, str] | None]):
     }
     RenameDialog .rename-row Label {
         width: 14;
-        padding: 0 0 0 2;
+        padding: 1 0 0 2;
     }
     RenameDialog .rename-row SpeakerSelect, RenameDialog .rename-row Input {
         width: 1fr;
@@ -46,12 +46,11 @@ class RenameDialog(Dialog[tuple[str, str] | None]):
                 self._speakers,
                 prompt="Choose a speaker",
                 value=self._speakers[0][0] if self._speakers else SpeakerSelect.BLANK,
-                compact=True,
                 id="speaker-select",
             )
         with Horizontal(classes="rename-row"):
             yield Label("New name")
-            yield Input(placeholder="New speaker name", compact=True, id="speaker-name")
+            yield Input(placeholder="New speaker name", id="speaker-name")
 
     def buttons(self) -> tuple[tuple[str, str, str], ...]:
         return (("esc", "Cancel", "cancel"), ("enter", "Rename", "rename"))
