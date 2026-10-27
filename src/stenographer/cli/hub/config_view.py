@@ -38,6 +38,7 @@ _HELP = {
     "refine.model": "Model name used by the local refinement service.",
     "refine.min_words": "Skip refinement for utterances with fewer words.",
     "refine.structured_output": "Ask the refinement model for structured output.",
+    "refine.vocabulary": "Terms that refinement spells exactly as written.",
     "feedback.volume": "Playback volume for feedback sounds.",
     "feedback.mute": "Mute feedback sounds.",
     "feedback.overlay": "Show the best-effort status overlay.",

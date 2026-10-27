@@ -14,7 +14,8 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 ## [Unreleased]
 
 Files jobs now save their results as session folders next to your recordings,
-and the Files output format and output folder options are gone.
+and the Files output format and output folder options are gone. Refine can keep
+your own names and terms spelled exactly as you write them.
 
 ### Added
 
@@ -27,6 +28,9 @@ and the Files output format and output folder options are gone.
 - Session changes run one at a time per session. A revision based on an older
   read fails and keeps the newer revision, and an interrupted revision write
   leaves the session unchanged.
+- Adds `refine.vocabulary`, a list of terms that refine spells exactly as
+  written in dictation, hub file jobs, and `transcribe --refine`. The default
+  empty list leaves each refine request unchanged.
 
 ### Removed
 

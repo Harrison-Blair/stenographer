@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import threading
 import time
 
@@ -987,3 +988,31 @@ def test_stop_bounds_the_total_wait_when_every_shutdown_join_is_wedged(monkeypat
         warmup_release.set()
         worker.transcribe_release.set()
         refine_warm_release.set()
+
+
+def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire):
+    from .support import _Feedback, _Notifier, _Recorder, _Worker
+
+    defaults = Config.defaults()
+    cfg = dataclasses.replace(
+        defaults,
+        refine=dataclasses.replace(
+            defaults.refine, enabled=True, min_words=1, vocabulary=("Kubernetes", "PipeWire")
+        ),
+    )
+    daemon = Daemon(
+        cfg=cfg,
+        feedback=_Feedback(),
+        notifier=_Notifier(),
+        worker=_Worker(None, None),
+        recorder=_Recorder(np.zeros(16000, dtype=np.float32)),
+    )
+    try:
+        daemon._refiner.refine("alpha bravo charlie")
+    finally:
+        daemon.stop()
+
+    assert len(ollama_wire) == 1
+    wire = json.dumps(ollama_wire[0]["messages"])
+    assert "Kubernetes" in wire
+    assert "PipeWire" in wire

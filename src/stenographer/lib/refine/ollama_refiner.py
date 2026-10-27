@@ -73,6 +73,7 @@ class OllamaRefiner:
         min_words: int,
         structured_output: bool,
         keep_alive: int,
+        vocabulary: tuple[str, ...] = (),
         on_model_loading: Callable[[], None] | None = None,
         on_model_loading_finished: Callable[[], None] | None = None,
     ) -> None:
@@ -81,6 +82,7 @@ class OllamaRefiner:
         self._min_words = min_words
         self._structured_output = structured_output
         self._keep_alive = keep_alive
+        self._vocabulary = vocabulary
         self._on_model_loading = on_model_loading
         self._on_model_loading_finished = on_model_loading_finished
         self._last_result: RefineResult | None = None
@@ -202,6 +204,7 @@ class OllamaRefiner:
             keep_alive=self._keep_alive,
             structured_output=self._structured_output,
             profile=profile,
+            vocabulary=self._vocabulary,
         )
         if not self._claim():
             self._last_result = RefineResult(OUTCOME_CANCELLED, chars_in=len(text))

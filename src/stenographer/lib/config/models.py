@@ -64,6 +64,7 @@ class RefineConfig:
     model: str = DEFAULT_MODEL
     min_words: int = 10
     structured_output: bool = DEFAULT_STRUCTURED_OUTPUT
+    vocabulary: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

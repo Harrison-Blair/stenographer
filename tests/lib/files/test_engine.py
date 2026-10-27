@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import queue
@@ -327,6 +328,34 @@ def test_fixed_speaker_count_runs_batch_diarization(tmp_path):
     finally:
         release.set()
         engine.close()
+
+
+def test_a_file_job_refine_request_carries_the_vocabulary(tmp_path, ollama_wire):
+    defaults = Config.defaults()
+    config = dataclasses.replace(
+        defaults,
+        refine=dataclasses.replace(
+            defaults.refine, min_words=1, vocabulary=("Kubernetes", "PipeWire")
+        ),
+    )
+    engine = FilesEngine(
+        config,
+        data_dir=tmp_path / "data",
+        decoder=SubprocessFfmpegDecoder(),
+        transport=FakeAsrTransport(FakeAsrProcess()),
+        segmenter_factory=FakeSegmenter,
+    )
+    job = engine.submit(_audio(tmp_path / "refine.wav"), diarize=False, refine=True)
+    try:
+        assert job.wait(5) == "completed"
+    finally:
+        engine.close()
+
+    assert ollama_wire
+    for body in ollama_wire:
+        wire = json.dumps(body["messages"])
+        assert "Kubernetes" in wire
+        assert "PipeWire" in wire
 
 
 def _snapshot(directory):

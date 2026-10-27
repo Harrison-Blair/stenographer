@@ -360,3 +360,32 @@ def test_the_factory_passes_the_loading_observers_through():
     assert isinstance(refiner, OllamaRefiner)
     assert refiner._on_model_loading is on_loading
     assert refiner._on_model_loading_finished is on_finished
+
+
+def test_the_factory_hands_the_vocabulary_to_the_request(transport):
+    section = RefineConfig(enabled=True, vocabulary=("Kubernetes", "PipeWire"))
+
+    build_refiner(section, idle_unload_seconds=900).refine(SPOKEN)
+
+    system_text = " ".join(
+        message["content"]
+        for message in transport["calls"][0]["body"]["messages"]
+        if message["role"] == "system"
+    )
+    assert "Kubernetes" in system_text
+    assert "PipeWire" in system_text
+
+
+@pytest.mark.parametrize("failure", [None, RefineTransportError("connection refused")])
+def test_vocabulary_terms_never_reach_the_log(transport, caplog, failure):
+    transport["raise"] = failure
+    transport["loaded"] = False
+    refiner = _refiner(vocabulary=("Zebulonterm", "Quixarvel"))
+
+    with caplog.at_level(logging.DEBUG, logger="stenographer"):
+        refiner.refine(SPOKEN)
+        refiner.warm()
+
+    text = "\n".join(caplog.messages)
+    assert "Zebulonterm" not in text
+    assert "Quixarvel" not in text
