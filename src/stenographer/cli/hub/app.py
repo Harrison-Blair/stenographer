@@ -307,7 +307,6 @@ class HubApp(App[None]):
         self.files_panel = FilesPanel(
             home=files_home,
             start=getattr(services, "files_start_folder", None),
-            output_folder=getattr(services, "files_output_folder", None),
             id="files-panel",
         )
         self._files_submitting = 0
@@ -649,7 +648,6 @@ class HubApp(App[None]):
                     ("space", "select"),
                     ("o", "options"),
                     ("x", "cancel"),
-                    ("e", "open result"),
                     ("1-6", "sections"),
                 )
             )
@@ -877,20 +875,11 @@ class HubApp(App[None]):
         elif option == "refine":
             panel.refine = not panel.refine
             panel.refresh_display()
-        elif option == "output format":
-            formats = ("md", "jsonl", "srt", "txt")
-            panel.output_format = formats[(formats.index(panel.output_format) + 1) % len(formats)]
-            panel.refresh_display()
         elif option == "speaker count":
             count = "auto" if panel.speaker_count is None else str(panel.speaker_count)
             self.push_screen(
                 ConfigPrompt("Speaker count (auto or a positive number)", initial=count),
                 self._set_file_speaker_count,
-            )
-        elif option == "output folder":
-            self.push_screen(
-                ConfigPrompt("Output folder", initial=str(panel.output_folder)),
-                self._set_file_output_folder,
             )
 
     def _set_file_speaker_count(self, value: str | None) -> None:
@@ -908,12 +897,6 @@ class HubApp(App[None]):
         self.files_panel.refresh_display()
         log.info(fmt_event("hub", "files_speaker_count_changed", automatic=count is None))
 
-    def _set_file_output_folder(self, value: str | None) -> None:
-        if value is not None and value.strip():
-            self.files_panel.output_folder = pathlib.Path(value).expanduser()
-            self.files_panel.refresh_display()
-            log.info(fmt_event("hub", "files_output_folder_changed"))
-
     def _queue_selected_files(self) -> None:
         selected = self.files_panel.selected_entry
         paths = self.files_panel.enter()
@@ -930,8 +913,6 @@ class HubApp(App[None]):
             "diarize": self.files_panel.diarize,
             "speaker_count": self.files_panel.speaker_count,
             "refine": self.files_panel.refine,
-            "output_format": self.files_panel.output_format,
-            "output_folder": self.files_panel.output_folder,
         }
         self._files_submitting += len(paths)
         log.info(fmt_event("hub", "files_queue_requested", count=len(paths)))
@@ -984,32 +965,6 @@ class HubApp(App[None]):
         if not cancelled:
             self.notify("This Files job has already finished.", severity="warning")
         self._refresh_files_view()
-
-    def _open_files_result(self) -> None:
-        if self.files_panel.focus_area != "queue":
-            self.notify("Focus the queue to select a Files result.", severity="warning")
-            return
-        job = self.files_panel.selected_job
-        output_path = None if job is None else getattr(job, "output_path", None)
-        if output_path is None:
-            self.notify("This Files job has no saved result yet.", severity="warning")
-            return
-        log.info(
-            fmt_event(
-                "hub", "files_result_folder_open_requested", job_id=getattr(job, "id", "unknown")
-            )
-        )
-        opener = getattr(self.services, "open_files_result", None)
-        if opener is None:
-            self.notify("Could not open the result folder.", severity="error")
-            return
-        try:
-            opened = opener(output_path)
-        except Exception as exc:
-            log_failure(log, logging.ERROR, "hub: file_result_open_failed", exc, safe=True)
-            opened = False
-        if not opened:
-            self.notify("Could not open the result folder.", severity="warning")
 
     def _search_config(self, term: str | None) -> None:
         if self.config_editor is None:
@@ -1416,9 +1371,6 @@ class HubApp(App[None]):
         self._refresh_view()
 
     def action_setup_edit(self) -> None:
-        if self._section == "files":
-            self._open_files_result()
-            return
         if self._section != "setup" or self.config_editor is None:
             return
         key = self.setup_wizard.step.config_key

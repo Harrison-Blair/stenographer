@@ -44,7 +44,9 @@ class FakeServices:
         if not self.release_job.wait(timeout=2):
             raise TimeoutError("test job timed out")
         detail = self.session_store.read(session_id)
-        self.session_store.write_revision(session_id, detail.lines, method=method)
+        self.session_store.write_revision(
+            session_id, detail.lines, method=method, expected_revision=detail.revision
+        )
 
 
 def _write_session(root, started_at, *, interrupted=False):

@@ -78,13 +78,16 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
         for line in lines
     )
 
-    revision = store.write_revision(session.name, revised_lines, method="re-transcribe")
+    revision = store.write_revision(
+        session.name, revised_lines, method="re-transcribe", expected_revision="transcript.jsonl"
+    )
 
     assert revision == "transcript.r2.jsonl"
     assert (session / "transcript.jsonl").read_bytes() == original_jsonl
     assert (session / "transcript.md").read_bytes() == original_markdown
     assert json.loads((session / "session.json").read_text(encoding="utf-8")) == {
         "current_revision": "transcript.r2.jsonl",
+        "kind": "rec",
         "method": "re-transcribe",
     }
     assert "revised placeholder" in (session / "transcript.r2.md").read_text(encoding="utf-8")
@@ -102,7 +105,12 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
     assert (session / "transcript.r2.jsonl").read_text(encoding="utf-8").count("Alice") == 2
 
     for _ in range(7):
-        revision = store.write_revision(session.name, detail.lines, method="relabel")
+        revision = store.write_revision(
+            session.name,
+            detail.lines,
+            method="relabel",
+            expected_revision=store.read(session.name).revision,
+        )
     assert revision == "transcript.r10.jsonl"
     assert store.read(session.name).revision == revision
 
@@ -172,7 +180,12 @@ def test_revision_and_export_paths_keep_private_permissions(tmp_path):
     session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
     store = SessionStore(tmp_path / "sessions")
 
-    revision = store.write_revision(session.name, store.read(session.name).lines, method="relabel")
+    revision = store.write_revision(
+        session.name,
+        store.read(session.name).lines,
+        method="relabel",
+        expected_revision="transcript.jsonl",
+    )
     exported = store.export(session.name, tmp_path / "new-export-folder", "txt")
 
     assert session.stat().st_mode & 0o777 == 0o700

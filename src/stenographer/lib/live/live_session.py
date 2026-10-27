@@ -380,6 +380,7 @@ class LiveSession:
                 self._writer.path.name,
                 revised_lines,
                 method="diarization",
+                expected_revision="transcript.jsonl",
             )
             with self._lock:
                 self._lines = revised_lines
