@@ -177,6 +177,7 @@ class SettingsScreen(HubScreen):
         self.tab = "general"
         self.check_badge: tuple[int, str] | None = None
         self.editing: str | None = None
+        self.row_error: tuple[str, str] | None = None
         self._rows: dict[str, Field] = {}
         self._row_signature: tuple[object, ...] | None = None
         self._shown_selection: str | None = None
@@ -353,7 +354,11 @@ class SettingsScreen(HubScreen):
         for key, field in self._rows.items():
             focused = key == selected
             help_text = editor.help(key)
-            if key == self.editing:
+            if self.row_error is not None and key == self.row_error[0]:
+                help_text = f"✗ {self.row_error[1]}"
+                if key == self.editing:
+                    help_text += " · esc cancels"
+            elif key == self.editing:
                 help_text = "editing · enter keeps · esc cancels"
             elif focused and editor.kind(key) != "list":
                 help_text += f" · default {self._value_text(editor, key, editor.default(key))}"
@@ -478,6 +483,7 @@ class SettingsScreen(HubScreen):
     def _move_key(self, offset: int) -> None:
         editor = self._editor()
         if editor is not None:
+            self.row_error = None
             editor.move_key(offset)
             self.app.refresh_view()
 
@@ -539,11 +545,18 @@ class SettingsScreen(HubScreen):
         try:
             editor.set_value(key, value)
         except (ConfigError, ConfigPersistenceError) as exc:
+            self.row_error = (key, self._reason(exc))
             self.app.notify(str(exc), severity="error")
             return False
         finally:
             self.app.refresh_view()
+        self.row_error = None
         return True
+
+    @staticmethod
+    def _reason(exc: Exception) -> str:
+        """Return the words of a rejection for the ``✗`` line of its row."""
+        return exc.reason if isinstance(exc, ConfigError) else str(exc)
 
     async def _open_input(self, editor: ConfigEditor, key: str) -> None:
         field = self._rows.get(key)
@@ -577,6 +590,7 @@ class SettingsScreen(HubScreen):
 
     def _close_input(self) -> None:
         self.editing = None
+        self.row_error = None
         for editor_input in self.query("#config-input"):
             editor_input.remove()
         if self.tab != "checks" and self.ready:
@@ -592,7 +606,12 @@ class SettingsScreen(HubScreen):
         try:
             editor.edit(key, value)
         except (ValueError, TypeError, ConfigError, ConfigPersistenceError) as exc:
+            reason = self._reason(exc)
+            if isinstance(exc, ValueError) and editor.kind(key) == "number":
+                reason = "enter a number"
+            self.row_error = (key, reason)
             self.app.notify(str(exc), severity="error")
+            self.app.refresh_view()
             return False
         self._close_input()
         self.app.refresh_view()

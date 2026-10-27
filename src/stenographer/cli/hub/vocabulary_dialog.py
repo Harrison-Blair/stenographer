@@ -27,7 +27,8 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
     ``check`` returns the terms as the config reads them or raises
     ``ConfigError``, so the dialog applies the config rules and keeps no copy
     of them. While the term input has focus, letters go to it; ``enter``
-    keeps the term and ``escape`` closes the input.
+    keeps the term and ``escape`` closes the input. A rejected term leaves
+    the input open with ``✗`` and the reason under it.
     """
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
@@ -47,6 +48,9 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
         display: none;
         margin-top: 1;
     }
+    VocabularyDialog #vocab-error {
+        display: none;
+    }
     VocabularyDialog #vocab-count {
         margin-top: 1;
         color: #8b93a1;
@@ -65,6 +69,7 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
     def compose_body(self) -> ComposeResult:
         yield SelectableList(id="vocab-list")
         yield Input(placeholder="term", compact=True, select_on_focus=False, id="vocab-input")
+        yield Static("", id="vocab-error", markup=False)
         yield Static("", id="vocab-count", markup=False)
 
     def buttons(self) -> tuple[tuple[str, str, str], ...]:
@@ -94,7 +99,14 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
     def _input(self) -> Input:
         return self.query_one("#vocab-input", Input)
 
+    def _show_error(self, text: str | None) -> None:
+        """Show ``✗ text`` under the input; ``None`` hides the line."""
+        error = self.query_one("#vocab-error", Static)
+        error.update(f"✗ {text}" if text else "")
+        error.display = bool(text)
+
     def _open_input(self, value: str, editing: int | None) -> None:
+        self._show_error(None)
         self.editing = editing
         field = self._input()
         field.value = value
@@ -105,6 +117,7 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
     def _close_input(self) -> None:
         field = self._input()
         field.display = False
+        self._show_error(None)
         self.set_focus(None)
         self.editing = None
 
@@ -146,7 +159,7 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
         try:
             self.terms = list(self.check(tuple(candidate)))
         except ConfigError as exc:
-            self.app.notify(f"Term not kept: {exc.reason}.", severity="error")
+            self._show_error(f"term not kept: {exc.reason}")
             return
         self.selected = index
         self._close_input()

@@ -15,7 +15,6 @@ from tests.cli.hub.test_settings_tabs import (
     IdleServices,
     _config_path,
     _field,
-    _messages,
     _plain,
     _screen_text,
     _select,
@@ -80,15 +79,15 @@ def test_settings_vocabulary_rejects_bad_terms_with_the_config_rules(tmp_path):
             await pilot.press("a", *"  BRAVO ", "enter")
             await pilot.pause()
             assert dialog.terms == ["alpha", "bravo"]
-            assert any("repeats an earlier term" in message for message in _messages(app))
+            assert "✗ term not kept: term 3 repeats an earlier term" in _screen_text(app)
             assert isinstance(app.screen.focused, Input), "the input stays open to fix the term"
             await pilot.press("ctrl+a", "ctrl+k", *("x" * 65), "enter")
             await pilot.pause()
             assert dialog.terms == ["alpha", "bravo"]
-            assert any("at most 64 characters" in message for message in _messages(app))
+            assert "✗ term not kept: term 3 must have at most 64 characters" in _screen_text(app)
             await pilot.press("ctrl+a", "ctrl+k", "space", "enter")
             await pilot.pause()
-            assert any("must be non-empty" in message for message in _messages(app))
+            assert "✗ term not kept: term 3 must be non-empty" in _screen_text(app)
             await pilot.press("escape")
             await pilot.pause()
             await pilot.press("a", *"  delta ", "enter")
@@ -99,5 +98,27 @@ def test_settings_vocabulary_rejects_bad_terms_with_the_config_rules(tmp_path):
             await pilot.pause()
             assert app.config_editor.config.refine.vocabulary == ("alpha", "bravo")
             assert not app.config_editor.dirty
+
+    asyncio.run(exercise())
+
+
+def test_settings_vocabulary_shows_the_rejection_inside_the_open_editor(tmp_path):
+    async def exercise():
+        app = HubApp(IdleServices(), config_path=_config_path(tmp_path))
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_vocabulary(pilot)
+            await pilot.press("a", "space", "enter")
+            await pilot.pause()
+            assert isinstance(app.screen.focused, Input)
+            assert "✗ term not kept: term 1 must be non-empty" in _screen_text(app)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert "✗" not in _screen_text(app)
+            await pilot.press("a", "space", "enter")
+            await pilot.pause()
+            await pilot.press(*"delta", "enter")
+            await pilot.pause()
+            assert app.screen.terms == ["delta"]
+            assert "✗" not in _screen_text(app)
 
     asyncio.run(exercise())

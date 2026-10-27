@@ -11,6 +11,7 @@ from textual.widgets import Input
 from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.widgets.field import Field
 from stenographer.lib.config.defaults import default_toml
+from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
 
 
@@ -426,5 +427,56 @@ def test_settings_click_selects_a_row_and_a_second_click_edits_it(tmp_path):
             await pilot.pause()
             assert app.settings_screen.editing == "asr.cpu_threads"
             assert isinstance(app.screen.focused, Input)
+
+    asyncio.run(exercise())
+
+
+def _row_text(app, label: str) -> str:
+    return next(line for line in _screen_text(app).splitlines() if label in line)
+
+
+@pytest.mark.parametrize(
+    ("tab", "label", "typed", "error"),
+    [
+        ("recognition", "Idle unload", (), "✗ enter a number"),
+        ("recognition", "Model", (), "✗ must be non-empty"),
+        ("recognition", "Host", tuple("ftp://x"), "✗ "),
+    ],
+)
+def test_settings_row_input_shows_its_rejection_on_screen(tmp_path, tab, label, typed, error):
+    async def exercise():
+        app = _app(tmp_path)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open(pilot, tab)
+            await _select(pilot, label)
+            await pilot.press("enter", "ctrl+a", "ctrl+k", *typed, "enter")
+            await pilot.pause()
+            assert isinstance(app.screen.focused, Input), "the input stays open"
+            assert error in _row_text(app, label)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert "✗" not in _screen_text(app)
+
+    asyncio.run(exercise())
+
+
+def test_settings_choice_row_shows_a_rejected_value_on_screen(tmp_path, monkeypatch):
+    async def exercise():
+        app = _app(tmp_path)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open(pilot)
+            await _select(pilot, "Hotkey mode")
+
+            def reject(key, _value):
+                raise ConfigError(app.config_editor.path, key, "is not allowed here")
+
+            monkeypatch.setattr(app.config_editor, "set_value", reject)
+            await pilot.press("enter", "up", "enter")
+            await pilot.pause()
+            assert "✗ is not allowed here" in _row_text(app, "Hotkey mode")
+            monkeypatch.undo()
+            await pilot.press("enter", "up", "enter")
+            await pilot.pause()
+            assert "✗" not in _screen_text(app)
 
     asyncio.run(exercise())
