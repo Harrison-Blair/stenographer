@@ -109,9 +109,6 @@ class ChecksTab(Vertical):
         height: 1;
         color: #8b93a1;
     }
-    ChecksTab #checks-run {
-        margin-top: 1;
-    }
     ChecksTab #checks-detail {
         width: 1fr;
     }
@@ -174,7 +171,6 @@ class ChecksTab(Vertical):
             with Vertical(id="checks-list-column"):
                 yield self.doctor_panel
                 yield Static("↑↓ check · enter details · t test", id="checks-list-hint")
-                yield HubButton("Run again", key="r", action="run_checks", id="checks-run")
             with Frame(id="checks-detail", variant="fill"):
                 yield Static("", id="checks-detail-head", markup=False)
                 yield Static("", id="checks-detail-body", markup=False)
@@ -220,7 +216,7 @@ class ChecksTab(Vertical):
     def summary_card(self) -> Text:
         report = self.report
         if report is None:
-            return Text("Checking…" if self.checking else "No check run yet.\n[r] Run again")
+            return Text("Checking…" if self.checking else "No check run yet.")
         ran_at = self.ran_at.strftime("%H:%M") if self.ran_at is not None else "—"
         card = Text()
         counts = (
@@ -232,7 +228,7 @@ class ChecksTab(Vertical):
             if position:
                 card.append(" · ")
             card.append(f"{count} {word}", style=StatusToken.TONES[tone] if count else None)
-        card.append(f"\nlast run {ran_at}\n[r] Run again")
+        card.append(f"\nlast run {ran_at}")
         return card
 
     def refresh_view(self) -> None:

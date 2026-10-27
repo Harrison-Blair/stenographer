@@ -202,7 +202,7 @@ def test_checks_detail_shows_title_state_explanation_path_and_buttons():
                 for selector in ("#checks-quick", "#checks-models", "#checks-defaults")
             ]
             assert dialogs == ["[Q] Quick setup…", "[m] Models…", "[D] Defaults…"]
-            assert str(_button(app, "#checks-run").label) == "[r] Run again"
+            assert not app.screen.query("#checks-run"), "Run again is in the context card"
             frame = app.screen.query_one("#checks-detail").content_region
             for name in ("fix", "test", "log", "copy", "quick", "models", "defaults"):
                 region = _button(app, f"#checks-{name}").region
@@ -275,7 +275,7 @@ def test_checks_card_badge_and_tab_label_follow_the_last_run():
             card = app.screen.query_one("#sidebar-card", Static).render()
             assert app.screen.query_one("#sidebar-context").border_title == "checks"
             ran_at = app.checks_tab.ran_at
-            assert card.plain == f"6 pass · 1 warn · 1 fail\nlast run {ran_at:%H:%M}\n[r] Run again"
+            assert card.plain == f"6 pass · 1 warn · 1 fail\nlast run {ran_at:%H:%M}"
             ok = card.get_style_at_offset(0)
             assert ok.rich_style.color.get_truecolor() == Color.parse("#6ee69a").get_truecolor()
             zero = card.get_style_at_offset(card.plain.index("1 fail"))
@@ -352,6 +352,33 @@ def test_checks_run_again_replaces_the_results():
             assert card_text.get_style_at_offset(0).rich_style.color is None, "a zero count"
 
             assert str(_button(app, "#tab-checks").label) == "▶ Checks ●1"
+
+    asyncio.run(exercise())
+
+
+def test_checks_card_run_again_button_starts_a_new_run():
+    calls = []
+
+    def probe(_config, _path):
+        calls.append("probe")
+        return _board_report()
+
+    async def exercise():
+        app = _app(doctor_probe=probe)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_checks(pilot)
+            first = app.checks_tab.report
+            card = app.screen.query_one("#sidebar-context")
+            button = card.query_one("#card-r", HubButton)
+            assert str(button.label) == "[r] Run again"
+            assert card.content_region.contains_region(button.region)
+            assert await pilot.click(button)
+            await _settle(pilot, lambda: app.checks_tab.report is not first)
+            assert calls == ["probe", "probe"]
+
+            await pilot.press("1")
+            await pilot.pause()
+            assert not app.screen.query_one("#sidebar-context").query(HubButton)
 
     asyncio.run(exercise())
 
