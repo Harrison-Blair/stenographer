@@ -1,112 +1,98 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Render grouped doctor checks, issue details, and recent warnings."""
+"""The grouped check list of the Checks tab: a section and a list per group."""
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 from rich.text import Text
-from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.widgets import Static
 
-from stenographer.cli.hub.doctor_view import DOCTOR_STATE_COLORS, DOCTOR_STATE_GLYPHS
-from stenographer.cli.hub.selection import append_line
+from stenographer.cli.hub.doctor_view import (
+    CHECK_GROUPS,
+    DOCTOR_STATE_GLYPHS,
+    DOCTOR_STATE_TONES,
+)
+from stenographer.cli.hub.widgets.row_selected import RowSelected
+from stenographer.cli.hub.widgets.selectable_list import SelectableList
+from stenographer.cli.hub.widgets.status_token import StatusToken
 
 if TYPE_CHECKING:
-    from stenographer.cli.hub.doctor_view import DoctorReport
+    from textual.app import ComposeResult
 
+    from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 
-_WARNING = re.compile(r"(\d{2}:\d{2}:\d{2}) (WARN|ERROR) (.+)\Z")
+_NAME_CELLS = 14
 
 
 class DoctorPanel(Vertical):
-    """Show grouped checks, the selected issue, and recent warnings."""
+    """Show each check as glyph, name and a cut detail, grouped input, engine, other.
+
+    A click on a row posts ``RowSelected`` from this panel with the index of
+    that check in the report.
+    """
+
+    DEFAULT_CSS = """
+    DoctorPanel {
+        height: 1fr;
+    }
+    DoctorPanel .-section {
+        height: 1;
+        color: #8b93a1;
+        text-style: bold;
+    }
+    DoctorPanel .-section.-later {
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._indexes: dict[str, tuple[int, ...]] = {}
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="doctor-groups"):
-            yield Static("", id="doctor-input-group", markup=False)
-            yield Static("", id="doctor-engine-group", markup=False)
-        yield Static("", id="doctor-issue", markup=False)
-        yield Static("", id="doctor-warnings", markup=False)
+        for position, group in enumerate(CHECK_GROUPS):
+            section = Static(group, id=f"checks-section-{group}", markup=False)
+            section.add_class("-section")
+            if position:
+                section.add_class("-later")
+            yield section
+            yield SelectableList(id=f"checks-{group}")
 
-    def refresh_view(
-        self,
-        report: DoctorReport | None,
-        *,
-        selected_index: int,
-        details: bool,
-        loading: bool,
-    ) -> None:
-        group_names = ("input and audio", "engine and desktop")
-        group_ids = ("doctor-input-group", "doctor-engine-group")
-        for group, widget_id in zip(group_names, group_ids, strict=True):
-            widget = self.query_one(f"#{widget_id}", Static)
-            widget.border_title = group
-            rows = Text()
+    def refresh_view(self, report: DoctorReport | None, *, selected_index: int, loading: bool):
+        for group in CHECK_GROUPS:
+            rows: list[tuple[Text, str]] = []
+            indexes: list[int] = []
             if report is not None:
                 for index, check in enumerate(report.checks):
-                    if check.group == group:
-                        state = DOCTOR_STATE_GLYPHS[check.status]
-                        if rows:
-                            rows.append("\n")
-                        selected = index == selected_index
-                        row_style = "bold #5fd7ff" if selected else None
-                        rows.append("▶ " if selected else "  ", style=row_style)
-                        rows.append(f"{state} ", style=DOCTOR_STATE_COLORS[check.status])
-                        rows.append(f"{check.label} · {check.detail}", style=row_style)
-            if not rows:
-                append_line(rows, "Checking system capabilities…" if loading else "No checks.")
-            widget.update(rows)
-
-        issue = self.query_one("#doctor-issue", Static)
-        selected = (
-            report.checks[selected_index]
-            if report is not None and 0 <= selected_index < len(report.checks)
-            else None
-        )
-        issue.border_title = "selected issue"
-        issue_text = Text()
-        if selected is None:
-            append_line(
-                issue_text, "Checking system capabilities…" if loading else "No issue selected."
-            )
-        elif selected.status in {"warn", "fail"}:
-            color = DOCTOR_STATE_COLORS[selected.status]
-            issue.styles.border = ("round", color)
-            issue.border_title = ""
-            issue_text.append(f"{selected.label} unavailable", style=f"bold {color}")
-            if details:
-                detail_and_fix = " ".join(part for part in (selected.detail, selected.fix) if part)
-                append_line(issue_text, detail_and_fix)
-            else:
-                append_line(issue_text, "Press enter for details and fix.")
-        else:
-            issue.styles.border = ("round", "#3a4150")
-            append_line(issue_text, f"{selected.label} · {selected.detail}")
-            append_line(issue_text, "No fix required.")
-        if selected is None:
-            issue.styles.border = ("round", "#3a4150")
-        issue.update(issue_text)
-
-        warnings = self.query_one("#doctor-warnings", Static)
-        warnings.border_title = "recent warnings · stenographer.log"
-        warning_text = Text()
-        if report is not None and report.warnings:
-            for warning in report.warnings:
-                match = _WARNING.fullmatch(warning)
-                if match is None:
-                    continue
-                if warning_text:
-                    warning_text.append("\n")
-                timestamp, level, event = match.groups()
-                warning_text.append(f"{timestamp} ", style="dim")
-                warning_text.append(
-                    f"{level} ",
-                    style=DOCTOR_STATE_COLORS["warn" if level == "WARN" else "fail"],
+                    if check.display_group == group:
+                        rows.append((self.row_text(check), ""))
+                        indexes.append(index)
+            elif group == "input":
+                rows.append(
+                    (Text("Checking system capabilities…" if loading else "No checks."), "")
                 )
-                warning_text.append(event)
-        else:
-            append_line(warning_text, "No recent warnings.")
-        warnings.update(warning_text)
+            self._indexes[group] = tuple(indexes)
+            selected = indexes.index(selected_index) if selected_index in indexes else None
+            self.query_one(f"#checks-{group}", SelectableList).set_rows(tuple(rows), selected)
+            shown = bool(rows)
+            self.query_one(f"#checks-section-{group}").display = shown
+            self.query_one(f"#checks-{group}").display = shown
+
+    @staticmethod
+    def row_text(check: DoctorCheck) -> Text:
+        tone = StatusToken.TONES[DOCTOR_STATE_TONES[check.status]]
+        text = Text()
+        text.append(DOCTOR_STATE_GLYPHS[check.status], style=tone)
+        text.append(f" {check.label:<{_NAME_CELLS}} {check.detail}")
+        return text
+
+    def on_row_selected(self, event: RowSelected) -> None:
+        if event.control is self:
+            return
+        event.stop()
+        group = event.control.id.removeprefix("checks-")
+        indexes = self._indexes.get(group, ())
+        if 0 <= event.index < len(indexes):
+            self.post_message(RowSelected(self, indexes[event.index]))

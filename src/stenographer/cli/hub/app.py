@@ -18,7 +18,13 @@ from stenographer.cli.hub.checks_tab import ChecksTab
 from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
-from stenographer.cli.hub.doctor_view import DoctorReport, build_report
+from stenographer.cli.hub.doctor_view import (
+    DoctorReport,
+    ModelEntry,
+    build_report,
+    default_model_download,
+    default_model_status,
+)
 from stenographer.cli.hub.engine_sampler import EngineSampler
 from stenographer.cli.hub.hub_screen import HubScreen
 from stenographer.cli.hub.library_screen import LibraryScreen
@@ -67,38 +73,6 @@ class HubApp(App[None]):
     #screen-body {
         width: 1fr;
         height: 1fr;
-    }
-    #doctor-groups {
-        width: 1fr;
-        height: 13;
-    }
-    #doctor-input-group, #doctor-engine-group {
-        width: 1fr;
-        height: 13;
-        padding: 1;
-        border: round #3a4150;
-        border-title-color: ansi_default;
-    }
-    #doctor-input-group {
-        margin-right: 1;
-    }
-    #doctor-issue {
-        width: 1fr;
-        height: 8;
-        margin-top: 1;
-        padding: 1;
-        border: round #3a4150;
-        border-title-color: ansi_default;
-    }
-    #doctor-warnings {
-        width: 1fr;
-        height: 1fr;
-        min-height: 5;
-        margin-top: 1;
-        padding: 1;
-        border: round #3a4150;
-        border-title-color: ansi_default;
-        overflow-y: auto;
     }
     #live-view {
         width: 1fr;
@@ -176,8 +150,9 @@ class HubApp(App[None]):
         config_path: pathlib.Path | None = None,
         setup_test: Callable[[str, Config], str] | None = None,
         model_download: Callable[[str], None] | None = None,
+        model_status: Callable[[], tuple[ModelEntry, ...]] | None = None,
         doctor_probe: Callable[[Config, pathlib.Path | None], DoctorReport] | None = None,
-        open_log: Callable[[], bool] | None = None,
+        open_log: Callable[[pathlib.Path], bool] | None = None,
         copy_report: Callable[[str], None] | None = None,
         files_home: pathlib.Path | None = None,
         engine_sampler: EngineSampler | None = None,
@@ -193,22 +168,6 @@ class HubApp(App[None]):
         self._context_cards: dict[str, tuple[str, RenderableType]] = {}
         self._busy: dict[str, str] = {}
         self._busy_lock = threading.Lock()
-        if model_download is None:
-
-            def model_download(_model: str) -> None:
-                # The same installs as `stenographer model download --asr`.
-                import os
-
-                from stenographer.lib.live.download import download_live_models
-                from stenographer.lib.live.models import LIVE_MODELS
-                from stenographer.lib.platform import current_platform
-                from stenographer.lib.transcribe.bark_download import download_bark_pro
-
-                data_dir = current_platform().data_dir(os.environ, pathlib.Path.home())
-                download_bark_pro(data_dir)
-                vad = tuple(m for m in LIVE_MODELS if m.filename == "silero_vad.onnx")
-                download_live_models(data_dir, models=vad)
-
         if open_log is None:
             from stenographer.cli.hub.doctor_view import default_log_opener
 
@@ -216,7 +175,8 @@ class HubApp(App[None]):
         self.checks_tab = ChecksTab(
             doctor_probe=doctor_probe or build_report,
             setup_test=setup_test or self._default_setup_test,
-            model_download=model_download,
+            model_download=model_download or default_model_download,
+            model_status=model_status or default_model_status,
             open_log=open_log,
             copy_report=copy_report,
             id="checks-tab",

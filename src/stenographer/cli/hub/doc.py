@@ -3,10 +3,11 @@
 
 - __init__.py: Mark the hub package.
 - app.py: Run the shell: screens, navigation, sidebar, help, quit, and shell contracts.
-- checks_tab.py: Run the system checks and setup actions of the Settings Checks tab.
-- doctor_panel.py: Render grouped checks, issue details, and recent warnings.
-- doctor_view.py: Build doctor checks and safe warning summaries.
+- checks_tab.py: Run the system checks; fix, test, and open the setup dialogs.
+- doctor_panel.py: Render the check list grouped input, engine, and other.
+- doctor_view.py: Build doctor checks, model status, and safe warning summaries.
 - config_dialog.py: Prompt for config edits, searches, and unsaved changes.
+- defaults_dialog.py: Confirm before writing the default configuration.
 - config_view.py: Render and validate the config draft and its saves.
 - dialogs.py: Confirm actions that stop work during quit.
 - handler.py: Prepare the hub and run its Textual app.
@@ -15,6 +16,8 @@
 - files_view.py: Render the file browser, options, queue, and transcript preview.
 - library_screen.py: Show saved sessions and the Files sub-view.
 - live_view.py: Render live recording status and mixed or split transcripts.
+- models_dialog.py: Show each model as present or missing and download one.
+- quick_setup_dialog.py: Test and edit input access, microphone, and hotkey.
 - record_screen.py: Start, pause, and watch a recording.
 - services.py: Own recording, playback, and shared session services.
 - session_jobs.py: Reprocess saved transcripts with current models and settings.

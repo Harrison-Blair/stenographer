@@ -37,15 +37,20 @@ screens, Record, Library, and Settings, in place of its six sections.
   tabs). Each screen has a sidebar with navigation badges, an engine card with
   the model state and CPU and memory use, and a context card. Press `?` for the
   keys of the current screen, and click a control to run its key.
+- The Checks tab of Settings merges Doctor and Setup. It groups the checks as
+  input, engine, and other with `✓`, `!`, and `×`, shows a fix and a test for
+  the selected check, and opens the Quick setup, Models, and Defaults dialogs.
+  A new refine service check asks the refine host for its model list while
+  refine is on. Recent warnings show only the time, the level, the event, and
+  a fixed description.
 
 ### Removed
 
 - The Files output format and output folder options, and the `e` key that
   opened the result folder. Earlier results in the `files/` folder stay where
   they are.
-- The hub Setup step wizard and its keys (`b`, `s`, `e`, and `shift+q` quick
-  setup). The Checks tab of Settings runs the checks, tests, model download,
-  and default configuration.
+- The hub Setup step wizard and its keys (`b`, `s`, and `e`). The Checks tab
+  of Settings runs the checks and tests and opens the setup dialogs.
 
 ### Fixed
 

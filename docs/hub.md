@@ -234,27 +234,62 @@ its current settings.
 
 ### Checks
 
-The Checks tab runs the system checks the first time it opens. It groups the
-capability checks and shows details and fixes for the selected check. The
-context card shows `N pass · N warn · N fail` and the time of the last run, and
-the tab label shows `●N` when the last run has warnings or failures. New
-optional checks appear as warnings and do not change the existing
-`stenographer doctor` exit status. Recent warnings are shown without
-transcript text.
+The Checks tab runs the system checks the first time it opens, in the
+background, so the hub keeps answering keys while they run. It merges the
+former Doctor and Setup sections. The checks are grouped:
+
+| Group | Checks |
+| --- | --- |
+| input | input access, microphone, hotkey, sounds |
+| engine | speech model, voice models, refine service, system audio, system service |
+| other | each other doctor check, such as ffmpeg, the clipboard, and the overlay |
+
+Each row shows a state glyph, the check name, and a short detail that is cut
+to fit: `✓` pass, `!` warning, `×` failure. The detail pane shows the
+selected check with its state word, what the check looks at, the result,
+`checked HH:MM` and the related path when one applies, and the buttons
+`[f] Fix: …` (for a warning or failure that has a fix), `[t] Test: …` (when
+the area has a test), `[l] Open log`, and `[c] Copy report`.
+
+The context card shows `N pass · N warn · N fail` and the time of the last
+run. The Settings navigation badge shows `N W` for warnings or `N F` for
+failures, and the tab label shows `●N` when the last run has warnings or
+failures. New optional checks appear as warnings and do not change the
+existing `stenographer doctor` exit status. The refine service check asks the
+configured Ollama host for its model list only while refine is on; it sends
+no transcript text.
 
 | Key | Action |
 | --- | --- |
 | `up` / `down` | Select a check. |
-| `enter` | Show or hide the details of the selected check. |
+| `enter` | Show or hide how to fix the selected check. |
 | `r` | Run the checks again. |
-| `f` | Fix: open the related setting, or offer the model download. |
+| `f` | Fix: open the related Settings tab and row, or the Quick setup or Models dialog. |
 | `t` | Test the area of the selected check. |
 | `l` | Open the log. |
 | `c` | Copy the check report. |
-| `m` | Start a model download after confirmation. |
-| `shift+d` | Write the default configuration. |
+| `shift+q` | Open Quick setup. |
+| `m` | Open Models. |
+| `shift+d` | Open Defaults. |
 
-The microphone test lists available devices and does not capture audio. The
-sound test plays a preview. The hub does not start or restart the system
-service. The `stenographer setup` and `stenographer doctor` commands do not
-change.
+The microphone test lists the input devices and does not capture audio. The
+sound test plays the preview of the sound pack. The hub does not start or
+restart the system service.
+
+Recent warnings, under `recent warnings (no transcript text)`, show only the
+time, the level, the event token, such as `live: system_source_failed`, and a
+fixed description for known tokens. They never show a log message, exception
+text, or a field of the log line. The copied report uses the same form.
+
+The dialogs:
+
+- **Quick setup** shows input access, microphone, and hotkey with their state
+  and current value. Press `t` to test the selected step and `e` to open its
+  setting.
+- **Models** shows the speech model and the two voice models as present or
+  missing. Press `enter` on a missing model to download it after a
+  confirmation.
+- **Defaults** writes the default configuration after a confirmation and
+  keeps the current file as a timestamped backup.
+
+The `stenographer setup` and `stenographer doctor` commands do not change.
