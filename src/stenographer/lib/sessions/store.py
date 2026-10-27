@@ -302,6 +302,7 @@ class SessionStore:
         try:
             revision, path, _ = current_revision(directory)
             key = (revision, path.lstat().st_mtime_ns)
+            path.open("rb").close()
         except OSError:
             self._search_texts.pop(session_id, None)
             return ()

@@ -118,6 +118,35 @@ def test_search_skips_an_unreadable_session(tmp_path):
         folder.chmod(0o700)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads files without permission")
+def test_search_skips_a_session_whose_transcript_is_unreadable_even_on_a_title_match(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    readable = _recording(tmp_path, _STARTED, "alpha bravo")
+    locked = _recording(tmp_path, _STARTED + timedelta(hours=1), "alpha charlie")
+    transcript = tmp_path / "sessions" / locked / "transcript.jsonl"
+    transcript.chmod(0)
+    try:
+        assert store.search("alpha") == (readable,)
+        assert store.search(locked) == ()
+        assert store.search("2026-03-02 05:05") == ()
+    finally:
+        transcript.chmod(0o600)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads files without permission")
+def test_search_rereads_a_transcript_once_it_is_readable_again(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    session = _recording(tmp_path, _STARTED, "alpha charlie")
+    transcript = tmp_path / "sessions" / session / "transcript.jsonl"
+    transcript.chmod(0)
+    try:
+        assert store.search("charlie") == ()
+    finally:
+        transcript.chmod(0o600)
+
+    assert store.search("charlie") == (session,)
+
+
 def test_search_writes_no_file_and_logs_no_query_or_line_text(tmp_path, caplog):
     store = SessionStore(tmp_path / "sessions")
     session = _recording(tmp_path, _STARTED, "alpha secretword")
