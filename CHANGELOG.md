@@ -13,6 +13,9 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
+Files jobs now save their results as session folders next to your recordings,
+and the Files output format and output folder options are gone.
+
 ### Added
 
 - Files jobs save each result as a session folder with a private copy of the
