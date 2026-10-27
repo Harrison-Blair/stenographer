@@ -13,6 +13,24 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
+### Added
+
+- Files jobs save each result as a session folder with a private copy of the
+  source file, so recordings and transcribed files live in one place. A job on
+  `mic.flac` or `system.flac` of a recording, or on the copied source of a file
+  session, saves a new transcript revision of that session instead.
+- Re-transcribe works on a file session from its copied source. Re-diarize
+  refuses a file session with a clear error.
+- Session changes run one at a time per session. A revision based on an older
+  read fails and keeps the newer revision, and an interrupted revision write
+  leaves the session unchanged.
+
+### Removed
+
+- The Files output format and output folder options, and the `e` key that
+  opened the result folder. Earlier results in the `files/` folder stay where
+  they are.
+
 ## [v0.16.0] - 2026-10-22
 
 This is a breaking change: Underdog Bark 3.0 Pro by Conway Research replaces

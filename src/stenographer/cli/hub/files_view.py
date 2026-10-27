@@ -15,7 +15,6 @@ from stenographer.cli.hub.files_entry import BrowserEntry
 from stenographer.cli.hub.selection import append_line
 from stenographer.cli.shared.speaker_colors import speaker_color
 
-_FORMATS = ("md", "jsonl", "srt", "txt")
 _AUDIO_SUFFIXES = {
     ".aac",
     ".flac",
@@ -29,7 +28,7 @@ _AUDIO_SUFFIXES = {
     ".webm",
     ".wma",
 }
-_OPTION_NAMES = ("diarize", "speaker count", "refine", "output format", "output folder")
+_OPTION_NAMES = ("diarize", "speaker count", "refine")
 _BROWSER_HINT = "/ search · enter queue · space select"
 
 
@@ -96,7 +95,6 @@ class FilesPanel(Vertical):
         *,
         home: Path | None = None,
         start: Path | None = None,
-        output_folder: Path | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -105,11 +103,9 @@ class FilesPanel(Vertical):
             self.home = Path.home()
         start = Path(start or self.home).expanduser()
         self.directory = start if start.is_dir() else self.home
-        self.output_folder = Path(output_folder or self.home / ".local/share/stenographer/files")
         self.diarize = True
         self.speaker_count: int | None = None
         self.refine = False
-        self.output_format = "md"
         self.search_term = ""
         self.entries: tuple[BrowserEntry, ...] = ()
         self.selected_entry_index = 0
@@ -309,9 +305,7 @@ class FilesPanel(Vertical):
         if job is None:
             result_name = ""
         else:
-            output_path = getattr(job, "output_path", None)
-            path = getattr(getattr(job, "options", None), "path", Path("file"))
-            result_name = Path(output_path).stem if output_path is not None else path.stem
+            result_name = getattr(getattr(job, "options", None), "path", Path("file")).stem
         preview_panel.border_title = "preview" if not result_name else f"preview · {result_name}"
         self.query_one("#files-browser", Static).update(self._browser_text)
         self.query_one("#files-options", Static).update(self._options_text)
@@ -362,8 +356,6 @@ class FilesPanel(Vertical):
         option_rows = (
             f"speakers      {diarize_choice}   count {speaker_count}",
             f"refine        {refine_choice}",
-            f"output        {' · '.join(_FORMATS)}",
-            f"save to       {self.output_folder}",
         )
         for row_index, option in enumerate(option_rows):
             if row_index == 0:
@@ -381,16 +373,6 @@ class FilesPanel(Vertical):
             elif row_index == 1:
                 choice_start = line_start + len("refine        ")
                 rows.stylize("#5fd7ff", choice_start, choice_start + len(refine_choice))
-            elif row_index == 2:
-                format_start = line_start + len("output        ")
-                active_start = format_start + sum(
-                    len(value) + 3 for value in _FORMATS[: _FORMATS.index(self.output_format)]
-                )
-                rows.stylize(
-                    "bold #5fd7ff",
-                    active_start,
-                    active_start + len(self.output_format),
-                )
         if self.options_open:
             append_line(rows, "enter/space edit · o close")
         else:
@@ -471,11 +453,11 @@ class FilesPanel(Vertical):
             color = speaker_color(line.speaker_id, speaker_ids, source=line.source)
             rows.append(f"{line.label}\u00a0", style=f"bold {color}")
             rows.append(f" {line.text.replace(chr(10), ' ')}")
-        output_path = getattr(job, "output_path", None)
-        if output_path is not None:
+        session_id = getattr(job, "session_id", None)
+        if session_id is not None and getattr(job, "state", None) == "completed":
             if rows:
                 rows.append("\n")
-            rows.append(f"saved: {Path(output_path).name}")
+            rows.append(f"saved: session {session_id}")
         return rows
 
     @staticmethod

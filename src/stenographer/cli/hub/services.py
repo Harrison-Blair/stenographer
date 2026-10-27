@@ -107,10 +107,6 @@ class HubServices:
         return () if self.files_job is None else (self.files_job,)
 
     @property
-    def files_output_folder(self) -> Path:
-        return self._platform.data_dir(os.environ, Path.home()) / "files"
-
-    @property
     def files_start_folder(self) -> Path:
         return self._platform.data_dir(os.environ, Path.home()) / "sessions"
 
@@ -130,17 +126,6 @@ class HubServices:
 
     def cancel_file(self, job) -> bool:
         return job.cancel()
-
-    def open_files_result(self, output_path: str | Path) -> bool:
-        result_folder = Path(output_path).expanduser().parent
-        subprocess.Popen(
-            ["xdg-open", str(result_folder)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        log.info(fmt_event("hub", "files_result_folder_opened"))
-        return True
 
     def close_files(self) -> None:
         with self._files_lock:
