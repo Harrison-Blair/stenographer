@@ -86,7 +86,14 @@ def test_render_materializes_every_refine_key_in_declaration_order():
     rendered = ConfigDocument.loads("").render(Config.defaults())
     section = tomlkit.parse(rendered)["stenographer"]["refine"]
 
-    assert list(section) == ["enabled", "host", "model", "min_words", "structured_output"]
+    assert list(section) == [
+        "enabled",
+        "host",
+        "model",
+        "min_words",
+        "structured_output",
+        "vocabulary",
+    ]
 
 
 def test_save_round_trips_a_configured_refine_section_through_preservation():
@@ -137,3 +144,81 @@ def test_credentials_in_the_host_are_refused_rather_than_carried(host):
     with pytest.raises(ConfigError) as failure:
         Config.loads(f'[stenographer.refine]\nhost = "{host}"\n')
     assert failure.value.key == "refine.host"
+
+
+def test_the_vocabulary_ships_empty_and_an_old_config_loads_without_it():
+    assert Config.defaults().refine.vocabulary == ()
+    assert Config.loads("[stenographer.refine]\nenabled = true\n").refine.vocabulary == ()
+
+
+def test_vocabulary_terms_load_in_order_and_trimmed():
+    cfg = Config.loads('[stenographer.refine]\nvocabulary = ["  Kubernetes ", "PipeWire"]\n')
+
+    assert cfg.refine.vocabulary == ("Kubernetes", "PipeWire")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '"Kubernetes"',
+        '[1, "PipeWire"]',
+        '["Kubernetes", "   "]',
+        '[""]',
+        '["two\\nlines"]',
+        '["carriage\\rreturn"]',
+        '["' + "x" * 65 + '"]',
+        "[" + ", ".join(f'"term{n}"' for n in range(201)) + "]",
+        '["PipeWire", "pipewire"]',
+        '["Kubernetes", " Kubernetes"]',
+    ],
+    ids=[
+        "not-a-list",
+        "not-a-string",
+        "blank",
+        "empty",
+        "line-feed",
+        "carriage-return",
+        "65-characters",
+        "201-terms",
+        "case-duplicate",
+        "trimmed-duplicate",
+    ],
+)
+def test_a_rejected_vocabulary_names_its_own_key(value):
+    with pytest.raises(ConfigError) as failure:
+        Config.loads(f"[stenographer.refine]\nvocabulary = {value}\n")
+    assert failure.value.key == "refine.vocabulary"
+
+
+def test_the_vocabulary_limits_are_inclusive():
+    longest = "x" * 64
+    many = "[" + ", ".join(f'"term{n}"' for n in range(200)) + "]"
+
+    assert Config.loads(f'[stenographer.refine]\nvocabulary = ["{longest}"]\n').refine.vocabulary
+    loaded = Config.loads(f"[stenographer.refine]\nvocabulary = {many}\n")
+    assert len(loaded.refine.vocabulary) == 200
+
+
+def test_save_round_trips_the_vocabulary_and_keeps_comments_and_unknown_keys(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "# hand-written preface\n"
+        "[stenographer.refine]\n"
+        "enabled = true # mine\n"
+        'mystery = "preserve me"\n',
+        encoding="utf-8",
+    )
+    source = ConfigDocument.load(path)
+    reviewed = replace(
+        source.config,
+        refine=replace(source.config.refine, vocabulary=("Kubernetes", "PipeWire")),
+    )
+
+    source.save(reviewed)
+
+    saved = path.read_text(encoding="utf-8")
+    assert Config.loads(saved) == reviewed
+    assert ConfigDocument.load(path).config.refine.vocabulary == ("Kubernetes", "PipeWire")
+    assert "# hand-written preface" in saved
+    assert "enabled = true # mine" in saved
+    assert 'mystery = "preserve me"' in saved

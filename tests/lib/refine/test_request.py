@@ -10,8 +10,12 @@ is on.
 
 from __future__ import annotations
 
+import hashlib
 import json
 
+import pytest
+
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.prompt import (
     FEW_SHOT_EXAMPLES,
     NUM_PREDICT_BASE,
@@ -121,3 +125,70 @@ def test_warm_and_unload_generate_nothing_at_all():
 
 def test_encode_is_the_exact_bytes_that_go_on_the_wire():
     assert json.loads(encode({"a": 1})) == {"a": 1}
+
+
+#: SHA-256 of the wire body captured at the base commit (51c4537), before the
+#: vocabulary existed, for ``alpha bravo charlie delta echo`` with
+#: ``test-model``, 5 words and ``keep_alive`` 900. An empty vocabulary must
+#: keep every one of them byte-for-byte.
+_BASE_BODY_SHA256 = {
+    (RefineProfile.AGENT, True): (
+        "81e70414d32edee725d17bed90d0ff348bba1bc37e87ec5de5e1e3d6b7a3c621"
+    ),
+    (RefineProfile.AGENT, False): (
+        "2042ef474e8f8655de7b7391b09c800c514c4af3441261765bc305f104a5ee77"
+    ),
+    (RefineProfile.GENERAL, True): (
+        "1d36dbf13d6cb81db49066eaa7eaa6f10deff460cb0744bdce180ad1e3a1f3df"
+    ),
+    (RefineProfile.GENERAL, False): (
+        "1b86b793c05c8491508ef17f0803f372e24d1d00efeb0a88234d91ad396b0946"
+    ),
+}
+
+
+def _base_input_body(profile, structured_output, **extra):
+    return build_chat_body(
+        "alpha bravo charlie delta echo",
+        model="test-model",
+        words=5,
+        keep_alive=900,
+        structured_output=structured_output,
+        profile=profile,
+        **extra,
+    )
+
+
+@pytest.mark.parametrize("profile", list(RefineProfile))
+@pytest.mark.parametrize("structured_output", [True, False])
+def test_an_empty_vocabulary_keeps_the_base_body_byte_identical(profile, structured_output):
+    expected = _BASE_BODY_SHA256[(profile, structured_output)]
+
+    for body in (
+        _base_input_body(profile, structured_output),
+        _base_input_body(profile, structured_output, vocabulary=()),
+    ):
+        assert hashlib.sha256(encode(body)).hexdigest() == expected
+
+
+@pytest.mark.parametrize("profile", list(RefineProfile))
+def test_a_vocabulary_adds_one_instruction_naming_each_term(profile):
+    plain = build_messages("alpha bravo", structured_output=True, profile=profile)
+    with_terms = build_messages(
+        "alpha bravo",
+        structured_output=True,
+        profile=profile,
+        vocabulary=("Kubernetes", "PipeWire"),
+    )
+
+    added = [message for message in with_terms if message not in plain]
+    assert len(with_terms) == len(plain) + 1
+    assert len(added) == 1
+    instruction = added[0]
+    assert instruction["role"] == "system"
+    assert "Kubernetes" in instruction["content"]
+    assert "PipeWire" in instruction["content"]
+    assert "exactly as written" in instruction["content"]
+    # The benchmark system prompt is untouched and still leads.
+    assert with_terms[0] == plain[0]
+    assert with_terms[-1] == {"role": "user", "content": "alpha bravo"}

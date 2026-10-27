@@ -13,6 +13,14 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
+Refine can keep your own names and terms spelled exactly as you write them.
+
+### Added
+
+- Adds `refine.vocabulary`, a list of terms that refine spells exactly as
+  written in dictation, hub file jobs, and `transcribe --refine`. The default
+  empty list leaves each refine request unchanged.
+
 ## [v0.16.0] - 2026-10-22
 
 This is a breaking change: Underdog Bark 3.0 Pro by Conway Research replaces

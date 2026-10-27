@@ -155,6 +155,35 @@ def analytics_session(request, drain_analytics):
     return create
 
 
+@pytest.fixture
+def ollama_wire(monkeypatch):
+    """A fake Ollama behind ``urlopen``: every chat body it is sent, decoded.
+
+    It lists no resident model, so a refiner warms the model first, and it
+    answers every POST with an empty reply, which the refiner rejects and
+    fails open on. Tests read ``chats`` for the exact JSON that went on the
+    wire to ``/api/chat``.
+    """
+
+    import io
+    import json
+    import urllib.request
+
+    chats: list[dict] = []
+
+    def urlopen(request, timeout=None):
+        url = request.full_url
+        if url.endswith("/api/ps"):
+            return io.BytesIO(json.dumps({"models": []}).encode())
+        body = json.loads(request.data)
+        if url.endswith("/api/chat"):
+            chats.append(body)
+        return io.BytesIO(json.dumps({"message": {"content": ""}}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    return chats
+
+
 def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
     if collection_path.name.endswith("_smoke.py"):
         return os.environ.get("STENOGRAPHER_INTEGRATION") != "1"

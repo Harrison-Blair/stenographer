@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import logging
 from types import SimpleNamespace
 
@@ -399,3 +400,18 @@ def test_a_short_transcript_is_below_the_threshold_and_is_printed_unrefined(
     assert refine_capture.refiner.calls == []
     # The formatter's dictation trailing space, unchanged by the skipped stage.
     assert capsys.readouterr().out == "Ship it on friday \n"
+
+
+def test_transcribe_refine_sends_the_configured_vocabulary(ollama_wire, monkeypatch, tmp_path):
+    path = _spoken_clip(monkeypatch, tmp_path, SPOKEN)
+    cfg = Config.defaults()
+    cfg = dataclasses.replace(
+        cfg, refine=dataclasses.replace(cfg.refine, vocabulary=("Kubernetes", "PipeWire"))
+    )
+
+    assert cmd_transcribe.__wrapped__(_refine_args(path, refine=True), cfg) == 0
+
+    assert len(ollama_wire) == 1
+    wire = json.dumps(ollama_wire[0]["messages"])
+    assert "Kubernetes" in wire
+    assert "PipeWire" in wire
