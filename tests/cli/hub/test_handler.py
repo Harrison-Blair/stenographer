@@ -125,7 +125,7 @@ def test_hub_opens_invalid_config_read_only_without_starting_worker(monkeypatch,
     assert handler.cmd_hub(SimpleNamespace()) == 0
     services, editor = opened[0]
     assert editor.read_only
-    assert str(path) in editor.render()
+    assert str(path) in editor.error_text()
     assert services._config.asr.cpu_threads == Config.defaults().asr.cpu_threads
 
 
