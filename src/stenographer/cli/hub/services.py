@@ -107,6 +107,11 @@ class HubServices:
         return () if self.files_job is None else (self.files_job,)
 
     @property
+    def files_engine(self) -> FilesEngine | None:
+        """Return the files engine once a file is submitted and until it closes."""
+        return self._files_engine
+
+    @property
     def files_start_folder(self) -> Path:
         return self._platform.data_dir(os.environ, Path.home()) / "sessions"
 

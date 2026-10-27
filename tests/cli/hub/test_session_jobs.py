@@ -19,6 +19,7 @@ from stenographer.lib.files.media import DecodedAudio
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError, StaleRevisionError
 from stenographer.lib.transcribe.results import TranscriptionResult
@@ -33,6 +34,9 @@ class FakePlatform:
 
     def asr_transport(self):
         return "fake-transport"
+
+    def process_counters(self):
+        return NullProcessCounters()
 
 
 class FakeSpeakerTracker:

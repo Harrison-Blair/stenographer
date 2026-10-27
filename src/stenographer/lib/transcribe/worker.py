@@ -86,6 +86,7 @@ class Worker:
         self._transport = transport
         self._process: AsrProcess | None = None
         self._idle_timer: threading.Timer | None = None
+        self._idle_deadline: float | None = None
         self._model_ready = threading.Event()
         self._model_hold = threading.Event()
         self._shutdown_requested = threading.Event()
@@ -304,6 +305,12 @@ class Worker:
         return self._model_ready.is_set() and proc is not None and proc.is_running()
 
     @property
+    def idle_unload_deadline(self) -> float | None:
+        """Return the monotonic time of the armed idle unload of a loaded model, or ``None``."""
+        deadline = self._idle_deadline
+        return deadline if self.is_model_ready else None
+
+    @property
     def process_ids(self) -> tuple[int, ...]:
         """Registered application children only; resource sampling never scans process names."""
         process = self._process
@@ -349,6 +356,7 @@ class Worker:
         # during an in-flight decode.
         with self._lock:
             self._idle_timer = None
+            self._idle_deadline = None
             if self._model_hold.is_set():
                 log.debug("worker: unload_deferred reason=recording")
                 # Retry directly rather than via _restart_idle_timer: its hold
@@ -356,9 +364,7 @@ class Worker:
                 # resident forever if no release ever arms a timer. The retry
                 # deliberately bypasses the gate so a deferred unload
                 # self-heals; a later successful arm cancels it anyway.
-                self._idle_timer = threading.Timer(self._idle_seconds, self._idle_kill)
-                self._idle_timer.daemon = True
-                self._idle_timer.start()
+                self._start_idle_timer()
                 return
             log.info("worker: unload phase=idle")
             self._teardown()
@@ -377,11 +383,16 @@ class Worker:
             shutdown_requested=self._shutdown_requested.is_set(),
             process_alive=self._process is not None and self._process.is_running(),
         ):
-            self._idle_timer = threading.Timer(self._idle_seconds, self._idle_kill)
-            self._idle_timer.daemon = True
-            self._idle_timer.start()
+            self._start_idle_timer()
+
+    def _start_idle_timer(self) -> None:
+        self._idle_deadline = time.monotonic() + self._idle_seconds
+        self._idle_timer = threading.Timer(self._idle_seconds, self._idle_kill)
+        self._idle_timer.daemon = True
+        self._idle_timer.start()
 
     def _cancel_timer(self) -> None:
+        self._idle_deadline = None
         if self._idle_timer is not None:
             self._idle_timer.cancel()
             self._idle_timer = None
