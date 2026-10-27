@@ -64,3 +64,46 @@ def test_partial_topology_is_unknown(tmp_path):
 def test_live_probe_reports_a_positive_count_or_none():
     count = physical_core_count()
     assert count is None or count >= 1
+
+
+def _write_proc(root, relative, text):
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="ascii")
+
+
+def test_system_cpu_times_sum_busy_and_idle_jiffies(tmp_path):
+    from stenographer.lib.platform.linux.cpu import read_system_cpu_times
+
+    # user nice system idle iowait irq softirq steal guest guest_nice
+    _write_proc(tmp_path, "stat", "cpu  100 5 50 800 20 3 2 10 7 1\ncpu0 1 1 1 1 1 1 1 1 1 1\n")
+
+    assert read_system_cpu_times(tmp_path) == (990, 820)
+
+
+def test_system_cpu_times_unreadable_is_none(tmp_path):
+    from stenographer.lib.platform.linux.cpu import read_system_cpu_times
+
+    assert read_system_cpu_times(tmp_path) is None
+    _write_proc(tmp_path, "stat", "intr 1 2 3\n")
+    assert read_system_cpu_times(tmp_path) is None
+
+
+def test_process_cpu_ticks_add_user_and_system_after_the_command_name(tmp_path):
+    from stenographer.lib.platform.linux.cpu import read_process_cpu_ticks
+
+    # A command name with spaces and a closing parenthesis must not shift fields.
+    fields = ["S", "1", "2", "3", "0", "-1", "4194560", "10", "0", "0", "0", "70", "30"]
+    _write_proc(tmp_path, "42/stat", f"42 (py thon) x) {' '.join(fields)} 0 0 20 0\n")
+
+    assert read_process_cpu_ticks(42, tmp_path) == 100
+    assert read_process_cpu_ticks(43, tmp_path) is None
+
+
+def test_process_resident_bytes_use_statm_pages(tmp_path):
+    from stenographer.lib.platform.linux.cpu import read_process_resident_bytes
+
+    _write_proc(tmp_path, "42/statm", "5000 300 100 10 0 200 0\n")
+
+    assert read_process_resident_bytes(42, tmp_path, page_size=4096) == 300 * 4096
+    assert read_process_resident_bytes(43, tmp_path, page_size=4096) is None

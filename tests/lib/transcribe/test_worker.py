@@ -744,3 +744,42 @@ def test_a_ready_event_answering_a_decode_is_a_protocol_error():
 
         # A poisoned channel is torn down rather than reused.
         assert worker.is_alive() is False
+
+
+def test_idle_unload_deadline_follows_the_armed_idle_timer():
+    transport = FakeAsrTransport()
+
+    with _worker(transport, idle_seconds=30.0) as worker:
+        assert worker.idle_unload_deadline is None
+
+        before = time.monotonic()
+        worker.warmup()
+        after = time.monotonic()
+        assert before + 30.0 <= worker.idle_unload_deadline <= after + 30.0
+
+        worker.hold_model()
+        worker.warmup()
+        assert worker.idle_unload_deadline is None
+
+    assert worker.idle_unload_deadline is None
+
+
+def test_idle_unload_deadline_clears_after_the_idle_unload():
+    transport = FakeAsrTransport()
+
+    with _worker(transport, idle_seconds=0.05) as worker:
+        worker.warmup()
+        assert worker.idle_unload_deadline is not None
+        deadline = time.monotonic() + 2.0
+        while worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert worker.is_alive() is False
+        assert worker.idle_unload_deadline is None
+
+
+def test_idle_unload_deadline_is_none_without_an_idle_timeout():
+    with _worker(FakeAsrTransport(), idle_seconds=0.0) as worker:
+        worker.warmup()
+        assert worker.is_model_ready is True
+        assert worker.idle_unload_deadline is None
