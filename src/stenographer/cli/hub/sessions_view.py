@@ -37,6 +37,8 @@ class SessionsPanel(Vertical):
     #sessions-list {
         height: auto;
         padding: 0 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     #sessions-detail-scroll {
         width: 1fr;
@@ -153,7 +155,12 @@ class SessionsPanel(Vertical):
 
     def storage_summary(self) -> str:
         total_bytes = sum(summary.audio_size_bytes for summary in self.summaries)
-        return f"storage\n{len(self.summaries)} sessions\n{self._format_size(total_bytes)} audio"
+        count = len(self.summaries)
+        text = f"{count} {'entry' if count == 1 else 'entries'}\n"
+        text += f"{self._format_size(total_bytes)} audio"
+        if self.store is not None:
+            text += f"\n\n{self.store.root}"
+        return text
 
     def _refresh_children(self) -> None:
         if not self.is_mounted:

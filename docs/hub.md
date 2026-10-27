@@ -2,74 +2,90 @@
 
 # Terminal hub
 
-Run `stenographer` from a terminal to open the hub. It opens on Live and does
+Run `stenographer` from a terminal to open the hub. It opens on Record and does
 not start recording until you press `space`. If stdin or stdout is not a
 terminal, the command prints help instead. The hub is a local, keyboard-driven
-interface with six sections. The daemon and existing commands keep their
+interface with three screens. The daemon and existing commands keep their
 current behavior. In particular, `stenographer live` still opens its
 standalone live app with its existing flags. See the [live guide](live.md).
 
-## Sections and keys
+## Screens and keys
 
-Press `1` to `6` to select a section:
+Press `1`, `2`, or `3`, or click a row of the navigation list, to show a
+screen. Keys `4` to `6` do nothing.
 
-| Key | Section | Purpose |
+| Key | Screen | Purpose |
 | --- | --- | --- |
-| `1` | Live | Record microphone and system audio, and view the transcript. |
-| `2` | Files | Queue audio files for transcription and export. |
-| `3` | Sessions | Review and manage saved live sessions. |
-| `4` | Config | Edit and save settings. |
-| `5` | Setup | Check six setup areas and edit related settings. |
-| `6` | Doctor | Review system checks, warnings, and suggested fixes. |
+| `1` | Record | Record microphone and system audio, and view the transcript. |
+| `2` | Library | Review saved sessions, and transcribe audio files. |
+| `3` | Settings | Edit settings by tab, and run the system checks. |
 
-The key hints at the bottom of the hub change with the selected section.
-Arrow keys move between items in Files, Sessions, and Config. Keys that have
-a meaning in more than one section perform the action for the selected section.
+Each screen has a sidebar and one row of key hints at the bottom. The hint row
+ends with `? help · q quit`. Press `?` to open a help overlay that lists every
+key of the current screen; press `?` or `escape` to close it. Each control on
+screen prints its key, for example `[r] Run again`, and a click on it does the
+same as the key.
+
+The sidebar shows, from top to bottom:
+
+- **Navigation:** `1 Record`, `2 Library`, and `3 Settings`. The current screen
+  has a bold `▶` marker. Record shows `● HH:MM:SS` while a recording runs and
+  `Ⅱ HH:MM:SS` while it is paused. Library shows its entry count. Settings
+  shows `N W` when the last check run has warnings and `N F` when it has
+  failures.
+- **Engine card:** the model (`bark-pro-int8`), a state line such as
+  `ready · 2 queued` or `idle · unloaded`, the CPU use of the hub and its speech
+  worker (`cpu app`), the CPU use of the system (`all`), the memory of the hub
+  and its worker (`ram app`), and a 60-second CPU history. The card updates
+  once per second. A gauge shows `—` before its first sample.
+- **Context card:** a card that the current screen sets, for example the
+  speakers of the recording or the size of the library.
+
 Scrollbars stay visible. Their thin accent-colour thumbs are the only exception
 to the no-background rule; tracks and corners stay transparent.
 
 ## Hub lifecycle
 
-Live is idle when the hub opens. Press `space` to start recording; while a
+Record is idle when the hub opens. Press `space` to start recording; while a
 session is active, `space` pauses or resumes it. Recording continues when you
-change sections. The hub runs recording start, stop, and save work in the
+change screens. The hub runs recording start, stop, and save work in the
 background so the interface can remain responsive.
 
-Press `q` or `ctrl+c` to quit. When a recording is active, the hub asks for
-confirmation before it stops and saves the session. Press `y`, `q`, or
-`ctrl+c` to confirm; press `n` or `escape` to cancel. When a Files job is
-running, the hub asks before it cancels the job and quits. A cancelled Files
-job does not leave a partial output file. If a start, stop, or save operation
-is still in progress, wait for its status to finish before you send another
-quit key.
+Press `q` or `ctrl+c` to quit. When a recording is active, the hub asks "Stop
+recording and save before quitting?" Press `y`, `q`, or `ctrl+c` (or click
+`[y] Save and quit`) to stop and save; press `n` or `escape` (or click
+`[n] Keep recording`) to keep recording. When a Files job is running, the hub
+asks before it cancels the job and quits. A cancelled Files job does not leave
+a partial output file. If a start, stop, or save operation is still in
+progress, wait for its status to finish before you send another quit key.
 
-If you have unsaved Config changes, the hub asks whether to save, discard, or
-stay in the current section before it navigates away or quits. A successful
-save keeps a timestamped `config.toml.bak-<time>` backup and preserves
-comments and settings that the editor does not know about.
+If Settings has unsaved changes, the hub asks whether to save, discard, or stay
+before it leaves Settings or quits. A tab change inside Settings keeps the
+changes and does not ask. A successful save keeps a timestamped
+`config.toml.bak-<time>` backup and preserves comments and settings that the
+editor does not know about.
 
-## Live
+## Record
 
-The Live section has a REC panel with elapsed time and MIC and SYSTEM panels
-with the device, waveform meter, and dBFS level. A sidebar card shows the
-engine (`bark-pro-int8`), queue, failed count, and CPU use. The transcript opens in mixed
-view, with one time-ordered stream and speaker labels. Press `v` to switch to
-split view, where microphone and system lines appear in separate, captioned
-columns in time order. Press `v` again to return to mixed view. Use `up` and
-`down` to scroll one line, `pageup` and `pagedown` to scroll one page, and
-`home` and `end` to move to the top and bottom. The mouse wheel also scrolls
-the transcript. New lines stay in view while the transcript is at the bottom.
-If you scroll up, refreshes do not move the view; press `end` or scroll to the
-bottom to follow new lines again. These keys scroll only in Live; `up` and
-`down` keep their section-specific actions elsewhere. The key hints show the
-section keys `1` to `6`. Press `m` to toggle microphone input, `s` to toggle
-system audio, and `r` to rename a speaker. System audio captures the current
-output mix, not separate applications.
+Record has a REC panel with elapsed time and MIC and SYSTEM panels with the
+device, waveform meter, and dBFS level. The context card lists the speakers,
+the count of failed phrases when there are any, and `[r] Rename…`. The
+transcript opens in mixed view, with one time-ordered stream and speaker
+labels. Press `v` to switch to split view, where microphone and system lines
+appear in separate, captioned columns in time order. Press `v` again to return
+to mixed view. Use `up` and `down` to scroll one line, `pageup` and `pagedown`
+to scroll one page, and `home` and `end` to move to the top and bottom. The
+mouse wheel also scrolls the transcript. New lines stay in view while the
+transcript is at the bottom. If you scroll up, refreshes do not move the view;
+press `end` or scroll to the bottom to follow new lines again. Press `m` to
+toggle microphone input, `s` to toggle system audio, and `r` to rename a
+speaker. System audio captures the current output mix, not separate
+applications.
 
-When `live.diarize_mic` is on in Config, a new recording labels microphone
+When `live.diarize_mic` is on in Settings (Live tab), a new recording labels microphone
 speakers `Room 1`, `Room 2`, and so on, apart from the system speakers
 (`Speaker 1`, ...). `r` lists room speakers with the system speakers. The
-setting applies when a recording starts; Live has no toggle for it. With the
+setting applies when a recording starts; Record has no toggle for it. With the
 setting off, microphone lines are `You`. See
 [separate the speakers in a room](live.md#separate-the-speakers-in-a-room) for
 its limits.
@@ -90,14 +106,43 @@ Live session audio and transcripts are saved only in the session folder. Logs
 and analytics do not contain audio or transcript text. See [saved session
 files and privacy](live.md#saved-session-files).
 
-## Files
+## Library
 
-Files has a browser, transcription options, a job queue, and a result preview.
+Library lists saved sessions. The context card shows the entry count, the
+audio size, and the sessions folder. The saved session list and
+selected-session detail use separate bordered panels. The list shows each
+session's duration and speaker count. Select a session with the up and down
+arrows. The detail view shows each speaker's talk time, microphone and system
+activity, whether labels were revised, and the transcript. The active recording
+does not appear in this list until it has been saved.
+
+| Key | Action |
+| --- | --- |
+| `n` | Open Files to transcribe audio files. |
+| `p` | Play or stop session audio with `pw-play`. |
+| `d` | Re-diarize the saved session. |
+| `t` | Re-transcribe the saved session. |
+| `r` | Rename a speaker in the selected session. |
+| `x` | Export the transcript as `md`, `jsonl`, `srt`, or `txt`. |
+| `delete` | Delete the selected session after confirmation. |
+
+Re-diarization and re-transcription write new transcript revisions and keep
+previous revisions. Re-labeling uses the same speaker similarity limits as the
+Record screen. Re-diarization relabels microphone lines as `Room N` speakers only
+for a session recorded with microphone diarization (`"diarize_mic": true` in its
+`session.json`). For other sessions, including older ones, it relabels system
+lines only and microphone lines stay `You`. `r` can rename room speakers.
+
+### Files
+
+Press `n` in Library to open Files in the screen body; press `escape` to
+return to the session list. Files has a browser, transcription options, a job
+queue, and a result preview.
 The browser lists WAV, FLAC, OGG, MP3, Opus, AAC, M4A, MP4, MKV, WebM, and WMA
 files. Files that `soundfile` can read use that library. M4A and AAC files use
 the system `ffmpeg` executable; other files that `soundfile` cannot read also
 use `ffmpeg`. Stenographer does not bundle FFmpeg. Install it with your system
-package manager. Doctor reports when `ffmpeg` is missing, and a file job that
+package manager. The Checks tab reports when `ffmpeg` is missing, and a file job that
 needs it cannot start without it.
 
 The browser opens in the folder where Live saves recordings:
@@ -152,77 +197,64 @@ folder or queue the selected files. In Options, press `o` to open or close the
 panel; use the arrow keys to choose a setting and `enter` or `space` to edit
 it. Speaker count accepts `auto` or a positive integer.
 
-## Sessions
+## Settings
 
-Sessions shows storage count and audio size in the sidebar card. Its saved
-session list and selected-session detail use separate bordered panels. The list
-shows each session's duration and speaker count. Select a session with the up
-and down arrows. The detail view shows each speaker's talk time, microphone
-and system activity, whether labels were revised, and the transcript. The
-active recording does not appear in this list until it has been saved.
+Settings has five tabs: General, Audio, Recognition, Live, and Checks. Press
+`left` and `right`, or click a tab, to change the tab. A `▶` marks the active
+tab. The first four tabs edit
+`config.toml`:
+
+| Tab | Settings |
+| --- | --- |
+| General | hotkey, sound and overlay feedback, update check, log level, delivery, and analytics |
+| Audio | input device, minimum speech level, maximum recording length, and spectrum floor |
+| Recognition | `asr.idle_unload_seconds`, `asr.cpu_threads`, and the refine settings |
+| Live | `live.diarize_mic` |
+
+Each tab shows compact key/value rows. A `●` marks values that differ from
+their defaults. The selected key's description and default appear at the
+bottom of the panel. The context card shows the config path and the count of
+unsaved changes. Recognition holds the one shared set of ASR settings for
+dictation, Record, and Files. Model downloads are explicit. Run
+`stenographer model download --asr` to build the speech model; see
+[build the speech model](usage.md#build-the-speech-model).
 
 | Key | Action |
 | --- | --- |
-| `p` | Play or stop session audio with `pw-play`. |
-| `d` | Re-diarize the saved session. |
-| `t` | Re-transcribe the saved session. |
-| `r` | Rename a speaker in the selected session. |
-| `x` | Export the transcript as `md`, `jsonl`, `srt`, or `txt`. |
-| `delete` | Delete the selected session after confirmation. |
-
-Re-diarization and re-transcription write new transcript revisions and keep
-previous revisions. Re-labeling uses the same speaker similarity limits as the
-Live section. Re-diarization relabels microphone lines as `Room N` speakers only
-for a session recorded with microphone diarization (`"diarize_mic": true` in its
-`session.json`). For other sessions, including older ones, it relabels system
-lines only and microphone lines stay `You`. `r` can rename room speakers.
-
-## Config
-
-Config edits `config.toml` by the groups in the current configuration:
-hotkey, audio, ASR, live, refine, feedback, analytics, and delivery. It keeps the
-group selector beside compact key/value rows. A `●` marks values that differ
-from their defaults. The selected key's description and default appear at the
-bottom of the panel. The sidebar card shows the config path and the count of
-changed values. It shows one shared set of ASR settings for dictation, Live,
-and Files: `idle_unload_seconds` and `cpu_threads`. Model downloads are
-explicit. Run `stenographer model download --asr` to build the speech model;
-see [build the speech model](usage.md#build-the-speech-model).
-
-| Key | Action |
-| --- | --- |
-| `left` / `right` | Select a settings group. |
+| `left` / `right` | Select a tab. |
 | `up` / `down` | Select a setting. |
 | `enter` | Edit the selected setting. |
 | `u` | Undo the last edit. |
 | `shift+d` | Reset the selected setting to its default. |
-| `/` | Search setting names. |
+| `/` | Search setting names in every tab. |
 | `ctrl+s` | Save changes and keep a timestamped backup. |
 
 Settings apply to new sessions and jobs. Work that is already running keeps
 its current settings.
 
-## Setup and Doctor
+### Checks
 
-Setup has six steps: input access, microphone, hotkey, models, sounds, and
-system service. Tests check the selected item. The microphone test lists
-available devices and does not capture audio. The sound test plays a preview.
-Model downloads require a separate confirmation. Setup does not start or
-restart the system service.
+The Checks tab runs the system checks the first time it opens. It groups the
+capability checks and shows details and fixes for the selected check. The
+context card shows `N pass · N warn · N fail` and the time of the last run, and
+the tab label shows `●N` when the last run has warnings or failures. New
+optional checks appear as warnings and do not change the existing
+`stenographer doctor` exit status. Recent warnings are shown without
+transcript text.
 
 | Key | Action |
 | --- | --- |
-| `enter` | Complete or advance the current step. |
-| `b` | Go back one step. |
-| `s` | Skip the current step. |
-| `t` | Test the current step. |
-| `e` | Edit the setting for the current step. |
+| `up` / `down` | Select a check. |
+| `enter` | Show or hide the details of the selected check. |
+| `r` | Run the checks again. |
+| `f` | Fix: open the related setting, or offer the model download. |
+| `t` | Test the area of the selected check. |
+| `l` | Open the log. |
+| `c` | Copy the check report. |
 | `m` | Start a model download after confirmation. |
-| `shift+q` | Use quick setup for steps 1 to 3. |
 | `shift+d` | Write the default configuration. |
 
-Doctor groups capability checks and shows details and fixes for selected
-checks. New optional checks appear as warnings and do not change the existing
-`stenographer doctor` exit status. Press `r` to run the checks again, `enter`
-to show details, `f` to open the related Setup step, `l` to open the log, or
-`c` to copy the report. Recent warnings are shown without transcript text.
+The microphone test lists available devices and does not capture audio. The
+sound test plays a preview. The hub does not start or restart the system
+service. The `stenographer setup` and `stenographer doctor` commands do not
+change.

@@ -15,7 +15,8 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 Files jobs now save their results as session folders next to your recordings,
 and the Files output format and output folder options are gone. Refine can keep
-your own names and terms spelled exactly as you write them.
+your own names and terms spelled exactly as you write them. The hub has three
+screens, Record, Library, and Settings, in place of its six sections.
 
 ### Added
 
@@ -31,12 +32,20 @@ your own names and terms spelled exactly as you write them.
 - Adds `refine.vocabulary`, a list of terms that refine spells exactly as
   written in dictation, hub file jobs, and `transcribe --refine`. The default
   empty list leaves each refine request unchanged.
+- The hub has three screens: Record (`1`), Library (`2`, with Files on `n`),
+  and Settings (`3`, with the General, Audio, Recognition, Live, and Checks
+  tabs). Each screen has a sidebar with navigation badges, an engine card with
+  the model state and CPU and memory use, and a context card. Press `?` for the
+  keys of the current screen, and click a control to run its key.
 
 ### Removed
 
 - The Files output format and output folder options, and the `e` key that
   opened the result folder. Earlier results in the `files/` folder stay where
   they are.
+- The hub Setup step wizard and its keys (`b`, `s`, `e`, and `shift+q` quick
+  setup). The Checks tab of Settings runs the checks, tests, model download,
+  and default configuration.
 
 ### Fixed
 
