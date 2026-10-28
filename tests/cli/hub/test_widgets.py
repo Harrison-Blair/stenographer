@@ -266,7 +266,7 @@ def test_widget_dialog_marks_the_focused_button_with_a_glyph(dialog):
             else:
                 choices = (("Save", "save"), ("Discard", "discard"), ("Stay", "stay"))
                 app.push_screen(ConfigPrompt("Unsaved?", choices=choices))
-                labels = ("Save", "Discard", "Stay")
+                labels = ("[s] Save", "[d] Discard", "[esc] Stay")
             await pilot.pause()
             text = "\n".join(_plain_rows(app))
             focused = app.focused.label.plain.strip().removeprefix("▶").strip()

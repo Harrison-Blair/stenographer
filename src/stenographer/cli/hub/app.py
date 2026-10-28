@@ -34,7 +34,6 @@ from stenographer.cli.hub.setup_test import test_step as test_setup_step
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
-from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.sidebar import CardButtons, Sidebar
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
@@ -305,7 +304,7 @@ class HubApp(App[None]):
             self.current_mode, ("", "", (), frozenset())
         )
         sidebar.show_context(content, title, buttons, disabled)
-        screen.query_one("#key-hints", KeyHints).set_hints(*screen.footer_hints())
+        screen.draw_hints()
 
     def _badges(self) -> dict[str, str | Text]:
         badges: dict[str, str | Text] = {}

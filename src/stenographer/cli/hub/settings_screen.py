@@ -439,6 +439,8 @@ class SettingsScreen(HubScreen):
         return card
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
+        if self.typing:
+            return (("enter", "keep"), ("esc", "cancel"), ("tab", "next row"), ("ctrl+s", "save"))
         if self.tab == "checks":
             return (("←→", "tab"), *self.checks_tab.footer_hints(), ("1 2 3", "screens"))
         return (

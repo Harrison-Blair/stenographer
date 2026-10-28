@@ -203,6 +203,8 @@ class LibraryScreen(HubScreen):
         self.set_interval(0.1, self.poll_jobs)
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
+        if self.typing:
+            return (("enter", "keep"), ("esc", "clear"))
         return (
             ("n", "transcribe file"),
             ("/", "search"),

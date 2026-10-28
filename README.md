@@ -96,7 +96,7 @@ setting.
 
 ## Speech model
 
-Dictation, Live, and Files use one speech model: Underdog Bark 3.0 Pro by
+Dictation, Record, and file jobs use one speech model: Underdog Bark 3.0 Pro by
 Conway Research. It runs as int8 ONNX through sherpa-onnx, on the CPU only.
 Stenographer does not host the model. Build it once on your machine:
 
@@ -265,5 +265,5 @@ attribution files are in
 | [Underdog Bark 3.0 Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro) | Conway Research | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Speech recognition. Converted to ONNX and quantized to int8 (weight-only) on your machine by stenographer. |
 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | NVIDIA | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) | Moondream | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
-| [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Live, and Files. |
-| [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | NVIDIA | NeMo Toolkit license ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) | Speaker labels in Live and Files. |
+| [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. |
+| [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | NVIDIA | NeMo Toolkit license ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) | Speaker labels in Record and file jobs. |

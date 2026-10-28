@@ -25,6 +25,15 @@ key of the current screen; press `?` or `escape` to close it. Each control on
 screen prints its key, for example `[r] Run again`, and a click on it does the
 same as the key.
 
+| Key | Action |
+| --- | --- |
+| `?` | Open the help overlay of the current screen; `?` or `escape` closes it. |
+| `q` / `ctrl+c` | Quit. The hub asks first while a recording, a relabel pass, or a file job runs, and while Settings has unsaved changes. |
+
+While a text input has focus, such as the Library search or a Settings row,
+letters, `?`, and `q` go to the input. The hint row then shows only the keys
+that still act, for example `enter keep · esc cancel`.
+
 The sidebar shows, from top to bottom:
 
 - **Navigation:** `1 Record`, `2 Library`, and `3 Settings`. The current screen
@@ -78,6 +87,17 @@ depend on colour.
 | Paused | `Ⅱ PAUSED` and `[space] ▶ Resume` | as Recording, with `space` resume |
 | Saved | `■ SAVED`, the final duration, `saved HH:MM`, the session ID, `[space] ● Record again`, `[o] Open in Library` | `space` record again · `o` open in Library · `d` device · `m` mic · `s` system · `v` view · `r` rename |
 
+| Key | Action |
+| --- | --- |
+| `space` | Start a recording; during a recording, pause or resume it. |
+| `enter` | Stop and save the recording. |
+| `o` | Show the saved session in Library. |
+| `d` | Choose the input device for the next recordings, while no recording runs. |
+| `m` / `s` | Turn the microphone or system audio on or off. |
+| `v` | Switch between the mixed and split transcript views. |
+| `r` | Rename a speaker. |
+| `up` / `down`, `pageup` / `pagedown`, `home` / `end` | Scroll the transcript. |
+
 Press `enter` (or click `[enter] ■ Stop & save`) to stop and save. The hub
 stays open. The save and the speaker relabel pass run in the background: the
 transcript title shows `relabeling…` and the engine card shows
@@ -128,7 +148,7 @@ transcript revision of that session.
 
 ### Prepare the models
 
-Record uses the same speech model as dictation and Files: Underdog Bark 3.0
+Record uses the same speech model as dictation and file jobs: Underdog Bark 3.0
 Pro, int8 ONNX on the CPU. It also uses separate voice-activity and speaker
 models. Download each model only when you choose to:
 
@@ -264,6 +284,8 @@ the transcript. Each action is a button that prints its key:
 | --- | --- |
 | `n` | Open the [Transcribe a file](#transcribe-a-file) dialog. |
 | `up` / `down` | Select the previous or next entry. |
+| `/` | Search titles and transcripts. |
+| `escape` | Clear the search. |
 | `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. |
 | `r` | Rename a speaker of the session. |
 | `d` | Re-diarize the session. A file session cannot: use Re-transcribe. |
@@ -387,7 +409,7 @@ shows the config file, `● N unsaved changes`, and the newest
 changes`, `[u] Undo`, `[D] Reset row`, and `Discard all` act on the draft;
 Discard all asks first. Click a row to select it, and click it again to edit
 it. Recognition holds the one shared set of ASR settings for dictation,
-Record, and Files. Model downloads are explicit. Run
+Record, and file jobs. Model downloads are explicit. Run
 `stenographer model download --asr` to build the speech model; see
 [build the speech model](usage.md#build-the-speech-model).
 
