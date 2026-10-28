@@ -13,10 +13,14 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
-Files jobs now save their results as session folders next to your recordings,
-and the Files output format and output folder options are gone. Refine can keep
-your own names and terms spelled exactly as you write them. The hub has three
-screens, Record, Library, and Settings, in place of its six sections.
+## [v0.17.0] - 2026-10-28
+
+This is a breaking change: the `stenographer live` command is gone, and the
+hub has three screens, Record, Library, and Settings, in place of its six
+sections, with Record in place of `stenographer live`. Files jobs now save
+their results as session folders next to your recordings, and the Files output
+format and output folder options are gone. Refine can keep your own names and
+terms spelled exactly as you write them.
 
 ### Added
 
@@ -34,9 +38,10 @@ screens, Record, Library, and Settings, in place of its six sections.
   empty list leaves each refine request unchanged.
 - The hub has three screens: Record (`1`), Library (`2`, with Transcribe a
   file on `n`), and Settings (`3`, with the General, Audio, Recognition, Live,
-  and Checks tabs). Each screen has a sidebar with navigation badges, an engine card with
-  the model state and CPU and memory use, and a context card. Press `?` for the
-  keys of the current screen, and click a control to run its key.
+  and Checks tabs). Each screen has a sidebar with navigation badges, an
+  engine card with the model state and CPU and memory use, and a context card.
+  Press `?` for the keys of the current screen, and click a control to run its
+  key.
 - The Checks tab of Settings merges Doctor and Setup. It groups the checks as
   input, engine, and other with `✓`, `!`, and `×`, shows a fix and a test for
   the selected check, and opens the Quick setup, Models, and Defaults dialogs.
@@ -53,7 +58,9 @@ screens, Record, Library, and Settings, in place of its six sections.
   session in Library. Spectrum meters show 18 bands, the level and peak, and a
   speech light. `d` chooses the input device for the next recordings of this
   run without changing `config.toml`. The speakers card shows talk time, and a
-  speaker of a saved session can be renamed.
+  speaker of a saved session can be renamed. The transcript scrolls with the
+  arrow, page, `home`, and `end` keys and the mouse wheel, and follows new
+  lines while it is at the bottom.
 - Library lists recordings, file sessions, and unfinished file jobs in one
   list with `date`, `dur`, `kind`, `spk`, and `labels` columns. Press `/` to
   search titles and transcripts. A session that a job or another change is
@@ -93,6 +100,8 @@ screens, Record, Library, and Settings, in place of its six sections.
 - Hub errors use one fail glyph, `×`, in checks, inputs, and dialogs.
 - The Checks microphone test on a machine with no audio server shows
   `× no audio server` instead of an exception name.
+- Session lines that start at the same moment show the microphone line
+  first.
 
 ## [v0.16.0] - 2026-10-22
 
