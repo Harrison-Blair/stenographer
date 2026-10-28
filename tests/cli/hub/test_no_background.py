@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 from typing import ClassVar
 
 from rich.color import Color
@@ -17,7 +16,6 @@ from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
-from stenographer.cli.hub.files_view import FilesPanel
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.lib.config.defaults import default_toml
@@ -135,7 +133,7 @@ def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
             _painted_backgrounds(app, "Library", errors)
             await pilot.press("n")
             await pilot.pause()
-            _painted_backgrounds(app, "Library files", errors)
+            _painted_backgrounds(app, "Transcribe dialog", errors)
             await pilot.press("escape")
 
             await pilot.press("3")
@@ -175,20 +173,21 @@ def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
     asyncio.run(exercise())
 
 
-def test_files_directory_rows_keep_base_alignment(tmp_path):
+def test_transcribe_dialog_rows_keep_base_alignment(tmp_path):
+    (tmp_path / "folder").mkdir()
     (tmp_path / "sample.wav").touch()
-    files = FilesPanel(home=tmp_path)
-    assert "       ../" in _plain(files._render_browser()).splitlines()
+    app = HubApp(FakeServices(), files_home=tmp_path)
 
+    async def exercise():
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.press("2", "n")
+            await pilot.pause()
+            rows = app.screen.query_one("#transcribe-list", Static).render().plain.splitlines()
+            assert rows[0] == "  .."
+            assert rows[1] == "▶ folder/"
+            assert rows[2].startswith("  sample.wav")
 
-def test_files_queue_error_lines_keep_two_cell_indent(tmp_path):
-    files = FilesPanel(home=tmp_path)
-    files.jobs = (
-        SimpleNamespace(
-            options=SimpleNamespace(path=tmp_path / "sample.wav"), error="Decode failed"
-        ),
-    )
-    assert "  Decode failed" in _plain(files._render_queue()).splitlines()
+    asyncio.run(exercise())
 
 
 def test_blank_input_cursor_is_accent_underlined_without_a_fill():
@@ -226,7 +225,7 @@ def test_visible_scrollbar_thumb_is_the_only_background_exception(tmp_path):
         async with app.run_test(size=(120, 36)) as pilot:
             await pilot.press("2", "n")
             await pilot.pause()
-            thumb_cells = _painted_backgrounds(app, "Files scrolling", errors)
+            thumb_cells = _painted_backgrounds(app, "Transcribe scrolling", errors)
             assert thumb_cells > 0
 
     asyncio.run(exercise())
@@ -243,7 +242,8 @@ def test_selected_sidebar_and_file_rows_use_bold_accent_marker(tmp_path):
             _assert_selected_row(sidebar, "▶ 1 Record")
 
             await pilot.press("2", "n")
-            file_rows = app.screen.query_one("#files-browser", Static).render()
-            _assert_selected_row(file_rows, "▶ [ ] sample.wav")
+            await pilot.pause()
+            file_rows = app.screen.query_one("#transcribe-list", Static).render()
+            _assert_selected_row(file_rows, "▶ sample.wav")
 
     asyncio.run(exercise())

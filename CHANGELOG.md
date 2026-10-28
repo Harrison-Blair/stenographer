@@ -32,26 +32,49 @@ screens, Record, Library, and Settings, in place of its six sections.
 - Adds `refine.vocabulary`, a list of terms that refine spells exactly as
   written in dictation, hub file jobs, and `transcribe --refine`. The default
   empty list leaves each refine request unchanged.
-- The hub has three screens: Record (`1`), Library (`2`, with Files on `n`),
-  and Settings (`3`, with the General, Audio, Recognition, Live, and Checks
-  tabs). Each screen has a sidebar with navigation badges, an engine card with
+- The hub has three screens: Record (`1`), Library (`2`, with Transcribe a
+  file on `n`), and Settings (`3`, with the General, Audio, Recognition, Live,
+  and Checks tabs). Each screen has a sidebar with navigation badges, an engine card with
   the model state and CPU and memory use, and a context card. Press `?` for the
   keys of the current screen, and click a control to run its key.
+- The Checks tab of Settings merges Doctor and Setup. It groups the checks as
+  input, engine, and other with `✓`, `!`, and `×`, shows a fix and a test for
+  the selected check, and opens the Quick setup, Models, and Defaults dialogs.
+  A new refine service check asks the refine host for its model list while
+  refine is on. Recent warnings show only the time, the level, the event, and
+  a fixed description.
+- Settings shows each setting as a row with its control: a toggle, a number
+  that refuses letters, text, a list of choices or devices, or the Vocabulary
+  list editor. `●` marks a row that differs from the saved file. `ctrl+s`
+  saves with a backup, `u` undoes, `D` resets the row, and Discard all drops
+  every unsaved change after it asks.
 - Record stops and saves with `enter` and stays open: the speaker relabel pass
   runs in the background, `space` records again, and `o` opens the saved
   session in Library. Spectrum meters show 18 bands, the level and peak, and a
   speech light. `d` chooses the input device for the next recordings of this
   run without changing `config.toml`. The speakers card shows talk time, and a
   speaker of a saved session can be renamed.
+- Library lists recordings, file sessions, and unfinished file jobs in one
+  list with `date`, `dur`, `kind`, `spk`, and `labels` columns. Press `/` to
+  search titles and transcripts. A session that a job or another change is
+  using shows `busy` on its Rename, Re-diarize, Re-transcribe, and Delete
+  buttons, and `delete` on a job row cancels the job. Play works on a file
+  session, and Export asks for the format and the folder.
+- `n` on Library opens the Transcribe a file dialog: a browser that starts in
+  your home folder with `/` search, and the Separate speakers, Speaker count,
+  and Refine text options. It queues one job, and the Library shows and
+  selects its row at once.
 
 ### Removed
 
 - The Files output format and output folder options, and the `e` key that
   opened the result folder. Earlier results in the `files/` folder stay where
   they are.
-- The hub Setup step wizard and its keys (`b`, `s`, `e`, and `shift+q` quick
-  setup). The Checks tab of Settings runs the checks, tests, model download,
-  and default configuration.
+- The hub Files view with its queue and preview panels and multi-file
+  selection. The Transcribe a file dialog queues one file; the Library shows
+  each job's progress and finished lines.
+- The hub Setup step wizard and its keys (`b`, `s`, and `e`). The Checks tab
+  of Settings runs the checks and tests and opens the setup dialogs.
 - The `stenographer live` command and its flags, completion, and guide. The
   hub Record screen replaces it; `live.diarize_mic` and
   `stenographer model download --live` stay. The live guide content is now in

@@ -271,8 +271,8 @@ def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(tmp_pat
 
             await pilot.press("o")
             assert app.current_mode == "library"
-            panel = app.library_screen.sessions_panel
-            await _until(pilot, lambda: panel.selected_session_id == session.path.name)
+            panel = app.library_screen
+            await _until(pilot, lambda: panel.selected_id == session.path.name)
 
             await pilot.press("1")
             await pilot.press("space")

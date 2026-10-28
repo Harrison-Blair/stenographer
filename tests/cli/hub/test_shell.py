@@ -8,17 +8,18 @@ import threading
 from datetime import UTC, datetime
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 from stenographer.cli.hub.engine_status import EngineStatus
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
+from tests.cli.hub.test_library import FakeServices as LibraryServices
+from tests.cli.hub.test_library import _write_rec as _write_session
 from tests.cli.hub.test_live_view import FakeServices as RecordingServices
-from tests.cli.hub.test_sessions import FakeServices as LibraryServices
-from tests.cli.hub.test_sessions import _write_session
 
 
 class IdleServices:
@@ -224,7 +225,7 @@ def test_shell_show_library_selects_listed_unloaded_and_unknown_sessions(tmp_pat
         older = _write_session(sessions_root, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
         latest = _write_session(sessions_root, datetime(2026, 10, 21, 9, 0, tzinfo=UTC))
         app = HubApp(LibraryServices(sessions_root))
-        panel = app.library_screen.sessions_panel
+        panel = app.library_screen
 
         async def until(condition) -> None:
             for _ in range(100):
@@ -235,25 +236,25 @@ def test_shell_show_library_selects_listed_unloaded_and_unknown_sessions(tmp_pat
 
         async with app.run_test(size=(150, 45)) as pilot:
             await until(lambda: len(panel.summaries) == 2)
-            assert panel.selected_session_id == latest.name
+            assert panel.selected_id == latest.name
 
             app.show_library(older.name)
             await pilot.pause()
             assert app.current_mode == "library"
-            assert panel.selected_session_id == older.name
+            assert panel.selected_id == older.name
 
             # A session saved after the list loaded is not listed yet: reload and select it.
             newest = _write_session(sessions_root, datetime(2026, 10, 22, 8, 0, tzinfo=UTC))
             app.show_screen("record")
             app.show_library(newest.name)
-            await until(lambda: panel.selected_session_id == newest.name)
+            await until(lambda: panel.selected_id == newest.name)
             assert len(panel.summaries) == 3
 
             app.show_library(older.name)
-            await until(lambda: panel.selected_session_id == older.name)
+            await until(lambda: panel.selected_id == older.name)
             app.show_library("20990101T000000Z")
             await until(lambda: any("not found" in n.message for n in app._notifications))
-            assert panel.selected_session_id == older.name
+            assert panel.selected_id == older.name
             notice = next(n for n in app._notifications if "not found" in n.message)
             assert notice.severity == "warning"
 
@@ -350,10 +351,10 @@ def test_shell_session_release_needs_the_owner():
 @pytest.mark.parametrize(
     ("tab", "key", "expected"),
     [
-        ("general", "enter", "Edit hotkey.binding"),
-        ("audio", "enter", "Edit audio.input_device"),
-        ("recognition", "enter", "Edit asr.idle_unload_seconds"),
-        ("live", "enter", "Edit live.diarize_mic"),
+        ("general", "enter", "input hotkey.binding"),
+        ("audio", "enter", "Microphone"),
+        ("recognition", "enter", "input asr.idle_unload_seconds"),
+        ("live", "enter", "toggled live.diarize_mic"),
         ("checks", "r", "probe"),
     ],
 )
@@ -365,6 +366,7 @@ def test_shell_settings_tab_keys_reach_the_active_tab(tmp_path, tab, key, expect
             config_path=_config_path(tmp_path),
             doctor_probe=lambda _config, _path: probes.append("probe") or _report("ok"),
         )
+        app.settings_screen.list_devices = lambda _key: []
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("3")
             app.settings_screen.select_tab(tab)
@@ -374,8 +376,14 @@ def test_shell_settings_tab_keys_reach_the_active_tab(tmp_path, tab, key, expect
             await pilot.pause(0.1)
             if tab == "checks":
                 assert len(probes) == before + 1
+            elif expected.startswith("input "):
+                assert isinstance(app.screen.focused, Input)
+                assert app.settings_screen.editing == expected.removeprefix("input ")
+            elif expected.startswith("toggled "):
+                assert app.config_editor.config.live.diarize_mic is True
             else:
-                assert _prompt_text(app) == expected
+                assert isinstance(app.screen, ChoiceDialog)
+                assert app.screen.dialog_title == expected
 
     asyncio.run(exercise())
 

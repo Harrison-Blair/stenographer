@@ -23,7 +23,9 @@ def test_step(step_id: str, config: Config, config_dir: pathlib.Path) -> str:
         )
     if step_id == "microphone":
         devices = workflow._audio_devices()
-        return f"{len(devices)} input device(s) found; no audio was captured"
+        names = ", ".join(label for _value, label in devices) or "none"
+        noun = "device" if len(devices) == 1 else "devices"
+        return f"{len(devices)} input {noun}: {names}; no audio was captured"
     if step_id == "hotkey":
         workflow._parse_binding(config.hotkey.binding)
         host = current_platform().probe_host()
