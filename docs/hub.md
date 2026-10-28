@@ -6,8 +6,7 @@ Run `stenographer` from a terminal to open the hub. It opens on Record and does
 not start recording until you press `space`. If stdin or stdout is not a
 terminal, the command prints help instead. The hub is a local, keyboard-driven
 interface with three screens. The daemon and existing commands keep their
-current behavior. In particular, `stenographer live` still opens its
-standalone live app with its existing flags. See the [live guide](live.md).
+current behavior.
 
 ## Screens and keys
 
@@ -68,7 +67,8 @@ editor does not know about.
 ## Record
 
 Record has a REC panel, a MIC meter, a SYSTEM meter, the transcript, and a
-`speakers` context card. Each state shows a glyph and a word, so it does not
+`speakers` context card. Capture is local: Record never sends audio or
+transcript text over the network. Each state shows a glyph and a word, so it does not
 depend on colour.
 
 | State | REC panel | Keys |
@@ -126,29 +126,108 @@ open the Rename speaker dialog: choose the speaker, type the new name, and press
 rename changes the live labels. On a saved session, the rename writes a new
 transcript revision of that session.
 
-When `live.diarize_mic` is on in Settings (Live tab), a new recording labels microphone
-speakers `Room 1`, `Room 2`, and so on, apart from the system speakers
-(`Speaker 1`, ...). `r` lists room speakers with the system speakers. The
-setting applies when a recording starts; Record has no toggle for it. With the
-setting off, microphone lines are `You`. See
-[separate the speakers in a room](live.md#separate-the-speakers-in-a-room) for
-its limits.
+### Prepare the models
+
+Record uses the same speech model as dictation and Files: Underdog Bark 3.0
+Pro, int8 ONNX on the CPU. It also uses separate voice-activity and speaker
+models. Download each model only when you choose to:
+
+```sh
+stenographer model download --asr
+stenographer model download --live
+```
+
+`--asr` builds the speech model on your machine and downloads the Silero
+voice-activity model. It needs `python3-venv`, 10 GiB of free disk, and about
+10.2 GiB of RAM; see [build the speech model](usage.md#build-the-speech-model).
+`--live` downloads the Silero voice-activity model and the English speaker
+model. Record does not download models for you.
+
+### Separate the speakers in a room
+
+When several people share one microphone, turn on microphone diarization:
+set `live.diarize_mic` (default `false`) on the Live tab of Settings. A new
+recording then labels microphone speakers `Room 1`, `Room 2`, and so on
+(speaker IDs `room-1`, `room-2`), apart from the system speakers (`Speaker 1`,
+...). Microphone and system voices are never clustered together, so a room
+voice and a system voice never share a label. `r` lists room speakers with the
+system speakers. The setting applies when a recording starts; Record has no
+toggle for it. With the setting off, microphone lines are `You`.
+
+Limits:
+
+- Labels are per phrase. Voice-activity detection splits phrases at pauses, so
+  a speaker change without a pause stays in one phrase under one label.
+- Room labels are similarity estimates, like system labels. They can split one
+  person or merge several people.
+- System audio that leaks into the microphone can appear as a room speaker. Use
+  headphones to avoid this.
+
+### System capture limits
+
+System capture records the full mix from the current default output sink. It
+does not capture separate applications. It requires PipeWire, `pw-record`, and
+`pactl`. A recording does not follow a change to the default output sink. If
+you do not need system audio, press `s` to turn it off.
+
+Echo cancellation is out of scope. System audio can also reach the microphone
+and appear twice. Use headphones, or press `m` to turn off the microphone.
+
+Each phrase is decoded on the CPU. Microphone and system phrases share one
+processing queue, so a backlog can delay lines. Running `stenographer run` and
+the hub together is supported. Each loads its own copy of the speech model,
+and both can compete for CPU time.
+
+### Relabel rules
 
 When you stop and save a session, stenographer runs a batch speaker-label pass
 on the saved system phrases, and separately on the microphone phrases when
 microphone diarization is on, and stores the revised labels in a new transcript
 revision. This pass also runs when you confirm quit during a recording. Speaker
-labels are similarity estimates, not reliable identity checks. A minor voice
-gets its own label only if it has at least 15 seconds of phrases that are each
-at least 2 seconds long within a 30-second window and at least two-thirds of
-its speech in those sustained phrases, or if it has at least 20% of the top
-speaker's speech time. Otherwise, stenographer merges that voice into the most
-similar voice. Short or sparse phrases can therefore remain under another
-speaker's label.
+labels are similarity estimates, not reliable identity checks. During a
+recording, phrases shorter than 1.2 seconds reuse a known speaker and do not
+change its embedding mean. A minor voice gets its own label only if it has at
+least 15 seconds of phrases that are each at least 2 seconds long within a
+30-second window and at least two-thirds of its speech in those sustained
+phrases, or if it has at least 20% of the top speaker's speech time.
+Otherwise, stenographer merges that voice into the most similar voice. Short or
+sparse phrases can therefore remain under another speaker's label.
 
-Live session audio and transcripts are saved only in the session folder. Logs
-and analytics do not contain audio or transcript text. See [saved session
-files and privacy](live.md#saved-session-files).
+Each renamed label can go to only one cluster; when a label appears in several
+clusters, it stays with the cluster with the most shared speech time. The pass
+numbers clusters without a user name `Speaker 1`, `Speaker 2`, and so on, in
+order of first appearance in the session. If relabeling fails, the live labels
+remain and the hub shows the reason. Rename several speakers to the same name
+to merge their displayed labels; this does not change their speaker IDs. The
+clustering threshold is 0.50; it was tested on only three clips, so labels are
+not reliable identification.
+
+### Saved session files and privacy
+
+Sessions are saved under
+`$XDG_DATA_HOME/stenographer/sessions/<UTC YYYYMMDDTHHMMSSZ>/`. If
+`XDG_DATA_HOME` is not set, the directory is
+`~/.local/share/stenographer/sessions/<UTC YYYYMMDDTHHMMSSZ>/`.
+
+The session directory has mode `0700`. Each file has mode `0600`. Files are
+created only for sources that were active during the session:
+
+- `mic.flac` and `system.flac` contain 16 kHz, mono, FLAC `PCM_24` audio.
+  Audio is flushed as the session runs. A source that is off during part of
+  the session has silence for that time in its file.
+- `transcript.jsonl` contains one JSON object per recognized phrase. Each
+  object has `start`, `end`, `wall` (UTC), `source`, `speaker_id`, `label`, and
+  `text` fields. Speaker rename events are also recorded.
+- `transcript.md` is written when the session stops. It contains the saved
+  transcript and the final display labels.
+- `session.json` records the current transcript revision. A session recorded
+  with microphone diarization has it from the start, with `"diarize_mic": true`.
+
+These files are user data that you request when you record. The hub writes
+transcript text and audio only to this session folder. Logs and analytics do
+not contain transcript text or audio. See the [privacy
+notes](usage.md#understand-privacy-and-network-access) for other Stenographer
+network behavior.
 
 ## Library
 

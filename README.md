@@ -194,12 +194,6 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
 - `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
 - `stenographer run` — run the daemon in the foreground.
-- `stenographer live` — open the standalone live app with its existing flags;
-  it does not open the hub. After `q`, it keeps each renamed label on one voice
-  and numbers unnamed voices by first appearance. Press `q` again to skip.
-  `--diarize-mic` (or `live.diarize_mic = true`) labels the people on one
-  microphone `Room 1`, `Room 2`, and so on instead of `You`. See the
-  [live guide](docs/live.md).
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
 for sound packs, statistics, and configuration examples.
@@ -216,9 +210,9 @@ systemctl --user restart stenographer.service
 
 Model downloads are explicit and dictation runs locally. Audio, transcripts,
 configuration, and device or model names stay on your machine. Logs never
-contain transcript text or audio. `stenographer live` saves the requested
+contain transcript text or audio. The hub Record screen saves the requested
 audio and transcript in a private session folder, then saves a new revision
-with batch speaker labels; see the [live guide](docs/live.md).
+with batch speaker labels; see the [hub guide](docs/hub.md#record).
 The only automatic network request that leaves your machine is an optional,
 metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
@@ -246,7 +240,7 @@ the speech model and in the Refining colour for the cleanup model, taking
 turns one breath each when both are loading.
 
 Read the [user guide](docs/usage.md) for privacy settings and more examples,
-and the [live guide](docs/live.md) for live capture and saved sessions.
+and the [hub guide](docs/hub.md#record) for live capture and saved sessions.
 
 ## Development
 

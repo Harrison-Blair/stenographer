@@ -66,14 +66,6 @@ def test_resolve_unknown_command_raises():
         resolve_command(COMMANDS, "bogus")
 
 
-def test_live_command_is_registered_with_its_handler_and_parser():
-    spec = resolve_command(COMMANDS, "live")
-
-    assert spec.handler_module == "stenographer.cli.live.handler"
-    assert spec.handler_name == "cmd_live"
-    assert spec.parser_module == "stenographer.cli.live.parser"
-
-
 @pytest.mark.parametrize("spec", [*COMMANDS, *MODEL_COMMANDS], ids=lambda s: s.name)
 def test_every_parser_module_exposes_register(spec):
     if spec.parser_module is None:
