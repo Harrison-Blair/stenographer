@@ -29,7 +29,7 @@ from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
-from stenographer.cli.hub.widgets.sidebar import Sidebar
+from stenographer.cli.hub.widgets.sidebar import CardButtons, Sidebar
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
@@ -100,43 +100,6 @@ class HubApp(App[None]):
         border-title-color: ansi_default;
         overflow-y: auto;
     }
-    #live-view {
-        width: 1fr;
-        height: 1fr;
-    }
-    #live-top {
-        width: 1fr;
-        height: 6;
-    }
-    #live-rec, #live-mic {
-        margin-right: 1;
-    }
-    #live-rec, #live-mic, #live-system {
-        width: 1fr;
-        height: 6;
-        padding: 0 1;
-    }
-    #live-rec {
-        border: round #ff875f;
-        border-title-color: #ff875f;
-        border-title-style: bold;
-    }
-    #live-mic {
-        border: round #5fd7ff;
-    }
-    #live-system {
-        border: round #ffaf5f;
-    }
-    #live-transcript {
-        width: 1fr;
-        height: 1fr;
-        margin-top: 1;
-        padding: 0 1;
-        border: round #3a4150;
-        border-title-color: ansi_default;
-        border-title-style: bold;
-        overflow-y: auto;
-    }
     #transcript-scroll-content {
         width: 1fr;
         height: auto;
@@ -190,7 +153,7 @@ class HubApp(App[None]):
         self.activity_status: str | None = None
         self.engine_sampler = engine_sampler or EngineSampler(services)
         self.check_summary: tuple[int, int, int, datetime.datetime] | None = None
-        self._context_cards: dict[str, tuple[str, RenderableType]] = {}
+        self._context_cards: dict[str, tuple[str, RenderableType, CardButtons, frozenset[str]]] = {}
         self._busy: dict[str, str] = {}
         self._busy_lock = threading.Lock()
         if model_download is None:
@@ -298,15 +261,26 @@ class HubApp(App[None]):
         self.settings_screen.open_setting(key)
 
     def set_context_card(
-        self, screen: str, content: RenderableType, *, title: str | None = None
+        self,
+        screen: str,
+        content: RenderableType,
+        *,
+        title: str | None = None,
+        buttons: CardButtons = (),
+        disabled: frozenset[str] = frozenset(),
     ) -> None:
-        """Set the context card of one screen; it shows while that screen shows."""
+        """Set the context card of one screen; it shows while that screen shows.
+
+        Each ``(label, key, run)`` of ``buttons`` shows as a ``[key] label``
+        button under the text; a click calls ``run``. A button whose key is in
+        ``disabled`` shows as disabled.
+        """
         if title is None:
-            title = self._context_cards.get(screen, ("", ""))[0]
-        self._context_cards[screen] = (title, content)
+            title = self._context_cards.get(screen, ("",))[0]
+        self._context_cards[screen] = (title, content, buttons, disabled)
         hub_screen = self.hub_screens[screen]
         if screen == self.current_mode and hub_screen.ready:
-            hub_screen.query_one(Sidebar).show_context(content, title)
+            hub_screen.query_one(Sidebar).show_context(content, title, buttons, disabled)
 
     def set_check_summary(
         self, passed: int, warned: int, failed: int, ran_at: datetime.datetime
@@ -391,8 +365,10 @@ class HubApp(App[None]):
         sidebar = screen.query_one(Sidebar)
         sidebar.show_navigation(self.current_mode, self._badges())
         sidebar.show_engine(self.engine_sampler.snapshot())
-        title, content = self._context_cards.get(self.current_mode, ("", ""))
-        sidebar.show_context(content, title)
+        title, content, buttons, disabled = self._context_cards.get(
+            self.current_mode, ("", "", (), frozenset())
+        )
+        sidebar.show_context(content, title, buttons, disabled)
         screen.query_one("#key-hints", KeyHints).set_hints(*screen.footer_hints())
 
     def _badges(self) -> dict[str, str | Text]:
@@ -491,6 +467,8 @@ class HubApp(App[None]):
                 ),
                 self._confirm_recording_quit,
             )
+        elif getattr(self.services, "stopping_sessions", ()):
+            self._prompt_relabel_quit()
         elif self.library_screen.files_running:
             self._prompt_files_quit()
         else:
@@ -516,6 +494,33 @@ class HubApp(App[None]):
             return
         self.activity_status = None
         self.refresh_view()
+        if getattr(self.services, "stopping_sessions", ()):
+            self._prompt_relabel_quit()
+        elif self.library_screen.files_running:
+            self._prompt_files_quit()
+        else:
+            self.exit()
+
+    def _prompt_relabel_quit(self) -> None:
+        log.info(fmt_event("hub", "quit_prompted", work="relabel"))
+        self.push_screen(
+            QuitConfirm("Relabel is still running. Quit and keep the live labels?"),
+            self._confirm_relabel_quit,
+        )
+
+    def _confirm_relabel_quit(self, confirmed: bool | None) -> None:
+        log.info(fmt_event("hub", "quit_confirmed", work="relabel", confirmed=bool(confirmed)))
+        if not confirmed:
+            return
+        self.activity_status = "Saving recordings..."
+        self.refresh_view()
+        self.run_worker(self._skip_relabels_and_quit(), name="skip-relabels", group="hub-work")
+
+    async def _skip_relabels_and_quit(self) -> None:
+        # Each stop still finishes writing its files; only the relabel passes end early.
+        await asyncio.to_thread(self.services.skip_relabels)
+        await asyncio.to_thread(self.services.wait_for_stops)
+        self.activity_status = None
         if self.library_screen.files_running:
             self._prompt_files_quit()
         else:

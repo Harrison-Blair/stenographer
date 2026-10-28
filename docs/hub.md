@@ -67,20 +67,64 @@ editor does not know about.
 
 ## Record
 
-Record has a REC panel with elapsed time and MIC and SYSTEM panels with the
-device, waveform meter, and dBFS level. The context card lists the speakers,
-the count of failed phrases when there are any, and `[r] Rename…`. The
-transcript opens in mixed view, with one time-ordered stream and speaker
-labels. Press `v` to switch to split view, where microphone and system lines
-appear in separate, captioned columns in time order. Press `v` again to return
-to mixed view. Use `up` and `down` to scroll one line, `pageup` and `pagedown`
-to scroll one page, and `home` and `end` to move to the top and bottom. The
-mouse wheel also scrolls the transcript. New lines stay in view while the
-transcript is at the bottom. If you scroll up, refreshes do not move the view;
-press `end` or scroll to the bottom to follow new lines again. Press `m` to
-toggle microphone input, `s` to toggle system audio, and `r` to rename a
-speaker. System audio captures the current output mix, not separate
-applications.
+Record has a REC panel, a MIC meter, a SYSTEM meter, the transcript, and a
+`speakers` context card. Each state shows a glyph and a word, so it does not
+depend on colour.
+
+| State | REC panel | Keys |
+| --- | --- | --- |
+| Idle | `○ READY`, the microphone device, `[space] ● Record` | `space` record · `d` device · `m` mic · `s` system · `v` view |
+| Recording | `● REC`, the elapsed clock, `started HH:MM`, `[enter] ■ Stop & save`, `[space] Ⅱ Pause` | `enter` stop & save · `space` pause · `m` mic · `s` system · `v` view · `r` rename |
+| Paused | `Ⅱ PAUSED` and `[space] ▶ Resume` | as Recording, with `space` resume |
+| Saved | `■ SAVED`, the final duration, `saved HH:MM`, the session ID, `[space] ● Record again`, `[o] Open in Library` | `space` record again · `o` open in Library · `d` device · `m` mic · `s` system · `v` view · `r` rename |
+
+Press `enter` (or click `[enter] ■ Stop & save`) to stop and save. The hub
+stays open. The save and the speaker relabel pass run in the background: the
+transcript title shows `relabeling…` and the engine card shows
+`relabeling N of M` until the pass ends. While it runs, the saved session is
+busy: `[r] Rename… busy` shows in the speakers card, and `r` shows the notice
+`session busy`. You can press `space` to record again while the pass runs, and
+several stopped sessions can relabel at the same time. When the pass ends, the
+transcript ends with a marker line such as
+`── saved · 31 phrases · mic.flac 88 MB · system.flac 0.2 MB ──` (only the
+audio files that exist). Press `o` to show the session in Library.
+
+If you quit while a relabel pass runs, the hub asks "Relabel is still running.
+Quit and keep the live labels?" Press `y` to skip each pass; the hub waits until
+each session has saved its files, then quits. The saved session keeps the
+labels that it had during the recording. Press `n` to keep the hub open.
+
+Each meter shows 18 frequency bands in 8 rows, the band labels
+`100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS, and a
+speech light (`● speech` or `○ quiet`) from the voice detector of the source.
+While no recording runs, a meter shows a dotted grid: the MIC meter shows
+`not recording` and the SYSTEM meter shows `captures the default output mix`.
+Press `m` or `s` to turn a source on or off. During a recording, the key
+changes the running session. Before a recording, the key chooses the sources
+of the next recording; a source that is off shows `off · press m to enable` (or
+`s`). System audio captures the current output mix, not separate applications.
+
+Press `d` (or click `[d] change device…`) while no recording runs to choose the
+input device. The dialog lists each input device and `Settings default`. The
+choice shows in the MIC meter and applies to the next recordings until the hub
+quits. It does not change `config.toml`; the Audio tab of Settings edits the
+saved device.
+
+The transcript opens in mixed view, with one time-ordered stream and speaker
+labels. Press `v` (or click `[v] ▶ mixed  split`) to switch to split view,
+where microphone and system lines appear in separate, captioned columns in time
+order. Use `up` and `down` to scroll one line, `pageup` and `pagedown` to scroll
+one page, and `home` and `end` to move to the top and bottom. The mouse wheel
+also scrolls the transcript. New lines stay in view while the transcript is at
+the bottom. If you scroll up, refreshes do not move the view; press `end` or
+scroll to the bottom to follow new lines again.
+
+The `speakers` card lists each speaker with its talk time, the count of failed
+phrases when there are any, and `[r] Rename…`. Press `r` (or click the card) to
+open the Rename speaker dialog: choose the speaker, type the new name, and press
+`enter` (or click `[enter] Rename`); `escape` cancels. During a recording, the
+rename changes the live labels. On a saved session, the rename writes a new
+transcript revision of that session.
 
 When `live.diarize_mic` is on in Settings (Live tab), a new recording labels microphone
 speakers `Room 1`, `Room 2`, and so on, apart from the system speakers

@@ -37,7 +37,7 @@ class TranscriptLine(Static):
         self.line_text = text
         self.color = color
         self.source = source
-        self.layout = layout
+        self.line_layout = layout
         self.state = state
         self.update(self.row())
 
@@ -50,7 +50,7 @@ class TranscriptLine(Static):
         who_style = _DIM if self.state == "pending" else f"bold {self.color}"
         text_style = _DIM if self.state == "pending" else None
         body = self.line_text.replace("\n", " ")
-        if self.layout == "split":
+        if self.line_layout == "split":
             table.add_column(ratio=1)
             table.add_column(ratio=1)
             cell = Text()
