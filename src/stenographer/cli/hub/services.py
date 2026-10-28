@@ -124,10 +124,6 @@ class HubServices:
         """Return the files engine once a file is submitted and until it closes."""
         return self._files_engine
 
-    @property
-    def files_start_folder(self) -> Path:
-        return self._platform.data_dir(os.environ, Path.home()) / "sessions"
-
     def submit_file(self, path: str | Path, **options):
         with self._files_lock:
             if self._files_closed:

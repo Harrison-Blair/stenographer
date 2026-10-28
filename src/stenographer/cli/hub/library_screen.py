@@ -17,13 +17,12 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Rule, Static
 
-from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.export_dialog import ExportDialog
-from stenographer.cli.hub.files_view import FilesPanel
 from stenographer.cli.hub.hub_screen import HubScreen
 from stenographer.cli.hub.library_entry import ACTIVE_JOB_STATES, LibraryEntry
 from stenographer.cli.hub.rename_dialog import RenameDialog
+from stenographer.cli.hub.transcribe_dialog import TranscribeDialog
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.key_hints import KeyHints
@@ -45,35 +44,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_LIBRARY_ACTIONS = frozenset(
-    {
-        "session_move",
-        "library_search",
-        "clear_search",
-        "session_playback",
-        "session_rediarize",
-        "session_retranscribe",
-        "session_rename",
-        "session_export",
-        "session_delete",
-        "scroll_page",
-        "scroll_home",
-        "scroll_end",
-        "open_files",
-    }
-)
-_FILES_ACTIONS = frozenset(
-    {
-        "files_move",
-        "files_next_area",
-        "files_toggle",
-        "files_enter",
-        "files_options",
-        "files_search",
-        "files_cancel",
-        "close_files",
-    }
-)
 _FAILED_JOB_STATES = frozenset({"failed", "needs_ffmpeg"})
 _FAILED = "\u00d7"  # the multiplication sign: the failed glyph
 _COLUMNS = f"  {'date':<12} {'dur':>7} {'kind':<4} {'spk':>3}  labels"
@@ -93,7 +63,7 @@ _ACTIONS = (
 class LibraryScreen(HubScreen):
     """List recordings, file sessions and unfinished file jobs; act on the selected entry.
 
-    ``n`` opens the temporary Files view as a full-body sub-view.
+    ``n`` opens the Transcribe a file dialog; its job shows in the list at once.
     """
 
     SCREEN_NAME = "library"
@@ -115,16 +85,7 @@ class LibraryScreen(HubScreen):
         ("pagedown", "scroll_page(1)", "Scroll transcript down one page"),
         ("home", "scroll_home", "Scroll to transcript start"),
         ("end", "scroll_end", "Scroll to transcript end"),
-        ("n", "open_files", "Transcribe a file"),
-        ("up", "files_move(-1)", "Previous file, option or job"),
-        ("down", "files_move(1)", "Next file, option or job"),
-        Binding("tab", "files_next_area", "Change Files panel focus", priority=True),
-        ("space", "files_toggle", "Select a file or change an option"),
-        ("enter", "files_enter", "Queue files or edit an option"),
-        ("o", "files_options", "Edit Files options"),
-        ("slash", "files_search", "Search audio files"),
-        ("x", "files_cancel", "Cancel the selected job"),
-        ("escape", "close_files", "Back to the Library list"),
+        ("n", "transcribe_file", "Transcribe a file"),
     ]
     DEFAULT_CSS = """
     LibraryScreen #library-body { height: 1fr; }
@@ -159,13 +120,7 @@ class LibraryScreen(HubScreen):
     def __init__(self, services, *, files_home: pathlib.Path | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.store = getattr(services, "session_store", None)
-        self.files_panel = FilesPanel(
-            home=files_home,
-            start=getattr(services, "files_start_folder", None),
-            id="files-panel",
-        )
-        self.files_panel.display = False
-        self.files_open = False
+        self.files_home = files_home
         self.files_submitting = 0
         self.loaded = False
         self.summaries: tuple[SessionSummary, ...] = ()
@@ -206,7 +161,7 @@ class LibraryScreen(HubScreen):
                 yield HubButton(
                     "+ Transcribe a file…",
                     key="n",
-                    action="open_files",
+                    action="transcribe_file",
                     tone="primary",
                     id="library-transcribe",
                 )
@@ -232,7 +187,6 @@ class LibraryScreen(HubScreen):
                 yield Rule(id="library-rule")
                 yield TranscriptScroll(id="library-transcript", can_focus=False)
                 yield KeyHints(footer=False, id="library-detail-hints", classes="library-hints")
-        yield self.files_panel
 
     def on_mount(self) -> None:
         self.query_one("#library-search", Input).display = False
@@ -247,26 +201,7 @@ class LibraryScreen(HubScreen):
             button.styles.padding = 0
         self.set_interval(0.1, self.poll_jobs)
 
-    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        if action in _LIBRARY_ACTIONS:
-            return not self.files_open
-        if action in _FILES_ACTIONS:
-            return self.files_open and (action != "files_next_area" or self.app.screen is self)
-        return True
-
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
-        if self.files_open:
-            return (
-                ("↑↓", "move"),
-                ("tab", "focus"),
-                ("/", "search"),
-                ("enter", "queue"),
-                ("space", "select"),
-                ("o", "options"),
-                ("x", "cancel"),
-                ("esc", "back"),
-                ("1 2 3", "screens"),
-            )
         return (
             ("n", "transcribe file"),
             ("/", "search"),
@@ -298,13 +233,8 @@ class LibraryScreen(HubScreen):
     # Drawing
 
     def refresh_body(self) -> None:
-        self.query_one("#library-body").display = not self.files_open
-        self.files_panel.display = self.files_open
-        if self.files_open:
-            self.refresh_files()
-        else:
-            self._draw_list()
-            self._draw_detail()
+        self._draw_list()
+        self._draw_detail()
         self.app.set_context_card("library", self._storage_card(), title="storage")
 
     def _storage_card(self) -> str:
@@ -687,7 +617,7 @@ class LibraryScreen(HubScreen):
             self._watch_key = watch
         if reload:
             self.load_sessions()
-        elif self.loaded and self.app.current_mode == "library" and not self.files_open:
+        elif self.loaded and self.app.current_mode == "library":
             self._rebuild()
             self._load_detail()
             self._draw_list()
@@ -753,7 +683,6 @@ class LibraryScreen(HubScreen):
 
     def show_session(self, session_id: str) -> None:
         """Select a session; reload the list first when it is not in it."""
-        self.close_files_view()
         if not self.select_session(session_id):
             self.load_sessions(select=session_id)
         self.app.refresh_view()
@@ -1007,155 +936,49 @@ class LibraryScreen(HubScreen):
     def action_scroll_end(self) -> None:
         self._transcript().scroll_bottom()
 
-    # Files sub-view (temporary; task 201 replaces it)
+    # Transcribe a file
 
-    def action_open_files(self) -> None:
-        self.files_open = True
-        log.info(fmt_event("hub", "library_files_opened"))
-        self.app.refresh_view()
+    def action_transcribe_file(self) -> None:
+        log.info(fmt_event("hub", "library_transcribe_opened"))
+        self.app.push_screen(TranscribeDialog(self.files_home), self._queue_file)
 
-    def action_close_files(self) -> None:
-        self.close_files_view()
-        self.load_sessions()
-        self.app.refresh_view()
+    def _queue_file(self, result: tuple[pathlib.Path, dict[str, object]] | None) -> None:
+        if result is None:
+            return
+        app = self.app
+        if app.config_editor is not None and app.config_editor.read_only:
+            app.notify("Fix the invalid configuration before transcribing files.", severity="error")
+            return
+        path, options = result
+        self.files_submitting += 1
+        log.info(fmt_event("hub", "files_queue_requested", count=1))
+        app.run_worker(partial(self._submit_file, path, options), group="files-submit")
 
-    def close_files_view(self) -> None:
-        self.files_open = False
-
-    def refresh_files(self) -> None:
-        self.files_panel.set_jobs(self._jobs())
+    async def _submit_file(self, path: pathlib.Path, options: dict[str, object]) -> None:
+        app = self.app
+        try:
+            job = await asyncio.to_thread(self.submit_file, path, **options)
+        except Exception as exc:
+            log_failure(log, logging.ERROR, "hub: file_submit_failed", exc, safe=True)
+            app.notify("Could not queue this file.", severity="error")
+            job = None
+        finally:
+            self.files_submitting = max(0, self.files_submitting - 1)
+        if job is None or not app.is_running:
+            return
+        # The job was queued when it was submitted, so the poll sees its end even when it ends
+        # before the next poll.
+        self._job_states.setdefault(job.id, "queued")
+        target = self._job_targets.get(job.id)
+        if self.search_query:
+            self.action_clear_search()
+        self._rebuild()
+        self.select_entry(target[0] if target is not None else f"job:{job.id}")
+        app.refresh_view()
 
     @property
     def files_running(self) -> bool:
         return self.files_submitting > 0 or bool(getattr(self.app.services, "files_running", False))
-
-    def action_files_move(self, offset: int) -> None:
-        self.files_panel.move_selection(offset)
-
-    def action_files_next_area(self) -> None:
-        self.files_panel.cycle_focus()
-        log.info(fmt_event("hub", "files_focus_changed", area=self.files_panel.focus_area))
-
-    def action_files_options(self) -> None:
-        self.files_panel.toggle_options()
-        log.info(fmt_event("hub", "files_options_toggled", open=self.files_panel.options_open))
-
-    def action_files_toggle(self) -> None:
-        panel = self.files_panel
-        if panel.focus_area == "options":
-            self._edit_files_option()
-        elif panel.focus_area == "browser":
-            panel.toggle_selected_file()
-            log.info(fmt_event("hub", "files_selection_changed", count=len(panel.selected_paths)))
-
-    def action_files_enter(self) -> None:
-        if self.files_panel.focus_area == "options":
-            self._edit_files_option()
-        else:
-            self._queue_selected_files()
-
-    def action_files_search(self) -> None:
-        self.app.push_screen(
-            ConfigPrompt("Search audio files", initial=self.files_panel.search_term),
-            self._search_files,
-        )
-
-    def _search_files(self, term: str | None) -> None:
-        if term is not None:
-            self.files_panel.set_search(term)
-            log.info(fmt_event("hub", "files_search_updated", active=bool(term.strip())))
-
-    def _edit_files_option(self) -> None:
-        panel = self.files_panel
-        option = panel.selected_option
-        log.info(fmt_event("hub", "files_option_edit_started", option=option.replace(" ", "_")))
-        if option == "diarize":
-            panel.diarize = not panel.diarize
-            panel.refresh_display()
-        elif option == "refine":
-            panel.refine = not panel.refine
-            panel.refresh_display()
-        elif option == "speaker count":
-            count = "auto" if panel.speaker_count is None else str(panel.speaker_count)
-            self.app.push_screen(
-                ConfigPrompt("Speaker count (auto or a positive number)", initial=count),
-                self._set_file_speaker_count,
-            )
-
-    def _set_file_speaker_count(self, value: str | None) -> None:
-        if value is None:
-            return
-        normalized = value.strip().lower()
-        try:
-            count = None if normalized == "auto" else int(normalized)
-            if count is not None and count < 1:
-                raise ValueError
-        except ValueError:
-            self.app.notify("Speaker count must be auto or a positive number.", severity="warning")
-            return
-        self.files_panel.speaker_count = count
-        self.files_panel.refresh_display()
-        log.info(fmt_event("hub", "files_speaker_count_changed", automatic=count is None))
-
-    def _queue_selected_files(self) -> None:
-        app = self.app
-        selected = self.files_panel.selected_entry
-        paths = self.files_panel.enter()
-        if not paths:
-            if selected is not None and selected.is_dir:
-                log.info(fmt_event("hub", "files_directory_opened"))
-            return
-        if app.config_editor is not None and app.config_editor.read_only:
-            app.notify("Fix the invalid configuration before transcribing files.", severity="error")
-            return
-        options = {
-            "diarize": self.files_panel.diarize,
-            "speaker_count": self.files_panel.speaker_count,
-            "refine": self.files_panel.refine,
-        }
-        self.files_submitting += len(paths)
-        log.info(fmt_event("hub", "files_queue_requested", count=len(paths)))
-        app.refresh_view()
-        app.run_worker(partial(self._submit_files, paths, options), group="files-submit")
-
-    async def _submit_files(
-        self, paths: tuple[pathlib.Path, ...], options: dict[str, object]
-    ) -> None:
-        app = self.app
-        for path in paths:
-            try:
-                await asyncio.to_thread(self.submit_file, path, **options)
-            except Exception as exc:
-                log_failure(log, logging.ERROR, "hub: file_submit_failed", exc, safe=True)
-                app.notify("Could not queue this file.", severity="error")
-            finally:
-                self.files_submitting = max(0, self.files_submitting - 1)
-                self.refresh_files()
-        if app.is_running:
-            app.refresh_view()
-
-    def action_files_cancel(self) -> None:
-        app = self.app
-        if self.files_panel.focus_area != "queue":
-            app.notify("Focus the queue to select a Files job.", severity="warning")
-            return
-        job = self.files_panel.selected_job
-        if job is None:
-            app.notify("Select a Files job first.", severity="warning")
-            return
-        cancel = getattr(app.services, "cancel_file", None)
-        try:
-            cancelled = cancel(job) if cancel is not None else job.cancel()
-        except Exception as exc:
-            log_failure(log, logging.ERROR, "hub: file_cancel_failed", exc, safe=True)
-            app.notify("Could not cancel this Files job.", severity="error")
-            return
-        log.info(
-            fmt_event("hub", "files_job_cancel_requested", job_id=getattr(job, "id", "unknown"))
-        )
-        if not cancelled:
-            app.notify("This Files job has already finished.", severity="warning")
-        self.refresh_files()
 
     # Formats
 

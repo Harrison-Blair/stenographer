@@ -54,8 +54,8 @@ background so the interface can remain responsive.
 Press `q` or `ctrl+c` to quit. When a recording is active, the hub asks "Stop
 recording and save before quitting?" Press `y`, `q`, or `ctrl+c` (or click
 `[y] Save and quit`) to stop and save; press `n` or `escape` (or click
-`[n] Keep recording`) to keep recording. When a Files job is running, the hub
-asks before it cancels the job and quits. A cancelled Files job does not leave
+`[n] Keep recording`) to keep recording. When a file job is running, the hub
+asks before it cancels the job and quits. A cancelled file job does not leave
 a partial output file. If a start, stop, or save operation is still in
 progress, wait for its status to finish before you send another quit key.
 
@@ -183,7 +183,7 @@ the transcript. Each action is a button that prints its key:
 
 | Key | Action |
 | --- | --- |
-| `n` | Open Files to transcribe audio files. |
+| `n` | Open the [Transcribe a file](#transcribe-a-file) dialog. |
 | `up` / `down` | Select the previous or next entry. |
 | `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. |
 | `r` | Rename a speaker of the session. |
@@ -211,31 +211,39 @@ for a session recorded with microphone diarization (`"diarize_mic": true` in its
 `session.json`). For other sessions, including older ones, it relabels system
 lines only and microphone lines stay `You`. `r` can rename room speakers.
 
-### Files
+### Transcribe a file
 
-Press `n` in Library to open Files in the screen body; press `escape` to
-return to the Library list. Files has a browser, transcription options, a job
-queue, and a result preview.
+Press `n` or click `[n] + Transcribe a file…` to open the Transcribe a file
+dialog. It has a file browser and the job options:
+
+- The browser starts in your home folder. It lists `..`, the folders, and the
+  supported audio files of the current folder with their duration; names that
+  start with a dot are hidden. Press `up` and `down` (or click a row) to select
+  an entry. Press `enter` on a folder to open it. Press `/` to search names in
+  the current folder; `escape` clears the search.
+- **Separate speakers** (`s`): identify and label speakers. On by default.
+- **Speaker count** (`c`): `auto` (the default) or a whole number above 0. Any
+  other value shows `✗ Speaker count must be auto or a whole number above 0`
+  and the dialog stays open.
+- **Refine text** (`r`): apply the configured text-refinement service. Off by
+  default.
+
+Press `enter` on a file (or click `[enter] Transcribe`) to queue one job with
+these options; press `escape` (or click `[esc] Cancel`) to close the dialog.
+The Library shows the job at once and selects it: a new file row, or the
+session row for a revision job. Jobs run one at a time in the background. The
+dialog has no output format or output folder option.
+
 The browser lists WAV, FLAC, OGG, MP3, Opus, AAC, M4A, MP4, MKV, WebM, and WMA
 files. Files that `soundfile` can read use that library. M4A and AAC files use
 the system `ffmpeg` executable; other files that `soundfile` cannot read also
 use `ffmpeg`. Stenographer does not bundle FFmpeg. Install it with your system
-package manager. The Checks tab reports when `ffmpeg` is missing, and a file job that
-needs it cannot start without it.
+package manager. The Checks tab reports when `ffmpeg` is missing; a job that
+needs it fails with `× needs ffmpeg` in the Library detail.
 
-The browser opens in the folder where Live saves recordings:
-`$XDG_DATA_HOME/stenographer/sessions/`, or
-`~/.local/share/stenographer/sessions/` when `XDG_DATA_HOME` is unset. Each
-session folder holds `mic.flac` and `system.flac`. When that folder does not
-exist yet, the browser opens in your home folder. Select `..` to move up from
-either one; the browser title shows the current folder.
-
-Select one or more files in the browser and press `enter` to queue them. Jobs
-run one at a time in the background. The queue shows each job's state, stage,
-progress, and estimated time remaining. Select a job to see its transcript
-preview. Press `x` while the queue has focus to cancel the selected job.
-
-Each job saves its result in the sessions folder, next to your recordings:
+Each job saves its result in the sessions folder, next to your recordings
+(`$XDG_DATA_HOME/stenographer/sessions/`, or
+`~/.local/share/stenographer/sessions/` when `XDG_DATA_HOME` is unset):
 
 - **Another file:** the job makes a new session folder named by the UTC time
   the job started, for example `20261027T153000Z` (when that name exists, it
@@ -248,8 +256,8 @@ Each job saves its result in the sessions folder, next to your recordings:
   transcript revision of that recording. The revision holds the new lines of
   that source and the current lines of the other source, ordered by start
   time. New speakers get IDs such as `mic-file-r3-1` and the labels `Room 1`
-  (mic) or `Speaker 1` (system); without diarization, mic lines are `You`.
-  Earlier renames of the replaced source do not carry over.
+  (mic) or `Speaker 1` (system); without Separate speakers, mic lines are
+  `You`. Earlier renames of the replaced source do not carry over.
 - **`source.<ext>` of a file session:** the job saves a new transcript
   revision that replaces all lines.
 
@@ -260,20 +268,6 @@ session unchanged. When the session changes while a revision job runs (for
 example, a speaker rename), the job fails and keeps the newer revision.
 Earlier results in the old `files/` folder stay where they are; the hub does
 not read, move, or delete them.
-
-The options are:
-
-- **Diarize:** identify and label speakers. This is on by default.
-- **Speaker count:** choose `auto` or a positive number. `auto` is the default.
-  A number requests a fixed speaker count for that Files job.
-- **Refine:** apply the configured text-refinement service. This is off by
-  default for Files jobs.
-
-Press `tab` to move focus between the browser, queue, and options. In the
-browser, press `/` to search, `space` to select a file, and `enter` to open a
-folder or queue the selected files. In Options, press `o` to open or close the
-panel; use the arrow keys to choose a setting and `enter` or `space` to edit
-it. Speaker count accepts `auto` or a positive integer.
 
 ## Settings
 
