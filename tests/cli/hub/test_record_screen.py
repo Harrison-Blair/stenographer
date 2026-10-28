@@ -18,6 +18,7 @@ from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.engine_sampler import EngineSampler
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.services import HubServices
+from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
 from stenographer.lib.live.models import LIVE_MODELS
@@ -515,7 +516,7 @@ def test_record_transcript_split_view_and_talk_time(tmp_path):
             card = _card(app)
             assert "You" in card and "0:02" in card
             assert "Speaker 1" in card and "0:01" in card
-            assert "[r] Rename…" in card
+            assert "[r] Rename…" in text and "[r] Rename…" not in card
 
             await pilot.press("v")
             split = _screen_text(app)
@@ -690,3 +691,75 @@ def test_record_services_skip_each_pass_and_wait(tmp_path):
     assert all(session.skipped for session in created)
     for worker in workers:
         worker.join(1)
+
+
+def test_record_meter_head_clicks_match_their_keys(tmp_path):
+    async def exercise():
+        services, created = _services(tmp_path, devices=[(3, "USB mic")])
+        app = _app(services)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.pause()
+            mic = app.screen.query_one("#mic-meter")
+            system = app.screen.query_one("#system-meter")
+            assert mic.model.head[0].startswith("[m] MIC")
+            assert system.model.head[0].startswith("[s] SYSTEM")
+
+            # Offset (2, 1) is the first head cell inside the border and padding.
+            await pilot.click("#mic-meter", offset=(2, 1))
+            await pilot.pause()
+            assert mic.model.state == "off" and system.model.state == "idle"
+            await pilot.click("#system-meter", offset=(2, 1))
+            await pilot.pause()
+            assert system.model.state == "off"
+            await pilot.click("#system-meter", offset=(2, 1))
+            await pilot.click("#mic-meter", offset=(2, 1))
+            await pilot.pause()
+            assert mic.model.state == "idle" and system.model.state == "idle"
+
+            # A click on the bars is not a control.
+            await pilot.click("#mic-meter", offset=(2, 4))
+            await pilot.pause()
+            assert mic.model.state == "idle"
+
+            # The right token "[d] device" ends at the last content cell.
+            assert mic.model.head[1] == "[d] device"
+            await pilot.click("#mic-meter", offset=(mic.size.width - 3, 1))
+            await _until(pilot, lambda: "Input device" in _screen_text(app), "no device dialog")
+            await pilot.press("escape")
+            await pilot.pause()
+
+            await pilot.press("space")
+            await _until(pilot, lambda: services.recording)
+            session = created[0]
+            await pilot.click("#mic-meter", offset=(2, 1))
+            await _until(pilot, lambda: ("toggle", "mic") in session.actions)
+            await pilot.click("#system-meter", offset=(2, 1))
+            await _until(pilot, lambda: ("toggle", "system") in session.actions)
+            session.release.set()
+
+    asyncio.run(exercise())
+
+
+def test_record_rename_button_in_the_speakers_card_opens_the_dialog(tmp_path):
+    async def exercise():
+        services, created = _services(tmp_path)
+        app = _app(services)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("space")
+            await _until(pilot, lambda: services.recording)
+            session = created[0]
+            button = app.screen.query_one("#card-r", HubButton)
+            assert str(button.label) == "[r] Rename…"
+            assert "[r] Rename…" not in _card(app)
+
+            await pilot.click("#card-r")
+            await pilot.pause()
+            assert isinstance(app.screen, RenameDialog)
+            app.screen.query_one("#speaker-select", Select).value = "speaker-1"
+            app.screen.query_one("#speaker-name", Input).value = "Juliet"
+            await pilot.click("#dialog-rename")
+            await pilot.pause()
+            assert ("rename", "speaker-1", "Juliet") in session.actions
+            session.release.set()
+
+    asyncio.run(exercise())

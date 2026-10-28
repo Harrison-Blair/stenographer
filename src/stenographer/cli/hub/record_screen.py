@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import numpy as np
-    from textual import events
     from textual.app import ComposeResult
 
 log = logging.getLogger(__name__)
@@ -196,7 +195,12 @@ class RecordScreen(HubScreen):
         self._draw_rec_panel(state, shown)
         self._draw_meters(state, live)
         self._draw_transcript(state, shown, lines, speakers)
-        app.set_context_card("record", self._speakers_card(shown, speakers), title="speakers")
+        app.set_context_card(
+            "record",
+            self._speakers_card(shown, speakers),
+            title="speakers",
+            buttons=(("Rename…", "r", self.action_rename_speaker),),
+        )
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
         state = self.record_state()
@@ -396,10 +400,9 @@ class RecordScreen(HubScreen):
         if failed:
             noun = "phrase" if failed == 1 else "phrases"
             card.append(f"\n! {failed} {noun} failed", style="#ffaf5f")
-        card.append("\n\n[r] Rename…")
         saved = self.record_state() == "saved" and session is not None
         if saved and self.app.is_busy(session.path.name):
-            card.append(" busy", style="#8b93a1")
+            card.append("\n\nrename busy", style="#8b93a1")
         return card
 
     def mic_device(self) -> str:
@@ -584,10 +587,6 @@ class RecordScreen(HubScreen):
         self.app.refresh_view()
 
     # Rename
-
-    def on_click(self, event: events.Click) -> None:
-        if event.widget is not None and event.widget.id == "sidebar-card":
-            self.action_rename_speaker()
 
     def action_rename_speaker(self) -> None:
         app = self.app
