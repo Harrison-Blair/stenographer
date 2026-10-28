@@ -43,6 +43,23 @@ screens, Record, Library, and Settings, in place of its six sections.
   A new refine service check asks the refine host for its model list while
   refine is on. Recent warnings show only the time, the level, the event, and
   a fixed description.
+- Settings shows each setting as a row with its control: a toggle, a number
+  that refuses letters, text, a list of choices or devices, or the Vocabulary
+  list editor. `●` marks a row that differs from the saved file. `ctrl+s`
+  saves with a backup, `u` undoes, `D` resets the row, and Discard all drops
+  every unsaved change after it asks.
+- Record stops and saves with `enter` and stays open: the speaker relabel pass
+  runs in the background, `space` records again, and `o` opens the saved
+  session in Library. Spectrum meters show 18 bands, the level and peak, and a
+  speech light. `d` chooses the input device for the next recordings of this
+  run without changing `config.toml`. The speakers card shows talk time, and a
+  speaker of a saved session can be renamed.
+- Library lists recordings, file sessions, and unfinished file jobs in one
+  list with `date`, `dur`, `kind`, `spk`, and `labels` columns. Press `/` to
+  search titles and transcripts. A session that a job or another change is
+  using shows `busy` on its Rename, Re-diarize, Re-transcribe, and Delete
+  buttons, and `delete` on a job row cancels the job. Play works on a file
+  session, and Export asks for the format and the folder.
 
 ### Removed
 

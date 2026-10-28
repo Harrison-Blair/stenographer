@@ -378,7 +378,8 @@ def test_checks_card_run_again_button_starts_a_new_run():
 
             await pilot.press("1")
             await pilot.pause()
-            assert not app.screen.query_one("#sidebar-context").query(HubButton)
+            record_buttons = app.screen.query_one("#sidebar-context").query(HubButton)
+            assert "[r] Run again" not in [str(b.label) for b in record_buttons]
 
     asyncio.run(exercise())
 

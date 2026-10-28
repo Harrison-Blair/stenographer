@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import numpy as np
+    from textual import events
 
 _COLORS = {"mic": "#5fd7ff", "system": "#ffaf5f"}
 _DIM = "#8b93a1"
@@ -25,7 +26,12 @@ _REFRESH_SECONDS = 1 / 20
 
 
 class SpectrumMeter(Widget):
-    """Show the spectrum, level, peak and speech light of one live source."""
+    """Show the spectrum, level, peak and speech light of one live source.
+
+    The head prints ``[m] MIC`` (or ``[s] SYSTEM``) and, while the mic is
+    idle, ``[d] device``. A click on either runs the action of that key on the
+    nearest ancestor that defines it, so the click and the key do the same.
+    """
 
     DEFAULT_CSS = """
     SpectrumMeter {
@@ -104,6 +110,24 @@ class SpectrumMeter(Widget):
         else:
             text.append(level)
         return text
+
+    async def on_click(self, event: events.Click) -> None:
+        offset = event.get_content_offset(self)
+        if offset is None or offset.y != 0:
+            return
+        left, right = self.model.head
+        width = self.content_size.width
+        if right == "[d] device" and offset.x >= width - len(right):
+            action = "choose_device"
+        elif offset.x < len(left):
+            action = f"toggle_{self.model.source}"
+        else:
+            return
+        event.stop()
+        for node in self.ancestors:
+            if callable(getattr(node, f"action_{action}", None)):
+                await self.app.run_action(action, node)
+                return
 
     def _apply_border(self) -> None:
         state = self.model.state

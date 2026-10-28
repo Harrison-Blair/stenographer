@@ -16,10 +16,13 @@ import numpy as np
 import soundfile as sf
 
 from stenographer.cli.hub.session_jobs import SessionJobs
+from stenographer.lib.files.media import DecodedAudio, decode_media, inspect_media
 from stenographer.lib.live.live_session import LiveSession
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.logging.pipeline import fmt_event
 from stenographer.lib.sessions import SessionStore
+from stenographer.lib.sessions.errors import SessionNotFoundError
+from stenographer.lib.sessions.reader import session_directory, session_metadata
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +46,8 @@ class HubServices:
         session_store: SessionStore | None = None,
         player_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
         files_engine_factory: Callable[..., FilesEngine] | None = None,
+        device_query: Callable[[], list[tuple[str, str]]] | None = None,
+        media_decoder: Callable[[Path], DecodedAudio] | None = None,
     ) -> None:
         self._config = config
         self._platform = platform
@@ -61,6 +66,14 @@ class HubServices:
         self._files_lock = threading.Lock()
         self._files_closed = False
         self.files_job = None
+        self._device_query = device_query
+        self._media_decoder = media_decoder
+        self._stopping: list[LiveSession] = []
+        self._stops_changed = threading.Condition()
+        self.last_saved: LiveSession | None = None
+        self.next_sources = {"mic": True, "system": True}
+        self.next_device: str | None = None
+        self.next_device_label: str | None = None
 
     @property
     def recording(self) -> bool:
@@ -164,6 +177,9 @@ class HubServices:
             self._config,
             diarize_mic=self._config.live.diarize_mic,
             platform=self._platform,
+            mic=self.next_sources["mic"],
+            system=self.next_sources["system"],
+            device=self.next_device,
         )
         self._session = session
         try:
@@ -174,11 +190,62 @@ class HubServices:
             raise
 
     def stop_recording(self) -> None:
-        session = self._session
-        if session is None:
-            return
-        session.stop()
-        self._session = None
+        session = self.begin_stop()
+        if session is not None:
+            self.finish_stop(session)
+
+    @property
+    def stopping_sessions(self) -> tuple[LiveSession, ...]:
+        """Return the sessions whose stop runs, in stop order."""
+        with self._stops_changed:
+            return tuple(self._stopping)
+
+    def begin_stop(self) -> LiveSession | None:
+        """End the recording at once; the caller runs ``finish_stop`` in the background."""
+        with self._stops_changed:
+            session = self._session
+            if session is None:
+                return None
+            self._session = None
+            self._stopping.append(session)
+            self.last_saved = session
+        return session
+
+    def finish_stop(self, session: LiveSession) -> None:
+        """Save the session and run its relabel pass; it leaves the stopping list at the end."""
+        try:
+            session.stop()
+        finally:
+            with self._stops_changed:
+                self._stopping.remove(session)
+                self._stops_changed.notify_all()
+
+    def skip_relabels(self) -> None:
+        """Skip the relabel pass of each stopping session; each keeps its live labels."""
+        for session in self.stopping_sessions:
+            session.skip_relabel()
+
+    def wait_for_stops(self, timeout: float | None = None) -> bool:
+        """Wait until no stop runs; return false when the timeout ends first."""
+        with self._stops_changed:
+            return self._stops_changed.wait_for(lambda: not self._stopping, timeout)
+
+    def toggle_next_source(self, source: str) -> None:
+        """Turn a source of the next recording on or off."""
+        self.next_sources[source] = not self.next_sources[source]
+
+    def input_devices(self) -> list[tuple[str, str]]:
+        """Return the input devices as ``(value, label)`` pairs; empty when none can record."""
+        if self._device_query is not None:
+            return self._device_query()
+        from stenographer.lib.audio.probe import input_device_choices, query_devices
+
+        return input_device_choices(query_devices().devices)
+
+    def choose_device(self, value: str | None, label: str | None) -> None:
+        """Use a device for the next recordings of this run; ``None`` uses the saved setting."""
+        self.next_device = value
+        self.next_device_label = label
 
     def rediarize_session(self, session_id: str) -> str:
         return self.session_jobs.rediarize(session_id)
@@ -205,7 +272,7 @@ class HubServices:
             if self._player_temp_path is not None:
                 self._player_temp_path.unlink(missing_ok=True)
                 self._player_temp_path = None
-            mixed_path = self._write_mixed_audio(session_id)
+            mixed_path = self._write_play_audio(session_id)
             try:
                 process = self._player_factory(["pw-play", str(mixed_path)])
             except Exception:
@@ -260,8 +327,38 @@ class HubServices:
                 self._player_temp_path = None
             mixed_path.unlink(missing_ok=True)
 
-    def _write_mixed_audio(self, session_id: str) -> Path:
-        directory = self.session_store.root / session_id
+    def _write_play_audio(self, session_id: str) -> Path:
+        directory = session_directory(self.session_store.root, session_id)
+        if directory is None:
+            raise SessionNotFoundError(f"session not found: {session_id}")
+        if session_metadata(directory).get("kind") == "file":
+            return self._write_source_audio(self.session_store.source_audio(session_id))
+        return self._write_mixed_audio(directory, session_id)
+
+    def _write_source_audio(self, source: Path) -> Path:
+        """Decode the copied source of a file session into a private temporary WAV file."""
+        if self._media_decoder is not None:
+            audio = self._media_decoder(source)
+        else:
+            decoder = self._platform.ffmpeg_decoder()
+            audio = decode_media(source, inspect_media(source, decoder), decoder)
+        fd, name = tempfile.mkstemp(prefix="stenographer-session-", suffix=".wav")
+        os.close(fd)
+        path = Path(name)
+        try:
+            sf.write(
+                path,
+                np.clip(audio.samples, -1.0, 1.0),
+                audio.sample_rate,
+                format="WAV",
+                subtype="PCM_16",
+            )
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        return path
+
+    def _write_mixed_audio(self, directory: Path, session_id: str) -> Path:
         paths = [directory / "mic.flac", directory / "system.flac"]
         with ExitStack() as stack:
             streams = [stack.enter_context(sf.SoundFile(path)) for path in paths if path.is_file()]

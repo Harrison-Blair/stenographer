@@ -62,6 +62,7 @@ class Sidebar(Vertical):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._card_buttons: CardButtons = ()
+        self._disabled_keys: frozenset[str] = frozenset()
 
     def show_navigation(self, current: str, badges: dict[str, str | Text]) -> None:
         """Show ``1 Record`` to ``3 Settings`` with badges; select ``current``."""
@@ -80,16 +81,28 @@ class Sidebar(Vertical):
         content: RenderableType,
         title: str = "",
         buttons: CardButtons = (),
+        disabled: frozenset[str] = frozenset(),
     ) -> None:
-        """Show the card text and one ``[key] label`` button per ``(label, key, run)``."""
+        """Show the card text and one ``[key] label`` button per ``(label, key, run)``.
+
+        Each button whose key is in ``disabled`` shows as disabled.
+        """
         self.query_one("#sidebar-context", Frame).border_title = title
         self.query_one("#sidebar-card", Static).update(content)
         if buttons == self._card_buttons:
+            if disabled != self._disabled_keys:
+                self._disabled_keys = disabled
+                for button in self.query_one("#sidebar-card-buttons", Vertical).query(HubButton):
+                    button.disabled = button.key in disabled
             return
         self._card_buttons = buttons
+        self._disabled_keys = disabled
         row = self.query_one("#sidebar-card-buttons", Vertical)
         row.remove_children()
-        row.mount_all(HubButton(label, key=key, id=f"card-{key}") for label, key, _run in buttons)
+        row.mount_all(
+            HubButton(label, key=key, id=f"card-{key}", disabled=key in disabled)
+            for label, key, _run in buttons
+        )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         for _label, key, run in self._card_buttons:

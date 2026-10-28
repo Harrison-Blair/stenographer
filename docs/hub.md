@@ -67,20 +67,64 @@ editor does not know about.
 
 ## Record
 
-Record has a REC panel with elapsed time and MIC and SYSTEM panels with the
-device, waveform meter, and dBFS level. The context card lists the speakers,
-the count of failed phrases when there are any, and `[r] Rename…`. The
-transcript opens in mixed view, with one time-ordered stream and speaker
-labels. Press `v` to switch to split view, where microphone and system lines
-appear in separate, captioned columns in time order. Press `v` again to return
-to mixed view. Use `up` and `down` to scroll one line, `pageup` and `pagedown`
-to scroll one page, and `home` and `end` to move to the top and bottom. The
-mouse wheel also scrolls the transcript. New lines stay in view while the
-transcript is at the bottom. If you scroll up, refreshes do not move the view;
-press `end` or scroll to the bottom to follow new lines again. Press `m` to
-toggle microphone input, `s` to toggle system audio, and `r` to rename a
-speaker. System audio captures the current output mix, not separate
-applications.
+Record has a REC panel, a MIC meter, a SYSTEM meter, the transcript, and a
+`speakers` context card. Each state shows a glyph and a word, so it does not
+depend on colour.
+
+| State | REC panel | Keys |
+| --- | --- | --- |
+| Idle | `○ READY`, the microphone device, `[space] ● Record` | `space` record · `d` device · `m` mic · `s` system · `v` view |
+| Recording | `● REC`, the elapsed clock, `started HH:MM`, `[enter] ■ Stop & save`, `[space] Ⅱ Pause` | `enter` stop & save · `space` pause · `m` mic · `s` system · `v` view · `r` rename |
+| Paused | `Ⅱ PAUSED` and `[space] ▶ Resume` | as Recording, with `space` resume |
+| Saved | `■ SAVED`, the final duration, `saved HH:MM`, the session ID, `[space] ● Record again`, `[o] Open in Library` | `space` record again · `o` open in Library · `d` device · `m` mic · `s` system · `v` view · `r` rename |
+
+Press `enter` (or click `[enter] ■ Stop & save`) to stop and save. The hub
+stays open. The save and the speaker relabel pass run in the background: the
+transcript title shows `relabeling…` and the engine card shows
+`relabeling N of M` until the pass ends. While it runs, the saved session is
+busy: `[r] Rename… busy` shows in the speakers card, and `r` shows the notice
+`session busy`. You can press `space` to record again while the pass runs, and
+several stopped sessions can relabel at the same time. When the pass ends, the
+transcript ends with a marker line such as
+`── saved · 31 phrases · mic.flac 88 MB · system.flac 0.2 MB ──` (only the
+audio files that exist). Press `o` to show the session in Library.
+
+If you quit while a relabel pass runs, the hub asks "Relabel is still running.
+Quit and keep the live labels?" Press `y` to skip each pass; the hub waits until
+each session has saved its files, then quits. The saved session keeps the
+labels that it had during the recording. Press `n` to keep the hub open.
+
+Each meter shows 18 frequency bands in 8 rows, the band labels
+`100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS, and a
+speech light (`● speech` or `○ quiet`) from the voice detector of the source.
+While no recording runs, a meter shows a dotted grid: the MIC meter shows
+`not recording` and the SYSTEM meter shows `captures the default output mix`.
+Press `m` or `s` to turn a source on or off. During a recording, the key
+changes the running session. Before a recording, the key chooses the sources
+of the next recording; a source that is off shows `off · press m to enable` (or
+`s`). System audio captures the current output mix, not separate applications.
+
+Press `d` (or click `[d] change device…`) while no recording runs to choose the
+input device. The dialog lists each input device and `Settings default`. The
+choice shows in the MIC meter and applies to the next recordings until the hub
+quits. It does not change `config.toml`; the Audio tab of Settings edits the
+saved device.
+
+The transcript opens in mixed view, with one time-ordered stream and speaker
+labels. Press `v` (or click `[v] ▶ mixed  split`) to switch to split view,
+where microphone and system lines appear in separate, captioned columns in time
+order. Use `up` and `down` to scroll one line, `pageup` and `pagedown` to scroll
+one page, and `home` and `end` to move to the top and bottom. The mouse wheel
+also scrolls the transcript. New lines stay in view while the transcript is at
+the bottom. If you scroll up, refreshes do not move the view; press `end` or
+scroll to the bottom to follow new lines again.
+
+The `speakers` card lists each speaker with its talk time, the count of failed
+phrases when there are any, and `[r] Rename…`. Press `r` (or click the card) to
+open the Rename speaker dialog: choose the speaker, type the new name, and press
+`enter` (or click `[enter] Rename`); `escape` cancels. During a recording, the
+rename changes the live labels. On a saved session, the rename writes a new
+transcript revision of that session.
 
 When `live.diarize_mic` is on in Settings (Live tab), a new recording labels microphone
 speakers `Room 1`, `Room 2`, and so on, apart from the system speakers
@@ -108,23 +152,57 @@ files and privacy](live.md#saved-session-files).
 
 ## Library
 
-Library lists saved sessions. The context card shows the entry count, the
-audio size, and the sessions folder. The saved session list and
-selected-session detail use separate bordered panels. The list shows each
-session's duration and speaker count. Select a session with the up and down
-arrows. The detail view shows each speaker's talk time, microphone and system
-activity, whether labels were revised, and the transcript. The active recording
-does not appear in this list until it has been saved.
+Library has a list on the left and the detail of the selected entry on the
+right. The list holds saved recordings, file sessions, and file jobs that are
+not finished, newest first. Its columns are `date`, `dur`, `kind` (`rec` or
+`file`), `spk` (speaker count), and `labels`:
+
+- **Recording:** `labels` is `live` for live speaker labels, `relabeled` after
+  the relabel pass or a re-diarize, or `! interrupted` when the recording
+  stopped without a clean save.
+- **File session:** `labels` is the name of the source file.
+- **File job:** `dur` shows `queued` or the percent done, and `labels` shows the
+  source file name. A failed job shows `× failed`; press `delete` to remove its
+  row. When a job finishes, its row becomes the session row and stays
+  selected.
+- **Revision job:** a job that writes a new revision of a listed session shows
+  `queued` or its percent in the `dur` cell of that session row.
+
+The list updates when a job ends and when a recording is saved, and it keeps
+the selected entry. The active recording does not appear until it is saved.
+The context card shows the entry count, the audio size, and the sessions
+folder; the navigation row shows the entry count.
+
+Press `/` to search titles and transcripts; the search ignores case and runs in
+the background. A job row matches by its source file name. Press `escape` to
+clear the search.
+
+The detail shows the date, time, duration, and kind, the label state, each
+speaker's talk time, the microphone and system activity of a recording, and
+the transcript. Each action is a button that prints its key:
 
 | Key | Action |
 | --- | --- |
 | `n` | Open Files to transcribe audio files. |
-| `p` | Play or stop session audio with `pw-play`. |
-| `d` | Re-diarize the saved session. |
-| `t` | Re-transcribe the saved session. |
-| `r` | Rename a speaker in the selected session. |
-| `x` | Export the transcript as `md`, `jsonl`, `srt`, or `txt`. |
-| `delete` | Delete the selected session after confirmation. |
+| `up` / `down` | Select the previous or next entry. |
+| `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. |
+| `r` | Rename a speaker of the session. |
+| `d` | Re-diarize the session. A file session cannot: use Re-transcribe. |
+| `t` | Re-transcribe the session. |
+| `x` | Export the transcript. |
+| `delete` | Delete the session after confirmation. On a queued or running job, cancel it after confirmation. |
+| `pageup` / `pagedown`, `home` / `end` | Scroll the transcript. |
+
+While a re-diarize, re-transcribe, rename, delete, or file job changes a
+session, that session is busy: its Rename, Re-diarize, Re-transcribe, and
+Delete buttons show `busy` and do nothing, and a second change shows the
+notice `session busy`. On a session row with a running revision job, `delete`
+cancels the job.
+
+`x` opens the Export dialog. Press `tab` or click a format to choose `md`,
+`jsonl`, `srt`, or `txt`, and type the folder (default `~/Documents`). Press
+`enter` to export or `escape` to cancel. The notice shows the path of the
+exported file.
 
 Re-diarization and re-transcription write new transcript revisions and keep
 previous revisions. Re-labeling uses the same speaker similarity limits as the
@@ -136,7 +214,7 @@ lines only and microphone lines stay `You`. `r` can rename room speakers.
 ### Files
 
 Press `n` in Library to open Files in the screen body; press `escape` to
-return to the session list. Files has a browser, transcription options, a job
+return to the Library list. Files has a browser, transcription options, a job
 queue, and a result preview.
 The browser lists WAV, FLAC, OGG, MP3, Opus, AAC, M4A, MP4, MKV, WebM, and WMA
 files. Files that `soundfile` can read use that library. M4A and AAC files use
@@ -211,22 +289,53 @@ tab. The first four tabs edit
 | Recognition | `asr.idle_unload_seconds`, `asr.cpu_threads`, and the refine settings |
 | Live | `live.diarize_mic` |
 
-Each tab shows compact key/value rows. A `●` marks values that differ from
-their defaults. The selected key's description and default appear at the
-bottom of the panel. The context card shows the config path and the count of
-unsaved changes. Recognition holds the one shared set of ASR settings for
-dictation, Record, and Files. Model downloads are explicit. Run
+Each row shows a `●` slot, the setting name, its control, and help. A `▶`
+marks the selected row. The controls are:
+
+| Control | Example | Edit |
+| --- | --- | --- |
+| Toggle | `(●) on`, `( ) off` | `space` or `enter` flips it. |
+| Number | `900 s` | `enter` opens an input in the row; it refuses letters. |
+| Text | `http://127.0.0.1:11434` | `enter` opens an input in the row. |
+| Choice | `hybrid ▾` | `enter` opens the list of allowed values. |
+| Device | `Default input ▾` | `enter` lists the devices of the sound server. |
+| List | `[enter] Edit list… 3 terms` | `enter` opens the Vocabulary editor. |
+
+While an input in a row has focus, letters go to the input. `enter` keeps the
+value, `escape` cancels it, `tab` keeps it and selects the next row, and
+`ctrl+s` keeps it and saves. When the config refuses a value, the input stays
+open and the help of the row reads `✗ <reason>`, for example
+`✗ must be non-empty`.
+
+A `●` marks a row whose value differs from the saved file, not from the
+default. The help of the selected row shows the default. The context card
+shows the config file, `● N unsaved changes`, and the newest
+`config.toml.bak-<time>` backup with its time. Below the rows, `[ctrl+s] Save N
+changes`, `[u] Undo`, `[D] Reset row`, and `Discard all` act on the draft;
+Discard all asks first. Click a row to select it, and click it again to edit
+it. Recognition holds the one shared set of ASR settings for dictation,
+Record, and Files. Model downloads are explicit. Run
 `stenographer model download --asr` to build the speech model; see
 [build the speech model](usage.md#build-the-speech-model).
+
+The Vocabulary row (`refine.vocabulary`) opens a list editor. Press `a` to
+add a term, `e` to edit the selected term, and `del` to delete it. In the
+term input, `enter` keeps the term and `escape` closes the input. A term is
+trimmed, is not empty, has at most 64 characters, and does not repeat another
+term in any letter case; the list holds at most 200 terms. The editor refuses
+a term that breaks a rule: the input stays open and the line under it names the
+rule, for example `✗ term not kept: term 3 must be non-empty`. `enter` Done makes the list an
+unsaved change of Settings; `escape` cancels.
 
 | Key | Action |
 | --- | --- |
 | `left` / `right` | Select a tab. |
 | `up` / `down` | Select a setting. |
 | `enter` | Edit the selected setting. |
+| `space` | Flip the selected toggle. |
 | `u` | Undo the last edit. |
 | `shift+d` | Reset the selected setting to its default. |
-| `/` | Search setting names in every tab. |
+| `/` | Search setting names in every tab; `escape` clears the search. |
 | `ctrl+s` | Save changes and keep a timestamped backup. |
 
 Settings apply to new sessions and jobs. Work that is already running keeps
