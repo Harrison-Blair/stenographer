@@ -6,7 +6,9 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import sys
 import threading
+import types
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -493,23 +495,22 @@ def test_checks_test_runs_the_setup_test_of_the_area(check_id, area, label):
 
 
 def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch):
-    import sounddevice
-
+    # A fake module in place of sounddevice: importing the real one initializes
+    # PortAudio, which fails on a machine with no audio server (CI).
     def no_capture(*_args, **_kwargs):
         raise AssertionError("the microphone test opened an audio stream")
 
+    sounddevice = types.ModuleType("sounddevice")
+    sounddevice.PortAudioError = type("PortAudioError", (Exception,), {})
     for name in ("InputStream", "RawInputStream", "Stream", "rec"):
-        monkeypatch.setattr(sounddevice, name, no_capture)
-    monkeypatch.setattr(
-        sounddevice,
-        "query_devices",
-        lambda: (
-            {"name": "alpha mic", "max_input_channels": 1},
-            {"name": "bravo speaker", "max_input_channels": 0},
-            {"name": "charlie mic", "max_input_channels": 2},
-        ),
+        setattr(sounddevice, name, no_capture)
+    sounddevice.query_devices = lambda: (
+        {"name": "alpha mic", "max_input_channels": 1},
+        {"name": "bravo speaker", "max_input_channels": 0},
+        {"name": "charlie mic", "max_input_channels": 2},
     )
-    monkeypatch.setattr(sounddevice, "default", SimpleNamespace(device=(0, 1)))
+    sounddevice.default = SimpleNamespace(device=(0, 1))
+    monkeypatch.setitem(sys.modules, "sounddevice", sounddevice)
     report = DoctorReport((_check("has_mic", "microphone", "input"),), ())
 
     async def exercise():
