@@ -25,6 +25,7 @@ class Dialog[ResultType](ModalScreen[ResultType]):
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("escape", "cancel", "Cancel"),
+        Binding("question_mark", "app.help", "Help", show=False),
     ]
     DEFAULT_CSS = """
     Dialog {

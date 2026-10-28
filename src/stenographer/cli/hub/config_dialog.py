@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
@@ -20,10 +21,11 @@ class ConfigPrompt(ModalScreen[str | None]):
     Each choice button prints its key; ``escape`` stays (it returns ``None``).
     """
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("escape", "cancel", "Cancel"),
         ("s", "choose('save')", "Save"),
         ("d", "choose('discard')", "Discard"),
+        Binding("question_mark", "app.help", "Help", show=False),
     ]
     CHOICE_KEYS: ClassVar[dict[str, str]] = {"save": "s", "discard": "d", "stay": "esc"}
     CSS = """

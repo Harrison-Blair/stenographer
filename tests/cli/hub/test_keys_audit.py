@@ -381,6 +381,52 @@ def test_help_overlay_shows_every_shown_binding_of_the_screen(tmp_path, name):
     _run_state(tmp_path, STATES, name, check)
 
 
+# Dialogs whose only focus is a text input; ``tab`` there cycles the format.
+INPUT_ONLY_DIALOGS = frozenset({"library-export"})
+
+
+@pytest.mark.parametrize("name", [name for name in DIALOGS if name != "help"])
+def test_help_overlay_shows_every_shown_binding_of_the_dialog(tmp_path, name):
+    async def check(pilot):
+        app = pilot.app
+        dialog = app.screen
+        if name in INPUT_ONLY_DIALOGS:
+            # README §4.6: the input is the only focus and takes ``?`` as text.
+            await pilot.press("question_mark")
+            await pilot.pause()
+            assert app.screen is dialog
+            assert dialog.focused.value.endswith("?")
+            return
+        if isinstance(dialog.focused, Input):
+            # A focused input takes ``?`` as text; ``tab`` moves to the buttons.
+            await pilot.press("tab")
+            await pilot.pause()
+            assert not isinstance(dialog.focused, Input), name
+        active = {
+            key: item
+            for key, item in dialog.active_bindings.items()
+            if item.enabled
+        }
+        wanted = {
+            (HelpOverlay.help_rows({key: item})[0])
+            for key, item in active.items()
+            if item.binding.show
+        }
+        assert wanted, name
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert isinstance(app.screen, HelpOverlay), name
+        text = _screen_text(app)
+        missing = sorted(row for row in wanted if row[0] not in text or row[1] not in text)
+        assert missing == []
+        assert "[esc] Close" in text
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert app.screen is dialog
+
+    _run_state(tmp_path, DIALOGS, name, check)
+
+
 def test_help_overlay_scrolls_its_rows_and_keeps_its_close_button_on_a_short_terminal():
     async def exercise():
         app = HubApp(SettingsServices())
@@ -554,9 +600,10 @@ def test_readme_and_site_describe_three_screens_and_no_live_command():
 
 def test_hub_uses_one_fail_glyph():
     hub = REPO / "src" / "stenographer" / "cli" / "hub"
+    docs = [REPO / "docs" / "hub.md", REPO / "README.md", REPO / "site" / "index.html"]
     offenders = [
         str(path.relative_to(REPO))
-        for path in sorted(hub.rglob("*.py"))
+        for path in [*sorted(hub.rglob("*.py")), *docs]
         if "\N{BALLOT X}" in path.read_text(encoding="utf-8")
     ]
     assert offenders == []

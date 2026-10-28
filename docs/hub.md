@@ -324,7 +324,7 @@ dialog. It has a file browser and the job options:
   the current folder; `escape` clears the search.
 - **Separate speakers** (`s`): identify and label speakers. On by default.
 - **Speaker count** (`c`): `auto` (the default) or a whole number above 0. Any
-  other value shows `✗ Speaker count must be auto or a whole number above 0`
+  other value shows `× Speaker count must be auto or a whole number above 0`
   and the dialog stays open.
 - **Refine text** (`r`): apply the configured text-refinement service. Off by
   default.
@@ -399,8 +399,8 @@ marks the selected row. The controls are:
 While an input in a row has focus, letters go to the input. `enter` keeps the
 value, `escape` cancels it, `tab` keeps it and selects the next row, and
 `ctrl+s` keeps it and saves. When the config refuses a value, the input stays
-open and the help of the row reads `✗ <reason>`, for example
-`✗ must be non-empty`.
+open and the help of the row reads `× <reason>`, for example
+`× must be non-empty`.
 
 A `●` marks a row whose value differs from the saved file, not from the
 default. The help of the selected row shows the default. The context card
@@ -419,7 +419,7 @@ term input, `enter` keeps the term and `escape` closes the input. A term is
 trimmed, is not empty, has at most 64 characters, and does not repeat another
 term in any letter case; the list holds at most 200 terms. The editor refuses
 a term that breaks a rule: the input stays open and the line under it names the
-rule, for example `✗ term not kept: term 3 must be non-empty`. `enter` Done makes the list an
+rule, for example `× term not kept: term 3 must be non-empty`. `enter` Done makes the list an
 unsaved change of Settings; `escape` cancels.
 
 | Key | Action |

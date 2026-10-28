@@ -285,9 +285,15 @@ class HubApp(App[None]):
 
     def action_help(self) -> None:
         screen = self.current_hub_screen
-        if screen is None or self.screen is not screen:
+        if screen is None or isinstance(self.screen, HelpOverlay):
             return
-        self.push_screen(HelpOverlay(screen.SCREEN_TITLE, screen.active_bindings))
+        if self.screen is screen:
+            self.push_screen(HelpOverlay(screen.SCREEN_TITLE, screen.active_bindings))
+            return
+        # A dialog: its bindings stop at the modal, so the overlay lists its own keys.
+        dialog = self.screen
+        title = getattr(dialog, "dialog_title", "") or "dialog"
+        self.push_screen(HelpOverlay(title, dialog.active_bindings))
 
     # Drawing
 
