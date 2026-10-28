@@ -3,12 +3,13 @@
 
 - __init__.py: Mark the hub package.
 - app.py: Run the shell: screens, navigation, sidebar, help, quit, and shell contracts.
+- checks_tab.py: Run the system checks; fix, test, and open the setup dialogs.
 - choice_dialog.py: List the allowed values of a choice or device setting.
-- checks_tab.py: Run the system checks and setup actions of the Settings Checks tab.
-- doctor_panel.py: Render grouped checks, issue details, and recent warnings.
-- doctor_view.py: Build doctor checks and safe warning summaries.
+- doctor_panel.py: Render the check list grouped input, engine, and other.
+- doctor_view.py: Build doctor checks, model status, and safe warning summaries.
 - config_dialog.py: Prompt for config edits, searches, and unsaved changes.
 - config_view.py: Validate the config draft and its saves; name, help and control of each key.
+- defaults_dialog.py: Confirm before writing the default configuration.
 - device_dialog.py: Choose the input device of the next recordings of this run.
 - dialogs.py: Confirm actions that stop work during quit.
 - export_dialog.py: Choose the export format and folder of a saved session.
@@ -18,6 +19,8 @@
 - files_view.py: Render the file browser, options, queue, and transcript preview.
 - library_entry.py: Describe one Library row: a session, a file job, or both.
 - library_screen.py: List, search, and act on sessions and file jobs; host Files.
+- models_dialog.py: Show each model as present or missing and download one.
+- quick_setup_dialog.py: Test and edit input access, microphone, and hotkey.
 - record_screen.py: Record, stop and save, watch meters and transcript, rename speakers.
 - rename_dialog.py: Rename one speaker of a live or saved session.
 - services.py: Own recording, playback, and shared session services.

@@ -299,7 +299,12 @@ class SettingsScreen(HubScreen):
         self.query_one("#tab-checks", HubButton).set_label(self.tab_label("checks"))
         if self.tab == "checks":
             self.checks_tab.refresh_view()
-            app.set_context_card("settings", self.checks_tab.summary_card(), title="checks")
+            app.set_context_card(
+                "settings",
+                self.checks_tab.summary_card(),
+                title="checks",
+                buttons=(("Run again", "r", self.checks_tab.action_run_checks),),
+            )
             return
         editor = app.config_editor
         if editor is not None and editor.shown_keys is None and not editor.read_only:

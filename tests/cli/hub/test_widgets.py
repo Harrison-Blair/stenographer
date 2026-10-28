@@ -103,7 +103,7 @@ def test_widget_checks_buttons_run_the_same_actions_as_their_keys():
         app = HubApp(
             IdleServices(),
             doctor_probe=lambda _config, _path: probes.append("probe") or report,
-            open_log=lambda: probes.append("log") or True,
+            open_log=lambda _path: probes.append("log") or True,
         )
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("3", "left")

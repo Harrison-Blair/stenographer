@@ -182,7 +182,9 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   recordings, so queue files there and use `x` to cancel a selected job. Settings has the General, Audio,
   Recognition, Live, and Checks tabs; `●` marks an unsaved change, `ctrl+s`
   saves it with a backup, and the Vocabulary row edits the refine terms.
-  Checks runs the system checks and setup tests. See the [terminal hub guide](docs/hub.md) for all screens, controls,
+  Checks groups the system checks,
+  fixes and tests the selected check, and opens the Quick setup, Models, and
+  Defaults dialogs. See the [terminal hub guide](docs/hub.md) for all screens, controls,
   and file formats.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
