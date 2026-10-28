@@ -3,11 +3,12 @@
 
 - __init__.py: Mark the hub package.
 - app.py: Run the shell: screens, navigation, sidebar, help, quit, and shell contracts.
+- choice_dialog.py: List the allowed values of a choice or device setting.
 - checks_tab.py: Run the system checks and setup actions of the Settings Checks tab.
 - doctor_panel.py: Render grouped checks, issue details, and recent warnings.
 - doctor_view.py: Build doctor checks and safe warning summaries.
 - config_dialog.py: Prompt for config edits, searches, and unsaved changes.
-- config_view.py: Render and validate the config draft and its saves.
+- config_view.py: Validate the config draft and its saves; name, help and control of each key.
 - device_dialog.py: Choose the input device of the next recordings of this run.
 - dialogs.py: Confirm actions that stop work during quit.
 - export_dialog.py: Choose the export format and folder of a saved session.
@@ -26,5 +27,6 @@
 - selection.py: Render selected rows with an accent marker and no fill.
 - settings_screen.py: Edit the configuration by tab and host the Checks tab.
 - setup_test.py: Run the setup workflow probes behind the Checks test key.
+- vocabulary_dialog.py: Add, edit and delete the refine vocabulary terms.
 - widgets/: Shared widgets: buttons, lists, cards, gauges, hints, and dialogs.
 """

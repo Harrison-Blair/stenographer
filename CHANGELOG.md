@@ -37,6 +37,11 @@ screens, Record, Library, and Settings, in place of its six sections.
   tabs). Each screen has a sidebar with navigation badges, an engine card with
   the model state and CPU and memory use, and a context card. Press `?` for the
   keys of the current screen, and click a control to run its key.
+- Settings shows each setting as a row with its control: a toggle, a number
+  that refuses letters, text, a list of choices or devices, or the Vocabulary
+  list editor. `●` marks a row that differs from the saved file. `ctrl+s`
+  saves with a backup, `u` undoes, `D` resets the row, and Discard all drops
+  every unsaved change after it asks.
 - Record stops and saves with `enter` and stays open: the speaker relabel pass
   runs in the background, `space` records again, and `o` opens the saved
   session in Library. Spectrum meters show 18 bands, the level and peak, and a
