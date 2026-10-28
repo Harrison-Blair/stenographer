@@ -52,6 +52,10 @@ screens, Record, Library, and Settings, in place of its six sections.
 - The hub Setup step wizard and its keys (`b`, `s`, `e`, and `shift+q` quick
   setup). The Checks tab of Settings runs the checks, tests, model download,
   and default configuration.
+- The `stenographer live` command and its flags, completion, and guide. The
+  hub Record screen replaces it; `live.diarize_mic` and
+  `stenographer model download --live` stay. The live guide content is now in
+  the Record section of the hub guide.
 
 ### Fixed
 

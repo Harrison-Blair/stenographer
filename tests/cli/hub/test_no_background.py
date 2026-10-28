@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Verify transparent backgrounds and selected-row styles in both TUIs."""
+"""Verify transparent backgrounds and selected-row styles in the hub."""
 
 from __future__ import annotations
 
@@ -18,9 +18,8 @@ from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 from stenographer.cli.hub.files_view import FilesPanel
+from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
-from stenographer.cli.live.app import LiveApp
-from stenographer.cli.live.rename_dialog import RenameDialog
 from stenographer.lib.config.defaults import default_toml
 
 
@@ -97,7 +96,7 @@ def _assert_selected_row(renderable, expected: str) -> None:
     assert rich_style.bgcolor is None or rich_style.bgcolor.is_default
 
 
-def test_hub_sections_dialogs_and_live_app_do_not_paint_backgrounds(tmp_path):
+def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
     async def exercise():
         (tmp_path / "sample.wav").touch()
         config_path = tmp_path / "config.toml"
@@ -170,11 +169,6 @@ def test_hub_sections_dialogs_and_live_app_do_not_paint_backgrounds(tmp_path):
             await pilot.pause()
             _painted_backgrounds(app, "Speaker picker", errors)
             await pilot.press("escape")
-
-        live_app = LiveApp(FakeSession())
-        async with live_app.run_test(size=(120, 36)) as pilot:
-            await pilot.pause()
-            _painted_backgrounds(live_app, "stenographer live", errors)
 
         assert not errors, "\n".join(errors)
 
