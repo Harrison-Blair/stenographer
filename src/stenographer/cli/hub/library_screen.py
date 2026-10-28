@@ -129,7 +129,7 @@ class LibraryScreen(HubScreen):
     DEFAULT_CSS = """
     LibraryScreen #library-body { height: 1fr; }
     LibraryScreen #library-list-frame {
-        width: 1fr;
+        width: 52;
         height: 1fr;
         margin-right: 1;
     }
@@ -145,7 +145,7 @@ class LibraryScreen(HubScreen):
     LibraryScreen #library-columns { height: 1; color: #8b93a1; }
     LibraryScreen #library-list-scroll { height: 1fr; }
     LibraryScreen #library-detail-head { height: 1; }
-    LibraryScreen #library-detail-title { width: 1fr; text-style: bold; }
+    LibraryScreen #library-detail-title { width: 1fr; text-style: bold; color: ansi_default; }
     LibraryScreen #library-detail-state { width: auto; }
     LibraryScreen #library-speakers { height: auto; }
     LibraryScreen .library-actions { height: 1; }

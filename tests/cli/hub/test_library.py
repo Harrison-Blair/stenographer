@@ -147,7 +147,7 @@ def _write_rec(root: Path, started_at, *, relabel=False, interrupted=False) -> P
     return writer.path
 
 
-def _write_file_session(root: Path, tmp_path: Path, name: str = "meeting-notes.wav") -> str:
+def _write_file_session(root: Path, tmp_path: Path, name: str = "meeting.wav") -> str:
     source = tmp_path / "sources" / name
     source.parent.mkdir(parents=True, exist_ok=True)
     sf.write(source, np.full(16_000, 0.1, dtype=np.float32), 16_000)
@@ -222,7 +222,7 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
             assert [row.split() for row in rows[1:]] == [
                 ["27", "Oct", "13:03", "0:03", "rec", "2", "relabeled"],
                 ["26", "Oct", "18:00", "0:03", "rec", "2", "live"],
-                ["26", "Oct", "13:30", "0:01", "file", "1", "meeting-notes.wav"],
+                ["26", "Oct", "13:30", "0:01", "file", "1", "meeting.wav"],
                 ["23", "Oct", "00:22", "0:03", "rec", "2", "!", "interrupted"],
             ]
             job_row = rows[0].split()
@@ -234,7 +234,11 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
             card = _card(app)
             assert app.screen.query_one("#sidebar-context").border_title == "storage"
             assert "5 entries" in card
-            assert "audio" in card
+            # Stored audio: each recording's FLAC files and the file session's source copy.
+            stored = [*root.glob("*/*.flac"), *root.glob("*/source.wav")]
+            assert len(stored) == 6
+            audio_bytes = sum(path.stat().st_size for path in stored)
+            assert f"{audio_bytes / 1024:.1f} KB audio" in card
             assert str(root) in card
             assert app.screen.query_one("#sidebar", Static).render().plain.splitlines()[
                 1
@@ -251,6 +255,13 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
 
             # The interrupted label carries the danger tone in addition to its "!" glyph.
             listing = app.screen.query_one("#library-list", Static).render()
+
+            # The selected row is bold accent with no fill.
+            offset = listing.plain.index("▶")
+            style = next(s.style for s in listing.spans if s.start <= offset < s.end)
+            assert style.bold
+            assert style.foreground.rgb == (95, 215, 255)
+            assert style.background is None
             offset = listing.plain.index("! interrupted")
             style = next(s.style for s in listing.spans if s.start <= offset < s.end)
             assert style.foreground.rgb == (255, 135, 95)
@@ -560,6 +571,51 @@ def test_library_play_refusal_shows_a_notice(tmp_path):
 
 
 @pytest.mark.parametrize("by", ["key", "click"])
+def test_library_second_play_stops_the_first(tmp_path, monkeypatch, by):
+    monkeypatch.setattr(tempfile, "tempdir", str(_private_tmp(tmp_path)))
+    root, _sessions = _library(tmp_path)
+    players: list[FakePlayer] = []
+
+    def start_player(command):
+        players.append(FakePlayer())
+        return players[-1]
+
+    services = HubServices(
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        session_store=SessionStore(root),
+        player_factory=start_player,
+    )
+    app = HubApp(services)
+
+    async def press_play(pilot):
+        if by == "key":
+            await pilot.press("p")
+        else:
+            # Textual ignores a click while the press effect of the last one shows.
+            button = _button(app, "library-play")
+            await _until(pilot, lambda: not button.has_class("-active"))
+            await pilot.click("#library-play")
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 4)
+            await press_play(pilot)
+            await _until(pilot, lambda: len(players) == 1, "first Play started no player")
+            assert not players[0].terminated
+
+            await press_play(pilot)
+            await _until(pilot, lambda: players[0].terminated, "second Play did not stop")
+            await pilot.pause(0.1)
+            assert len(players) == 1
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        services.stop_session_playback()
+
+
+@pytest.mark.parametrize("by", ["key", "click"])
 def test_library_rename_export_and_delete_by_key_and_click(tmp_path, by):
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
@@ -578,6 +634,7 @@ def test_library_rename_export_and_delete_by_key_and_click(tmp_path, by):
             await _open_library(pilot, app, 4)
             await run(pilot, "r", "library-rename")
             await _until(pilot, lambda: isinstance(app.screen, RenameDialog))
+            assert app.screen.query_one("#speaker-select").value == "speaker-1"
             await pilot.press(*"Alice", "enter")
             await _until(
                 pilot,
@@ -587,6 +644,8 @@ def test_library_rename_export_and_delete_by_key_and_click(tmp_path, by):
                 pilot,
                 lambda: "Alice" in app.screen.query_one("#library-speakers", Static).render().plain,
             )
+            state = app.screen.query_one("#library-detail-state", Static).render()
+            assert "rename" in str(state)
 
             await run(pilot, "x", "library-export")
             await _until(pilot, lambda: isinstance(app.screen, ExportDialog))
@@ -637,6 +696,25 @@ def test_library_export_dialog_escape_cancels(tmp_path):
             await _until(pilot, lambda: isinstance(app.screen, ExportDialog))
             await pilot.press("escape")
             await _until(pilot, lambda: not isinstance(app.screen, ExportDialog))
+
+    asyncio.run(exercise())
+
+
+def test_library_export_writes_markdown_by_default(tmp_path):
+    root, sessions = _library(tmp_path)
+    app = HubApp(FakeServices(root))
+    output = tmp_path / "exports"
+    session = sessions["relabeled"]
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 4)
+            await pilot.press("x")
+            await _until(pilot, lambda: isinstance(app.screen, ExportDialog))
+            app.screen.query_one("#export-folder", Input).value = str(output)
+            await pilot.press("enter")
+            await _until(pilot, lambda: (output / f"{session}.md").is_file())
+            assert "alpha bravo charlie" in (output / f"{session}.md").read_text(encoding="utf-8")
 
     asyncio.run(exercise())
 
@@ -967,16 +1045,35 @@ def test_library_layout_frames_rows_state_rule_and_transcript_colours(tmp_path):
             assert listing.styles.border.top[0] == "round"
             assert detail.styles.border.top[0] == "round"
             assert listing.region.x < detail.region.x
+            # The board fixes the list width and the detail takes the rest.
+            assert listing.region.width < detail.region.width
             assert listing.region.y == detail.region.y
             assert listing.region.height == detail.region.height
 
-            # Each row stays on one line, the interrupted one too.
+            # The board gives the list and the detail no frame title.
+            assert not listing.border_title
+            assert not detail.border_title
+
+            # The storage card sits under the navigation, in the same column.
+            card = app.screen.query_one("#sidebar-card", Static)
+            nav = app.screen.query_one("#sidebar", Static)
+            assert card.region.x == nav.region.x
+            assert card.region.y > nav.region.y
+
+            # Each row stays on one line, the interrupted one too, as the selection moves.
             rows = app.screen.query_one("#library-list", Static)
             assert rows.region.height == len(app.library_screen.entries)
+            await pilot.press("down")
+            await pilot.pause()
+            assert rows.region.height == len(app.library_screen.entries)
+            await pilot.press("up")
+            await pilot.pause()
 
             # The label state sits right of the title on the same row.
             title = app.screen.query_one("#library-detail-title", Static)
             state = app.screen.query_one("#library-detail-state", Static)
+            assert title.styles.text_style.bold
+            assert title.styles.color.css == "ansi_default"
             assert title.region.y == state.region.y
             assert state.region.right == detail.content_region.right
 
