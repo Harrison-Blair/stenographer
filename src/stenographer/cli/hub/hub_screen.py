@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
+from textual.widgets import Input
 
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.sidebar import Sidebar
@@ -22,7 +23,9 @@ class HubScreen(Screen):
 
     The app draws the sidebar of the current screen once the screen is
     ``ready`` (mounted with its children). A subclass gives ``compose_body``,
-    ``refresh_body`` and ``footer_hints``.
+    ``refresh_body`` and ``footer_hints``. While a text input has focus,
+    letters, ``?`` and ``q`` go to it, so the footer shows only the keys that
+    still act and drops ``? help · q quit`` (README §4.6).
     """
 
     SCREEN_NAME = ""
@@ -43,9 +46,25 @@ class HubScreen(Screen):
     def refresh_body(self) -> None:
         """Redraw the body from the app and service state."""
 
+    @property
+    def typing(self) -> bool:
+        """Whether a text input has focus."""
+        return isinstance(self.focused, Input)
+
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
         """Return the footer items; the footer adds ``? help · q quit``."""
         return (("1 2 3", "screens"),)
+
+    def draw_hints(self) -> None:
+        self.query_one("#key-hints", KeyHints).set_hints(*self.footer_hints(), end=not self.typing)
+
+    def on_descendant_focus(self) -> None:
+        if self.ready:
+            self.draw_hints()
+
+    def on_descendant_blur(self) -> None:
+        if self.ready:
+            self.draw_hints()
 
     def on_mount(self) -> None:
         self.ready = True

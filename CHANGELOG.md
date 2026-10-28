@@ -85,6 +85,14 @@ screens, Record, Library, and Settings, in place of its six sections.
 - The speaker relabel progress after you stop a recording counts phrases from
   0 to the phrase total. It no longer goes past the total or steps back
   between the system and microphone passes.
+- Every hub screen, dialog, and help overlay agrees on its keys: each printed
+  button key acts like a click, the unsaved-changes prompt prints `[s] Save`,
+  `[d] Discard`, and `[esc] Stay`, and a hint row shows only the keys that
+  still act while a text input has focus. A dialog that is taller than the
+  terminal scrolls its rows and keeps its buttons in view.
+- Hub errors use one fail glyph, `×`, in checks, inputs, and dialogs.
+- The Checks microphone test on a machine with no audio server shows
+  `× no audio server` instead of an exception name.
 
 ## [v0.16.0] - 2026-10-22
 

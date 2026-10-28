@@ -18,6 +18,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Rule, Static
 
 from stenographer.cli.hub.dialogs import QuitConfirm
+from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.export_dialog import ExportDialog
 from stenographer.cli.hub.hub_screen import HubScreen
 from stenographer.cli.hub.library_entry import ACTIVE_JOB_STATES, LibraryEntry
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _FAILED_JOB_STATES = frozenset({"failed", "needs_ffmpeg"})
-_FAILED = "\u00d7"  # the multiplication sign: the failed glyph
+_FAILED = DOCTOR_STATE_GLYPHS["fail"]
 _COLUMNS = f"  {'date':<12} {'dur':>7} {'kind':<4} {'spk':>3}  labels"
 _DIM = StatusToken.TONES["dim"]
 _SPARK_CELLS = 28
@@ -202,6 +203,8 @@ class LibraryScreen(HubScreen):
         self.set_interval(0.1, self.poll_jobs)
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
+        if self.typing:
+            return (("enter", "keep"), ("esc", "clear"))
         return (
             ("n", "transcribe file"),
             ("/", "search"),

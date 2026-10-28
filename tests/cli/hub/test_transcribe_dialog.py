@@ -27,6 +27,8 @@ from tests.cli.hub.test_library import FakeServices, _library, _rows, _screen_te
 from tests.cli.hub.test_session_jobs import FakePlatform
 from tests.lib.files.test_engine import FakeAsrProcess, FakeAsrTransport, FakeSegmenter
 
+FAIL = "\N{MULTIPLICATION SIGN}"
+
 
 @pytest.fixture(autouse=True)
 def _utc(monkeypatch):
@@ -167,12 +169,15 @@ def test_transcribe_options_and_an_invalid_speaker_count(tmp_path, by):
                 await pilot.press("enter")
                 await pilot.pause()
                 assert isinstance(app.screen, TranscribeDialog)
-                assert "✗ Speaker count must be auto or a whole number above 0" in _screen_text(app)
+                assert (
+                    f"{FAIL} Speaker count must be auto or a whole number above 0"
+                    in _screen_text(app)
+                )
             assert services.jobs == []
 
             count.value = "3"
             await pilot.pause()
-            assert "✗" not in _screen_text(app)
+            assert FAIL not in _screen_text(app)
             await pilot.press("enter")
             await _until(pilot, lambda: len(services.jobs) == 1, "no job was queued")
             job = services.jobs[0]

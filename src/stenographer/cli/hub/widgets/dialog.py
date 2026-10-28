@@ -25,6 +25,7 @@ class Dialog[ResultType](ModalScreen[ResultType]):
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("escape", "cancel", "Cancel"),
+        Binding("question_mark", "app.help", "Help", show=False),
     ]
     DEFAULT_CSS = """
     Dialog {
@@ -44,9 +45,10 @@ class Dialog[ResultType](ModalScreen[ResultType]):
     }
     Dialog #dialog-body {
         height: auto;
-        max-height: 30;
+        max-height: 100%;
     }
     Dialog #dialog-buttons {
+        dock: bottom;
         height: 1;
         margin-top: 1;
         align-horizontal: right;

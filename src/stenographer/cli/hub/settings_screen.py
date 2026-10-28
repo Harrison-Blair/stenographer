@@ -16,6 +16,7 @@ from stenographer.cli.hub.checks_tab import ChecksTab
 from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.dialogs import QuitConfirm
+from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.hub_screen import HubScreen
 from stenographer.cli.hub.vocabulary_dialog import VocabularyDialog
 from stenographer.cli.hub.widgets.button import HubButton
@@ -360,7 +361,7 @@ class SettingsScreen(HubScreen):
             focused = key == selected
             help_text = editor.help(key)
             if self.row_error is not None and key == self.row_error[0]:
-                help_text = f"✗ {self.row_error[1]}"
+                help_text = f"{DOCTOR_STATE_GLYPHS['fail']} {self.row_error[1]}"
                 if key == self.editing:
                     help_text += " · esc cancels"
             elif key == self.editing:
@@ -438,6 +439,8 @@ class SettingsScreen(HubScreen):
         return card
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
+        if self.typing:
+            return (("enter", "keep"), ("esc", "cancel"), ("tab", "next row"), ("ctrl+s", "save"))
         if self.tab == "checks":
             return (("←→", "tab"), *self.checks_tab.footer_hints(), ("1 2 3", "screens"))
         return (
@@ -560,7 +563,7 @@ class SettingsScreen(HubScreen):
 
     @staticmethod
     def _reason(exc: Exception) -> str:
-        """Return the words of a rejection for the ``✗`` line of its row."""
+        """Return the words of a rejection for the ``\N{MULTIPLICATION SIGN}`` line of its row."""
         return exc.reason if isinstance(exc, ConfigError) else str(exc)
 
     async def _open_input(self, editor: ConfigEditor, key: str) -> None:

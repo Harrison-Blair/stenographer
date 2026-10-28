@@ -35,11 +35,12 @@ class KeyHints(Static):
         if not footer:
             self.add_class("-panel")
 
-    def set_hints(self, *items: tuple[str, str]) -> None:
-        """Show the items; a footer row appends ``? help · q quit``."""
+    def set_hints(self, *items: tuple[str, str], end: bool = True) -> None:
+        """Show the items; a footer row appends ``? help · q quit`` unless ``end`` is false."""
         if self.footer:
             items = tuple(item for item in items if item not in self.FOOTER_END)
-            items += self.FOOTER_END
+            if end:
+                items += self.FOOTER_END
         self.items = items
         self.update(self.hint_text(items, footer=self.footer))
 

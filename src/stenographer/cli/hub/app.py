@@ -34,7 +34,6 @@ from stenographer.cli.hub.setup_test import test_step as test_setup_step
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
-from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.sidebar import CardButtons, Sidebar
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
@@ -77,30 +76,6 @@ class HubApp(App[None]):
     #transcript-scroll-content {
         width: 1fr;
         height: auto;
-    }
-    #sessions-list-scroll, #sessions-detail-scroll {
-        border-title-color: ansi_default;
-        border-title-style: bold;
-    }
-    #sessions-detail-header {
-        width: 1fr;
-        height: 1;
-        padding: 0 1;
-    }
-    #sessions-detail-title {
-        width: auto;
-        color: ansi_default;
-        text-style: bold;
-    }
-    #sessions-detail-labels {
-        width: 1fr;
-        color: #6ee69a;
-        text-style: bold;
-        text-align: right;
-    }
-    #files-browser-scroll, #files-options-scroll, #files-queue-scroll, #files-preview-scroll {
-        border-title-color: ansi_default;
-        border-title-style: bold;
     }
     """
     )
@@ -310,9 +285,15 @@ class HubApp(App[None]):
 
     def action_help(self) -> None:
         screen = self.current_hub_screen
-        if screen is None or self.screen is not screen:
+        if screen is None or isinstance(self.screen, HelpOverlay):
             return
-        self.push_screen(HelpOverlay(screen.SCREEN_TITLE, screen.active_bindings))
+        if self.screen is screen:
+            self.push_screen(HelpOverlay(screen.SCREEN_TITLE, screen.active_bindings))
+            return
+        # A dialog: its bindings stop at the modal, so the overlay lists its own keys.
+        dialog = self.screen
+        title = getattr(dialog, "dialog_title", "") or "dialog"
+        self.push_screen(HelpOverlay(title, dialog.active_bindings))
 
     # Drawing
 
@@ -329,7 +310,7 @@ class HubApp(App[None]):
             self.current_mode, ("", "", (), frozenset())
         )
         sidebar.show_context(content, title, buttons, disabled)
-        screen.query_one("#key-hints", KeyHints).set_hints(*screen.footer_hints())
+        screen.draw_hints()
 
     def _badges(self) -> dict[str, str | Text]:
         badges: dict[str, str | Text] = {}
@@ -487,7 +468,7 @@ class HubApp(App[None]):
     def _prompt_files_quit(self) -> None:
         log.info(fmt_event("hub", "quit_prompted", work="files"))
         self.push_screen(
-            QuitConfirm("Cancel the running Files job before quitting?"),
+            QuitConfirm("Cancel the running file job before quitting?"),
             self._confirm_files_quit,
         )
 
@@ -495,7 +476,7 @@ class HubApp(App[None]):
         log.info(fmt_event("hub", "quit_confirmed", work="files", confirmed=bool(confirmed)))
         if not confirmed:
             return
-        self.activity_status = "Canceling Files job..."
+        self.activity_status = "Canceling the file job..."
         self.refresh_view()
         self.run_worker(self._cancel_files_and_quit(), name="cancel-files", group="hub-work")
 
@@ -505,7 +486,7 @@ class HubApp(App[None]):
             await asyncio.to_thread(self.services.cancel_files)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
-            self.notify(f"Could not cancel the Files job: {exc}", severity="error")
+            self.notify(f"Could not cancel the file job: {exc}", severity="error")
             self.activity_status = None
             self.refresh_view()
             return

@@ -232,7 +232,7 @@ def test_pilot_slow_files_cancel_keeps_hub_responsive():
                 assert await asyncio.to_thread(services.cancel_entered.wait, 1)
                 await asyncio.sleep(0.05)
                 content = str(app.record_screen.query_one("#section-content", Static).render())
-                assert "Canceling Files job..." in content
+                assert "Canceling the file job..." in content
                 await pilot.press("3")
                 assert app.current_mode == "settings"
             finally:
@@ -265,7 +265,8 @@ def test_pilot_quit_asks_before_cancelling_a_files_job():
         app = HubApp(services)
         async with app.run_test() as pilot:
             await pilot.press("q")
-            assert "files" in str(app.screen.query_one("#quit-prompt", Static).render()).lower()
+            prompt = str(app.screen.query_one("#quit-prompt", Static).render())
+            assert prompt == "Cancel the running file job before quitting?"
             await pilot.click("#cancel-quit")
             assert services.actions == []
             assert services.files_running

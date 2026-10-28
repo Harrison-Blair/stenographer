@@ -14,6 +14,8 @@ from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
 
+FAIL = "\N{MULTIPLICATION SIGN}"
+
 
 class IdleServices:
     recording = False
@@ -438,9 +440,9 @@ def _row_text(app, label: str) -> str:
 @pytest.mark.parametrize(
     ("tab", "label", "typed", "error"),
     [
-        ("recognition", "Idle unload", (), "✗ enter a number"),
-        ("recognition", "Model", (), "✗ must be non-empty"),
-        ("recognition", "Host", tuple("ftp://x"), "✗ "),
+        ("recognition", "Idle unload", (), f"{FAIL} enter a number"),
+        ("recognition", "Model", (), f"{FAIL} must be non-empty"),
+        ("recognition", "Host", tuple("ftp://x"), f"{FAIL} "),
     ],
 )
 def test_settings_row_input_shows_its_rejection_on_screen(tmp_path, tab, label, typed, error):
@@ -455,7 +457,7 @@ def test_settings_row_input_shows_its_rejection_on_screen(tmp_path, tab, label, 
             assert error in _row_text(app, label)
             await pilot.press("escape")
             await pilot.pause()
-            assert "✗" not in _screen_text(app)
+            assert FAIL not in _screen_text(app)
 
     asyncio.run(exercise())
 
@@ -473,10 +475,10 @@ def test_settings_choice_row_shows_a_rejected_value_on_screen(tmp_path, monkeypa
             monkeypatch.setattr(app.config_editor, "set_value", reject)
             await pilot.press("enter", "up", "enter")
             await pilot.pause()
-            assert "✗ is not allowed here" in _row_text(app, "Hotkey mode")
+            assert f"{FAIL} is not allowed here" in _row_text(app, "Hotkey mode")
             monkeypatch.undo()
             await pilot.press("enter", "up", "enter")
             await pilot.pause()
-            assert "✗" not in _screen_text(app)
+            assert FAIL not in _screen_text(app)
 
     asyncio.run(exercise())

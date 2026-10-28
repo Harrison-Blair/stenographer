@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
@@ -17,12 +18,13 @@ from stenographer.cli.hub.widgets.focus_button import FocusButton
 class QuitConfirm(ModalScreen[bool]):
     """Ask before the hub stops work and exits."""
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("y", "confirm", "Confirm"),
         ("q", "confirm", "Confirm"),
         ("ctrl+c", "confirm", "Confirm"),
         ("n", "cancel", "Cancel"),
         ("escape", "cancel", "Cancel"),
+        Binding("question_mark", "app.help", "Help", show=False),
     ]
     CSS = """
     QuitConfirm {
