@@ -200,6 +200,7 @@ class RecordScreen(HubScreen):
             self._speakers_card(shown, speakers),
             title="speakers",
             buttons=(("Rename…", "r", self.action_rename_speaker),),
+            disabled=frozenset({"r"}) if self._rename_busy(shown) else frozenset(),
         )
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
@@ -400,10 +401,13 @@ class RecordScreen(HubScreen):
         if failed:
             noun = "phrase" if failed == 1 else "phrases"
             card.append(f"\n! {failed} {noun} failed", style="#ffaf5f")
-        saved = self.record_state() == "saved" and session is not None
-        if saved and self.app.is_busy(session.path.name):
+        if self._rename_busy(session):
             card.append("\n\nrename busy", style="#8b93a1")
         return card
+
+    def _rename_busy(self, session) -> bool:
+        saved = self.record_state() == "saved" and session is not None
+        return saved and self.app.is_busy(session.path.name)
 
     def mic_device(self) -> str:
         label = getattr(self.app.services, "next_device_label", None)

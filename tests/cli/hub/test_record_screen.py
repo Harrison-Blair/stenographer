@@ -282,6 +282,38 @@ def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(tmp_pat
     asyncio.run(exercise())
 
 
+def test_record_rename_button_is_disabled_while_the_session_is_busy(tmp_path):
+    async def exercise():
+        services, created = _services(tmp_path)
+        app = _app(services)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("space")
+            await _until(pilot, lambda: services.recording)
+            session = created[0]
+            await pilot.press("enter")
+            await _until(pilot, session.stop_entered.is_set)
+            await _until(pilot, lambda: app.is_busy(session.path.name))
+            app.refresh_view()
+            await pilot.pause()
+            button = app.screen.query_one("#card-r", HubButton)
+            assert button.disabled
+            assert "busy" in _card(app)
+
+            await pilot.click("#card-r")
+            await pilot.pause()
+            assert not isinstance(app.screen, RenameDialog)
+
+            session.release.set()
+            await _until(pilot, lambda: not app.is_busy(session.path.name))
+            await _until(pilot, lambda: not app.screen.query_one("#card-r", HubButton).disabled)
+            await pilot.click("#card-r")
+            await pilot.pause()
+            assert isinstance(app.screen, RenameDialog)
+
+    asyncio.run(exercise())
+
+
 def test_record_saved_buttons_by_click_match_their_keys(tmp_path):
     async def exercise():
         services, created = _services(tmp_path)

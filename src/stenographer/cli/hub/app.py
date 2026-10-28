@@ -153,7 +153,7 @@ class HubApp(App[None]):
         self.activity_status: str | None = None
         self.engine_sampler = engine_sampler or EngineSampler(services)
         self.check_summary: tuple[int, int, int, datetime.datetime] | None = None
-        self._context_cards: dict[str, tuple[str, RenderableType, CardButtons]] = {}
+        self._context_cards: dict[str, tuple[str, RenderableType, CardButtons, frozenset[str]]] = {}
         self._busy: dict[str, str] = {}
         self._busy_lock = threading.Lock()
         if model_download is None:
@@ -267,18 +267,20 @@ class HubApp(App[None]):
         *,
         title: str | None = None,
         buttons: CardButtons = (),
+        disabled: frozenset[str] = frozenset(),
     ) -> None:
         """Set the context card of one screen; it shows while that screen shows.
 
         Each ``(label, key, run)`` of ``buttons`` shows as a ``[key] label``
-        button under the text; a click calls ``run``.
+        button under the text; a click calls ``run``. A button whose key is in
+        ``disabled`` shows as disabled.
         """
         if title is None:
-            title = self._context_cards.get(screen, ("", "", ()))[0]
-        self._context_cards[screen] = (title, content, buttons)
+            title = self._context_cards.get(screen, ("",))[0]
+        self._context_cards[screen] = (title, content, buttons, disabled)
         hub_screen = self.hub_screens[screen]
         if screen == self.current_mode and hub_screen.ready:
-            hub_screen.query_one(Sidebar).show_context(content, title, buttons)
+            hub_screen.query_one(Sidebar).show_context(content, title, buttons, disabled)
 
     def set_check_summary(
         self, passed: int, warned: int, failed: int, ran_at: datetime.datetime
@@ -363,8 +365,10 @@ class HubApp(App[None]):
         sidebar = screen.query_one(Sidebar)
         sidebar.show_navigation(self.current_mode, self._badges())
         sidebar.show_engine(self.engine_sampler.snapshot())
-        title, content, buttons = self._context_cards.get(self.current_mode, ("", "", ()))
-        sidebar.show_context(content, title, buttons)
+        title, content, buttons, disabled = self._context_cards.get(
+            self.current_mode, ("", "", (), frozenset())
+        )
+        sidebar.show_context(content, title, buttons, disabled)
         screen.query_one("#key-hints", KeyHints).set_hints(*screen.footer_hints())
 
     def _badges(self) -> dict[str, str | Text]:
