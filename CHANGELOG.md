@@ -32,9 +32,9 @@ screens, Record, Library, and Settings, in place of its six sections.
 - Adds `refine.vocabulary`, a list of terms that refine spells exactly as
   written in dictation, hub file jobs, and `transcribe --refine`. The default
   empty list leaves each refine request unchanged.
-- The hub has three screens: Record (`1`), Library (`2`, with Files on `n`),
-  and Settings (`3`, with the General, Audio, Recognition, Live, and Checks
-  tabs). Each screen has a sidebar with navigation badges, an engine card with
+- The hub has three screens: Record (`1`), Library (`2`, with Transcribe a
+  file on `n`), and Settings (`3`, with the General, Audio, Recognition, Live,
+  and Checks tabs). Each screen has a sidebar with navigation badges, an engine card with
   the model state and CPU and memory use, and a context card. Press `?` for the
   keys of the current screen, and click a control to run its key.
 - The Checks tab of Settings merges Doctor and Setup. It groups the checks as
@@ -60,12 +60,19 @@ screens, Record, Library, and Settings, in place of its six sections.
   using shows `busy` on its Rename, Re-diarize, Re-transcribe, and Delete
   buttons, and `delete` on a job row cancels the job. Play works on a file
   session, and Export asks for the format and the folder.
+- `n` on Library opens the Transcribe a file dialog: a browser that starts in
+  your home folder with `/` search, and the Separate speakers, Speaker count,
+  and Refine text options. It queues one job, and the Library shows and
+  selects its row at once.
 
 ### Removed
 
 - The Files output format and output folder options, and the `e` key that
   opened the result folder. Earlier results in the `files/` folder stay where
   they are.
+- The hub Files view with its queue and preview panels and multi-file
+  selection. The Transcribe a file dialog queues one file; the Library shows
+  each job's progress and finished lines.
 - The hub Setup step wizard and its keys (`b`, `s`, and `e`). The Checks tab
   of Settings runs the checks and tests and opens the setup dialogs.
 

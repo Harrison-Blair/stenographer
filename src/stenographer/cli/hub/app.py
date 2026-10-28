@@ -354,8 +354,6 @@ class HubApp(App[None]):
     def _refresh_live(self) -> None:
         if self.current_mode == "record":
             self.refresh_view()
-        elif self.current_mode == "library" and self.library_screen.files_open:
-            self.library_screen.refresh_files()
 
     def _sample_engine(self) -> None:
         self.engine_sampler.sample()

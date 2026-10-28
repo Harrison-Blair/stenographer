@@ -178,8 +178,9 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   lines at the bottom. Library lists recordings, file sessions, and file
   jobs; press `/` to search transcripts, `p` to play, `d` or `t` to
   re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
-  a job. Press `n` there to open Files, whose browser opens in your saved
-  recordings, so queue files there and use `x` to cancel a selected job. Settings has the General, Audio,
+  a job. Press `n` there to transcribe a file: the dialog browses from your
+  home folder, sets Separate speakers, Speaker count, and Refine text, and
+  queues one job that shows in the list at once. Settings has the General, Audio,
   Recognition, Live, and Checks tabs; `●` marks an unsaved change, `ctrl+s`
   saves it with a backup, and the Vocabulary row edits the refine terms.
   Checks groups the system checks,
@@ -224,7 +225,7 @@ metadata-only release check; disable it in
 
 The [terminal hub](docs/hub.md) has three screens: Record, Library, and
 Settings. Recording starts only when you press `space`; changing screens
-does not stop a recording. Files jobs run in the background, one at a time.
+does not stop a recording. File jobs run in the background, one at a time.
 
 A [refine](docs/refine.md) pass, on by default, provides exactly two built-in
 profiles through one local Ollama model. Agent rewrites jumbled requests into
