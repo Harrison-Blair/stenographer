@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ import pytest
 from stenographer.lib.live.phrase import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
 
@@ -124,11 +126,15 @@ class FakePlatform:
     def asr_transport(self):
         return object()
 
+    def process_counters(self):
+        return NullProcessCounters()
+
 
 class FakeSegmenter:
     def __init__(self, source, _model_path, **_kwargs):
         self.source = source
         self.flushed = False
+        self.speech_detected = False
 
     def accept(self, block):
         value = float(block[0])
@@ -429,6 +435,38 @@ def test_relabel_failure_keeps_live_labels_and_exposes_the_reason(monkeypatch, t
     assert [line.label for line in detail.lines] == ["Speaker 1"]
 
 
+def test_relabel_stale_revision_keeps_a_rename_saved_during_the_pass(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    original_relabel = live_session.relabel_system_lines
+    holder = {}
+
+    def rename_during_pass(lines, embeddings, **kwargs):
+        writer = holder["writer"]
+        SessionStore(writer.path.parent).rename_speaker(writer.path.name, "speaker-1", "Alice")
+        return original_relabel(lines, embeddings, **kwargs)
+
+    monkeypatch.setattr(live_session, "relabel_system_lines", rename_during_pass)
+    session, writer, _worker, system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, mic=False
+    )
+    holder["writer"] = writer
+    processed = Event()
+    session.subscribe(lambda _line: processed.set())
+
+    system.emit(4)
+    assert processed.wait(timeout=1)
+    session.stop()
+    detail = SessionStore(writer.path.parent).read(writer.path.name)
+
+    assert detail.revision == "transcript.r2.jsonl"
+    assert [(line.speaker_id, line.label, line.text) for line in detail.lines] == [
+        ("speaker-1", "Alice", "a phrase")
+    ]
+    assert "changed since it was read" in session.relabel_error
+    assert [(line.speaker_id, line.label) for line in session.lines] == [("speaker-1", "Speaker 1")]
+
+
 def test_pause_freezes_clock_and_silence_writes_and_rename_updates_old_lines(monkeypatch, tmp_path):
     clock = FakeClock()
     session, writer, _worker, system, _recorder, segmenters = _make_session(
@@ -701,7 +739,7 @@ def test_mic_phrases_stay_you_when_mic_diarization_is_off(monkeypatch, tmp_path)
         ("you", "You"),
     ]
     assert session.speakers == ()
-    assert not (writer.path / "session.json").exists()
+    assert "diarize_mic" not in json.loads((writer.path / "session.json").read_text())
     assert SessionStore(writer.path.parent).read(writer.path.name).diarize_mic is False
 
 
@@ -841,3 +879,72 @@ def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
     assert session.relabel_status == "Relabeling skipped"
     assert detail.revision == "transcript.jsonl"
     assert [line.label for line in detail.lines] == ["Room 1", "Room 2", "Speaker 1"]
+
+
+class LongPhraseSegmenter(FakeSegmenter):
+    """Give each fake phrase anchor length so the real relabel pass clusters it."""
+
+    def accept(self, block):
+        return [
+            Phrase(
+                source=self.source,
+                start=0.0,
+                end=2.0,
+                samples=np.asarray([float(block[0])], dtype=np.float32),
+            )
+        ]
+
+
+def test_relabel_progress_counts_phrases_from_the_real_work_units_of_both_passes(
+    monkeypatch, tmp_path
+):
+    import stenographer.lib.live.live_session as live_session
+
+    original_relabel = live_session.relabel_system_lines
+    observed = []
+    session_holder = {}
+
+    def observe_pass(lines, embeddings, **kwargs):
+        report = kwargs["progress"]
+
+        def progress(done, total):
+            report(done, total)
+            observed.append(session_holder["session"].relabel_progress)
+
+        return original_relabel(lines, embeddings, **{**kwargs, "progress": progress})
+
+    monkeypatch.setattr(live_session, "relabel_system_lines", observe_pass)
+    session, _writer, _worker, system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True, start=False
+    )
+    session_holder["session"] = session
+    monkeypatch.setattr(live_session, "PhraseSegmenter", LongPhraseSegmenter)
+    session.start()
+    processed = _wait_for_lines(session, 7)
+    for value in (1, 4, 1, 4):
+        recorder.emit(value)
+    for value in (1, 4, 4):
+        system.emit(value)
+    assert processed.wait(timeout=1)
+    assert session.relabel_progress is None
+
+    session.stop()
+
+    assert observed
+    assert {total for _done, total in observed} == {7}
+    done = [value for value, _total in observed]
+    assert done == sorted(done)
+    assert all(0 <= value <= 7 for value in done)
+    assert observed[-1] == (7, 7)
+    assert session.relabel_progress is None
+
+
+def test_live_session_exposes_its_worker_pids_and_idle_unload_deadline(monkeypatch, tmp_path):
+    session, _writer, worker, _system, _recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, start=False
+    )
+    worker.process_ids = (4321,)
+    worker.idle_unload_deadline = 12.5
+
+    assert session.process_ids == (4321,)
+    assert session.idle_unload_deadline == 12.5

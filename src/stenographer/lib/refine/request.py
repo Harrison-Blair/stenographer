@@ -37,6 +37,12 @@ from stenographer.lib.refine.prompt import (
 
 USER_AGENT = "stenographer-refine"
 
+#: Leads the one extra system turn a non-empty ``refine.vocabulary`` adds; the
+#: terms follow, one per line. Lives here, not in the benchmark prompts.
+VOCABULARY_INSTRUCTION = (
+    "When any of these terms occurs in the transcript, spell it exactly as written here:"
+)
+
 
 def num_predict_for(words: int) -> int:
     """Cap the reply length relative to the input; cleanup never expands much.
@@ -62,8 +68,13 @@ def build_messages(
     *,
     structured_output: bool,
     profile: RefineProfile = RefineProfile.GENERAL,
+    vocabulary: tuple[str, ...] = (),
 ) -> list[dict[str, str]]:
-    """The system turn, the few-shot turns, and the utterance to clean."""
+    """The system turn, the few-shot turns, and the utterance to clean.
+
+    A non-empty *vocabulary* adds one system turn after the benchmark prompt;
+    an empty one leaves the messages exactly as they were before it existed.
+    """
 
     if profile is RefineProfile.AGENT:
         examples = AGENT_FEW_SHOT_EXAMPLES
@@ -72,6 +83,9 @@ def build_messages(
         examples = FEW_SHOT_EXAMPLES
         system_prompt = SYSTEM_PROMPT
     messages = [{"role": "system", "content": system_prompt}]
+    if vocabulary:
+        terms = "\n".join(f"- {term}" for term in vocabulary)
+        messages.append({"role": "system", "content": f"{VOCABULARY_INSTRUCTION}\n{terms}"})
     for spoken, cleaned in examples:
         messages.append({"role": "user", "content": spoken})
         answer = _assistant_turn(cleaned, structured_output=structured_output)
@@ -88,12 +102,15 @@ def build_chat_body(
     keep_alive: int,
     structured_output: bool,
     profile: RefineProfile = RefineProfile.GENERAL,
+    vocabulary: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """The complete ``/api/chat`` body for one utterance."""
 
     body: dict[str, object] = {
         "model": model,
-        "messages": build_messages(text, structured_output=structured_output, profile=profile),
+        "messages": build_messages(
+            text, structured_output=structured_output, profile=profile, vocabulary=vocabulary
+        ),
         "stream": False,
         "think": False,
         "keep_alive": keep_alive,

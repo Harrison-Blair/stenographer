@@ -4,10 +4,6 @@
 
 # Ignore everything unless an approved path below allows it.
 *
-!/.hive/
-/.hive/*
-!/.hive/spec/
-!/.hive/spec/**
 
 # Root project metadata and shared guidance.
 !/.gitignore
@@ -91,7 +87,6 @@
 !/docs/building.md
 !/docs/cue-audition.md
 !/docs/refine.md
-!/docs/live.md
 !/docs/hub.md
 !/docs/transcription-experiments.md
 !/docs/usage.md

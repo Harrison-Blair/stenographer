@@ -41,6 +41,7 @@ _EXPECTED_VERSIONS = (
     "v0.14.0",
     "v0.15.0",
     "v0.16.0",
+    "v0.17.0",
 )
 
 _THREE_SECTION_BODY = """\

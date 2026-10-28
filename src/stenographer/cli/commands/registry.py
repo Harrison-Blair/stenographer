@@ -15,12 +15,6 @@ COMMANDS: tuple[CommandSpec, ...] = (
         help="Run the dictation daemon.",
     ),
     CommandSpec(
-        "live",
-        handler_module="stenographer.cli.live.handler",
-        handler_name="cmd_live",
-        parser_module="stenographer.cli.live.parser",
-    ),
-    CommandSpec(
         "transcribe",
         handler_module="stenographer.cli.transcribe.handler",
         handler_name="cmd_transcribe",

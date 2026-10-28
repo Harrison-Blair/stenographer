@@ -35,6 +35,7 @@ host = "{refine_host}" # non-loopback hosts send transcript text over the networ
 model = "{refine_model}"           # pull it with `stenographer model download --refine`
 min_words = 10                 # shorter utterances are delivered without a refine
 structured_output = false      # some models (qwen3.5:4b) need the JSON text-field schema
+vocabulary = []                # terms refine spells exactly as written, e.g. ["PipeWire"]
 
 [stenographer.delivery]
 copy_original = true           # Agent: copy the unrefined transcript first, for clipboard history

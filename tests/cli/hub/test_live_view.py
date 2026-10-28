@@ -8,11 +8,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from rich.color import Color
+from textual.events import MouseScrollDown
 from textual.widget import Widget
-from textual.widgets import Digits, Input, Select, Static
+from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.app import HubApp
-from stenographer.cli.live.rename_dialog import RenameDialog
+from stenographer.cli.hub.rename_dialog import RenameDialog
+from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.lib.live.transcript_line import TranscriptLine
 
 
@@ -32,6 +34,8 @@ class FakeSession:
         self.failed_phrase_count = 1
         self.elapsed_seconds = 3.0
         self.queue_depth = 2
+        self.relabel_progress = None
+        self.idle_unload_deadline = None
         self.model_name = "medium.en"
         self.actions = []
 
@@ -95,28 +99,28 @@ def test_pilot_live_has_board_panels_and_captioned_split_columns():
         app = HubApp(services)
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.pause()
-            rec = app.query_one("#live-rec", Widget)
-            mic = app.query_one("#live-mic", Widget)
-            system = app.query_one("#live-system", Widget)
-            transcript = app.query_one("#live-transcript", Widget)
+            rec = app.screen.query_one("#rec-panel", Widget)
+            mic = app.screen.query_one("#mic-meter", Widget)
+            system = app.screen.query_one("#system-meter", Widget)
+            transcript = app.screen.query_one("#transcript-frame", Widget)
             top = (rec, mic, system)
             assert all(panel.styles.border.top[0] == "round" for panel in (*top, transcript))
             assert len({panel.region.y for panel in top}) == 1
             assert rec.region.x < mic.region.x < system.region.x
             assert transcript.region.y > rec.region.y
-            assert app.query_one("#live-elapsed", Digits).value == "00:00:00"
+            assert app.screen.query_one("#rec-clock", Clock).value == "00:00:00"
 
             app.services.session = FakeSession()
             app.services.recording = True
-            app._refresh_view()
+            app.refresh_view()
             await pilot.pause()
             mixed = _screen_text(app)
-            assert "transcript · mixed · 2 speakers" in mixed
-            assert app.query_one("#live-elapsed", Digits).value == "00:00:03"
+            assert "transcript · 3 speakers" in mixed
+            assert app.screen.query_one("#rec-clock", Clock).value == "00:00:03"
             assert "[m] MIC" in mixed and "Default input" in mixed
-            assert "[s] SYSTEM" in mixed and "Default output" in mixed
-            assert "-20 dBFS" in mixed and "-30 dBFS" in mixed
-            assert "▁" in mixed
+            assert "[s] SYSTEM" in mixed and "default output" in mixed
+            assert mixed.count("-inf dBFS  peak -inf") == 2
+            assert "100  200  400  800 1k6 3k2 6k4" in mixed
             assert "You" in mixed and "mic words" in mixed
             assert "Speaker 2" in mixed and "system words" in mixed
             you_segments = [
@@ -125,41 +129,49 @@ def test_pilot_live_has_board_panels_and_captioned_split_columns():
                 for segment in strip._segments
                 if segment.text.strip() == "You"
             ]
-            assert len(you_segments) == 1
-            you_style = you_segments[0].style
-            assert you_style.bold
-            assert you_style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
-            assert you_style.bgcolor is None or you_style.bgcolor.is_default
-            assert not app.query_one("#section-content", Static).display
-            assert "1-6 sections" in mixed
+            # One in the transcript and one in the speakers card.
+            assert len(you_segments) == 2
+            for you_segment in you_segments:
+                you_style = you_segment.style
+                assert you_style.bold
+                assert you_style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
+                assert you_style.bgcolor is None or you_style.bgcolor.is_default
+            assert not app.screen.query_one("#section-content", Static).display
+            assert "1 2 3 screens · ? help · q quit" in mixed
 
             await pilot.press("v")
             split = _screen_text(app)
             assert "MIC · what you said" in split
             assert "SYSTEM · everyone else" in split
             assert "00:00:01" in split and "00:00:02" in split
-            split_rows = [row for row in split.splitlines() if "You" in row or "Speaker 2" in row]
+            split_rows = [
+                row for row in split.splitlines() if "mic words" in row or "system words" in row
+            ]
             assert len(split_rows) == 2
             assert all("·" in row for row in split_rows)
 
     asyncio.run(exercise())
 
 
-def test_sidebar_card_is_section_owned_and_live_shows_engine_status():
+def test_sidebar_context_card_is_screen_owned_and_engine_card_stays():
     async def exercise():
         app = HubApp(FakeServices())
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.pause()
-            card = app.query_one("#sidebar-card", Static)
-            sidebar = app.query_one("#sidebar", Static)
+            frame = app.screen.query_one("#sidebar-context")
+            card = app.screen.query_one("#sidebar-card", Static)
+            sidebar = app.screen.query_one("#sidebar", Static)
             assert card.region.y > sidebar.region.y
-            assert card.styles.border.top[0] == "round"
-            assert "engine\nmedium.en\nqueue 2" in str(card.render())
-            app.set_sidebar_card("Files queue · 3", section="files")
+            assert frame.styles.border.top[0] == "round"
+            assert frame.border_title == "speakers"
+            assert str(card.render()).startswith("You ")
+            assert "\nSpeaker 2 " in str(card.render()) and "\nSpeaker 1 " in str(card.render())
+            assert "! 1 phrase failed" in str(card.render())
             await pilot.press("2")
-            assert "Files queue · 3" in str(card.render())
+            assert app.screen.query_one("#sidebar-context").border_title == "storage"
             await pilot.press("1")
-            assert "engine\nmedium.en\n" in str(card.render())
+            assert app.screen.query_one("#sidebar-context").border_title == "speakers"
+            assert str(app.screen.query_one("#engine-model", Static).render()) == "bark-pro-int8"
 
     asyncio.run(exercise())
 
@@ -170,19 +182,18 @@ def test_pilot_live_mixed_and_split_views_keep_time_order():
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.pause()
             content = _screen_text(app)
-            assert "transcript · mixed · 2 speakers" in content
+            assert "transcript · 3 speakers" in content
             assert "Speaker 2" in content and "system words" in content
             assert "You" in content and "mic words" in content
-            card = str(app.query_one("#sidebar-card", Static).render())
-            assert "engine\nmedium.en\n" in card
-            assert "queue 2 · failed 1" in card
-            assert app.query_one("#live-elapsed", Digits).value == "00:00:03"
-            assert "Default output" in content
+            card = str(app.screen.query_one("#sidebar-card", Static).render())
+            assert "! 1 phrase failed" in card
+            assert app.screen.query_one("#rec-clock", Clock).value == "00:00:03"
+            assert "default output" in content
             assert "dBFS" in content
 
             await pilot.press("v")
             split = _screen_text(app)
-            assert "transcript · split · 2 speakers" in split
+            assert "mixed  ▶ split" in split
             assert "MIC · what you said" in split
             assert "SYSTEM · everyone else" in split
             rows = [
@@ -204,7 +215,7 @@ def test_pilot_live_renames_a_speaker_and_updates_existing_lines():
             await pilot.press("r")
             app.screen.query_one("#speaker-select", Select).value = "speaker-2"
             app.screen.query_one("#speaker-name", Input).value = "Alice"
-            await pilot.click("#rename-submit")
+            await pilot.click("#dialog-rename")
             await pilot.pause()
 
             content = _screen_text(app)
@@ -237,7 +248,7 @@ def test_pilot_live_lists_and_renames_room_speakers():
             assert "system speaker" not in dialog_text
             select.value = "room-2"
             app.screen.query_one("#speaker-name", Input).value = "Dana"
-            await pilot.click("#rename-submit")
+            await pilot.click("#dialog-rename")
             await pilot.pause()
 
             content = _screen_text(app)
@@ -280,28 +291,23 @@ def test_live_rec_panel_shows_only_the_inline_rec_label():
         app = HubApp(FakeServices())
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.pause()
-            rec = app.query_one("#live-rec", Widget)
+            rec = app.screen.query_one("#rec-panel", Widget)
             assert not rec.border_title
             assert _screen_text(app).count("REC") == 1
 
     asyncio.run(exercise())
 
 
-def test_live_view_hint_names_both_modes_and_bolds_the_current_mode():
+def test_record_footer_matches_the_board_hint_row():
     async def exercise():
         app = HubApp(FakeServices())
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.pause()
-            hints = app.query_one("#key-hints", Static).render()
-            assert "v view: mixed / split" in hints.plain
-            assert hints.get_style_at_offset(hints.plain.index("mixed")).bold
-            assert not hints.get_style_at_offset(hints.plain.index("split")).bold
-
-            await pilot.press("v")
-            hints = app.query_one("#key-hints", Static).render()
-            assert "v view: mixed / split" in hints.plain
-            assert not hints.get_style_at_offset(hints.plain.index("mixed")).bold
-            assert hints.get_style_at_offset(hints.plain.index("split")).bold
+            hints = app.screen.query_one("#key-hints", Static).render().plain
+            assert hints == (
+                "enter stop & save · space pause · m mic · s system"
+                " · v view · r rename · 1 2 3 screens · ? help · q quit"
+            )
 
     asyncio.run(exercise())
 
@@ -311,7 +317,7 @@ def test_live_elapsed_uses_digits_widget():
         app = HubApp(FakeServices())
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.pause()
-            elapsed = app.query_one("#live-elapsed", Digits)
+            elapsed = app.screen.query_one("#rec-clock", Clock)
             assert elapsed.value == "00:00:03"
             assert elapsed.region.height == 3
 
@@ -378,13 +384,76 @@ def test_live_key_hints_style_keys_and_descriptions_without_fills():
         app = HubApp(FakeServices())
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.pause()
-            key = _visible_segment(app, "space")
-            description = _visible_segment(app, "pause/resume")
+            hints = app.screen.query_one("#transcript-hints", Static).render().plain
+            assert hints == "↑↓ line · PgUp/Dn page · End follow"
+            footer = app.screen._compositor.render_strips()[-1]._segments
+            key = next(segment for segment in footer if "space" in segment.text)
+            description = next(segment for segment in footer if "pause" in segment.text)
             assert key.style.bold
             assert key.style.color == Color.parse("#5fd7ff")
             assert key.style.bgcolor is None or key.style.bgcolor.is_default
             assert description.style.color is None or description.style.color.is_default
             assert description.style.bgcolor is None or description.style.bgcolor.is_default
+
+    asyncio.run(exercise())
+
+
+def test_live_transcript_scrolls_in_mixed_and_split_views_and_follows_new_lines():
+    async def exercise():
+        services = FakeServices()
+        session = services.session
+        session.lines = [
+            TranscriptLine(
+                float(index), float(index + 1), "wall", "mic", "you", "You", f"line {index}"
+            )
+            for index in range(40)
+        ]
+        app = HubApp(services)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            scroll = app.screen.query_one("#transcript")
+            assert scroll.max_scroll_y > 0
+            assert scroll.scroll_y == scroll.max_scroll_y
+
+            await pilot.press("home")
+            await pilot.press("pagedown")
+            page_position = scroll.scroll_y
+            assert page_position > 1
+            await pilot.press("pageup")
+            assert scroll.scroll_y < page_position
+            await pilot._post_mouse_events([MouseScrollDown], widget=scroll)
+            await pilot.pause()
+            assert scroll.scroll_y > 0
+
+            await pilot.press("home")
+            await pilot.press("down")
+            assert scroll.scroll_y == 1
+            held_position = scroll.scroll_y
+            await pilot.pause(0.25)
+            assert scroll.scroll_y == held_position
+            session.lines.append(
+                TranscriptLine(40.0, 41.0, "wall", "mic", "you", "You", "new line")
+            )
+            app.refresh_view()
+            await pilot.pause()
+            assert scroll.scroll_y == held_position
+
+            await pilot.press("end")
+            await pilot.press("v")
+            assert scroll.scroll_y == scroll.max_scroll_y
+            await pilot.press("home")
+            await pilot.press("down")
+            assert scroll.scroll_y == 1
+            await pilot.press("end")
+            session.lines.append(
+                TranscriptLine(
+                    41.0, 42.0, "wall", "system", "speaker-2", "Speaker 2", "latest line"
+                )
+            )
+            app.refresh_view()
+            await pilot.pause()
+            assert scroll.scroll_y == scroll.max_scroll_y
+            assert "mixed  ▶ split" in _screen_text(app)
 
     asyncio.run(exercise())
 
@@ -398,7 +467,7 @@ def test_live_sidebar_and_transcript_titles_are_legible():
             assert sidebar_title.style.bold
             assert sidebar_title.style.color == Color.parse("#5fd7ff")
 
-            transcript_title = _visible_segment(app, "transcript · mixed · 2 speakers")
+            transcript_title = _visible_segment(app, "transcript · 3 speakers")
             assert transcript_title.style.bold
             assert transcript_title.style.color is None or transcript_title.style.color.is_default
 
@@ -412,8 +481,7 @@ def test_system_source_state_and_device_fit_on_one_line():
             await pilot.pause()
             system_lines = [row for row in _screen_text(app).splitlines() if "[s] SYSTEM" in row]
             assert len(system_lines) == 1
-            assert "on · Default output" in system_lines[0]
-            assert "…" in system_lines[0]
-            assert "monitor" not in system_lines[0]
+            assert "on · default output" in system_lines[0]
+            assert "○ quiet" in system_lines[0]
 
     asyncio.run(exercise())

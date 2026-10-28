@@ -174,6 +174,7 @@ All of these live under `[stenographer.refine]`.
 | `model` | `"gemma4:e2b"` | The Ollama model tag to use. |
 | `min_words` | `10` | Shorter utterances are delivered without a refine. |
 | `structured_output` | `false` | Constrain the reply to a JSON object with one text field. |
+| `vocabulary` | `[]` | Terms that refine spells exactly as written. |
 
 ### `model`
 
@@ -224,6 +225,28 @@ schema is on. It is sent as `think: false` on every request, including to
 models that cannot think, which ignore it. Turning it on made a 2-second
 utterance take 8.5 seconds in the benchmark, and made one model spend its
 entire token budget deliberating and then return nothing at all.
+
+### `vocabulary`
+
+A list of names and terms that refine spells exactly as you wrote them, for
+example product names or your colleagues' names:
+
+```toml
+[stenographer.refine]
+vocabulary = ["PipeWire", "Kubernetes", "Siobhan"]
+```
+
+Every refine request carries the list: dictation, hub file jobs, and
+`stenographer transcribe --refine`. It adds one instruction after the built-in
+prompt and names each term. An empty list, the default, sends the same request
+as before the setting existed. The list changes only how refine spells a term
+that the speech model already heard; it does not change what the speech model
+hears.
+
+Each term is trimmed, must not be empty, must not hold a line break, and may
+have at most 64 characters. The list holds at most 200 terms, and no two terms
+may differ only in case. The terms go to your refine host with the transcript
+and never into a log.
 
 ## What you will see
 

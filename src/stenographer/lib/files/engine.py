@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from queue import Queue
 from typing import TYPE_CHECKING
@@ -25,7 +26,8 @@ from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.platform import current_platform
-from stenographer.lib.sessions.exporter import export_transcript
+from stenographer.lib.sessions.errors import SessionWriteCancelledError, StaleRevisionError
+from stenographer.lib.sessions.store import SessionStore
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
@@ -37,8 +39,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 _STOP = object()
-_FILENAME_PART = re.compile(r"[^A-Za-z0-9._-]+")
 _VAD_WINDOW_FRAMES = 512
+_SOURCE_ORDER = {"mic": 0, "system": 1}
 
 
 class FilesEngine:
@@ -55,6 +57,8 @@ class FilesEngine:
         segmenter_factory: Callable[[], object] | None = None,
         speaker_tracker_factory: Callable[[], object] | None = None,
         refiner_factory: Callable[[Config], TextRefiner] | None = None,
+        session_store: SessionStore | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         if platform is None and (data_dir is None or decoder is None or transport is None):
             platform = current_platform()
@@ -77,6 +81,12 @@ class FilesEngine:
             lambda: SpeakerTracker(speaker_path)
         )
         self._refiner_factory = refiner_factory
+        self._store = (
+            session_store
+            if session_store is not None
+            else SessionStore(self._data_dir / "sessions")
+        )
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._queue: Queue[FileJob | object] = Queue()
         self._jobs: list[FileJob] = []
         self._active: FileJob | None = None
@@ -100,6 +110,16 @@ class FilesEngine:
         with self._lock:
             return self._active
 
+    @property
+    def process_ids(self) -> tuple[int, ...]:
+        """Return the ASR worker child of this engine, if it runs."""
+        return self._worker.process_ids
+
+    @property
+    def idle_unload_deadline(self) -> float | None:
+        """Return the monotonic time of the idle unload of its worker, or ``None``."""
+        return self._worker.idle_unload_deadline
+
     def submit(
         self,
         path: str | Path,
@@ -107,8 +127,6 @@ class FilesEngine:
         diarize: bool = True,
         speaker_count: int | None = None,
         refine: bool = False,
-        output_format: str = "md",
-        output_folder: str | Path | None = None,
     ) -> FileJob:
         """Queue one file without blocking on media inspection or inference."""
         options = FileJobOptions(
@@ -116,8 +134,6 @@ class FilesEngine:
             diarize=diarize,
             speaker_count=speaker_count,
             refine=refine,
-            output_format=output_format,
-            output_folder=None if output_folder is None else Path(output_folder),
         )
         with self._lock:
             if self._closed:
@@ -179,6 +195,8 @@ class FilesEngine:
                 return
             if not job._start():
                 return
+            started_at = self._clock()
+            target = self._store.revision_target(job.options.path)
             lines, embeddings = self._transcribe(job, media)
             if job.cancel_requested:
                 job._cancelled(tuple(lines))
@@ -189,14 +207,23 @@ class FilesEngine:
                     job._cancelled(tuple(lines))
                     return
             job._update("save", 95, None, tuple(lines))
-            output_folder = job.options.output_folder or self._data_dir / "files"
-            output_path = export_transcript(
-                lines,
-                output_folder,
-                job.options.output_format,
-                filename=self._output_name(job.options.path),
-            )
-            job._complete(output_path, tuple(lines))
+            if target is None:
+                session_id = self._store.create_file_session(
+                    job.options.path,
+                    started_at=started_at,
+                    duration_seconds=media.duration_seconds
+                    or max((line.end for line in lines), default=0.0),
+                    lines=lines,
+                    should_cancel=lambda: job.cancel_requested,
+                )
+            else:
+                session_id, source = target
+                lines = self._write_revision(job, session_id, source, lines)
+            job._complete(session_id, tuple(lines))
+        except SessionWriteCancelledError:
+            job._cancelled(job.progress.completed_lines)
+        except StaleRevisionError:
+            job._fail("session changed during this job; nothing was saved")
         except Exception as exc:
             if job.cancel_requested:
                 job._cancelled(job.progress.completed_lines)
@@ -311,9 +338,45 @@ class FilesEngine:
             enabled=True,
         )
 
-    @staticmethod
-    def _output_name(path: Path) -> str:
-        cleaned = _FILENAME_PART.sub("-", path.stem).strip("._-")
-        if not cleaned or not cleaned[0].isalnum():
-            return "transcript"
-        return cleaned
+    def _write_revision(
+        self, job: FileJob, session_id: str, source: str, lines: list[TranscriptLine]
+    ) -> list[TranscriptLine]:
+        """Save new lines of one source as a revision of the session that holds it."""
+        detail = self._store.read(session_id)
+        revision_name = self._store.next_revision_name(session_id)
+        revised = list(lines)
+        if source != "file":
+            number = revision_name.removeprefix("transcript.r").removesuffix(".jsonl")
+            prefix = "Room" if source == "mic" else "Speaker"
+            speakers: dict[str, int] = {}
+            new_lines = []
+            for line in lines:
+                index = speakers.setdefault(line.speaker_id, len(speakers) + 1)
+                if not job.options.diarize:
+                    index = 1
+                    label = "You" if source == "mic" else "Speaker 1"
+                else:
+                    label = f"{prefix} {index}"
+                new_lines.append(
+                    replace(
+                        line,
+                        source=source,
+                        speaker_id=f"{source}-file-r{number}-{index}",
+                        label=label,
+                    )
+                )
+            combined = [*new_lines, *(line for line in detail.lines if line.source != source)]
+            ordered = sorted(
+                enumerate(combined),
+                key=lambda item: (item[1].start, _SOURCE_ORDER.get(item[1].source, 2), item[0]),
+            )
+            revised = [line for _, line in ordered]
+        self._store.write_revision(
+            session_id,
+            revised,
+            method="file-transcribe",
+            expected_revision=detail.revision,
+            revision_name=revision_name,
+            should_cancel=lambda: job.cancel_requested,
+        )
+        return revised

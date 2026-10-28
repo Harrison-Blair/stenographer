@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
@@ -11,7 +12,7 @@ import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -20,7 +21,7 @@ from stenographer.lib.audio.recorder import Recorder
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.phrase import Phrase
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
-from stenographer.lib.live.relabel import relabel_system_lines
+from stenographer.lib.live.relabel import relabel_system_lines, relabel_work_units
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 _SAMPLE_RATE = 16000
 _STOP = object()
+_BLOCK_QUEUE_SIZE = 32
+_BLOCK_STOP_WAIT_SECONDS = 0.5
 # Mic and system voices are clustered apart, so their labels never share a number space.
 _LABEL_PREFIXES = {"system": "Speaker", "mic": "Room"}
 
@@ -110,6 +113,13 @@ class LiveSession:
             "system": self._system_platform_reason,
         }
         self._levels = {"mic": float("-inf"), "system": float("-inf")}
+        self._speech = {"mic": False, "system": False}
+        self._block_listeners: list[Callable[[str, np.ndarray], None]] = []
+        self._block_listener_lock = threading.Lock()
+        self._blocks: Queue[tuple[str, np.ndarray] | object] = Queue(maxsize=_BLOCK_QUEUE_SIZE)
+        self._blocks_closed = threading.Event()
+        self._block_thread: threading.Thread | None = None
+        self._dropped_blocks = 0
         self._segmenters: dict[str, PhraseSegmenter | None] = {"mic": None, "system": None}
         self._segment_offsets = {"mic": 0.0, "system": 0.0}
         self._source_samples = {"mic": 0, "system": 0}
@@ -150,6 +160,52 @@ class LiveSession:
         with self._lock:
             self._subscribers.append(callback)
 
+    def add_block_listener(self, listener: Callable[[str, np.ndarray], None]) -> Callable[[], None]:
+        """Send ``(source, samples)`` of each written block to *listener* on a delivery thread.
+
+        Return a function that removes the listener.
+        """
+        with self._block_listener_lock:
+            if self._blocks_closed.is_set():
+                return lambda: None
+            self._block_listeners.append(listener)
+            if self._block_thread is None:
+                self._block_thread = threading.Thread(
+                    target=self._deliver_blocks,
+                    name="stenographer-live-blocks",
+                    daemon=True,
+                )
+                self._block_thread.start()
+
+        def remove() -> None:
+            with self._block_listener_lock:
+                for index, registered in enumerate(self._block_listeners):
+                    if registered is listener:
+                        del self._block_listeners[index]
+                        return
+
+        return remove
+
+    @property
+    def dropped_blocks(self) -> int:
+        """Return the count of blocks dropped because the delivery queue was full."""
+        with self._block_listener_lock:
+            return self._dropped_blocks
+
+    @property
+    def speech_detected(self) -> dict[str, bool]:
+        """Return whether the voice detector of each running source hears speech."""
+        with self._lock:
+            states = self.source_states
+            return {
+                source: (
+                    states[source] == "on"
+                    and self._segmenters[source] is not None
+                    and self._speech[source]
+                )
+                for source in ("mic", "system")
+            }
+
     @property
     def path(self) -> Path:
         return self._writer.path
@@ -157,6 +213,16 @@ class LiveSession:
     @property
     def model_name(self) -> str:
         return MODEL_DIRNAME
+
+    @property
+    def process_ids(self) -> tuple[int, ...]:
+        """Return the ASR worker child of this session, if it runs."""
+        return self._worker.process_ids
+
+    @property
+    def idle_unload_deadline(self) -> float | None:
+        """Return the monotonic time of the idle unload of its worker, or ``None``."""
+        return self._worker.idle_unload_deadline
 
     @property
     def queue_depth(self) -> int:
@@ -221,6 +287,12 @@ class LiveSession:
     def relabel_error(self) -> str | None:
         with self._lock:
             return self._relabel_error
+
+    @property
+    def relabel_progress(self) -> tuple[int, int] | None:
+        """Return ``(done, total)`` phrases of the running relabel pass, or ``None``."""
+        with self._lock:
+            return self._relabel_progress if self._relabeling else None
 
     @property
     def relabel_status(self) -> str:
@@ -314,6 +386,7 @@ class LiveSession:
             if self._stopped:
                 return
             self._stop_started = True
+            self._close_block_delivery()
             self._freeze_clock()
             for source in ("mic", "system"):
                 if self._active[source] or self._source_seen[source]:
@@ -356,15 +429,21 @@ class LiveSession:
             self._relabeling = True
             self._relabel_progress = (0, total)
 
+        # Progress counts phrases: each pass reports work units, and every pass
+        # total is known up front, so the phrase count never falls or overshoots.
+        units = [relabel_work_units(lines) for _, _, lines, _ in passes]
+        total_units = sum(units)
         try:
             revised_lines = list(self.lines)
             offset = 0
-            for source, indices, lines, embeddings in passes:
+            for (source, indices, lines, embeddings), pass_units in zip(passes, units, strict=True):
                 relabeled = relabel_system_lines(
                     lines,
                     embeddings,
-                    progress=lambda done, _total, offset=offset: self._set_relabel_progress(
-                        offset + done, total
+                    progress=lambda done, _total, offset=offset, pass_units=pass_units: (
+                        self._set_relabel_progress(
+                            total * (offset + min(done, pass_units)) // total_units, total
+                        )
                     ),
                     should_cancel=self._skip_relabel.is_set,
                     label_prefix=_LABEL_PREFIXES[source],
@@ -375,11 +454,12 @@ class LiveSession:
                     return
                 for index, line in zip(indices, relabeled, strict=True):
                     revised_lines[index] = line
-                offset += len(lines)
+                offset += pass_units
             SessionStore(self._writer.path.parent).write_revision(
                 self._writer.path.name,
                 revised_lines,
                 method="diarization",
+                expected_revision="transcript.jsonl",
             )
             with self._lock:
                 self._lines = revised_lines
@@ -393,7 +473,7 @@ class LiveSession:
 
     def _set_relabel_progress(self, done: int, total: int) -> None:
         with self._lock:
-            self._relabel_progress = done, total
+            self._relabel_progress = max(done, self._relabel_progress[0]), total
 
     def _check_system_availability(self) -> None:
         try:
@@ -463,6 +543,7 @@ class LiveSession:
                 log_failure(log, logging.WARNING, "live: system_stop_failed", exc, safe=True)
         with self._lock:
             self._active[source] = False
+            self._speech[source] = False
             segmenter = self._segmenters[source]
             self._segmenters[source] = None
         if segmenter is not None:
@@ -480,6 +561,7 @@ class LiveSession:
                 self._active["system"] = False
                 self._enabled["system"] = False
                 self._reasons["system"] = str(block)
+                self._speech["system"] = False
                 segmenter = self._segmenters["system"]
                 self._segmenters["system"] = None
             if segmenter is not None:
@@ -503,12 +585,63 @@ class LiveSession:
                 rms = float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
                 self._levels[source] = 20 * math.log10(rms) if rms > 0 else float("-inf")
                 phrases = segmenter.accept(samples)
+                self._speech[source] = segmenter.speech_detected
                 offset = self._segment_offsets[source]
                 self._enqueue_phrases(phrases, offset)
+            self._offer_block(source, samples)
         except Exception as exc:
             log_failure(
                 log, logging.WARNING, "live: audio_block_failed", exc, safe=True, source=source
             )
+
+    def _offer_block(self, source: str, samples: np.ndarray) -> None:
+        with self._block_listener_lock:
+            if not self._block_listeners:
+                return
+            copy = samples.copy()
+            copy.flags.writeable = False
+            try:
+                self._blocks.put_nowait((source, copy))
+            except Full:
+                self._dropped_blocks += 1
+
+    def _close_block_delivery(self) -> None:
+        with self._block_listener_lock:
+            self._blocks_closed.set()
+            self._block_listeners.clear()
+            thread = self._block_thread
+        while True:
+            try:
+                self._blocks.get_nowait()
+            except Empty:
+                break
+        with contextlib.suppress(Full):
+            self._blocks.put_nowait(_STOP)
+        if thread is not None:
+            thread.join(_BLOCK_STOP_WAIT_SECONDS)
+
+    def _deliver_blocks(self) -> None:
+        while True:
+            item = self._blocks.get()
+            if item is _STOP or self._blocks_closed.is_set():
+                return
+            source, samples = item
+            with self._block_listener_lock:
+                listeners = tuple(self._block_listeners)
+            for listener in listeners:
+                if self._blocks_closed.is_set():
+                    return
+                try:
+                    listener(source, samples)
+                except Exception as exc:
+                    log_failure(
+                        log,
+                        logging.WARNING,
+                        "live: block_listener_failed",
+                        exc,
+                        safe=False,
+                        source=source,
+                    )
 
     def _enqueue_phrases(self, phrases: list[Phrase], offset: float) -> None:
         for phrase in phrases:

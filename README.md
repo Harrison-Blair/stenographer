@@ -96,7 +96,7 @@ setting.
 
 ## Speech model
 
-Dictation, Live, and Files use one speech model: Underdog Bark 3.0 Pro by
+Dictation, Record, and file jobs use one speech model: Underdog Bark 3.0 Pro by
 Conway Research. It runs as int8 ONNX through sherpa-onnx, on the CPU only.
 Stenographer does not host the model. Build it once on your machine:
 
@@ -166,17 +166,26 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 ## Common commands
 
 - `stenographer` — open the terminal hub when stdin and stdout are terminals;
-  otherwise show help. Live shows REC, MIC, and SYSTEM panels plus a sidebar
-  card with the engine, queue, and CPU use. Config shows a group selector
-  beside compact key/value rows and selected-setting details. The sidebar
-  shows the config path and unsaved-change count.
-  Press `space` to start;
-  use `v` for mixed or split transcripts, and `m` or `s` to toggle audio sources.
-  Press `2` for Files;
-  the browser opens in your saved Live recordings, so queue files there and use
-  `x` to cancel a selected job. Sessions
-  shows storage use in the sidebar and separates the session list from its
-  detail. See the [terminal hub guide](docs/hub.md) for all sections, controls,
+  otherwise show help. The hub has three screens: press `1` for Record, `2`
+  for Library, and `3` for Settings, and `?` for the keys of each screen. A
+  sidebar on each screen shows navigation badges, an engine card with the
+  model state and CPU and memory use, and one context card.
+  On Record, press `space` to start and `enter` to stop and save; the hub stays
+  open while the speaker relabel pass runs, and `o` opens the saved session in
+  Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
+  sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,
+  `pageup`/`pagedown`, `home`/`end`, or the mouse wheel; the view follows new
+  lines at the bottom. Library lists recordings, file sessions, and file
+  jobs; press `/` to search transcripts, `p` to play, `d` or `t` to
+  re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
+  a job. Press `n` there to transcribe a file: the dialog browses from your
+  home folder, sets Separate speakers, Speaker count, and Refine text, and
+  queues one job that shows in the list at once. Settings has the General, Audio,
+  Recognition, Live, and Checks tabs; `●` marks an unsaved change, `ctrl+s`
+  saves it with a backup, and the Vocabulary row edits the refine terms.
+  Checks groups the system checks,
+  fixes and tests the selected check, and opens the Quick setup, Models, and
+  Defaults dialogs. See the [terminal hub guide](docs/hub.md) for all screens, controls,
   and file formats.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
@@ -185,12 +194,6 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
 - `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
 - `stenographer run` — run the daemon in the foreground.
-- `stenographer live` — open the standalone live app with its existing flags;
-  it does not open the hub. After `q`, it keeps each renamed label on one voice
-  and numbers unnamed voices by first appearance. Press `q` again to skip.
-  `--diarize-mic` (or `live.diarize_mic = true`) labels the people on one
-  microphone `Room 1`, `Room 2`, and so on instead of `You`. See the
-  [live guide](docs/live.md).
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
 for sound packs, statistics, and configuration examples.
@@ -207,16 +210,16 @@ systemctl --user restart stenographer.service
 
 Model downloads are explicit and dictation runs locally. Audio, transcripts,
 configuration, and device or model names stay on your machine. Logs never
-contain transcript text or audio. `stenographer live` saves the requested
+contain transcript text or audio. The hub Record screen saves the requested
 audio and transcript in a private session folder, then saves a new revision
-with batch speaker labels; see the [live guide](docs/live.md).
+with batch speaker labels; see the [hub guide](docs/hub.md#record).
 The only automatic network request that leaves your machine is an optional,
 metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
 
-The [terminal hub](docs/hub.md) includes Live, Files, Sessions, Config, Setup,
-and Doctor. Recording starts only when you press `space`; changing sections
-does not stop a recording. Files jobs run in the background, one at a time.
+The [terminal hub](docs/hub.md) has three screens: Record, Library, and
+Settings. Recording starts only when you press `space`; changing screens
+does not stop a recording. File jobs run in the background, one at a time.
 
 A [refine](docs/refine.md) pass, on by default, provides exactly two built-in
 profiles through one local Ollama model. Agent rewrites jumbled requests into
@@ -237,7 +240,7 @@ the speech model and in the Refining colour for the cleanup model, taking
 turns one breath each when both are loading.
 
 Read the [user guide](docs/usage.md) for privacy settings and more examples,
-and the [live guide](docs/live.md) for live capture and saved sessions.
+and the [hub guide](docs/hub.md#record) for live capture and saved sessions.
 
 ## Development
 
@@ -262,5 +265,5 @@ attribution files are in
 | [Underdog Bark 3.0 Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro) | Conway Research | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Speech recognition. Converted to ONNX and quantized to int8 (weight-only) on your machine by stenographer. |
 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | NVIDIA | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) | Moondream | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
-| [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Live, and Files. |
-| [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | NVIDIA | NeMo Toolkit license ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) | Speaker labels in Live and Files. |
+| [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. |
+| [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | NVIDIA | NeMo Toolkit license ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) | Speaker labels in Record and file jobs. |

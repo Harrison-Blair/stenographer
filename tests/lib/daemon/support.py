@@ -27,6 +27,7 @@ from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.hotkey.chord_tracker import ChordTracker
 from stenographer.lib.logging.utterance_filter import UtteranceFilter
 from stenographer.lib.platform.errors import UnsupportedPlatformError
+from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.refine.cancellation import never_cancelled
 from stenographer.lib.refine.policy import should_refine
 from stenographer.lib.refine.profiles import RefineProfile
@@ -397,6 +398,9 @@ class _Platform:
 
     def asr_transport(self):
         return None
+
+    def process_counters(self):
+        return NullProcessCounters()
 
     def keys(self):
         from stenographer.lib.hotkey.static_key_table import StaticKeyTable

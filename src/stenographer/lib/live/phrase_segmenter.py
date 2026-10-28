@@ -43,6 +43,11 @@ class PhraseSegmenter:
         self._vad = sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=120)
         self._flushed = False
 
+    @property
+    def speech_detected(self) -> bool:
+        """Return whether the voice detector hears speech in the latest audio."""
+        return bool(self._vad.is_speech_detected())
+
     def accept(self, block: np.ndarray) -> list[Phrase]:
         """Accept one mono block and return all phrases now available."""
         if self._flushed:

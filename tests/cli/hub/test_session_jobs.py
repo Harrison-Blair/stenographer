@@ -9,15 +9,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 from stenographer.cli.hub.services import HubServices
 from stenographer.cli.hub.session_jobs import SessionJobs
 from stenographer.lib.config.models import Config
+from stenographer.lib.files.media import DecodedAudio
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
+from stenographer.lib.sessions.errors import SessionSourceError, StaleRevisionError
 from stenographer.lib.transcribe.results import TranscriptionResult
 
 
@@ -30,6 +34,9 @@ class FakePlatform:
 
     def asr_transport(self):
         return "fake-transport"
+
+    def process_counters(self):
+        return NullProcessCounters()
 
 
 class FakeSpeakerTracker:
@@ -250,3 +257,136 @@ def test_playback_mixes_saved_sources_and_second_press_stops_own_player(tmp_path
     while mixed_path.exists() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not mixed_path.exists()
+
+
+class RecordingDecoder:
+    def __init__(self):
+        self.paths = []
+
+    def __call__(self, path):
+        self.paths.append(path)
+        return DecodedAudio(np.full(48_000, 0.1, dtype=np.float32), 16_000, 3.0)
+
+
+def _file_session(sessions_root: Path, tmp_path: Path) -> str:
+    source = tmp_path / "Interview.wav"
+    sf.write(source, np.full(48_000, 0.1, dtype=np.float32), 16_000)
+    return SessionStore(sessions_root).create_file_session(
+        source,
+        started_at=datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC),
+        duration_seconds=3.0,
+        lines=[
+            TranscriptLine(0.0, 1.0, "", "file", "speaker-1", "Speaker 1", "alpha"),
+            TranscriptLine(1.5, 2.5, "", "file", "speaker-2", "Speaker 2", "bravo"),
+        ],
+    )
+
+
+def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session_id = _file_session(sessions_root, tmp_path)
+    store = SessionStore(sessions_root)
+    decoder = RecordingDecoder()
+    workers = []
+
+    def make_worker(_asr_config, *, transport):
+        workers.append(FakeWorker())
+        return workers[-1]
+
+    jobs = SessionJobs(
+        store,
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        worker_factory=make_worker,
+        media_decoder=decoder,
+    )
+
+    revision = jobs.retranscribe(session_id)
+
+    detail = store.read(session_id)
+    assert revision == "transcript.r2.jsonl"
+    assert decoder.paths == [sessions_root / session_id / "source.wav"]
+    assert [(line.source, line.label, line.text) for line in detail.lines] == [
+        ("file", "Speaker 1", "new phrase 1"),
+        ("file", "Speaker 2", "new phrase 2"),
+    ]
+    assert detail.summary.kind == "file"
+    assert workers[0].closed
+
+
+def test_retranscribe_file_session_refuses_an_invalid_source(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session_id = _file_session(sessions_root, tmp_path)
+    directory = sessions_root / session_id
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"outside")
+    (directory / "source.wav").unlink()
+    (directory / "source.wav").symlink_to(outside)
+    decoder = RecordingDecoder()
+    jobs = SessionJobs(
+        SessionStore(sessions_root),
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        worker_factory=lambda *_args, **_kwargs: FakeWorker(),
+        media_decoder=decoder,
+    )
+
+    with pytest.raises(SessionSourceError, match="source audio"):
+        jobs.retranscribe(session_id)
+
+    assert decoder.paths == []
+    assert not (directory / "transcript.r2.jsonl").exists()
+
+
+def test_rediarize_file_session_raises_a_clear_error(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session_id = _file_session(sessions_root, tmp_path)
+    store = SessionStore(sessions_root)
+
+    with pytest.raises(ValueError, match="use Re-transcribe"):
+        _jobs(tmp_path, store, VoiceSpeakerTracker).rediarize(session_id)
+
+    assert store.read(session_id).revision == "transcript.jsonl"
+
+
+class RenameAfterRead(SessionStore):
+    """Save a rename from another store right after the job reads the session."""
+
+    def __init__(self, root):
+        super().__init__(root)
+        self.renamed = False
+
+    def read(self, session_id):
+        detail = super().read(session_id)
+        if not self.renamed:
+            self.renamed = True
+            SessionStore(self.root).rename_speaker(session_id, "speaker-1", "Alex")
+        return detail
+
+
+@pytest.mark.parametrize("operation", ("retranscribe", "rediarize"))
+def test_stale_revision_keeps_a_rename_saved_during_the_job(tmp_path, operation):
+    sessions_root = tmp_path / "sessions"
+    session = _write_session(sessions_root)
+    store = RenameAfterRead(sessions_root)
+    model_path = tmp_path / "models" / "live" / LIVE_MODELS[1].filename
+    model_path.parent.mkdir(parents=True)
+    model_path.touch()
+    jobs = SessionJobs(
+        store,
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        speaker_tracker_factory=FakeSpeakerTracker,
+        worker_factory=lambda *_args, **_kwargs: FakeWorker(),
+    )
+
+    with pytest.raises(StaleRevisionError, match="changed since it was read"):
+        getattr(jobs, operation)(session.name)
+
+    detail = SessionStore(sessions_root).read(session.name)
+    assert detail.revision == "transcript.r2.jsonl"
+    assert [(line.source, line.speaker_id, line.label, line.text) for line in detail.lines] == [
+        ("system", "speaker-1", "Alex", "first fixture line"),
+        ("mic", "you", "You", "second fixture line"),
+    ]
+    assert not (session / "transcript.r3.jsonl").exists()

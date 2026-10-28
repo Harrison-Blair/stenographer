@@ -45,8 +45,8 @@ commands) or a `parser.py` owned by the command package. `cli/parser.py` and
 Handlers are resolved by import path only when their command runs.
 
 Commands own their prompts, terminal output, consent, and follow-up actions.
-`cli/run/` owns startup and its banner. `cli/live/` owns the live terminal UI
-and session controls. `cli/setup/` owns quick/default setup and calibration
+`cli/run/` owns startup and its banner. `cli/hub/` owns the terminal hub,
+including the Record screen and its session controls. `cli/setup/` owns quick/default setup and calibration
 prompts; `cli/sounds/` owns interactive pack selection and preview.
 The model download and stats operations have their own subcommand packages.
 `cli/shared/` owns cross-command support for capability reports, terminal

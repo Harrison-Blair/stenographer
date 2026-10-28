@@ -45,7 +45,7 @@ your config file. Stenographer ignores them and saves keep them unchanged; you
 can delete them by hand. The speech model keeps fillers such as "um" in every
 mode; [refine](refine.md) removes them from dictations of 10 or more words (the
 default `min_words`). For live capture,
-see the [live transcription guide](live.md).
+see [Record live audio](#record-live-audio).
 
 The configuration file is:
 
@@ -195,7 +195,9 @@ can lose measurements that have not been committed yet.
 The model runs locally. Audio, transcripts, configuration, and device or model
 names do not leave the machine. Logs contain timings and counts, never audio or
 transcript text. The lifecycle pill does not receive raw audio or transcript
-text.
+text. The hub Record screen saves the audio and transcript that you record only
+in a private session folder; see [saved session files and
+privacy](hub.md#saved-session-files-and-privacy).
 
 By default the only network access that leaves the machine is an optional
 metadata-only request for the latest GitHub release tag, at most once every
@@ -221,33 +223,32 @@ local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
 
 Run `stenographer` with no arguments in a terminal to open the hub. It starts
 on Live; press `space` when you want to start recording. If stdin or stdout is
-not a terminal, the command prints help. Existing subcommands, including
-`stenographer live`, keep their current behavior.
+not a terminal, the command prints help. Existing subcommands keep their
+current behavior.
 
-In the hub, press `2` to open Files. The browser starts in the folder where
-Live saves your recordings, or in your home folder when that folder does not
-exist yet; see [the hub guide](hub.md) for the paths. Use `/` to filter names
-in the current folder, `enter` to open a folder, and `space` to select files.
-Press `enter` to queue the selected files. The queue runs one file at a time
-and continues when you change sections.
+In the hub, press `2` for Library, then `n` to open the Transcribe a file
+dialog. The browser starts in your home folder. Use `up` and `down` to select
+an entry, `enter` to open a folder, and `/` to filter names in the current
+folder. Press `s` for Separate speakers (on by default), `r` for Refine text
+(off by default), and `c` to type the speaker count: `auto` or a whole number
+above 0. Press `enter` on a file to queue it; the Library shows and selects
+the job at once. Jobs run one at a time and continue when you change screens.
 
-Press `o` to focus the options. Use `up` and `down` to select an option and
-`space` or `enter` to change it. Diarization starts on, refine starts off, and
-Markdown is the default format. Set the speaker count to `auto` or a positive
-number. The output folder defaults to the Stenographer data folder's `files`
-subfolder. In the queue, use `tab` to focus the selected job, `up` or `down` to
-select a job, and `x` to cancel it. The preview shows current or completed
-transcript lines with speaker labels. Press `e` on a job with a saved result to
-open its folder with `xdg-open`.
+Each job saves its result as a session folder in the sessions folder next to
+your recordings: a private copy of the source file, `transcript.jsonl`,
+`transcript.md`, and `session.json`. A job on `mic.flac` or `system.flac` of a
+recording saves a new transcript revision of that recording instead. Select
+the row in Library to see the progress and the finished lines, and use `x` to
+export the transcript. See [the hub guide](hub.md#transcribe-a-file) for the
+paths and details.
 
-## Start live transcription
+## Record live audio
 
-Run `stenographer live` to transcribe the microphone and full system mix in a
-terminal session. Download its voice and speaker models with
+The Record screen of the hub transcribes the microphone and full system mix.
+Download its voice and speaker models with
 `stenographer model download --live`; build the ASR model separately with
-`stenographer model download --asr`. See the
-[live transcription guide](live.md) for source controls, saved files, privacy,
-and limits.
+`stenographer model download --asr`. See the [Record section of the hub
+guide](hub.md#record) for source controls, saved files, privacy, and limits.
 
 To separate several speakers who share one microphone, turn on microphone
 diarization in the config:
@@ -258,10 +259,9 @@ diarize_mic = true   # default false: every microphone line is "You"
 ```
 
 Microphone speakers then get labels such as `Room 1` and `Room 2`, separate
-from the system `Speaker N` labels. `stenographer live --diarize-mic` and
-`--no-diarize-mic` override the setting for one session. The hub Live section
-uses the setting. See
-[separate the speakers in a room](live.md#separate-the-speakers-in-a-room).
+from the system `Speaker N` labels. The Live tab of hub Settings edits the
+setting; it applies when a recording starts. See
+[separate the speakers in a room](hub.md#separate-the-speakers-in-a-room).
 
 ## Troubleshoot a running service
 

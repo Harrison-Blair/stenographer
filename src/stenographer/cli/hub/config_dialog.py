@@ -6,15 +6,28 @@ from __future__ import annotations
 from typing import ClassVar
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
+from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.focus_button import FocusButton
+
 
 class ConfigPrompt(ModalScreen[str | None]):
-    """Show a text input or a save/discard prompt and return its choice."""
+    """Show a text input or a save/discard prompt and return its choice.
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "cancel", "Cancel")]
+    Each choice button prints its key; ``escape`` stays (it returns ``None``).
+    """
+
+    BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
+        ("escape", "cancel", "Cancel"),
+        ("s", "choose('save')", "Save"),
+        ("d", "choose('discard')", "Discard"),
+        Binding("question_mark", "app.help", "Help", show=False),
+    ]
+    CHOICE_KEYS: ClassVar[dict[str, str]] = {"save": "s", "discard": "d", "stay": "esc"}
     CSS = """
     ConfigPrompt {
         align: center middle;
@@ -60,7 +73,10 @@ class ConfigPrompt(ModalScreen[str | None]):
             if self._choices:
                 with Horizontal(id="config-prompt-buttons"):
                     for label, value in self._choices:
-                        yield Button(label, id=f"choice-{value}")
+                        yield FocusButton(
+                            HubButton.label_text(label, self.CHOICE_KEYS.get(value)),
+                            id=f"choice-{value}",
+                        )
 
     def on_mount(self) -> None:
         if self._initial is not None:
@@ -75,6 +91,14 @@ class ConfigPrompt(ModalScreen[str | None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         value = event.button.id.removeprefix("choice-")
+        self.dismiss(value)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "choose":
+            return any(value == parameters[0] for _label, value in self._choices)
+        return True
+
+    def action_choose(self, value: str) -> None:
         self.dismiss(value)
 
     def action_cancel(self) -> None:
