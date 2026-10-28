@@ -22,7 +22,13 @@ def test_step(step_id: str, config: Config, config_dir: pathlib.Path) -> str:
             f"global hotkey {'available' if host.hotkey_access_ok else 'unavailable'}"
         )
     if step_id == "microphone":
-        devices = workflow._audio_devices()
+        from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
+        from stenographer.lib.audio.probe import input_device_choices, query_devices
+
+        query = query_devices()
+        if query.error is not None:
+            return f"{DOCTOR_STATE_GLYPHS['fail']} no audio server; no audio was captured"
+        devices = input_device_choices(query.devices)
         names = ", ".join(label for _value, label in devices) or "none"
         noun = "device" if len(devices) == 1 else "devices"
         return f"{len(devices)} input {noun}: {names}; no audio was captured"

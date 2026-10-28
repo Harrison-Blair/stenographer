@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from stenographer.lib.audio.probe import has_input_device, input_device_choices
+import sys
+
+from stenographer.lib.audio.probe import has_input_device, input_device_choices, query_devices
 
 _DEVICES = [
     {"name": "hdmi-out", "max_input_channels": 0},
@@ -32,3 +34,21 @@ def test_input_device_choices_empty_without_inputs():
 
 def test_input_device_choices_fall_back_to_a_placeholder_name():
     assert input_device_choices([{"max_input_channels": 1}]) == [("0", "0: ?")]
+
+
+def test_query_devices_reports_a_portaudio_start_failure_on_import(monkeypatch, tmp_path):
+    # The real sounddevice starts PortAudio when it is imported; with no audio
+    # server that raises PortAudioError, which is neither ImportError nor OSError.
+    (tmp_path / "sounddevice.py").write_text(
+        "class PortAudioError(Exception):\n"
+        "    pass\n"
+        "raise PortAudioError('Error querying host API -9999')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "sounddevice", raising=False)
+
+    query = query_devices()
+
+    assert query.devices == ()
+    assert query.error is not None

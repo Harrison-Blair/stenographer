@@ -44,9 +44,10 @@ class Dialog[ResultType](ModalScreen[ResultType]):
     }
     Dialog #dialog-body {
         height: auto;
-        max-height: 30;
+        max-height: 100%;
     }
     Dialog #dialog-buttons {
+        dock: bottom;
         height: 1;
         margin-top: 1;
         align-horizontal: right;

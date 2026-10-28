@@ -29,6 +29,9 @@ def query_devices() -> DeviceQuery:
         import sounddevice
     except (ImportError, OSError) as exc:
         return DeviceQuery(error=f"audio support unavailable: {exc}")
+    except Exception as exc:
+        # The import starts PortAudio, which raises PortAudioError with no audio server.
+        return DeviceQuery(error=f"audio subsystem unavailable: {exc}")
 
     try:
         devices = tuple(sounddevice.query_devices())

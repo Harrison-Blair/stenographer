@@ -527,6 +527,35 @@ def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch):
     asyncio.run(exercise())
 
 
+def test_checks_microphone_test_without_an_audio_server_shows_a_plain_failure(
+    monkeypatch, tmp_path
+):
+    # Importing the real sounddevice starts PortAudio; with no audio server that
+    # raises PortAudioError. The row shows plain words, not the exception name.
+    (tmp_path / "sounddevice.py").write_text(
+        "class PortAudioError(Exception):\n"
+        "    pass\n"
+        "raise PortAudioError('Error querying host API -9999')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "sounddevice", raising=False)
+    report = DoctorReport((_check("has_mic", "microphone", "input"),), ())
+
+    async def exercise():
+        app = _app(report)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_checks(pilot)
+            await pilot.press("t")
+            await _settle(pilot, lambda: app.checks_tab.test_status not in {"", "running…"})
+            await pilot.pause()
+            assert _plain(app, "#checks-test-status") == (
+                f"test: {FAIL} no audio server; no audio was captured"
+            )
+
+    asyncio.run(exercise())
+
+
 def test_checks_sounds_test_plays_the_preview_through_the_preview_path(monkeypatch, tmp_path):
     from stenographer.lib import platform as platform_module
     from stenographer.lib.sounds import packs, playback

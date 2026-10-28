@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, ClassVar
 from textual.binding import Binding
 from textual.widgets import Input, Static
 
+from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.widgets.dialog import Dialog
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.lib.config.constants import MAX_VOCABULARY_TERMS
@@ -28,7 +29,7 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
     ``ConfigError``, so the dialog applies the config rules and keeps no copy
     of them. While the term input has focus, letters go to it; ``enter``
     keeps the term and ``escape`` closes the input. A rejected term leaves
-    the input open with ``✗`` and the reason under it.
+    the input open with ``\N{MULTIPLICATION SIGN}`` and the reason under it.
     """
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
@@ -100,9 +101,9 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
         return self.query_one("#vocab-input", Input)
 
     def _show_error(self, text: str | None) -> None:
-        """Show ``✗ text`` under the input; ``None`` hides the line."""
+        """Show ``\N{MULTIPLICATION SIGN} text`` under the input; ``None`` hides the line."""
         error = self.query_one("#vocab-error", Static)
-        error.update(f"✗ {text}" if text else "")
+        error.update(f"{DOCTOR_STATE_GLYPHS['fail']} {text}" if text else "")
         error.display = bool(text)
 
     def _open_input(self, value: str, editing: int | None) -> None:

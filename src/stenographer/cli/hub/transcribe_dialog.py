@@ -12,6 +12,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Input, Label, Static
 
+from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.files_entry import BrowserEntry
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.dialog import Dialog
@@ -39,7 +40,7 @@ AUDIO_SUFFIXES = frozenset(
         ".wma",
     }
 )
-_COUNT_ERROR = "✗ Speaker count must be auto or a whole number above 0"
+_COUNT_ERROR = f"{DOCTOR_STATE_GLYPHS['fail']} Speaker count must be auto or a whole number above 0"
 _DIM = StatusToken.TONES["dim"]
 
 

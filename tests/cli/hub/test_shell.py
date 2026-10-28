@@ -432,6 +432,41 @@ def test_shell_guard_asks_before_leaving_settings_with_unsaved_changes(
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize(
+    ("key", "label", "destination", "expected"),
+    [
+        ("s", "[s] Save", "record", 5),
+        ("d", "[d] Discard", "record", None),
+        ("escape", "[esc] Stay", "settings", None),
+    ],
+)
+def test_shell_guard_buttons_print_their_keys_and_the_keys_choose(
+    tmp_path, key, label, destination, expected
+):
+    async def exercise():
+        path = _config_path(tmp_path)
+        app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("3")
+            await pilot.pause()
+            app.config_editor.edit("asr.cpu_threads", "5")
+            await pilot.press("1")
+            await pilot.pause()
+            assert label in _screen_rows_text(app)
+            await pilot.press(key)
+            await pilot.pause()
+            assert app.current_mode == destination
+            default = Config.defaults().asr.cpu_threads
+            assert Config.load(path).asr.cpu_threads == (expected or default)
+            assert app.config_editor.dirty is (destination == "settings")
+
+    asyncio.run(exercise())
+
+
+def _screen_rows_text(app: HubApp) -> str:
+    return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
 def test_shell_guard_runs_on_quit_from_settings(tmp_path):
     async def exercise():
         path = _config_path(tmp_path)

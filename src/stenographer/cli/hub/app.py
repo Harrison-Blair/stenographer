@@ -78,30 +78,6 @@ class HubApp(App[None]):
         width: 1fr;
         height: auto;
     }
-    #sessions-list-scroll, #sessions-detail-scroll {
-        border-title-color: ansi_default;
-        border-title-style: bold;
-    }
-    #sessions-detail-header {
-        width: 1fr;
-        height: 1;
-        padding: 0 1;
-    }
-    #sessions-detail-title {
-        width: auto;
-        color: ansi_default;
-        text-style: bold;
-    }
-    #sessions-detail-labels {
-        width: 1fr;
-        color: #6ee69a;
-        text-style: bold;
-        text-align: right;
-    }
-    #files-browser-scroll, #files-options-scroll, #files-queue-scroll, #files-preview-scroll {
-        border-title-color: ansi_default;
-        border-title-style: bold;
-    }
     """
     )
 
@@ -487,7 +463,7 @@ class HubApp(App[None]):
     def _prompt_files_quit(self) -> None:
         log.info(fmt_event("hub", "quit_prompted", work="files"))
         self.push_screen(
-            QuitConfirm("Cancel the running Files job before quitting?"),
+            QuitConfirm("Cancel the running file job before quitting?"),
             self._confirm_files_quit,
         )
 
@@ -495,7 +471,7 @@ class HubApp(App[None]):
         log.info(fmt_event("hub", "quit_confirmed", work="files", confirmed=bool(confirmed)))
         if not confirmed:
             return
-        self.activity_status = "Canceling Files job..."
+        self.activity_status = "Canceling the file job..."
         self.refresh_view()
         self.run_worker(self._cancel_files_and_quit(), name="cancel-files", group="hub-work")
 
@@ -505,7 +481,7 @@ class HubApp(App[None]):
             await asyncio.to_thread(self.services.cancel_files)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
-            self.notify(f"Could not cancel the Files job: {exc}", severity="error")
+            self.notify(f"Could not cancel the file job: {exc}", severity="error")
             self.activity_status = None
             self.refresh_view()
             return
