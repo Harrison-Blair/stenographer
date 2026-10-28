@@ -17,9 +17,9 @@ from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 from stenographer.cli.hub.engine_status import EngineStatus
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
+from tests.cli.hub.test_library import FakeServices as LibraryServices
+from tests.cli.hub.test_library import _write_rec as _write_session
 from tests.cli.hub.test_live_view import FakeServices as RecordingServices
-from tests.cli.hub.test_sessions import FakeServices as LibraryServices
-from tests.cli.hub.test_sessions import _write_session
 
 
 class IdleServices:
@@ -225,7 +225,7 @@ def test_shell_show_library_selects_listed_unloaded_and_unknown_sessions(tmp_pat
         older = _write_session(sessions_root, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
         latest = _write_session(sessions_root, datetime(2026, 10, 21, 9, 0, tzinfo=UTC))
         app = HubApp(LibraryServices(sessions_root))
-        panel = app.library_screen.sessions_panel
+        panel = app.library_screen
 
         async def until(condition) -> None:
             for _ in range(100):
@@ -236,25 +236,25 @@ def test_shell_show_library_selects_listed_unloaded_and_unknown_sessions(tmp_pat
 
         async with app.run_test(size=(150, 45)) as pilot:
             await until(lambda: len(panel.summaries) == 2)
-            assert panel.selected_session_id == latest.name
+            assert panel.selected_id == latest.name
 
             app.show_library(older.name)
             await pilot.pause()
             assert app.current_mode == "library"
-            assert panel.selected_session_id == older.name
+            assert panel.selected_id == older.name
 
             # A session saved after the list loaded is not listed yet: reload and select it.
             newest = _write_session(sessions_root, datetime(2026, 10, 22, 8, 0, tzinfo=UTC))
             app.show_screen("record")
             app.show_library(newest.name)
-            await until(lambda: panel.selected_session_id == newest.name)
+            await until(lambda: panel.selected_id == newest.name)
             assert len(panel.summaries) == 3
 
             app.show_library(older.name)
-            await until(lambda: panel.selected_session_id == older.name)
+            await until(lambda: panel.selected_id == older.name)
             app.show_library("20990101T000000Z")
             await until(lambda: any("not found" in n.message for n in app._notifications))
-            assert panel.selected_session_id == older.name
+            assert panel.selected_id == older.name
             notice = next(n for n in app._notifications if "not found" in n.message)
             assert notice.severity == "warning"
 
