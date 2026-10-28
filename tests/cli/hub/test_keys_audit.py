@@ -402,11 +402,7 @@ def test_help_overlay_shows_every_shown_binding_of_the_dialog(tmp_path, name):
             await pilot.press("tab")
             await pilot.pause()
             assert not isinstance(dialog.focused, Input), name
-        active = {
-            key: item
-            for key, item in dialog.active_bindings.items()
-            if item.enabled
-        }
+        active = {key: item for key, item in dialog.active_bindings.items() if item.enabled}
         wanted = {
             (HelpOverlay.help_rows({key: item})[0])
             for key, item in active.items()
