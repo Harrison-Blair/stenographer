@@ -175,9 +175,11 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,
   `pageup`/`pagedown`, `home`/`end`, or the mouse wheel; the view follows new
-  lines at the bottom. Library lists saved sessions; press `n` there to open
-  Files, whose browser opens in your saved recordings, so queue files there
-  and use `x` to cancel a selected job. Settings has the General, Audio,
+  lines at the bottom. Library lists recordings, file sessions, and file
+  jobs; press `/` to search transcripts, `p` to play, `d` or `t` to
+  re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
+  a job. Press `n` there to open Files, whose browser opens in your saved
+  recordings, so queue files there and use `x` to cancel a selected job. Settings has the General, Audio,
   Recognition, Live, and Checks tabs; Checks runs the system checks and setup
   tests. See the [terminal hub guide](docs/hub.md) for all screens, controls,
   and file formats.

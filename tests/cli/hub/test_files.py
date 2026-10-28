@@ -122,7 +122,7 @@ def test_files_panels_have_board_layout_and_the_engine_card(tmp_path):
             assert abs(main.region.height - column * 3 / 5) < 1
 
             assert app.library_screen.files_open
-            assert not app.library_screen.sessions_panel.display
+            assert not app.screen.query_one("#library-body").display
             model = app.screen.query_one("#engine-model", Static).render()
             assert str(model) == "bark-pro-int8"
 
