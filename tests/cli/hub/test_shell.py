@@ -8,9 +8,10 @@ import threading
 from datetime import UTC, datetime
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 from stenographer.cli.hub.engine_status import EngineStatus
@@ -350,10 +351,10 @@ def test_shell_session_release_needs_the_owner():
 @pytest.mark.parametrize(
     ("tab", "key", "expected"),
     [
-        ("general", "enter", "Edit hotkey.binding"),
-        ("audio", "enter", "Edit audio.input_device"),
-        ("recognition", "enter", "Edit asr.idle_unload_seconds"),
-        ("live", "enter", "Edit live.diarize_mic"),
+        ("general", "enter", "input hotkey.binding"),
+        ("audio", "enter", "Microphone"),
+        ("recognition", "enter", "input asr.idle_unload_seconds"),
+        ("live", "enter", "toggled live.diarize_mic"),
         ("checks", "r", "probe"),
     ],
 )
@@ -365,6 +366,7 @@ def test_shell_settings_tab_keys_reach_the_active_tab(tmp_path, tab, key, expect
             config_path=_config_path(tmp_path),
             doctor_probe=lambda _config, _path: probes.append("probe") or _report("ok"),
         )
+        app.settings_screen.list_devices = lambda _key: []
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("3")
             app.settings_screen.select_tab(tab)
@@ -374,8 +376,14 @@ def test_shell_settings_tab_keys_reach_the_active_tab(tmp_path, tab, key, expect
             await pilot.pause(0.1)
             if tab == "checks":
                 assert len(probes) == before + 1
+            elif expected.startswith("input "):
+                assert isinstance(app.screen.focused, Input)
+                assert app.settings_screen.editing == expected.removeprefix("input ")
+            elif expected.startswith("toggled "):
+                assert app.config_editor.config.live.diarize_mic is True
             else:
-                assert _prompt_text(app) == expected
+                assert isinstance(app.screen, ChoiceDialog)
+                assert app.screen.dialog_title == expected
 
     asyncio.run(exercise())
 

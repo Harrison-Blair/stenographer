@@ -283,22 +283,53 @@ tab. The first four tabs edit
 | Recognition | `asr.idle_unload_seconds`, `asr.cpu_threads`, and the refine settings |
 | Live | `live.diarize_mic` |
 
-Each tab shows compact key/value rows. A `●` marks values that differ from
-their defaults. The selected key's description and default appear at the
-bottom of the panel. The context card shows the config path and the count of
-unsaved changes. Recognition holds the one shared set of ASR settings for
-dictation, Record, and Files. Model downloads are explicit. Run
+Each row shows a `●` slot, the setting name, its control, and help. A `▶`
+marks the selected row. The controls are:
+
+| Control | Example | Edit |
+| --- | --- | --- |
+| Toggle | `(●) on`, `( ) off` | `space` or `enter` flips it. |
+| Number | `900 s` | `enter` opens an input in the row; it refuses letters. |
+| Text | `http://127.0.0.1:11434` | `enter` opens an input in the row. |
+| Choice | `hybrid ▾` | `enter` opens the list of allowed values. |
+| Device | `Default input ▾` | `enter` lists the devices of the sound server. |
+| List | `[enter] Edit list… 3 terms` | `enter` opens the Vocabulary editor. |
+
+While an input in a row has focus, letters go to the input. `enter` keeps the
+value, `escape` cancels it, `tab` keeps it and selects the next row, and
+`ctrl+s` keeps it and saves. When the config refuses a value, the input stays
+open and the help of the row reads `✗ <reason>`, for example
+`✗ must be non-empty`.
+
+A `●` marks a row whose value differs from the saved file, not from the
+default. The help of the selected row shows the default. The context card
+shows the config file, `● N unsaved changes`, and the newest
+`config.toml.bak-<time>` backup with its time. Below the rows, `[ctrl+s] Save N
+changes`, `[u] Undo`, `[D] Reset row`, and `Discard all` act on the draft;
+Discard all asks first. Click a row to select it, and click it again to edit
+it. Recognition holds the one shared set of ASR settings for dictation,
+Record, and Files. Model downloads are explicit. Run
 `stenographer model download --asr` to build the speech model; see
 [build the speech model](usage.md#build-the-speech-model).
+
+The Vocabulary row (`refine.vocabulary`) opens a list editor. Press `a` to
+add a term, `e` to edit the selected term, and `del` to delete it. In the
+term input, `enter` keeps the term and `escape` closes the input. A term is
+trimmed, is not empty, has at most 64 characters, and does not repeat another
+term in any letter case; the list holds at most 200 terms. The editor refuses
+a term that breaks a rule: the input stays open and the line under it names the
+rule, for example `✗ term not kept: term 3 must be non-empty`. `enter` Done makes the list an
+unsaved change of Settings; `escape` cancels.
 
 | Key | Action |
 | --- | --- |
 | `left` / `right` | Select a tab. |
 | `up` / `down` | Select a setting. |
 | `enter` | Edit the selected setting. |
+| `space` | Flip the selected toggle. |
 | `u` | Undo the last edit. |
 | `shift+d` | Reset the selected setting to its default. |
-| `/` | Search setting names in every tab. |
+| `/` | Search setting names in every tab; `escape` clears the search. |
 | `ctrl+s` | Save changes and keep a timestamped backup. |
 
 Settings apply to new sessions and jobs. Work that is already running keeps
