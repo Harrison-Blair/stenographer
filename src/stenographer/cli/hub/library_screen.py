@@ -312,7 +312,11 @@ class LibraryScreen(HubScreen):
         total = sum(summary.audio_size_bytes for summary in self.summaries)
         text = f"{count} {'entry' if count == 1 else 'entries'}\n{self._format_size(total)} audio"
         if self.store is not None:
-            text += f"\n\n{self.store.root}"
+            root = self.store.root
+            home = pathlib.Path.home()
+            text += (
+                f"\n\n~/{root.relative_to(home)}" if root.is_relative_to(home) else f"\n\n{root}"
+            )
         return text
 
     def _draw_list(self) -> None:
@@ -400,7 +404,7 @@ class LibraryScreen(HubScreen):
         elif summary.interrupted:
             state = StatusToken.text("!", "interrupted", "danger")
         elif summary.label_state == "live":
-            state = Text("live labels", style=_DIM)
+            state = Text("" if summary.kind == "file" else "live labels", style=_DIM)
         else:
             state = Text(summary.label_state, style=StatusToken.TONES["ok"])
         return title, state

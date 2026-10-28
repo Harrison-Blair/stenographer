@@ -42,6 +42,11 @@ class ExportDialog(Dialog[tuple[str, Path] | None]):
     }
     ExportDialog #export-format-hint {
         color: #8b93a1;
+        padding: 0 0 0 12;
+        margin-bottom: 1;
+    }
+    ExportDialog #export-format-row {
+        margin-bottom: 0;
     }
     """
 
@@ -50,7 +55,7 @@ class ExportDialog(Dialog[tuple[str, Path] | None]):
         self.export_format = FORMATS[0]
 
     def compose_body(self) -> ComposeResult:
-        with Horizontal(classes="export-row"):
+        with Horizontal(classes="export-row", id="export-format-row"):
             yield Label("Format")
             for name in FORMATS:
                 yield HubButton(
@@ -58,7 +63,7 @@ class ExportDialog(Dialog[tuple[str, Path] | None]):
                     action=f"choose_format('{name}')",
                     id=f"export-format-{name}",
                 )
-            yield Label("tab next", id="export-format-hint")
+        yield Label("tab next format", id="export-format-hint")
         with Horizontal(classes="export-row", id="export-folder-row"):
             yield Label("Folder")
             yield Input("~/Documents", placeholder="Output folder", id="export-folder")

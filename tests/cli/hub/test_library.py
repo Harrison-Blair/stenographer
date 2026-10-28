@@ -440,6 +440,8 @@ def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
             await pilot.pause()
             text = _screen_text(app)
             assert "26 Oct 2026 · 13:30 · 0:01 · file" in text
+            # Live labels belong to a recording; a file session has no live pass.
+            assert "live" not in str(app.screen.query_one("#library-detail-state").render())
             assert not app.screen.query_one("#library-mic").display
             assert not app.screen.query_one("#library-sys").display
             assert "golf hotel india" in text
@@ -992,5 +994,19 @@ def test_library_layout_frames_rows_state_rule_and_transcript_colours(tmp_path):
             speaker = next(segment for segment in segments if segment.text.strip() == "Speaker 1")
             assert speaker.style.bold
             assert speaker.style.color.triplet == (255, 175, 95)
+
+    asyncio.run(exercise())
+
+
+def test_library_storage_card_shortens_the_home_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    root, _sessions = _library(tmp_path)
+    app = HubApp(FakeServices(root))
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 4, detail=False)
+            assert "~/sessions" in _card(app)
+            assert str(tmp_path) not in _card(app)
 
     asyncio.run(exercise())
