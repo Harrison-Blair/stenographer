@@ -10,16 +10,17 @@
 - config_view.py: Render and validate the config draft and its saves.
 - device_dialog.py: Choose the input device of the next recordings of this run.
 - dialogs.py: Confirm actions that stop work during quit.
+- export_dialog.py: Choose the export format and folder of a saved session.
 - handler.py: Prepare the hub and run its Textual app.
 - hub_screen.py: Compose the sidebar, body, and footer shared by each screen.
 - files_entry.py: Describe one directory or audio file in the browser.
 - files_view.py: Render the file browser, options, queue, and transcript preview.
-- library_screen.py: Show saved sessions and the Files sub-view.
+- library_entry.py: Describe one Library row: a session, a file job, or both.
+- library_screen.py: List, search, and act on sessions and file jobs; host Files.
 - record_screen.py: Record, stop and save, watch meters and transcript, rename speakers.
 - rename_dialog.py: Rename one speaker of a live or saved session.
 - services.py: Own recording, playback, and shared session services.
 - session_jobs.py: Reprocess saved transcripts with current models and settings.
-- sessions_view.py: Render saved-session storage, list, detail, and transcript.
 - speaker_select.py: Choose a speaker in the rename dialog.
 - speaker_select_overlay.py: Mark the highlighted speaker choice without a fill.
 - selection.py: Render selected rows with an accent marker and no fill.

@@ -43,6 +43,12 @@ screens, Record, Library, and Settings, in place of its six sections.
   speech light. `d` chooses the input device for the next recordings of this
   run without changing `config.toml`. The speakers card shows talk time, and a
   speaker of a saved session can be renamed.
+- Library lists recordings, file sessions, and unfinished file jobs in one
+  list with `date`, `dur`, `kind`, `spk`, and `labels` columns. Press `/` to
+  search titles and transcripts. A session that a job or another change is
+  using shows `busy` on its Rename, Re-diarize, Re-transcribe, and Delete
+  buttons, and `delete` on a job row cancels the job. Play works on a file
+  session, and Export asks for the format and the folder.
 
 ### Removed
 

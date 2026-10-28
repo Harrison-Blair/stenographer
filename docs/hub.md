@@ -152,23 +152,57 @@ files and privacy](live.md#saved-session-files).
 
 ## Library
 
-Library lists saved sessions. The context card shows the entry count, the
-audio size, and the sessions folder. The saved session list and
-selected-session detail use separate bordered panels. The list shows each
-session's duration and speaker count. Select a session with the up and down
-arrows. The detail view shows each speaker's talk time, microphone and system
-activity, whether labels were revised, and the transcript. The active recording
-does not appear in this list until it has been saved.
+Library has a list on the left and the detail of the selected entry on the
+right. The list holds saved recordings, file sessions, and file jobs that are
+not finished, newest first. Its columns are `date`, `dur`, `kind` (`rec` or
+`file`), `spk` (speaker count), and `labels`:
+
+- **Recording:** `labels` is `live` for live speaker labels, `relabeled` after
+  the relabel pass or a re-diarize, or `! interrupted` when the recording
+  stopped without a clean save.
+- **File session:** `labels` is the name of the source file.
+- **File job:** `dur` shows `queued` or the percent done, and `labels` shows the
+  source file name. A failed job shows `× failed`; press `delete` to remove its
+  row. When a job finishes, its row becomes the session row and stays
+  selected.
+- **Revision job:** a job that writes a new revision of a listed session shows
+  `queued` or its percent in the `dur` cell of that session row.
+
+The list updates when a job ends and when a recording is saved, and it keeps
+the selected entry. The active recording does not appear until it is saved.
+The context card shows the entry count, the audio size, and the sessions
+folder; the navigation row shows the entry count.
+
+Press `/` to search titles and transcripts; the search ignores case and runs in
+the background. A job row matches by its source file name. Press `escape` to
+clear the search.
+
+The detail shows the date, time, duration, and kind, the label state, each
+speaker's talk time, the microphone and system activity of a recording, and
+the transcript. Each action is a button that prints its key:
 
 | Key | Action |
 | --- | --- |
 | `n` | Open Files to transcribe audio files. |
-| `p` | Play or stop session audio with `pw-play`. |
-| `d` | Re-diarize the saved session. |
-| `t` | Re-transcribe the saved session. |
-| `r` | Rename a speaker in the selected session. |
-| `x` | Export the transcript as `md`, `jsonl`, `srt`, or `txt`. |
-| `delete` | Delete the selected session after confirmation. |
+| `up` / `down` | Select the previous or next entry. |
+| `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. |
+| `r` | Rename a speaker of the session. |
+| `d` | Re-diarize the session. A file session cannot: use Re-transcribe. |
+| `t` | Re-transcribe the session. |
+| `x` | Export the transcript. |
+| `delete` | Delete the session after confirmation. On a queued or running job, cancel it after confirmation. |
+| `pageup` / `pagedown`, `home` / `end` | Scroll the transcript. |
+
+While a re-diarize, re-transcribe, rename, delete, or file job changes a
+session, that session is busy: its Rename, Re-diarize, Re-transcribe, and
+Delete buttons show `busy` and do nothing, and a second change shows the
+notice `session busy`. On a session row with a running revision job, `delete`
+cancels the job.
+
+`x` opens the Export dialog. Press `tab` or click a format to choose `md`,
+`jsonl`, `srt`, or `txt`, and type the folder (default `~/Documents`). Press
+`enter` to export or `escape` to cancel. The notice shows the path of the
+exported file.
 
 Re-diarization and re-transcription write new transcript revisions and keep
 previous revisions. Re-labeling uses the same speaker similarity limits as the
@@ -180,7 +214,7 @@ lines only and microphone lines stay `You`. `r` can rename room speakers.
 ### Files
 
 Press `n` in Library to open Files in the screen body; press `escape` to
-return to the session list. Files has a browser, transcription options, a job
+return to the Library list. Files has a browser, transcription options, a job
 queue, and a result preview.
 The browser lists WAV, FLAC, OGG, MP3, Opus, AAC, M4A, MP4, MKV, WebM, and WMA
 files. Files that `soundfile` can read use that library. M4A and AAC files use
