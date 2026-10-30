@@ -37,7 +37,7 @@ For code changes, run:
 ```sh
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
-.venv/bin/pytest -m "not integration"
+env -u NO_COLOR .venv/bin/pytest -m "not integration"
 .venv/bin/stenographer --help
 ```
 
