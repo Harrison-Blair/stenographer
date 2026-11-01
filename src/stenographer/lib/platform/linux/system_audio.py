@@ -66,7 +66,6 @@ class LinuxSystemAudioCapture:
             raise SystemAudioCaptureError(reason or "pactl returned no default sink")
         command = [
             executable,
-            "--raw",
             "-P",
             "{ stream.capture.sink = true, node.name = stenographer-system-capture }",
             "--target",
@@ -118,7 +117,7 @@ class LinuxSystemAudioCapture:
         deadline = time.monotonic() + _LINK_CHECK_TIMEOUT
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                break
+                raise SystemAudioCaptureError("pw-record exited before system capture connected")
             remaining = deadline - time.monotonic()
             command = [executable, "-l"] if kind == "pw-link" else [executable]
             try:
