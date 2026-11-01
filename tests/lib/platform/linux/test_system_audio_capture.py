@@ -110,7 +110,6 @@ def test_linux_capture_reads_raw_float_frames_and_stops_process(tmp_path, monkey
             time.sleep(0.01)
         assert args_file.exists()
         assert json.loads(args_file.read_text()) == [
-            "--raw",
             "-P",
             "{ stream.capture.sink = true, node.name = stenographer-system-capture }",
             "--target",
@@ -149,6 +148,16 @@ def test_early_process_exit_is_reported_to_callback(tmp_path, monkeypatch):
     failures = [event for event in events if isinstance(event, SystemAudioCaptureError)]
     assert len(failures) == 1
     assert "exited unexpectedly" in str(failures[0])
+
+
+def test_capture_reports_player_exit_before_link(tmp_path, monkeypatch):
+    _install_tools(tmp_path, monkeypatch, link_output="")
+    player = tmp_path / "bin" / "pw-record"
+    player.write_text("#!/bin/sh\nexit 2\n")
+    with pytest.raises(
+        SystemAudioCaptureError, match="pw-record exited before system capture connected"
+    ):
+        LinuxSystemAudioCapture().start(lambda block: None)
 
 
 def test_capture_reports_wrong_monitor_link_and_stops_without_emitting_audio(tmp_path, monkeypatch):
