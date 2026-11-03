@@ -16,6 +16,7 @@
 !/BUILD.md
 !/AGENTS.md
 !/CLAUDE.md
+!/SPEC.md
 
 # Application code, including lib/ and generated platform bindings.
 !/src/
