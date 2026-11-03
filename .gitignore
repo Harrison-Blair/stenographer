@@ -1,152 +1,33 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Keep these rules synchronized with tool.hatch.build.exclude in pyproject.toml.
-# See docs/building.md for the repository and distribution contents policy.
 
 # Ignore everything unless an approved path below allows it.
+# This keeps recordings, models, and build output out of git.
 *
 
-# Root project metadata and shared guidance.
+# Root files.
 !/.gitignore
-!/.python-version
-!/pyproject.toml
 !/LICENSE
 !/README.md
-!/CHANGELOG.md
-# Compatibility redirect for the protected README link.
-!/BUILD.md
-!/AGENTS.md
-!/CLAUDE.md
 !/SPEC.md
 
-# Application code, including lib/ and generated platform bindings.
-!/src/
-!/src/stenographer/
-!/src/stenographer/**/
-!/src/stenographer/**/*.py
-
-# Bundled resources: additions require an explicit path.
-!/src/stenographer/assets/completions/_stenographer
-!/src/stenographer/assets/completions/stenographer.bash
-!/src/stenographer/assets/completions/stenographer.fish
-!/src/stenographer/assets/convert/bark_pro_to_sherpa.py
-!/src/stenographer/assets/convert/constraints.txt
-!/src/stenographer/assets/default_config.toml.in
-!/src/stenographer/assets/fonts/Caveat-OFL.txt
-!/src/stenographer/assets/fonts/Caveat-wght.ttf
-!/src/stenographer/assets/icons/stenographer.png
-!/src/stenographer/assets/keycodes.toml
-!/src/stenographer/assets/licenses/asd-ste100-MIT.txt
-!/src/stenographer/assets/licenses/silero-vad-MIT.txt
-!/src/stenographer/assets/licenses/titanet-small-NOTICE.txt
-!/src/stenographer/assets/licenses/underdog-bark-3.0-pro-NOTICE.txt
-!/src/stenographer/assets/sounds/legacy/delivered.wav
-!/src/stenographer/assets/sounds/legacy/error.wav
-!/src/stenographer/assets/sounds/legacy/record_start.wav
-!/src/stenographer/assets/sounds/legacy/record_stop.wav
-!/src/stenographer/assets/sounds/minimal-ui/delivered.wav
-!/src/stenographer/assets/sounds/minimal-ui/error.wav
-!/src/stenographer/assets/sounds/minimal-ui/record_start.wav
-!/src/stenographer/assets/sounds/minimal-ui/record_stop.wav
-!/src/stenographer/assets/sounds/soft-electronic/delivered.wav
-!/src/stenographer/assets/sounds/soft-electronic/error.wav
-!/src/stenographer/assets/sounds/soft-electronic/record_start.wav
-!/src/stenographer/assets/sounds/soft-electronic/record_stop.wav
-!/src/stenographer/assets/sounds/warm-desk/delivered.wav
-!/src/stenographer/assets/sounds/warm-desk/error.wav
-!/src/stenographer/assets/sounds/warm-desk/record_start.wav
-!/src/stenographer/assets/sounds/warm-desk/record_stop.wav
-
-# Tests and fixture instructions; speech recordings stay local.
-!/tests/
-!/tests/**/
-!/tests/**/*.py
-!/tests/fixtures/README.md
-
-# Development and installation scripts.
-!/scripts/
-!/scripts/**/
-!/scripts/**/*.py
-!/scripts/**/*.sh
-
-# Packaging code, build spec, service, and acceptance instructions.
-!/packaging/
-!/packaging/**/
-!/packaging/**/*.py
-!/packaging/stenographer.spec
-!/packaging/stenographer.service
-!/packaging/NATIVE-ACCEPTANCE.md
-
-# GitHub workflows.
-!/.github/
-!/.github/workflows/
-!/.github/workflows/*.yml
-!/.github/workflows/*.yaml
-
-# Maintained documentation and curated Refactoring.Guru references.
-!/docs/
-!/docs/architecture.md
-!/docs/building.md
-!/docs/cue-audition.md
-!/docs/refine.md
-!/docs/hub.md
-!/docs/transcription-experiments.md
-!/docs/usage.md
-!/docs/reference/
-!/docs/reference/guru/
-!/docs/reference/guru/code-smells.md
-!/docs/reference/guru/refactoring-techniques.md
-
-# GitHub Pages site; the icon and font are copied from src/ at deploy time.
-!/site/
-!/site/index.html
-!/site/site.css
-!/site/pill.js
-!/site/favicon.png
-
-# Local and generated directories remain excluded inside approved trees.
-__pycache__/
-.venv/
-venv/
-env/
-ENV/
-.cache/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.hypothesis/
-.tox/
-.nox/
-*.egg-info/
-build/
-dist/
-htmlcov/
-.agents/
-.claude/
-.codex/
-.fledge/
-.vscode/
-.idea/
-
-# Exclude their contents explicitly too: package builders can traverse ignored parents.
-**/__pycache__/**
-**/.venv/**
-**/venv/**
-**/env/**
-**/ENV/**
-**/.cache/**
-**/.pytest_cache/**
-**/.ruff_cache/**
-**/.mypy_cache/**
-**/.hypothesis/**
-**/.tox/**
-**/.nox/**
-**/*.egg-info/**
-**/build/**
-**/dist/**
-**/htmlcov/**
-**/.agents/**
-**/.claude/**
-**/.codex/**
-**/.fledge/**
-**/.vscode/**
-**/.idea/**
+# Bundled assets: additions require an explicit path.
+!/assets/
+!/assets/fonts/
+!/assets/fonts/Caveat-OFL.txt
+!/assets/fonts/Caveat-wght.ttf
+!/assets/icons/
+!/assets/icons/stenographer.png
+!/assets/licenses/
+!/assets/licenses/asd-ste100-MIT.txt
+!/assets/licenses/silero-vad-MIT.txt
+!/assets/licenses/titanet-small-NOTICE.txt
+!/assets/licenses/underdog-bark-3.0-pro-NOTICE.txt
+!/assets/sounds/
+!/assets/sounds/legacy/
+!/assets/sounds/minimal-ui/
+!/assets/sounds/soft-electronic/
+!/assets/sounds/warm-desk/
+!/assets/sounds/*/record_start.wav
+!/assets/sounds/*/record_stop.wav
+!/assets/sounds/*/delivered.wav
+!/assets/sounds/*/error.wav
