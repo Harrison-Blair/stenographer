@@ -780,8 +780,7 @@ class Daemon:
                     with self._lock:
                         self._secure_capture()
             self._recorder.close()
-        with contextlib.suppress(Exception):
-            self._worker.shutdown()
+        self._worker.shutdown()
         # One shared deadline for every bounded wait below: SIGINT is
         # permanently rebound to request_stop() while the process is up (see
         # install_stop_handlers), so a second or third Ctrl-C here does
