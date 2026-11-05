@@ -9,6 +9,9 @@ import numpy as np
 
 from stenographer.lib.audio.resample import _polyphase_filter
 
+#: Output samples per filter evaluation; bounds the index matrices on file blocks.
+_MAX_BATCH_OUTPUTS = 4096
+
 
 class StreamingResampler:
     """Resample mono float32 blocks while retaining only filter history."""
@@ -22,6 +25,11 @@ class StreamingResampler:
         self._filter = _polyphase_filter(self._up, self._down)
         self._n_taps = self._filter.size
         self._half = self._n_taps // 2
+        # Every phase reads the same tap count; a shorter one reads padded zeros.
+        self._tap_count = (self._n_taps + self._up - 1) // self._up
+        self._padded_filter = np.concatenate(
+            (self._filter, np.zeros(self._tap_count * self._up - self._n_taps, np.float32))
+        )
         self._samples = np.empty(0, dtype=np.float32)
         self._buffer_start = 0
         self._input_frames = 0
@@ -37,44 +45,40 @@ class StreamingResampler:
 
         self._samples = np.concatenate((self._samples, block))
         self._input_frames += block.size
-        return self._produce(final=False, output_count=None)
+        stop = (self._input_frames * self._up - self._half + self._down - 1) // self._down
+        result = self._produce(stop)
+        center = self._half + self._next_output * self._down
+        keep_from = max(0, (center - self._n_taps + self._up) // self._up)
+        discard = min(keep_from - self._buffer_start, self._samples.size)
+        if discard > 0:
+            self._samples = self._samples[discard:].copy()
+            self._buffer_start += discard
+        return result
 
     def flush(self) -> np.ndarray:
         """Return the remaining output samples with zero-padding at end of input."""
         if self._rate_in == self._rate_out:
             return np.empty(0, dtype=np.float32)
-        count = (self._input_frames * self._up + self._down - 1) // self._down
-        return self._produce(final=True, output_count=count)
+        result = self._produce((self._input_frames * self._up + self._down - 1) // self._down)
+        self._samples = np.empty(0, dtype=np.float32)
+        self._buffer_start = self._input_frames
+        return result
 
-    def _produce(self, *, final: bool, output_count: int | None) -> np.ndarray:
-        output: list[np.float32] = []
-        while output_count is None or self._next_output < output_count:
-            center = self._half + self._next_output * self._down
-            right = center // self._up
-            if not final and right >= self._input_frames:
-                break
-            left = max(0, (center - self._n_taps + self._up) // self._up)
-            right = min(right, self._input_frames - 1)
-            left = max(left, self._buffer_start)
-            if left <= right:
-                indices = np.arange(left, right + 1)
-                taps = center - indices * self._up
-                values = self._samples[indices - self._buffer_start]
-                output.append(np.dot(values, self._filter[taps]))
-            else:
-                output.append(np.float32(0.0))
-            self._next_output += 1
-
-        result = np.asarray(output, dtype=np.float32) if output else np.empty(0, dtype=np.float32)
-
-        if not final:
-            center = self._half + self._next_output * self._down
-            keep_from = max(0, (center - self._n_taps + self._up) // self._up)
-            discard = min(keep_from - self._buffer_start, self._samples.size)
-            if discard > 0:
-                self._samples = self._samples[discard:].copy()
-                self._buffer_start += discard
-        else:
-            self._samples = np.empty(0, dtype=np.float32)
-            self._buffer_start = self._input_frames
+    def _produce(self, stop_output: int) -> np.ndarray:
+        """Filter outputs ``_next_output`` to ``stop_output``; absent input reads as zero."""
+        count = stop_output - self._next_output
+        if count <= 0:
+            return np.empty(0, dtype=np.float32)
+        padding = np.zeros(self._tap_count, dtype=np.float32)
+        padded = np.concatenate((padding, self._samples, padding))
+        offsets = np.arange(self._tap_count)
+        result = np.empty(count, dtype=np.float32)
+        for start in range(0, count, _MAX_BATCH_OUTPUTS):
+            outputs = self._next_output + np.arange(start, min(start + _MAX_BATCH_OUTPUTS, count))
+            centers = self._half + outputs * self._down
+            taps = (centers % self._up)[:, None] + offsets * self._up
+            inputs = (centers // self._up)[:, None] - offsets - self._buffer_start + self._tap_count
+            values = padded[inputs] * self._padded_filter[taps]
+            result[outputs - self._next_output] = values.sum(axis=1, dtype=np.float32)
+        self._next_output = stop_output
         return result

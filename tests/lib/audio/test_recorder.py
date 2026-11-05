@@ -28,6 +28,7 @@ from stenographer.lib.audio.recorder import (
     RecorderState,
 )
 from stenographer.lib.audio.resample import _polyphase_filter, _resample_poly
+from stenographer.lib.audio.streaming_resampler import StreamingResampler
 
 _LOGGER = "stenographer.lib.audio.recorder"
 
@@ -156,6 +157,31 @@ def test_resample_matches_the_zero_stuffed_definition(rate, frames):
     expected = _zero_stuffed_reference(data, rate, 16000)
     assert out.size == expected.size
     assert out == pytest.approx(expected, abs=1e-5)
+
+
+@pytest.mark.parametrize("rate", [48000, 44100, 22050, 8000])
+@pytest.mark.parametrize("block", [1, 37, 512, 20000])
+def test_streaming_resampler_matches_the_definition_for_any_block_size(rate, block):
+    data = np.random.default_rng(block).standard_normal(6000).astype(np.float32)
+    resampler = StreamingResampler(rate, 16000)
+
+    pieces = [resampler.process(data[i : i + block]) for i in range(0, data.size, block)]
+    pieces.append(resampler.flush())
+    out = np.concatenate(pieces)
+
+    gcd = math.gcd(rate, 16000)
+    assert out.size == math.ceil(data.size * (16000 // gcd) / (rate // gcd))
+    assert out.dtype == np.float32
+    assert out == pytest.approx(_zero_stuffed_reference(data, rate, 16000)[: out.size], abs=1e-5)
+
+
+def test_streaming_resampler_emits_only_outputs_with_complete_input():
+    resampler = StreamingResampler(48000, 16000)
+
+    # A 3:1 filter has 61 taps, so output m centres on input 30 + 3m.
+    assert resampler.process(np.ones(30, dtype=np.float32)).size == 0
+    assert resampler.process(np.ones(1, dtype=np.float32)).size == 1
+    assert resampler.process(np.ones(3, dtype=np.float32)).size == 1
 
 
 @pytest.mark.parametrize("min_rms", [0.0, -1.0])
