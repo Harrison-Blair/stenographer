@@ -2,10 +2,10 @@
 """The ASR child's request loop, run in-process over real queues.
 
 ``_child_main`` is a plain loop over two queues, so it runs here on real
-``queue.Queue`` objects with no process and no model: the requests used never
-reach a model load, which stays the integration smoke suite's job. The child's
-own logger configuration is global to the interpreter, so it is saved and
-restored around each run.
+``queue.Queue`` objects with no process. The native model is replaced by a
+stand-in whose decode fails, because a real load stays the integration smoke
+suite's job. The child's own logger configuration is global to the interpreter,
+so it is saved and restored around each run.
 """
 
 from __future__ import annotations
@@ -19,6 +19,24 @@ import pytest
 from stenographer.lib.config.models import Config
 from stenographer.lib.logging import pipeline
 from stenographer.lib.platform.asr import _child_main
+from stenographer.lib.transcribe import model as model_module
+
+_DECODE_ERROR = "decoder said: the quick brown fox"
+
+
+class _FailingModel:
+    cpu_threads = 1
+
+    def __init__(self, cfg) -> None:
+        pass
+
+    def transcribe(self, samples):
+        raise RuntimeError(_DECODE_ERROR)
+
+
+@pytest.fixture
+def failing_model(monkeypatch):
+    monkeypatch.setattr(model_module, "Model", _FailingModel)
 
 
 def _run_child(requests: list[tuple]) -> tuple[queue.Queue, list[logging.LogRecord], queue.Queue]:
@@ -69,26 +87,29 @@ def test_stop_ends_the_loop_without_answering_anything():
     assert requests.qsize() == 1
 
 
-def test_a_decode_before_any_load_is_refused_and_the_child_stays_alive():
+@pytest.mark.usefixtures("failing_model")
+def test_a_failed_decode_is_answered_and_the_child_stays_alive():
     samples = np.zeros(16000, dtype=np.float32)
 
     responses, _records, _requests = _run_child(
-        [("job", samples, 4), ("job", samples, 5), ("stop",)]
+        [("load", 3), ("job", samples, 4), ("job", samples, 5), ("stop",)]
     )
 
-    # Both requests are answered: a refused decode must not end the child, or
-    # the parent would respawn a healthy process for a protocol mistake.
+    # Both requests are answered: a failed decode must not end the child, or
+    # the parent would respawn a healthy process for one bad request.
     assert _drain(responses) == [
-        ("error", "inference", "RuntimeError: decode requested before model load"),
-        ("error", "inference", "RuntimeError: decode requested before model load"),
+        ("model_ready",),
+        ("error", "inference", f"RuntimeError: {_DECODE_ERROR}"),
+        ("error", "inference", f"RuntimeError: {_DECODE_ERROR}"),
     ]
 
 
-def test_each_refusal_is_logged_under_the_requesting_utterance():
+@pytest.mark.usefixtures("failing_model")
+def test_each_failure_is_logged_under_the_requesting_utterance():
     samples = np.zeros(16000, dtype=np.float32)
 
     _responses, records, _requests = _run_child(
-        [("job", samples, 4), ("job", samples, 5), ("stop",)]
+        [("load", 3), ("job", samples, 4), ("job", samples, 5), ("stop",)]
     )
 
     failures = [record for record in records if "asr: job_failed" in record.getMessage()]
@@ -100,26 +121,30 @@ def test_each_refusal_is_logged_under_the_requesting_utterance():
     assert "phase=decode" in failures[0].getMessage()
 
 
+@pytest.mark.usefixtures("failing_model")
 def test_a_decode_failure_never_renders_the_exception_message():
     # The decode lineage can quote audio-derived text, so only the class name
     # and the traceback frames may be logged.
     samples = np.zeros(16000, dtype=np.float32)
 
-    _responses, records, _requests = _run_child([("job", samples, 4), ("stop",)])
+    _responses, records, _requests = _run_child([("load", 3), ("job", samples, 4), ("stop",)])
 
     message = next(r.getMessage() for r in records if "asr: job_failed" in r.getMessage())
     assert "error=RuntimeError" in message
     assert "frames=asr.py:" in message
     assert "detail=" not in message
-    assert "decode requested before model load" not in message
+    assert _DECODE_ERROR not in message
 
 
+@pytest.mark.usefixtures("failing_model")
 @pytest.mark.parametrize("utterance", [None, 12])
-def test_the_refusal_response_carries_no_audio(utterance):
+def test_the_failure_response_carries_no_audio(utterance):
     samples = np.full(16000, 0.5, dtype=np.float32)
 
-    responses, _records, _requests = _run_child([("job", samples, utterance), ("stop",)])
+    responses, _records, _requests = _run_child(
+        [("load", 3), ("job", samples, utterance), ("stop",)]
+    )
 
-    (kind, category, detail) = _drain(responses)[0]
+    (kind, category, detail) = _drain(responses)[1]
     assert (kind, category) == ("error", "inference")
-    assert detail == "RuntimeError: decode requested before model load"
+    assert detail == f"RuntimeError: {_DECODE_ERROR}"

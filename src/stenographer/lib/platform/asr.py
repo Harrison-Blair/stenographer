@@ -41,8 +41,7 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
         set_utterance(message[-1])
         if message[0] == "load":
             try:
-                if model is None:
-                    model = Model(cfg)
+                model = Model(cfg)
             except Exception as exc:
                 # A model-load failure names paths and library complaints, not
                 # anything derived from audio: its text may be rendered.
@@ -65,8 +64,6 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
 
         phase = "decode"
         try:
-            if model is None:
-                raise RuntimeError("decode requested before model load")
             samples = message[1]
             inference_started_at = time.perf_counter()
             result = model.transcribe(samples)

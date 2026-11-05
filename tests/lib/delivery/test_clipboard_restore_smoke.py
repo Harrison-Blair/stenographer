@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from functools import partial
 
 import pytest
 
@@ -44,6 +45,8 @@ if detect_clipboard_backend() is not ClipboardBackend.WL_COPY:
     pytest.skip("the chord-free smoke covers the wl-copy backend", allow_module_level=True)
 if shutil.which("wl-copy") is None or shutil.which("wl-paste") is None:
     pytest.skip("wl-copy/wl-paste not on PATH", allow_module_level=True)
+
+_TOOLS = ClipboardBackend.WL_COPY.tools
 
 #: Appends ``<length> <sha256>`` for each clipboard entry it is handed on stdin.
 _RECORDER = """\
@@ -72,13 +75,13 @@ def _entry(text: str) -> str:
 @pytest.fixture
 def real_clipboard():
     """Save the user's clipboard through the reader under test; always put it back."""
-    saved = read_clipboard()
+    saved = read_clipboard(_TOOLS)
     if saved is None:
         pytest.skip("the clipboard holds nothing this reader can save and restore")
     try:
         yield saved
     finally:
-        assert restore_clipboard(saved) is True
+        assert restore_clipboard(_TOOLS, saved) is True
 
 
 @pytest.fixture
@@ -120,7 +123,7 @@ def test_history_sees_original_then_refined_then_the_restored_seed(real_clipboar
     refined = f"stenographer-smoke-refined-{token} "
     seed_snapshot = ClipboardSnapshot("text/plain;charset=utf-8", seed.encode())
 
-    assert restore_clipboard(seed_snapshot) is True
+    assert restore_clipboard(_TOOLS, seed_snapshot) is True
     entries = _wait_for(history, lambda e: _entry(seed) in e)
     assert _entry(seed) in entries
     start = len(entries)
@@ -128,9 +131,9 @@ def test_history_sees_original_then_refined_then_the_restored_seed(real_clipboar
     keyboard = RecordingKeyboard()
     deliverer = Deliverer(
         keyboard=keyboard,
-        copy=copy_both_selections,
-        read=read_clipboard,
-        restore=restore_clipboard,
+        copy=partial(copy_both_selections, _TOOLS),
+        read=partial(read_clipboard, _TOOLS),
+        restore=partial(restore_clipboard, _TOOLS),
         restore_delay=0.2,
     )
     assert deliverer.deliver(refined, original=original) is True
@@ -140,7 +143,7 @@ def test_history_sees_original_then_refined_then_the_restored_seed(real_clipboar
     expected = [_entry(original), _entry(refined), _entry(seed)]
     entries = _wait_for(history, lambda e: e[start:] == expected)
     assert entries[start:] == expected
-    assert read_clipboard() == seed_snapshot
+    assert read_clipboard(_TOOLS) == seed_snapshot
     timings = deliverer.last_timings
     assert timings.original_copied is True
     assert timings.restored is True

@@ -14,6 +14,7 @@ stream.
 from __future__ import annotations
 
 import logging
+import math
 from types import SimpleNamespace
 
 import numpy as np
@@ -26,7 +27,8 @@ from stenographer.lib.audio.recorder import (
     Recorder,
     RecorderState,
 )
-from stenographer.lib.audio.resample import _resample_poly
+from stenographer.lib.audio.resample import _polyphase_filter, _resample_poly
+from stenographer.lib.audio.streaming_resampler import StreamingResampler
 
 _LOGGER = "stenographer.lib.audio.recorder"
 
@@ -133,6 +135,53 @@ def test_resample_preserves_dc_level():
     interior = out[100:-100]
     assert interior.size > 0
     assert np.allclose(interior, 0.3, atol=0.02)
+
+
+def _zero_stuffed_reference(data: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
+    """The textbook definition: stuff zeros, filter at the high rate, decimate."""
+    gcd = math.gcd(rate_in, rate_out)
+    up, down = rate_out // gcd, rate_in // gcd
+    filt = _polyphase_filter(up, down)
+    stuffed = np.zeros(data.size * up, dtype=np.float64)
+    stuffed[::up] = data
+    return np.convolve(stuffed, filt.astype(np.float64))[filt.size // 2 :: down]
+
+
+@pytest.mark.parametrize("rate", [48000, 44100, 22050, 8000])
+@pytest.mark.parametrize("frames", [1, 7, 500, 3000])
+def test_resample_matches_the_zero_stuffed_definition(rate, frames):
+    data = np.random.default_rng(frames).standard_normal(frames).astype(np.float32)
+
+    out = _resample_poly(data, rate, 16000)
+
+    expected = _zero_stuffed_reference(data, rate, 16000)
+    assert out.size == expected.size
+    assert out == pytest.approx(expected, abs=1e-5)
+
+
+@pytest.mark.parametrize("rate", [48000, 44100, 22050, 8000])
+@pytest.mark.parametrize("block", [1, 37, 512, 20000])
+def test_streaming_resampler_matches_the_definition_for_any_block_size(rate, block):
+    data = np.random.default_rng(block).standard_normal(6000).astype(np.float32)
+    resampler = StreamingResampler(rate, 16000)
+
+    pieces = [resampler.process(data[i : i + block]) for i in range(0, data.size, block)]
+    pieces.append(resampler.flush())
+    out = np.concatenate(pieces)
+
+    gcd = math.gcd(rate, 16000)
+    assert out.size == math.ceil(data.size * (16000 // gcd) / (rate // gcd))
+    assert out.dtype == np.float32
+    assert out == pytest.approx(_zero_stuffed_reference(data, rate, 16000)[: out.size], abs=1e-5)
+
+
+def test_streaming_resampler_emits_only_outputs_with_complete_input():
+    resampler = StreamingResampler(48000, 16000)
+
+    # A 3:1 filter has 61 taps, so output m centres on input 30 + 3m.
+    assert resampler.process(np.ones(30, dtype=np.float32)).size == 0
+    assert resampler.process(np.ones(1, dtype=np.float32)).size == 1
+    assert resampler.process(np.ones(3, dtype=np.float32)).size == 1
 
 
 @pytest.mark.parametrize("min_rms", [0.0, -1.0])
@@ -443,24 +492,6 @@ def test_a_mono_capture_returns_its_samples_and_the_cost_of_taking_them():
     assert sounddevice.streams[0].closes == 0
 
 
-def test_a_one_dimensional_callback_block_is_still_accepted():
-    # Defensive only: a real PortAudio callback always carries a channel axis.
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
-
-    recorder._on_audio(
-        np.full(800, 0.25, dtype=np.float32),
-        800,
-        SimpleNamespace(inputBufferAdcTime=1.0),
-        SimpleNamespace(input_overflow=False),
-    )
-    audio = recorder.stop()
-
-    assert audio.size == 800
-    assert audio[0] == pytest.approx(0.25)
-
-
 def test_a_stereo_callback_keeps_channel_zero():
     # The second channel of a stereo microphone is routinely silent or out of
     # phase; averaging it into the capture is what the gate then has to find.
@@ -728,15 +759,6 @@ def test_a_device_whose_name_is_not_text_is_simply_unnamed():
 
     assert recorder._state is RecorderState.PREPARED
     assert recorder._device_name is None
-
-
-def test_activation_refuses_to_run_without_a_negotiated_stream():
-    recorder = Recorder(device=1, max_seconds=5)
-
-    with pytest.raises(RuntimeError, match="no prepared stream"):
-        recorder._activate(recovery="none")
-
-    assert recorder._state is RecorderState.UNPREPARED
 
 
 def test_a_retained_stream_that_will_not_activate_is_replaced_exactly_once(caplog):

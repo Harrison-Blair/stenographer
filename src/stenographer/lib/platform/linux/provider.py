@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import signal
+from functools import partial
 from typing import TYPE_CHECKING
 
 from stenographer.lib.platform.diagnostics_host_mixin import DiagnosticsHostMixin
@@ -108,19 +109,27 @@ class LinuxPlatform(DiagnosticsHostMixin):
         return UinputKeyboard()
 
     def clipboard_writer(self, backend: str) -> Callable[[str], bool]:
-        from stenographer.lib.platform.linux.clipboard import ClipboardBackend, copy_for_backend
+        from stenographer.lib.platform.linux.clipboard import (
+            ClipboardBackend,
+            copy_both_selections,
+        )
 
-        return copy_for_backend(ClipboardBackend(backend))
+        return partial(copy_both_selections, ClipboardBackend(backend).tools)
 
     def clipboard_reader(self, backend: str) -> ClipboardReader | None:
-        from stenographer.lib.platform.linux.clipboard import ClipboardBackend, reader_for_backend
+        from stenographer.lib.platform.linux.clipboard import (
+            ClipboardBackend,
+            clipboard_read_available,
+            read_clipboard,
+        )
 
-        return reader_for_backend(ClipboardBackend(backend))
+        tools = ClipboardBackend(backend).tools
+        return partial(read_clipboard, tools) if clipboard_read_available(tools) else None
 
     def clipboard_restorer(self, backend: str) -> ClipboardRestorer:
-        from stenographer.lib.platform.linux.clipboard import ClipboardBackend, restorer_for_backend
+        from stenographer.lib.platform.linux.clipboard import ClipboardBackend, restore_clipboard
 
-        return restorer_for_backend(ClipboardBackend(backend))
+        return partial(restore_clipboard, ClipboardBackend(backend).tools)
 
     def notifier(self) -> Notifier:
         from stenographer.lib.platform.linux.notify import NotifySendNotifier

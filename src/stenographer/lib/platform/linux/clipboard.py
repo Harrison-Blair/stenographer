@@ -8,6 +8,7 @@ import selectors
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -15,9 +16,7 @@ from stenographer.lib.platform.linux.process import child_env
 from stenographer.lib.platform.types import ClipboardSnapshot
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer
+    from collections.abc import Sequence
 
 
 log = logging.getLogger(__name__)
@@ -62,9 +61,57 @@ _SENSITIVE_TYPE = "x-kde-passwordManagerHint"
 _DATA_CONTROL_GLOBALS = frozenset({"ext_data_control_manager_v1", "zwlr_data_control_manager_v1"})
 
 
+@dataclass(frozen=True)
+class ClipboardTools:
+    """The tools of one backend and their exact command lines."""
+
+    copy_tool: str
+    read_tool: str
+    #: ``(selection, argv)`` of each write that delivers a copy.
+    copies: tuple[tuple[str, tuple[str, ...]], ...]
+    #: Taking X11 selection ownership is fire-and-forget, so xclip's writes are
+    #: read back; wl-copy's exit status is already the answer.
+    verify_copies: bool
+    list_argv: tuple[str, ...]
+    read_argv: tuple[str, ...]
+    restore_argv: tuple[str, ...]
+
+
+_XCLIP_READ = ("xclip", "-selection", "clipboard", "-o", "-t")
+
+
 class ClipboardBackend(enum.Enum):
     WL_COPY = "wl-copy"
     X11 = "x11"
+
+    @property
+    def tools(self) -> ClipboardTools:
+        return _BACKEND_TOOLS[self]
+
+
+_BACKEND_TOOLS = {
+    ClipboardBackend.WL_COPY: ClipboardTools(
+        copy_tool="wl-copy",
+        read_tool="wl-paste",
+        copies=(("clipboard", ("wl-copy",)), ("primary", ("wl-copy", "--primary"))),
+        verify_copies=False,
+        list_argv=("wl-paste", "-l"),
+        read_argv=("wl-paste", "-n", "-t"),
+        restore_argv=("wl-copy",),
+    ),
+    ClipboardBackend.X11: ClipboardTools(
+        copy_tool="xclip",
+        read_tool="xclip",
+        copies=(
+            ("clipboard", ("xclip", "-selection", "clipboard")),
+            ("primary", ("xclip", "-selection", "primary")),
+        ),
+        verify_copies=True,
+        list_argv=(*_XCLIP_READ, "TARGETS"),
+        read_argv=_XCLIP_READ,
+        restore_argv=("xclip", "-selection", "clipboard"),
+    ),
+}
 
 
 def pick_backend(globals_seen: set[str] | None, *, have_display: bool) -> ClipboardBackend:
@@ -120,33 +167,40 @@ def detect_clipboard_backend() -> ClipboardBackend:
     return pick_backend(globals_seen, have_display=have_display)
 
 
-def copy_both_selections(text: str) -> bool:
+def _write_to_tool(argv: Sequence[str], payload: bytes) -> None:
+    """Pipe *payload* to *argv*; raises one of ``_COPY_ERRORS`` on failure.
+
+    stdout/stderr go to DEVNULL rather than being captured: wl-copy and xclip
+    fork and serve the selection in the background, and the forked child
+    inherits any pipes, so capturing blocks until the timeout even though the
+    selection is already set. The return code is still collected, so check=True
+    is unchanged. Nothing raised here has seen the payload.
+    """
+    subprocess.run(
+        list(argv),
+        input=payload,
+        check=True,
+        timeout=_COPY_TIMEOUT_SECONDS,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=child_env(),
+    )
+
+
+def copy_both_selections(tools: ClipboardTools, text: str) -> bool:
     """Copy *text* to the regular clipboard and the primary selection.
 
     Both selections because Shift+Insert reads the primary selection in some
     clients (e.g. kitty) and the regular clipboard in others. Returns True only
-    if BOTH ``wl-copy`` invocations succeed; False on any failure.
-
-    stdout/stderr go to DEVNULL rather than being captured: wl-copy forks and
-    serves the selection in the background, and the forked child inherits any
-    pipes, so capturing blocks until the timeout even though the clipboard is
-    already set. The return code is still collected, so check=True is unchanged.
+    if every write succeeds and, where *tools* asks for it, reads back as *text*.
     """
     payload = text.encode("utf-8")
-    for argv in (["wl-copy"], ["wl-copy", "--primary"]):
+    for selection, argv in tools.copies:
         try:
-            subprocess.run(
-                argv,
-                input=payload,
-                check=True,
-                timeout=_COPY_TIMEOUT_SECONDS,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=child_env(),
-            )
+            _write_to_tool(argv, payload)
         except _COPY_ERRORS as exc:
             # WARNING, not DEBUG: a failed copy is why nothing was pasted, and
-            # ``wl-copy``'s own complaint is host vocabulary, never transcript.
+            # the tool's own complaint is host vocabulary, never transcript.
             log_failure(
                 log,
                 logging.WARNING,
@@ -154,80 +208,49 @@ def copy_both_selections(text: str) -> bool:
                 exc,
                 safe=True,
                 argv=" ".join(argv),
+                phase="write" if tools.verify_copies else None,
             )
+            return False
+        if tools.verify_copies and not _selection_holds(selection, argv, payload):
             return False
     return True
 
 
-def copy_both_selections_x11(text: str) -> bool:
-    """Copy *text* to CLIPBOARD and PRIMARY via xclip under XWayland.
-
-    xclip forks a child that serves the selection, and that child inherits any
-    pipes — stdout/stderr go to DEVNULL for the same reason as wl-copy above.
-    Unlike wl-copy's exit status, taking X11 selection ownership is
-    fire-and-forget, so each write is confirmed by reading the selection back
-    (``xclip -o`` exits without forking) and comparing bytes: True only when
-    both selections verifiably hold *text*.
-    """
-    payload = text.encode("utf-8")
-    for selection in ("clipboard", "primary"):
-        argv = ["xclip", "-selection", selection]
-        try:
-            # The write discards both streams, so nothing it can raise has ever
-            # seen the selection: its own complaint is host vocabulary.
-            subprocess.run(
-                argv,
-                input=payload,
-                check=True,
-                timeout=_COPY_TIMEOUT_SECONDS,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=child_env(),
-            )
-        except _COPY_ERRORS as exc:
-            log_failure(
-                log,
-                logging.WARNING,
-                "deliver: copy_failed",
-                exc,
-                safe=True,
-                argv=" ".join(argv),
-                phase="write",
-            )
-            return False
-        try:
-            readback = subprocess.run(
-                [*argv, "-o"],
-                check=True,
-                timeout=_COPY_TIMEOUT_SECONDS,
-                capture_output=True,
-                env=child_env(),
-            )
-        except _COPY_ERRORS as exc:
-            # safe=False, and split from the write above for exactly this
-            # reason: the read-back captures the selection, so a raised
-            # ``CalledProcessError``/``TimeoutExpired`` carries the clipboard's
-            # own bytes on ``.output``/``.stdout``. Only the class name and the
-            # traceback frames may ever be rendered from this lineage; the argv
-            # is ours, so it is passed as a field rather than read off ``.cmd``.
-            log_failure(
-                log,
-                logging.WARNING,
-                "deliver: copy_failed",
-                exc,
-                safe=False,
-                argv=" ".join(argv),
-                phase="readback",
-            )
-            return False
-        if readback.stdout != payload:
-            log.warning(
-                "deliver: xclip_readback_mismatch selection=%s expected_bytes=%d got_bytes=%d",
-                selection,
-                len(payload),
-                len(readback.stdout),
-            )
-            return False
+def _selection_holds(selection: str, argv: Sequence[str], payload: bytes) -> bool:
+    """Whether reading the selection back (``-o`` exits without forking) gives *payload*."""
+    try:
+        readback = subprocess.run(
+            [*argv, "-o"],
+            check=True,
+            timeout=_COPY_TIMEOUT_SECONDS,
+            capture_output=True,
+            env=child_env(),
+        )
+    except _COPY_ERRORS as exc:
+        # safe=False, and split from the write for exactly this reason: the
+        # read-back captures the selection, so a raised
+        # ``CalledProcessError``/``TimeoutExpired`` carries the clipboard's
+        # own bytes on ``.output``/``.stdout``. Only the class name and the
+        # traceback frames may ever be rendered from this lineage; the argv
+        # is ours, so it is passed as a field rather than read off ``.cmd``.
+        log_failure(
+            log,
+            logging.WARNING,
+            "deliver: copy_failed",
+            exc,
+            safe=False,
+            argv=" ".join(argv),
+            phase="readback",
+        )
+        return False
+    if readback.stdout != payload:
+        log.warning(
+            "deliver: xclip_readback_mismatch selection=%s expected_bytes=%d got_bytes=%d",
+            selection,
+            len(payload),
+            len(readback.stdout),
+        )
+        return False
     return True
 
 
@@ -250,7 +273,7 @@ def pick_snapshot_type(offered: list[str]) -> str | None:
     return None
 
 
-def _capture_bounded(argv: list[str], deadline: float) -> bytes | None:
+def _capture_bounded(argv: Sequence[str], deadline: float) -> bytes | None:
     """*argv*'s stdout, or None once it fails, overruns the deadline or the cap.
 
     ``capture_output`` cannot bound memory, so stdout is read in chunks that
@@ -309,10 +332,10 @@ def _capture_bounded(argv: list[str], deadline: float) -> bytes | None:
     return b"".join(chunks)
 
 
-def _snapshot(list_argv: list[str], read_argv: list[str]) -> ClipboardSnapshot | None:
-    """List the clipboard's types, pick one, read it; all within one budget."""
+def read_clipboard(tools: ClipboardTools) -> ClipboardSnapshot | None:
+    """Snapshot the regular clipboard, never primary: list, pick, read; one budget."""
     deadline = time.monotonic() + _SNAPSHOT_BUDGET_SECONDS
-    listing = _capture_bounded(list_argv, deadline)
+    listing = _capture_bounded(tools.list_argv, deadline)
     if listing is None:
         return None
     offered = [line.strip() for line in listing.decode("utf-8", errors="replace").splitlines()]
@@ -323,7 +346,7 @@ def _snapshot(list_argv: list[str], read_argv: list[str]) -> ClipboardSnapshot |
     if mime is None:
         log.debug(fmt_event("deliver", "snapshot_skipped", reason="no_type"))
         return None
-    data = _capture_bounded([*read_argv, mime], deadline)
+    data = _capture_bounded([*tools.read_argv, mime], deadline)
     if data is None:
         return None
     if not data:
@@ -332,75 +355,24 @@ def _snapshot(list_argv: list[str], read_argv: list[str]) -> ClipboardSnapshot |
     return ClipboardSnapshot(mime, data)
 
 
-def read_clipboard() -> ClipboardSnapshot | None:
-    """Snapshot the regular clipboard (never primary) through ``wl-paste``."""
-    return _snapshot(["wl-paste", "-l"], ["wl-paste", "-n", "-t"])
-
-
-def read_clipboard_x11() -> ClipboardSnapshot | None:
-    """Snapshot CLIPBOARD (never PRIMARY) through ``xclip`` under XWayland."""
-    argv = ["xclip", "-selection", "clipboard", "-o", "-t"]
-    return _snapshot([*argv, "TARGETS"], argv)
-
-
-def _restore(argv: list[str], snapshot: ClipboardSnapshot) -> bool:
-    """Write *snapshot* back with *argv*; True when the tool accepted it.
-
-    Both streams go to DEVNULL for the same fork reason as the copies above,
-    so nothing raised here has seen the bytes.
-    """
+def restore_clipboard(tools: ClipboardTools, snapshot: ClipboardSnapshot) -> bool:
+    """Put *snapshot* back on the regular clipboard only, with its own type."""
+    argv = [*tools.restore_argv, "-t", snapshot.mime]
     try:
-        subprocess.run(
-            argv,
-            input=snapshot.data,
-            check=True,
-            timeout=_COPY_TIMEOUT_SECONDS,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=child_env(),
-        )
+        _write_to_tool(argv, snapshot.data)
     except _COPY_ERRORS as exc:
         log_failure(log, logging.WARNING, "deliver: restore_failed", exc, safe=True, tool=argv[0])
         return False
     return True
 
 
-def restore_clipboard(snapshot: ClipboardSnapshot) -> bool:
-    """Put *snapshot* back on the regular clipboard only, with its own type."""
-    return _restore(["wl-copy", "-t", snapshot.mime], snapshot)
+def clipboard_read_available(tools: ClipboardTools) -> bool:
+    """Whether the tool that reads this backend's clipboard is installed."""
+    return shutil.which(tools.read_tool) is not None
 
 
-def restore_clipboard_x11(snapshot: ClipboardSnapshot) -> bool:
-    """Put *snapshot* back on CLIPBOARD only, with its own type."""
-    return _restore(["xclip", "-selection", "clipboard", "-t", snapshot.mime], snapshot)
-
-
-def copy_for_backend(backend: ClipboardBackend) -> Callable[[str], bool]:
-    """The copy callable for a detected backend. PURE mapping."""
-    if backend is ClipboardBackend.X11:
-        return copy_both_selections_x11
-    return copy_both_selections
-
-
-def clipboard_read_available(backend: ClipboardBackend) -> bool:
-    """Whether the tool that reads *backend*'s clipboard is installed."""
-    return shutil.which("xclip" if backend is ClipboardBackend.X11 else "wl-paste") is not None
-
-
-def reader_for_backend(backend: ClipboardBackend) -> ClipboardReader | None:
-    """The snapshot reader for a backend, or None when its tool is missing."""
-    if not clipboard_read_available(backend):
-        return None
-    return read_clipboard_x11 if backend is ClipboardBackend.X11 else read_clipboard
-
-
-def restorer_for_backend(backend: ClipboardBackend) -> ClipboardRestorer:
-    """The snapshot restorer for a backend. PURE mapping."""
-    return restore_clipboard_x11 if backend is ClipboardBackend.X11 else restore_clipboard
-
-
-def probe_clipboard() -> tuple[bool, str]:
-    """(needed binary present, detected backend name) for the delivery copy path."""
+def probe_clipboard() -> tuple[bool, bool, str]:
+    """(copy tool present, read tool present, detected backend name) for delivery."""
     backend = detect_clipboard_backend()
-    binary = "xclip" if backend is ClipboardBackend.X11 else "wl-copy"
-    return shutil.which(binary) is not None, backend.value
+    tools = backend.tools
+    return shutil.which(tools.copy_tool) is not None, clipboard_read_available(tools), backend.value
