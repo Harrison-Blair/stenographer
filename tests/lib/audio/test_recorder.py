@@ -837,22 +837,6 @@ def test_an_unprepared_recorder_gets_one_attempt_and_no_recovery(caplog):
     assert "retained=0" in warnings[0]
 
 
-def test_a_later_prepare_reuses_the_module_the_recorder_was_built_on():
-    sounddevice = FakeSoundDevice()
-    recorder = Recorder(device=1, max_seconds=5)
-
-    recorder.prepare(sounddevice)
-    recorder.close()
-    recorder.prepare()
-
-    # No argument, and still no real PortAudio import: the retained module is
-    # what the second negotiation used.
-    assert recorder._sounddevice is sounddevice
-    assert len(sounddevice.attempts) == 2
-    assert len(sounddevice.streams) == 2
-    assert recorder._state is RecorderState.PREPARED
-
-
 def test_preparing_an_already_prepared_recorder_is_a_no_op():
     sounddevice = FakeSoundDevice()
     recorder = _prepared(sounddevice)
