@@ -42,16 +42,12 @@ def test_keyboard_opens_no_device_until_a_chord_is_sent():
     """The injector is lazy and its teardown is idempotent.
 
     ``/dev/uinput`` is opened on the first ``send_chord`` (the loopback smoke
-    owns that path); constructing, entering, and closing must never touch it,
+    owns that path); constructing and closing must never touch it,
     so the daemon can build an injector on a host that has no uinput at all.
     Closing twice is a no-op, because daemon shutdown may unwind twice.
     """
     from stenographer.lib.platform.linux.uinput import UinputKeyboard
 
     keyboard = UinputKeyboard()
-    with keyboard as entered:
-        assert entered is keyboard
     keyboard.close()
-
-    with UinputKeyboard() as fresh:
-        fresh.close()
+    keyboard.close()

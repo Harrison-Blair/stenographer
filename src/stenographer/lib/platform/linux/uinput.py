@@ -54,9 +54,3 @@ class UinputKeyboard:
         if self._ui is not None:
             self._ui.close()
             self._ui = None
-
-    def __enter__(self) -> UinputKeyboard:
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.close()
