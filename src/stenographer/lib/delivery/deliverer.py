@@ -146,6 +146,8 @@ class Deliverer:
             self.last_timings = timings
         if not copied:
             return False
+        # Confirmed, so the original now is an older entry the user may choose again.
+        self._written = frozenset({text.encode("utf-8")})
         if on_copied is not None:
             on_copied()
         if self._wait_released is not None:

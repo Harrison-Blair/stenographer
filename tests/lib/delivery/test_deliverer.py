@@ -552,12 +552,12 @@ def test_a_new_delivery_drops_a_snapshot_the_last_one_never_restored():
     assert restore.snapshots == []
 
 
-def _restoring_over(current, restore: RecordingRestore):
+def _restoring_over(current, restore: RecordingRestore, *, copy=None):
     """A deliverer whose clipboard holds *current* once the settle delay ends."""
     reads = iter([lambda: SEED, current])
     return Deliverer(
         keyboard=RecordingKeyboard(),
-        copy=RecordingClipboard(),
+        copy=copy if copy is not None else RecordingClipboard(),
         read=lambda: next(reads)(),
         restore=restore,
         restore_delay=0.5,
@@ -632,3 +632,29 @@ def test_a_cancel_during_the_original_copy_never_writes_the_refined_text():
     assert deliverer.restore_clipboard() is True
     assert restore.snapshots == [SEED]
     assert deliverer.last_timings.restored is True
+
+
+ORIGINAL = ClipboardSnapshot(SEED.mime, b"original ")
+
+
+def test_restore_keeps_the_original_chosen_from_history_during_the_delay():
+    restore = RecordingRestore()
+    deliverer = _restoring_over(lambda: ORIGINAL, restore)
+    assert deliverer.deliver("refined ", original="original ") is True
+
+    assert deliverer.restore_clipboard() is False
+    assert restore.snapshots == []
+
+
+def test_restore_replaces_the_original_left_behind_by_a_failed_refined_copy():
+    class SecondFails(RecordingClipboard):
+        def __call__(self, text: str) -> bool:
+            super().__call__(text)
+            return len(self.texts) == 1
+
+    restore = RecordingRestore()
+    deliverer = _restoring_over(lambda: ORIGINAL, restore, copy=SecondFails())
+    assert deliverer.deliver("refined ", original="original ") is False
+
+    assert deliverer.restore_clipboard() is True
+    assert restore.snapshots == [SEED]
