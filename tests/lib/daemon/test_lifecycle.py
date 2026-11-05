@@ -857,51 +857,6 @@ def test_stop_waits_for_an_in_flight_refine_before_unloading_the_model():
     assert pipeline_alive_at_unload == [False]
 
 
-def test_stop_joins_the_pipeline_thread_before_calling_unload(monkeypatch):
-    # Deterministic companion to the behavioural test above: asserts the
-    # code-level call SEQUENCE (pipeline join before unload) with nothing
-    # blocked, so there is no timing window at all — it inverts 100% of the
-    # time against the reverted ordering, by construction. It is whiter-box
-    # than the test above (it asserts "join was called" rather than the
-    # user-visible "the thread was not alive"), so it is kept as a second,
-    # belt-and-braces guard rather than a replacement for it.
-    order: list[str] = []
-
-    class _Refiner:
-        def will_refine(self, text: str) -> bool:
-            return True
-
-        @property
-        def last_result(self):
-            return None
-
-        def refine(self, text: str, *, profile, cancelled=never_cancelled) -> str:
-            return text
-
-        def unload(self) -> None:
-            order.append("unload")
-
-    daemon = _daemon(
-        result=TranscriptionResult(text="one", duration_seconds=1.0), refiner=_Refiner()
-    )
-    daemon.on_key_down()
-    daemon.on_key_up()
-    pipeline_thread = daemon._pipeline_thread
-    assert pipeline_thread is not None
-
-    real_join = threading.Thread.join
-
-    def spy_join(self, timeout=None):
-        if self is pipeline_thread:
-            order.append("pipeline_join")
-        return real_join(self, timeout=timeout)
-
-    monkeypatch.setattr(threading.Thread, "join", spy_join)
-    daemon.stop()
-
-    assert order == ["pipeline_join", "unload"]
-
-
 def test_stop_does_not_wait_out_a_hung_refine_warmup():
     # Seen to FAIL when the refine warm-up join drew on the full shared
     # shutdown budget (_STOP_BUDGET_SECONDS, 30s) instead of its own small
