@@ -56,7 +56,6 @@ def words_from_tokens(
     tokens: Sequence[str],
     timestamps: Sequence[float],
     durations: Sequence[float],
-    log_probs: Sequence[float],
     *,
     offset: float,
 ) -> list[WordInfo]:
@@ -65,12 +64,9 @@ def words_from_tokens(
     A token spans its timestamp plus its predicted TDT duration (none: a point).
     Times shift back by *offset* (the leading pad) and clamp at zero. A token
     without letters or digits joins the previous word without widening its span.
-    ``probability`` is exp of the mean token log-prob, or 1.0 when the log-probs
-    do not align with the tokens; it is information only.
     """
     spans = list(durations) if len(durations) == len(tokens) else [0.0] * len(tokens)
-    scores = list(log_probs) if len(log_probs) == len(tokens) else None
-    words: list[tuple[float, float, str, list[float]]] = []
+    words: list[tuple[float, float, str]] = []
     starts_word = True
     for index, token in enumerate(tokens):
         if token == _UNKNOWN_TOKEN:
@@ -82,19 +78,15 @@ def words_from_tokens(
             continue
         start = max(0.0, timestamps[index] - offset)
         end = max(start, timestamps[index] + spans[index] - offset)
-        score = [scores[index]] if scores is not None else []
         if starts_word or not words:
-            words.append((start, end, piece, score))
+            words.append((start, end, piece))
         else:
-            first, last, joined, previous = words[-1]
+            first, last, joined = words[-1]
             if any(ch.isalnum() for ch in piece):
                 last = max(last, end)
-            words[-1] = (first, last, joined + piece, previous + score)
+            words[-1] = (first, last, joined + piece)
         starts_word = False
-    return [
-        WordInfo(start, end, word, math.exp(sum(score) / len(score)) if score else 1.0)
-        for start, end, word, score in words
-    ]
+    return [WordInfo(start, end, word) for start, end, word in words]
 
 
 def decode_segments(text: str, words: list[WordInfo]) -> list[SegmentInfo]:

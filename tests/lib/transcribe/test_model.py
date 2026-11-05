@@ -115,8 +115,8 @@ def _segment(start, end, text, words=None):
 
 
 def test_assemble_keeps_every_segment_and_concatenates():
-    w1 = WordInfo(0.0, 0.5, "hi", 0.9)
-    w2 = WordInfo(1.0, 1.5, "there", 0.9)
+    w1 = WordInfo(0.0, 0.5, "hi")
+    w2 = WordInfo(1.0, 1.5, "there")
     segments = [_segment(0.0, 0.5, " hi ", [w1]), _segment(1.0, 1.5, "there", [w2])]
     result = _assemble(segments, audio_seconds=2.0, vad_seconds=1.5)
     assert result.text == "hi there"
@@ -126,7 +126,7 @@ def test_assemble_keeps_every_segment_and_concatenates():
 
 
 def test_assemble_validates_word_density():
-    words = [WordInfo(0.0, 0.01, "x", 0.9) for _ in range(13)]
+    words = [WordInfo(0.0, 0.01, "x") for _ in range(13)]
     segments = [_segment(0.0, 1.0, "x" * 13, words)]
     with pytest.raises(PathologicalOutputError):
         _assemble(segments, audio_seconds=1.5, vad_seconds=1.0)
@@ -154,7 +154,7 @@ def test_pad_samples_prepends_a_quarter_second_of_zeros():
 
 def test_tokens_join_into_words_at_the_word_marker():
     words = words_from_tokens(
-        ["▁hel", "lo", "▁world"], [0.25, 0.33, 0.65], [0.08, 0.16, 0.24], [], offset=0.25
+        ["▁hel", "lo", "▁world"], [0.25, 0.33, 0.65], [0.08, 0.16, 0.24], offset=0.25
     )
     assert [w.word for w in words] == ["hello", "world"]
     assert words[0].start == pytest.approx(0.0)
@@ -164,19 +164,19 @@ def test_tokens_join_into_words_at_the_word_marker():
 
 
 def test_a_space_prefix_also_starts_a_word():
-    words = words_from_tokens([" so", " it", "s"], [0.0, 0.1, 0.2], [], [], offset=0.0)
+    words = words_from_tokens([" so", " it", "s"], [0.0, 0.1, 0.2], [], offset=0.0)
     assert [w.word for w in words] == ["so", "its"]
 
 
 def test_a_bare_marker_token_starts_the_next_word():
-    words = words_from_tokens(["▁one", "▁", "two"], [0.0, 0.3, 0.4], [], [], offset=0.0)
+    words = words_from_tokens(["▁one", "▁", "two"], [0.0, 0.3, 0.4], [], offset=0.0)
     assert [w.word for w in words] == ["one", "two"]
     assert words[1].start == pytest.approx(0.4)
 
 
 def test_punctuation_joins_the_word_and_keeps_its_span():
     words = words_from_tokens(
-        ["▁yes", ",", "▁no", "."], [0.0, 0.5, 0.8, 1.6], [0.2, 0.08, 0.2, 0.08], [], offset=0.0
+        ["▁yes", ",", "▁no", "."], [0.0, 0.5, 0.8, 1.6], [0.2, 0.08, 0.2, 0.08], offset=0.0
     )
     assert [w.word for w in words] == ["yes,", "no."]
     assert words[0].end == pytest.approx(0.2)
@@ -184,44 +184,26 @@ def test_punctuation_joins_the_word_and_keeps_its_span():
 
 
 def test_unknown_tokens_are_dropped():
-    words = words_from_tokens(["▁a", "<unk>", "▁b"], [0.0, 0.2, 0.4], [], [], offset=0.0)
+    words = words_from_tokens(["▁a", "<unk>", "▁b"], [0.0, 0.2, 0.4], [], offset=0.0)
     assert [w.word for w in words] == ["a", "b"]
 
 
 def test_timestamps_inside_the_pad_clamp_at_zero():
-    words = words_from_tokens(["▁hi"], [0.1], [0.08], [], offset=0.25)
+    words = words_from_tokens(["▁hi"], [0.1], [0.08], offset=0.25)
     assert words[0].start == 0.0
     assert words[0].end == 0.0
 
 
 def test_missing_durations_give_point_spans():
-    words = words_from_tokens(["▁hi"], [0.5], [], [], offset=0.25)
+    words = words_from_tokens(["▁hi"], [0.5], [], offset=0.25)
     assert (words[0].start, words[0].end) == (pytest.approx(0.25), pytest.approx(0.25))
-
-
-def test_word_probability_is_exp_of_mean_token_log_prob():
-    words = words_from_tokens(
-        ["▁hel", "lo", "▁x"], [0.0, 0.1, 0.2], [], [-0.2, -0.4, 0.0], offset=0.0
-    )
-    assert words[0].probability == pytest.approx(math.exp(-0.3))
-    assert words[1].probability == pytest.approx(1.0)
-
-
-def test_word_probability_is_one_without_log_probs():
-    words = words_from_tokens(["▁hi", "▁yo"], [0.0, 0.2], [], [], offset=0.0)
-    assert [w.probability for w in words] == [1.0, 1.0]
-
-
-def test_word_probability_is_one_when_log_probs_do_not_align():
-    words = words_from_tokens(["▁hi", "▁yo"], [0.0, 0.2], [], [-0.5], offset=0.0)
-    assert [w.probability for w in words] == [1.0, 1.0]
 
 
 # --- one segment per decode ---
 
 
 def test_a_decode_gives_one_segment_spanning_its_words():
-    words = [WordInfo(0.1, 0.4, "hi", 1.0), WordInfo(0.5, 0.9, "there", 1.0)]
+    words = [WordInfo(0.1, 0.4, "hi"), WordInfo(0.5, 0.9, "there")]
     [segment] = decode_segments(" hi there ", words)
     assert (segment.start, segment.end, segment.text) == (0.1, 0.9, "hi there")
     assert segment.words == words
@@ -241,12 +223,11 @@ def test_unknown_markers_leave_the_segment_text():
 
 
 class _Result:
-    def __init__(self, text, tokens, timestamps, durations, ys_log_probs=()):
+    def __init__(self, text, tokens, timestamps, durations):
         self.text = text
         self.tokens = tokens
         self.timestamps = timestamps
         self.durations = durations
-        self.ys_log_probs = ys_log_probs
 
 
 class _Stream:
@@ -283,9 +264,7 @@ def _model(result):
 
 
 def test_model_decodes_padded_samples_and_shifts_timestamps_back():
-    model, recognizer = _model(
-        _Result(" hi there", ["▁hi", "▁there"], [0.33, 0.65], [0.16, 0.24], [-0.1, -0.2])
-    )
+    model, recognizer = _model(_Result(" hi there", ["▁hi", "▁there"], [0.33, 0.65], [0.16, 0.24]))
     speech = np.full(8000, 0.1, dtype=np.float32)
     result = model.transcribe(speech)
 

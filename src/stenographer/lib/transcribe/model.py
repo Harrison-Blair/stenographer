@@ -124,7 +124,6 @@ class Model:
             list(decoded.tokens),
             list(decoded.timestamps),
             list(decoded.durations),
-            list(decoded.ys_log_probs),
             offset=_PAD_SECONDS,
         )
         # The input is already speech only (the dictation VAD or a live phrase),

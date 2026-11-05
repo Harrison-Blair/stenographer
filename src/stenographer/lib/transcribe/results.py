@@ -11,7 +11,6 @@ class WordInfo:
     start: float
     end: float
     word: str
-    probability: float
 
 
 @dataclass(frozen=True)
