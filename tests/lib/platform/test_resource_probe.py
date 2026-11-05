@@ -57,32 +57,29 @@ def test_the_gpu_query_asks_only_for_anonymous_aggregates(monkeypatch, tmp_path)
     ]
 
 
-@pytest.mark.parametrize("body", ['echo "12"', "true", 'echo "12, 2048, 7"'])
-def test_unexpected_csv_shapes_report_unavailable_rather_than_a_number(monkeypatch, tmp_path, body):
-    sample = _probe_with_nvidia(monkeypatch, tmp_path, body)
+@pytest.mark.parametrize(
+    ("body", "shebang", "expected_reason"),
+    [
+        pytest.param('echo "12"', "#!/bin/sh", "gpu_metrics_unavailable", id="too_few_fields"),
+        pytest.param("true", "#!/bin/sh", "gpu_metrics_unavailable", id="no_output"),
+        pytest.param(
+            'echo "12, 2048, 7"', "#!/bin/sh", "gpu_metrics_unavailable", id="too_many_fields"
+        ),
+        pytest.param(
+            'echo "N/A, [Not Supported]"', "#!/bin/sh", "gpu_probe_failed", id="unparseable_values"
+        ),
+        pytest.param('echo "12, 2048"\nexit 9', "#!/bin/sh", "gpu_probe_failed", id="nonzero_exit"),
+        pytest.param("true", "#!/nonexistent/interpreter", "gpu_probe_failed", id="unlaunchable"),
+    ],
+)
+def test_a_bad_vendor_tool_reports_its_reason_rather_than_a_number(
+    monkeypatch, tmp_path, body, shebang, expected_reason
+):
+    sample = _probe_with_nvidia(monkeypatch, tmp_path, body, shebang=shebang)
 
     assert sample["gpu_utilization_percent"] is None
     assert sample["gpu_memory_used_bytes"] is None
-    assert sample["reasons"]["gpu"] == "gpu_metrics_unavailable"
-
-
-def test_unparseable_values_are_a_probe_failure(monkeypatch, tmp_path):
-    sample = _probe_with_nvidia(monkeypatch, tmp_path, 'echo "N/A, [Not Supported]"')
-
-    assert sample["gpu_utilization_percent"] is None
-    assert sample["reasons"]["gpu"] == "gpu_probe_failed"
-
-
-def test_a_nonzero_exit_status_is_a_probe_failure(monkeypatch, tmp_path):
-    sample = _probe_with_nvidia(monkeypatch, tmp_path, 'echo "12, 2048"\nexit 9')
-
-    assert sample["reasons"]["gpu"] == "gpu_probe_failed"
-
-
-def test_an_unlaunchable_vendor_tool_is_a_probe_failure(monkeypatch, tmp_path):
-    sample = _probe_with_nvidia(monkeypatch, tmp_path, "true", shebang="#!/nonexistent/interpreter")
-
-    assert sample["reasons"]["gpu"] == "gpu_probe_failed"
+    assert sample["reasons"]["gpu"] == expected_reason
 
 
 def test_a_hanging_vendor_tool_cannot_stall_the_sample(monkeypatch, tmp_path):
