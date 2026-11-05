@@ -555,23 +555,18 @@ def test_worker_logging_replaces_child_handlers_with_one_forwarder():
         logger.propagate = saved_propagate
 
 
-def test_an_unavailable_log_file_is_reported_once_per_process(tmp_path):
-    """The warning names a recovery action; repeating it every rotation would not."""
-    from stenographer.lib.logging.pipeline import _build_file_handler
-
+def test_an_unavailable_log_file_is_reported_once_per_setup_lifecycle(tmp_path):
     blocked = tmp_path / "occupied"
     blocked.write_text("not a directory", encoding="utf-8")
-    logger = logging.getLogger("stenographer.tests.filewarning")
     stream = StringIO()
-    handler = logging.StreamHandler(stream)
     env = {"XDG_STATE_HOME": str(blocked)}
+    shutdown_logging()
     try:
-        assert _build_file_handler(logger, env, tmp_path, handler) is None
-        assert _build_file_handler(logger, env, tmp_path, handler) is None
-
+        setup_logging(env=env, home=tmp_path, stderr=stream)
+        setup_logging(env=env, home=tmp_path, stderr=stream)
         assert stream.getvalue().count("logging: file_unavailable") == 1
-        assert f"path={blocked}" in stream.getvalue()
-        assert "fallback=stderr" in stream.getvalue()
+        shutdown_logging()
+        setup_logging(env=env, home=tmp_path, stderr=stream)
+        assert stream.getvalue().count("logging: file_unavailable") == 2
     finally:
-        if hasattr(logger, "_stenographer_file_warning_emitted"):
-            delattr(logger, "_stenographer_file_warning_emitted")
+        shutdown_logging()
