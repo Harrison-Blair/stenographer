@@ -6,7 +6,6 @@ from __future__ import annotations
 import importlib
 import logging
 import logging.handlers
-import os
 from io import StringIO
 
 import pytest
@@ -62,14 +61,8 @@ def test_resolve_log_level(value, expected):
     assert resolve_log_level(value) == expected
 
 
-def _require_integration() -> None:
-    if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-        pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1")
-
-
 @pytest.mark.integration
 def test_setup_is_idempotent_and_preserves_host_handler(tmp_path):
-    _require_integration()
     shutdown_logging()
     logger = logging.getLogger("stenographer")
     host_handler = logging.NullHandler()
@@ -94,7 +87,6 @@ def test_setup_is_idempotent_and_preserves_host_handler(tmp_path):
 
 @pytest.mark.integration
 def test_file_handler_rotates_at_configured_limit(tmp_path):
-    _require_integration()
     shutdown_logging()
     try:
         logger = setup_logging(
@@ -124,7 +116,6 @@ def test_file_handler_rotates_at_configured_limit(tmp_path):
 
 @pytest.mark.integration
 def test_file_failure_falls_back_to_stderr_and_warns_once(tmp_path):
-    _require_integration()
     shutdown_logging()
     blocked = tmp_path / "not-a-directory"
     blocked.write_text("occupied", encoding="utf-8")
@@ -149,7 +140,6 @@ def test_file_failure_falls_back_to_stderr_and_warns_once(tmp_path):
 
 @pytest.mark.integration
 def test_invalid_file_path_value_falls_back_safely(tmp_path):
-    _require_integration()
     shutdown_logging()
     stderr = StringIO()
     try:
