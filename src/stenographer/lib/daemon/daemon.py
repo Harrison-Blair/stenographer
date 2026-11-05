@@ -703,6 +703,14 @@ class Daemon:
                 self._emit_summary(self._take_record(outcome or outcome_name))
                 self._record_profile = None
 
+    @property
+    def notifier(self) -> Notifier:
+        return self._notifier
+
+    def prepare_recorder(self) -> None:
+        """Open the audio path ahead of the first press."""
+        self._recorder.prepare()
+
     def run(self) -> None:
         """Start the listener and block until stopped."""
         if self._listener is None:

@@ -94,7 +94,7 @@ def run(cfg: Config) -> int:
 
     try:
         try:
-            daemon._recorder.prepare()
+            daemon.prepare_recorder()
         except Exception as exc:
             log_failure(
                 log,
@@ -113,7 +113,7 @@ def run(cfg: Config) -> int:
                 start_background_check(
                     __version__,
                     plat.state_dir(os.environ, Path.home()),
-                    daemon._notifier,
+                    daemon.notifier,
                 )
             except Exception as exc:
                 log_failure(log, logging.DEBUG, "update_check: not_started", exc, safe=True)
