@@ -89,10 +89,9 @@ class LiveSession:
         self._relabel_skipped = False
         try:
             self._system_capture = self._platform.system_audio_capture()
-            self._system_platform_reason = None
         except UnsupportedPlatformError as exc:
             self._system_capture = None
-            self._system_platform_reason = str(exc)
+            log_failure(log, logging.WARNING, "live: system_source_unavailable", exc, safe=True)
         self._recorder = Recorder(
             device=cfg.audio.input_device if device is None else device,
             max_seconds=0,
@@ -106,10 +105,6 @@ class LiveSession:
         self._control_lock = threading.RLock()
         self._enabled = {"mic": mic, "system": system and self._system_capture is not None}
         self._active = {"mic": False, "system": False}
-        self._reasons: dict[str, str | None] = {
-            "mic": None,
-            "system": self._system_platform_reason,
-        }
         self._levels = {"mic": float("-inf"), "system": float("-inf")}
         self._speech = {"mic": False, "system": False}
         self._block_listeners: list[Callable[[str, np.ndarray], None]] = []
@@ -151,7 +146,7 @@ class LiveSession:
             self._transcriber.start()
             self._started = True
             for source in ("mic", "system"):
-                if self._enabled[source] and self._reasons[source] is None:
+                if self._enabled[source]:
                     self._start_source(source)
 
     def subscribe(self, callback: Callable[[TranscriptLine], None]) -> None:
@@ -273,11 +268,6 @@ class LiveSession:
             }
 
     @property
-    def source_reasons(self) -> dict[str, str | None]:
-        with self._lock:
-            return dict(self._reasons)
-
-    @property
     def levels_dbfs(self) -> dict[str, float]:
         with self._lock:
             return dict(self._levels)
@@ -326,7 +316,7 @@ class LiveSession:
             )
 
     def toggle(self, source: str) -> None:
-        """Toggle one source. An unavailable source keeps its reason until retried."""
+        """Toggle one source. An unavailable source stays off."""
         with self._control_lock:
             if self._stopped:
                 return
@@ -335,7 +325,6 @@ class LiveSession:
                 self._stop_source(source)
             else:
                 self._enabled[source] = True
-                self._reasons[source] = None
                 if not self._paused:
                     self._start_source(source)
             log.info(
@@ -362,7 +351,7 @@ class LiveSession:
             self._paused = False
             self._run_started_at = self._monotonic()
             for source in ("mic", "system"):
-                if self._enabled[source] and self._reasons[source] is None:
+                if self._enabled[source]:
                     self._start_source(source)
             log.info(fmt_event("live", "resumed", duration_seconds=round(self.elapsed_seconds, 3)))
 
@@ -483,16 +472,13 @@ class LiveSession:
             available, reason = False, str(exc)
         if not available:
             self._enabled["system"] = False
-            self._reasons["system"] = reason or "system audio capture is unavailable"
+            log.warning(fmt_event("live", "system_source_unavailable", reason=reason))
 
     def _start_source(self, source: str) -> None:
         if self._active[source] or self._paused or self._stopped:
             return
         if source == "system" and self._system_capture is None:
             self._enabled[source] = False
-            self._reasons[source] = (
-                self._system_platform_reason or "system audio capture is unavailable"
-            )
             return
         if source == "system":
             try:
@@ -502,7 +488,7 @@ class LiveSession:
                 available, reason = False, str(exc)
             if not available:
                 self._enabled[source] = False
-                self._reasons[source] = reason or "system audio capture is unavailable"
+                log.warning(fmt_event("live", "system_source_unavailable", reason=reason))
                 return
         try:
             self._pad_source(source, self.elapsed_seconds)
@@ -511,7 +497,6 @@ class LiveSession:
                 self._segmenters[source] = segmenter
                 self._segment_offsets[source] = self.elapsed_seconds
                 self._active[source] = True
-                self._reasons[source] = None
             if source == "mic":
                 self._recorder.start()
             else:
@@ -524,7 +509,6 @@ class LiveSession:
                 self._active[source] = False
                 self._enabled[source] = False
                 self._segmenters[source] = None
-                self._reasons[source] = str(exc)
             log_failure(
                 log, logging.WARNING, "live: source_start_failed", exc, safe=True, source=source
             )
@@ -561,7 +545,6 @@ class LiveSession:
             with self._lock:
                 self._active["system"] = False
                 self._enabled["system"] = False
-                self._reasons["system"] = str(block)
                 self._speech["system"] = False
                 segmenter = self._segmenters["system"]
                 self._segmenters["system"] = None

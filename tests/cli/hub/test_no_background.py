@@ -25,7 +25,6 @@ class FakeSession:
     lines = ()
     speakers = (("speaker-1", "Speaker 1"),)
     source_states: ClassVar[dict[str, str]] = {"mic": "on", "system": "on"}
-    source_reasons: ClassVar[dict[str, str | None]] = {"mic": None, "system": None}
     levels_dbfs: ClassVar[dict[str, float]] = {"mic": -24.0, "system": -18.0}
     meter_floor_dbfs = -70.0
     failed_phrase_count = 0

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.job import FileJob
 from stenographer.lib.files.media import MediaInfo, inspect_media, iter_media_audio
 from stenographer.lib.files.models import FileJobOptions
@@ -224,6 +225,14 @@ class FilesEngine:
         lines: list[TranscriptLine] = []
         embeddings: list[np.ndarray] = []
         duration = media.duration_seconds or 0.0
+        furthest = 0.0
+
+        def report_position(seconds: float) -> None:
+            # A phrase can end behind the audio already read, so progress keeps its maximum.
+            nonlocal furthest
+            furthest = max(furthest, seconds)
+            percent = round(80 * min(duration, furthest) / duration) if duration > 0 else 0
+            job._update("transcribe", percent, tuple(lines))
 
         def transcribe_phrases(phrases) -> bool:
             for phrase in phrases:
@@ -255,13 +264,12 @@ class FilesEngine:
                             text=text,
                         )
                     )
-                processed = min(duration, max(0.0, phrase.end)) if duration > 0 else 0.0
-                percent = round(80 * processed / duration) if duration > 0 else 0
-                job._update("transcribe", percent, tuple(lines))
+                report_position(phrase.end)
             return True
 
         blocks = iter_media_audio(job.options.path, media, self._decoder)
         pending = np.empty(0, dtype=np.float32)
+        accepted_frames = 0
         try:
             for block in blocks:
                 if job.cancel_requested:
@@ -272,6 +280,8 @@ class FilesEngine:
                 pending = block[aligned_size:].copy()
                 if aligned_size and not transcribe_phrases(segmenter.accept(block[:aligned_size])):
                     break
+                accepted_frames += aligned_size
+                report_position(accepted_frames / SAMPLE_RATE)
             if not job.cancel_requested and pending.size:
                 transcribe_phrases(segmenter.accept(pending))
             if not job.cancel_requested:
