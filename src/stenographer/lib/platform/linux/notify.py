@@ -36,13 +36,8 @@ class NotifySendNotifier:
     """Fires notifications, degrading to a no-op when notify-send is absent."""
 
     def __init__(self) -> None:
-        self._available = self.probe()
+        self._available = shutil.which("notify-send") is not None
         self._icon = self._resolve_icon()
-
-    @staticmethod
-    def probe() -> bool:
-        """True if ``notify-send`` is on PATH (shared with the M6 doctor probe)."""
-        return shutil.which("notify-send") is not None
 
     @staticmethod
     def _resolve_icon() -> str | None:

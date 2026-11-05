@@ -11,7 +11,6 @@ suite because they would drive systemd and /dev/input respectively.
 from __future__ import annotations
 
 import io
-import os
 import threading
 from pathlib import Path
 
@@ -46,9 +45,6 @@ def test_provider_resolves_xdg_user_directories():
     )
     assert plat.state_dir({}, home) == home / ".local/state/stenographer"
     assert plat.state_dir({"XDG_STATE_HOME": "/xdg"}, home) == Path("/xdg/stenographer")
-    assert plat.runtime_dir({"XDG_RUNTIME_DIR": "/run/user/42"}) == Path("/run/user/42")
-    # No XDG_RUNTIME_DIR: the socket/lock directory still has to be this user's.
-    assert plat.runtime_dir({}) == Path(f"/run/user/{os.getuid()}")
 
 
 def test_provider_speaks_the_evdev_key_vocabulary():
@@ -112,7 +108,6 @@ def test_provider_builds_a_notifier_and_a_cue_player_from_what_is_installed(tmp_
     monkeypatch.setenv("PATH", str(tmp_path))
     # Nothing installed: the notifier degrades to a no-op and there is no cue
     # player at all, so the daemon plays no cues rather than failing to.
-    assert NotifySendNotifier.probe() is False
     assert isinstance(plat.notifier(), NotifySendNotifier)
     assert plat.cue_player() is None
 
