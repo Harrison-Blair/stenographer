@@ -66,12 +66,10 @@ class Worker:
         transport: AsrTransport,
         on_model_loading: Callable[[], None] | None = None,
         on_model_loading_finished: Callable[[], None] | None = None,
-        on_transcribing: Callable[[], None] | None = None,
     ) -> None:
         self._cfg = cfg
         self._on_model_loading = on_model_loading
         self._on_model_loading_finished = on_model_loading_finished
-        self._on_transcribing = on_transcribing
         self._idle_seconds = cfg.idle_unload_seconds
         self._lock = threading.RLock()
         self._transport = transport
@@ -157,7 +155,6 @@ class Worker:
                 raise WorkerModelError("model loading failed") from exc
             load_ms = (time.perf_counter() - load_started_at) * 1000.0 if loaded else None
             self._abort_if_shutdown_requested("transcribe")
-            self._notify(self._on_transcribing)
             decode_started_at = time.perf_counter()
             self._process.send(("job", samples, utterance))
             try:

@@ -161,16 +161,11 @@ class Daemon:
             if daemon_ref is not None:
                 daemon_ref._on_model_loading_finished()
 
-        def on_transcribing() -> None:
-            if daemon_ref is not None:
-                daemon_ref._publish_state(OverlayState.TRANSCRIBING)
-
         worker = Worker(
             cfg.asr,
             transport=plat.asr_transport(),
             on_model_loading=on_model_loading,
             on_model_loading_finished=on_model_loading_finished,
-            on_transcribing=on_transcribing,
         )
         recorder = Recorder(
             device=cfg.audio.input_device,

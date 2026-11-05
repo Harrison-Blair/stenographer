@@ -344,8 +344,36 @@ def test_build_wires_the_worker_callbacks_onto_this_daemon(tmp_path, monkeypatch
         daemon._worker._on_model_loading_finished()
         assert status.loading == [(LoadingModel.ASR, True), (LoadingModel.ASR, False)]
 
-        daemon._worker._on_transcribing()
-        assert status.states == [OverlayState.TRANSCRIBING]
+    finally:
+        daemon.stop()
+
+
+def test_cancel_while_worker_waits_for_model_lock_keeps_cancelled_state():
+    from tests.lib.transcribe.support import FakeAsrTransport
+
+    platform = _Platform()
+    platform.asr_transport = lambda: FakeAsrTransport()
+    status = _Status()
+    daemon = Daemon.build(_no_network_cfg(), clipboard_backend="wl-copy", platform=platform)
+    daemon._status = status
+    started = threading.Event()
+
+    def transcribe():
+        started.set()
+        daemon._worker.transcribe(_SPEECH, 1)
+
+    try:
+        daemon._busy = True
+        daemon._utterance_id = 1
+        daemon._publish_state(OverlayState.TRANSCRIBING)
+        with daemon._worker._lock:
+            thread = threading.Thread(target=transcribe)
+            thread.start()
+            assert started.wait(1)
+            daemon.on_cancel()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert status.states == [OverlayState.TRANSCRIBING, OverlayState.CANCELLED]
     finally:
         daemon.stop()
 
