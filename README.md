@@ -246,9 +246,6 @@ and the [hub guide](docs/hub.md#record) for live capture and saved sessions.
 
 See [docs/building.md](docs/building.md) for standalone builds and contributor
 checks. See [docs/architecture.md](docs/architecture.md) for code boundaries.
-The [transcription-quality study](docs/transcription-experiments.md) records
-earlier public-audio measurements and a microphone experiment catalog. It is
-history; the speech model it measured is no longer used.
 
 ## License
 
