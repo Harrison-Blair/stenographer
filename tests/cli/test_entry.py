@@ -10,7 +10,6 @@ import sys
 import pytest
 
 import stenographer
-from stenographer.cli.devices.handler import _format_input_devices
 from stenographer.cli.entry import dispatch
 from stenographer.cli.parser import build_parser
 
@@ -125,22 +124,6 @@ def test_setup_default_dispatches_to_the_noninteractive_writer(monkeypatch):
 
     assert dispatch(["setup", "--default"]) == 0
     assert hits == ["default"]
-
-
-def test_format_input_devices_marks_default_and_skips_outputs():
-    devices = [
-        {"name": "hdmi-out", "max_input_channels": 0},
-        {"name": "usb mic", "max_input_channels": 1},
-        {"name": "webcam mic", "max_input_channels": 2},
-    ]
-    lines = _format_input_devices(devices, default_index=1)
-    assert lines == ["* 1: usb mic (1 ch)", "  2: webcam mic (2 ch)"]
-
-
-def test_format_input_devices_empty():
-    assert _format_input_devices([{"name": "out", "max_input_channels": 0}], -1) == [
-        "  (no input devices found)"
-    ]
 
 
 def test_main_doctor_dispatches_without_creating_the_daemon_log(monkeypatch, tmp_path):

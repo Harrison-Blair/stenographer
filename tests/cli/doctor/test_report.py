@@ -148,19 +148,6 @@ def _render(
     )
 
 
-def test_missing_required_empty_when_all_present():
-    assert missing_required(_caps()) == []
-
-
-def test_missing_required_names_each_absent_capability():
-    caps = _caps(key_injector_ok=False, model_cached=False)
-    assert missing_required(caps) == ["key_injector_ok", "model_cached"]
-
-
-def test_cue_player_is_not_required():
-    assert missing_required(_caps(cue_player=None)) == []
-
-
 def test_render_all_present():
     report = _render(_caps(), logs=_LOGS)
     assert "all required capabilities present" in report
@@ -221,10 +208,6 @@ def test_render_absent_cue_player_is_informational():
     report = _render(_caps(cue_player=None), logs=_LOGS)
     assert "audio player: none (sound cues disabled)" in report
     assert "all required capabilities present" in report
-
-
-def test_service_status_is_not_required():
-    assert missing_required(_caps(service_enabled=None, service_active=None)) == []
 
 
 def test_format_service_status_installed():
@@ -326,10 +309,7 @@ def test_overlay_report_variants_are_informational_only():
 
 
 def test_run_shows_optional_warnings_without_changing_exit_code(monkeypatch, capsys):
-    from stenographer.lib import platform as platform_module
     from stenographer.lib.diagnostics import additional_checks
-    from stenographer.lib.logging import pipeline as logging_pipeline
-    from stenographer.overlay import platform as overlay_platform
 
     monkeypatch.setattr(doctor, "probe", lambda _config: _caps())
     monkeypatch.setattr(
@@ -341,30 +321,8 @@ def test_run_shows_optional_warnings_without_changing_exit_code(monkeypatch, cap
             ),
         ),
     )
-    monkeypatch.setattr(
-        logging_pipeline,
-        "log_paths",
-        lambda: (_DAEMON_LOG, _HELPER_LOG),
-    )
-    monkeypatch.setattr(
-        doctor, "_log_status", lambda name, path: doctor.LogStatus(name, path, None)
-    )
-    monkeypatch.setattr(
-        platform_module,
-        "current_platform",
-        lambda: type("Host", (), {"guidance": lambda self: _GUIDANCE})(),
-    )
-    monkeypatch.setattr(
-        overlay_platform,
-        "current_platform",
-        lambda: type("OverlayHost", (), {"guidance": lambda self: _OVERLAY_GUIDANCE})(),
-    )
-
     assert doctor.run(Config.defaults(), _CONFIG_PATH) == 0
     assert "ffmpeg: WARN — ffmpeg is not installed" in capsys.readouterr().out
-
-    monkeypatch.setattr(doctor, "probe", lambda _config: _caps(has_mic=False))
-    assert doctor.run(Config.defaults(), _CONFIG_PATH) == 78
 
 
 def _log_line(level: str, message: str, *, utt: int = 1) -> str:
@@ -548,7 +506,6 @@ def test_run_prints_the_report_and_succeeds_when_nothing_is_missing(
     tmp_path,
     capsys,
 ):
-    from stenographer.lib.config.models import Config
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(doctor, "probe", lambda cfg: _capabilities())
@@ -568,7 +525,6 @@ def test_run_reports_the_missing_capability_and_exits_seventy_eight(
     tmp_path,
     capsys,
 ):
-    from stenographer.lib.config.models import Config
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(doctor, "probe", lambda cfg: _capabilities(has_mic=False))
@@ -581,7 +537,6 @@ def test_run_reports_the_missing_capability_and_exits_seventy_eight(
 
 
 def test_run_replays_the_complaints_of_an_existing_log(monkeypatch, tmp_path, capsys):
-    from stenographer.lib.config.models import Config
 
     state = tmp_path / "state" / "stenographer"
     state.mkdir(parents=True)

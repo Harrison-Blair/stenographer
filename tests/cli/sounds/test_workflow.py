@@ -140,28 +140,31 @@ def _menu(monkeypatch, answers: str, packs, *, load, preview, discover):
     return chosen, stdout.getvalue(), stderr.getvalue()
 
 
-def test_menu_reports_failed_preview_and_reprompts(monkeypatch):
+@pytest.mark.parametrize("succeeds", [False, True])
+def test_menu_reprompts_after_preview(monkeypatch, succeeds):
     packs = ("legacy", "warm-desk")
     previewed: list[object] = []
 
-    def failing_preview(console, config, pack):
+    def preview(console, config, pack):
         previewed.append(pack)
-        console.error("sound-pack preview failed: no player")
-        return False
+        if not succeeds:
+            console.error("sound-pack preview failed: no player")
+        return succeeds
 
     chosen, stdout, stderr = _menu(
         monkeypatch,
         "P1\n2\n",
         packs,
         load=lambda name: f"pack:{name}",
-        preview=failing_preview,
+        preview=preview,
         discover=lambda: packs,
     )
-
     assert chosen == "warm-desk"
     assert previewed == ["pack:legacy"]
-    assert "sound-pack preview failed: no player" in stderr
+    assert stderr == ("" if succeeds else "stenographer: sound-pack preview failed: no player\n")
     assert stdout.count("Sound packs") == 2
+    if succeeds:
+        assert "or cancel Q: \nSound packs" in stdout
 
 
 def test_menu_reports_vanished_pack_rediscovers_and_reprompts(monkeypatch):
@@ -240,61 +243,35 @@ def _platform(*, service_active="active", restart=(True, ""), probe_error=None):
     return Plat
 
 
-def test_menu_spaces_the_listing_after_a_successful_preview(monkeypatch):
-    packs = ("legacy", "warm-desk")
-    previewed: list[object] = []
+@pytest.fixture
+def host(monkeypatch):
+    from stenographer.lib import platform as platform_module
 
-    def preview(console, config, pack):
-        previewed.append(pack)
-        return True
+    def install(**kwargs):
+        monkeypatch.setattr(platform_module, "current_platform", _platform(**kwargs))
 
-    chosen, stdout, stderr = _menu(
-        monkeypatch,
-        "P1\n2\n",
-        packs,
-        load=lambda name: f"pack:{name}",
-        preview=preview,
-        discover=lambda: packs,
-    )
-
-    assert chosen == "warm-desk"
-    assert previewed == ["pack:legacy"]
-    assert stderr == ""
-    assert stdout.count("Sound packs") == 2
-    # The audition ends the prompt line before the menu is listed again.
-    assert "or cancel Q: \nSound packs" in stdout
+    return install
 
 
-def _post_save(answers="", **kwargs):
+def _post_save(answers="", *, changed=True, custom_config=False, interactive=True):
+    kwargs = {"changed": changed, "custom_config": custom_config, "interactive": interactive}
     console = Console(io.StringIO(answers), io.StringIO(), io.StringIO())
     code = sounds._post_save(console, **kwargs)
     return code, console.stdout.getvalue(), console.stderr.getvalue()
 
 
-def test_post_save_never_probes_the_host_when_nothing_changed(monkeypatch):
-    from stenographer.lib import platform as platform_module
-
-    monkeypatch.setattr(
-        platform_module,
-        "current_platform",
-        _platform(probe_error=AssertionError("the host was probed")),
-    )
+def test_post_save_never_probes_the_host_when_nothing_changed(host):
+    host(probe_error=AssertionError("the host was probed"))
 
     code, stdout, stderr = _post_save(changed=False, custom_config=False, interactive=True)
 
     assert (code, stdout, stderr) == (0, "", "")
 
 
-def test_post_save_reports_an_unreadable_service_status_and_fails(monkeypatch):
-    from stenographer.lib import platform as platform_module
+def test_post_save_reports_an_unreadable_service_status_and_fails(host):
+    host(probe_error=OSError("systemctl is not on PATH"))
 
-    monkeypatch.setattr(
-        platform_module,
-        "current_platform",
-        _platform(probe_error=OSError("systemctl is not on PATH")),
-    )
-
-    code, stdout, stderr = _post_save(changed=True, custom_config=False, interactive=True)
+    code, stdout, stderr = _post_save()
 
     assert code == 1
     assert stderr == (
@@ -304,12 +281,10 @@ def test_post_save_reports_an_unreadable_service_status_and_fails(monkeypatch):
 
 
 @pytest.mark.parametrize("state", ["inactive", "failed"])
-def test_post_save_prints_the_guidance_arm_without_prompting(monkeypatch, state):
-    from stenographer.lib import platform as platform_module
+def test_post_save_prints_the_guidance_arm_without_prompting(host, state):
+    host(service_active=state)
 
-    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active=state))
-
-    code, stdout, stderr = _post_save(changed=True, custom_config=False, interactive=True)
+    code, stdout, stderr = _post_save()
 
     assert code == 0
     assert stdout == (
@@ -324,14 +299,8 @@ def test_post_save_prints_the_guidance_arm_without_prompting(monkeypatch, state)
     [(True, True), (True, False), (False, False)],
     ids=["custom-terminal", "custom-piped", "standard-piped"],
 )
-def test_post_save_without_a_prompt_never_probes_the_host(monkeypatch, custom, interactive):
-    from stenographer.lib import platform as platform_module
-
-    monkeypatch.setattr(
-        platform_module,
-        "current_platform",
-        _platform(probe_error=AssertionError("the host was probed")),
-    )
+def test_post_save_without_a_prompt_never_probes_the_host(host, custom, interactive):
+    host(probe_error=AssertionError("the host was probed"))
 
     code, stdout, stderr = _post_save(changed=True, custom_config=custom, interactive=interactive)
 
@@ -345,12 +314,10 @@ def test_post_save_without_a_prompt_never_probes_the_host(monkeypatch, custom, i
     assert stderr == ""
 
 
-def test_post_save_reports_an_unknown_service_state_without_prompting(monkeypatch):
-    from stenographer.lib import platform as platform_module
+def test_post_save_reports_an_unknown_service_state_without_prompting(host):
+    host(service_active=None)
 
-    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active=None))
-
-    code, stdout, stderr = _post_save(changed=True, custom_config=False, interactive=True)
+    code, stdout, stderr = _post_save()
 
     assert code == 0
     assert stdout == (
@@ -360,16 +327,11 @@ def test_post_save_reports_an_unknown_service_state_without_prompting(monkeypatc
     assert stderr == ""
 
 
-def test_post_save_declined_restart_names_the_command_to_run_later(monkeypatch):
-    from stenographer.lib import platform as platform_module
-
-    monkeypatch.setattr(platform_module, "current_platform", _platform())
+def test_post_save_declined_restart_names_the_command_to_run_later(host):
+    host()
 
     code, stdout, stderr = _post_save(
         "n\n",
-        changed=True,
-        custom_config=False,
-        interactive=True,
     )
 
     assert code == 0
@@ -378,16 +340,11 @@ def test_post_save_declined_restart_names_the_command_to_run_later(monkeypatch):
     assert stderr == ""
 
 
-def test_post_save_accepted_restart_reports_the_restart(monkeypatch):
-    from stenographer.lib import platform as platform_module
-
-    monkeypatch.setattr(platform_module, "current_platform", _platform())
+def test_post_save_accepted_restart_reports_the_restart(host):
+    host()
 
     code, stdout, stderr = _post_save(
         "\n",
-        changed=True,
-        custom_config=False,
-        interactive=True,
     )
 
     assert code == 0
@@ -395,20 +352,11 @@ def test_post_save_accepted_restart_reports_the_restart(monkeypatch):
     assert stderr == ""
 
 
-def test_post_save_failed_restart_reports_the_detail_and_fails(monkeypatch):
-    from stenographer.lib import platform as platform_module
-
-    monkeypatch.setattr(
-        platform_module,
-        "current_platform",
-        _platform(restart=(False, "unit not loaded")),
-    )
+def test_post_save_failed_restart_reports_the_detail_and_fails(host):
+    host(restart=(False, "unit not loaded"))
 
     code, stdout, stderr = _post_save(
         "y\n",
-        changed=True,
-        custom_config=False,
-        interactive=True,
     )
 
     assert code == 1
@@ -469,32 +417,28 @@ def test_run_returns_the_load_ladders_own_exit_code(sounds_run):
     assert stdout == ""
 
 
-def test_run_reports_a_failed_discovery_and_fails(sounds_run, tmp_path):
+@pytest.mark.parametrize(
+    ("failure", "expected_code", "expected_error"),
+    [
+        (
+            OSError("permission denied"),
+            1,
+            "stenographer: could not discover sound packs: permission denied\n",
+        ),
+        (KeyboardInterrupt(), 130, "stenographer: sounds interrupted\n"),
+    ],
+)
+def test_run_reports_discovery_failure(
+    sounds_run, tmp_path, failure, expected_code, expected_error
+):
     def explode():
-        raise OSError("permission denied")
+        raise failure
 
     code, _, stderr = sounds_run(
-        document=_document(tmp_path, []),
-        api=_api(discover=explode),
-        list_only=True,
+        document=_document(tmp_path, []), api=_api(discover=explode), list_only=True
     )
-
-    assert code == 1
-    assert stderr == "stenographer: could not discover sound packs: permission denied\n"
-
-
-def test_run_treats_an_interrupted_discovery_as_an_interruption(sounds_run, tmp_path):
-    def interrupt():
-        raise KeyboardInterrupt
-
-    code, _, stderr = sounds_run(
-        document=_document(tmp_path, []),
-        api=_api(discover=interrupt),
-        list_only=True,
-    )
-
-    assert code == 130
-    assert stderr == "stenographer: sounds interrupted\n"
+    assert code == expected_code
+    assert stderr == expected_error
 
 
 def test_run_lists_every_pack_without_touching_the_configuration(sounds_run, tmp_path):
@@ -512,14 +456,14 @@ def test_run_lists_every_pack_without_touching_the_configuration(sounds_run, tmp
     assert "warm-desk (bundled" in stdout
 
 
-def test_run_refuses_to_preview_a_pack_that_is_not_available(sounds_run, tmp_path):
+@pytest.mark.parametrize("option", ["preview_name", "pack_name"])
+def test_run_refuses_an_unavailable_pack(sounds_run, tmp_path, option):
+    saved: list[Config] = []
     code, _, stderr = sounds_run(
-        document=_document(tmp_path, []),
-        api=_api(),
-        preview_name="gone-pack",
+        document=_document(tmp_path, saved), api=_api(), **{option: "gone-pack"}
     )
-
     assert code == 2
+    assert saved == []
     assert stderr == "stenographer: invalid or unavailable sound pack: gone-pack\n"
 
 
@@ -548,24 +492,8 @@ def test_run_preview_exit_code_follows_the_audition(
     assert auditioned == ["pack:warm-desk"]
 
 
-def test_run_refuses_to_select_a_pack_that_is_not_available(sounds_run, tmp_path):
-    saved: list[Config] = []
-
-    code, _, stderr = sounds_run(
-        document=_document(tmp_path, saved),
-        api=_api(),
-        pack_name="gone-pack",
-    )
-
-    assert code == 2
-    assert saved == []
-    assert stderr == "stenographer: invalid or unavailable sound pack: gone-pack\n"
-
-
-def test_run_saves_the_named_pack_and_reports_the_save(sounds_run, monkeypatch, tmp_path):
-    from stenographer.lib import platform as platform_module
-
-    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active="inactive"))
+def test_run_saves_the_named_pack_and_reports_the_save(sounds_run, host, tmp_path):
+    host(service_active="inactive")
     saved: list[Config] = []
 
     code, stdout, _ = sounds_run(
@@ -592,10 +520,8 @@ def test_run_reports_a_refused_save_and_fails(sounds_run, tmp_path):
     assert stderr == "stenographer: cannot replace config\n"
 
 
-def test_run_menu_selection_saves_the_chosen_pack(sounds_run, monkeypatch, tmp_path):
-    from stenographer.lib import platform as platform_module
-
-    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active="inactive"))
+def test_run_menu_selection_saves_the_chosen_pack(sounds_run, host, tmp_path):
+    host(service_active="inactive")
     saved: list[Config] = []
 
     code, _, _ = sounds_run(

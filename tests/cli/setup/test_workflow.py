@@ -134,85 +134,67 @@ def test_followup_exit_precedence(guided, operational, missing, expected):
     assert code == expected
 
 
-def test_tryout_sends_a_custom_config_path_to_a_foreground_run():
-    lines = _tryout(custom_config=True)
-
-    assert lines[0] == "\nTry a real dictation"
-    assert lines[1] == (
-        "Run `STENO_CONFIG=/tmp/custom.toml stenographer run` in a terminal; "
-        "the standard service was not changed."
-    )
-    assert lines[-1] == (
-        "Watch that foreground command for logs; the standard service log is `steno-agent logs -f`."
-    )
-
-
-def test_tryout_asks_for_a_restart_before_anything_else_when_one_is_pending():
-    lines = _tryout(restart_pending=True)
-
-    assert lines[1] == "Apply the saved configuration first with `steno-agent restart`."
-
-
-def test_tryout_reports_an_active_service_as_ready():
-    assert _tryout()[1] == "steno-agent is active and ready for a tryout."
-
-
-def test_tryout_offers_the_installer_when_the_service_is_not_installed():
-    lines = _tryout(service_enabled=None, service_active="inactive")
-
-    assert lines[1] == (
-        "The service is not installed. Run `stenographer run` in a terminal, "
-        "or install it with `steno-agent install`."
-    )
-
-
-def test_tryout_points_an_installed_but_stopped_service_at_the_start_command():
-    lines = _tryout(service_enabled="disabled", service_active="inactive")
-
-    assert lines[1] == (
-        "The service is inactive. Start it with `steno-agent start`; setup did not start it."
-    )
-
-
-def test_tryout_falls_back_to_a_foreground_run_when_the_state_is_unknown():
-    lines = _tryout(service_enabled=None, service_active=None)
-
-    assert lines[1] == (
-        "The user-service state could not be determined. Run `stenographer run` "
-        "in a terminal to try the configuration."
-    )
-
-
-def test_tryout_describes_a_hold_binding_as_held_and_logs_the_service():
-    defaults = Config.defaults()
-    config = dataclasses.replace(defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hold"))
-    lines = _tryout(config=config)
-
-    assert lines[-2] == "Focus a text field, hold KEY_RIGHTCTRL, speak, then release it."
-    assert lines[-1] == "Follow service logs with `steno-agent logs -f`."
-
-
-def test_tryout_describes_a_toggle_binding_as_pressed_twice():
-    defaults = Config.defaults()
-    config = dataclasses.replace(
-        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="toggle", binding="KEY_F9")
-    )
-
-    assert _tryout(config=config)[-2] == (
-        "Focus a text field, press KEY_F9, speak, then press it again."
-    )
-
-
-def test_tryout_describes_a_hybrid_binding_as_tapped_or_held():
-    defaults = Config.defaults()
-    config = dataclasses.replace(
-        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hybrid", binding="KEY_F9")
-    )
-
-    assert _tryout(config=config)[-2] == (
-        "Focus a text field, tap KEY_F9 to latch (tap again to stop), "
-        "or hold it, speak, and release."
-    )
+@pytest.mark.parametrize(
+    ("overrides", "line_index", "expected"),
+    [
+        ({"custom_config": True}, 0, "\nTry a real dictation"),
+        (
+            {"custom_config": True},
+            1,
+            "Run `STENO_CONFIG=/tmp/custom.toml stenographer run` in a terminal; "
+            "the standard service was not changed.",
+        ),
+        (
+            {"custom_config": True},
+            -1,
+            "Watch that foreground command for logs; the standard service log is "
+            "`steno-agent logs -f`.",
+        ),
+        (
+            {"restart_pending": True},
+            1,
+            "Apply the saved configuration first with `steno-agent restart`.",
+        ),
+        ({}, 1, "steno-agent is active and ready for a tryout."),
+        (
+            {"service_enabled": None, "service_active": "inactive"},
+            1,
+            "The service is not installed. Run `stenographer run` in a terminal, "
+            "or install it with `steno-agent install`.",
+        ),
+        (
+            {"service_enabled": "disabled", "service_active": "inactive"},
+            1,
+            "The service is inactive. Start it with `steno-agent start`; setup did not start it.",
+        ),
+        (
+            {"service_enabled": None, "service_active": None},
+            1,
+            "The user-service state could not be determined. Run `stenographer run` "
+            "in a terminal to try the configuration.",
+        ),
+        ({"mode": "hold"}, -2, "Focus a text field, hold KEY_RIGHTCTRL, speak, then release it."),
+        ({"mode": "hold"}, -1, "Follow service logs with `steno-agent logs -f`."),
+        (
+            {"mode": "toggle", "binding": "KEY_F9"},
+            -2,
+            "Focus a text field, press KEY_F9, speak, then press it again.",
+        ),
+        (
+            {"mode": "hybrid", "binding": "KEY_F9"},
+            -2,
+            "Focus a text field, tap KEY_F9 to latch (tap again to stop), "
+            "or hold it, speak, and release.",
+        ),
+    ],
+)
+def test_tryout_lines(overrides, line_index, expected):
+    overrides = overrides.copy()
+    if "mode" in overrides:
+        defaults = Config.defaults()
+        hotkey = dataclasses.replace(defaults.hotkey, **overrides)
+        overrides = {"config": dataclasses.replace(defaults, hotkey=hotkey)}
+    assert _tryout(**overrides)[line_index] == expected
 
 
 def test_field_display_names_unset_values_and_calibrated_profiles():
@@ -306,94 +288,59 @@ def test_setup_requires_an_interactive_terminal():
     assert "requires an interactive terminal" in stderr.getvalue()
 
 
-def test_setup_applies_loaded_then_reviewed_log_levels_before_followup_work(monkeypatch, tmp_path):
+def test_setup_applies_loaded_then_reviewed_log_levels_before_followup_work(setup_run, tmp_path):
     from stenographer.lib.config.document import SaveResult
-    from stenographer.lib.logging import pipeline as logging_setup
 
-    events: list[str] = []
     defaults = Config.defaults()
     loaded = dataclasses.replace(
-        defaults,
-        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
+        defaults, feedback=dataclasses.replace(defaults.feedback, log_level="warning")
     )
     reviewed = dataclasses.replace(
-        loaded,
-        feedback=dataclasses.replace(loaded.feedback, log_level="debug"),
+        loaded, feedback=dataclasses.replace(loaded.feedback, log_level="debug")
     )
+    events = setup_run.levels
 
-    class Document:
-        path = tmp_path / "config.toml"
-        config = loaded
+    def save(config):
+        assert config is reviewed
+        events.append("save")
+        return SaveResult(False, tmp_path / "config.toml")
 
-        def save(self, config):
-            assert config is reviewed
-            events.append("save")
-            return SaveResult(False, self.path)
-
-    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
-    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: Document())
-    monkeypatch.setattr(
-        setup,
-        "_wizard",
-        lambda *args, **kwargs: events.append("wizard") or reviewed,
+    code, _, _ = setup_run(
+        document=_document_double(tmp_path, config=loaded, save=save),
+        wizard=lambda *args, **kwargs: events.append("wizard") or reviewed,
+        guided=lambda *args, **kwargs: events.append("guided") or 0,
     )
-    monkeypatch.setattr(
-        setup,
-        "_guided_setup",
-        lambda *args, **kwargs: events.append("guided") or 0,
-    )
-    monkeypatch.setattr(
-        logging_setup,
-        "apply_stderr_level",
-        lambda level: events.append(f"level:{level}"),
-    )
-
-    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 0
-    assert events == ["level:warning", "wizard", "save", "level:debug", "guided"]
+    assert code == 0
+    assert events == ["warning", "wizard", "save", "debug", "guided"]
 
 
-def test_setup_does_not_apply_a_level_when_loading_fails(monkeypatch):
-    from stenographer.lib.logging import pipeline as logging_setup
-
-    levels: list[str] = []
-    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
-    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: 78)
-    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
-
-    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 78
-    assert levels == []
+def test_setup_does_not_apply_a_level_when_loading_fails(setup_run):
+    code, _, _ = setup_run(document=78)
+    assert code == 78
+    assert setup_run.levels == []
 
 
-def test_setup_save_failure_keeps_the_loaded_level(monkeypatch, tmp_path):
+def test_setup_save_failure_keeps_the_loaded_level(setup_run, tmp_path):
     from stenographer.lib.config.errors import ConfigPersistenceError
-    from stenographer.lib.logging import pipeline as logging_setup
 
-    levels: list[str] = []
     defaults = Config.defaults()
     loaded = dataclasses.replace(
-        defaults,
-        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
+        defaults, feedback=dataclasses.replace(defaults.feedback, log_level="warning")
     )
     reviewed = dataclasses.replace(
-        loaded,
-        feedback=dataclasses.replace(loaded.feedback, log_level="debug"),
+        loaded, feedback=dataclasses.replace(loaded.feedback, log_level="debug")
     )
 
-    class Document:
-        path = tmp_path / "config.toml"
-        config = loaded
+    def save(config):
+        assert config is reviewed
+        raise ConfigPersistenceError("save failed")
 
-        def save(self, config):
-            assert config is reviewed
-            raise ConfigPersistenceError("save failed")
-
-    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
-    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: Document())
-    monkeypatch.setattr(setup, "_wizard", lambda *args, **kwargs: reviewed)
-    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
-
-    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 1
-    assert levels == ["warning"]
+    code, _, _ = setup_run(
+        document=_document_double(tmp_path, config=loaded, save=save),
+        wizard=lambda *args, **kwargs: reviewed,
+    )
+    assert code == 1
+    assert setup_run.levels == ["warning"]
 
 
 def test_write_default_creates_the_annotated_template(tmp_path, monkeypatch):
@@ -407,6 +354,7 @@ def test_write_default_creates_the_annotated_template(tmp_path, monkeypatch):
 
     assert path.read_text(encoding="utf-8") == default_toml()
     assert f"Wrote the default configuration to {path.resolve()}" in out.getvalue()
+    assert "Backup:" not in out.getvalue()
     assert err.getvalue() == ""
 
 
@@ -1484,13 +1432,16 @@ def test_offer_refine_pull_reports_an_unreachable_ollama_without_prompting(monke
     assert "No Ollama server answered" not in stdout
 
 
-def _document_double(tmp_path, *, save=None):
+def _document_double(tmp_path, *, save=None, config=None):
     from stenographer.lib.config.document import SaveResult
 
     def save_document(config, path):
         return save(config) if save is not None else SaveResult(True, path)
 
-    return document(tmp_path, save=save_document)
+    result = document(tmp_path, save=save_document)
+    if config is not None:
+        result.config = config
+    return result
 
 
 @pytest.fixture
@@ -1500,7 +1451,8 @@ def setup_run(monkeypatch, tmp_path):
     from stenographer.lib.logging import pipeline as logging_setup
 
     monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
-    monkeypatch.setattr(logging_setup, "apply_stderr_level", lambda level: None)
+    levels = []
+    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
 
     def invoke(*, document=None, wizard=None, guided=None, quick=False):
         monkeypatch.setattr(
@@ -1521,6 +1473,7 @@ def setup_run(monkeypatch, tmp_path):
         code = setup.run(quick=quick, stdin=io.StringIO(), stdout=stdout, stderr=stderr)
         return code, stdout.getvalue(), stderr.getvalue()
 
+    invoke.levels = levels
     return invoke
 
 
@@ -1648,16 +1601,17 @@ def test_a_host_changed_to_non_loopback_is_warned_about_before_the_probe(monkeyp
     )
 
 
-def test_keeping_the_same_non_loopback_host_does_not_double_the_warning(monkeypatch):
+@pytest.mark.parametrize("ask_details", [True, False])
+def test_keeping_the_same_non_loopback_host_does_not_double_the_warning(monkeypatch, ask_details):
     monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     defaults = Config.defaults()
     remote_config = dataclasses.replace(
         defaults,
         refine=dataclasses.replace(defaults.refine, host="https://ollama.example.com:8443"),
     )
-    console = _console("yes\n\n\n\n\n")  # Enter on the host prompt keeps it unchanged
+    console = _console("yes\n\n\n\n\n" if ask_details else "yes\n\n")
 
-    config = setup._edit_refine_section(console, remote_config, ask_details=True)
+    config = setup._edit_refine_section(console, remote_config, ask_details=ask_details)
 
     assert config.refine.host == "https://ollama.example.com:8443"
     stdout = console.stdout.getvalue()
@@ -1698,24 +1652,6 @@ def test_moving_from_a_remote_host_to_loopback_gets_the_reassurance_too(monkeypa
     # The stale warning must not be the last word: the reassurance for the
     # host actually being saved has to come after it.
     assert stdout.index(reassurance) > stdout.index(stale_warning)
-
-
-def test_the_quick_wizard_never_re_warns_about_a_host_it_never_asked_for(monkeypatch):
-    """``ask_details=False`` skips the host prompt entirely, so the change
-    that re-warns after it must be a complete no-op on this path."""
-    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
-    defaults = Config.defaults()
-    remote_config = dataclasses.replace(
-        defaults,
-        refine=dataclasses.replace(defaults.refine, host="https://ollama.example.com:8443"),
-    )
-    console = _console("yes\n\n")  # enabled, model (kept)
-
-    config = setup._edit_refine_section(console, remote_config, ask_details=False)
-
-    assert config.refine.host == "https://ollama.example.com:8443"
-    stdout = console.stdout.getvalue()
-    assert stdout.count("WARNING: https://ollama.example.com:8443 is not loopback") == 1
 
 
 @pytest.mark.parametrize(
@@ -1767,24 +1703,10 @@ def test_an_absent_ollama_still_lets_the_model_be_named_for_a_later_pull(monkeyp
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=False)
 
     assert config.refine.model == "some/other:tag"
-    assert "No refine model is available" in console.stdout.getvalue()
-    assert "model download --refine" in console.stdout.getvalue()
-
-
-def test_the_empty_listing_message_does_not_claim_the_server_never_answered(monkeypatch):
-    """``installed_model_names`` returns ``[]`` both when nothing is listening at the
-    host and when a live Ollama simply has no models installed — the wizard
-    cannot tell those apart, and the message must not pretend it can. Seen to
-    FAIL before the fix: the old wording asserted unreachability outright,
-    which is false in the second case."""
-    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
-    console = _console("yes\nsome/other:tag\n")
-
-    setup._edit_refine_section(console, Config.defaults(), ask_details=False)
-
     stdout = console.stdout.getvalue()
-    assert "No Ollama server answered" not in stdout
     assert "No refine model is available" in stdout
+    assert "model download --refine" in stdout
+    assert "No Ollama server answered" not in stdout
     assert "either nothing answered there, or none is installed" in stdout
 
 
@@ -1805,35 +1727,18 @@ def test_refine_host_parser_normalizes_before_review(text, expected):
     assert setup.parse_refine_host(text, "kept") == expected
 
 
-def test_refine_host_parser_rejects_credentials_and_a_hostless_url():
-    with pytest.raises(ValueError, match="must not embed credentials"):
-        setup.parse_refine_host("http://user:pass@host:11434", "kept")
-    with pytest.raises(ValueError, match="must name a host"):
-        setup.parse_refine_host("http://", "kept")
-    with pytest.raises(ValueError, match="http:// or https://"):
-        setup.parse_refine_host("ftp://host", "kept")
-
-
-def test_refine_host_prompt_in_the_wizard_normalizes_before_the_review_screen(monkeypatch):
-    """Drives the real wizard prompt (not just the pure parser) to guard the
-    seam that used to store the raw text verbatim via ``_prompt_string``."""
-    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
-    console = _console("yes\nlocalhost:11434\n\n\n\n")
-
-    config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
-
-    assert config.refine.host == "http://localhost:11434"
-
-
 def test_refine_host_prompt_rejects_credentials_and_a_hostless_url_then_retries(monkeypatch):
     monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
-    console = _console("yes\nhttp://user:pass@evil:11434\nhttp://\nHTTP://127.0.0.1:11434\n\n\n\n")
+    console = _console(
+        "yes\nhttp://user:pass@evil:11434\nhttp://\nftp://host\nHTTP://127.0.0.1:11434\n\n\n\n"
+    )
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
 
     assert config.refine.host == "http://127.0.0.1:11434"
     assert "must not embed credentials" in console.stderr.getvalue()
     assert "must name a host" in console.stderr.getvalue()
+    assert "http:// or https://" in console.stderr.getvalue()
 
 
 def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypatch, tmp_path):
@@ -1851,6 +1756,7 @@ def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypa
     path = tmp_path / "render-config.toml"
     path.write_text(default_toml(), encoding="utf-8")
     document = ConfigDocument.load(path)
+    assert config.refine.host == "http://localhost:11434"
     document.render(config)  # must not raise ConfigPersistenceError
 
 
