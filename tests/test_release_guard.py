@@ -130,6 +130,11 @@ def test_release_plan_bumps_the_highest_stable_tag(bump: str, candidate: str) ->
     assert plan.tag == f"v{candidate}"
 
 
+def test_release_plan_rejects_a_bare_candidate_tag() -> None:
+    with pytest.raises(ReleaseGuardError, match="Git tag already exists"):
+        plan_release(["v1.4.5", "1.4.6"], [[]], "patch", _TARGET)
+
+
 def test_release_plan_uses_tags_even_when_the_latest_has_no_release() -> None:
     plan = plan_release(["v1.4.5"], [[]], "patch", _TARGET)
 

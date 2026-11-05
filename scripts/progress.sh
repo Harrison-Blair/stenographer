@@ -1,10 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Shared progress-bar helpers for build.sh / install.sh. Source, don't execute.
 #
-#   progress_start "title"        begin a bar (records the start time)
 #   progress_indeterminate_start "title"  begin an animated bar
 #   progress_tail FILE            live-tail FILE's last lines beneath the bar
-#   progress_update PCT "label"   redraw at PCT % with a step label
 #   progress_activity PHASE COUNT update indeterminate activity fields
 #   progress_tick                 redraw unchanged (keeps elapsed ticking)
 #   progress_done                 finish the bar and newline
@@ -15,12 +13,9 @@
 
 _PROGRESS_TITLE=""
 _PROGRESS_START=0
-_PROGRESS_PCT=0
 _PROGRESS_LABEL=""
 _PROGRESS_COUNTER=""
 _PROGRESS_TTY=0
-_PROGRESS_WIDTH=20
-_PROGRESS_MODE="determinate"
 _PROGRESS_FRAME=0
 _PROGRESS_COMPLETE=0
 _PROGRESS_TAIL_FILE=""
@@ -32,23 +27,6 @@ _progress_elapsed() {
 }
 
 _progress_draw() {
-    if [[ "${_PROGRESS_MODE}" == "indeterminate" ]]; then
-        _progress_draw_indeterminate
-        return
-    fi
-    local filled=$((_PROGRESS_PCT * _PROGRESS_WIDTH / 100))
-    local bar=""
-    local i
-    for ((i = 0; i < _PROGRESS_WIDTH; i++)); do
-        if ((i < filled)); then bar+="█"; else bar+="░"; fi
-    done
-    printf '\r\033[K  %-10s [%s] %3d%%  %-24s %s' \
-        "${_PROGRESS_TITLE}" "${bar}" "${_PROGRESS_PCT}" "${_PROGRESS_LABEL}" \
-        "$(_progress_elapsed)"
-    _progress_draw_tail
-}
-
-_progress_draw_indeterminate() {
     local width=16
     local segment=4
     local limit=$((width - segment))
@@ -100,31 +78,11 @@ _progress_tail_clear() {
     printf '\r\033[0J'
 }
 
-progress_start() {
-    _PROGRESS_TITLE="$1"
-    _PROGRESS_START=$(date +%s)
-    _PROGRESS_PCT=0
-    _PROGRESS_LABEL=""
-    _PROGRESS_COUNTER=""
-    _PROGRESS_MODE="determinate"
-    _PROGRESS_FRAME=0
-    _PROGRESS_COMPLETE=0
-    _PROGRESS_TAIL_FILE=""
-    if [[ -t 1 ]]; then
-        _PROGRESS_TTY=1
-        _progress_draw
-    else
-        _PROGRESS_TTY=0
-        echo "${_PROGRESS_TITLE}:"
-    fi
-}
-
 progress_indeterminate_start() {
     _PROGRESS_TITLE="$1"
     _PROGRESS_START=$(date +%s)
     _PROGRESS_LABEL="${2-}"
     _PROGRESS_COUNTER=""
-    _PROGRESS_MODE="indeterminate"
     _PROGRESS_FRAME=0
     _PROGRESS_COMPLETE=0
     _PROGRESS_TAIL_FILE=""
@@ -148,18 +106,6 @@ progress_tail() {
     return 0
 }
 
-progress_update() {
-    _PROGRESS_PCT="$1"
-    if [[ "${2-}" != "${_PROGRESS_LABEL}" ]]; then
-        _PROGRESS_LABEL="${2-}"
-        if [[ "${_PROGRESS_TTY}" -eq 0 && -n "${_PROGRESS_LABEL}" ]]; then
-            printf '  %3d%%  %s\n' "${_PROGRESS_PCT}" "${_PROGRESS_LABEL}"
-        fi
-    fi
-    [[ "${_PROGRESS_TTY}" -eq 1 ]] && _progress_draw
-    return 0
-}
-
 progress_activity() {
     local phase="${1-}"
     local counter="${2-}"
@@ -177,35 +123,21 @@ progress_activity() {
 }
 
 progress_tick() {
-    if [[ "${_PROGRESS_MODE}" == "indeterminate" ]]; then
-        ((_PROGRESS_FRAME += 1))
-    fi
+    ((_PROGRESS_FRAME += 1))
     [[ "${_PROGRESS_TTY}" -eq 1 ]] && _progress_draw
     return 0
 }
 
 progress_done() {
-    if [[ "${_PROGRESS_MODE}" == "indeterminate" ]]; then
-        _PROGRESS_LABEL="done"
-        _PROGRESS_COUNTER=""
-        _PROGRESS_COMPLETE=1
-        if [[ "${_PROGRESS_TTY}" -eq 1 ]]; then
-            _progress_tail_clear
-            _progress_draw
-            printf '\n'
-        else
-            printf '  done (%s)\n' "$(_progress_elapsed)"
-        fi
-        return
-    fi
-    _PROGRESS_PCT=100
     _PROGRESS_LABEL="done"
+    _PROGRESS_COUNTER=""
+    _PROGRESS_COMPLETE=1
     if [[ "${_PROGRESS_TTY}" -eq 1 ]]; then
         _progress_tail_clear
         _progress_draw
         printf '\n'
     else
-        printf '  100%%  done (%s)\n' "$(_progress_elapsed)"
+        printf '  done (%s)\n' "$(_progress_elapsed)"
     fi
 }
 
