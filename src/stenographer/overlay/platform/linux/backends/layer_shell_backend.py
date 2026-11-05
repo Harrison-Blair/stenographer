@@ -14,7 +14,6 @@ from pywayland.protocol.wayland import WlCompositor, WlOutput, WlShm
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.overlay.platform.linux.backends.base import DISPLAY_KEY
-from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
 from stenographer.overlay.platform.linux.backends.global_removal import GlobalRemoval
 from stenographer.overlay.platform.linux.backends.helper_backend import HelperBackend
 from stenographer.overlay.platform.linux.backends.protocols.fractional_scale_v1 import (
@@ -40,6 +39,7 @@ from stenographer.overlay.platform.linux.backends.wayland_constants import (
     log,
 )
 from stenographer.overlay.protocol.backend import Backend
+from stenographer.overlay.protocol.errors import BackendUnavailableError
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 from stenographer.overlay.rendering.constants import CANVAS_HEIGHT, CANVAS_WIDTH
 from stenographer.overlay.rendering.render import layer_margin_bottom, premultiplied_argb32

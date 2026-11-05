@@ -24,6 +24,7 @@ from stenographer.lib.logging.pipeline import log_failure
 from stenographer.overlay.platform.overlay_backend import OverlayBackend
 from stenographer.overlay.platform.overlay_backend_spec import OverlayBackendSpec
 from stenographer.overlay.protocol.backend import Backend
+from stenographer.overlay.protocol.errors import BackendUnavailableError
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
 log = logging.getLogger(__name__)
@@ -61,8 +62,6 @@ def _probe_layer_shell() -> UnavailableReason | None:
 
 
 def _construct_layer_shell() -> OverlayBackend:
-    from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
-
     try:
         from stenographer.overlay.platform.linux.backends.layer_shell_backend import (
             LayerShellBackend,
@@ -114,8 +113,6 @@ def _probe_xwayland() -> UnavailableReason | None:
 
 
 def _construct_xwayland() -> OverlayBackend:
-    from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
-
     try:
         from stenographer.overlay.platform.linux.backends.x11_overlay_backend import (
             X11OverlayBackend,

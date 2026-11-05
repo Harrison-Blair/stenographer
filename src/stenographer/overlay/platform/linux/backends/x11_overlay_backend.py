@@ -12,7 +12,6 @@ from Xlib.ext import randr, shape
 
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
-from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
 from stenographer.overlay.platform.linux.backends.helper_backend import HelperBackend
 from stenographer.overlay.platform.linux.backends.monitor import Monitor
 from stenographer.overlay.platform.linux.backends.pict_format import PictFormat
@@ -38,6 +37,7 @@ from stenographer.overlay.platform.linux.backends.x11_constants import (
     log,
 )
 from stenographer.overlay.protocol.backend import Backend
+from stenographer.overlay.protocol.errors import BackendUnavailableError
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 from stenographer.overlay.rendering.frame import OverlayFrame
 from stenographer.overlay.rendering.render import overlay_position, premultiplied_argb32
