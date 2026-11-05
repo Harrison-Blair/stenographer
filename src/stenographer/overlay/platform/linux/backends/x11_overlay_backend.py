@@ -154,11 +154,10 @@ class X11OverlayBackend(HelperBackend):
     def _choose_monitor(self) -> Monitor:
         assert self._screen is not None
         pointer = self._screen.root.query_pointer()
-        root = self._root_monitor()
         return select_monitor(
             self._monitors(),
             pointer=(pointer.root_x, pointer.root_y),
-            root_rect=root.rect,
+            root=self._root_monitor(),
         )
 
     def _xft_dpi(self) -> float | None:
