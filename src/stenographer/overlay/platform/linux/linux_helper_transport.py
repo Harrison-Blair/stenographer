@@ -11,7 +11,6 @@ if TYPE_CHECKING:
 
 from stenographer.overlay.platform.linux.linux_helper_process import LinuxHelperProcess
 
-
 _SPAWN_CLEANUP_SECONDS = 0.75
 
 

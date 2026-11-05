@@ -165,9 +165,6 @@ def smooth_spectrum(
     previous: object,
     target: object,
     elapsed: float,
-    *,
-    attack: float = ATTACK_SECONDS,
-    release: float = RELEASE_SECONDS,
 ) -> np.ndarray:
     """Apply independent exponential attack/release smoothing to 18 levels."""
     old = np.asarray(previous, dtype=np.float64).reshape(-1)
@@ -176,12 +173,10 @@ def smooth_spectrum(
         raise ValueError(f"spectrum smoothing requires {SPECTRUM_BANDS} levels")
     if not math.isfinite(elapsed) or elapsed < 0:
         raise ValueError("smoothing elapsed time must be finite and non-negative")
-    if not math.isfinite(attack) or not math.isfinite(release) or min(attack, release) <= 0:
-        raise ValueError("smoothing time constants must be finite and positive")
     old = np.clip(np.nan_to_num(old, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
     new = np.clip(np.nan_to_num(new, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
-    attack_weight = 1.0 - math.exp(-elapsed / attack)
-    release_weight = 1.0 - math.exp(-elapsed / release)
+    attack_weight = 1.0 - math.exp(-elapsed / ATTACK_SECONDS)
+    release_weight = 1.0 - math.exp(-elapsed / RELEASE_SECONDS)
     weights = np.where(new > old, attack_weight, release_weight)
     return old + weights * (new - old)
 

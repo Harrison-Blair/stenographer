@@ -434,19 +434,6 @@ def test_smoothing_refuses_an_elapsed_time_that_is_not_a_real_interval(
         smooth_spectrum(frame, frame, elapsed)
 
 
-@pytest.mark.parametrize(
-    ("attack", "release"),
-    [(0.0, RELEASE_SECONDS), (ATTACK_SECONDS, 0.0), (-1.0, RELEASE_SECONDS)],
-)
-def test_smoothing_refuses_time_constants_that_would_divide_by_zero(
-    attack: float, release: float
-) -> None:
-    frame = np.zeros(SPECTRUM_BANDS)
-
-    with pytest.raises(ValueError, match="finite and positive"):
-        smooth_spectrum(frame, frame, _FRAME_SECONDS, attack=attack, release=release)
-
-
 @pytest.mark.parametrize("size", [SPECTRUM_BANDS - 1, SPECTRUM_BANDS + 1])
 def test_quantization_requires_exactly_eighteen_levels(size: int) -> None:
     with pytest.raises(ValueError, match=f"requires {SPECTRUM_BANDS} levels"):

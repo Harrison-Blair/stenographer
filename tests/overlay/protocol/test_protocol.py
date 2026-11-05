@@ -98,7 +98,6 @@ def test_protocol_rejects_malformed_or_expansive_records_without_echo(record):
     assert "detailed" not in str(exc.value)
 
 
-
 def test_encoder_rejects_invalid_typed_values():
     with pytest.raises(ProtocolError, match="state"):
         encode_message(StateMessage(1, "recording"))
@@ -336,11 +335,9 @@ def test_the_decoder_rejects_spectrum_counters_outside_the_wire_range(generation
         decode_message(record.encode())
 
 
-
 def test_the_decoder_rejects_bytes_that_are_not_utf_eight():
     with pytest.raises(ProtocolError, match="not UTF-8"):
         decode_message(b'{"v":5,"type":"ready","backend":"\xff\xfe"}\n')
-
 
 
 @pytest.mark.parametrize("record", ["[1,2,3]\n", '"state"\n', "4\n", "null\n"])

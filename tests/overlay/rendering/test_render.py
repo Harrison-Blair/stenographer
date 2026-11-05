@@ -37,8 +37,16 @@ from stenographer.overlay.rendering.render import (
     overlay_position,
     premultiplied_argb32,
     render_overlay,
-    spectrum_bar_bounds,
 )
+from stenographer.overlay.rendering.render import (
+    spectrum_bar_bounds as _spectrum_bar_bounds,
+)
+
+
+def spectrum_bar_bounds(levels, *, scale=1.0):
+    return _spectrum_bar_bounds(
+        levels, pill_bounds=(12, 8, 12 + PILL_WIDTH, 8 + PILL_HEIGHT), scale=scale
+    )
 
 
 def test_lifecycle_visual_contract_has_no_loading_label_or_dot() -> None:
@@ -296,7 +304,7 @@ def test_position_rejects_output_too_small_for_visible_pill() -> None:
 
 
 def test_layer_margin_offsets_visible_pill_not_shadow_canvas() -> None:
-    assert layer_margin_bottom(canvas_height=88, pill_bottom=72, edge_offset=32) == 16
+    assert layer_margin_bottom(canvas_height=88, pill_bottom=72) == 16
 
 
 def test_layer_margin_and_position_agree_on_the_pill_edge_offset() -> None:
@@ -312,7 +320,7 @@ def test_layer_margin_and_position_agree_on_the_pill_edge_offset() -> None:
 
 def test_layer_margin_rejects_a_shadow_canvas_deeper_than_the_offset() -> None:
     with pytest.raises(ValueError, match="edge offset"):
-        layer_margin_bottom(canvas_height=88, pill_bottom=40, edge_offset=32)
+        layer_margin_bottom(canvas_height=88, pill_bottom=40)
 
 
 # Exact RGBA values sampled from the reference renderer at scale 1.0.  These
@@ -506,10 +514,3 @@ def test_position_requires_four_whole_pixel_output_bounds(output_rect: tuple) ->
 
     with pytest.raises(TypeError, match="four integers"):
         overlay_position(output_rect, frame)
-
-
-def test_position_rejects_a_negative_edge_offset() -> None:
-    frame = render_overlay(OverlayState.ERROR)
-
-    with pytest.raises(ValueError, match="output is too small"):
-        overlay_position((0, 0, 1920, 1080), frame, edge_offset=-1)

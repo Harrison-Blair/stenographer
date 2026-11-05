@@ -13,7 +13,6 @@ from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.rendering.constants import (
-    _CANVAS_MARGIN_LEFT,
     _CANVAS_MARGIN_TOP,
     _CONTENT_INSET_LEFT,
     _CORNER_RADIUS,
@@ -30,8 +29,8 @@ from stenographer.overlay.rendering.constants import (
     _LABEL_WEIGHT,
     _PILL_FILL,
     _PROFILE_LABEL_EXTRA,
-    _SHADOW_BLUR,
     _SHADOW_ALPHA,
+    _SHADOW_BLUR,
     _SHADOW_OFFSET_Y,
     _SPECTRUM_BAR_GAP,
     _SPECTRUM_BAR_WIDTH,
@@ -125,13 +124,8 @@ def loading_border_opacity(elapsed_seconds: object) -> float:
 def spectrum_bar_bounds(
     levels: object | None,
     *,
-    pill_bounds: tuple[int, int, int, int] = (
-        _CANVAS_MARGIN_LEFT,
-        _CANVAS_MARGIN_TOP,
-        _CANVAS_MARGIN_LEFT + PILL_WIDTH,
-        _CANVAS_MARGIN_TOP + PILL_HEIGHT,
-    ),
-    scale: float = 1.0,
+    pill_bounds: tuple[int, int, int, int],
+    scale: float,
     left_offset: int = 0,
 ) -> tuple[tuple[int, int, int, int], ...]:
     """Return deterministic exclusive pixel bounds for exactly 18 bars."""
@@ -387,8 +381,6 @@ def premultiplied_argb32(
 def overlay_position(
     output_rect: tuple[int, int, int, int],
     frame: OverlayFrame,
-    *,
-    edge_offset: float = EDGE_OFFSET,
 ) -> tuple[int, int]:
     """Place a frame so its visible pill is centered and offset from bottom."""
     if len(output_rect) != 4 or any(
@@ -398,28 +390,22 @@ def overlay_position(
     output_x, output_y, output_width, output_height = output_rect
     pill_width = frame.pill_bounds[2] - frame.pill_bounds[0]
     pill_height = frame.pill_bounds[3] - frame.pill_bounds[1]
-    physical_offset = round(edge_offset * frame.scale)
-    if (
-        output_width < pill_width
-        or output_height < pill_height + physical_offset
-        or edge_offset < 0
-    ):
+    physical_offset = round(EDGE_OFFSET * frame.scale)
+    if output_width < pill_width or output_height < pill_height + physical_offset:
         raise ValueError("output is too small for the overlay placement")
     x = output_x + (output_width - frame.width) // 2
     y = output_y + output_height - physical_offset - frame.pill_bounds[3]
     return x, y
 
 
-def layer_margin_bottom(
-    *, canvas_height: int, pill_bottom: int, edge_offset: int = EDGE_OFFSET
-) -> int:
+def layer_margin_bottom(*, canvas_height: int, pill_bottom: int) -> int:
     """Translate a visible-pill offset into a bottom-anchored canvas margin.
 
     The counterpart of ``overlay_position`` for a display server that places
     the surface itself: both keep the *pill* the requested distance from the
     output edge, so the shadow canvas below it never becomes visible padding.
     """
-    margin = edge_offset - (canvas_height - pill_bottom)
+    margin = EDGE_OFFSET - (canvas_height - pill_bottom)
     if margin < 0:
         raise ValueError("overlay shadow canvas exceeds the requested edge offset")
     return margin

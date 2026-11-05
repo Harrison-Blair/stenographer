@@ -83,7 +83,7 @@ def test_serve_timeout_clamps_imminent_and_past_deadlines_to_zero_or_more():
 
 
 def test_serve_timeout_caps_far_deadlines_at_poll_cadence():
-    assert serve_timeout(100.0, 200.0, poll_seconds=0.05) == 0.05
+    assert serve_timeout(100.0, 200.0) == _POLL_SECONDS
 
 
 def test_mailbox_assigns_generations_and_coalesces_pending_states():
@@ -153,20 +153,23 @@ def test_mailbox_transition_discards_prior_recording_frames_and_takes_priority()
 
 
 def test_mailbox_is_bounded_and_keeps_newest_metadata():
-    mailbox = OutboundMailbox(capacity=3)
+    mailbox = OutboundMailbox()
     mailbox.publish(OverlayState.RECORDING)
     mailbox.loading_activity(LoadingModel.ASR, True)
     mailbox.publish(OverlayState.TRANSCRIBING)
     mailbox.loading_activity(LoadingModel.ASR, False)
     mailbox.publish(OverlayState.DELIVERING)
     mailbox.publish(OverlayState.ERROR)
+    for index in range(5):
+        mailbox.loading_activity(LoadingModel.ASR, index % 2 == 0)
+        mailbox.publish(OverlayState.ERROR)
 
     messages = []
     while (message := mailbox.take_nowait()) is not None:
         messages.append(message)
 
-    assert len(messages) <= 3
-    assert messages[-1] == StateMessage(3, OverlayState.ERROR)
+    assert len(messages) == 8
+    assert messages[-1] == StateMessage(8, OverlayState.ERROR)
     generated = [message for message in messages if isinstance(message, StateMessage)]
     assert all(a.generation < b.generation for a, b in pairwise(generated))
 
@@ -270,15 +273,6 @@ def test_mailbox_cancelled_timeout_is_short_and_generation_guarded():
     newer = mailbox.publish(OverlayState.RECORDING)
     assert mailbox.expire_transient(deadline + 100.0) is None
     assert mailbox.current_state == StateMessage(newer, OverlayState.RECORDING)
-
-
-@pytest.mark.parametrize("capacity", [0, -1, True, False, 8.0, "8"])
-def test_mailbox_capacity_must_be_a_real_positive_integer(capacity: object) -> None:
-    """``True`` is an ``int`` in Python: a bool capacity would silently make a
-    one-slot mailbox that drops every record but the newest.
-    """
-    with pytest.raises(ValueError, match="positive integer"):
-        OutboundMailbox(capacity=capacity)
 
 
 def test_a_closed_mailbox_accepts_nothing_but_still_reports_the_last_state() -> None:

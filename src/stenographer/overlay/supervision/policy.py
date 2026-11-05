@@ -41,12 +41,10 @@ def schedule_spectrum(
     return next_spectrum_at, False
 
 
-def serve_timeout(
-    now: float, next_spectrum_at: float | None, poll_seconds: float = _POLL_SECONDS
-) -> float:
+def serve_timeout(now: float, next_spectrum_at: float | None) -> float:
     if next_spectrum_at is None:
-        return poll_seconds
-    return min(poll_seconds, max(0.0, next_spectrum_at - now))
+        return _POLL_SECONDS
+    return min(_POLL_SECONDS, max(0.0, next_spectrum_at - now))
 
 
 def _helper_stderr_path() -> Path | None:

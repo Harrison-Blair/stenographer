@@ -439,7 +439,7 @@ def test_a_helper_handle_that_breaks_the_serve_loop_is_still_reaped(
 
     _install, session = host
     broken = _BrokenHelper()
-    transport = session(broken)
+    session(broken)
 
     with caplog.at_level(logging.WARNING, logger=_LOG):
         instance = supervisor()
