@@ -23,7 +23,7 @@ choose it. Use hub Settings or the configuration file for the remaining settings
 
 ## Build the speech model
 
-Dictation, Live, and Files use Underdog Bark 3.0 Pro by Conway Research. It
+Dictation, Record, and file jobs use Underdog Bark 3.0 Pro by Conway Research. It
 runs as int8 ONNX through sherpa-onnx, on the CPU only. Stenographer does not
 host the model; you build it once on your machine:
 
@@ -51,11 +51,15 @@ mode; [refine](refine.md) removes them from dictations of 10 or more words (the
 default `min_words`). For live capture,
 see [Record live audio](hub.md#record).
 
-The configuration file is:
+The default configuration file is:
 
 ```text
 ~/.config/stenographer/config.toml
 ```
+
+Set `STENOGRAPHER_CONFIG` to use a different file. Otherwise, when
+`XDG_CONFIG_HOME` is set, the file is
+`$XDG_CONFIG_HOME/stenographer/config.toml`.
 
 For example, use toggle mode, keep Escape as the cancel key, and hide the
 lifecycle pill:
@@ -166,7 +170,8 @@ stenographer sounds soft-electronic
 
 The bundled packs are `legacy`, `warm-desk`, `soft-electronic`, and
 `minimal-ui`. A custom pack lives under
-`~/.config/stenographer/sounds/<pack>/` and must contain these four files:
+`sounds/<pack>/` in the active configuration directory (by default,
+`~/.config/stenographer/sounds/<pack>/`) and must contain these four files:
 
 ```text
 record_start.wav

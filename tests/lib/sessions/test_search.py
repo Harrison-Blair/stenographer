@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -57,6 +58,20 @@ def test_search_matches_titles_and_transcript_text_case_insensitively_newest_fir
     assert store.search("kilo") == ()
     assert store.search("") == tuple(everyone)
     assert store.search("   ") == tuple(everyone)
+
+
+def test_search_matches_recording_displayed_local_time(tmp_path, monkeypatch):
+    with monkeypatch.context() as env:
+        env.setenv("TZ", "UTC+5")
+        time.tzset()
+        try:
+            store = SessionStore(tmp_path / "sessions")
+            session = _recording(tmp_path, _STARTED, "hello")
+            assert store.search("01 Mar 23:05") == (session,)
+            assert store.search("2026-03-02 04:05") == (session,)
+        finally:
+            env.undo()
+            time.tzset()
 
 
 def test_search_reads_only_the_current_revision(tmp_path):
