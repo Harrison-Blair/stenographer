@@ -465,36 +465,36 @@ its current settings.
 
 | Setting | Key | What it does |
 | --- | --- | --- |
-| Agent key | `hotkey.binding` | The binding for agent-directed dictation and its cleanup. |
+| Agent key | `hotkey.binding` | The dictation binding for agent-directed dictation and its cleanup. |
 | Hotkey device | `hotkey.device` | The hotkey input device. Blank listens on the keyboards that stenographer detects. |
-| Cancel key | `hotkey.cancel_binding` | The global cancel key. Blank disables it. |
+| Cancel key | `hotkey.cancel_binding` | The global cancel key of dictation. Blank disables it. |
 | Hotkey mode | `hotkey.mode` | The hotkey behavior: hold, toggle, or hybrid. |
-| Hold threshold | `hotkey.hybrid_threshold_seconds` | The press duration that separates a tap from a hold. |
-| General key | `hotkey.general_binding` | The binding for ordinary transcript cleanup. |
-| Volume | `feedback.volume` | The playback volume of feedback sounds. |
-| Mute sounds | `feedback.mute` | Mutes feedback sounds. |
-| Overlay | `feedback.overlay` | Shows the best-effort status overlay. |
+| Hold threshold | `hotkey.hybrid_threshold_seconds` | In hybrid mode, the press duration that separates a tap from a hold. |
+| General key | `hotkey.general_binding` | The dictation binding for ordinary transcript cleanup. |
+| Volume | `feedback.volume` | The playback volume of dictation feedback sounds. |
+| Mute sounds | `feedback.mute` | Mutes dictation feedback sounds. |
+| Overlay | `feedback.overlay` | Shows the best-effort status overlay of dictation. |
 | Sound pack | `feedback.sound_pack` | The name of the feedback sound pack. |
-| Update check | `feedback.update_check` | Checks release metadata and shows an update notice. |
+| Update check | `feedback.update_check` | When the dictation daemon starts, checks release metadata and shows an update notice. |
 | Log level | `feedback.log_level` | The minimum level of console log messages. |
-| Copy original | `delivery.copy_original` | Copies the original transcript before cleanup. |
-| Restore clipboard | `delivery.restore_clipboard` | Restores the previous clipboard item after delivery. |
+| Copy original | `delivery.copy_original` | For the Agent key, and only when cleanup changed the text, copies the original transcript too. |
+| Restore clipboard | `delivery.restore_clipboard` | Restores the previous clipboard item after dictation delivers its text. |
 | Restore delay | `delivery.restore_delay_ms` | The wait, in milliseconds, before the clipboard is restored. |
-| Usage history | `analytics.enabled` | Stores local numeric usage history. It stores no audio or transcript text. |
-| Resource profiling | `analytics.resource_profiling` | Measures local resource use during utterances. |
-| Microphone | `audio.input_device` | The audio input device name or index. Blank uses the default. |
-| Minimum speech level | `audio.min_speech_rms` | Ignores audio below this speech energy level. Zero disables the gate. |
-| Longest recording | `audio.max_recording_seconds` | The maximum length of one recording. |
-| Meter floor dBFS | `feedback.spectrum_floor_dbfs` | The audio meter floor in dBFS: one fixed value, or one value per band. |
-| Idle unload | `asr.idle_unload_seconds` | The seconds before the idle speech worker unloads. Zero never unloads it. |
+| Usage history | `analytics.enabled` | Stores local numeric usage history of dictation and `stenographer transcribe`. No audio or transcript text is stored. |
+| Resource profiling | `analytics.resource_profiling` | With Usage history on, measures local resource use during utterances. |
+| Microphone | `audio.input_device` | The audio input device name or index for dictation and Record. Blank uses the default. Record's `d` key can choose another device for its next recording. |
+| Minimum speech level | `audio.min_speech_rms` | Hotkey dictation ignores audio below this speech energy level. Zero disables the gate. `stenographer transcribe` only reports the result. Record and file jobs do not use it. |
+| Longest recording | `audio.max_recording_seconds` | The maximum length of one hotkey dictation. It does not limit Record. |
+| Meter floor dBFS | `feedback.spectrum_floor_dbfs` | The floor of the Record meters and the dictation overlay in dBFS: one fixed value, or one value per band. |
+| Idle unload | `asr.idle_unload_seconds` | The seconds before the idle speech worker unloads, and how long Ollama keeps the refine model loaded when idle. Zero never unloads either one. |
 | CPU threads | `asr.cpu_threads` | The CPU threads of the speech worker. Zero is automatic. |
 | Vocabulary | `refine.vocabulary` | Terms that refine spells exactly as written. |
-| Refine | `refine.enabled` | Runs text cleanup after each utterance. |
+| Refine | `refine.enabled` | Runs text cleanup after each dictated utterance. File jobs and `stenographer transcribe --refine` choose it per run. Record does not use refine. |
 | Host | `refine.host` | The Ollama server of refine. A host that is not loopback receives transcript text. |
 | Model | `refine.model` | The model name on the refine service. |
 | Minimum words | `refine.min_words` | Shorter utterances skip refine. |
 | Structured output | `refine.structured_output` | Asks the model for structured output. |
-| Separate room speakers | `live.diarize_mic` | Separates the speakers on the microphone as Room 1, Room 2, and so on. Off labels every microphone line You. |
+| Separate room speakers | `live.diarize_mic` | Separates the speakers on the microphone as Room 1, Room 2, and so on. Off labels every microphone line You. It applies to new Record recordings. |
 
 ### Checks
 

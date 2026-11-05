@@ -216,6 +216,33 @@ async def test_failed_live_rename_shows_a_notice_and_the_hub_stays_open(tmp_path
         session.release.set()
 
 
+async def test_saved_record_rename_changes_one_of_two_speakers_that_share_a_name(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        session.lines = [
+            TranscriptLine(0.0, 1.0, "", "mic", "room-1", "Dana", TEXT),
+            TranscriptLine(1.0, 2.0, "", "mic", "room-2", "Dana", TEXT),
+        ]
+        await pilot.press("enter")
+        await _until(pilot, session.stop_entered.is_set)
+        session.release.set()
+        await _until(pilot, lambda: not services.stopping_sessions)
+        await _until(pilot, lambda: not app.is_busy(session.path.name))
+        await pilot.press("r")
+        await pilot.pause()
+        app.screen.query_one("#speaker-select", Select).value = "room-1"
+        app.screen.query_one("#speaker-name", Input).value = "Diana"
+        await pilot.click("#dialog-rename")
+        await _until(pilot, lambda: not app.is_busy(session.path.name))
+        store = services.session_store
+        await _until(pilot, lambda: store.read(session.path.name).revision != "transcript.jsonl")
+
+        labels = {line.speaker_id: line.label for line in store.read(session.path.name).lines}
+        assert labels == {"room-1": "Diana", "room-2": "Dana"}
+
+
 async def test_record_bar_gives_a_room_speaker_the_color_of_its_transcript_row(tmp_path):
     services, created = _services(tmp_path)
     app = _app(tmp_path, services)
