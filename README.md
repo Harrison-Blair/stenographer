@@ -92,7 +92,8 @@ systemctl --user start stenographer.service
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
 offers the separate ASR and voice-activity model download. Use plain `setup` to
-review every setting.
+review the hotkey, audio, ASR, feedback, and refine settings. Use hub Settings
+or the configuration file for the remaining settings.
 
 ## Speech model
 
@@ -154,12 +155,13 @@ behavior. Both bindings share the configured mode:
 - Press Escape while recording or delivering to discard the audio and
   transcript. Nothing is pasted.
 
-Otherwise the transcript is pasted at your cursor. About half a second later
-your previous clipboard item is back on the clipboard, unless you copied
-something newer in that time. When Agent changes the text and
+Otherwise the transcript is pasted at your cursor. By default, when clipboard
+capture and restoration are available, your previous item is restored about
+half a second later unless you copied something newer. Configure this with
+`restore_clipboard` and `restore_delay_ms`. When Agent changes the text and
 `stenographer.delivery.copy_original` is enabled, the app attempts to copy the
-unrefined transcript before delivering the rewrite. This copy is best effort;
-a clipboard history can keep both. See
+original immediately before the rewritten text. This copy is best effort; a
+clipboard history can keep both. See
 [Keep your clipboard](docs/usage.md#keep-your-clipboard).
 Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
 Set `binding` (Agent) or `general_binding` to any `KEY_*` chord to rebind it.
