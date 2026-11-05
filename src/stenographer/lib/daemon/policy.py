@@ -11,17 +11,15 @@ from stenographer.lib.daemon.outcome import Outcome
 
 
 def classify_pipeline(
-    *, gate_passed: bool, transcript_nonempty: bool, deliver_result: bool | None
+    *, transcript_nonempty: bool, deliver_result: bool | None
 ) -> tuple[Outcome, str | None]:
     """Map a pipeline run to its outcome and optional error message. PURE.
 
-    A failed energy gate or an empty transcript is success-shaped — no paste, no
+    An empty transcript is success-shaped — no paste, no
     error cue. Otherwise the delivery result decides: a False deliver on
     non-empty text is an error (deliver already withheld the chord on copy
     failure), never treated as silent.
     """
-    if not gate_passed:
-        return (Outcome.SILENT, None)
     if not transcript_nonempty:
         return (Outcome.SILENT, None)
     if deliver_result:
@@ -45,9 +43,7 @@ def ignored_edge_reason(recording: bool, busy: bool, stopping: bool) -> str:
         return "recording"
     if busy:
         return "busy"
-    if stopping:
-        return "stopping"
-    return "none"
+    return "stopping"
 
 
 def toggle_action(

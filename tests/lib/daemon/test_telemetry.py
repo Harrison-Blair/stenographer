@@ -189,19 +189,6 @@ def _record(utt: int = 1) -> UtteranceRecord:
     )
 
 
-def test_telemetry_without_a_platform_collects_nothing():
-    telemetry = UtteranceTelemetry()
-    record = _record()
-
-    telemetry.open(Config.defaults(), None, pids=tuple)
-    telemetry.start(record)
-    telemetry.checkpoint(record, "secured_capture")
-    telemetry.finish(record)
-    telemetry.close()
-
-    assert record.analytics_id is None
-
-
 def test_a_fresh_telemetry_collects_nothing_until_it_is_opened(tmp_path):
     # The daemon constructs telemetry long before it starts its listener; the
     # presses that cannot happen yet must still find nothing to write to.
@@ -319,7 +306,8 @@ def test_a_control_character_device_name_never_reaches_the_database(tmp_path):
 
 def test_a_failing_collection_never_interrupts_the_utterance(daemon_logs):
     collection = _Collection(error=RuntimeError(f"collection exploded on {CANARY}"))
-    telemetry = UtteranceTelemetry(collection=collection)
+    telemetry = UtteranceTelemetry()
+    telemetry._collection = collection
     record = _record()
 
     telemetry.start(record)
@@ -348,7 +336,8 @@ def test_a_failing_collection_never_interrupts_the_utterance(daemon_logs):
 
 def test_a_healthy_collection_receives_the_daemon_supplied_phases():
     collection = _Collection()
-    telemetry = UtteranceTelemetry(collection=collection)
+    telemetry = UtteranceTelemetry()
+    telemetry._collection = collection
     record = _record(utt=7)
     record.device_name = "USB microphone"
 

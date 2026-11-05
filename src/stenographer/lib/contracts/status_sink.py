@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 
 
-@runtime_checkable
 class StatusSink(Protocol):
     """Nonblocking daemon-side lifecycle destination.
 

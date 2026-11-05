@@ -185,7 +185,6 @@ class UtterancePipeline:
                 return outcome_name
             self._apply_delivery(record, attempted=transcript_nonempty)
             outcome, message = classify_pipeline(
-                gate_passed=True,
                 transcript_nonempty=transcript_nonempty,
                 deliver_result=deliver_result,
             )
@@ -203,7 +202,7 @@ class UtterancePipeline:
                 self._publish_state(self._refine_display_state or OverlayState.HIDDEN)
                 self._play_cue("delivered")
             elif outcome is Outcome.ERROR:
-                self._fail(message or "delivery failed")
+                self._fail(message)
         except Exception as exc:
             if record is not None:
                 record.failure = "error"

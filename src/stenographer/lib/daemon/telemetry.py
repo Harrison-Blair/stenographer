@@ -28,21 +28,17 @@ class UtteranceTelemetry:
     with the caller.
     """
 
-    def __init__(self, *, collection: Collection | None = None) -> None:
-        # Left unopened by default: ``open`` creates the session collection when
-        # the daemon starts. An injected collection is used as-is instead.
-        self._collection: Collection | None = collection
+    def __init__(self) -> None:
+        self._collection: Collection | None = None
 
     def open(
         self,
         cfg: Config,
-        platform: Platform | None,
+        platform: Platform,
         *,
         pids: Callable[[], Sequence[int]],
     ) -> None:
         """Initialize diagnostics when the daemon starts its listener."""
-        if platform is None:
-            return
         try:
             from stenographer.lib.diagnostics.session import create_session
 
