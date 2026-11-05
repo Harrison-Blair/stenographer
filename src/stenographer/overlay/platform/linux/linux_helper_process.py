@@ -56,8 +56,6 @@ class LinuxHelperProcess:
     def terminate(self, grace_seconds: float) -> None:
         process = self._process
         if process.poll() is not None:
-            with contextlib.suppress(OSError):
-                process.wait(timeout=0)
             return
         with contextlib.suppress(OSError):
             process.terminate()
