@@ -411,11 +411,6 @@ class HubApp(App[None]):
 
     async def _finish_work_and_quit(self) -> None:
         services = self.services
-        relabeling = bool(getattr(services, "stopping_sessions", ()))
-        if relabeling:
-            # Each stop still finishes writing its files; only the relabel passes end early.
-            self._show_quit_status("Saving recordings...")
-            await asyncio.to_thread(services.skip_relabels)
         if services.recording:
             self._show_quit_status("Saving recording...")
             try:
@@ -424,8 +419,10 @@ class HubApp(App[None]):
                 log_failure(log, logging.ERROR, "hub: recording_stop_failed", exc, safe=True)
                 self._quit_step_failed(f"Could not save the recording: {exc}")
                 return
-        if relabeling:
+        if getattr(services, "stopping_sessions", ()):
+            # Each stop still finishes writing its files; only the relabel passes end early.
             self._show_quit_status("Saving recordings...")
+            await asyncio.to_thread(services.skip_relabels)
             await asyncio.to_thread(services.wait_for_stops)
         if self.library_screen.files_running:
             self._show_quit_status("Canceling the file job...")

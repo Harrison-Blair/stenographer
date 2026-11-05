@@ -290,8 +290,8 @@ async def test_pilot_quit_asks_once_for_all_active_work_and_runs_it_in_order():
             await pilot.pause(0.02)
         assert not app.is_running
     assert services.actions == [
-        "skip-relabels",
         "stop-recording",
+        "skip-relabels",
         "wait-for-stops",
         "cancel-files",
     ]
@@ -314,6 +314,7 @@ async def test_pilot_quit_keeps_the_hub_open_when_the_recording_cannot_save():
         assert app.activity_status is None
         assert services.files_running, "a failed save must not cancel the file job"
         assert "cancel-files" not in services.actions
+        assert "skip-relabels" not in services.actions, "a failed save must not skip a relabel"
         notices = [str(notice.message) for notice in app._notifications]
         assert "Could not save the recording: no space left on device" in notices
 
