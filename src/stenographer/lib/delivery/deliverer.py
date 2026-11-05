@@ -7,7 +7,8 @@ delivery policy, which is platform-neutral: empty text is not delivered, a
 failed copy never fires the chord, and a release-wait timeout proceeds because
 the copy is already confirmed. After the chord the caller asks for
 :meth:`Deliverer.restore_clipboard`, which puts back the clipboard item the
-user had before this delivery wrote over it."""
+user had before this delivery wrote over it, unless a newer item replaced this
+delivery's text in the meantime."""
 
 from __future__ import annotations
 
@@ -65,6 +66,8 @@ class Deliverer:
         self.last_timings: DeliveryTimings | None = None
         # Held only between a snapshot and the write that follows it at once.
         self._snapshot: ClipboardSnapshot | None = None
+        # What the last delivery may have left on the clipboard.
+        self._written: frozenset[bytes] = frozenset()
 
     def deliver(
         self,
@@ -87,6 +90,7 @@ class Deliverer:
         self._snapshot = None
         if not text or (cancelled is not None and cancelled()):
             return False
+        self._written = frozenset(item.encode("utf-8") for item in (text, original) if item)
         snapshot_ms: float | None = None
         if self._read is not None:
             snapshot_started_at = time.perf_counter()
@@ -113,6 +117,17 @@ class Deliverer:
                 if not original_copied:
                     log.warning(fmt_event("deliver", "original_copy_failed"))
             original_copy_ms = (time.perf_counter() - original_started_at) * 1000.0
+            # A slow copy must never lead to a second write after a cancel.
+            if cancelled is not None and cancelled():
+                self.last_timings = DeliveryTimings(
+                    0.0,
+                    None,
+                    None,
+                    snapshot_ms=snapshot_ms,
+                    original_copied=original_copied,
+                    original_copy_ms=original_copy_ms,
+                )
+                return False
         copy_started_at = time.perf_counter()
         copied = False
         try:
@@ -168,8 +183,10 @@ class Deliverer:
         A no-op returning False unless that delivery took a snapshot, which it
         keeps only once a write follows. Otherwise wait the settle delay, so the target window
         has read the paste, then write the snapshot back once; it is dropped
-        either way. Never raises: a failure is logged and returns False. A
-        cancel is deliberately not consulted, because the paste has landed.
+        either way. The clipboard keeps its item unless it still holds this
+        delivery's bytes: another application may have copied during the delay.
+        Never raises: a failure is logged and returns False. A cancel is
+        deliberately not consulted, because the paste has landed.
         """
         snapshot, self._snapshot = self._snapshot, None
         if snapshot is None or self._restore is None:
@@ -179,12 +196,15 @@ class Deliverer:
         try:
             self._sleep(self._restore_delay)
             restore_started_at = time.perf_counter()
-            restored = self._restore(snapshot)
+            current = self._read()
+            if current is None or current.data not in self._written:
+                log.info(fmt_event("deliver", "restore_skipped", reason="clipboard_changed"))
+            else:
+                restored = self._restore(snapshot)
+                if not restored:
+                    log.warning(fmt_event("deliver", "restore_failed"))
         except Exception as exc:
             log_failure(log, logging.WARNING, "deliver: restore_failed", exc, safe=False)
-        else:
-            if not restored:
-                log.warning(fmt_event("deliver", "restore_failed"))
         if self.last_timings is not None:
             self.last_timings = replace(
                 self.last_timings,

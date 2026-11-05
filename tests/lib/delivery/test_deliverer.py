@@ -268,8 +268,12 @@ def _restoring(
     sleeps: list[float] = []
 
     def read() -> ClipboardSnapshot | None:
-        events.append("snapshot")
-        return snapshot
+        # The first read saves the seed; a later one sees what this delivery wrote.
+        if "snapshot" not in events:
+            events.append("snapshot")
+            return snapshot
+        events.append("check")
+        return ClipboardSnapshot(SEED.mime, copy.texts[-1].encode("utf-8"))
 
     def sleep(seconds: float) -> None:
         events.append("sleep")
@@ -378,7 +382,7 @@ def test_restore_runs_after_a_sent_chord_with_the_configured_delay():
 
     assert restore.snapshots == [SEED]
     assert sleeps == [0.5]
-    assert events[-2:] == ["sleep", "restore"]
+    assert events[-3:] == ["sleep", "check", "restore"]
     timings = deliverer.last_timings
     assert timings.restored is True
     assert timings.restore_ms is not None
@@ -546,3 +550,85 @@ def test_a_new_delivery_drops_a_snapshot_the_last_one_never_restored():
 
     assert deliverer.restore_clipboard() is False
     assert restore.snapshots == []
+
+
+def _restoring_over(current, restore: RecordingRestore):
+    """A deliverer whose clipboard holds *current* once the settle delay ends."""
+    reads = iter([lambda: SEED, current])
+    return Deliverer(
+        keyboard=RecordingKeyboard(),
+        copy=RecordingClipboard(),
+        read=lambda: next(reads)(),
+        restore=restore,
+        restore_delay=0.5,
+        sleep=lambda _seconds: None,
+    )
+
+
+def test_restore_keeps_an_item_copied_during_the_delay(caplog):
+    restore = RecordingRestore()
+    newer = ClipboardSnapshot(SEED.mime, f"newer {CANARY}".encode())
+    deliverer = _restoring_over(lambda: newer, restore)
+    deliverer.deliver("refined ")
+
+    with caplog.at_level(logging.DEBUG, logger="stenographer.lib.delivery.deliverer"):
+        assert deliverer.restore_clipboard() is False
+
+    assert restore.snapshots == []
+    assert deliverer.last_timings.restored is False
+    assert "deliver: restore_skipped" in caplog.text
+    assert CANARY not in caplog.text
+
+
+def test_restore_keeps_a_secret_the_reader_will_not_save():
+    restore = RecordingRestore()
+    deliverer = _restoring_over(lambda: None, restore)
+    deliverer.deliver("refined ")
+
+    assert deliverer.restore_clipboard() is False
+    assert restore.snapshots == []
+
+
+def test_restore_is_skipped_when_the_clipboard_check_raises(caplog):
+    restore = RecordingRestore()
+
+    def read() -> ClipboardSnapshot | None:
+        raise RuntimeError(f"owner sent {CANARY}")
+
+    deliverer = _restoring_over(read, restore)
+    deliverer.deliver("refined ")
+
+    with caplog.at_level(logging.DEBUG, logger="stenographer.lib.delivery.deliverer"):
+        assert deliverer.restore_clipboard() is False
+
+    assert restore.snapshots == []
+    assert "deliver: restore_failed" in caplog.text
+    assert CANARY not in caplog.text
+
+
+def test_restore_recognises_non_ascii_text_as_this_deliverys_own():
+    restore = RecordingRestore()
+    delivered = ClipboardSnapshot(SEED.mime, b"caf\xc3\xa9 ")
+    deliverer = _restoring_over(lambda: delivered, restore)
+    deliverer.deliver("caf\u00e9 ")
+
+    assert deliverer.restore_clipboard() is True
+    assert restore.snapshots == [SEED]
+
+
+def test_a_cancel_during_the_original_copy_never_writes_the_refined_text():
+    verdicts = iter([False, False, True])
+    deliverer, copy, keyboard, restore, _sleeps = _restoring()
+
+    assert (
+        deliverer.deliver("refined ", original="original ", cancelled=lambda: next(verdicts))
+        is False
+    )
+
+    assert copy.texts == ["original "]
+    assert keyboard.chords == 0
+    assert deliverer.last_timings.original_copied is True
+    assert deliverer.last_timings.copied is False
+    assert deliverer.restore_clipboard() is True
+    assert restore.snapshots == [SEED]
+    assert deliverer.last_timings.restored is True

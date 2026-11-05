@@ -155,7 +155,8 @@ behavior. Both bindings share the configured mode:
   transcript. Nothing is pasted.
 
 Otherwise the transcript is pasted at your cursor. About half a second later
-your previous clipboard item is back on the clipboard. When Agent rewrites the
+your previous clipboard item is back on the clipboard, unless you copied
+something newer in that time. When Agent rewrites the
 text, the unrefined transcript is copied just before the rewrite, so a
 clipboard history keeps both. See
 [Keep your clipboard](docs/usage.md#keep-your-clipboard).
