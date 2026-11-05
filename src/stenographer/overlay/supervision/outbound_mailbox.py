@@ -17,10 +17,7 @@ from stenographer.overlay.protocol.messages import (
     SpectrumMessage,
     StateMessage,
 )
-from stenographer.overlay.protocol.ordering import (
-    transient_display_seconds,
-    transient_timeout_applies,
-)
+from stenographer.overlay.protocol.ordering import transient_display_seconds
 from stenographer.overlay.supervision.constants import _MAILBOX_CAPACITY
 from stenographer.overlay.supervision.models import _AudioBlock
 
@@ -163,26 +160,9 @@ class OutboundMailbox:
             now = time.monotonic()
         with self._condition:
             deadline = self._transient_deadline
-            current = self._current_state
-            if (
-                self._closed
-                or deadline is None
-                or now < deadline
-                or not transient_timeout_applies(current.generation, current)
-            ):
+            if deadline is None or now < deadline:
                 return None
-            message = StateMessage(
-                self._generation(), OverlayState.HIDDEN, self._current_state.profile
-            )
-            self._audio_pending = None
-            self._spectrum_pending = None
-            self._recording_generation = None
-            self._next_sequence = 0
-            self._append(message)
-            self._current_state = message
-            self._transient_deadline = None
-            self._condition.notify()
-            return message.generation
+            return self.publish(OverlayState.HIDDEN, self._current_state.profile)
 
     def close(self) -> None:
         with self._condition:

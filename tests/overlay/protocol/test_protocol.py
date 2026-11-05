@@ -33,7 +33,6 @@ from stenographer.overlay.protocol.ordering import (
     coalesce_spectrum_messages,
     drain_display_stream,
     transient_display_seconds,
-    transient_timeout_applies,
 )
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
@@ -280,15 +279,6 @@ def test_drain_display_stream_rejects_unexpected_parent_message_types():
     stream = encode_message(ReadyMessage(Backend.XWAYLAND)).encode()
     with pytest.raises(ProtocolError, match="unexpected parent protocol message"):
         drain_display_stream(stream, reader, gate)
-
-
-def test_transient_timeout_is_guarded_by_generation_and_state():
-    error = StateMessage(10, OverlayState.ERROR)
-    cancelled = StateMessage(11, OverlayState.CANCELLED)
-    assert transient_timeout_applies(10, error) is True
-    assert transient_timeout_applies(9, error) is False
-    assert transient_timeout_applies(11, cancelled) is True
-    assert transient_timeout_applies(10, StateMessage(10, OverlayState.RECORDING)) is False
 
 
 def test_transient_display_windows_match_the_visual_contract():
