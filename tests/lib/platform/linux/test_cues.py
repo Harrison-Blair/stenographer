@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import threading
 import time
+from functools import partial
 
 import psutil
 import pytest
@@ -24,6 +25,9 @@ from stenographer.lib.platform.linux.cues import (
     build_play_command,
     detect_player,
 )
+from tests.support import wait_until as _wait_until
+
+wait_until = partial(_wait_until, timeout=10.0, interval=0.01)
 
 
 def _script(path, body):
@@ -35,15 +39,6 @@ def _script(path, body):
 
 def _recorder(path, record):
     return _script(path, f'printf "%s\\n" "$@" >> {shlex.quote(str(record))}\n')
-
-
-def _wait_for(predicate, timeout=10.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return False
 
 
 def test_canberra_volume_converts_linear_gain_to_decibels():
@@ -103,7 +98,7 @@ def test_preview_gives_up_on_a_stalled_player_and_reaps_it(tmp_path, monkeypatch
     assert raised.value.cmd == command
     assert raised.value.timeout == 0.3
     pid = int(marker.read_text())
-    assert _wait_for(lambda: not psutil.pid_exists(pid))
+    assert wait_until(lambda: not psutil.pid_exists(pid))
 
 
 def test_preview_reports_a_player_that_exits_nonzero(tmp_path):
@@ -137,14 +132,14 @@ def test_cancellation_kills_a_player_that_ignores_sigterm(tmp_path):
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
     try:
-        assert _wait_for(marker.exists)
+        assert wait_until(marker.exists)
         pid = int(marker.read_text())
         cancellation.set()
         worker.join(timeout=10)
         assert not worker.is_alive()
         assert [type(exc) for exc in outcome] == [RuntimeError]
         assert str(outcome[0]) == "Sound preview cancelled"
-        assert _wait_for(lambda: not psutil.pid_exists(pid))
+        assert wait_until(lambda: not psutil.pid_exists(pid))
     finally:
         cancellation.set()
         worker.join(timeout=10)
@@ -156,8 +151,8 @@ def test_cue_player_spawns_the_detected_player_detached(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
 
     LinuxCuePlayer("paplay").play(pathlib.Path("/tmp/cue.wav"), 0.6)
-    assert _wait_for(record.exists)
-    assert _wait_for(lambda: record.read_text().splitlines() == ["--volume=39321", "/tmp/cue.wav"])
+    assert wait_until(record.exists)
+    assert wait_until(lambda: record.read_text().splitlines() == ["--volume=39321", "/tmp/cue.wav"])
 
 
 def test_cue_player_preview_waits_for_the_player_and_surfaces_its_failure(tmp_path, monkeypatch):

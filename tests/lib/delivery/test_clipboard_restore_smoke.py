@@ -22,7 +22,6 @@ import hashlib
 import shutil
 import subprocess
 import sys
-import time
 import uuid
 
 import pytest
@@ -37,6 +36,7 @@ from stenographer.lib.platform.linux.clipboard import (
 )
 from stenographer.lib.platform.linux.process import child_env
 from stenographer.lib.platform.types import ClipboardSnapshot
+from tests.support import wait_until
 
 pytestmark = pytest.mark.integration
 
@@ -102,13 +102,15 @@ def history(tmp_path):
 
 
 def _wait_for(read, predicate, timeout: float = 5.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    entries = []
+
+    def ready():
+        nonlocal entries
         entries = read()
-        if predicate(entries):
-            return entries
-        time.sleep(0.05)
-    return read()
+        return predicate(entries)
+
+    wait_until(ready, timeout, interval=0.05)
+    return entries
 
 
 def test_history_sees_original_then_refined_then_the_restored_seed(real_clipboard, history):

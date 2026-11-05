@@ -10,19 +10,15 @@ import time
 import numpy as np
 
 from tests.lib.live.test_live_session import _make_session
+from tests.support import wait_until as _wait
+
+
+def wait_until(predicate, timeout=2.0):
+    return _wait(predicate, timeout)
 
 
 def _speech(session):
     return session.speech_detected
-
-
-def _wait_until(predicate, timeout=2.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.005)
-    return predicate()
 
 
 def test_speech_flag_follows_the_source_segmenter_after_each_block(monkeypatch, tmp_path):
@@ -80,7 +76,7 @@ def test_block_listener_gets_read_only_copies_after_the_write(monkeypatch, tmp_p
     mutated.set()
     system.emit(4)
 
-    assert _wait_until(lambda: len(received) == 2)
+    assert wait_until(lambda: len(received) == 2)
     assert received[0][0] == "mic"
     assert received[0][1].tolist() == [3.0, 0.5]
     assert not received[0][1].flags.writeable
@@ -95,11 +91,11 @@ def test_removing_a_block_listener_stops_delivery(monkeypatch, tmp_path):
     session.add_block_listener(lambda source, samples: kept.append(source))
     remove = session.add_block_listener(lambda source, samples: removed.append(source))
     recorder.emit(3)
-    assert _wait_until(lambda: len(kept) == 1 and len(removed) == 1)
+    assert wait_until(lambda: len(kept) == 1 and len(removed) == 1)
 
     remove()
     recorder.emit(3)
-    assert _wait_until(lambda: len(kept) == 2)
+    assert wait_until(lambda: len(kept) == 2)
     time.sleep(0.05)
     assert removed == ["mic"]
     session.stop()
@@ -118,7 +114,7 @@ def test_a_slow_listener_does_not_delay_accept_or_pause(monkeypatch, tmp_path):
     for _ in range(5):
         recorder.emit(3)
     assert time.monotonic() - started < 0.1
-    assert _wait_until(lambda: calls)
+    assert wait_until(lambda: calls)
     started = time.monotonic()
     session.pause()
     assert time.monotonic() - started < 0.1
@@ -186,7 +182,7 @@ def test_a_full_queue_drops_new_blocks_and_counts_them(monkeypatch, tmp_path):
 
     assert session.dropped_blocks == 3
     release.set()
-    assert _wait_until(lambda: len(received) == 33)
+    assert wait_until(lambda: len(received) == 33)
     assert received == [float(value) for value in range(1, 34)]
     session.stop()
 
@@ -205,7 +201,7 @@ def test_a_raising_listener_is_logged_without_its_message(monkeypatch, tmp_path,
     recorder.emit(3)
     recorder.emit(3)
 
-    assert _wait_until(lambda: len(received) == 2)
+    assert wait_until(lambda: len(received) == 2)
     assert recorder.running
     assert any("block_listener_failed" in record.getMessage() for record in caplog.records)
     for record in caplog.records:

@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import threading
-import time
 from datetime import UTC, datetime
 
 import numpy as np
@@ -21,6 +20,7 @@ from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecod
 from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.transcribe.results import TranscriptionResult
 from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport
+from tests.support import wait_until
 
 
 def _file_asr_process(*, started=None, release=None):
@@ -79,10 +79,7 @@ def _audio(path):
 
 
 def _wait_for(job, state):
-    deadline = time.monotonic() + 5
-    while job.state != state and time.monotonic() < deadline:
-        time.sleep(0.005)
-    assert job.state == state
+    assert wait_until(lambda: job.state == state, timeout=5)
 
 
 _JOB_START = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
