@@ -89,7 +89,7 @@ class HubApp(App[None]):
         setup_test: Callable[[str, Config], str] | None = None,
         model_download: Callable[[str], None] | None = None,
         model_status: Callable[[], tuple[ModelEntry, ...]] | None = None,
-        doctor_probe: Callable[[Config, pathlib.Path | None], DoctorReport] | None = None,
+        doctor_probe: Callable[[Config], DoctorReport] | None = None,
         open_log: Callable[[pathlib.Path], bool] | None = None,
         copy_report: Callable[[str], None] | None = None,
         files_home: pathlib.Path | None = None,

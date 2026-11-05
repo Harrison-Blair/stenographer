@@ -27,6 +27,13 @@ class Clock(Digits):
         self.add_class(f"-{tone}")
 
     @staticmethod
+    def duration(seconds: float) -> str:
+        whole = int(seconds)
+        hours, remainder = divmod(whole, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+
+    @staticmethod
     def format(seconds: float) -> str:
         whole = int(seconds)
         hours, remainder = divmod(whole, 3600)

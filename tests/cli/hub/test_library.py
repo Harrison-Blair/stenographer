@@ -65,6 +65,7 @@ class FakeJob:
 class FakeServices:
     def __init__(self, sessions_root: Path):
         self.session_store = SessionStore(sessions_root)
+        self.session_jobs = self
         self.recording = False
         self.active_session_id = None
         self.jobs: list[FakeJob] = []
@@ -96,10 +97,10 @@ class FakeServices:
         if self.play_error is not None:
             raise self.play_error
 
-    def rediarize_session(self, session_id):
+    def rediarize(self, session_id):
         self._run_fake_job(session_id, "diarization")
 
-    def retranscribe_session(self, session_id):
+    def retranscribe(self, session_id):
         self._run_fake_job(session_id, "re-transcribe")
 
     def _run_fake_job(self, session_id, method):
@@ -274,9 +275,9 @@ def test_library_select_by_id_keeps_selection_and_moves_by_keys_and_clicks(tmp_p
             await _open_library(pilot, app, 4)
             screen = app.library_screen
             assert screen.selected_id == sessions["relabeled"]
-            assert screen.select_session(sessions["file"])
+            assert screen.select_entry(sessions["file"])
             assert screen.selected_id == sessions["file"]
-            assert not screen.select_session("20990101T000000Z")
+            assert not screen.select_entry("20990101T000000Z")
             assert screen.selected_id == sessions["file"]
 
             await pilot.press("down")
@@ -290,7 +291,7 @@ def test_library_select_by_id_keeps_selection_and_moves_by_keys_and_clicks(tmp_p
             assert screen.selected_id == sessions["relabeled"]
 
             # A reload keeps the selection by ID even when a newer session comes first.
-            screen.select_session(sessions["live"])
+            screen.select_entry(sessions["live"])
             newer = _write_rec(root, datetime(2026, 10, 28, 9, 0, tzinfo=UTC))
             screen.load_sessions()
             await _until(pilot, lambda: len(screen.entries) == 5)
@@ -420,7 +421,7 @@ def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
             assert "00:00:00" in text and "alpha bravo charlie" in text
             assert "delta echo foxtrot" in text
 
-            app.library_screen.select_session(sessions["file"])
+            app.library_screen.select_entry(sessions["file"])
             await _until(
                 pilot,
                 lambda: (
@@ -444,7 +445,7 @@ def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
             await pilot.pause()
             assert "use Re-transcribe" in "\n".join(str(n.message) for n in app._notifications)
 
-            app.library_screen.select_session(sessions["interrupted"])
+            app.library_screen.select_entry(sessions["interrupted"])
             await _until(
                 pilot,
                 lambda: (
@@ -817,7 +818,7 @@ def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
             # del cancels the job; it does not delete the session.
             await pilot.press("escape")
             await _until(pilot, lambda: len(screen.entries) == 4)
-            screen.select_session(live)
+            screen.select_entry(live)
             await pilot.press("delete")
             await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
             assert "mic.flac" in str(app.screen.query_one("#quit-prompt", Static).render())

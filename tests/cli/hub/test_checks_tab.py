@@ -50,11 +50,9 @@ def _check(check_id, label, group, status="ok", detail="available", fix="", **ex
 
 
 def _board_report(warnings=()) -> DoctorReport:
-    """A synthetic report in a mixed order; the tab shows it by group."""
+    """A synthetic report in group order."""
     return DoctorReport(
         (
-            _check("ffmpeg", "ffmpeg", "other", "fail", "ffmpeg is not installed", "Install it."),
-            _check("model_cached", "speech model", "engine", detail="alpha model · pinned"),
             _check("key_injector_ok", "input access", "input", detail="uinput group ok"),
             _check("has_mic", "microphone", "input", detail="Default input"),
             _check("hotkey_access_ok", "hotkey", "input", detail="RCtrl · hybrid"),
@@ -68,8 +66,10 @@ def _board_report(warnings=()) -> DoctorReport:
                 explanation="The sound pack bravo has no charlie cue.",
                 path="/tmp/sounds/bravo",
             ),
+            _check("model_cached", "speech model", "engine", detail="alpha model · pinned"),
             _check("live_models_cached", "voice models", "engine", detail="alpha · bravo"),
             _check("system_service", "system service", "engine", detail="enabled · running"),
+            _check("ffmpeg", "ffmpeg", "other", "fail", "ffmpeg is not installed", "Install it."),
         ),
         tuple(warnings),
         checked_at=datetime(2026, 10, 27, 13, 21),
@@ -79,7 +79,7 @@ def _board_report(warnings=()) -> DoctorReport:
 def _app(report=None, **kwargs) -> HubApp:
     if report is None:
         report = _board_report()
-    kwargs.setdefault("doctor_probe", lambda _config, _path: report)
+    kwargs.setdefault("doctor_probe", lambda _config: report)
     return HubApp(FakeServices(), **kwargs)
 
 
@@ -276,7 +276,7 @@ def test_checks_slow_run_leaves_the_app_answering_keys():
     release = threading.Event()
     started = threading.Event()
 
-    def slow_probe(_config, _path):
+    def slow_probe(_config):
         started.set()
         release.wait(5)
         return _board_report()
@@ -312,7 +312,7 @@ def test_checks_run_again_replaces_the_results():
     ]
     calls = []
 
-    def probe(_config, _path):
+    def probe(_config):
         calls.append("probe")
         return reports[len(calls) - 1]
 
@@ -343,7 +343,7 @@ def test_checks_run_again_replaces_the_results():
 def test_checks_card_run_again_button_starts_a_new_run():
     calls = []
 
-    def probe(_config, _path):
+    def probe(_config):
         calls.append("probe")
         return _board_report()
 
@@ -995,7 +995,7 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
     )
     config = Config.defaults()
 
-    report = doctor_view.build_report(config, tmp_path / "config.toml").in_group_order()
+    report = doctor_view.build_report(config)
     checks = {check.check_id: check for check in report.checks}
 
     assert [(check.group, check.label) for check in report.checks] == [

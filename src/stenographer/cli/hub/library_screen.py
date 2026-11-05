@@ -7,9 +7,10 @@ import asyncio
 import itertools
 import logging
 import pathlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.console import Group
 from rich.text import Text
@@ -21,10 +22,10 @@ from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.export_dialog import ExportDialog
 from stenographer.cli.hub.hub_screen import HubScreen
-from stenographer.cli.hub.library_entry import ACTIVE_JOB_STATES, LibraryEntry
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.transcribe_dialog import TranscribeDialog
 from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
@@ -34,6 +35,7 @@ from stenographer.cli.hub.widgets.transcript_line import TranscriptLine
 from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
+from stenographer.lib.sessions.models import SessionSummary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -61,13 +63,39 @@ _ACTIONS = (
 )
 
 
+ACTIVE_JOB_STATES = frozenset({"queued", "running"})
+
+
+@dataclass(frozen=True)
+class LibraryEntry:
+    """A session row (``summary``), a job row (``summary`` is None), or a session row with
+    the revision job that writes into it (``job``)."""
+
+    entry_id: str
+    summary: SessionSummary | None
+    job: Any = None
+    job_name: str = ""
+    listed_at: datetime | None = None
+
+    @property
+    def session_id(self) -> str | None:
+        return None if self.summary is None else self.summary.session_id
+
+    @property
+    def kind(self) -> str:
+        return "file" if self.summary is None else self.summary.kind
+
+    @property
+    def job_active(self) -> bool:
+        return self.job is not None and self.job.state in ACTIVE_JOB_STATES
+
+
 class LibraryScreen(HubScreen):
     """List recordings, file sessions and unfinished file jobs; act on the selected entry.
 
     ``n`` opens the Transcribe a file dialog; its job shows in the list at once.
     """
 
-    SCREEN_NAME = "library"
     SCREEN_TITLE = "Library"
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("up", "session_move(-1)", "Previous entry"),
@@ -274,7 +302,7 @@ class LibraryScreen(HubScreen):
         job = entry.job
         if summary is not None:
             when = summary.started_at.astimezone()
-            dur = self._duration(summary.duration_seconds)
+            dur = Clock.duration(max(0, summary.duration_seconds))
             spk = str(summary.speaker_count)
         else:
             when = (self._job_listed_at.get(job.id) or datetime.now(UTC)).astimezone()
@@ -329,7 +357,7 @@ class LibraryScreen(HubScreen):
             title = f"{when:%d %b %Y · %H:%M} · file · {entry.job_name}"
             return title, self._job_state(job)
         when = summary.started_at.astimezone()
-        title = f"{when:%d %b %Y · %H:%M} · {self._duration(summary.duration_seconds)} · "
+        title = f"{when:%d %b %Y · %H:%M} · {Clock.duration(max(0, summary.duration_seconds))} · "
         title += "file" if summary.kind == "file" else "recording"
         if entry.job_active:
             state = self._job_state(job)
@@ -363,7 +391,7 @@ class LibraryScreen(HubScreen):
                 speaker_id, tuple(ids.values()), source=self._source_of(detail, label)
             )
             text.append(label, style=f"bold {color}")
-            text.append(f" {self._duration(seconds)}")
+            text.append(f" {Clock.duration(max(0, seconds))}")
         return text or Text("no speakers", style=_DIM)
 
     @staticmethod
@@ -680,13 +708,9 @@ class LibraryScreen(HubScreen):
                 self.app.refresh_view()
         return True
 
-    def select_session(self, session_id: str) -> bool:
-        """Select a listed session by its ID (Record ``o``); false when it is not listed."""
-        return self.select_entry(session_id)
-
     def show_session(self, session_id: str) -> None:
         """Select a session; reload the list first when it is not in it."""
-        if not self.select_session(session_id):
+        if not self.select_entry(session_id):
             self.load_sessions(select=session_id)
         self.app.refresh_view()
 
@@ -773,27 +797,14 @@ class LibraryScreen(HubScreen):
                 severity="warning",
             )
             return
-        self._start_session_job("Re-diarize", "rediarize_session", entry.entry_id)
+        self._start_job("Re-diarize", entry.entry_id, self.app.services.session_jobs.rediarize)
 
     def action_session_retranscribe(self) -> None:
         entry = self._selected_session()
         if entry is not None:
-            self._start_session_job("Re-transcribe", "retranscribe_session", entry.entry_id)
-
-    def _start_session_job(self, label: str, method: str, session_id: str) -> None:
-        app = self.app
-        operation = getattr(app.services, method, None)
-        if operation is None:
-            return
-        owner = f"{method}-{next(self._owner_ids)}"
-        if not app.try_acquire_session(session_id, owner):
-            app.notify("session busy", severity="warning")
-            return
-        app.run_worker(
-            partial(self._run_session_job, label, operation, session_id, owner),
-            group="library-session-job",
-        )
-        app.refresh_view()
+            self._start_job(
+                "Re-transcribe", entry.entry_id, self.app.services.session_jobs.retranscribe
+            )
 
     async def _run_session_job(
         self, label: str, operation: Callable[..., object], session_id: str, owner: str
@@ -836,9 +847,9 @@ class LibraryScreen(HubScreen):
     def _rename(self, session_id: str, value: tuple[str, str] | None) -> None:
         if value is None or self.store is None:
             return
-        self._start_store_job("Rename", session_id, self.store.rename_speaker, *value)
+        self._start_job("Rename", session_id, self.store.rename_speaker, *value)
 
-    def _start_store_job(
+    def _start_job(
         self, label: str, session_id: str, operation: Callable[..., object], *args
     ) -> None:
         app = self.app
@@ -923,23 +934,9 @@ class LibraryScreen(HubScreen):
 
     def _delete(self, session_id: str, confirmed: bool | None) -> None:
         if confirmed and self.store is not None:
-            self._start_store_job("Delete", session_id, self.store.delete)
+            self._start_job("Delete", session_id, self.store.delete)
 
     # Transcript scroll
-
-    def _transcript(self) -> TranscriptScroll:
-        return self.query_one("#library-transcript", TranscriptScroll)
-
-    def action_scroll_page(self, offset: int) -> None:
-        self._transcript().scroll_page(offset)
-
-    def action_scroll_home(self) -> None:
-        self._transcript().scroll_top()
-
-    def action_scroll_end(self) -> None:
-        self._transcript().scroll_bottom()
-
-    # Transcribe a file
 
     def action_transcribe_file(self) -> None:
         log.info(fmt_event("hub", "library_transcribe_opened"))
@@ -986,22 +983,12 @@ class LibraryScreen(HubScreen):
     # Formats
 
     @staticmethod
-    def _duration(seconds: float) -> str:
-        total = max(0, int(seconds))
-        hours, remainder = divmod(total, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        if hours:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes}:{seconds:02d}"
-
-    @staticmethod
     def _format_size(size: int) -> str:
         amount = float(size)
         for unit in ("B", "KB", "MB", "GB"):
             if amount < 1024 or unit == "GB":
                 return f"{amount:.1f} {unit}"
             amount /= 1024
-        return f"{amount:.1f} GB"
 
     @staticmethod
     def _resample(activity: tuple[float, ...]) -> tuple[float, ...]:

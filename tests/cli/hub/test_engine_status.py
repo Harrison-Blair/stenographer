@@ -405,7 +405,7 @@ def test_engine_sampler_feeds_the_sidebar_engine_card(tmp_path):
     app = HubApp(
         services,
         engine_sampler=sampler,
-        doctor_probe=lambda _config, _path: None,
+        doctor_probe=lambda _config: None,
     )
 
     async def exercise():

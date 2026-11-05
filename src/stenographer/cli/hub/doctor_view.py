@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import pathlib
 import re
 from dataclasses import dataclass, field
@@ -84,10 +83,6 @@ class DoctorCheck:
     explanation: str = ""
     path: str = ""
 
-    @property
-    def display_group(self) -> str:
-        return self.group if self.group in CHECK_GROUPS else "other"
-
 
 @dataclass(frozen=True)
 class DoctorReport:
@@ -114,11 +109,6 @@ class DoctorReport:
             0,
         )
 
-    def in_group_order(self) -> DoctorReport:
-        """Return this report with its checks in the shown group order."""
-        checks = sorted(self.checks, key=lambda check: CHECK_GROUPS.index(check.display_group))
-        return dataclasses.replace(self, checks=tuple(checks))
-
     def warning_entries(self) -> tuple[tuple[str, str, str, str], ...]:
         """Return ``(HH:MM, level, token, description)`` for each recent warning."""
         entries = []
@@ -143,7 +133,7 @@ class DoctorReport:
             f"Checks report: {self.ok_count} pass, {self.warn_count} warn, {self.fail_count} fail"
         ]
         for group in CHECK_GROUPS:
-            checks = [check for check in self.checks if check.display_group == group]
+            checks = [check for check in self.checks if check.group == group]
             if not checks:
                 continue
             lines.append(f"\n{group}")
@@ -230,7 +220,7 @@ def _refine_check(config: Config) -> DoctorCheck:
     return DoctorCheck("refine_service", "refine service", "engine", "ok", detail, "", explanation)
 
 
-def build_report(config: Config, config_path: pathlib.Path | None = None) -> DoctorReport:
+def build_report(config: Config) -> DoctorReport:
     """Probe the host and build the doctor checks in the groups of the Checks tab."""
     import os
 

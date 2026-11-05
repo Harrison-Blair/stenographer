@@ -112,7 +112,6 @@ class SettingsScreen(HubScreen):
     ``enter``, ``tab`` and ``ctrl+s`` act.
     """
 
-    SCREEN_NAME = "settings"
     SCREEN_TITLE = "Settings"
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("left", "move_tab(-1)", "Previous tab"),
@@ -350,7 +349,6 @@ class SettingsScreen(HubScreen):
                     widgets.append(Rule())
                 continue
             field = Field(editor.label(key), "")
-            field.CONTROL_WIDTH = _CONTROL_WIDTH
             self._rows[key] = field
             widgets.append(field)
         container.mount_all(widgets)

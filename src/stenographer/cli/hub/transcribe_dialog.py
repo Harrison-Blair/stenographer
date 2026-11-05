@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -13,8 +14,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Input, Label, Static
 
 from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
-from stenographer.cli.hub.files_entry import BrowserEntry
 from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.dialog import Dialog
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
@@ -42,6 +43,15 @@ AUDIO_SUFFIXES = frozenset(
 )
 _COUNT_ERROR = f"{DOCTOR_STATE_GLYPHS['fail']} Speaker count must be auto or a whole number above 0"
 _DIM = StatusToken.TONES["dim"]
+
+
+@dataclass(frozen=True)
+class BrowserEntry:
+    """One visible directory or audio file."""
+
+    path: Path
+    is_dir: bool
+    duration_seconds: float | None
 
 
 class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
@@ -191,7 +201,7 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
                 rows.append((f"{entry.path.name}/", ""))
             else:
                 duration = entry.duration_seconds
-                rows.append((entry.path.name, "" if duration is None else self.clock(duration)))
+                rows.append((entry.path.name, "" if duration is None else Clock.duration(duration)))
         if not rows or (len(rows) == 1 and self.entries[0].path == self.directory.parent):
             rows.append((Text("no audio files or folders match", style=_DIM), ""))
         self.query_one("#transcribe-list", SelectableList).set_rows(
@@ -300,11 +310,3 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         self.dismiss(
             (entry.path, {"diarize": self.diarize, "speaker_count": count, "refine": self.refine})
         )
-
-    @staticmethod
-    def clock(seconds: float) -> str:
-        """Return ``m:ss`` or ``h:mm:ss``."""
-        total = int(seconds)
-        hours, remainder = divmod(total, 3600)
-        minutes, second = divmod(remainder, 60)
-        return f"{hours}:{minutes:02d}:{second:02d}" if hours else f"{minutes}:{second:02d}"

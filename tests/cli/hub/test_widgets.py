@@ -82,12 +82,10 @@ async def test_widget_settings_tab_click_matches_the_tab_keys(tmp_path):
 
 async def test_widget_checks_buttons_run_the_same_actions_as_their_keys():
     probes = []
-    report = DoctorReport(
-        (DoctorCheck("has_mic", "microphone", "input and audio", "warn", "", ""),), ()
-    )
+    report = DoctorReport((DoctorCheck("has_mic", "microphone", "input", "warn", "", ""),), ())
     app = HubApp(
         IdleServices(),
-        doctor_probe=lambda _config, _path: probes.append("probe") or report,
+        doctor_probe=lambda _config: probes.append("probe") or report,
         open_log=lambda _path: probes.append("log") or True,
     )
     async with app.run_test(size=(150, 45)) as pilot:
