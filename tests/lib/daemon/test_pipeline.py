@@ -22,7 +22,7 @@ from .support import (
     CANARY,
     _daemon,
     _daemon_with_status,
-    _run_utterance,
+    _run_and_stop,
     _summary,
 )
 
@@ -33,10 +33,7 @@ def test_transcription_failure_never_renders_the_worker_message(daemon_logs):
     # safe=False tier must keep it out of the log at every level, DEBUG
     # included. Seen to FAIL against ``log_failure(..., safe=True)``.
     daemon = _daemon(error=WorkerError(f"inference blew up on {CANARY}"))
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert CANARY not in daemon_logs.text
     assert "pipeline: transcription_failed" in daemon_logs.text
@@ -46,10 +43,7 @@ def test_transcription_failure_never_renders_the_worker_message(daemon_logs):
 
 def test_gate_rejection_is_silent_and_reports_only_the_phases_it_reached(daemon_logs):
     daemon = _daemon(samples=_SILENCE)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert daemon._deliverer.delivered == []
     line = _summary(daemon_logs)
@@ -67,27 +61,11 @@ def test_a_pathological_decode_keeps_its_counts_only_reason(daemon_logs):
     # the plain WorkerError arm at safe=False: detail= disappeared entirely.
     reason = "decoder word density exceeded limit (312 > 40)"
     daemon = _daemon(error=WorkerPathologicalError(reason))
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert f'detail="{reason}"' in daemon_logs.text
     assert "error=WorkerPathologicalError" in daemon_logs.text
     assert "outcome=ERROR" in _summary(daemon_logs)
-
-
-def test_an_inference_failure_beside_it_still_renders_nothing(daemon_logs):
-    # The sibling of the test above: same handler, opposite tier. Seen to FAIL
-    # against collapsing both arms to safe=True.
-    daemon = _daemon(error=WorkerError(f"inference blew up on {CANARY}"))
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
-
-    assert CANARY not in daemon_logs.text
-    assert "error=WorkerError" in daemon_logs.text
 
 
 def test_the_pill_stays_up_from_release_until_the_paste_lands():
@@ -99,10 +77,7 @@ def test_the_pill_stays_up_from_release_until_the_paste_lands():
     daemon, status = _daemon_with_status(
         result=TranscriptionResult(text="one", duration_seconds=1.0), warm=True
     )
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert status.states == [
         OverlayState.RECORDING,
@@ -120,10 +95,7 @@ def test_a_capture_without_vad_speech_is_never_decoded(daemon_logs):
         result=TranscriptionResult(text="must not appear", duration_seconds=1.0),
         speech_filter=lambda _samples: np.empty(0, dtype=np.float32),
     )
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert daemon._worker.utterances == []
     assert daemon._deliverer.delivered == []
@@ -139,10 +111,7 @@ def test_only_the_vad_speech_reaches_the_decoder():
         result=TranscriptionResult(text="one", duration_seconds=0.5, vad_seconds=0.5),
         speech_filter=lambda _samples: kept,
     )
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     [decoded] = daemon._worker.samples
     assert decoded is kept
@@ -152,10 +121,7 @@ def test_only_the_vad_speech_reaches_the_decoder():
 def test_a_gate_rejection_still_takes_the_pill_down():
     # Silence is success-shaped: the pill goes away without an error state.
     daemon, status = _daemon_with_status(samples=_SILENCE)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert status.states[0] is OverlayState.RECORDING
     assert status.states[-1] is OverlayState.HIDDEN

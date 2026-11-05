@@ -266,6 +266,13 @@ def _run_utterance(daemon: Daemon) -> None:
         assert not thread.is_alive()
 
 
+def _run_and_stop(daemon: Daemon) -> None:
+    try:
+        _run_utterance(daemon)
+    finally:
+        daemon.stop()
+
+
 def _summary(caplog) -> str:
     lines = [m for m in caplog.messages if m.startswith("pipeline: utterance ")]
     assert len(lines) == 1, caplog.messages

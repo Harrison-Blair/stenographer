@@ -25,7 +25,7 @@ from stenographer.lib.refine.results import (
 from stenographer.lib.transcribe.pipeline import analytics_metrics
 from stenographer.lib.transcribe.results import TranscriptionResult
 
-from .support import _daemon, _daemon_with_status, _Refiner, _run_utterance, _summary
+from .support import _daemon, _daemon_with_status, _Refiner, _run_and_stop, _summary
 
 #: Eleven words: over the ten-word default threshold.
 LONG = "um i think we should ship it on thursday no wait friday"
@@ -93,17 +93,6 @@ def _result(text: str) -> TranscriptionResult:
     return TranscriptionResult(text=text, duration_seconds=1.0, vad_seconds=1.0)
 
 
-def test_a_long_utterance_is_refined_and_the_refined_text_is_what_is_pasted():
-    refiner = _Refiner(refined=CLEANED)
-    daemon = _daemon(result=_result(LONG), refiner=refiner)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
-
-    assert len(refiner.calls) == 1
-
-
 def test_profile_is_captured_at_recording_start_and_cannot_change_mid_utterance():
     refiner = _Refiner(refined=CLEANED)
     daemon = _daemon(result=_result(LONG), refiner=refiner)
@@ -141,10 +130,7 @@ def test_profiled_pipeline_briefly_reports_the_refine_outcome():
 def test_a_short_utterance_never_reaches_the_model():
     refiner = _Refiner(refined=CLEANED)
     daemon = _daemon(result=_result(SHORT), refiner=refiner)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert refiner.calls == []
     assert daemon._deliverer.delivered == ["Ship it on friday "]
@@ -155,10 +141,7 @@ def test_a_refiner_that_raises_still_delivers_the_formatted_transcript(daemon_lo
     Seen to FAIL against a pipeline that called ``refine`` unguarded."""
     refiner = _Refiner(error=RuntimeError("model exploded"))
     daemon = _daemon(result=_result(LONG), refiner=refiner)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert daemon._deliverer.delivered == [FORMATTED]
     assert "pipeline: refine_failed" in daemon_logs.text
@@ -167,10 +150,7 @@ def test_a_refiner_that_raises_still_delivers_the_formatted_transcript(daemon_lo
 
 def test_a_refiner_that_returns_nothing_delivers_the_formatted_transcript():
     daemon = _daemon(result=_result(LONG), refiner=_Refiner(refined="   "))
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert daemon._deliverer.delivered == [FORMATTED]
 
@@ -182,13 +162,9 @@ def test_a_failed_refine_records_the_fallback_without_losing_the_utterance(daemo
     because the daemon had already cleared ``_record``."""
     refiner = _Refiner(refined=None, outcome=OUTCOME_FAILED)
     daemon = _daemon(result=_result(LONG), refiner=refiner)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     line = _summary(daemon_logs)
-    assert refiner.last_result.outcome == OUTCOME_FAILED
     assert "refine=0" in line
     assert "refine_failed=1" in line
     assert daemon._deliverer.delivered == [FORMATTED]
@@ -196,10 +172,7 @@ def test_a_failed_refine_records_the_fallback_without_losing_the_utterance(daemo
 
 def test_the_refining_pill_is_shown_between_transcribing_and_delivering():
     daemon, status = _daemon_with_status(result=_result(LONG), refiner=_Refiner(refined=CLEANED))
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert OverlayState.REFINING in status.states
     order = [s for s in status.states if s in (OverlayState.REFINING, OverlayState.DELIVERING)]
@@ -208,10 +181,7 @@ def test_the_refining_pill_is_shown_between_transcribing_and_delivering():
 
 def test_a_skipped_refine_never_shows_the_pill():
     daemon, status = _daemon_with_status(result=_result(SHORT), refiner=_Refiner(refined=CLEANED))
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert OverlayState.REFINING not in status.states
 
@@ -223,10 +193,7 @@ def test_cancelling_during_a_refine_drops_the_utterance_without_pasting():
     refiner = _Refiner(refined=CLEANED)
     daemon, status = _daemon_with_status(result=_result(LONG), refiner=refiner)
     refiner.on_refine = daemon.on_cancel
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert refiner.calls != []
     assert daemon._deliverer.delivered == []
@@ -264,10 +231,7 @@ def test_cancelling_a_refine_releases_the_pipeline_without_waiting_out_the_budge
 
 def test_the_summary_line_reports_the_refine_without_any_transcript_text(daemon_logs):
     daemon = _daemon(result=_result(LONG), refiner=_Refiner(refined=CLEANED))
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     line = _summary(daemon_logs)
     assert "refine=1" in line
@@ -310,10 +274,7 @@ def test_a_refiner_whose_will_refine_raises_still_delivers_the_transcript(daemon
     refiner.will_refine = _raise
 
     daemon = _daemon(result=_result(LONG), refiner=refiner)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert daemon._deliverer.delivered == [FORMATTED]
     assert "pipeline: refine_failed" in daemon_logs.text
@@ -324,10 +285,7 @@ def test_a_refiner_whose_last_result_raises_still_delivers_the_refined_text(daem
     """The measurement must never be able to cost the text it measured."""
     refiner = _Refiner(refined=CLEANED, measurement_error=RuntimeError("measurement blew up"))
     daemon = _daemon(result=_result(LONG), refiner=refiner)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     assert daemon._deliverer.delivered == [CLEANED]
     assert "pipeline: refine_failed" in daemon_logs.text

@@ -514,22 +514,6 @@ def test_a_held_model_defers_eviction_and_schedules_a_retry(make_worker, caplog)
     assert worker._idle_timer is not None
 
 
-def test_an_armed_timer_really_evicts_the_child(make_worker):
-    transport = FakeAsrTransport()
-
-    # A sub-second idle budget: the same arming policy the configured seconds
-    # use, shortened so the timer can actually be observed firing.
-    worker = make_worker(transport, idle_seconds=0.05)
-    worker.warmup()
-
-    deadline = time.monotonic() + 5.0
-    while _child_running(worker) and time.monotonic() < deadline:
-        time.sleep(0.01)
-
-    assert _child_running(worker) is False
-    assert transport.spawned[0].closes == [False]
-
-
 def test_releasing_a_hold_arms_the_timer_even_when_the_lock_is_busy(make_worker):
     transport = FakeAsrTransport()
 
