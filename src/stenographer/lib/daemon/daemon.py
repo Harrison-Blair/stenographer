@@ -183,7 +183,7 @@ class Daemon:
         daemon_ref = daemon
         keys = plat.keys()
         cancel = (
-            parse_binding(cfg.hotkey.cancel_binding, keys)
+            parse_binding(cfg.hotkey.cancel_binding, keys, setting="hotkey.cancel_binding")
             if cfg.hotkey.cancel_binding is not None
             else frozenset()
         )
@@ -207,7 +207,9 @@ class Daemon:
             lock=threading.RLock(),
             bindings={
                 RefineProfile.AGENT.value: parse_binding(cfg.hotkey.binding, keys),
-                RefineProfile.GENERAL.value: parse_binding(cfg.hotkey.general_binding, keys),
+                RefineProfile.GENERAL.value: parse_binding(
+                    cfg.hotkey.general_binding, keys, setting="hotkey.general_binding"
+                ),
             },
             on_binding_start=on_profile_start,
             on_binding_stop=on_profile_stop,

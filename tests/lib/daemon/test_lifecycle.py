@@ -60,6 +60,16 @@ def test_build_wires_collaborators_lazily():
         daemon.stop()
 
 
+@pytest.mark.parametrize("field", ["binding", "general_binding", "cancel_binding"])
+def test_build_identifies_invalid_binding_setting(field):
+    from stenographer.lib.hotkey.errors import BindingError
+
+    cfg = _no_network_cfg()
+    cfg = dataclasses.replace(cfg, hotkey=dataclasses.replace(cfg.hotkey, **{field: "KEY_NOPE"}))
+    with pytest.raises(BindingError, match=rf"hotkey\.{field}: unknown key 'KEY_NOPE'"):
+        Daemon.build(cfg, clipboard_backend="wl-copy", platform=_Platform())
+
+
 def test_a_busy_press_of_the_other_binding_holds_the_paste_until_released():
     # Hybrid default: Agent = Right Ctrl, General = Right Alt. After a stop the
     # pipeline is busy; holding Right Alt then is refused by the daemon, and a
