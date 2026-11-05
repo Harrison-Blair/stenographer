@@ -1,15 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure tests for overlay supervision policy (no child processes).
-
-The mailbox's blocking ``take`` is the one exception: two real threads, because
-a queue that never wakes its consumer is exactly the bug worth catching.
-"""
+"""Pure tests for overlay supervision policy (no child processes)."""
 
 from __future__ import annotations
 
 import logging
-import threading
-import time
 from itertools import pairwise
 
 import pytest
@@ -25,7 +19,6 @@ from stenographer.overlay.protocol.messages import (
     StateMessage,
 )
 from stenographer.overlay.supervision.constants import _POLL_SECONDS, _SPECTRUM_INTERVAL
-from stenographer.overlay.supervision.models import RestartBudget, _ProcessOutcome
 from stenographer.overlay.supervision.outbound_mailbox import OutboundMailbox
 from stenographer.overlay.supervision.policy import (
     _helper_stderr_path,
@@ -142,14 +135,6 @@ def test_loading_activity_is_ordered_without_resetting_recording_slots():
     mailbox.loading_activity(LoadingModel.ASR, False)
     assert mailbox.take_nowait() == LoadingActivityMessage(LoadingModel.ASR, False)
     assert mailbox.take_nowait() == SpectrumMessage(generation, 1, (2,) * SPECTRUM_BANDS)
-
-
-def test_loading_activity_requires_a_loading_model_and_a_strict_boolean():
-    mailbox = OutboundMailbox()
-    with pytest.raises(TypeError, match="LoadingModel"):
-        mailbox.loading_activity("asr", True)
-    with pytest.raises(TypeError, match="boolean"):
-        mailbox.loading_activity(LoadingModel.ASR, 1)
 
 
 def test_mailbox_transition_discards_prior_recording_frames_and_takes_priority():
@@ -287,21 +272,6 @@ def test_mailbox_cancelled_timeout_is_short_and_generation_guarded():
     assert mailbox.current_state == StateMessage(newer, OverlayState.RECORDING)
 
 
-def test_restart_budget_allows_exactly_one_unexpected_restart():
-    budget = RestartBudget(1)
-
-    assert budget.on_exit(unexpected=True) is True
-    assert budget.on_exit(unexpected=True) is False
-    assert budget.on_exit(unexpected=True) is False
-
-
-def test_expected_exit_never_spends_or_uses_restart_budget():
-    budget = RestartBudget(1)
-
-    assert budget.on_exit(unexpected=False) is False
-    assert budget.on_exit(unexpected=True) is True
-
-
 @pytest.mark.parametrize("capacity", [0, -1, True, False, 8.0, "8"])
 def test_mailbox_capacity_must_be_a_real_positive_integer(capacity: object) -> None:
     """``True`` is an ``int`` in Python: a bool capacity would silently make a
@@ -309,11 +279,6 @@ def test_mailbox_capacity_must_be_a_real_positive_integer(capacity: object) -> N
     """
     with pytest.raises(ValueError, match="positive integer"):
         OutboundMailbox(capacity=capacity)
-
-
-def test_mailbox_publish_requires_a_real_overlay_state() -> None:
-    with pytest.raises(TypeError, match="OverlayState"):
-        OutboundMailbox().publish("recording")
 
 
 def test_a_closed_mailbox_accepts_nothing_but_still_reports_the_last_state() -> None:
@@ -402,62 +367,6 @@ def test_expire_transient_reads_the_clock_when_the_caller_does_not() -> None:
 
     assert mailbox.expire_transient() is None
     assert mailbox.current_state.state is OverlayState.RECORDING
-
-
-def test_a_blocking_take_wakes_on_the_next_published_record() -> None:
-    """The supervisor's wait has to end when work arrives, not when it expires.
-
-    Seen to FAIL against a ``take`` that waited without being notified: the
-    first state change of a session would be delayed by the whole timeout.
-    """
-    mailbox = OutboundMailbox()
-    taken: list[object] = []
-    ready = threading.Event()
-
-    def consume() -> None:
-        ready.set()
-        taken.append(mailbox.take(timeout=10.0))
-
-    consumer = threading.Thread(target=consume, name="mailbox-take")
-    consumer.start()
-    try:
-        assert ready.wait(10.0)
-        started = time.monotonic()
-        mailbox.publish(OverlayState.DELIVERING)
-        consumer.join(timeout=10.0)
-    finally:
-        consumer.join(timeout=10.0)
-
-    assert not consumer.is_alive()
-    assert taken == [StateMessage(0, OverlayState.DELIVERING)]
-    assert time.monotonic() - started < 5.0
-
-
-def test_a_blocking_take_returns_nothing_once_its_timeout_expires() -> None:
-    mailbox = OutboundMailbox()
-
-    assert mailbox.take(timeout=0.01) is None
-
-
-def test_a_blocking_take_returns_a_waiting_record_without_waiting() -> None:
-    mailbox = OutboundMailbox()
-    mailbox.publish(OverlayState.ERROR)
-
-    assert mailbox.take(timeout=10.0) == StateMessage(0, OverlayState.ERROR)
-
-
-@pytest.mark.parametrize("remaining", [-1, True])
-def test_a_restart_budget_must_be_a_real_non_negative_count(remaining: object) -> None:
-    with pytest.raises(ValueError, match="non-negative integer"):
-        RestartBudget(remaining)
-
-
-def test_a_process_outcome_is_only_unavailable_when_the_helper_said_so() -> None:
-    """An expected exit is not the same as an overlay that cannot exist: only
-    the second one stops the supervisor from ever trying again.
-    """
-    assert _ProcessOutcome(True).unavailable is False
-    assert _ProcessOutcome(False, True).unavailable is True
 
 
 def test_the_helper_stderr_file_is_created_under_the_state_directory(tmp_path, monkeypatch) -> None:

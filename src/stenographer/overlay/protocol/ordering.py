@@ -100,11 +100,3 @@ def transient_display_seconds(state: OverlayState) -> float | None:
     }:
         return CANCELLED_DISPLAY_SECONDS
     return None
-
-
-def transient_timeout_applies(expected_generation: int, current: StateMessage) -> bool:
-    """Guard a delayed hide so it cannot erase a newer visible state. PURE."""
-    return (
-        current.generation == expected_generation
-        and transient_display_seconds(current.state) is not None
-    )

@@ -16,20 +16,20 @@ def test_helper_ready_then_backend_loss_remains_unexpected():
     ready = ReadyMessage(Backend.LAYER_SHELL)
     transition = reduce_helper_control(HelperControlState(), ready)
     assert transition.state.ready and transition.event == "ready" and not transition.stop
-    assert not transition.state.expected_exit
+    assert not transition.state.unavailable
     with pytest.raises(ProtocolError):
         reduce_helper_control(transition.state, ready)
     lost = reduce_helper_control(
         transition.state, UnavailableMessage(UnavailableReason.BACKEND_DEPENDENCY_MISSING)
     )
     assert lost.event == "backend_lost" and lost.stop
-    assert lost.value == "backend_dependency_missing" and not lost.state.expected_exit
+    assert lost.value == "backend_dependency_missing" and not lost.state.unavailable
 
 
 def test_helper_refusal_preserves_specific_reason_and_rejects_later_controls():
     refusal = UnavailableMessage(UnavailableReason.BACKEND_DEPENDENCY_MISSING)
     transition = reduce_helper_control(HelperControlState(), refusal)
-    assert transition.event == "unavailable" and transition.state.expected_exit
+    assert transition.event == "unavailable" and transition.state.unavailable
     assert transition.value == "backend_dependency_missing" and not transition.state.ready
     for message in (
         refusal,
