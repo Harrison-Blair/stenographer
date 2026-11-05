@@ -443,24 +443,6 @@ def test_a_mono_capture_returns_its_samples_and_the_cost_of_taking_them():
     assert sounddevice.streams[0].closes == 0
 
 
-def test_a_one_dimensional_callback_block_is_still_accepted():
-    # Defensive only: a real PortAudio callback always carries a channel axis.
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
-
-    recorder._on_audio(
-        np.full(800, 0.25, dtype=np.float32),
-        800,
-        SimpleNamespace(inputBufferAdcTime=1.0),
-        SimpleNamespace(input_overflow=False),
-    )
-    audio = recorder.stop()
-
-    assert audio.size == 800
-    assert audio[0] == pytest.approx(0.25)
-
-
 def test_a_stereo_callback_keeps_channel_zero():
     # The second channel of a stereo microphone is routinely silent or out of
     # phase; averaging it into the capture is what the gate then has to find.

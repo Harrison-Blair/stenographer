@@ -287,7 +287,7 @@ class Recorder:
         self._clock_metadata.append(
             (callback_at, getattr(time_info, "inputBufferAdcTime", 0.0), frames)
         )
-        block = indata[:, 0].copy() if indata.ndim == 2 else indata.copy()
+        block = indata[:, 0].copy()
         if self._streaming:
             self._frames += block.shape[0]
             assert self._streaming_resampler is not None
