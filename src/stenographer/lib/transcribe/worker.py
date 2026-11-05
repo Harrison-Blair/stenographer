@@ -39,14 +39,11 @@ from stenographer.lib.transcribe.errors import (
     WorkerModelError,
     WorkerProtocolError,
     WorkerTimeoutError,
-    _WorkerTimeoutError,
 )
+from stenographer.lib.transcribe.results import WorkerTimings
 from stenographer.lib.transcribe.worker_event import WorkerEvent
 from stenographer.lib.transcribe.worker_lifecycle import WorkerLifecycle
 from stenographer.lib.transcribe.worker_policy import (
-    _DECODE_MIN_TIMEOUT_SECONDS,
-    _DECODE_REALTIME_MULTIPLIER,
-    _POLL_SECONDS,
     decode_timeout_seconds,
     interpret_response,
     lifecycle_transition,
@@ -54,7 +51,6 @@ from stenographer.lib.transcribe.worker_policy import (
     should_arm_idle_timer,
     should_teardown_for_response_error,
 )
-from stenographer.lib.transcribe.worker_timings import WorkerTimings
 
 log = logging.getLogger(__name__)
 
@@ -170,11 +166,7 @@ class Worker:
             decode_started_at = time.perf_counter()
             self._process.send(("job", samples, utterance))
             try:
-                timeout_seconds = decode_timeout_seconds(
-                    samples.shape[0],
-                    minimum_seconds=_DECODE_MIN_TIMEOUT_SECONDS,
-                    realtime_multiplier=_DECODE_REALTIME_MULTIPLIER,
-                )
+                timeout_seconds = decode_timeout_seconds(samples.shape[0])
                 interpreted = self._wait_for_response(
                     "transcribe", deadline=time.monotonic() + timeout_seconds
                 )
@@ -240,12 +232,10 @@ class Worker:
                 )
                 self._teardown()
                 raise WorkerCrashedError(f"ASR child exited during {phase}")
-            poll_timeout = response_poll_timeout(
-                now=time.monotonic(), deadline=deadline, poll_seconds=_POLL_SECONDS
-            )
+            poll_timeout = response_poll_timeout(now=time.monotonic(), deadline=deadline)
             if poll_timeout == 0:
                 log.error("worker: request_timeout phase=%s", phase)
-                raise _WorkerTimeoutError(f"ASR worker timed out during {phase}")
+                raise WorkerTimeoutError(f"ASR worker timed out during {phase}")
             try:
                 message = self._process.receive(poll_timeout)
             except TimeoutError:
@@ -275,24 +265,12 @@ class Worker:
             WorkerLifecycle.TRANSCRIBING: self._on_transcribing,
         }
         for event in events:
-            self._notify(callbacks[event], event.name.lower())
+            self._notify(callbacks[event])
 
     @staticmethod
-    def _notify(callback: Callable[[], None] | None, event: str) -> None:
-        if callback is None:
-            return
-        try:
+    def _notify(callback: Callable[[], None] | None) -> None:
+        if callback is not None:
             callback()
-        except Exception as exc:
-            # Optional observers must never change transcription success.
-            log_failure(
-                log,
-                logging.WARNING,
-                "worker: lifecycle_callback_failed",
-                exc,
-                safe=True,
-                lifecycle_event=event,
-            )
 
     def is_alive(self) -> bool:
         proc = self._process

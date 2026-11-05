@@ -135,7 +135,7 @@ def test_measurement_phases_preserve_recognition_and_readiness(text):
         apply_recognition,
         apply_worker_timings,
     )
-    from stenographer.lib.transcribe.worker_timings import WorkerTimings
+    from stenographer.lib.transcribe.results import WorkerTimings
 
     records = [
         UtteranceRecord(utt=0, source=source, capture_s=2, stopped_at=10)
@@ -277,7 +277,7 @@ def test_gate_failure_and_empty_audio_report_no_clipping():
 
 def test_a_warm_model_load_measurement_survives_a_later_warm_transcription():
     from stenographer.lib.transcribe.pipeline import apply_worker_timings
-    from stenographer.lib.transcribe.worker_timings import WorkerTimings
+    from stenographer.lib.transcribe.results import WorkerTimings
 
     record = UtteranceRecord(utt=1)
 
@@ -303,7 +303,7 @@ def test_every_phase_is_a_no_op_without_a_record():
         apply_recognition,
         apply_worker_timings,
     )
-    from stenographer.lib.transcribe.worker_timings import WorkerTimings
+    from stenographer.lib.transcribe.results import WorkerTimings
 
     stats = CaptureStats(
         activate_ms=1.0,

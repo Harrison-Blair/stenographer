@@ -28,9 +28,8 @@ from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.refine.cancellation import never_cancelled
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED, RefineResult
-from stenographer.lib.transcribe.results import TranscriptionResult
+from stenographer.lib.transcribe.results import TranscriptionResult, WorkerTimings
 from stenographer.lib.transcribe.text import count_words
-from stenographer.lib.transcribe.worker_timings import WorkerTimings
 
 # Never a substring of any field name, level, subsystem, or path in the log.
 CANARY = "supercalifragilisticexpialidocious"

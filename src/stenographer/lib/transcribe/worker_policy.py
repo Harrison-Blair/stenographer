@@ -12,7 +12,6 @@ from stenographer.lib.transcribe.errors import (
     WorkerPathologicalError,
     WorkerProtocolError,
     WorkerTimeoutError,
-    _WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker_event import WorkerEvent
@@ -72,25 +71,19 @@ def should_arm_idle_timer(
 
 def should_teardown_for_response_error(exc: WorkerError) -> bool:
     """Malformed or timed-out protocol poisons the channel. PURE."""
-    return isinstance(exc, (WorkerProtocolError, _WorkerTimeoutError))
+    return isinstance(exc, (WorkerProtocolError, WorkerTimeoutError))
 
 
-def decode_timeout_seconds(
-    sample_frames: int,
-    *,
-    sample_rate: int = SAMPLE_RATE,
-    minimum_seconds: float = _DECODE_MIN_TIMEOUT_SECONDS,
-    realtime_multiplier: float = _DECODE_REALTIME_MULTIPLIER,
-) -> float:
+def decode_timeout_seconds(sample_frames: int) -> float:
     """Return the fixed decode deadline budget for 16 kHz audio. PURE."""
-    return max(minimum_seconds, realtime_multiplier * sample_frames / sample_rate)
+    return max(
+        _DECODE_MIN_TIMEOUT_SECONDS, _DECODE_REALTIME_MULTIPLIER * sample_frames / SAMPLE_RATE
+    )
 
 
-def response_poll_timeout(
-    *, now: float, deadline: float, poll_seconds: float = _POLL_SECONDS
-) -> float:
+def response_poll_timeout(*, now: float, deadline: float) -> float:
     """Clamp one queue poll to the remaining phase deadline. PURE."""
-    return max(0.0, min(poll_seconds, deadline - now))
+    return max(0.0, min(_POLL_SECONDS, deadline - now))
 
 
 def classify_error(exc: Exception) -> tuple[str, str]:

@@ -24,7 +24,7 @@ from stenographer.lib.transcribe.errors import (
     WorkerModelError,
     WorkerPathologicalError,
     WorkerProtocolError,
-    _WorkerTimeoutError,
+    WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker import Worker
@@ -43,27 +43,6 @@ from stenographer.lib.transcribe.worker_policy import (
 from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport, _reply_normally, _result
 
 _WORKER_LOGGER = "stenographer.lib.transcribe.worker"
-
-
-def test_lifecycle_observer_failure_is_logged_and_suppressed(caplog):
-    observed = []
-
-    def raising_observer():
-        raise RuntimeError("observer failed")
-
-    worker = Worker(
-        Config.loads("").asr,
-        on_model_loading=raising_observer,
-        on_model_ready=lambda: observed.append("ready"),
-    )
-    with caplog.at_level(logging.WARNING, logger="stenographer.lib.transcribe.worker"):
-        worker._emit_lifecycle((WorkerLifecycle.MODEL_LOADING, WorkerLifecycle.MODEL_READY))
-    assert observed == ["ready"]
-    messages = [record.getMessage() for record in caplog.records]
-    assert len(messages) == 1
-    assert "worker: lifecycle_callback_failed" in messages[0]
-    assert "lifecycle_event=model_loading" in messages[0]
-    assert 'error=RuntimeError detail="observer failed"' in messages[0]
 
 
 def test_interpret_response_returns_ok_result():
@@ -126,7 +105,7 @@ def test_malformed_worker_errors_require_teardown():
 
 
 def test_timeout_errors_require_teardown():
-    assert should_teardown_for_response_error(_WorkerTimeoutError("timed out")) is True
+    assert should_teardown_for_response_error(WorkerTimeoutError("timed out")) is True
 
 
 def test_decode_timeout_has_sixty_second_floor():
@@ -470,7 +449,7 @@ def test_an_expired_deadline_ends_the_wait(caplog):
         worker._begin_request()
         with (
             caplog.at_level(logging.ERROR, logger=_WORKER_LOGGER),
-            pytest.raises(_WorkerTimeoutError, match="timed out during transcribe"),
+            pytest.raises(WorkerTimeoutError, match="timed out during transcribe"),
         ):
             worker._wait_for_response("transcribe", deadline=time.monotonic() - 1.0)
 

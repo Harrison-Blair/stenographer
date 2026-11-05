@@ -6,8 +6,12 @@ from __future__ import annotations
 
 import pytest
 
-from stenographer.lib.hotkey.capture import reduce_capture, serialize_capture
-from stenographer.lib.hotkey.capture_records import CaptureState, KeyEvent
+from stenographer.lib.hotkey.capture import (
+    CaptureState,
+    KeyEvent,
+    reduce_capture,
+    serialize_capture,
+)
 from stenographer.lib.hotkey.errors import BindingCaptureError
 from stenographer.lib.hotkey.static_key_table import StaticKeyTable
 
