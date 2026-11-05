@@ -512,11 +512,9 @@ def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch):
     asyncio.run(exercise())
 
 
-def test_checks_microphone_test_without_an_audio_server_shows_a_plain_failure(
-    monkeypatch, tmp_path
-):
+def test_checks_microphone_test_shows_the_probe_error(monkeypatch, tmp_path):
     # Importing the real sounddevice starts PortAudio; with no audio server that
-    # raises PortAudioError. The row shows plain words, not the exception name.
+    # raises PortAudioError. The row shows the error of the probe, not a guessed cause.
     (tmp_path / "sounddevice.py").write_text(
         "class PortAudioError(Exception):\n"
         "    pass\n"
@@ -535,7 +533,8 @@ def test_checks_microphone_test_without_an_audio_server_shows_a_plain_failure(
             await _settle(pilot, lambda: app.checks_tab.test_status not in {"", "running…"})
             await pilot.pause()
             assert _plain(app, "#checks-test-status") == (
-                f"test: {FAIL} no audio server; no audio was captured"
+                f"test: {FAIL} audio subsystem unavailable: Error querying host API -9999; "
+                "no audio was captured"
             )
 
     asyncio.run(exercise())
