@@ -162,6 +162,61 @@ def test_file_job_writes_phrase_text_to_a_new_file_session_and_progress_preview(
         engine.close()
 
 
+def _transcribe_percents(tmp_path, segmenter):
+    """Run a 20 s file through *segmenter*; return each change of transcribe progress."""
+    subscribed = threading.Event()
+
+    def segmenter_factory():
+        assert subscribed.wait(5)
+        return segmenter
+
+    source = tmp_path / "long.wav"
+    soundfile.write(source, np.zeros(320000, dtype=np.float32), 16000)
+    engine = FilesEngine(
+        Config.defaults(),
+        platform=FakeFilesPlatform(tmp_path / "data", _file_asr_process()),
+        segmenter_factory=segmenter_factory,
+        clock=lambda: _JOB_START,
+    )
+    job = engine.submit(source, diarize=False)
+    events = []
+    job.subscribe(events.append)
+    subscribed.set()
+    try:
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    percents = [event.percent for event in events if event.stage == "transcribe"]
+    return [p for index, p in enumerate(percents) if index == 0 or p != percents[index - 1]]
+
+
+def test_transcribe_progress_advances_through_audio_with_no_phrases(tmp_path):
+    class SilentSegmenter:
+        def accept(self, _samples):
+            return []
+
+        def flush(self):
+            return []
+
+    # 65536-frame blocks of 320000 frames, scaled to the 80% that transcription holds.
+    assert _transcribe_percents(tmp_path, SilentSegmenter()) == [0, 16, 33, 49, 66, 80]
+
+
+def test_transcribe_progress_does_not_fall_when_a_phrase_ends_behind_the_audio_read(tmp_path):
+    class LateSegmenter:
+        def __init__(self):
+            self.accepted = 0
+
+        def accept(self, samples):
+            self.accepted += 1
+            return [_phrase(0.0, 1.0, samples)] if self.accepted == 4 else []
+
+        def flush(self):
+            return []
+
+    assert _transcribe_percents(tmp_path, LateSegmenter()) == [0, 16, 33, 49, 66, 80]
+
+
 def test_file_session_name_adds_one_second_while_the_name_exists(tmp_path):
     for name in ("20260302T040506Z", "20260302T040507Z"):
         (_sessions(tmp_path) / name).mkdir(parents=True)
