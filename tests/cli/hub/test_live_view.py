@@ -15,7 +15,7 @@ from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.lib.live.transcript_line import TranscriptLine
-from tests.cli.hub.support import _screen_text, make_app
+from tests.cli.hub.support import _has_split_header, _screen_text, make_app
 
 
 class FakeSession:
@@ -106,7 +106,7 @@ async def test_pilot_live_has_board_panels_and_captioned_split_columns(tmp_path)
         app.refresh_view()
         await pilot.pause()
         mixed = _screen_text(app)
-        assert "transcript · 3 speakers" in mixed
+        assert "transcript · 2 speakers" in mixed
         assert app.screen.query_one("#rec-clock", Clock).value == "00:00:03"
         assert "[m] MIC" in mixed and "Default input" in mixed
         assert "[s] SYSTEM" in mixed and "default output" in mixed
@@ -120,7 +120,7 @@ async def test_pilot_live_has_board_panels_and_captioned_split_columns(tmp_path)
             for segment in strip._segments
             if segment.text.strip() == "You"
         ]
-        # One in the transcript and one in the speakers card.
+        # One in the transcript and one in the speaker bar.
         assert len(you_segments) == 2
         for you_segment in you_segments:
             you_style = you_segment.style
@@ -132,8 +132,7 @@ async def test_pilot_live_has_board_panels_and_captioned_split_columns(tmp_path)
 
         await pilot.press("v")
         split = _screen_text(app)
-        assert "MIC · what you said" in split
-        assert "SYSTEM · everyone else" in split
+        assert _has_split_header(split)
         assert "00:00:01" in split and "00:00:02" in split
         split_rows = [
             row for row in split.splitlines() if "mic words" in row or "system words" in row
@@ -142,24 +141,21 @@ async def test_pilot_live_has_board_panels_and_captioned_split_columns(tmp_path)
         assert all("·" in row for row in split_rows)
 
 
-async def test_sidebar_context_card_is_screen_owned_and_engine_card_stays(tmp_path):
+async def test_speaker_bar_sits_above_the_transcript_and_engine_status_stays(tmp_path):
     app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
-        frame = app.screen.query_one("#sidebar-context")
-        card = app.screen.query_one("#sidebar-card", Static)
-        sidebar = app.screen.query_one("#sidebar", Static)
-        assert card.region.y > sidebar.region.y
-        assert frame.styles.border.top[0] == "round"
-        assert frame.border_title == "speakers"
-        assert str(card.render()).startswith("You ")
-        assert "\nSpeaker 2 " in str(card.render()) and "\nSpeaker 1 " in str(card.render())
-        assert "! 1 phrase failed" in str(card.render())
-        await pilot.press("2")
-        assert app.screen.query_one("#sidebar-context").border_title == "storage"
-        await pilot.press("1")
-        assert app.screen.query_one("#sidebar-context").border_title == "speakers"
-        assert str(app.screen.query_one("#engine-model", Static).render()) == "bark-pro-int8"
+        bar = app.screen.query_one("#speaker-bar", Static)
+        assert bar.region.y < app.screen.query_one("#transcript").region.y
+        assert bar.region.width == app.screen.query_one("#transcript").region.width
+        items = str(bar.render()).split("   ")
+        assert items[0].startswith("You ")
+        assert [item.rsplit(" ", 1)[0] for item in items[:2]] == ["You", "Speaker 2"]
+        assert items[-1] == "! 1 phrase failed"
+        for key in "21":
+            await pilot.press(key)
+            engine = str(app.screen.query_one("#top-engine", Static).render())
+            assert engine.startswith("bark-pro-int8 ")
 
 
 async def test_pilot_live_mixed_and_split_views_keep_time_order(tmp_path):
@@ -167,11 +163,11 @@ async def test_pilot_live_mixed_and_split_views_keep_time_order(tmp_path):
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         content = _screen_text(app)
-        assert "transcript · 3 speakers" in content
+        assert "transcript · 2 speakers" in content
         assert "Speaker 2" in content and "system words" in content
         assert "You" in content and "mic words" in content
-        card = str(app.screen.query_one("#sidebar-card", Static).render())
-        assert "! 1 phrase failed" in card
+        bar = str(app.screen.query_one("#speaker-bar", Static).render())
+        assert "! 1 phrase failed" in bar
         assert app.screen.query_one("#rec-clock", Clock).value == "00:00:03"
         assert "default output" in content
         assert "dBFS" in content
@@ -179,8 +175,7 @@ async def test_pilot_live_mixed_and_split_views_keep_time_order(tmp_path):
         await pilot.press("v")
         split = _screen_text(app)
         assert "mixed  ▶ split" in split
-        assert "MIC · what you said" in split
-        assert "SYSTEM · everyone else" in split
+        assert _has_split_header(split)
         rows = [row for row in split.splitlines() if "mic words" in row or "system words" in row]
         assert len(rows) == 2
         assert "00:00:01" in rows[0] and "00:00:02" in rows[1]
@@ -257,7 +252,7 @@ async def test_record_footer_matches_the_board_hint_row(tmp_path):
         hints = app.screen.query_one("#key-hints", Static).render().plain
         assert hints == (
             "? help · q quit · enter stop & save · space pause · m mic · s system"
-            " · v view · r rename · 1 2 3 screens"
+            " · v view · r rename"
         )
 
 
@@ -389,15 +384,11 @@ async def test_live_transcript_scrolls_in_mixed_and_split_views_and_follows_new_
         assert "mixed  ▶ split" in _screen_text(app)
 
 
-async def test_live_sidebar_and_transcript_titles_are_legible(tmp_path):
+async def test_live_transcript_title_is_legible(tmp_path):
     app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
-        sidebar_title = _visible_segment(app, "stenographer")
-        assert sidebar_title.style.bold
-        assert sidebar_title.style.color == Color.parse("#5fd7ff")
-
-        transcript_title = _visible_segment(app, "transcript · 3 speakers")
+        transcript_title = _visible_segment(app, "transcript · 2 speakers")
         assert transcript_title.style.bold
         assert transcript_title.style.color is None or transcript_title.style.color.is_default
 

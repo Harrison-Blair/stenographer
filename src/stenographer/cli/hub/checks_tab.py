@@ -92,14 +92,19 @@ class ChecksTab(Vertical):
     DEFAULT_CSS = """
     ChecksTab {
         height: 1fr;
+        border: round #3a4150;
     }
     ChecksTab:focus {
         background-tint: transparent;
     }
+    ChecksTab #checks-summary-row {
+        height: 1;
+        padding: 0 1;
+    }
+    ChecksTab #checks-summary { width: 1fr; }
     ChecksTab #checks-body {
         height: 1fr;
         padding: 1 1 0 1;
-        border: round #3a4150;
     }
     ChecksTab #checks-list-column {
         width: 48;
@@ -176,6 +181,9 @@ class ChecksTab(Vertical):
         return self._test_statuses.get(check.check_id, "") if check else ""
 
     def compose(self) -> ComposeResult:
+        with Horizontal(id="checks-summary-row"):
+            yield Static("", id="checks-summary", markup=False)
+            yield HubButton("Run again", key="r", action="run_checks", id="checks-run-again")
         with Horizontal(id="checks-body"):
             with Vertical(id="checks-list-column"):
                 with Vertical(id="doctor-panel"):
@@ -198,11 +206,7 @@ class ChecksTab(Vertical):
                     yield HubButton("Open log", key="l", action="open_log", id="checks-log")
                     yield HubButton("Copy report", key="c", action="copy_report", id="checks-copy")
                 yield Static("", id="checks-test-status", markup=False)
-                yield Static(
-                    "recent warnings (no transcript text)",
-                    id="checks-warnings-title",
-                    markup=False,
-                )
+                yield Static("recent warnings", id="checks-warnings-title", markup=False)
                 yield Static("", id="checks-warnings", markup=False)
                 with Horizontal(id="checks-dialog-buttons"):
                     yield HubButton(
@@ -228,12 +232,12 @@ class ChecksTab(Vertical):
             ("c", "copy"),
         )
 
-    def summary_card(self) -> Text:
+    def summary_text(self) -> Text:
         report = self.report
         if report is None:
             return Text("Checking…" if self.checking else "No check run yet.")
         ran_at = report.checked_at.strftime("%H:%M")
-        card = Text()
+        summary = Text()
         counts = (
             (report.ok_count, "pass", "ok"),
             (report.warn_count, "warn", "warn"),
@@ -241,10 +245,10 @@ class ChecksTab(Vertical):
         )
         for position, (count, word, tone) in enumerate(counts):
             if position:
-                card.append(" · ")
-            card.append(f"{count} {word}", style=StatusToken.TONES[tone] if count else None)
-        card.append(f"\nlast run {ran_at}")
-        return card
+                summary.append(" · ")
+            summary.append(f"{count} {word}", style=StatusToken.TONES[tone] if count else None)
+        summary.append(f" · last run {ran_at}")
+        return summary
 
     def refresh_view(self) -> None:
         if not self.is_mounted:
@@ -253,6 +257,7 @@ class ChecksTab(Vertical):
         if key == self._view_key:
             return
         self._refresh_checks()
+        self.query_one("#checks-summary", Static).update(self.summary_text())
         check = self.selected
         head = self.query_one("#checks-detail-head", Static)
         body = self.query_one("#checks-detail-body", Static)
@@ -272,7 +277,7 @@ class ChecksTab(Vertical):
             )
             title.append(f" {check.label} · {DOCTOR_STATE_WORDS[check.status]}")
             head.update(title)
-            lines = [line for line in (check.explanation, check.detail) if line]
+            lines = [check.detail] if check.detail else []
             if check.fix:
                 lines.append(f"how to fix: {check.fix}")
             body.update("\n".join(lines))

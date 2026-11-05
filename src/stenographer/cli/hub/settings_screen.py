@@ -22,7 +22,9 @@ from stenographer.cli.hub.hub_screen import HubScreen
 from stenographer.cli.hub.vocabulary_dialog import VocabularyDialog
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.field import Field
+from stenographer.cli.hub.widgets.row_input import fit_input_to_row
 from stenographer.cli.hub.widgets.status_token import StatusToken
+from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 
 if TYPE_CHECKING:
@@ -143,6 +145,12 @@ class SettingsScreen(HubScreen):
         height: 1fr;
         border: round #3a4150;
     }
+    SettingsScreen #config-summary {
+        height: 1;
+        padding: 0 2;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
     SettingsScreen #config-search {
         height: 1;
         padding: 0 2;
@@ -164,11 +172,6 @@ class SettingsScreen(HubScreen):
         height: 2;
         padding: 0 2;
         border-top: solid #3a4150;
-    }
-    SettingsScreen #config-applies {
-        width: 1fr;
-        content-align: right top;
-        color: #8b93a1;
     }
     """
 
@@ -193,6 +196,7 @@ class SettingsScreen(HubScreen):
                 yield tab
             yield Static("←→ tab", id="settings-tabs-hint", markup=False)
         with Vertical(id="config-body"):
+            yield Static("", id="config-summary", markup=False)
             yield Static("", id="config-search", markup=False)
             yield VerticalScroll(id="config-rows")
             with Horizontal(id="config-actions"):
@@ -206,7 +210,6 @@ class SettingsScreen(HubScreen):
                 yield HubButton("Undo", key="u", action="undo", id="config-undo")
                 yield HubButton("Reset row", key="D", action="reset_key", id="config-reset")
                 yield HubButton("Discard all", action="discard_all", id="config-discard")
-                yield Static("applies to new sessions and jobs", id="config-applies", markup=False)
         yield self.checks_tab
 
     def on_mount(self) -> None:
@@ -300,12 +303,6 @@ class SettingsScreen(HubScreen):
         self.query_one("#tab-checks", HubButton).set_label(self.tab_label("checks"))
         if self.tab == "checks":
             self.checks_tab.refresh_view()
-            app.set_context_card(
-                "settings",
-                self.checks_tab.summary_card(),
-                title="checks",
-                buttons=(("Run again", "r", self.checks_tab.action_run_checks),),
-            )
             return
         editor = app.config_editor
         if editor.shown_keys is None and not editor.read_only:
@@ -313,6 +310,8 @@ class SettingsScreen(HubScreen):
         self._sync_rows(editor)
         actions = self.query_one("#config-actions")
         actions.display = not editor.read_only
+        summary = self.query_one("#config-summary", Static)
+        summary.display = not editor.read_only
         search = self.query_one("#config-search", Static)
         search.display = bool(editor.search_term)
         if editor.read_only:
@@ -321,7 +320,7 @@ class SettingsScreen(HubScreen):
         self._update_rows(editor)
         count = editor.unsaved_change_count
         self.query_one("#config-save", HubButton).set_label(self._save_label(count))
-        app.set_context_card("settings", self._config_card(editor), title="config")
+        update_changed(summary, self._config_summary(editor))
 
     def _sync_rows(self, editor: ConfigEditor) -> None:
         """Mount one Field per visible key when the visible keys change."""
@@ -356,16 +355,16 @@ class SettingsScreen(HubScreen):
         selected = editor.selected_key
         for key, field in self._rows.items():
             focused = key == selected
-            help_text = editor.help(key)
+            note = ""
             if self.row_error is not None and key == self.row_error[0]:
-                help_text = f"{DOCTOR_STATE_GLYPHS['fail']} {self.row_error[1]}"
+                note = f"{DOCTOR_STATE_GLYPHS['fail']} {self.row_error[1]}"
                 if key == self.editing:
-                    help_text += " · esc cancels"
+                    note += " · esc cancels"
             elif key == self.editing:
-                help_text = "editing · enter keeps · esc cancels"
-            elif focused and editor.kind(key) != "list":
-                help_text += f" · default {self._value_text(editor, key, editor.default(key))}"
-            field.help_text = help_text
+                note = "editing"
+            elif editor.value(key) != editor.default(key):
+                note = f"default {self._value_text(editor, key, editor.default(key))}"
+            field.note = note
             field.set_value(
                 self._control(editor, key, focused), changed=editor.is_changed(key), focused=focused
             )
@@ -380,25 +379,24 @@ class SettingsScreen(HubScreen):
         kind = editor.kind(key)
         value = editor.value(key)
         if kind == "toggle":
-            return Text("(●) on" if value else "( ) off", style=style, justify="right")
+            return Text("(●) on" if value else "( ) off", style=style)
         if kind == "number":
-            text = Text(str(value), style=style, justify="right")
+            text = Text(str(value), style=style)
             unit = editor.unit(key)
             if unit:
                 text.append(f" {unit}", style=_DIM)
             return text
         if kind == "list":
-            count = len(value)
-            noun = "term" if count == 1 else "terms"
-            return Text(
-                f"[enter] Edit list… {count} {noun}", style=style or "#5fd7ff", justify="right"
-            )
+            terms = self._value_text(editor, key, value)
+            return Text(f"[enter] Edit list… {terms}", style=style or "#5fd7ff")
         text = self._value_text(editor, key, value)
         if kind in {"choice", "device"}:
-            return Text(f"{text} ▾", style=style, justify="right")
+            return Text(f"{text} ▾", style=style)
         return Text(text, style=style)
 
     def _value_text(self, editor: ConfigEditor, key: str, value: object) -> str:
+        if editor.kind(key) == "list":
+            return f"{len(value)} {'term' if len(value) == 1 else 'terms'}"
         if editor.kind(key) == "device":
             if value is None:
                 return _DEFAULT_DEVICE[key]
@@ -411,33 +409,33 @@ class SettingsScreen(HubScreen):
     def _save_label(count: int) -> str:
         return f"Save {count} change{'' if count == 1 else 's'}"
 
-    def _config_card(self, editor: ConfigEditor) -> Text:
+    def _config_summary(self, editor: ConfigEditor) -> Text:
         count = editor.unsaved_change_count
         suffix = "" if count == 1 else "s"
-        card = Text(f"{editor.path.name}\n")
-        card.append(
+        summary = Text(f"{editor.path.name} · ", no_wrap=True)
+        summary.append(
             f"● {count} unsaved change{suffix}" if count else "0 unsaved changes",
             style=StatusToken.TONES["warn"] if count else StatusToken.TONES["dim"],
         )
-        card.append("\n\nbackups\n")
+        summary.append(" · backups ")
         backups = editor.backups()
         if not backups:
-            card.append("none yet", style=StatusToken.TONES["dim"])
-            return card
+            summary.append("none yet", style=StatusToken.TONES["dim"])
+            return summary
         newest = backups[-1]
-        card.append(f"{newest.name}\n")
+        summary.append(f"{newest.name} · ")
         try:
             stamp = datetime.datetime.fromtimestamp(newest.stat().st_mtime).strftime("%H:%M")
         except OSError:
             stamp = "—"
-        card.append(f"last {stamp}", style=StatusToken.TONES["dim"])
-        return card
+        summary.append(f"last {stamp}", style=StatusToken.TONES["dim"])
+        return summary
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
         if self.typing:
             return (("enter", "keep"), ("esc", "cancel"), ("tab", "next row"), ("ctrl+s", "save"))
         if self.tab == "checks":
-            return (("←→", "tab"), *self.checks_tab.footer_hints(), ("1 2 3", "screens"))
+            return (("←→", "tab"), *self.checks_tab.footer_hints())
         return (
             ("←→", "tab"),
             ("↑↓", "row"),
@@ -447,7 +445,6 @@ class SettingsScreen(HubScreen):
             ("D", "reset"),
             ("ctrl+s", "save"),
             ("/", "search"),
-            ("1 2 3", "screens"),
         )
 
     # Device lists
@@ -579,11 +576,7 @@ class SettingsScreen(HubScreen):
         editor_input = Input(
             initial, type=input_type, compact=True, select_on_focus=False, id="config-input"
         )
-        # Inline styles: the app stylesheet gives each Input a border, and a
-        # row input stays on the one line of its row.
-        editor_input.styles.border = ("none", "black")
-        editor_input.styles.height = 1
-        editor_input.styles.padding = 0
+        fit_input_to_row(editor_input)
         editor_input.styles.width = _CONTROL_WIDTH
         editor_input.styles.margin = (0, 0, 0, _CONTROL_OFFSET)
         self.editing = key

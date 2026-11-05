@@ -1,28 +1,26 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The shell of one hub screen: sidebar, body and footer hint row."""
+"""The shell of one hub screen: top bar, body and footer hint row."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Input
 
 from stenographer.cli.hub.widgets.key_hints import KeyHints
-from stenographer.cli.hub.widgets.sidebar import Sidebar
+from stenographer.cli.hub.widgets.top_bar import TopBar
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
 
-    from stenographer.cli.hub.widgets.row_selected import RowSelected
-
 
 class HubScreen(Screen):
-    """Compose the shared shell; a subclass owns its body, keys, hints and card.
+    """Compose the shared shell; a subclass owns its body, keys and hints.
 
-    The app draws the sidebar of the current screen once the screen is
+    The app draws the top bar of the current screen once the screen is
     ``ready`` (mounted with its children). A subclass gives ``compose_body``,
     ``refresh_body`` and ``footer_hints``. While a text input has focus,
     letters, ``?`` and ``q`` go to it, so the footer shows only the keys that
@@ -34,10 +32,9 @@ class HubScreen(Screen):
     ready = False
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="hub-layout"):
-            yield Sidebar(id="hub-sidebar")
-            with Vertical(id="screen-body"):
-                yield from self.compose_body()
+        yield TopBar(id="top-bar")
+        with Vertical(id="screen-body"):
+            yield from self.compose_body()
         yield KeyHints(id="key-hints")
 
     def compose_body(self) -> ComposeResult:
@@ -53,7 +50,7 @@ class HubScreen(Screen):
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
         """Return the footer items; the footer adds ``? help · q quit``."""
-        return (("1 2 3", "screens"),)
+        return ()
 
     def draw_hints(self) -> None:
         self.query_one("#key-hints", KeyHints).set_hints(*self.footer_hints(), end=not self.typing)
@@ -83,8 +80,3 @@ class HubScreen(Screen):
 
     def action_scroll_end(self) -> None:
         self._transcript().scroll_bottom()
-
-    def on_row_selected(self, event: RowSelected) -> None:
-        if event.control.id == "sidebar":
-            event.stop()
-            self.app.show_screen(Sidebar.SCREENS[event.index][0])

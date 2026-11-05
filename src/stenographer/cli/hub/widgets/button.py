@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from rich.text import Text
 from textual.widgets import Button as TextualButton
+
+if TYPE_CHECKING:
+    from textual.geometry import Size
 
 
 class HubButton(TextualButton):
@@ -12,7 +17,8 @@ class HubButton(TextualButton):
 
     The action is the action name of the key binding. A click runs it on the
     nearest ancestor (or the app) that defines ``action_<name>``, so the click
-    and the key always do the same thing. A tab button has no key.
+    and the key always do the same thing. A tab button has no key. A ``tight``
+    button takes only the cells of its label.
     """
 
     # The app stylesheet includes these rules after the shared transparent
@@ -61,6 +67,7 @@ class HubButton(TextualButton):
         key: str | None = None,
         action: str | None = None,
         tone: str = "default",
+        tight: bool = False,
         **kwargs,
     ) -> None:
         self.key = key
@@ -68,6 +75,16 @@ class HubButton(TextualButton):
         super().__init__(self.label_text(label, key), **kwargs)
         self.can_focus = False
         self.add_class("-hub", f"-tone-{tone}")
+        # Inline styles: the app rules outrank default CSS, and CSS refuses ``line-pad: 0``.
+        self._tight = tight
+        if tight:
+            self.styles.padding = 0
+            self.styles.line_pad = 0
+
+    def get_content_width(self, container: Size, viewport: Size) -> int:
+        """Return the label width; Textual always adds two line-pad cells to a button."""
+        width = super().get_content_width(container, viewport)
+        return width - 2 if self._tight else width
 
     @staticmethod
     def label_text(label: str | Text, key: str | None) -> Text:

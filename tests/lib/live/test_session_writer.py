@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta, timezone
 
 import numpy as np
+import pytest
 import soundfile
 
 from stenographer.lib.live.session_writer import SessionWriter
@@ -194,3 +195,32 @@ def test_audio_and_transcript_writes_are_safe_from_three_threads(tmp_path):
     records = (writer.path / "transcript.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(records) == thread_count * blocks
     assert all(json.loads(record)["source"] == "mic" for record in records)
+
+
+def test_a_failed_rename_write_leaves_the_name_out_of_the_markdown(tmp_path):
+    writer = _open_writer(tmp_path)
+    writer.append_line(
+        _line(
+            start=0.25,
+            end=0.5,
+            source="system",
+            speaker_id="speaker-1",
+            label="Speaker 1",
+            text="words",
+        )
+    )
+    jsonl = writer._jsonl
+
+    class FailingFile:
+        def write(self, _text):
+            raise OSError("disk full")
+
+    writer._jsonl = FailingFile()
+    with pytest.raises(OSError, match="disk full"):
+        writer.relabel({"speaker-1": "Alice"})
+    writer._jsonl = jsonl
+    writer.close()
+
+    markdown = (writer.path / "transcript.md").read_text(encoding="utf-8")
+    assert "Speaker 1" in markdown
+    assert "Alice" not in markdown

@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Sample the engine card from hub services and ``/proc``."""
+"""Sample the engine status from hub services and ``/proc``."""
 
 from __future__ import annotations
 
 import math
 import os
 import time
-from collections import deque
 from typing import TYPE_CHECKING
 
 from stenographer.cli.hub.engine_status import EngineStatus
@@ -17,8 +16,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from stenographer.lib.platform.process_counters import ProcessCounters
-
-_HISTORY_SECONDS = 60
 
 
 class EngineSampler:
@@ -53,7 +50,6 @@ class EngineSampler:
         self._cpu_app: float | None = None
         self._cpu_all: float | None = None
         self._ram_app: int | None = None
-        self._history: deque[float] = deque(maxlen=_HISTORY_SECONDS)
 
     def sample(self) -> None:
         """Read the gauges once; CPU needs a previous sample, RAM does not."""
@@ -79,7 +75,6 @@ class EngineSampler:
             )
             seconds = delta / self._counters.clock_ticks
             self._cpu_app = min(100.0, 100.0 * seconds / elapsed / self._cpu_count)
-            self._history.append(self._cpu_app)
         else:
             self._cpu_app = None
         self._process_ticks = ticks if hub_read else {}
@@ -94,14 +89,13 @@ class EngineSampler:
                 self._cpu_all = max(0.0, min(100.0, 100.0 * (1 - idle / total)))
 
     def snapshot(self) -> EngineStatus:
-        """Return the card data; the state line reads the services now."""
+        """Return the status; the state line reads the services now."""
         return EngineStatus(
             model=MODEL_DIRNAME,
             state=self._state(),
             cpu_app_percent=self._cpu_app,
             cpu_all_percent=self._cpu_all,
             ram_app_bytes=self._ram_app,
-            cpu_history=tuple(self._history),
         )
 
     def _sessions(self) -> tuple:

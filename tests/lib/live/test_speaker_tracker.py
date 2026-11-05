@@ -12,7 +12,7 @@ import pytest
 import soundfile
 
 from stenographer.lib.live.models import LIVE_MODELS
-from stenographer.lib.live.speaker_tracker import SpeakerClustering, SpeakerTracker
+from stenographer.lib.live.speaker_tracker import Speaker, SpeakerClustering, SpeakerTracker
 from stenographer.lib.platform import current_platform
 
 
@@ -242,6 +242,143 @@ def test_room_tracker_labels_and_renames_room_speakers(monkeypatch):
     tracker.rename(second, "Dana")
 
     assert (first, second) == ("room-1", "room-2")
-    assert tracker.speaker_ids == ("room-1", "room-2")
     assert tracker.label(first) == "Room 1"
     assert tracker.label(second) == "Dana"
+
+
+A = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+B = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+C = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+
+def test_assign_nearest_creates_only_the_first_speaker():
+    clustering = SpeakerClustering(threshold=0.5, id_prefix="room")
+
+    assert clustering.assign_nearest(A) == "room-1"
+    assert clustering.assign_nearest(B) == "room-1"
+    assert len(clustering.speakers) == 1
+
+
+def test_assign_nearest_picks_the_closest_speaker_below_the_threshold():
+    clustering = SpeakerClustering(threshold=0.99, speakers=[Speaker("room-1", A.copy())])
+    clustering.speakers.append(Speaker("room-2", B.copy()))
+
+    assert clustering.assign_nearest(np.array([0.2, 0.3, 0.9], dtype=np.float32)) == "room-2"
+
+
+def test_a_file_job_tracker_still_creates_speakers_as_phrases_arrive(monkeypatch):
+    tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Speaker")
+
+    assert tracker.assign_embedding(A, duration=2.0) == "speaker-1"
+    assert tracker.assign_embedding(B, duration=2.0) == "speaker-2"
+    # A short phrase joins a known speaker and a long phrase near one joins it too.
+    assert tracker.assign_embedding(C, duration=0.5) == "speaker-2"
+    assert tracker.assign_embedding(A, duration=2.0) == "speaker-1"
+    assert tracker.label("speaker-2") == "Speaker 2"
+
+
+def _regroup(tracker, rows):
+    """Regroup rows of ``(current ID, batch cluster, seconds, embedding)``, all grouped before."""
+    current, clusters, durations, embeddings = zip(*rows, strict=True)
+    tracker._grouped_phrases = len(rows)
+    return tracker.regroup(current, clusters, durations, embeddings)
+
+
+def test_regroup_keeps_each_number_when_batch_numbers_differ(monkeypatch):
+    tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Room")
+
+    ids = _regroup(
+        tracker,
+        [
+            ("room-3", "room-1", 5.0, A),
+            ("room-1", "room-2", 5.0, B),
+            ("room-3", "room-1", 5.0, A),
+        ],
+    )
+
+    assert ids == ("room-3", "room-1", "room-3")
+
+
+def test_regroup_gives_a_new_cluster_a_new_number_after_every_number_used(monkeypatch):
+    tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Room")
+    assert tracker.assign_nearest(A) == "room-1"
+
+    first = tracker.regroup(("room-1", "room-1"), ("x", "y"), (5.0, 4.0), (A, B))
+    assert first == ("room-1", "room-2")
+
+    # room-2 merges away, and its number stays unused for the next new person.
+    second = _regroup(tracker, [("room-1", "x", 5.0, A), ("room-2", "x", 4.0, B)])
+    assert second == ("room-1", "room-1")
+    third = _regroup(
+        tracker,
+        [("room-1", "x", 5.0, A), ("room-1", "x", 4.0, B), ("room-1", "y", 1.0, C)],
+    )
+    assert third == ("room-1", "room-1", "room-3")
+
+
+def test_regroup_gives_a_cluster_to_the_speaker_with_the_most_shared_speech(monkeypatch):
+    tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Room")
+
+    ids = _regroup(tracker, [("room-1", "x", 2.0, A), ("room-2", "x", 9.0, A)])
+
+    assert ids == ("room-2", "room-2")
+    assert tracker.current_id("room-1") == "room-2"
+    assert tracker.current_id("room-2") == "room-2"
+
+
+def test_regroup_lets_a_renamed_speaker_choose_before_a_larger_speaker(monkeypatch):
+    tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Room")
+    assert tracker.assign_embedding(A, duration=2.0) == "room-1"
+    assert tracker.assign_embedding(B, duration=2.0) == "room-2"
+    tracker.rename("room-1", "Dana")
+
+    ids = _regroup(tracker, [("room-1", "x", 2.0, A), ("room-2", "x", 9.0, A)])
+
+    assert ids == ("room-1", "room-1")
+    assert tracker.label("room-1") == "Dana"
+
+
+def test_current_id_follows_a_merge_chain(monkeypatch):
+    tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Room")
+
+    _regroup(tracker, [("room-1", "x", 1.0, A), ("room-2", "x", 2.0, A), ("room-3", "y", 1.0, B)])
+    _regroup(tracker, [("room-2", "x", 3.0, A), ("room-3", "x", 4.0, B)])
+
+    assert tracker.current_id("room-1") == "room-3"
+
+
+def test_regroup_sets_the_mean_of_all_phrases_of_a_speaker(monkeypatch):
+    tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Room")
+    between = np.array([0.9, 0.9, 1.0], dtype=np.float32)
+
+    _regroup(
+        tracker, [("room-1", "x", 5.0, A), ("room-1", "x", 5.0, B), ("room-2", "y", 5.0, between)]
+    )
+
+    # The mean of A and B is this exact direction. A alone or B alone scores below room-2.
+    assert tracker.assign_nearest(np.array([1.0, 1.0, 0.0], dtype=np.float32)) == "room-1"
+
+
+def test_regroup_counts_only_phrases_that_an_earlier_pass_grouped(monkeypatch):
+    tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Room")
+    assert tracker.assign_nearest(A) == "room-1"
+
+    # Only the first phrase has evidence at the first pass, whatever speech the others have.
+    first = tracker.regroup(("room-1", "room-1"), ("x", "y"), (1.0, 99.0), (A, B))
+    assert first == ("room-1", "room-2")
+
+    # The new phrase joined room-1 by nearest. Its speech does not move room-1 to cluster y.
+    second = tracker.regroup(
+        ("room-1", "room-2", "room-1"), ("x", "y", "y"), (1.0, 99.0, 500.0), (A, B, B)
+    )
+    assert second == ("room-1", "room-2", "room-2")
+
+
+def test_saved_speakers_count_only_phrases_that_a_pass_grouped(monkeypatch):
+    tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Room")
+    assert tracker.assign_nearest(A) == "room-1"
+    tracker.rename("room-1", "Dana")
+
+    saved = tracker.saved_speakers(("room-1", "room-1"), ("x", "y"), (1.0, 99.0))
+
+    assert saved == (("room-1", "Dana"), ("room-2", "Room 2"))

@@ -21,8 +21,7 @@ class Frame(Vertical):
     Frame.-fill { height: 1fr; }
     """
 
-    def __init__(self, *children, title: str = "", variant: str | None = None, **kwargs) -> None:
+    def __init__(self, *children, variant: str | None = None, **kwargs) -> None:
         super().__init__(*children, **kwargs)
-        self.border_title = title
         if variant is not None:
             self.add_class(f"-{variant}")

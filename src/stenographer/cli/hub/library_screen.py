@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from rich.console import Group
 from rich.text import Text
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.geometry import Region
 from textual.widgets import Input, Rule, Static
 
 from stenographer.cli.hub.dialogs import QuitConfirm
@@ -28,8 +29,10 @@ from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.key_hints import KeyHints
+from stenographer.cli.hub.widgets.row_input import fit_input_to_row
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.sparkline import Sparkline
+from stenographer.cli.hub.widgets.speaker_bar import SpeakerBar
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
 from stenographer.cli.hub.widgets.update_changed import update_changed
@@ -56,7 +59,7 @@ _SPARK_CELLS = 28
 # Buttons of the detail: ``(id, key, label, action, tone)``.
 _ACTIONS = (
     ("library-play", "p", "▶ Play", "session_playback", "default"),
-    ("library-rename", "r", "Rename speaker…", "session_rename", "default"),
+    ("library-rename", "r", "Rename…", "session_rename", "default"),
     ("library-rediarize", "d", "Re-diarize", "session_rediarize", "default"),
     ("library-retranscribe", "t", "Re-transcribe", "session_retranscribe", "default"),
     ("library-export", "x", "Export…", "session_export", "default"),
@@ -119,29 +122,16 @@ class LibraryScreen(HubScreen):
     ]
     DEFAULT_CSS = """
     LibraryScreen #library-body { height: 1fr; }
-    LibraryScreen #library-list-frame {
-        width: 52;
-        height: 1fr;
-        margin-right: 1;
-    }
-    LibraryScreen #library-detail-frame { width: 1fr; height: 1fr; }
     LibraryScreen #library-search-row { height: 1; }
-    LibraryScreen #library-search {
-        width: 1fr;
-        height: 1;
-        padding: 0;
-        border: none;
-    }
-    LibraryScreen #library-transcribe { margin-bottom: 1; }
+    LibraryScreen #library-search { width: 1fr; }
     LibraryScreen #library-columns { height: 1; color: #8b93a1; }
-    LibraryScreen #library-list-scroll { height: 1fr; }
+    LibraryScreen #library-list-scroll { height: 8; }
     LibraryScreen #library-detail-head { height: 1; }
     LibraryScreen #library-detail-title { width: 1fr; text-style: bold; color: ansi_default; }
     LibraryScreen #library-detail-state { width: auto; }
-    LibraryScreen #library-speakers { height: auto; }
-    LibraryScreen .library-actions { height: 1; }
-    LibraryScreen #library-actions-0 { margin-top: 1; }
-    LibraryScreen #library-action-help { height: auto; color: #8b93a1; }
+    LibraryScreen #library-activity { height: auto; }
+    LibraryScreen #library-activity Sparkline { width: auto; margin-right: 2; }
+    LibraryScreen #library-actions { height: 1; margin-top: 1; }
     LibraryScreen #library-rule { margin: 0; color: #3a4150; }
     LibraryScreen #library-transcript { height: 1fr; }
     LibraryScreen .library-hints { height: 1; }
@@ -176,68 +166,67 @@ class LibraryScreen(HubScreen):
         self._watch_key: object = None
         self._poll_key: object = None
         self._rows_key: object = None
+        self._row_in_view: int | None = None
+        self._storage_shown: str | None = None
         self._transcript_key: object = None
         self._rows = TranscriptRows()
 
     def compose_body(self) -> ComposeResult:
-        with Horizontal(id="library-body"):
-            with Frame(id="library-list-frame", variant="fill"):
+        with Vertical(id="library-body"):
+            with Frame(id="library-list-frame"):
                 with Horizontal(id="library-search-row"):
                     yield HubButton(
-                        "search titles and transcripts",
+                        "search",
                         key="/",
                         action="library_search",
                         id="library-search-button",
                     )
-                    yield Input(placeholder="search titles and transcripts", id="library-search")
-                yield HubButton(
-                    "+ Transcribe a file…",
-                    key="n",
-                    action="transcribe_file",
-                    tone="primary",
-                    id="library-transcribe",
-                )
+                    yield Input(placeholder="search", id="library-search")
+                    yield HubButton(
+                        "+ Transcribe a file…",
+                        key="n",
+                        action="transcribe_file",
+                        tone="primary",
+                        id="library-transcribe",
+                    )
+                    yield KeyHints(footer=False, id="library-list-hints", classes="library-hints")
                 yield Static(_COLUMNS, id="library-columns", markup=False)
-                with Vertical(id="library-list-scroll"):
+                with VerticalScroll(id="library-list-scroll", can_focus=False):
                     yield SelectableList(id="library-list")
-                yield KeyHints(footer=False, id="library-list-hints", classes="library-hints")
             with Frame(id="library-detail-frame", variant="fill"):
                 with Horizontal(id="library-detail-head"):
                     yield Static("", id="library-detail-title", markup=False)
                     yield Static("", id="library-detail-state", markup=False)
-                yield Static("", id="library-speakers", markup=False)
-                yield Sparkline("mic", label_after=False, width=_SPARK_CELLS, id="library-mic")
-                yield Sparkline(
-                    "sys", label_after=False, width=_SPARK_CELLS, color="#ffaf5f", id="library-sys"
-                )
-                # Two buttons per row, so each ``busy`` word stays visible.
-                for row in range(0, len(_ACTIONS), 2):
-                    with Horizontal(id=f"library-actions-{row}", classes="library-actions"):
-                        for button_id, key, label, action, tone in _ACTIONS[row : row + 2]:
-                            yield HubButton(label, key=key, action=action, tone=tone, id=button_id)
-                yield Static("", id="library-action-help", markup=False)
+                yield SpeakerBar(id="library-speakers")
+                with Horizontal(id="library-activity"):
+                    yield Sparkline("mic", width=_SPARK_CELLS, id="library-mic")
+                    yield Sparkline("sys", width=_SPARK_CELLS, color="#ffaf5f", id="library-sys")
+                with Horizontal(id="library-actions"):
+                    for button_id, key, label, action, tone in _ACTIONS:
+                        yield HubButton(
+                            label, key=key, action=action, tone=tone, tight=True, id=button_id
+                        )
                 yield Rule(id="library-rule")
                 yield TranscriptScroll(id="library-transcript", can_focus=False)
                 yield KeyHints(footer=False, id="library-detail-hints", classes="library-hints")
 
     def on_mount(self) -> None:
-        self.query_one("#library-search", Input).display = False
+        search = self.query_one("#library-search", Input)
+        fit_input_to_row(search)
+        search.display = False
         self.query_one("#library-list-hints", KeyHints).set_hints(
             ("↑↓", "select"), ("del", "delete")
         )
         self.query_one("#library-detail-hints", KeyHints).set_hints(
             ("PgUp/Dn", "page"), ("Home/End", "top/end")
         )
-        # The app rules of HubButton outrank screen CSS; the action rows need tight buttons.
-        for button in self.query(".library-actions HubButton"):
-            button.styles.padding = 0
         self.set_interval(0.1, self.poll_jobs)
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
         if self.typing:
             return (("enter", "keep"), ("esc", "clear"))
         return (
-            ("n", "transcribe file"),
+            ("n", "transcribe"),
             ("/", "search"),
             ("p", "play"),
             ("r", "rename"),
@@ -245,7 +234,6 @@ class LibraryScreen(HubScreen):
             ("t", "re-transcribe"),
             ("x", "export"),
             ("del", "delete"),
-            ("1 2 3", "screens"),
         )
 
     @property
@@ -269,18 +257,19 @@ class LibraryScreen(HubScreen):
     def refresh_body(self) -> None:
         self._draw_list()
         self._draw_detail()
-        self.app.set_context_card("library", self._storage_card(), title="storage")
+        storage = self._storage_summary()
+        if storage != self._storage_shown:
+            self._storage_shown = storage
+            self.query_one("#library-list-frame", Frame).border_title = Text(storage)
 
-    def _storage_card(self) -> str:
+    def _storage_summary(self) -> str:
         count = self._all_count
         total = sum(summary.audio_size_bytes for summary in self.summaries)
-        text = f"{count} {'entry' if count == 1 else 'entries'}\n{self._format_size(total)} audio"
+        text = f"{count} {'entry' if count == 1 else 'entries'} · {self._format_size(total)} audio"
         if self.store is not None:
             root = self.store.root
             home = pathlib.Path.home()
-            text += (
-                f"\n\n~/{root.relative_to(home)}" if root.is_relative_to(home) else f"\n\n{root}"
-            )
+            text += f" · ~/{root.relative_to(home)}" if root.is_relative_to(home) else f" · {root}"
         return text
 
     def _draw_list(self) -> None:
@@ -304,6 +293,16 @@ class LibraryScreen(HubScreen):
         if key != self._rows_key:
             self._rows_key = key
             self.query_one("#library-list", SelectableList).set_rows(rows, index)
+            if index is not None and index != self._row_in_view:
+                # The list shows about eight rows, so a selection move can leave the view.
+                # Only a move scrolls: a job's progress changes its row text, not the selection.
+                self.call_after_refresh(self._show_row, index)
+            self._row_in_view = index
+
+    def _show_row(self, index: int) -> None:
+        self.query_one("#library-list-scroll", VerticalScroll).scroll_to_region(
+            Region(0, index, 1, 1), animate=False, immediate=True
+        )
 
     def _row_text(self, entry: LibraryEntry) -> Text:
         summary = entry.summary
@@ -344,8 +343,8 @@ class LibraryScreen(HubScreen):
         update_changed(self.query_one("#library-detail-state", Static), state)
         detail = self.detail if entry is not None and entry.summary is not None else None
         recording = detail is not None and detail.summary.kind == "rec"
-        speakers = self.query_one("#library-speakers", Static)
-        update_changed(speakers, self._speakers_text(detail) if detail is not None else "")
+        speakers = self.query_one("#library-speakers", SpeakerBar)
+        speakers.set_items(self._speaker_items(detail) if detail is not None else ())
         speakers.display = detail is not None
         for spark_id, source in (("#library-mic", "mic"), ("#library-sys", "system")):
             spark = self.query_one(spark_id, Sparkline)
@@ -388,19 +387,19 @@ class LibraryScreen(HubScreen):
             return StatusToken.text(_FAILED, "failed", "danger")
         return StatusToken.text("■", job.state, "dim")
 
-    def _speakers_text(self, detail: SessionDetail) -> Text:
+    def _speaker_items(self, detail: SessionDetail) -> tuple[Text, ...]:
         ids = self._speaker_ids(detail)
-        text = Text()
+        items: list[Text] = []
         for label, seconds in detail.talk_time.items():
-            if text:
-                text.append("   ")
             speaker_id = ids[label]
             color = speaker_color(
                 speaker_id, tuple(ids.values()), source=self._source_of(detail, label)
             )
-            text.append(label, style=f"bold {color}")
-            text.append(f" {Clock.duration(max(0, seconds))}")
-        return text or Text("no speakers", style=_DIM)
+            item = Text()
+            item.append(label, style=f"bold {color}")
+            item.append(f" {Clock.duration(max(0, seconds))}")
+            items.append(item)
+        return tuple(items) or (Text("no speakers", style=_DIM),)
 
     @staticmethod
     def _speaker_ids(detail: SessionDetail) -> dict[str, str]:
@@ -428,18 +427,13 @@ class LibraryScreen(HubScreen):
             if entry.kind == "file":
                 labels["library-rediarize"] = ("Re-diarize", True)
             if entry.job_active:
-                labels["library-delete"] = ("Cancel job… · delete busy", False)
+                labels["library-delete"] = ("Cancel job… · busy", False)
             elif busy:
                 labels["library-delete"] = ("Delete… · busy", True)
         elif entry is not None:
             labels["library-delete"] = (
                 ("Cancel job…", False) if entry.job_active else ("Remove", False)
             )
-        help_line = self.query_one("#library-action-help", Static)
-        update_changed(
-            help_line, "d re-diarize: use Re-transcribe" if entry and entry.kind == "file" else ""
-        )
-        help_line.display = entry is not None and entry.kind == "file"
         for button_id, (label, disabled) in labels.items():
             button = self.query_one(f"#{button_id}", HubButton)
             if str(button.label) != str(HubButton.label_text(label, button.key)):
@@ -451,9 +445,7 @@ class LibraryScreen(HubScreen):
             job = entry.job
             lines = tuple(job.progress.completed_lines)
             message = (
-                f"{_FAILED} {job.error or 'failed'}"
-                if job.state in _FAILED_JOB_STATES
-                else "Finished lines show here while the job runs."
+                f"{_FAILED} {job.error or 'failed'}" if job.state in _FAILED_JOB_STATES else ""
             )
         elif detail is not None:
             lines = detail.lines
@@ -758,9 +750,7 @@ class LibraryScreen(HubScreen):
         self.search_query = ""
         search.value = ""
         search.display = False
-        self.query_one("#library-search-button", HubButton).set_label(
-            "search titles and transcripts"
-        )
+        self.query_one("#library-search-button", HubButton).set_label("search")
         self.set_focus(None)
         if had_query:
             self._search_matches = None
@@ -876,7 +866,7 @@ class LibraryScreen(HubScreen):
     def _rename(self, session_id: str, value: tuple[str, str] | None) -> None:
         if value is None or self.store is None:
             return
-        self._start_job("Rename", session_id, self.store.rename_speaker, *value)
+        self._start_job("Rename", session_id, self.store.rename_label, *value)
 
     def _start_job(
         self, label: str, session_id: str, operation: Callable[..., object], *args

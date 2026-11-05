@@ -180,11 +180,15 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 
 - `stenographer` — open the terminal hub when stdin and stdout are terminals;
   otherwise show help. The hub has three screens: press `1` for Record, `2`
-  for Library, and `3` for Settings, and `?` for the keys of each screen. A
-  sidebar on each screen shows navigation badges, an engine card with the
-  model state and CPU and memory use, and one context card.
+  for Library, and `3` for Settings, and `?` for the keys of each screen. One
+  top line on each screen shows navigation badges, the model state, and CPU and
+  memory use. Transcripts use the full width, under a horizontal speaker bar.
   On Record, press `space` to start and `enter` to stop and save; the hub stays
-  open while the speaker relabel pass runs; failures show the reason and keep live labels.
+  open while the speaker relabel pass runs; a skipped or failed
+  pass saves the speakers and names shown on screen, numbered from 1, and a failure
+  shows the reason. Long lines that hold a clear change of speaker are split into
+  separate lines when a recording stops, when a file job ends, and on Re-diarize and
+  Re-transcribe. Overlapping speech stays on one line.
   `o` opens the saved session in
   Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,

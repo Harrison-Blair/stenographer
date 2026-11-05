@@ -10,6 +10,7 @@ from textual.widgets import Input, Static
 
 from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.widgets.dialog import Dialog
+from stenographer.cli.hub.widgets.row_input import fit_input_to_row
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.lib.config.constants import MAX_VOCABULARY_TERMS
 from stenographer.lib.config.errors import ConfigError
@@ -83,6 +84,7 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
         )
 
     def on_mount(self) -> None:
+        fit_input_to_row(self.query_one("#vocab-input", Input))
         self._show()
 
     def _show(self) -> None:
@@ -93,9 +95,7 @@ class VocabularyDialog(Dialog[tuple[str, ...] | None]):
         else:
             listing.set_rows((("no terms · a adds one", ""),))
         count = len(self.terms)
-        self.query_one("#vocab-count", Static).update(
-            f"{count} of {MAX_VOCABULARY_TERMS} terms · spelled exactly as written by refine"
-        )
+        self.query_one("#vocab-count", Static).update(f"{count} of {MAX_VOCABULARY_TERMS} terms")
 
     def _input(self) -> Input:
         return self.query_one("#vocab-input", Input)

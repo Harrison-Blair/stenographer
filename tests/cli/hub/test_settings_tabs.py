@@ -135,7 +135,6 @@ async def test_settings_each_key_sits_in_its_tab_as_one_field_row(tmp_path):
         ]
         text = _screen_text(app)
         assert "▶ Recognition" in text
-        assert "applies to new sessions and jobs" in text
 
 
 def test_settings_rows_draw_the_control_that_fits_the_key(tmp_path):
@@ -157,7 +156,6 @@ def test_settings_rows_draw_the_control_that_fits_the_key(tmp_path):
             app.settings_screen.select_tab("audio")
             await pilot.pause()
             assert _plain(_field(app, "Microphone")) == "Default input ▾"
-            assert "local text cleanup" not in _field(app, "Microphone").help_text
 
     asyncio.run(exercise())
 
@@ -286,7 +284,7 @@ def test_settings_save_keeps_a_backup_and_a_comment(tmp_path):
         app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
         async with app.run_test(size=(150, 45)) as pilot:
             await _open(pilot, "recognition")
-            assert "backups\nnone yet" in app.screen.query_one("#sidebar-card").render().plain
+            assert "backups none yet" in app.screen.query_one("#config-summary").render().plain
             await pilot.press("down", "enter", "ctrl+a", "ctrl+k", "3", "enter")
             await pilot.press("ctrl+s")
             await pilot.pause()
@@ -298,9 +296,9 @@ def test_settings_save_keeps_a_backup_and_a_comment(tmp_path):
             assert len(backups) == 1
             assert backups[0].read_text(encoding="utf-8") == content
             assert not _field(app, "CPU threads").changed
-            card = app.screen.query_one("#sidebar-card").render().plain
-            assert "0 unsaved changes" in card
-            assert f"backups\n{backups[0].name}\nlast " in card
+            summary = app.screen.query_one("#config-summary").render().plain
+            assert "0 unsaved changes" in summary
+            assert f"backups {backups[0].name} · last " in summary
             assert "[ctrl+s] Save 0 changes" in _screen_text(app)
 
     asyncio.run(exercise())

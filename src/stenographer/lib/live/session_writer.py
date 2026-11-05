@@ -120,11 +120,11 @@ class SessionWriter:
             if self._closed:
                 raise RuntimeError("session writer is closed")
             changes = dict(labels)
-            self._labels.update(changes)
             self._jsonl.write(
                 json.dumps({"type": "rename", "labels": changes}, ensure_ascii=False) + "\n"
             )
             self._jsonl.flush()
+            self._labels.update(changes)
 
     def mark_mic_diarized(self) -> None:
         """Record in session.json that microphone lines carry Room speaker labels."""

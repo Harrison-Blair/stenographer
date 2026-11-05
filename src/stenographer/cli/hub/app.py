@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Textual shell for the stenographer hub: three screens, sidebar, help and quit."""
+"""Textual shell for the stenographer hub: three screens, top bar, help and quit."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import logging
 import pathlib
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 
 from rich.text import Text
 from textual.app import App
@@ -34,15 +34,12 @@ from stenographer.cli.hub.setup_test import test_step as test_setup_step
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
-from stenographer.cli.hub.widgets.sidebar import CardButtons, Sidebar
 from stenographer.cli.hub.widgets.status_token import StatusToken
+from stenographer.cli.hub.widgets.top_bar import TopBar
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
-
-if TYPE_CHECKING:
-    from rich.console import RenderableType
 
 log = logging.getLogger(__name__)
 
@@ -63,13 +60,10 @@ class HubApp(App[None]):
         NO_BACKGROUND_CSS
         + HubButton.APP_CSS
         + """
-    #hub-layout {
-        height: 1fr;
-        padding: 1 1 0 1;
-    }
     #screen-body {
         width: 1fr;
         height: 1fr;
+        padding: 0 1;
     }
     #transcript-scroll-content {
         width: 1fr;
@@ -97,7 +91,6 @@ class HubApp(App[None]):
         self.config_editor = config_editor
         self.activity_status: str | None = None
         self.engine_sampler = engine_sampler or EngineSampler(services)
-        self._context_cards: dict[str, tuple[str, RenderableType, CardButtons, frozenset[str]]] = {}
         self._busy: dict[str, str] = {}
         self._busy_lock = threading.Lock()
         if open_log is None:
@@ -182,23 +175,6 @@ class HubApp(App[None]):
         self._switch("settings")
         self.settings_screen.open_setting(key)
 
-    def set_context_card(
-        self,
-        screen: str,
-        content: RenderableType,
-        *,
-        title: str,
-        buttons: CardButtons = (),
-        disabled: frozenset[str] = frozenset(),
-    ) -> None:
-        """Set the context card of one screen; it shows while that screen shows.
-
-        Each ``(label, key, run)`` of ``buttons`` shows as a ``[key] label``
-        button under the text; a click calls ``run``. A button whose key is in
-        ``disabled`` shows as disabled.
-        """
-        self._context_cards[screen] = (title, content, buttons, disabled)
-
     def try_acquire_session(self, session_id: str, owner: str) -> bool:
         """Mark a session busy for ``owner``; false when another owner holds it."""
         with self._busy_lock:
@@ -273,18 +249,14 @@ class HubApp(App[None]):
     # Drawing
 
     def refresh_view(self) -> None:
-        """Redraw the current screen body, its sidebar and its footer."""
+        """Redraw the current screen body, its top bar and its footer."""
         screen = self.current_hub_screen
         if screen is None or not self.is_running or not screen.ready or not screen.is_attached:
             return
         screen.refresh_body()
-        sidebar = screen.query_one(Sidebar)
-        sidebar.show_navigation(self.current_mode, self._badges())
-        sidebar.show_engine(self.engine_sampler.snapshot())
-        title, content, buttons, disabled = self._context_cards.get(
-            self.current_mode, ("", "", (), frozenset())
+        screen.query_one(TopBar).show(
+            self.current_mode, self._badges(), self.engine_sampler.snapshot()
         )
-        sidebar.show_context(content, title, buttons, disabled)
         screen.draw_hints()
 
     def _badges(self) -> dict[str, str | Text]:

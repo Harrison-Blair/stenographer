@@ -10,12 +10,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Thread
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 
+from stenographer.lib.live import voice_split
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
+from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
 from tests.lib.platform.support import NullProcessCounters
@@ -246,6 +249,12 @@ def _make_session(
     monkeypatch.setattr(live_session, "Recorder", RecorderFactory)
     monkeypatch.setattr(live_session, "PhraseSegmenter", SegmenterFactory)
     monkeypatch.setattr(live_session, "SpeakerTracker", tracker or VoiceSpeakerTracker)
+    saved_audio = {}
+    monkeypatch.setattr(
+        live_session,
+        "read_saved_audio",
+        lambda path, start, end: saved_audio[path.stem, start, end],
+    )
     platform = FakePlatform(system_capture, tmp_path, platform_error)
     cfg = SimpleNamespace(
         asr=SimpleNamespace(),
@@ -269,6 +278,7 @@ def _make_session(
         system=system_capture,
         recorder=recorder_holder["recorder"],
         segmenters=segmenters,
+        saved_audio=saved_audio,
     )
 
 
@@ -354,7 +364,7 @@ def test_second_stop_request_skips_relabel_and_keeps_the_live_revision(monkeypat
             return None
         return original_relabel(lines, embeddings, **kwargs)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", wait_for_skip)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", wait_for_skip)
     rig = _make_session(monkeypatch, tmp_path, mic=False)
     processed = Event()
     rig.session.subscribe(lambda _line: processed.set())
@@ -385,12 +395,11 @@ def test_second_stop_request_skips_relabel_and_keeps_the_live_revision(monkeypat
 
 
 def test_relabel_failure_keeps_live_labels_and_exposes_the_reason(monkeypatch, tmp_path):
-    import stenographer.lib.live.live_session as live_session
 
     def fail_relabel(*_args, **_kwargs):
         raise RuntimeError("batch clustering unavailable")
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", fail_relabel)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", fail_relabel)
     rig = _make_session(monkeypatch, tmp_path, mic=False)
     processed = Event()
     rig.session.subscribe(lambda _line: processed.set())
@@ -417,7 +426,7 @@ def test_relabel_stale_revision_keeps_a_rename_saved_during_the_pass(monkeypatch
         SessionStore(writer.path.parent).rename_speaker(writer.path.name, "speaker-1", "Alice")
         return original_relabel(lines, embeddings, **kwargs)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", rename_during_pass)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", rename_during_pass)
     rig = _make_session(monkeypatch, tmp_path, mic=False)
     writer = rig.writer
     holder["writer"] = writer
@@ -663,37 +672,20 @@ def test_stop_finishes_when_padding_fails(monkeypatch, tmp_path):
     assert rig.session.relabel_status == ""
 
 
-class VoiceSpeakerTracker:
-    """Give each fake phrase value its own voice and number voices per prefix."""
+class VoiceSpeakerTracker(SpeakerTracker):
+    """Run the real speaker logic and give each fake phrase value its own voice."""
 
     def __init__(self, *_args, label_prefix="Speaker", **_kwargs):
-        self.prefix = label_prefix
-        self.voices = {}
-        self.names = {}
-
-    @property
-    def speaker_ids(self):
-        return tuple(self.voices.values())
+        model = SimpleNamespace(
+            SpeakerEmbeddingExtractorConfig=lambda **_options: None,
+            SpeakerEmbeddingExtractor=lambda _config: None,
+        )
+        with patch.dict(sys.modules, {"sherpa_onnx": model}):
+            super().__init__("speaker.onnx", label_prefix=label_prefix)
 
     def embed(self, samples):
-        return np.array([1.0, 0.0] if samples[0] == 1 else [0.0, 1.0], dtype=np.float32)
-
-    def assign_embedding(self, embedding, *, duration=None):
-        key = tuple(float(value) for value in embedding)
-        if key not in self.voices:
-            self.voices[key] = f"{self.prefix.lower()}-{len(self.voices) + 1}"
-        return self.voices[key]
-
-    def label(self, speaker_id):
-        if speaker_id == "you":
-            return "You"
-        number = speaker_id.removeprefix(f"{self.prefix.lower()}-")
-        return self.names.get(speaker_id, f"{self.prefix} {number}")
-
-    def rename(self, speaker_id, name):
-        if speaker_id not in self.voices.values():
-            raise ValueError(f"Unknown speaker ID: {speaker_id}")
-        self.names[speaker_id] = name.strip()
+        voices = {1: (1.0, 0.0, 0.0), 4: (0.0, 1.0, 0.0), 2: (0.0, 0.0, 1.0)}
+        return np.array(voices[int(samples[0])], dtype=np.float32)
 
 
 def _wait_for_lines(session, count):
@@ -736,12 +728,11 @@ def test_mic_diarization_labels_room_speakers_apart_from_system_speakers(monkeyp
 
     assert [(line.source, line.speaker_id, line.label) for line in rig.writer.lines] == [
         ("mic", "room-1", "Room 1"),
-        ("mic", "room-2", "Room 2"),
+        ("mic", "room-1", "Room 1"),
         ("system", "speaker-1", "Speaker 1"),
     ]
     assert set(rig.session.speakers) == {
         ("room-1", "Room 1"),
-        ("room-2", "Room 2"),
         ("speaker-1", "Speaker 1"),
     }
     rig.session.stop()
@@ -759,7 +750,7 @@ def test_stop_relabels_mic_lines_separately_with_the_room_prefix(monkeypatch, tm
         passes.append(({line.source for line in lines}, kwargs.get("label_prefix", "Speaker")))
         return original_relabel(lines, embeddings, **kwargs)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", record_pass)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", record_pass)
     rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 3)
     rig.recorder.emit(1)
@@ -812,16 +803,15 @@ def test_rename_updates_a_room_speaker_and_its_existing_lines(monkeypatch, tmp_p
     rig.recorder.emit(4)
     assert processed.wait(timeout=1)
 
-    rig.session.rename("room-2", "Dana")
+    rig.session.rename("room-1", "Dana")
 
-    assert [line.label for line in rig.session.lines] == ["Room 1", "Dana"]
-    assert rig.writer.renames == [{"room-2": "Dana"}]
-    assert ("room-2", "Dana") in rig.session.speakers
+    assert [line.label for line in rig.session.lines] == ["Dana", "Dana"]
+    assert rig.writer.renames == [{"room-1": "Dana"}]
+    assert ("room-1", "Dana") in rig.session.speakers
     rig.session.stop()
 
 
 def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
-    import stenographer.lib.live.live_session as live_session
 
     started = Event()
     release = Event()
@@ -831,7 +821,7 @@ def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
         release.wait(timeout=1)
         return None if kwargs["should_cancel"]() else tuple(lines)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", wait_for_skip)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", wait_for_skip)
     rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 3)
     rig.recorder.emit(1)
@@ -850,7 +840,7 @@ def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
     assert not stop_thread.is_alive()
     assert rig.session.relabel_status == "Relabeling skipped"
     assert detail.revision == "transcript.jsonl"
-    assert [line.label for line in detail.lines] == ["Room 1", "Room 2", "Speaker 1"]
+    assert [line.label for line in detail.lines] == ["Room 1", "Room 1", "Speaker 1"]
 
 
 class LongPhraseSegmenter(FakeSegmenter):
@@ -872,22 +862,15 @@ def test_relabel_progress_counts_phrases_from_the_real_work_units_of_both_passes
 ):
     import stenographer.lib.live.live_session as live_session
 
-    original_relabel = live_session.relabel_system_lines
     observed = []
-    session_holder = {}
-
-    def observe_pass(lines, embeddings, **kwargs):
-        report = kwargs["progress"]
-
-        def progress(done, total):
-            report(done, total)
-            observed.append(session_holder["session"].relabel_progress)
-
-        return original_relabel(lines, embeddings, **{**kwargs, "progress": progress})
-
-    monkeypatch.setattr(live_session, "relabel_system_lines", observe_pass)
     rig = _make_session(monkeypatch, tmp_path, diarize_mic=True, start=False)
-    session_holder["session"] = rig.session
+    set_progress = rig.session._set_relabel_progress
+
+    def observe_progress(done, total):
+        set_progress(done, total)
+        observed.append(rig.session.relabel_progress)
+
+    rig.session._set_relabel_progress = observe_progress
     monkeypatch.setattr(live_session, "PhraseSegmenter", LongPhraseSegmenter)
     rig.session.start()
     processed = _wait_for_lines(rig.session, 7)
@@ -1029,3 +1012,784 @@ def test_a_speaker_model_that_fails_on_toggle_leaves_system_off_and_mic_running(
     rig.recorder.emit(1)
     assert processed.wait(timeout=1)
     rig.session.stop()
+
+
+VOICE_A, VOICE_B, VOICE_C = 1, 4, 2
+
+
+def _say(rig, voice, start, end, *, source="mic"):
+    """Send one phrase through the queue that the capture callback fills."""
+    samples = np.asarray([voice], dtype=np.float32)
+    rig.saved_audio[source, start, end] = np.full(round((end - start) * 16000), voice, np.float32)
+    rig.session._queue.put(Phrase(source=source, start=start, end=end, samples=samples))
+    rig.session._queue.join()
+
+
+def _room_session(monkeypatch, tmp_path):
+    return _make_session(monkeypatch, tmp_path, system=False, diarize_mic=True)
+
+
+def _ids(session):
+    return [line.speaker_id for line in session.lines]
+
+
+def _say_a_then_b_to_first_pass(rig):
+    """Voice A speaks for 20 s and voice B for 10 s. The last phrase reaches 30 s."""
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 29.0)
+    _say(rig, VOICE_B, 29.0, 30.0)
+
+
+def test_a_new_voice_creates_no_speaker_until_a_pass_runs(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 29.0)
+
+    assert _ids(rig.session) == ["room-1", "room-1"]
+    assert rig.session.speakers == (("room-1", "Room 1"),)
+
+    _say(rig, VOICE_B, 29.0, 30.0)
+
+    assert _ids(rig.session) == ["room-1", "room-2", "room-2"]
+    assert rig.session.speakers == (("room-1", "Room 1"), ("room-2", "Room 2"))
+    assert rig.session.failed_phrase_count == 0
+    rig.session.stop()
+
+
+def test_a_phrase_between_passes_joins_the_nearest_speaker(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_a_then_b_to_first_pass(rig)
+
+    _say(rig, VOICE_B, 30.0, 32.0)
+    _say(rig, VOICE_A, 32.0, 34.0)
+    _say(rig, VOICE_C, 34.0, 36.0)
+
+    assert _ids(rig.session)[3:5] == ["room-2", "room-1"]
+    assert {speaker_id for speaker_id, _label in rig.session.speakers} == {"room-1", "room-2"}
+    rig.session.stop()
+
+
+def test_the_next_pass_waits_thirty_seconds_after_the_last_pass(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_a_then_b_to_first_pass(rig)
+
+    _say(rig, VOICE_C, 30.0, 59.0)
+
+    assert len(rig.session.speakers) == 2
+
+    _say(rig, VOICE_C, 59.0, 60.0)
+
+    assert ("room-3", "Room 3") in rig.session.speakers
+    rig.session.stop()
+
+
+def test_each_diarized_source_has_its_own_passes(monkeypatch, tmp_path):
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
+
+    _say_a_then_b_to_first_pass(rig)
+    _say(rig, VOICE_A, 0.0, 20.0, source="system")
+    _say(rig, VOICE_B, 20.0, 29.0, source="system")
+
+    assert rig.session.speakers == (
+        ("speaker-1", "Speaker 1"),
+        ("room-1", "Room 1"),
+        ("room-2", "Room 2"),
+    )
+
+    _say(rig, VOICE_B, 29.0, 30.0, source="system")
+
+    assert rig.session.speakers == (
+        ("speaker-1", "Speaker 1"),
+        ("speaker-2", "Speaker 2"),
+        ("room-1", "Room 1"),
+        ("room-2", "Room 2"),
+    )
+    rig.session.stop()
+
+
+def _say_until_voice_a_merges_into_voice_b(rig):
+    """Voice A has 18 s of brief phrases, then voice B passes five times that speech."""
+    for number in range(12):
+        _say(rig, VOICE_A, number * 1.5, (number + 1) * 1.5)
+    _say(rig, VOICE_B, 18.0, 30.0)
+    _say(rig, VOICE_B, 30.0, 60.0)
+    assert rig.session.speakers == (("room-1", "Room 1"), ("room-2", "Room 2"))
+    _say(rig, VOICE_B, 60.0, 110.0)
+
+
+def test_a_speaker_keeps_its_number_when_an_earlier_speaker_merges_away(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+
+    _say_until_voice_a_merges_into_voice_b(rig)
+
+    # The batch pass alone numbers this one cluster 1, by first appearance.
+    assert rig.session.speakers == (("room-2", "Room 2"),)
+    assert set(_ids(rig.session)) == {"room-2"}
+    rig.session.stop()
+
+
+def _say_to_numbers_two_and_three(rig):
+    """Leave room-2 for voice B and room-3 for voice C. Number 1 has merged away."""
+    _say_until_voice_a_merges_into_voice_b(rig)
+    _say(rig, VOICE_C, 110.0, 140.0)
+    assert rig.session.speakers == (("room-2", "Room 2"), ("room-3", "Room 3"))
+
+
+def test_save_numbers_speakers_from_one_by_first_appearance(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_to_numbers_two_and_three(rig)
+
+    rig.session.stop()
+
+    expected = [("room-1", "Room 1")] * 15 + [("room-2", "Room 2")]
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+    assert detail.revision == "transcript.r2.jsonl"
+    assert [(line.speaker_id, line.label) for line in detail.lines] == expected
+    assert [(line.speaker_id, line.label) for line in rig.session.lines] == expected
+    assert rig.session.speakers == (("room-1", "Room 1"), ("room-2", "Room 2"))
+
+
+def test_a_given_name_stays_when_save_changes_the_number(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_to_numbers_two_and_three(rig)
+    rig.session.rename("room-3", "Cara")
+
+    rig.session.stop()
+
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+    assert [(line.speaker_id, line.label) for line in detail.lines][-2:] == [
+        ("room-1", "Room 1"),
+        ("room-2", "Cara"),
+    ]
+    assert rig.session.speakers == (("room-1", "Room 1"), ("room-2", "Cara"))
+
+
+def test_a_rename_on_the_saved_session_uses_the_saved_numbers(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_to_numbers_two_and_three(rig)
+    rig.session.stop()
+    store = SessionStore(rig.writer.path.parent)
+    speaker_id, _label = rig.session.speakers[1]
+
+    store.rename_speaker(rig.writer.path.name, speaker_id, "Cara")
+
+    detail = store.read(rig.writer.path.name)
+    assert [(line.speaker_id, line.label) for line in detail.lines][-2:] == [
+        ("room-1", "Room 1"),
+        ("room-2", "Cara"),
+    ]
+
+
+def test_a_live_rename_after_the_save_changes_no_line(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_to_numbers_two_and_three(rig)
+    rig.session.stop()
+    lines = rig.session.lines
+
+    with pytest.raises(RuntimeError):
+        rig.session.rename("room-2", "Cara")
+
+    assert rig.session.lines == lines
+
+
+def test_each_source_is_numbered_from_one_at_save(monkeypatch, tmp_path):
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
+    _say_to_numbers_two_and_three(rig)
+    _say(rig, VOICE_A, 0.0, 30.0, source="system")
+
+    rig.session.stop()
+
+    assert set(rig.session.speakers) == {
+        ("speaker-1", "Speaker 1"),
+        ("room-1", "Room 1"),
+        ("room-2", "Room 2"),
+    }
+
+
+def _saved(rig):
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+    return detail, [(line.speaker_id, line.label) for line in detail.lines]
+
+
+def _shown(rig):
+    return [(line.speaker_id, line.label) for line in rig.session.lines]
+
+
+def test_a_later_voice_does_not_take_a_renamed_speaker_at_a_pass(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 20.0, 30.0)
+    rig.session.rename("room-1", "Dana")
+    _say(rig, VOICE_B, 30.0, 59.0)
+    _say(rig, VOICE_B, 59.0, 60.0)
+
+    expected = [("room-1", "Dana"), ("room-2", "Room 2"), ("room-2", "Room 2")]
+    assert _shown(rig) == expected
+    rig.session.stop()
+    assert _saved(rig)[1] == expected
+
+
+def test_a_later_voice_does_not_take_a_renamed_speaker_at_the_end_pass(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 20.0, 30.0)
+    rig.session.rename("room-1", "Dana")
+    _say(rig, VOICE_B, 30.0, 55.0)
+
+    rig.session.stop()
+
+    expected = [("room-1", "Dana"), ("room-2", "Room 2")]
+    assert _saved(rig)[1] == expected
+    assert _shown(rig) == expected
+
+
+def test_the_first_phrase_keeps_its_speaker_at_the_first_pass(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 8.0)
+    rig.session.rename("room-1", "Dana")
+    _say(rig, VOICE_B, 8.0, 30.0)
+
+    assert _shown(rig) == [("room-1", "Dana"), ("room-2", "Room 2")]
+    rig.session.stop()
+
+
+def test_the_first_phrase_keeps_number_one_with_no_given_name(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 8.0)
+    _say(rig, VOICE_B, 8.0, 30.0)
+
+    assert _shown(rig) == [("room-1", "Room 1"), ("room-2", "Room 2")]
+    rig.session.stop()
+
+
+def _say_ann_and_bob(rig):
+    """A pass splits two voices that were first written as one speaker, and both get names."""
+    _say(rig, VOICE_A, 0.0, 15.0)
+    _say(rig, VOICE_B, 15.0, 30.0)
+    rig.session.rename("room-1", "Ann")
+    rig.session.rename("room-2", "Bob")
+
+
+ANN_AND_BOB = [("room-1", "Ann"), ("room-2", "Bob")]
+
+
+def test_a_skipped_end_pass_saves_the_names_on_screen(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_ann_and_bob(rig)
+
+    rig.session.skip_relabel()
+    rig.session.stop()
+
+    detail, saved = _saved(rig)
+    assert detail.revision == "transcript.r2.jsonl"
+    assert saved == ANN_AND_BOB
+    assert _shown(rig) == ANN_AND_BOB
+    assert rig.session.speakers == tuple(ANN_AND_BOB)
+    assert rig.session.relabel_status == "Relabeling skipped"
+
+
+def test_a_skip_during_the_end_pass_saves_the_names_on_screen(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    holder = {}
+    original_relabel = live_session.relabel_system_lines
+
+    def skip_in_end_pass(lines, embeddings, **kwargs):
+        if "progress" in kwargs:
+            holder["session"].skip_relabel()
+            return None
+        return original_relabel(lines, embeddings, **kwargs)
+
+    monkeypatch.setattr(voice_split, "relabel_system_lines", skip_in_end_pass)
+    rig = _room_session(monkeypatch, tmp_path)
+    holder["session"] = rig.session
+    _say_ann_and_bob(rig)
+
+    rig.session.stop()
+
+    assert _saved(rig)[1] == ANN_AND_BOB
+    assert rig.session.relabel_status == "Relabeling skipped"
+
+
+def test_a_skipped_end_pass_numbers_the_saved_speakers_from_one(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_to_numbers_two_and_three(rig)
+    rig.session.rename("room-3", "Cara")
+
+    rig.session.skip_relabel()
+    rig.session.stop()
+
+    expected = [("room-1", "Room 1")] * 15 + [("room-2", "Cara")]
+    assert _saved(rig)[1] == expected
+    assert _shown(rig) == expected
+    assert rig.session.speakers == (("room-1", "Room 1"), ("room-2", "Cara"))
+
+    store = SessionStore(rig.writer.path.parent)
+    store.rename_speaker(rig.writer.path.name, "room-1", "Ben")
+    assert _saved(rig)[1] == [("room-1", "Ben")] * 15 + [("room-2", "Cara")]
+
+
+def test_a_skip_keeps_the_you_lines_of_a_microphone_without_diarization(monkeypatch, tmp_path):
+    rig = _make_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 2.0)
+    _say(rig, VOICE_A, 0.0, 15.0, source="system")
+    _say(rig, VOICE_B, 15.0, 30.0, source="system")
+
+    rig.session.skip_relabel()
+    rig.session.stop()
+
+    assert _saved(rig)[1] == [
+        ("you", "You"),
+        ("speaker-1", "Speaker 1"),
+        ("speaker-2", "Speaker 2"),
+    ]
+
+
+def test_a_failed_end_pass_saves_the_names_on_screen(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    original_relabel = live_session.relabel_system_lines
+
+    def fail_in_end_pass(lines, embeddings, **kwargs):
+        if "progress" in kwargs:
+            raise RuntimeError("batch clustering unavailable")
+        return original_relabel(lines, embeddings, **kwargs)
+
+    monkeypatch.setattr(voice_split, "relabel_system_lines", fail_in_end_pass)
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_ann_and_bob(rig)
+
+    rig.session.stop()
+
+    detail, saved = _saved(rig)
+    assert rig.session.relabel_error == "batch clustering unavailable"
+    assert detail.revision == "transcript.r2.jsonl"
+    assert saved == ANN_AND_BOB
+    assert rig.session.speakers == tuple(ANN_AND_BOB)
+
+
+def test_a_failed_revision_write_of_the_end_pass_saves_the_names_on_screen(monkeypatch, tmp_path):
+    original_write = SessionStore.write_revision
+    calls = []
+
+    def fail_once(self, *args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise OSError("disk full")
+        return original_write(self, *args, **kwargs)
+
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_ann_and_bob(rig)
+    monkeypatch.setattr(SessionStore, "write_revision", fail_once)
+
+    rig.session.stop()
+
+    assert rig.session.relabel_error == "disk full"
+    assert _saved(rig)[1] == ANN_AND_BOB
+
+
+@pytest.mark.parametrize("skip", [True, False])
+def test_a_failed_write_of_the_names_on_screen_fails_the_stop(monkeypatch, tmp_path, skip):
+    def fail(self, *_args, **_kwargs):
+        raise OSError("disk full")
+
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_to_numbers_two_and_three(rig)
+    monkeypatch.setattr(SessionStore, "write_revision", fail)
+    if skip:
+        rig.session.skip_relabel()
+    lines = rig.session.lines
+
+    with pytest.raises(OSError, match="disk full"):
+        rig.session.stop()
+
+    assert rig.session.lines == lines
+    assert rig.worker.stopped
+    assert rig.session.relabel_progress is None
+
+
+def test_a_new_person_does_not_reuse_the_number_of_a_merged_speaker(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_until_voice_a_merges_into_voice_b(rig)
+
+    _say(rig, VOICE_C, 110.0, 140.0)
+
+    assert rig.session.speakers == (("room-2", "Room 2"), ("room-3", "Room 3"))
+    rig.session.stop()
+
+
+def test_a_rename_survives_passes_and_reaches_the_final_revision(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_a_then_b_to_first_pass(rig)
+
+    rig.session.rename("room-2", "Dana")
+    _say(rig, VOICE_B, 30.0, 45.0)
+    _say(rig, VOICE_A, 45.0, 60.0)
+    _say(rig, VOICE_B, 60.0, 90.0)
+
+    assert ("room-2", "Dana") in rig.session.speakers
+    assert ("room-1", "Room 1") in rig.session.speakers
+    rig.session.stop()
+
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+    assert detail.revision == "transcript.r2.jsonl"
+    assert [(line.speaker_id, line.label) for line in detail.lines] == [
+        ("room-1", "Room 1"),
+        ("room-2", "Dana"),
+        ("room-2", "Dana"),
+        ("room-2", "Dana"),
+        ("room-1", "Room 1"),
+        ("room-2", "Dana"),
+    ]
+
+
+def test_two_speakers_with_one_given_name_both_keep_it(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_a_then_b_to_first_pass(rig)
+    rig.session.rename("room-1", "Guest")
+    rig.session.rename("room-2", "Guest")
+
+    _say(rig, VOICE_B, 30.0, 60.0)
+    rig.session.stop()
+
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+    assert {(line.speaker_id, line.label) for line in detail.lines} == {
+        ("room-1", "Guest"),
+        ("room-2", "Guest"),
+    }
+
+
+def test_a_rename_of_a_merged_speaker_goes_to_the_speaker_that_holds_its_lines(
+    monkeypatch, tmp_path
+):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_until_voice_a_merges_into_voice_b(rig)
+
+    # The rename dialog listed room-1 before the pass merged it.
+    rig.session.rename("room-1", "Dana")
+
+    assert rig.session.speakers == (("room-2", "Dana"),)
+    assert {line.label for line in rig.session.lines} == {"Dana"}
+    assert rig.writer.renames == [{"room-2": "Dana"}]
+    rig.session.stop()
+
+
+def test_a_rename_during_a_pass_is_kept(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    original_relabel = live_session.relabel_system_lines
+    holder = {}
+
+    def rename_during_pass(lines, embeddings, **kwargs):
+        if "progress" not in kwargs:
+            holder["session"].rename("room-1", "Dana")
+        return original_relabel(lines, embeddings, **kwargs)
+
+    monkeypatch.setattr(live_session, "relabel_system_lines", rename_during_pass)
+    rig = _room_session(monkeypatch, tmp_path)
+    holder["session"] = rig.session
+
+    _say_a_then_b_to_first_pass(rig)
+
+    assert rig.session.speakers == (("room-1", "Dana"), ("room-2", "Room 2"))
+    assert [line.label for line in rig.session.lines] == ["Dana", "Room 2", "Room 2"]
+    rig.session.stop()
+
+
+def test_a_mic_block_is_accepted_while_a_pass_runs(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    original_relabel = live_session.relabel_system_lines
+    accepted = []
+    holder = {}
+
+    def probe_lock(lines, embeddings, **kwargs):
+        if "progress" not in kwargs:
+            block = Thread(target=holder["rig"].recorder.emit, args=(3,), daemon=True)
+            block.start()
+            block.join(timeout=0.5)
+            accepted.append(not block.is_alive())
+        return original_relabel(lines, embeddings, **kwargs)
+
+    monkeypatch.setattr(live_session, "relabel_system_lines", probe_lock)
+    rig = _room_session(monkeypatch, tmp_path)
+    holder["rig"] = rig
+
+    _say_a_then_b_to_first_pass(rig)
+
+    assert accepted == [True]
+    rig.session.stop()
+
+
+def test_speakers_lists_no_speaker_without_lines(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    append_line = rig.writer.append_line
+
+    def fail_once(line):
+        rig.writer.append_line = append_line
+        raise OSError("disk full")
+
+    rig.writer.append_line = fail_once
+    _say(rig, VOICE_A, 0.0, 2.0)
+
+    # The tracker made a speaker for this phrase, and the phrase has no line.
+    assert rig.session.failed_phrase_count == 1
+    assert rig.session.speakers == ()
+    rig.session.stop()
+    assert rig.session.speakers == ()
+
+
+def test_speakers_after_the_end_pass_are_the_speakers_of_the_saved_lines(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    for number in range(8):
+        _say(rig, VOICE_A, number * 1.5, (number + 1) * 1.5)
+    _say(rig, VOICE_B, 12.0, 30.0)
+    _say(rig, VOICE_B, 30.0, 60.0)
+    # Voice A falls below one fifth of voice B here, and only the end pass sees it.
+    _say(rig, VOICE_B, 60.0, 89.0)
+    assert rig.session.speakers == (("room-1", "Room 1"), ("room-2", "Room 2"))
+
+    rig.session.stop()
+
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+    assert {(line.speaker_id, line.label) for line in detail.lines} == {("room-1", "Room 1")}
+    assert rig.session.speakers == (("room-1", "Room 1"),)
+
+
+def test_the_end_pass_makes_the_same_groups_as_the_batch_pass_alone(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_until_voice_a_merges_into_voice_b(rig)
+    _say(rig, VOICE_A, 110.0, 125.0)
+    _say(rig, VOICE_C, 125.0, 145.0)
+
+    rig.session.stop()
+
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+    voices = ["A"] * 12 + ["B"] * 3 + ["A", "C"]
+    groups = {}
+    for voice, line in zip(voices, detail.lines, strict=True):
+        groups.setdefault(line.speaker_id, set()).add(voice)
+    # Voice A has 33 s and voice C has 20 s. Each is over one fifth of the 92 s of voice B.
+    assert sorted(sorted(group) for group in groups.values()) == [["A"], ["B"], ["C"]]
+
+
+def _saved_state(rig):
+    summaries = SessionStore(rig.writer.path.parent).list_sessions()
+    metadata = json.loads((rig.writer.path / "session.json").read_text())
+    return metadata["method"], summaries[0].label_state
+
+
+def test_a_finished_end_pass_saves_as_relabeled(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_ann_and_bob(rig)
+
+    rig.session.stop()
+
+    assert _saved_state(rig) == ("diarization", "relabeled")
+
+
+def test_a_skipped_end_pass_saves_as_live_labels(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_ann_and_bob(rig)
+
+    rig.session.skip_relabel()
+    rig.session.stop()
+
+    assert _saved_state(rig) == ("live", "live")
+
+
+def test_a_failed_end_pass_saves_as_live_labels(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    original_relabel = live_session.relabel_system_lines
+
+    def fail_in_end_pass(lines, embeddings, **kwargs):
+        if "progress" in kwargs:
+            raise RuntimeError("batch clustering unavailable")
+        return original_relabel(lines, embeddings, **kwargs)
+
+    monkeypatch.setattr(voice_split, "relabel_system_lines", fail_in_end_pass)
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_ann_and_bob(rig)
+
+    rig.session.stop()
+
+    assert _saved_state(rig) == ("live", "live")
+
+
+def test_a_failed_rename_write_leaves_the_old_name_everywhere(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say_a_then_b_to_first_pass(rig)
+    relabel = rig.writer.relabel
+
+    def fail(_labels):
+        raise OSError("disk full")
+
+    rig.writer.relabel = fail
+    with pytest.raises(OSError, match="disk full"):
+        rig.session.rename("room-1", "Dana")
+    rig.writer.relabel = relabel
+
+    assert ("room-1", "Room 1") in rig.session.speakers
+    # The next pass and the save read the name from the tracker.
+    _say(rig, VOICE_B, 30.0, 60.0)
+    assert ("room-1", "Room 1") in rig.session.speakers
+    rig.session.stop()
+    assert {label for _speaker_id, label in _saved(rig)[1]} == {"Room 1", "Room 2"}
+
+
+def test_a_refused_rename_writes_no_record(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 2.0)
+
+    with pytest.raises(ValueError):
+        rig.session.rename("room-1", "   ")
+    with pytest.raises(ValueError):
+        rig.session.rename("room-9", "Dana")
+
+    assert rig.writer.renames == []
+    rig.session.stop()
+
+
+def test_a_rename_write_stores_the_trimmed_name(monkeypatch, tmp_path):
+    rig = _room_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 2.0)
+
+    rig.session.rename("room-1", "  Dana ")
+
+    assert rig.writer.renames == [{"room-1": "Dana"}]
+    assert rig.session.speakers == (("room-1", "Dana"),)
+    rig.session.stop()
+
+
+class MainVoiceTracker(VoiceSpeakerTracker):
+    """Take the voice of a slice of saved audio from most of its samples."""
+
+    def embed(self, samples):
+        return super().embed(np.asarray([np.median(samples)]))
+
+
+def _split_session(monkeypatch, tmp_path):
+    rig = _make_session(
+        monkeypatch, tmp_path, system=False, diarize_mic=True, tracker=MainVoiceTracker
+    )
+    transcribe = rig.worker.transcribe
+    rig.worker.transcribe = lambda samples: transcribe(np.asarray([np.median(samples)]))
+    return rig
+
+
+def _say_with_a_voice_change(rig, voice, other, start):
+    """Send a 24 s phrase that changes from *voice* to *other* after 12.75 s."""
+    _say(rig, voice, start, start + 24.0)
+    rig.saved_audio["mic", start, start + 24.0] = np.concatenate(
+        (np.full(204000, voice, np.float32), np.full(180000, other, np.float32))
+    )
+
+
+def _saved_detail(rig):
+    return SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+
+
+def test_the_end_pass_splits_a_voice_change_and_saves_each_part_with_its_speaker(
+    monkeypatch, tmp_path
+):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 40.0)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 40.0)
+
+    rig.session.stop()
+
+    detail = _saved_detail(rig)
+    assert _saved_state(rig) == ("diarization", "relabeled")
+    assert [line.speaker_id for line in detail.lines] == ["room-1", "room-2", "room-1", "room-2"]
+    assert [line.label for line in detail.lines] == ["Room 1", "Room 2", "Room 1", "Room 2"]
+    assert [line.text for line in detail.lines] == [
+        "spoken words",
+        "a phrase",
+        "spoken words",
+        "a phrase",
+    ]
+    first, second = detail.lines[2:]
+    assert (first.start, second.end) == (40.0, 64.0)
+    assert first.end == second.start
+    assert 52.0 <= second.start <= 53.5
+    assert first.wall < second.wall
+    assert rig.session.lines == tuple(detail.lines)
+    assert rig.session.speakers == (("room-1", "Room 1"), ("room-2", "Room 2"))
+    assert "release" in rig.worker.events
+
+
+def test_a_skip_while_a_part_decodes_saves_the_whole_phrase_as_live(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 40.0)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 40.0)
+    transcribe = rig.worker.transcribe
+
+    def skip_during_decode(samples):
+        rig.session.skip_relabel()
+        return transcribe(samples)
+
+    rig.worker.transcribe = skip_during_decode
+
+    rig.session.stop()
+
+    detail = _saved_detail(rig)
+    assert rig.session.relabel_status == "Relabeling skipped"
+    assert _saved_state(rig) == ("live", "live")
+    assert len(detail.lines) == 3
+    assert (detail.lines[2].start, detail.lines[2].end) == (40.0, 64.0)
+
+
+def test_a_source_whose_audio_failed_is_grouped_but_not_split(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 40.0)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 40.0)
+    rig.saved_audio.clear()
+    rig.session._mark_audio_failed("mic", OSError("disk full"))
+
+    rig.session.stop()
+
+    detail = _saved_detail(rig)
+    assert _saved_state(rig) == ("diarization", "relabeled")
+    assert [line.speaker_id for line in detail.lines] == ["room-1", "room-2", "room-1"]
+
+
+def test_a_given_name_stays_with_its_speech_when_an_earlier_phrase_split(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 0.0)
+    _say(rig, VOICE_A, 24.0, 29.0)
+    # This phrase passes 30 s, so a pass groups the three phrases and Bob's speaker appears.
+    _say(rig, VOICE_B, 29.0, 59.0)
+    bob = rig.session.lines[2].speaker_id
+    rig.session.rename(bob, "Bob")
+
+    rig.session.stop()
+
+    detail = _saved_detail(rig)
+    assert [(line.start, line.label) for line in detail.lines][-1] == (29.0, "Bob")
+    assert len(detail.lines) == 4
+    assert detail.lines[1].label == "Bob"
+
+
+def test_end_pass_progress_stays_within_its_total_through_a_split(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 40.0)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 40.0)
+    observed = []
+    set_progress = rig.session._set_relabel_progress
+
+    def observe(done, total):
+        set_progress(done, total)
+        observed.append(rig.session.relabel_progress)
+
+    rig.session._set_relabel_progress = observe
+
+    rig.session.stop()
+
+    done = [value for value, _total in observed]
+    assert done == sorted(done)
+    assert {total for _done, total in observed} == {3}
+    assert observed[-1] == (3, 3)

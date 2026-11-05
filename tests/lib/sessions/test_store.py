@@ -359,3 +359,53 @@ def test_list_sessions_keeps_other_sessions_when_a_folder_cannot_be_searched(tmp
         blocked.chmod(0o755)
     assert summaries[blocked.name].interrupted
     assert not summaries[other.name].interrupted
+
+
+def _shared_name_session(tmp_path):
+    started = datetime(2026, 11, 1, tzinfo=UTC)
+    writer = SessionWriter.open(tmp_path, started)
+    for index, (speaker_id, label) in enumerate(
+        (("room-1", "Dana"), ("room-2", "Dana"), ("room-3", "Eve"))
+    ):
+        writer.append_line(_line(float(index), index + 1.0, speaker_id, label, "alpha bravo"))
+    writer.close()
+    return SessionStore(tmp_path / "sessions"), writer.path
+
+
+def test_rename_label_changes_each_speaker_with_that_name_in_one_revision(tmp_path):
+    store, path = _shared_name_session(tmp_path)
+    before = len(list(path.glob("transcript*.jsonl")))
+
+    store.rename_label(path.name, "room-2", " Diana ")
+
+    labels = {line.speaker_id: line.label for line in store.read(path.name).lines}
+    assert labels == {"room-1": "Diana", "room-2": "Diana", "room-3": "Eve"}
+    assert len(list(path.glob("transcript*.jsonl"))) == before + 1
+
+
+@pytest.mark.parametrize(
+    ("speaker_id", "name", "message"),
+    [("room-1", "  ", "must not be empty"), ("room-9", "Diana", "speaker not found")],
+)
+def test_rename_label_refuses_without_a_new_revision(tmp_path, speaker_id, name, message):
+    store, path = _shared_name_session(tmp_path)
+    revision = store.read(path.name).revision
+
+    with pytest.raises(ValueError, match=message):
+        store.rename_label(path.name, speaker_id, name)
+
+    assert store.read(path.name).revision == revision
+
+
+def test_rename_label_does_not_decode_recorded_audio(tmp_path, monkeypatch):
+    from stenographer.lib.sessions import reader
+
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(session.parent)
+
+    def no_decode(_path):
+        raise AssertionError("audio was decoded")
+
+    monkeypatch.setattr(reader, "_activity", no_decode)
+
+    assert store.rename_label(session.name, "speaker-1", "Bob") == "transcript.r2.jsonl"

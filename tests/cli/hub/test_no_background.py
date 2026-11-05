@@ -204,13 +204,20 @@ def test_visible_scrollbar_thumb_is_the_only_background_exception(tmp_path):
     assert not errors, "\n".join(errors)
 
 
-async def test_selected_sidebar_and_file_rows_use_bold_accent_marker(tmp_path):
+async def test_selected_screen_and_file_rows_use_bold_accent_marker(tmp_path):
     (tmp_path / "sample.wav").touch()
     app = make_app(tmp_path, FakeServices(), files_home=tmp_path)
     async with app.run_test(size=(120, 36)) as pilot:
         await pilot.pause()
-        sidebar = app.screen.query_one("#sidebar", Static).render()
-        _assert_selected_row(sidebar, "▶ 1 Record")
+        marker = next(
+            segment
+            for strip in app.screen._compositor.render_strips()
+            for segment in strip._segments
+            if "▶ 1 Record" in segment.text
+        )
+        assert marker.style.bold
+        assert marker.style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
+        assert marker.style.bgcolor is None or marker.style.bgcolor.is_default
 
         await pilot.press("2", "n")
         await pilot.pause()

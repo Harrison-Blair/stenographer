@@ -21,5 +21,5 @@ class StatusToken:
 
     @classmethod
     def text(cls, glyph: str, word: str, tone: str = "info") -> Text:
-        """Return the token as styled text for a row or a card."""
+        """Return the token as styled text for a row."""
         return Text(f"{glyph} {word}", style=cls.TONES[tone], no_wrap=True)

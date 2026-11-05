@@ -98,6 +98,9 @@ SelectOverlay, SpeakerSelectOverlay, Input, Button {
 Input, SelectCurrent {
     border: round #3a4150;
 }
+Input {
+    scrollbar-size-horizontal: 0;
+}
 ListView:focus {
     background: transparent;
     background-tint: transparent;

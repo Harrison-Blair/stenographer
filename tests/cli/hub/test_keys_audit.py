@@ -38,7 +38,6 @@ from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.focus_button import FocusButton
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
-from stenographer.cli.hub.widgets.sidebar import Sidebar
 from tests.cli.hub.support import _config_path, make_app
 from tests.cli.hub.test_library import FakeServices as LibraryServices
 from tests.cli.hub.test_library import _library
@@ -50,7 +49,6 @@ REPO = Path(__file__).resolve().parents[3]
 
 # A hint or a printed button key names one or more binding keys.
 TOKEN_KEYS = {
-    "1 2 3": ("1", "2", "3"),
     "↑↓": ("up", "down"),
     "←→": ("left", "right"),
     "PgUp/Dn": ("pageup", "pagedown"),
@@ -72,7 +70,7 @@ FOCUS_BUTTON_ACTIONS = {
     "choice-stay": "cancel",
 }
 # Controls with no key of their own (README §4.6, the Export format row).
-KEYLESS = re.compile(r"^(tab-\w+|config-discard|export-format-\w+)$")
+KEYLESS = re.compile(r"^(nav-\w+|tab-\w+|config-discard|export-format-\w+)$")
 PRINTED_KEY = re.compile(r"\[([^\]]+)\]")
 # Keys that a focused input takes as text.
 TYPED_KEYS = frozenset({"slash", "space", "question_mark"})
@@ -284,7 +282,7 @@ def _run_state(tmp_path, table, name, check) -> None:
 
 
 def _key_problems(app: HubApp) -> list[str]:
-    """Return each hint key, printed button key and card key with no matching binding."""
+    """Return each hint key and printed button key with no matching binding."""
     screen = app.screen
     active = {key: item for key, item in screen.active_bindings.items() if item.enabled}
     typing = isinstance(screen.focused, Input)
@@ -299,8 +297,6 @@ def _key_problems(app: HubApp) -> list[str]:
                     problems.append(f"hint {token} {description}: no active binding {key}")
                 elif typing and _typed(key) and not item.binding.priority:
                     problems.append(f"hint {token} {description}: types into the focused input")
-    sidebar = next(iter(screen.query(Sidebar)), None)
-    card_runs = {key: run for _label, key, run in sidebar._card_buttons} if sidebar else {}
     for button in screen.query(Button):
         if not _shown(button) or button.disabled:
             continue
@@ -325,13 +321,7 @@ def _key_problems(app: HubApp) -> list[str]:
         if item is None:
             problems.append(f"button {name} [{key}]: no active binding")
             continue
-        if name.startswith("card-"):
-            run = card_runs[key]
-            if (run.__self__, run.__name__) != (item.node, f"action_{item.binding.action}"):
-                problems.append(
-                    f"card button [{key}]: runs {run.__name__}, key runs {item.binding.action}"
-                )
-        elif isinstance(item.node, Input) and item.node is screen.focused:
+        if isinstance(item.node, Input) and item.node is screen.focused:
             # ``enter`` submits the focused input and the dialog handles the
             # submit; the click test presses the key and checks the action.
             continue
@@ -492,8 +482,8 @@ async def test_nav_rows_and_settings_tabs_answer_a_click(tmp_path):
     app = _make_app("settings", tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
-        for row, screen in ((1, "library"), (2, "settings"), (0, "record")):
-            assert await pilot.click("#sidebar", offset=(4, row))
+        for screen in ("library", "settings", "record"):
+            assert await pilot.click(f"#nav-{screen}")
             await pilot.pause()
             assert app.current_mode == screen
         await pilot.press("3")

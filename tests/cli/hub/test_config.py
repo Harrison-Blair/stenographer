@@ -13,7 +13,7 @@ from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.widgets.field import Field
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
-from tests.cli.hub.support import _config_path, _fields
+from tests.cli.hub.support import _config_path, _fields, _screen_text
 
 
 class FakeServices:
@@ -42,7 +42,7 @@ def _notification_messages(app):
     return [notification.message for notification in app._notifications]
 
 
-async def test_settings_general_tab_shows_values_defaults_and_help(tmp_path):
+async def test_settings_general_tab_shows_values(tmp_path):
     app = HubApp(FakeServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
     async with app.run_test() as pilot:
         await pilot.press("3")
@@ -53,8 +53,6 @@ async def test_settings_general_tab_shows_values_defaults_and_help(tmp_path):
         assert focused.label == "Agent key"
         assert focused.control.plain == "KEY_RIGHTCTRL"
         assert "CPU threads" not in labels
-        assert "Agent binding" in focused.help_text
-        assert "default KEY_RIGHTCTRL" in focused.help_text
 
 
 async def test_settings_tab_keys_follow_the_tab_mapping_and_rows_move(tmp_path):
@@ -76,12 +74,10 @@ async def test_settings_tab_keys_follow_the_tab_mapping_and_rows_move(tmp_path):
             "refine.structured_output",
         )
         assert _focused(app).label == "Idle unload"
-        assert "idle worker unloads" in _focused(app).help_text
 
         await pilot.press("down")
         assert app.config_editor.selected_key == "asr.cpu_threads"
         assert _focused(app).label == "CPU threads"
-        assert "0 = automatic" in _focused(app).help_text
         await pilot.press("up")
         assert app.config_editor.selected_key == "asr.idle_unload_seconds"
 
@@ -89,7 +85,7 @@ async def test_settings_tab_keys_follow_the_tab_mapping_and_rows_move(tmp_path):
         assert app.config_editor.visible_keys == ("live.diarize_mic",)
 
 
-def test_config_settings_use_one_compact_label_value_help_row_per_key(tmp_path):
+def test_config_settings_use_one_compact_label_value_row_per_key(tmp_path):
     content = default_toml().replace("cpu_threads = 0", "cpu_threads = 5")
 
     async def exercise():
@@ -100,8 +96,8 @@ def test_config_settings_use_one_compact_label_value_help_row_per_key(tmp_path):
             rows = [strip.text for strip in app.screen._compositor.render_strips()]
             idle = next(row for row in rows if "Idle unload" in row)
             threads = next(row for row in rows if "CPU threads" in row)
-            assert "▶  Idle unload" in idle and "900 s" in idle and "idle worker unloads" in idle
-            assert "▶" not in threads and " 5 " in threads and "0 = automatic" in threads
+            assert "▶  Idle unload" in idle and "900 s" in idle
+            assert "▶" not in threads and " 5 " in threads and "default 0" in threads
             assert "Default:" not in "\n".join(rows)
             assert idle.index("Idle unload") == threads.index("CPU threads")
 
@@ -127,39 +123,43 @@ async def test_config_focused_row_is_bold_accent_and_unsaved_change_has_warn_dot
         assert dot.color == Color.parse("#ffaf5f")
 
 
-async def test_config_shows_the_default_only_in_the_focused_row_help(tmp_path):
+async def test_config_row_shows_the_default_only_when_its_value_differs(tmp_path):
     app = HubApp(FakeServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3", "right", "right")
         await pilot.pause()
-        assert "default 900" in _field(app, "Idle unload").help_text
-        assert "default" not in _field(app, "CPU threads").help_text
-        await pilot.press("down")
-        assert "default" not in _field(app, "Idle unload").help_text
-        assert _field(app, "CPU threads").help_text == "0 = automatic · default 0"
+        assert _field(app, "Idle unload").note == ""
+        app.config_editor.edit("asr.idle_unload_seconds", "60")
+        app.refresh_view()
+        assert _field(app, "Idle unload").note == "default 900"
+        assert _field(app, "CPU threads").note == ""
+        assert "default 900" in _screen_text(app)
+        app.config_editor.undo()
+        app.refresh_view()
+        assert _field(app, "Idle unload").note == ""
 
 
-async def test_config_sidebar_card_shows_path_and_unsaved_change_count(tmp_path):
+async def test_config_summary_shows_path_and_unsaved_change_count(tmp_path):
     path = _config_path(tmp_path)
     app = HubApp(FakeServices(), config_editor=ConfigEditor(path))
     async with app.run_test() as pilot:
         await pilot.press("3")
-        card = app.screen.query_one("#sidebar-card", Static)
-        assert "config.toml" in card.render().plain
-        assert "0 unsaved changes" in card.render().plain
+        summary = app.screen.query_one("#config-summary", Static)
+        assert "config.toml" in summary.render().plain
+        assert "0 unsaved changes" in summary.render().plain
 
         app.config_editor.edit("asr.cpu_threads", "3")
         app.config_editor.edit("asr.idle_unload_seconds", "60")
         app.refresh_view()
-        assert "2 unsaved changes" in card.render().plain
-        rendered = card.render()
+        assert "2 unsaved changes" in summary.render().plain
+        rendered = summary.render()
         count_offset = rendered.plain.index("2 unsaved changes")
         count_style = rendered.get_style_at_offset(count_offset).rich_style
         assert count_style.color == Color.parse("#ffaf5f")
 
         app.config_editor.undo()
         app.refresh_view()
-        assert "1 unsaved change" in card.render().plain
+        assert "1 unsaved change" in summary.render().plain
 
 
 async def test_edit_undo_and_reset_use_validated_config_values(tmp_path):
@@ -187,7 +187,6 @@ async def test_config_live_group_edits_and_saves_mic_diarization(tmp_path):
         await pilot.press(*tuple("live.diarize_mic"), "enter")
         await pilot.pause()
         assert app.config_editor.selected_key == "live.diarize_mic"
-        assert "microphone" in _focused(app).help_text
         await pilot.press("enter")
         assert app.config_editor.config.live.diarize_mic is True
         await pilot.press("ctrl+s")

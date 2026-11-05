@@ -213,7 +213,16 @@ def test_retranscribe_uses_current_asr_and_saves_new_text_revision(tmp_path):
         workers.append(worker)
         return worker
 
-    jobs = SessionJobs(store, config, platform, worker_factory=make_worker)
+    model_path = tmp_path / "models" / "live" / LIVE_MODELS[1].filename
+    model_path.parent.mkdir(parents=True)
+    model_path.touch()
+    jobs = SessionJobs(
+        store,
+        config,
+        platform,
+        speaker_tracker_factory=FakeSpeakerTracker,
+        worker_factory=make_worker,
+    )
     jobs.update_config(config)
 
     revision = jobs.retranscribe(session.name)
@@ -408,10 +417,21 @@ def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_p
         workers.append(FakeWorker())
         return workers[-1]
 
+    class TwoVoices:
+        def __init__(self, _model_path):
+            self.vectors = iter(([1.0, 0.0], [0.0, 1.0]))
+
+        def embed(self, _samples):
+            return np.array(next(self.vectors), dtype=np.float32)
+
+    model_path = tmp_path / "models" / "live" / LIVE_MODELS[1].filename
+    model_path.parent.mkdir(parents=True)
+    model_path.touch()
     jobs = SessionJobs(
         store,
         Config.defaults(),
         FakePlatform(tmp_path),
+        speaker_tracker_factory=TwoVoices,
         worker_factory=make_worker,
         media_decoder=decoder,
     )
@@ -421,9 +441,10 @@ def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_p
     detail = store.read(session_id)
     assert revision == "transcript.r2.jsonl"
     assert decoder.paths == [sessions_root / session_id / "source.wav"]
+    # Both 1 s phrases are too short to tell voices apart, so grouping gives them one speaker.
     assert [(line.source, line.label, line.text) for line in detail.lines] == [
         ("file", "Speaker 1", "new phrase 1"),
-        ("file", "Speaker 2", "new phrase 2"),
+        ("file", "Speaker 1", "new phrase 2"),
     ]
     assert detail.summary.kind == "file"
     assert workers[0].closed
