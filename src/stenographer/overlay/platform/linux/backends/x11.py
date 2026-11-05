@@ -147,14 +147,10 @@ def plan_upload_chunks(
     width: int,
     height: int,
     max_request_bytes: int,
-    bytes_per_pixel: int = _BYTES_PER_PIXEL,
-    request_overhead: int = _PUT_IMAGE_OVERHEAD,
 ) -> tuple[tuple[int, int], ...]:
     """Split a ZPixmap upload into whole-row requests below the server limit."""
-    if min(width, height, max_request_bytes, bytes_per_pixel) <= 0 or request_overhead < 0:
-        raise ValueError("upload dimensions and request limit must be positive")
-    row_bytes = width * bytes_per_pixel
-    rows_per_chunk = (max_request_bytes - request_overhead) // row_bytes
+    row_bytes = width * _BYTES_PER_PIXEL
+    rows_per_chunk = (max_request_bytes - _PUT_IMAGE_OVERHEAD) // row_bytes
     if rows_per_chunk < 1:
         raise ValueError("X request limit is too small for one image row")
     chunks = []

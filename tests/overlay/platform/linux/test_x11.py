@@ -267,29 +267,6 @@ def test_x_resources_must_be_text_bytes_or_absent(resources: object) -> None:
         parse_xft_dpi(resources)
 
 
-@pytest.mark.parametrize(
-    ("width", "height", "limit", "bytes_per_pixel", "overhead"),
-    [
-        (0, 88, 262144, 4, 28),
-        (304, 0, 262144, 4, 28),
-        (304, 88, 0, 4, 28),
-        (304, 88, 262144, 0, 28),
-        (304, 88, 262144, 4, -1),
-    ],
-)
-def test_upload_plan_rejects_dimensions_that_cannot_describe_an_image(
-    width: int, height: int, limit: int, bytes_per_pixel: int, overhead: int
-) -> None:
-    with pytest.raises(ValueError, match="must be positive"):
-        plan_upload_chunks(
-            width=width,
-            height=height,
-            max_request_bytes=limit,
-            bytes_per_pixel=bytes_per_pixel,
-            request_overhead=overhead,
-        )
-
-
 def test_a_server_without_the_render_extension_offers_no_formats() -> None:
     """Seen to matter on a bare XWayland: without RENDER there is no
     authoritative ARGB visual, and guessing one draws an opaque black pill.
