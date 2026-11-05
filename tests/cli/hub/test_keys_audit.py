@@ -136,7 +136,7 @@ def _make_app(kind: str, tmp_path: Path) -> HubApp:
     app = HubApp(
         SettingsServices(),
         config_path=_config_path(tmp_path),
-        doctor_probe=lambda _config, _path: _report(),
+        doctor_probe=lambda _config: _report(),
         model_status=lambda: (ModelEntry("alpha", "speech model", "alpha", False, "1 MB"),),
         setup_test=lambda _step, _config: "alpha test",
     )
@@ -514,7 +514,7 @@ def test_context_card_buttons_run_the_action_of_their_key(tmp_path):
 
         probes = []
         app = _make_app("settings", tmp_path / "settings")
-        app.checks_tab._doctor_probe = lambda _config, _path: probes.append(1) or _report()
+        app.checks_tab._doctor_probe = lambda _config: probes.append(1) or _report()
         async with app.run_test(size=(150, 45)) as pilot:
             await _settings(pilot, "checks")
             await _until(pilot, lambda: not app.checks_tab.checking, "checks still run")

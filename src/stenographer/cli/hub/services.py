@@ -244,12 +244,6 @@ class HubServices:
         self.next_device = value
         self.next_device_label = label
 
-    def rediarize_session(self, session_id: str) -> str:
-        return self.session_jobs.rediarize(session_id)
-
-    def retranscribe_session(self, session_id: str) -> str:
-        return self.session_jobs.retranscribe(session_id)
-
     def toggle_session_playback(self, session_id: str) -> None:
         with self._player_lock:
             process = self._player

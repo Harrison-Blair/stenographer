@@ -302,7 +302,7 @@ class LibraryScreen(HubScreen):
         job = entry.job
         if summary is not None:
             when = summary.started_at.astimezone()
-            dur = Clock.duration(summary.duration_seconds)
+            dur = Clock.duration(max(0, summary.duration_seconds))
             spk = str(summary.speaker_count)
         else:
             when = (self._job_listed_at.get(job.id) or datetime.now(UTC)).astimezone()
@@ -357,7 +357,7 @@ class LibraryScreen(HubScreen):
             title = f"{when:%d %b %Y · %H:%M} · file · {entry.job_name}"
             return title, self._job_state(job)
         when = summary.started_at.astimezone()
-        title = f"{when:%d %b %Y · %H:%M} · {Clock.duration(summary.duration_seconds)} · "
+        title = f"{when:%d %b %Y · %H:%M} · {Clock.duration(max(0, summary.duration_seconds))} · "
         title += "file" if summary.kind == "file" else "recording"
         if entry.job_active:
             state = self._job_state(job)
@@ -391,7 +391,7 @@ class LibraryScreen(HubScreen):
                 speaker_id, tuple(ids.values()), source=self._source_of(detail, label)
             )
             text.append(label, style=f"bold {color}")
-            text.append(f" {Clock.duration(seconds)}")
+            text.append(f" {Clock.duration(max(0, seconds))}")
         return text or Text("no speakers", style=_DIM)
 
     @staticmethod
@@ -797,27 +797,14 @@ class LibraryScreen(HubScreen):
                 severity="warning",
             )
             return
-        self._start_session_job("Re-diarize", "rediarize_session", entry.entry_id)
+        self._start_job("Re-diarize", entry.entry_id, self.app.services.session_jobs.rediarize)
 
     def action_session_retranscribe(self) -> None:
         entry = self._selected_session()
         if entry is not None:
-            self._start_session_job("Re-transcribe", "retranscribe_session", entry.entry_id)
-
-    def _start_session_job(self, label: str, method: str, session_id: str) -> None:
-        app = self.app
-        operation = getattr(app.services, method, None)
-        if operation is None:
-            return
-        owner = f"{method}-{next(self._owner_ids)}"
-        if not app.try_acquire_session(session_id, owner):
-            app.notify("session busy", severity="warning")
-            return
-        app.run_worker(
-            partial(self._run_session_job, label, operation, session_id, owner),
-            group="library-session-job",
-        )
-        app.refresh_view()
+            self._start_job(
+                "Re-transcribe", entry.entry_id, self.app.services.session_jobs.retranscribe
+            )
 
     async def _run_session_job(
         self, label: str, operation: Callable[..., object], session_id: str, owner: str
@@ -860,9 +847,9 @@ class LibraryScreen(HubScreen):
     def _rename(self, session_id: str, value: tuple[str, str] | None) -> None:
         if value is None or self.store is None:
             return
-        self._start_store_job("Rename", session_id, self.store.rename_speaker, *value)
+        self._start_job("Rename", session_id, self.store.rename_speaker, *value)
 
-    def _start_store_job(
+    def _start_job(
         self, label: str, session_id: str, operation: Callable[..., object], *args
     ) -> None:
         app = self.app
@@ -947,7 +934,7 @@ class LibraryScreen(HubScreen):
 
     def _delete(self, session_id: str, confirmed: bool | None) -> None:
         if confirmed and self.store is not None:
-            self._start_store_job("Delete", session_id, self.store.delete)
+            self._start_job("Delete", session_id, self.store.delete)
 
     # Transcript scroll
 

@@ -16,8 +16,8 @@ from textual.widgets import Static
 
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.defaults_dialog import DefaultsDialog
-from stenographer.cli.hub.doctor_panel import DoctorPanel
 from stenographer.cli.hub.doctor_view import (
+    CHECK_GROUPS,
     DOCTOR_STATE_GLYPHS,
     DOCTOR_STATE_TONES,
     DOCTOR_STATE_WORDS,
@@ -28,6 +28,7 @@ from stenographer.cli.hub.models_dialog import ModelsDialog
 from stenographer.cli.hub.quick_setup_dialog import QuickSetupDialog
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.frame import Frame
+from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -105,6 +106,9 @@ class ChecksTab(Vertical):
         height: 1fr;
         margin-right: 2;
     }
+    ChecksTab #doctor-panel { height: 1fr; }
+    ChecksTab .-section { height: 1; color: #8b93a1; text-style: bold; }
+    ChecksTab .-section.-later { margin-top: 1; }
     ChecksTab #checks-list-hint {
         height: 1;
         color: #8b93a1;
@@ -143,7 +147,7 @@ class ChecksTab(Vertical):
     def __init__(
         self,
         *,
-        doctor_probe: Callable[[Config, pathlib.Path | None], DoctorReport],
+        doctor_probe: Callable[[Config], DoctorReport],
         setup_test: Callable[[str, Config], str],
         model_download: Callable[[str], None],
         model_status: Callable[[], tuple[ModelEntry, ...]],
@@ -158,7 +162,7 @@ class ChecksTab(Vertical):
         self._model_status = model_status
         self._open_log = open_log
         self._copy_report = copy_report
-        self.doctor_panel = DoctorPanel(id="doctor-panel")
+        self._indexes: dict[str, tuple[int, ...]] = {}
         self.report: DoctorReport | None = None
         self.checking = False
         self.index = 0
@@ -169,7 +173,14 @@ class ChecksTab(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal(id="checks-body"):
             with Vertical(id="checks-list-column"):
-                yield self.doctor_panel
+                with Vertical(id="doctor-panel"):
+                    for position, group in enumerate(CHECK_GROUPS):
+                        section = Static(group, id=f"checks-section-{group}", markup=False)
+                        section.add_class("-section")
+                        if position:
+                            section.add_class("-later")
+                        yield section
+                        yield SelectableList(id=f"checks-{group}")
                 yield Static("↑↓ check · enter details · t test", id="checks-list-hint")
             with Frame(id="checks-detail", variant="fill"):
                 yield Static("", id="checks-detail-head", markup=False)
@@ -234,9 +245,7 @@ class ChecksTab(Vertical):
     def refresh_view(self) -> None:
         if not self.is_mounted:
             return
-        self.doctor_panel.refresh_view(
-            self.report, selected_index=self.index, loading=self.checking
-        )
+        self._refresh_checks()
         check = self.selected
         head = self.query_one("#checks-detail-head", Static)
         body = self.query_one("#checks-detail-body", Static)
@@ -291,6 +300,35 @@ class ChecksTab(Vertical):
                 text.append(f"\n{'':7}{description}", style=StatusToken.TONES["dim"])
         return text
 
+    def _refresh_checks(self):
+        report, selected_index, loading = self.report, self.index, self.checking
+        for group in CHECK_GROUPS:
+            rows: list[tuple[Text, str]] = []
+            indexes: list[int] = []
+            if report is not None:
+                for index, check in enumerate(report.checks):
+                    if check.group == group:
+                        rows.append((self.row_text(check), ""))
+                        indexes.append(index)
+            elif group == "input":
+                rows.append(
+                    (Text("Checking system capabilities…" if loading else "No checks."), "")
+                )
+            self._indexes[group] = tuple(indexes)
+            selected = indexes.index(selected_index) if selected_index in indexes else None
+            self.query_one(f"#checks-{group}", SelectableList).set_rows(tuple(rows), selected)
+            shown = bool(rows)
+            self.query_one(f"#checks-section-{group}").display = shown
+            self.query_one(f"#checks-{group}").display = shown
+
+    @staticmethod
+    def row_text(check: DoctorCheck) -> Text:
+        tone = StatusToken.TONES[DOCTOR_STATE_TONES[check.status]]
+        text = Text()
+        text.append(DOCTOR_STATE_GLYPHS[check.status], style=tone)
+        text.append(f" {check.label:<{14}} {check.detail}")
+        return text
+
     def run_checks(self) -> None:
         """Start a check run in a worker of the app; the probe runs in a thread."""
         self.checking = True
@@ -303,7 +341,6 @@ class ChecksTab(Vertical):
             report = await asyncio.to_thread(
                 self._doctor_probe,
                 app.current_config(),
-                app.config_editor.path if app.config_editor is not None else None,
             )
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: doctor_probe_failed", exc, safe=False)
@@ -320,7 +357,6 @@ class ChecksTab(Vertical):
                 ),
                 (),
             )
-        report = report.in_group_order()
         self.report = report
         self.ran_at = datetime.datetime.now()
         log.info(
@@ -354,9 +390,12 @@ class ChecksTab(Vertical):
         self.app.refresh_view()
 
     def on_row_selected(self, event: RowSelected) -> None:
-        if event.control is self.doctor_panel:
+        if event.control.id in {f"checks-{group}" for group in CHECK_GROUPS}:
             event.stop()
-            self._select(event.index)
+            group = event.control.id.removeprefix("checks-")
+            indexes = self._indexes[group]
+            if 0 <= event.index < len(indexes):
+                self._select(indexes[event.index])
 
     def action_run_checks(self) -> None:
         log.info(fmt_event("hub", "doctor_recheck_requested"))

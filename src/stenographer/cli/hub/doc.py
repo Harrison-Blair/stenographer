@@ -5,7 +5,6 @@
 - app.py: Run the shell: screens, navigation, sidebar, help, quit, and shell contracts.
 - checks_tab.py: Run the system checks; fix, test, and open the setup dialogs.
 - choice_dialog.py: List the allowed values of a choice or device setting.
-- doctor_panel.py: Render the check list grouped input, engine, and other.
 - doctor_view.py: Build doctor checks, model status, and safe warning summaries.
 - config_dialog.py: Prompt for config edits, searches, and unsaved changes.
 - config_view.py: Validate the config draft and its saves; name, help and control of each key.

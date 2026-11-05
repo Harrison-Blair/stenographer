@@ -65,6 +65,7 @@ class FakeJob:
 class FakeServices:
     def __init__(self, sessions_root: Path):
         self.session_store = SessionStore(sessions_root)
+        self.session_jobs = self
         self.recording = False
         self.active_session_id = None
         self.jobs: list[FakeJob] = []
@@ -96,10 +97,10 @@ class FakeServices:
         if self.play_error is not None:
             raise self.play_error
 
-    def rediarize_session(self, session_id):
+    def rediarize(self, session_id):
         self._run_fake_job(session_id, "diarization")
 
-    def retranscribe_session(self, session_id):
+    def retranscribe(self, session_id):
         self._run_fake_job(session_id, "re-transcribe")
 
     def _run_fake_job(self, session_id, method):

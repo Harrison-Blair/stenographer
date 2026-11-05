@@ -50,10 +50,8 @@ class FakeServices:
 
 async def test_pilot_shell_navigation_focus_and_recording_lifecycle():
     services = FakeServices()
-    doctor_report = DoctorReport(
-        (DoctorCheck("test", "test", "input and audio", "ok", "available", ""),), ()
-    )
-    app = HubApp(services, doctor_probe=lambda _config, _path: doctor_report)
+    doctor_report = DoctorReport((DoctorCheck("test", "test", "input", "ok", "available", ""),), ())
+    app = HubApp(services, doctor_probe=lambda _config: doctor_report)
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.current_mode == "record"

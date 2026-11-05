@@ -94,11 +94,7 @@ async def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(default_toml(), encoding="utf-8")
     report = DoctorReport(
-        (
-            DoctorCheck(
-                "mic", "microphone", "input and audio", "warn", "Unavailable", "Connect one."
-            ),
-        ),
+        (DoctorCheck("mic", "microphone", "input", "warn", "Unavailable", "Connect one."),),
         (),
     )
     services = FakeServices()
@@ -106,7 +102,7 @@ async def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
         services,
         config_path=config_path,
         files_home=tmp_path,
-        doctor_probe=lambda _config, _path: report,
+        doctor_probe=lambda _config: report,
     )
     errors = []
 

@@ -40,7 +40,7 @@ class FakeSampler:
 def _report(*statuses: str) -> DoctorReport:
     return DoctorReport(
         tuple(
-            DoctorCheck(f"check-{index}", f"check {index}", "input and audio", status, "", "")
+            DoctorCheck(f"check-{index}", f"check {index}", "input", status, "", "")
             for index, status in enumerate(statuses)
         ),
         (),
@@ -259,7 +259,7 @@ async def test_shell_open_setting_selects_tab_and_row_and_keeps_unsaved_changes(
 
 
 async def test_shell_set_check_summary_sets_badge_checks_tab_label_and_checks_card():
-    app = HubApp(IdleServices(), doctor_probe=lambda _config, _path: _report("ok", "warn"))
+    app = HubApp(IdleServices(), doctor_probe=lambda _config: _report("ok", "warn"))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3")
         app.set_check_summary(4, 2, 1, datetime(2026, 10, 27, 13, 3))
@@ -329,7 +329,7 @@ async def test_shell_settings_tab_keys_reach_the_active_tab(tmp_path, tab, key, 
     app = HubApp(
         IdleServices(),
         config_path=_config_path(tmp_path),
-        doctor_probe=lambda _config, _path: probes.append("probe") or _report("ok"),
+        doctor_probe=lambda _config: probes.append("probe") or _report("ok"),
     )
     app.settings_screen.list_devices = lambda _key: []
     async with app.run_test(size=(150, 45)) as pilot:
@@ -472,7 +472,7 @@ def test_shell_settings_tab_bar_marks_the_active_tab_in_plain_text(tab):
     labels |= {"live": "Live", "checks": "Checks"}
 
     async def exercise():
-        app = HubApp(IdleServices(), doctor_probe=lambda _config, _path: _report("ok"))
+        app = HubApp(IdleServices(), doctor_probe=lambda _config: _report("ok"))
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("3")
             app.settings_screen.select_tab(tab)
