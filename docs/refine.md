@@ -107,7 +107,8 @@ other markdown. Names, numbers, and quoted phrases come through verbatim.
 The transcript leaves the process once: as the body of a single
 `POST {host}/api/chat` to the host you configured. With the default host,
 `http://127.0.0.1:11434`, that is a loopback request and the text never leaves
-your machine.
+your machine. Loopback refine requests bypass environment proxies; requests to
+remote hosts retain the usual proxy settings.
 
 If you point `host` at anything else, your transcripts are sent over the
 network to that machine. Nothing stops you — it is your configuration — but the

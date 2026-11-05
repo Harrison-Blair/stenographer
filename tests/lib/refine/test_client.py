@@ -122,7 +122,7 @@ class _Reply(io.BytesIO):
 
 
 def _serve_ps(monkeypatch, payload):
-    import urllib.request
+    from stenographer.lib.refine import client
 
     seen: list[str] = []
 
@@ -132,7 +132,7 @@ def _serve_ps(monkeypatch, payload):
             raise payload
         return _Reply(json.dumps(payload).encode())
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(client, "_open", urlopen)
     return seen
 
 

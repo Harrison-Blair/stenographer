@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from stenographer.lib.refine.endpoints import (
     chat_url,
     generate_url,
+    is_loopback,
     ps_url,
     pull_url,
     qualify_tag,
@@ -75,6 +76,18 @@ def _translated(exc: Exception) -> RefineError:
     return exc if isinstance(exc, RefineError) else _translate(exc)
 
 
+def _open(request, timeout):
+    """Connect directly to loopback; retain proxy settings for remote hosts."""
+
+    import urllib.request
+
+    if is_loopback(request.full_url):
+        return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+            request, timeout=timeout
+        )
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 def _post(url: str, body: dict[str, object], timeout: float):
     """Open one POST and hand back the live response object."""
 
@@ -87,7 +100,7 @@ def _post(url: str, body: dict[str, object], timeout: float):
         headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
     )
     try:
-        return urllib.request.urlopen(request, timeout=timeout)
+        return _open(request, timeout)
     except Exception as exc:
         raise _translate(exc) from exc
 
@@ -120,7 +133,7 @@ def _model_listing(url: str, *, timeout: float) -> list[dict]:
 
     try:
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _open(request, timeout) as response:
             payload = json.loads(response.read())
     except Exception:
         return []

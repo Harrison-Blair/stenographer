@@ -157,7 +157,7 @@ def analytics_session(request, drain_analytics):
 
 @pytest.fixture
 def ollama_wire(monkeypatch):
-    """A fake Ollama behind ``urlopen``: every chat body it is sent, decoded.
+    """A fake Ollama behind the refine transport: every chat body it is sent, decoded.
 
     It lists no resident model, so a refiner warms the model first, and it
     answers every POST with an empty reply, which the refiner rejects and
@@ -167,7 +167,8 @@ def ollama_wire(monkeypatch):
 
     import io
     import json
-    import urllib.request
+
+    from stenographer.lib.refine import client
 
     chats: list[dict] = []
 
@@ -180,7 +181,7 @@ def ollama_wire(monkeypatch):
             chats.append(body)
         return io.BytesIO(json.dumps({"message": {"content": ""}}).encode())
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(client, "_open", urlopen)
     return chats
 
 
