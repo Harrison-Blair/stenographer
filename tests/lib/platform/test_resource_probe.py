@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import subprocess
 import sys
 import time
 
@@ -123,6 +124,39 @@ def test_registered_process_cpu_accumulates_and_memory_is_measured(monkeypatch, 
     assert second["cpu_seconds"] >= first["cpu_seconds"]
     assert second["cpu_seconds"] < first["cpu_seconds"] + 5.0
     assert second["monotonic_seconds"] >= first["monotonic_seconds"]
+
+
+def test_retired_process_baselines_are_released_without_recounting_live_processes(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    probe = ResourceProbe()
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import time; start = time.process_time(); "
+            "exec('while time.process_time() - start < 0.2: pass'); "
+            "print('ready', flush=True); time.sleep(30)",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert child.stdout.readline().strip() == "ready"
+        first = probe((child.pid,))
+        probe()
+        assert any(pid == child.pid for pid, _ in probe._process_cpu)
+        resumed = probe((child.pid,))
+        assert resumed["cpu_seconds"] - first["cpu_seconds"] < 0.15
+    finally:
+        child.terminate()
+        child.wait()
+        child.stdout.close()
+
+    after_exit = probe()
+    assert not any(pid == child.pid for pid, _ in probe._process_cpu)
+    assert after_exit["cpu_seconds"] >= resumed["cpu_seconds"]
 
 
 def test_host_cpu_percent_needs_a_baseline_before_it_can_be_reported(monkeypatch, tmp_path):

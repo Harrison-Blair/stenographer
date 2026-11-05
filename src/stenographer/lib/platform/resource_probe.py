@@ -47,7 +47,8 @@ class ResourceProbe:
         }
         rss = 0
         complete = True
-        for pid in {os.getpid(), *pids}:
+        registered = {os.getpid(), *pids}
+        for pid in registered:
             try:
                 process = psutil.Process(pid)
                 with process.oneshot():
@@ -59,6 +60,9 @@ class ResourceProbe:
                     rss += process.memory_info().rss
             except (psutil.Error, OSError):
                 complete = False
+        for identity in list(self._process_cpu):
+            if identity[0] not in registered and not psutil.pid_exists(identity[0]):
+                del self._process_cpu[identity]
         if complete:
             result.update(cpu_seconds=self._cpu_total, resident_bytes=rss)
         else:
