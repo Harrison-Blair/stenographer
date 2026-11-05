@@ -74,7 +74,9 @@ def estimate_spectrum_profile(samples: object) -> tuple[float, ...]:
     rms_dbfs = 20.0 * np.log10(np.maximum(rms, np.finfo(np.float64).tiny))
     spread = float(np.percentile(rms_dbfs, 90) - np.percentile(rms_dbfs, 10))
     if spread > NONSTATIONARY_SPREAD_DB:
-        raise CalibrationError("calibration capture is strongly nonstationary")
+        raise CalibrationError(
+            "room noise changed during calibration; keep the room quiet and retry"
+        )
 
     band_windows = np.stack([_band_dbfs(window, _SAMPLE_RATE) for window in windows])
     band_percentiles = np.percentile(band_windows, 95, axis=0)

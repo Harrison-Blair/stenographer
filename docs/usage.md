@@ -4,6 +4,9 @@
 
 This guide covers the settings and commands you may want after the first run.
 For the shortest path from install to dictation, see the [README](../README.md).
+If overlay backend imports fail, reinstall using the README installation method.
+If spectrum calibration reports "room noise changed during calibration; keep the
+room quiet and retry", repeat it in a quiet room.
 
 ## Configure a different workflow
 
