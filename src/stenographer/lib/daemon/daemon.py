@@ -277,11 +277,7 @@ class Daemon:
     def _publish_status(self, state: OverlayState) -> None:
         """Enqueue fixed lifecycle metadata without allowing overlay failure through."""
         try:
-            publish_profiled = getattr(self._status, "publish_profiled", None)
-            if publish_profiled is None:
-                self._status.publish(state)
-            else:
-                publish_profiled(state, self._record_profile)
+            self._status.publish(state, self._record_profile)
         except Exception as exc:
             log_failure(
                 log, logging.WARNING, "overlay: publish_failed", exc, safe=True, state=state.value
@@ -780,8 +776,7 @@ class Daemon:
                     with self._lock:
                         self._secure_capture()
             self._recorder.close()
-        with contextlib.suppress(Exception):
-            self._worker.shutdown()
+        self._worker.shutdown()
         # One shared deadline for every bounded wait below: SIGINT is
         # permanently rebound to request_stop() while the process is up (see
         # install_stop_handlers), so a second or third Ctrl-C here does

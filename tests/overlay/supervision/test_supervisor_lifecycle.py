@@ -29,6 +29,7 @@ from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.platform.errors import UnsupportedPlatformError
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.codec import decode_message, encode_message
 from stenographer.overlay.protocol.command import Command
@@ -309,6 +310,20 @@ def test_a_ready_helper_is_fed_state_then_spectrum_then_shutdown(host, superviso
     assert _finished(instance)
     assert helper.terminated == 1
     assert helper.closed >= 1
+
+
+def test_a_published_profile_reaches_the_helper(host, supervisor):
+    _install, session = host
+    helper = _SocketHelper()
+    transport = session(helper)
+
+    instance = supervisor()
+    assert transport.attempted.acquire(timeout=_DEADLINE)
+    helper.reply(ReadyMessage(Backend.XWAYLAND))
+
+    instance.publish(OverlayState.TRANSCRIBING, RefineProfile.AGENT)
+
+    assert helper.next_matching(StateMessage).profile is RefineProfile.AGENT
 
 
 def test_the_spawned_helper_command_is_the_private_re_exec_with_a_log_file(

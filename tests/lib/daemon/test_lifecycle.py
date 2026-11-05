@@ -52,7 +52,7 @@ def test_build_wires_collaborators_lazily():
         assert daemon._busy is False
         assert daemon._listener is not None
         assert daemon._deliverer is not None
-        assert daemon._worker.is_alive() is False
+        assert daemon._worker.process_ids == ()
         assert daemon._recorder._state is not RecorderState.CAPTURING
         assert daemon._recorder._state is not RecorderState.PREPARED
     finally:
@@ -428,7 +428,7 @@ def test_refine_loading_publish_happens_while_the_open_load_counter_is_locked():
     seen_locked: list[bool] = []
 
     class _LockCheckingStatus:
-        def publish(self, state):
+        def publish(self, state, profile=None):
             return 0
 
         def loading_activity(self, model, active):

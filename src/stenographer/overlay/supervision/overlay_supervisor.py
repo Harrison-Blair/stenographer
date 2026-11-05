@@ -60,10 +60,7 @@ class OverlaySupervisor:
         )
         self._thread.start()
 
-    def publish(self, state: OverlayState) -> None:
-        self._mailbox.publish(state)
-
-    def publish_profiled(self, state: OverlayState, profile: RefineProfile | None) -> None:
+    def publish(self, state: OverlayState, profile: RefineProfile | None = None) -> None:
         self._mailbox.publish(state, profile)
 
     def loading_activity(self, model: LoadingModel, active: bool) -> None:

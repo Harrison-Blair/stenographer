@@ -37,25 +37,22 @@ from stenographer.lib.transcribe.errors import (
     WorkerCrashedError,
     WorkerError,
     WorkerModelError,
-    WorkerProtocolError,
     WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import WorkerTimings
-from stenographer.lib.transcribe.worker_event import WorkerEvent
-from stenographer.lib.transcribe.worker_lifecycle import WorkerLifecycle
 from stenographer.lib.transcribe.worker_policy import (
     decode_timeout_seconds,
     interpret_response,
-    lifecycle_transition,
-    response_poll_timeout,
     should_arm_idle_timer,
-    should_teardown_for_response_error,
 )
 
 log = logging.getLogger(__name__)
 
 
 _MODEL_LOAD_TIMEOUT_SECONDS = 120.0
+
+
+_POLL_SECONDS = 0.1
 
 
 class Worker:
@@ -66,15 +63,13 @@ class Worker:
         self,
         cfg: AsrConfig,
         *,
-        transport: AsrTransport | None = None,
+        transport: AsrTransport,
         on_model_loading: Callable[[], None] | None = None,
-        on_model_ready: Callable[[], None] | None = None,
         on_model_loading_finished: Callable[[], None] | None = None,
         on_transcribing: Callable[[], None] | None = None,
     ) -> None:
         self._cfg = cfg
         self._on_model_loading = on_model_loading
-        self._on_model_ready = on_model_ready
         self._on_model_loading_finished = on_model_loading_finished
         self._on_transcribing = on_transcribing
         self._idle_seconds = cfg.idle_unload_seconds
@@ -162,16 +157,14 @@ class Worker:
                 raise WorkerModelError("model loading failed") from exc
             load_ms = (time.perf_counter() - load_started_at) * 1000.0 if loaded else None
             self._abort_if_shutdown_requested("transcribe")
-            self._emit_lifecycle((WorkerLifecycle.TRANSCRIBING,))
+            self._notify(self._on_transcribing)
             decode_started_at = time.perf_counter()
             self._process.send(("job", samples, utterance))
             try:
-                timeout_seconds = decode_timeout_seconds(samples.shape[0])
                 interpreted = self._wait_for_response(
-                    "transcribe", deadline=time.monotonic() + timeout_seconds
+                    "transcribe",
+                    deadline=time.monotonic() + decode_timeout_seconds(samples.shape[0]),
                 )
-                if isinstance(interpreted, WorkerEvent):
-                    raise WorkerProtocolError("unexpected model-ready event during transcription")
             except WorkerError as exc:
                 self.last_timings = WorkerTimings(
                     lock_wait_ms,
@@ -202,26 +195,20 @@ class Worker:
         """Load the model if it is cold. True when this call did the loading."""
         if self._model_ready.is_set():
             return False
-        self._emit_lifecycle(lifecycle_transition(model_loaded=False))
+        self._notify(self._on_model_loading)
         try:
             self._process.send(("load", utterance))
-            interpreted = self._wait_for_response(
+            self._wait_for_response(
                 "model_load", deadline=time.monotonic() + _MODEL_LOAD_TIMEOUT_SECONDS
             )
-            if interpreted is not WorkerEvent.MODEL_READY:
-                raise WorkerProtocolError("worker result arrived before model-ready event")
-            lifecycle = lifecycle_transition(model_loaded=False, event=interpreted)
             self._model_ready.set()
-            self._emit_lifecycle(lifecycle)
             return True
         finally:
             # The optional observer is the source of display-only activity
             # metadata.  It must clear the border after both ready and error.
-            self._emit_lifecycle((WorkerLifecycle.MODEL_LOADING_FINISHED,))
+            self._notify(self._on_model_loading_finished)
 
-    def _wait_for_response(
-        self, phase: str, *, deadline: float
-    ) -> TranscriptionResult | WorkerEvent:
+    def _wait_for_response(self, phase: str, *, deadline: float) -> TranscriptionResult | None:
         while True:
             self._abort_if_shutdown_requested(phase)
             if not self._process.is_running():
@@ -232,7 +219,7 @@ class Worker:
                 )
                 self._teardown()
                 raise WorkerCrashedError(f"ASR child exited during {phase}")
-            poll_timeout = response_poll_timeout(now=time.monotonic(), deadline=deadline)
+            poll_timeout = max(0.0, min(_POLL_SECONDS, deadline - time.monotonic()))
             if poll_timeout == 0:
                 log.error("worker: request_timeout phase=%s", phase)
                 raise WorkerTimeoutError(f"ASR worker timed out during {phase}")
@@ -244,7 +231,8 @@ class Worker:
             return interpret_response(message)
 
     def _finish_response_error(self, exc: WorkerError) -> None:
-        if should_teardown_for_response_error(exc):
+        # A child that missed its deadline may still answer: never reuse its channel.
+        if isinstance(exc, WorkerTimeoutError):
             self._teardown()
         else:
             self._restart_idle_timer()
@@ -257,24 +245,10 @@ class Worker:
         self._teardown()
         raise WorkerError(f"ASR worker shut down during {phase}")
 
-    def _emit_lifecycle(self, events: tuple[WorkerLifecycle, ...]) -> None:
-        callbacks = {
-            WorkerLifecycle.MODEL_LOADING: self._on_model_loading,
-            WorkerLifecycle.MODEL_READY: self._on_model_ready,
-            WorkerLifecycle.MODEL_LOADING_FINISHED: self._on_model_loading_finished,
-            WorkerLifecycle.TRANSCRIBING: self._on_transcribing,
-        }
-        for event in events:
-            self._notify(callbacks[event])
-
     @staticmethod
     def _notify(callback: Callable[[], None] | None) -> None:
         if callback is not None:
             callback()
-
-    def is_alive(self) -> bool:
-        proc = self._process
-        return proc is not None and proc.is_running()
 
     @property
     def is_model_ready(self) -> bool:
@@ -303,12 +277,6 @@ class Worker:
             self._cancel_timer()
             self._teardown(graceful=True)
 
-    def __enter__(self) -> Worker:
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.shutdown()
-
     def _spawn(self) -> None:
         previous = self._process
         if previous is not None:
@@ -318,10 +286,6 @@ class Worker:
             )
         self._teardown()
         try:
-            if self._transport is None:
-                from stenographer.lib.platform import current_platform
-
-                self._transport = current_platform().asr_transport()
             self._process = self._transport.spawn(self._cfg, on_log=forward_worker_record)
         except Exception as exc:
             log_failure(log, logging.ERROR, "worker: spawn_failed", exc, safe=True)

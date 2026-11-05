@@ -229,25 +229,6 @@ def test_no_restore_is_asked_for_without_a_delivery_attempt():
     assert events == []
 
 
-def test_a_raising_restore_never_reaches_the_pipeline_outcome(daemon_logs):
-    events: list[str] = []
-    deliverer = _Deliverer(events)
-
-    def broken() -> bool:
-        raise RuntimeError("restore exploded")
-
-    deliverer.restore_clipboard = broken
-    pipeline, failures = _pipeline(events=events, deliverer=deliverer)
-    record = _record()
-
-    assert (
-        pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT)
-        == "DELIVERED"
-    )
-    assert failures == []
-    assert "pipeline: restore_failed" in daemon_logs.text
-
-
 def test_the_restore_projection_never_recomputes_stop_to_chord():
     record = _record()
     record.stop_to_chord_ms = 123.0

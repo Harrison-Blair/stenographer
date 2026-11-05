@@ -36,7 +36,9 @@ import pytest
 from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import setup_logging, shutdown_logging
 from stenographer.lib.platform import asr as transport_module
+from stenographer.lib.platform import current_platform
 from stenographer.lib.transcribe import worker as worker_module
+from stenographer.lib.transcribe import worker_policy
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.worker import Worker
 
@@ -56,6 +58,15 @@ if not bark_download.is_model_cached():
 import soundfile  # noqa: E402
 
 
+def _real_worker(cfg, **observers) -> Worker:
+    return Worker(cfg, transport=current_platform().asr_transport(), **observers)
+
+
+def _child_running(worker: Worker) -> bool:
+    process = worker._process
+    return process is not None and process.is_running()
+
+
 def _read(path: pathlib.Path):
     return soundfile.read(str(path), dtype="float32", always_2d=True)[0]
 
@@ -72,7 +83,7 @@ def test_transcribe_through_child_matches_in_process():
     finally:
         in_process.close()
 
-    worker = Worker(cfg.asr)
+    worker = _real_worker(cfg.asr)
     try:
         result = worker.transcribe(samples)
     finally:
@@ -89,24 +100,22 @@ def test_warmup_loads_before_first_decode_and_lifecycle_is_ordered():
     cfg = Config.defaults()
 
     events: list[str] = []
-    worker = Worker(
+    worker = _real_worker(
         cfg.asr,
         on_model_loading=lambda: events.append("loading"),
-        on_model_ready=lambda: events.append("ready"),
         on_model_loading_finished=lambda: events.append("loading_finished"),
         on_transcribing=lambda: events.append("transcribing"),
     )
     try:
         worker.warmup()
-        assert events == ["loading", "ready", "loading_finished"]
+        assert events == ["loading", "loading_finished"]
 
         worker.transcribe(samples)
-        assert events == ["loading", "ready", "loading_finished", "transcribing"]
+        assert events == ["loading", "loading_finished", "transcribing"]
 
         worker.transcribe(samples)
         assert events == [
             "loading",
-            "ready",
             "loading_finished",
             "transcribing",
             "transcribing",
@@ -120,10 +129,9 @@ def test_failed_real_model_load_still_reports_loading_finished(tmp_path, monkeyp
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     cfg = Config.defaults().asr
     events: list[str] = []
-    worker = Worker(
+    worker = _real_worker(
         cfg,
         on_model_loading=lambda: events.append("loading"),
-        on_model_ready=lambda: events.append("ready"),
         on_model_loading_finished=lambda: events.append("loading_finished"),
     )
     try:
@@ -140,28 +148,28 @@ def test_idle_kill_then_restart():
     cfg = dataclasses.replace(base.asr, idle_unload_seconds=1)
 
     calls: list[int] = []
-    worker = Worker(cfg, on_model_loading=lambda: calls.append(1))
+    worker = _real_worker(cfg, on_model_loading=lambda: calls.append(1))
     try:
         worker.hold_model()
         worker.warmup()
-        assert worker.is_alive()
+        assert _child_running(worker)
         assert len(calls) == 1
 
         # A recording-scoped hold keeps a warmed model alive even when the
         # configured idle timeout is shorter than the recording itself.
         time.sleep(1.5)
-        assert worker.is_alive()
+        assert _child_running(worker)
         worker.release_model()
 
         # The lock-guarded idle timer must terminate the child within idle+grace.
         deadline = time.monotonic() + 5.0
-        while worker.is_alive() and time.monotonic() < deadline:
+        while _child_running(worker) and time.monotonic() < deadline:
             time.sleep(0.1)
-        assert not worker.is_alive()
+        assert not _child_running(worker)
 
         # The next request transparently respawns and loading activity returns.
         result = worker.transcribe(samples)
-        assert worker.is_alive()
+        assert _child_running(worker)
         assert len(calls) == 2
         assert result.text.strip() != ""
     finally:
@@ -172,20 +180,20 @@ def test_restart_after_forced_child_death():
     samples = _read(_CLIP)
     cfg = Config.defaults()
 
-    worker = Worker(cfg.asr)
+    worker = _real_worker(cfg.asr)
     try:
         worker.transcribe(samples)
-        assert worker.is_alive()
+        assert _child_running(worker)
 
         # Simulate an unexpected native crash by killing the real child.
         worker._process._process.kill()
         worker._process._process.join()
-        assert not worker.is_alive()
+        assert not _child_running(worker)
 
         # restart-if-dead: the next request respawns and succeeds; the daemon
         # side never went down.
         result = worker.transcribe(samples)
-        assert worker.is_alive()
+        assert _child_running(worker)
         assert result.text.strip() != ""
     finally:
         worker.shutdown()
@@ -194,7 +202,7 @@ def test_restart_after_forced_child_death():
 @pytest.mark.skipif(not hasattr(signal, "SIGSTOP"), reason="requires native process suspension")
 def test_decode_timeout_reaps_suspended_child_then_respawns(monkeypatch):
     samples = _read(_CLIP)
-    worker = Worker(Config.defaults().asr)
+    worker = _real_worker(Config.defaults().asr)
     try:
         worker.warmup()
         proc = worker._process
@@ -206,12 +214,12 @@ def test_decode_timeout_reaps_suspended_child_then_respawns(monkeypatch):
         with monkeypatch.context() as shortened:
             shortened.setattr(worker_module, "_POLL_SECONDS", 0.01)
             shortened.setattr(transport_module, "_JOIN_SECONDS", 0.25)
-            shortened.setattr(worker_module, "_DECODE_MIN_TIMEOUT_SECONDS", 0.25)
-            shortened.setattr(worker_module, "_DECODE_REALTIME_MULTIPLIER", 0.0)
+            shortened.setattr(worker_policy, "_DECODE_MIN_TIMEOUT_SECONDS", 0.25)
+            shortened.setattr(worker_policy, "_DECODE_REALTIME_MULTIPLIER", 0.0)
             with pytest.raises(WorkerError, match="timed out during transcribe"):
                 worker.transcribe(samples)
 
-        assert not worker.is_alive()
+        assert not _child_running(worker)
         assert worker._process is None
         assert proc._request_q is None
         assert proc._response_q is None
@@ -222,7 +230,7 @@ def test_decode_timeout_reaps_suspended_child_then_respawns(monkeypatch):
         # A timeout poisons only that child's protocol. The next request uses a
         # fresh process under the production deadline and decodes normally.
         result = worker.transcribe(samples)
-        assert worker.is_alive()
+        assert _child_running(worker)
         assert worker._process is not proc
         assert result.text.strip() != ""
     finally:
@@ -232,7 +240,7 @@ def test_decode_timeout_reaps_suspended_child_then_respawns(monkeypatch):
 @pytest.mark.skipif(not hasattr(signal, "SIGSTOP"), reason="requires native process suspension")
 def test_shutdown_terminates_suspended_inflight_decode():
     samples = _read(_CLIP)
-    worker = Worker(Config.defaults().asr)
+    worker = _real_worker(Config.defaults().asr)
     errors: list[Exception] = []
 
     def transcribe() -> None:
@@ -265,7 +273,7 @@ def test_shutdown_terminates_suspended_inflight_decode():
         assert len(errors) == 1
         assert isinstance(errors[0], WorkerError)
         assert "shut down" in str(errors[0])
-        assert not worker.is_alive()
+        assert not _child_running(worker)
         with pytest.raises(WorkerError, match="shut down"):
             worker.transcribe(samples)
     finally:
@@ -280,7 +288,7 @@ def test_spawned_worker_forwards_private_safe_decode_metrics(tmp_path):
     shutdown_logging()
     setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=stderr)
 
-    worker = Worker(cfg.asr)
+    worker = _real_worker(cfg.asr)
     try:
         result = worker.transcribe(samples)
     finally:

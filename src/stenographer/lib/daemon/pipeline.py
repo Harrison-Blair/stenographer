@@ -294,12 +294,9 @@ class UtterancePipeline:
         return accepted
 
     def _restore_clipboard(self, record: UtteranceRecord | None) -> None:
-        """Ask the deliverer for the restore. Never raises into the run."""
-        try:
-            self._deliverer.restore_clipboard()
-            apply_restore(record, self._deliverer.last_timings)
-        except Exception as exc:
-            log_failure(log, logging.WARNING, "pipeline: restore_failed", exc, safe=False)
+        """Ask the deliverer for the restore and record what it measured."""
+        self._deliverer.restore_clipboard()
+        apply_restore(record, self._deliverer.last_timings)
 
     def _clipboard_checkpoint(self, record: UtteranceRecord | None) -> None:
         self._apply_delivery(record, attempted=True)

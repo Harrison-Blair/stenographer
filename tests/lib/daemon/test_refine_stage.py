@@ -116,6 +116,16 @@ def test_profile_is_captured_at_recording_start_and_cannot_change_mid_utterance(
     assert refiner.profiles == [RefineProfile.GENERAL]
 
 
+def test_the_status_sink_receives_the_profile_of_the_utterance():
+    daemon, status = _daemon_with_status(result=_result(LONG), refiner=_Refiner(refined=CLEANED))
+
+    daemon.on_key_down(profile=RefineProfile.AGENT)
+
+    assert status.states == [OverlayState.RECORDING]
+    assert status.profiles == [RefineProfile.AGENT]
+    daemon.stop()
+
+
 def test_profiled_pipeline_briefly_reports_the_refine_outcome():
     refiner = _Refiner(refined=CLEANED)
     daemon, status = _daemon_with_status(result=_result(LONG), refiner=refiner)

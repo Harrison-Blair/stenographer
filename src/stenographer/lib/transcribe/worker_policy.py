@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure inference-worker protocol, lifecycle, and timeout policies."""
+"""Pure inference-worker protocol and timeout policies."""
 
 from __future__ import annotations
 
@@ -10,15 +10,9 @@ from stenographer.lib.transcribe.errors import (
     WorkerError,
     WorkerModelError,
     WorkerPathologicalError,
-    WorkerProtocolError,
     WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import TranscriptionResult
-from stenographer.lib.transcribe.worker_event import WorkerEvent
-from stenographer.lib.transcribe.worker_lifecycle import WorkerLifecycle
-
-_POLL_SECONDS = 0.1
-
 
 _DECODE_MIN_TIMEOUT_SECONDS = 60.0
 
@@ -39,25 +33,6 @@ def classify_worker_failure(exc: WorkerError) -> str:
     return "decode_failed"
 
 
-def lifecycle_transition(
-    *, model_loaded: bool, event: WorkerEvent | None = None
-) -> tuple[WorkerLifecycle, ...]:
-    """Return the observer signals for a model-load boundary. PURE.
-
-    A cold load first announces loading; the child's metadata-only ready event
-    then announces readiness. The caller emits ``MODEL_LOADING_FINISHED`` after
-    either readiness or failure. Warm-up and transcription share this transition,
-    while ``TRANSCRIBING`` remains a separate signal emitted only immediately
-    before a decode. A ready event after the model is already marked loaded is
-    a protocol violation rather than a second lifecycle.
-    """
-    if event is None:
-        return () if model_loaded else (WorkerLifecycle.MODEL_LOADING,)
-    if event is WorkerEvent.MODEL_READY and not model_loaded:
-        return (WorkerLifecycle.MODEL_READY,)
-    raise WorkerProtocolError("unexpected model-ready worker event")
-
-
 def should_arm_idle_timer(
     *,
     idle_seconds: float,
@@ -69,21 +44,11 @@ def should_arm_idle_timer(
     return idle_seconds > 0 and not hold_active and not shutdown_requested and process_alive
 
 
-def should_teardown_for_response_error(exc: WorkerError) -> bool:
-    """Malformed or timed-out protocol poisons the channel. PURE."""
-    return isinstance(exc, (WorkerProtocolError, WorkerTimeoutError))
-
-
 def decode_timeout_seconds(sample_frames: int) -> float:
     """Return the fixed decode deadline budget for 16 kHz audio. PURE."""
     return max(
         _DECODE_MIN_TIMEOUT_SECONDS, _DECODE_REALTIME_MULTIPLIER * sample_frames / SAMPLE_RATE
     )
-
-
-def response_poll_timeout(*, now: float, deadline: float) -> float:
-    """Clamp one queue poll to the remaining phase deadline. PURE."""
-    return max(0.0, min(_POLL_SECONDS, deadline - now))
 
 
 def classify_error(exc: Exception) -> tuple[str, str]:
@@ -105,24 +70,19 @@ def error_is_safe_to_render(exc: Exception) -> bool:
     return isinstance(exc, PathologicalOutputError)
 
 
-def interpret_response(message: object) -> TranscriptionResult | WorkerEvent:
-    """Parent-side: turn a child response tuple into a result or a typed raise.
-    Malformed messages are described by SHAPE only, never by echoed payload."""
-    if isinstance(message, tuple) and message:
-        tag = message[0]
-        if tag == "model_ready" and len(message) == 1:
-            return WorkerEvent.MODEL_READY
-        if tag == "ok" and len(message) == 2 and isinstance(message[1], TranscriptionResult):
-            return message[1]
-        if tag == "error" and len(message) == 3:
-            if message[1] == "pathological" and isinstance(message[2], str):
-                raise WorkerPathologicalError(message[2])
-            if message[1] == "inference" and isinstance(message[2], str):
-                raise WorkerError(message[2])
-    raise WorkerProtocolError(f"malformed worker response of shape {_describe_shape(message)}")
+def interpret_response(message: tuple) -> TranscriptionResult | None:
+    """Parent-side: turn one ``_child_main`` response into a result or a typed raise.
 
-
-def _describe_shape(message: object) -> str:
-    if not isinstance(message, tuple):
-        return type(message).__name__
-    return f"({', '.join(type(el).__name__ for el in message)})"
+    The metadata-only ready reply returns ``None``. An unknown tag raises without
+    echoing the message."""
+    tag = message[0]
+    if tag == "model_ready":
+        return None
+    if tag == "ok":
+        return message[1]
+    if tag == "error":
+        _, kind, detail = message
+        if kind == "pathological":
+            raise WorkerPathologicalError(detail)
+        raise WorkerError(detail)
+    raise WorkerError("unknown worker response")

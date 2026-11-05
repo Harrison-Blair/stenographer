@@ -7,6 +7,7 @@ from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.null_status_sink import NullStatusSink
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.contracts.publication import should_publish_state
+from stenographer.lib.refine.profiles import RefineProfile
 
 
 def test_visible_state_set_has_no_loading_pill() -> None:
@@ -41,6 +42,7 @@ def test_loading_models_are_exactly_asr_and_refine() -> None:
 def test_null_sink_accepts_all_fixed_display_metadata():
     sink = NullStatusSink()
     sink.publish(OverlayState.RECORDING)
+    sink.publish(OverlayState.RECORDING, RefineProfile.AGENT)
     sink.loading_activity(LoadingModel.ASR, True)
     sink.loading_activity(LoadingModel.ASR, False)
     sink.audio_block(object(), 16000, 4)
