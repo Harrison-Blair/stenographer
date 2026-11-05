@@ -33,7 +33,7 @@ from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError
-from tests.cli.hub.support import _card, _screen_text
+from tests.cli.hub.support import _card, _screen_text, make_app
 from tests.cli.hub.test_session_jobs import FakePlatform, FakePlayer
 
 REC_RELABELED = datetime(2026, 10, 27, 13, 3, tzinfo=UTC)
@@ -195,7 +195,7 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
     root, _sessions = _library(tmp_path)
     services = FakeServices(root)
     services.jobs.append(FakeJob("file-1", tmp_path / "sources" / "lecture.mp3"))
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -253,7 +253,7 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
 def test_library_long_file_label_is_cut_with_an_ellipsis(tmp_path):
     root = tmp_path / "sessions"
     _write_file_session(root, tmp_path, name="a-very-long-source-file-name-" + "x" * 80 + ".wav")
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -267,7 +267,7 @@ def test_library_long_file_label_is_cut_with_an_ellipsis(tmp_path):
 
 def test_library_select_by_id_keeps_selection_and_moves_by_keys_and_clicks(tmp_path):
     root, sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -307,7 +307,7 @@ def test_library_search_filters_sessions_and_job_rows_and_escape_clears(tmp_path
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
     services.jobs.append(FakeJob("file-1", tmp_path / "sources" / "Quarterly-Review.mp3"))
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -355,7 +355,7 @@ def test_library_search_runs_off_the_event_loop(tmp_path):
         return original(query)
 
     services.session_store.search = search
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -372,7 +372,7 @@ def test_library_does_not_list_the_active_recording(tmp_path):
     active = _write_rec(root, REC_LIVE)
     services = FakeServices(root)
     services.active_session_id = active.name
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -389,7 +389,7 @@ def test_library_does_not_list_the_active_recording(tmp_path):
 
 def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
     root, sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -471,7 +471,7 @@ def _notices(app: HubApp) -> str:
 def test_library_play_rediarize_and_retranscribe_by_key_and_click(tmp_path, by):
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     relabeled = sessions["relabeled"]
 
     async def run(pilot, key, button_id):
@@ -539,7 +539,7 @@ def test_library_player_failure_after_launch_shows_a_notice(tmp_path):
     root, _sessions = _library(tmp_path)
     services = FakeServices(root)
     services.player_exit_status = 3
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -567,7 +567,7 @@ def test_library_second_play_stops_the_first(tmp_path, monkeypatch, by):
         session_store=SessionStore(root),
         player_factory=start_player,
     )
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def press_play(pilot):
         if by == "key":
@@ -600,7 +600,7 @@ def test_library_second_play_stops_the_first(tmp_path, monkeypatch, by):
 def test_library_rename_export_and_delete_by_key_and_click(tmp_path, by):
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     live = sessions["relabeled"]
     output = tmp_path / "exports"
 
@@ -665,7 +665,7 @@ def test_library_rename_export_and_delete_by_key_and_click(tmp_path, by):
 @pytest.mark.parametrize("key", ["q", "ctrl+c"])
 def test_library_delete_quit_keys_do_not_confirm(tmp_path, key):
     root, sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
     live = sessions["live"]
 
     async def exercise():
@@ -686,7 +686,7 @@ def test_library_delete_quit_keys_do_not_confirm(tmp_path, key):
 
 def test_library_export_dialog_escape_cancels(tmp_path):
     root, _sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -705,7 +705,7 @@ def test_library_export_dialog_escape_cancels(tmp_path):
 
 def test_library_export_writes_markdown_by_default(tmp_path):
     root, sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
     output = tmp_path / "exports"
     session = sessions["relabeled"]
 
@@ -735,7 +735,7 @@ def test_library_job_rows_complete_fail_and_cancel(tmp_path):
     failing = FakeJob("file-2", sources / "broken.mp3", state="queued", percent=0)
     cancelled = FakeJob("file-3", sources / "dropped.mp3", state="queued", percent=0)
     services.jobs.extend((done, failing, cancelled))
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     screen = app.library_screen
 
     async def exercise():
@@ -786,7 +786,7 @@ def test_library_job_rows_complete_fail_and_cancel(tmp_path):
 def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     screen = app.library_screen
     live = sessions["live"]
     mic = root / live / "mic.flac"
@@ -847,7 +847,7 @@ def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
 def test_library_retranscribe_and_file_revision_race_one_starts(tmp_path):
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     screen = app.library_screen
     target = sessions["relabeled"]
     mic = root / target / "mic.flac"
@@ -896,7 +896,7 @@ def test_library_retranscribe_and_file_revision_race_one_starts(tmp_path):
 
 def test_library_screen_has_no_unawaited_coroutines(tmp_path):
     root, _sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -1084,7 +1084,7 @@ def test_library_play_notice_for_an_invalid_source_file(tmp_path):
         player_factory=lambda command: FakePlayer(),
         media_decoder=_Decoder(),
     )
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -1098,7 +1098,7 @@ def test_library_play_notice_for_an_invalid_source_file(tmp_path):
 
 def test_library_layout_frames_rows_state_rule_and_transcript_colours(tmp_path):
     root, _sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -1161,7 +1161,7 @@ def test_library_layout_frames_rows_state_rule_and_transcript_colours(tmp_path):
 def test_library_storage_card_shortens_the_home_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     root, _sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -1177,7 +1177,7 @@ pytestmark = pytest.mark.usefixtures("utc")
 
 def test_export_failure_keeps_values_for_retry(tmp_path):
     root, sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
     invalid = tmp_path / "not-a-folder"
     invalid.write_text("file")
     output = tmp_path / "exports"

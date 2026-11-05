@@ -11,9 +11,9 @@ import pytest
 from textual.screen import Screen
 from textual.widgets import Input, Static
 
-from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
+from tests.cli.hub.support import make_app
 
 
 class FakeServices:
@@ -50,10 +50,10 @@ class FakeServices:
         self.files_running = False
 
 
-async def test_pilot_shell_navigation_focus_and_recording_lifecycle():
+async def test_pilot_shell_navigation_focus_and_recording_lifecycle(tmp_path):
     services = FakeServices()
     doctor_report = DoctorReport((DoctorCheck("test", "test", "input", "ok", "available", ""),), ())
-    app = HubApp(services, doctor_probe=lambda _config: doctor_report)
+    app = make_app(tmp_path, services, doctor_probe=lambda _config: doctor_report)
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.current_mode == "record"
@@ -96,10 +96,10 @@ async def test_pilot_shell_navigation_focus_and_recording_lifecycle():
         assert services.files_running
 
 
-async def test_pilot_quit_asks_before_saving_a_recording():
+async def test_pilot_quit_asks_before_saving_a_recording(tmp_path):
     services = FakeServices()
     services.recording = True
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test() as pilot:
         await pilot.press("ctrl+c")
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())
@@ -125,7 +125,7 @@ async def test_pilot_quit_asks_before_saving_a_recording():
     ],
 )
 async def test_pilot_slow_work_keeps_hub_responsive(
-    initial_state, event_prefix, expected_text, screen_key, expected_mode
+    initial_state, event_prefix, expected_text, screen_key, expected_mode, tmp_path
 ):
     services = FakeServices()
     if initial_state is not None:
@@ -133,7 +133,7 @@ async def test_pilot_slow_work_keeps_hub_responsive(
     entered, release = threading.Event(), threading.Event()
     setattr(services, f"{event_prefix}_entered", entered)
     setattr(services, f"{event_prefix}_release", release)
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test() as pilot:
         if initial_state is None:
             task = asyncio.create_task(pilot.press("space"))
@@ -152,12 +152,12 @@ async def test_pilot_slow_work_keeps_hub_responsive(
             await task
 
 
-async def test_pilot_lifecycle_worker_finishes_after_hub_screen_unmount_without_failure():
+async def test_pilot_lifecycle_worker_finishes_after_hub_screen_unmount_without_failure(tmp_path):
     services = FakeServices()
     services.start_entered = threading.Event()
     services.start_release = threading.Event()
 
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test() as pilot:
         start_task = asyncio.create_task(pilot.press("space"))
         try:
@@ -175,11 +175,11 @@ async def test_pilot_lifecycle_worker_finishes_after_hub_screen_unmount_without_
             await start_task
 
 
-async def test_pilot_app_shutdown_during_lifecycle_work_does_not_fail_refresh():
+async def test_pilot_app_shutdown_during_lifecycle_work_does_not_fail_refresh(tmp_path):
     services = FakeServices()
     services.start_entered = threading.Event()
     services.start_release = threading.Event()
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     worker = None
     try:
         async with app.run_test() as pilot:
@@ -197,10 +197,10 @@ async def test_pilot_app_shutdown_during_lifecycle_work_does_not_fail_refresh():
 
 
 @pytest.mark.parametrize("confirm_key", ["ctrl+c", "q"])
-async def test_pilot_quit_keys_confirm_recording_prompt(confirm_key):
+async def test_pilot_quit_keys_confirm_recording_prompt(confirm_key, tmp_path):
     services = FakeServices()
     services.recording = True
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test() as pilot:
         await pilot.press(confirm_key)
         assert "recording" in str(app.screen.query_one("#quit-prompt", Static).render())
@@ -237,9 +237,9 @@ class WorkServices(FakeServices):
         super().stop_recording()
 
 
-async def test_pilot_quit_asks_once_for_all_active_work_and_runs_it_in_order():
+async def test_pilot_quit_asks_once_for_all_active_work_and_runs_it_in_order(tmp_path):
     services = WorkServices()
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test() as pilot:
         await pilot.press("q")
         await pilot.pause()
@@ -272,10 +272,10 @@ async def test_pilot_quit_asks_once_for_all_active_work_and_runs_it_in_order():
     ]
 
 
-async def test_pilot_quit_keeps_the_hub_open_when_the_recording_cannot_save():
+async def test_pilot_quit_keeps_the_hub_open_when_the_recording_cannot_save(tmp_path):
     services = WorkServices()
     services.stop_error = OSError("no space left on device")
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test() as pilot:
         await pilot.press("q")
         await pilot.pause()
@@ -294,10 +294,10 @@ async def test_pilot_quit_keeps_the_hub_open_when_the_recording_cannot_save():
         assert "Could not save the recording: no space left on device" in notices
 
 
-async def test_pilot_quit_asks_before_cancelling_a_files_job():
+async def test_pilot_quit_asks_before_cancelling_a_files_job(tmp_path):
     services = FakeServices()
     services.files_running = True
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test() as pilot:
         await pilot.press("q")
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())

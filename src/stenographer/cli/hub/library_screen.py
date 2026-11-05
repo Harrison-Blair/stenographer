@@ -960,7 +960,7 @@ class LibraryScreen(HubScreen):
     # Transcript scroll
 
     def action_transcribe_file(self) -> None:
-        if self.app.config_editor is not None and self.app.config_editor.read_only:
+        if self.app.config_editor.read_only:
             self.app.notify(
                 "Fix the invalid configuration before transcribing files.", severity="error"
             )
@@ -972,7 +972,7 @@ class LibraryScreen(HubScreen):
         if result is None:
             return
         app = self.app
-        if app.config_editor is not None and app.config_editor.read_only:
+        if app.config_editor.read_only:
             app.notify("Fix the invalid configuration before transcribing files.", severity="error")
             return
         path, options = result

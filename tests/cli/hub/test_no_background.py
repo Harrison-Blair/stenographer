@@ -13,11 +13,13 @@ from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.config_dialog import ConfigPrompt
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.lib.config.defaults import default_toml
+from tests.cli.hub.support import make_app
 
 
 class FakeSession:
@@ -99,7 +101,7 @@ async def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
     services = FakeServices()
     app = HubApp(
         services,
-        config_path=config_path,
+        config_editor=ConfigEditor(config_path),
         files_home=tmp_path,
         doctor_probe=lambda _config: report,
     )
@@ -160,8 +162,8 @@ async def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
     assert not errors, "\n".join(errors)
 
 
-def test_blank_input_cursor_is_accent_underlined_without_a_fill():
-    app = HubApp(FakeServices())
+def test_blank_input_cursor_is_accent_underlined_without_a_fill(tmp_path):
+    app = make_app(tmp_path, FakeServices())
 
     async def exercise():
         async with app.run_test(size=(120, 36)) as pilot:
@@ -188,7 +190,7 @@ def test_blank_input_cursor_is_accent_underlined_without_a_fill():
 def test_visible_scrollbar_thumb_is_the_only_background_exception(tmp_path):
     for index in range(50):
         (tmp_path / f"{index:02}.wav").touch()
-    app = HubApp(FakeServices(), files_home=tmp_path)
+    app = make_app(tmp_path, FakeServices(), files_home=tmp_path)
     errors = []
 
     async def exercise():
@@ -204,7 +206,7 @@ def test_visible_scrollbar_thumb_is_the_only_background_exception(tmp_path):
 
 async def test_selected_sidebar_and_file_rows_use_bold_accent_marker(tmp_path):
     (tmp_path / "sample.wav").touch()
-    app = HubApp(FakeServices(), files_home=tmp_path)
+    app = make_app(tmp_path, FakeServices(), files_home=tmp_path)
     async with app.run_test(size=(120, 36)) as pilot:
         await pilot.pause()
         sidebar = app.screen.query_one("#sidebar", Static).render()

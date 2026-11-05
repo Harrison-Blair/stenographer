@@ -14,6 +14,7 @@ from textual.binding import Binding
 from textual.widgets import Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
@@ -21,7 +22,7 @@ from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.config.defaults import default_toml
-from tests.cli.hub.support import IdleServices
+from tests.cli.hub.support import IdleServices, make_app
 
 
 class WidgetApp(App[None]):
@@ -67,7 +68,7 @@ async def test_widget_button_click_runs_the_action_of_its_key():
 async def test_widget_settings_tab_click_matches_the_tab_keys(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(default_toml(), encoding="utf-8")
-    app = HubApp(IdleServices(), config_path=path)
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3", "right", "right")
         by_keys = (app.settings_screen.tab, app.config_editor.visible_keys)
@@ -119,8 +120,8 @@ async def test_widget_footer_key_hints_start_with_help_and_quit():
 
 
 @pytest.mark.parametrize("screen", ["record", "library", "settings"])
-async def test_help_overlay_lists_every_active_binding_and_closes(screen):
-    app = HubApp(IdleServices())
+async def test_help_overlay_lists_every_active_binding_and_closes(screen, tmp_path):
+    app = make_app(tmp_path, IdleServices())
     async with app.run_test(size=(150, 45)) as pilot:
         app.show_screen(screen)
         await pilot.pause()
@@ -159,8 +160,8 @@ def test_help_every_hub_binding_has_a_help_row():
     assert missing == []
 
 
-async def test_help_rows_name_keys_and_skip_hidden_bindings():
-    app = HubApp(IdleServices())
+async def test_help_rows_name_keys_and_skip_hidden_bindings(tmp_path):
+    app = make_app(tmp_path, IdleServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         rows = dict(HelpOverlay.help_rows(app.screen.active_bindings))

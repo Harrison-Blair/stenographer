@@ -488,7 +488,7 @@ class RecordScreen(HubScreen):
             status = "Resuming recording..." if session.paused else "Pausing recording..."
             self._run_live_action(action, status=status, name="toggle-recording")
             return
-        if app.config_editor is not None and app.config_editor.read_only:
+        if app.config_editor.read_only:
             app.notify("Fix the invalid configuration before recording.", severity="error")
             return
         app.activity_status = "Starting recording..."

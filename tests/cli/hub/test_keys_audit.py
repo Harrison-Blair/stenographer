@@ -20,6 +20,7 @@ from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.checks_tab import ChecksTab
 from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.config_dialog import ConfigPrompt
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.defaults_dialog import DefaultsDialog
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, ModelEntry
@@ -38,7 +39,7 @@ from stenographer.cli.hub.widgets.focus_button import FocusButton
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.sidebar import Sidebar
-from tests.cli.hub.support import _config_path
+from tests.cli.hub.support import _config_path, make_app
 from tests.cli.hub.test_library import FakeServices as LibraryServices
 from tests.cli.hub.test_library import _library
 from tests.cli.hub.test_record_screen import _app as record_app
@@ -128,13 +129,13 @@ async def _until(pilot, condition, message: str) -> None:
 def _make_app(kind: str, tmp_path: Path) -> HubApp:
     if kind == "record":
         services, _created = record_services(tmp_path)
-        return record_app(services)
+        return record_app(tmp_path, services)
     if kind == "library":
         root, _sessions = _library(tmp_path)
-        return HubApp(LibraryServices(root), files_home=tmp_path)
+        return make_app(tmp_path, LibraryServices(root), files_home=tmp_path)
     app = HubApp(
         SettingsServices(),
-        config_path=_config_path(tmp_path),
+        config_editor=ConfigEditor(_config_path(tmp_path)),
         doctor_probe=lambda _config: _report(),
         model_status=lambda: (ModelEntry("alpha", "speech model", "alpha", False, "1 MB"),),
         setup_test=lambda _step, _config: "alpha test",
@@ -423,8 +424,10 @@ def test_help_overlay_shows_every_shown_binding_of_the_dialog(tmp_path, name):
     _run_state(tmp_path, DIALOGS, name, check)
 
 
-async def test_help_overlay_scrolls_its_rows_and_keeps_its_close_button_on_a_short_terminal():
-    app = HubApp(SettingsServices())
+async def test_help_overlay_scrolls_its_rows_and_keeps_its_close_button_on_a_short_terminal(
+    tmp_path,
+):
+    app = make_app(tmp_path, SettingsServices())
     async with app.run_test(size=(150, 20)) as pilot:
         await pilot.press("2")
         await pilot.pause()

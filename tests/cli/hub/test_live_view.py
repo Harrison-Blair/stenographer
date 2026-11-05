@@ -15,7 +15,7 @@ from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.lib.live.transcript_line import TranscriptLine
-from tests.cli.hub.support import _screen_text
+from tests.cli.hub.support import _screen_text, make_app
 
 
 class FakeSession:
@@ -83,11 +83,11 @@ class FakeServices:
         self.files_running = False
 
 
-async def test_pilot_live_has_board_panels_and_captioned_split_columns():
+async def test_pilot_live_has_board_panels_and_captioned_split_columns(tmp_path):
     services = FakeServices()
     services.recording = False
     services.session = None
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         rec = app.screen.query_one("#rec-panel", Widget)
@@ -142,8 +142,8 @@ async def test_pilot_live_has_board_panels_and_captioned_split_columns():
         assert all("·" in row for row in split_rows)
 
 
-async def test_sidebar_context_card_is_screen_owned_and_engine_card_stays():
-    app = HubApp(FakeServices())
+async def test_sidebar_context_card_is_screen_owned_and_engine_card_stays(tmp_path):
+    app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         frame = app.screen.query_one("#sidebar-context")
@@ -162,8 +162,8 @@ async def test_sidebar_context_card_is_screen_owned_and_engine_card_stays():
         assert str(app.screen.query_one("#engine-model", Static).render()) == "bark-pro-int8"
 
 
-async def test_pilot_live_mixed_and_split_views_keep_time_order():
-    app = HubApp(FakeServices())
+async def test_pilot_live_mixed_and_split_views_keep_time_order(tmp_path):
+    app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         content = _screen_text(app)
@@ -188,9 +188,9 @@ async def test_pilot_live_mixed_and_split_views_keep_time_order():
         assert "system words" in rows[1] and "mic words" not in rows[1]
 
 
-async def test_pilot_live_renames_a_speaker_and_updates_existing_lines():
+async def test_pilot_live_renames_a_speaker_and_updates_existing_lines(tmp_path):
     services = FakeServices()
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test() as pilot:
         await pilot.press("r")
         app.screen.query_one("#speaker-select", Select).value = "speaker-2"
@@ -203,7 +203,7 @@ async def test_pilot_live_renames_a_speaker_and_updates_existing_lines():
         assert "Alice" in content and "system words" in content
 
 
-async def test_pilot_live_lists_and_renames_room_speakers():
+async def test_pilot_live_lists_and_renames_room_speakers(tmp_path):
     services = FakeServices()
     session = services.session
     session.lines = [
@@ -211,7 +211,7 @@ async def test_pilot_live_lists_and_renames_room_speakers():
         TranscriptLine(2.0, 2.5, "wall", "mic", "room-2", "Room 2", "second room words"),
     ]
     session.speakers = (("room-1", "Room 1"), ("room-2", "Room 2"))
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test() as pilot:
         content = _screen_text(app)
         assert "Room 1" in content and "Room 2" in content
@@ -241,8 +241,8 @@ def _visible_segment(app: HubApp, text: str):
     raise AssertionError(f"{text!r} is not visible")
 
 
-async def test_live_rec_panel_shows_only_the_inline_rec_label():
-    app = HubApp(FakeServices())
+async def test_live_rec_panel_shows_only_the_inline_rec_label(tmp_path):
+    app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         rec = app.screen.query_one("#rec-panel", Widget)
@@ -250,8 +250,8 @@ async def test_live_rec_panel_shows_only_the_inline_rec_label():
         assert _screen_text(app).count("REC") == 1
 
 
-async def test_record_footer_matches_the_board_hint_row():
-    app = HubApp(FakeServices())
+async def test_record_footer_matches_the_board_hint_row(tmp_path):
+    app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         hints = app.screen.query_one("#key-hints", Static).render().plain
@@ -261,8 +261,8 @@ async def test_record_footer_matches_the_board_hint_row():
         )
 
 
-async def test_live_elapsed_uses_digits_widget():
-    app = HubApp(FakeServices())
+async def test_live_elapsed_uses_digits_widget(tmp_path):
+    app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         elapsed = app.screen.query_one("#rec-clock", Clock)
@@ -270,8 +270,8 @@ async def test_live_elapsed_uses_digits_widget():
         assert elapsed.region.height == 3
 
 
-async def test_live_speaker_colors_are_distinct_stable_and_used_in_rename_choices():
-    app = HubApp(FakeServices())
+async def test_live_speaker_colors_are_distinct_stable_and_used_in_rename_choices(tmp_path):
+    app = make_app(tmp_path, FakeServices())
     session = app.services.session
     session.lines.extend(
         (
@@ -322,8 +322,8 @@ async def test_live_speaker_colors_are_distinct_stable_and_used_in_rename_choice
             assert segment.style.bgcolor is None or segment.style.bgcolor.is_default
 
 
-async def test_live_key_hints_style_keys_and_descriptions_without_fills():
-    app = HubApp(FakeServices())
+async def test_live_key_hints_style_keys_and_descriptions_without_fills(tmp_path):
+    app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         hints = app.screen.query_one("#transcript-hints", Static).render().plain
@@ -338,14 +338,14 @@ async def test_live_key_hints_style_keys_and_descriptions_without_fills():
         assert description.style.bgcolor is None or description.style.bgcolor.is_default
 
 
-async def test_live_transcript_scrolls_in_mixed_and_split_views_and_follows_new_lines():
+async def test_live_transcript_scrolls_in_mixed_and_split_views_and_follows_new_lines(tmp_path):
     services = FakeServices()
     session = services.session
     session.lines = [
         TranscriptLine(float(index), float(index + 1), "wall", "mic", "you", "You", f"line {index}")
         for index in range(40)
     ]
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         scroll = app.screen.query_one("#transcript")
@@ -389,8 +389,8 @@ async def test_live_transcript_scrolls_in_mixed_and_split_views_and_follows_new_
         assert "mixed  ▶ split" in _screen_text(app)
 
 
-async def test_live_sidebar_and_transcript_titles_are_legible():
-    app = HubApp(FakeServices())
+async def test_live_sidebar_and_transcript_titles_are_legible(tmp_path):
+    app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         sidebar_title = _visible_segment(app, "stenographer")
@@ -402,8 +402,8 @@ async def test_live_sidebar_and_transcript_titles_are_legible():
         assert transcript_title.style.color is None or transcript_title.style.color.is_default
 
 
-async def test_system_source_state_and_device_fit_on_one_line():
-    app = HubApp(FakeServices())
+async def test_system_source_state_and_device_fit_on_one_line(tmp_path):
+    app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         system_lines = [row for row in _screen_text(app).splitlines() if "[s] SYSTEM" in row]

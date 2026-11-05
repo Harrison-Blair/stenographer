@@ -211,7 +211,7 @@ class SettingsScreen(HubScreen):
 
     def on_mount(self) -> None:
         editor = self.app.config_editor
-        if self.tab != "checks" and editor is not None and editor.shown_keys is None:
+        if self.tab != "checks" and editor.shown_keys is None:
             editor.show_keys(self.tab_keys(self.tab))
         self._sync_tab_widgets()
 
@@ -229,8 +229,7 @@ class SettingsScreen(HubScreen):
         return tuple(key for key in self._tab_layout(tab) if key != DIVIDER)
 
     def _tab_layout(self, tab: str) -> tuple[str, ...]:
-        editor = self.app.config_editor
-        keys = editor.all_keys if editor is not None else ()
+        keys = self.app.config_editor.all_keys
         patterns = next(patterns for name, _label, patterns in SETTINGS_TABS if name == tab)
         layout: list[str] = []
         for pattern in patterns:
@@ -247,9 +246,8 @@ class SettingsScreen(HubScreen):
         if not self._commit_input():
             return
         self.tab = tab
-        editor = self.app.config_editor
-        if tab != "checks" and editor is not None:
-            editor.show_keys(self.tab_keys(tab))
+        if tab != "checks":
+            self.app.config_editor.show_keys(self.tab_keys(tab))
         if self.ready:
             self._sync_tab_widgets()
         checks = self.checks_tab
@@ -310,14 +308,14 @@ class SettingsScreen(HubScreen):
             )
             return
         editor = app.config_editor
-        if editor is not None and editor.shown_keys is None and not editor.read_only:
+        if editor.shown_keys is None and not editor.read_only:
             editor.show_keys(self.tab_keys(self.tab))
         self._sync_rows(editor)
         actions = self.query_one("#config-actions")
-        actions.display = editor is not None and not editor.read_only
+        actions.display = not editor.read_only
         search = self.query_one("#config-search", Static)
-        search.display = editor is not None and bool(editor.search_term)
-        if editor is None or editor.read_only:
+        search.display = bool(editor.search_term)
+        if editor.read_only:
             return
         search.update(f"search: {editor.search_term} · esc clears")
         self._update_rows(editor)
@@ -325,12 +323,10 @@ class SettingsScreen(HubScreen):
         self.query_one("#config-save", HubButton).set_label(self._save_label(count))
         app.set_context_card("settings", self._config_card(editor), title="config")
 
-    def _sync_rows(self, editor: ConfigEditor | None) -> None:
+    def _sync_rows(self, editor: ConfigEditor) -> None:
         """Mount one Field per visible key when the visible keys change."""
-        if editor is None:
-            signature: tuple[object, ...] = (None, "Configuration settings will appear here.")
-        elif editor.read_only:
-            signature = (id(editor), editor.error_text())
+        if editor.read_only:
+            signature: tuple[object, ...] = (id(editor), editor.error_text())
         else:
             signature = (id(editor), editor.visible_keys, editor.search_term)
         if signature == self._row_signature:
@@ -341,8 +337,8 @@ class SettingsScreen(HubScreen):
         container.remove_children()
         self._rows = {}
         self._shown_selection = None
-        if editor is None or editor.read_only:
-            container.mount(Static(str(signature[1]), id="config-message", markup=False))
+        if editor.read_only:
+            container.mount(Static(editor.error_text(), id="config-message", markup=False))
             return
         layout = editor.visible_keys if editor.search_term else self._tab_layout(self.tab)
         widgets = []
@@ -468,9 +464,7 @@ class SettingsScreen(HubScreen):
 
     def _editor(self) -> ConfigEditor | None:
         editor = self.app.config_editor
-        if editor is None or editor.read_only:
-            return None
-        return editor
+        return None if editor.read_only else editor
 
     def action_move_tab(self, offset: int) -> None:
         names = [name for name, _label, _keys in SETTINGS_TABS]
