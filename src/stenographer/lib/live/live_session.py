@@ -44,6 +44,11 @@ _BLOCK_QUEUE_SIZE = 32
 _BLOCK_STOP_WAIT_SECONDS = 0.5
 # Mic and system voices are clustered apart, so their labels never share a number space.
 _LABEL_PREFIXES = {"system": "Speaker", "mic": "Room"}
+_REGROUP_INTERVAL_SECONDS = 30.0
+
+
+def _durations(lines: tuple[TranscriptLine, ...]) -> list[float]:
+    return [max(0.0, line.end - line.start) for line in lines]
 
 
 class LiveSession:
@@ -83,6 +88,8 @@ class LiveSession:
             source: [] for source in self._trackers
         }
         self._speaker_line_indices: dict[str, list[int]] = {source: [] for source in self._trackers}
+        self._next_regroup = dict.fromkeys(("mic", "system"), _REGROUP_INTERVAL_SECONDS)
+        self._regrouped = False
         self._stop_started = False
         self._stop_complete = False
         self._skip_relabel = threading.Event()
@@ -311,12 +318,13 @@ class LiveSession:
 
     @property
     def speakers(self) -> tuple[tuple[str, str], ...]:
+        """Return ``(speaker_id, label)`` of each diarized speaker that has lines."""
         with self._lock:
-            return tuple(
-                (speaker_id, tracker.label(speaker_id))
-                for tracker in self._trackers.values()
-                for speaker_id in tracker.speaker_ids
-            )
+            labels = {source: {} for source in self._trackers}
+            for line in self._lines:
+                if line.source in labels:
+                    labels[line.source][line.speaker_id] = line.label
+            return tuple(item for source in labels.values() for item in source.items())
 
     def toggle(self, source: str) -> None:
         """Toggle one source. An unavailable source stays off."""
@@ -363,13 +371,16 @@ class LiveSession:
         source = "mic" if "mic" in self._trackers and speaker_id.startswith("room-") else "system"
         tracker = self._trackers[source]
         with self._lock:
-            tracker.rename(speaker_id, name)
-            label = tracker.label(speaker_id)
+            # A pass can merge this speaker while the rename dialog is open.
+            speaker_id = tracker.current_id(speaker_id)
+            label = tracker.checked_name(speaker_id, name)
+            # A failed write, or the closed writer after a save, must change nothing here.
+            self._writer.relabel({speaker_id: label})
+            tracker.rename(speaker_id, label)
             self._lines = [
                 replace(line, label=label) if line.speaker_id == speaker_id else line
                 for line in self._lines
             ]
-        self._writer.relabel({speaker_id: label})
         log.info(fmt_event("live", "speaker_renamed", speaker_id=speaker_id))
 
     def stop(self) -> None:
@@ -422,40 +433,12 @@ class LiveSession:
             self._relabeling = True
             self._relabel_progress = (0, total)
 
-        # Progress counts phrases: each pass reports work units, and every pass
-        # total is known up front, so the phrase count never falls or overshoots.
-        units = [relabel_work_units(lines) for _, _, lines, _ in passes]
-        total_units = sum(units)
+        saved = False
         try:
-            revised_lines = list(self.lines)
-            offset = 0
-            for (source, indices, lines, embeddings), pass_units in zip(passes, units, strict=True):
-                relabeled = relabel_system_lines(
-                    lines,
-                    embeddings,
-                    progress=lambda done, _total, offset=offset, pass_units=pass_units: (
-                        self._set_relabel_progress(
-                            total * (offset + min(done, pass_units)) // total_units, total
-                        )
-                    ),
-                    should_cancel=self._skip_relabel.is_set,
-                    label_prefix=_LABEL_PREFIXES[source],
-                )
-                if relabeled is None or self._skip_relabel.is_set():
-                    with self._lock:
-                        self._relabel_skipped = True
-                    return
-                for index, line in zip(indices, relabeled, strict=True):
-                    revised_lines[index] = line
-                offset += pass_units
-            SessionStore(self._writer.path.parent).write_revision(
-                self._writer.path.name,
-                revised_lines,
-                method="diarization",
-                expected_revision="transcript.jsonl",
-            )
-            with self._lock:
-                self._lines = revised_lines
+            saved = self._save_end_pass(passes, total)
+            if not saved:
+                with self._lock:
+                    self._relabel_skipped = True
         except Exception as exc:
             with self._lock:
                 self._relabel_error = str(exc)
@@ -463,6 +446,101 @@ class LiveSession:
         finally:
             with self._lock:
                 self._relabeling = False
+        if not saved:
+            self._save_shown_lines()
+
+    def _save_end_pass(self, passes: list, total: int) -> bool:
+        """Save the batch pass as a revision. Return ``False`` if a skip ended it."""
+        # Progress counts phrases: each pass reports work units, and every pass
+        # total is known up front, so the phrase count never falls or overshoots.
+        units = [relabel_work_units(lines) for _, _, lines, _ in passes]
+        total_units = sum(units)
+        revised_lines = list(self.lines)
+        offset = 0
+        for (source, indices, lines, embeddings), pass_units in zip(passes, units, strict=True):
+            relabeled = relabel_system_lines(
+                lines,
+                embeddings,
+                progress=lambda done, _total, offset=offset, pass_units=pass_units: (
+                    self._set_relabel_progress(
+                        total * (offset + min(done, pass_units)) // total_units, total
+                    )
+                ),
+                should_cancel=self._skip_relabel.is_set,
+                label_prefix=_LABEL_PREFIXES[source],
+            )
+            if relabeled is None or self._skip_relabel.is_set():
+                return False
+            with self._lock:
+                numbered = self._numbered_lines(
+                    source, lines, [line.speaker_id for line in relabeled]
+                )
+            for index, line in zip(indices, numbered, strict=True):
+                revised_lines[index] = line
+            offset += pass_units
+        self._write_revision(revised_lines, method="diarization")
+        return True
+
+    def _save_shown_lines(self) -> None:
+        """Save the speakers on screen. transcript.jsonl has only first-written speakers.
+
+        A failed write raises, so the stop shows as a failed save.
+        """
+        with self._lock:
+            if not self._regrouped:
+                return
+            revised_lines = list(self._lines)
+            for source, indices in self._speaker_line_indices.items():
+                lines = tuple(revised_lines[index] for index in indices)
+                numbered = self._numbered_lines(source, lines, [line.speaker_id for line in lines])
+                for index, line in zip(indices, numbered, strict=True):
+                    revised_lines[index] = line
+        # The batch pass did not finish, so Library must not call these lines relabeled.
+        self._write_revision(revised_lines, method="live")
+
+    def _numbered_lines(
+        self, source: str, lines: tuple[TranscriptLine, ...], cluster_ids: list[str]
+    ) -> tuple[TranscriptLine, ...]:
+        speakers = self._trackers[source].saved_speakers(
+            [line.speaker_id for line in lines], cluster_ids, _durations(lines)
+        )
+        return tuple(
+            replace(line, speaker_id=speaker_id, label=label)
+            for line, (speaker_id, label) in zip(lines, speakers, strict=True)
+        )
+
+    def _write_revision(self, lines: list[TranscriptLine], *, method: str) -> None:
+        SessionStore(self._writer.path.parent).write_revision(
+            self._writer.path.name,
+            lines,
+            method=method,
+            expected_revision="transcript.jsonl",
+        )
+        with self._lock:
+            self._lines = lines
+
+    def _regroup_recording(self, source: str) -> None:
+        """Group the phrases so far. Only this thread adds lines, so none arrive meanwhile."""
+        with self._lock:
+            indices = tuple(self._speaker_line_indices[source])
+            lines = tuple(self._lines[index] for index in indices)
+            embeddings = tuple(self._speaker_embeddings[source])
+        # The capture callback needs this lock, so the pass runs outside it.
+        relabeled = relabel_system_lines(lines, embeddings, label_prefix=_LABEL_PREFIXES[source])
+        tracker = self._trackers[source]
+        with self._lock:
+            speaker_ids = tracker.regroup(
+                [line.speaker_id for line in lines],
+                [line.speaker_id for line in relabeled],
+                _durations(lines),
+                embeddings,
+            )
+            for index, line, speaker_id in zip(indices, lines, speaker_ids, strict=True):
+                # Read the label here: a rename can arrive during the pass.
+                label = tracker.label(speaker_id)
+                self._lines[index] = replace(line, speaker_id=speaker_id, label=label)
+            self._regrouped = True
+        log.debug(fmt_event("live", "speakers_regrouped", source=source, line_count=len(indices)))
 
     def _set_relabel_progress(self, done: int, total: int) -> None:
         with self._lock:
@@ -679,10 +757,7 @@ class LiveSession:
             # The capture callback needs this lock, so the embedding runs outside it.
             embedding = tracker.embed(phrase.samples)
             with self._lock:
-                speaker_id = tracker.assign_embedding(
-                    embedding,
-                    duration=phrase.end - phrase.start,
-                )
+                speaker_id = tracker.assign_nearest(embedding)
         with self._lock:
             if tracker is not None:
                 label = tracker.label(speaker_id)
@@ -707,6 +782,9 @@ class LiveSession:
                 subscriber(line)
             except Exception as exc:
                 log_failure(log, logging.WARNING, "live: subscriber_failed", exc, safe=False)
+        if tracker is not None and phrase.end >= self._next_regroup[phrase.source]:
+            self._next_regroup[phrase.source] = phrase.end + _REGROUP_INTERVAL_SECONDS
+            self._regroup_recording(phrase.source)
 
     def _write_audio(self, source: str, samples: np.ndarray) -> None:
         if source in self._audio_failed:
