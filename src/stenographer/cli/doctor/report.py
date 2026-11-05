@@ -31,7 +31,6 @@ from stenographer.lib.diagnostics.additional_checks import DiagnosticCheck
 from stenographer.lib.diagnostics.capabilities import REQUIRED, missing_required
 from stenographer.lib.transcribe.bark_download import MODEL_NAME
 from stenographer.overlay.capabilities.models import OverlayCapability
-from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
 if TYPE_CHECKING:
     import pathlib
@@ -116,8 +115,7 @@ def format_overlay_status(capability: OverlayCapability, guidance: OverlayGuidan
         return guidance.overlay_backend_labels.get(
             capability.backend.value, capability.backend.value
         )
-    reason = capability.reason or UnavailableReason.BACKENDS_UNAVAILABLE
-    hint = guidance.overlay_fix_hints.get(reason, guidance.overlay_fix_hint_default)
+    hint = guidance.overlay_fix_hints.get(capability.reason, guidance.overlay_fix_hint_default)
     return f"unavailable — {hint}"
 
 
