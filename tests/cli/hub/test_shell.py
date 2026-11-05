@@ -17,15 +17,10 @@ from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 from stenographer.cli.hub.engine_status import EngineStatus
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
+from tests.cli.hub.support import IdleServices
 from tests.cli.hub.test_library import FakeServices as LibraryServices
 from tests.cli.hub.test_library import _write_rec as _write_session
 from tests.cli.hub.test_live_view import FakeServices as RecordingServices
-
-
-class IdleServices:
-    recording = False
-    files_running = False
-    session = None
 
 
 class FakeSampler:

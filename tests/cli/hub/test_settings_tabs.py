@@ -13,6 +13,7 @@ from stenographer.cli.hub.widgets.field import Field
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
+from tests.cli.hub.support import _config_path, _fields
 
 FAIL = "\N{MULTIPLICATION SIGN}"
 
@@ -66,20 +67,10 @@ TAB_KEYS = {
 }
 
 
-def _config_path(tmp_path, content=None):
-    path = tmp_path / "config.toml"
-    path.write_text(default_toml() if content is None else content, encoding="utf-8")
-    return path
-
-
 def _app(tmp_path, content=None, devices=None):
     app = HubApp(IdleServices(), config_path=_config_path(tmp_path, content))
     app.settings_screen.list_devices = lambda _key: list(devices or ())
     return app
-
-
-def _fields(app) -> list[Field]:
-    return list(app.settings_screen.query("#config-rows Field").results(Field))
 
 
 def _field(app, label: str) -> Field:

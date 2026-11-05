@@ -248,24 +248,30 @@ class Daemon:
         daemon._platform = plat
         daemon._listener = listener
         daemon._deliverer = deliverer
-        daemon._pipeline = UtterancePipeline(
-            min_speech_rms=cfg.audio.min_speech_rms,
-            worker=worker,
-            deliverer=deliverer,
-            refiner=daemon._refiner,
-            telemetry=daemon._telemetry,
-            publish_state=daemon._publish_state,
-            fail=daemon._fail,
-            play_cue=lambda name: _play_cue(feedback, name),
-            cancelled=daemon._cancel_pending,
-            cancel_state=lambda: cancel_state(shutting_down=daemon._stop_event.is_set()),
-            copy_original=cfg.delivery.copy_original,
-            speech_filter=lambda samples: dictation_speech(
+        daemon._pipeline = daemon._build_pipeline(
+            deliverer,
+            lambda samples: dictation_speech(
                 samples,
                 plat.data_dir(os.environ, Path.home()) / "models" / "live" / "silero_vad.onnx",
             ),
         )
         return daemon
+
+    def _build_pipeline(self, deliverer, speech_filter):
+        return UtterancePipeline(
+            min_speech_rms=self._cfg.audio.min_speech_rms,
+            worker=self._worker,
+            deliverer=deliverer,
+            refiner=self._refiner,
+            telemetry=self._telemetry,
+            publish_state=self._publish_state,
+            fail=self._fail,
+            play_cue=lambda name: _play_cue(self._feedback, name),
+            cancelled=self._cancel_pending,
+            cancel_state=lambda: cancel_state(shutting_down=self._stop_event.is_set()),
+            copy_original=self._cfg.delivery.copy_original,
+            speech_filter=speech_filter,
+        )
 
     def _publish_state(self, state: OverlayState) -> None:
         """Serialize display state and suppress duplicate helper updates."""

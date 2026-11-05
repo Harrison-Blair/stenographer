@@ -20,9 +20,6 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.daemon import Daemon
-from stenographer.lib.daemon.feedback import _play_cue
-from stenographer.lib.daemon.pipeline import UtterancePipeline
-from stenographer.lib.daemon.policy import cancel_state
 from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.hotkey.chord_tracker import ChordTracker
 from stenographer.lib.logging.pipeline import UtteranceFilter
@@ -258,19 +255,7 @@ def _daemon(
     daemon._deliverer = _Deliverer()
     if refiner is not None:
         daemon._refiner = refiner
-    daemon._pipeline = UtterancePipeline(
-        min_speech_rms=cfg.audio.min_speech_rms,
-        worker=daemon._worker,
-        deliverer=daemon._deliverer,
-        refiner=daemon._refiner,
-        telemetry=daemon._telemetry,
-        publish_state=daemon._publish_state,
-        fail=daemon._fail,
-        play_cue=lambda name: _play_cue(daemon._feedback, name),
-        cancelled=daemon._cancel_pending,
-        cancel_state=lambda: cancel_state(shutting_down=daemon._stop_event.is_set()),
-        speech_filter=speech_filter,
-    )
+    daemon._pipeline = daemon._build_pipeline(daemon._deliverer, speech_filter)
     return daemon
 
 

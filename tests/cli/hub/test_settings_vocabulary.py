@@ -11,9 +11,9 @@ from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.vocabulary_dialog import VocabularyDialog
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
+from tests.cli.hub.support import _config_path
 from tests.cli.hub.test_settings_tabs import (
     IdleServices,
-    _config_path,
     _field,
     _plain,
     _screen_text,

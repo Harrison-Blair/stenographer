@@ -13,6 +13,7 @@ from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.widgets.field import Field
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
+from tests.cli.hub.support import _config_path, _fields
 
 
 class FakeServices:
@@ -23,20 +24,10 @@ class FakeServices:
         self.config = config
 
 
-def _config_path(tmp_path, content=None):
-    path = tmp_path / "config.toml"
-    path.write_text(default_toml() if content is None else content, encoding="utf-8")
-    return path
-
-
 async def _edit_cpu_threads(pilot, value):
     await pilot.press("3", "/")
     await pilot.press(*tuple("asr.cpu_threads"), "enter", "enter")
     await pilot.press("ctrl+a", "ctrl+k", *tuple(value), "enter")
-
-
-def _fields(app) -> list[Field]:
-    return list(app.settings_screen.query("#config-rows Field").results(Field))
 
 
 def _field(app, label):

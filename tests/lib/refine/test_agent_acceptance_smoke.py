@@ -9,7 +9,9 @@ inspect the output for all associations and details during machine acceptance.
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -17,8 +19,23 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED
-from tests.lib.refine.agent_acceptance_corpus import SEMANTIC_REGRESSIONS
 from tests.lib.refine.test_refine_smoke import refiner as production_refiner
+
+_PRESERVE = (
+    "Preserve every fact, request, uncertainty, condition, and authorization limit "
+    "in the spoken input: "
+)
+_rows = [
+    json.loads(line)
+    for line in Path(__file__)
+    .with_name("agent_acceptance_corpus.jsonl")
+    .read_text(encoding="utf-8")
+    .splitlines()
+]
+SEMANTIC_REGRESSIONS = [
+    (case_id, spoken, wrong, checklist if checklist is not None else _PRESERVE + spoken)
+    for case_id, spoken, wrong, checklist in _rows
+]
 
 installed_refiner = production_refiner
 

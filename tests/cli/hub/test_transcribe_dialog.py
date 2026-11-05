@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,20 +22,13 @@ from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
 from stenographer.lib.sessions import SessionStore
-from tests.cli.hub.test_library import FakeServices, _library, _rows, _screen_text, _until
+from tests.cli.hub.support import _screen_text
+from tests.cli.hub.test_library import FakeServices, _library, _rows, _until
 from tests.cli.hub.test_session_jobs import FakePlatform
-from tests.lib.files.test_engine import FakeAsrProcess, FakeAsrTransport, FakeSegmenter
+from tests.lib.files.test_engine import FakeSegmenter, _file_asr_process
+from tests.lib.transcribe.support import FakeAsrTransport
 
 FAIL = "\N{MULTIPLICATION SIGN}"
-
-
-@pytest.fixture(autouse=True)
-def _utc(monkeypatch):
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
 
 
 class RecordingServices(FakeServices):
@@ -217,7 +209,7 @@ def _engine_app(tmp_path: Path, home: Path, *, decoder=None) -> tuple[HubApp, Pa
             config,
             data_dir=data,
             decoder=decoder or SubprocessFfmpegDecoder(),
-            transport=FakeAsrTransport(FakeAsrProcess()),
+            transport=FakeAsrTransport(_file_asr_process()),
             segmenter_factory=FakeSegmenter,
             clock=lambda: datetime(2026, 10, 27, 9, 0, tzinfo=UTC),
         )
@@ -308,3 +300,6 @@ def test_transcribe_an_m4a_without_ffmpeg_shows_the_needs_ffmpeg_message(tmp_pat
             assert "\u00d7 needs ffmpeg" in _screen_text(app)
 
     asyncio.run(exercise())
+
+
+pytestmark = pytest.mark.usefixtures("utc")
