@@ -22,13 +22,10 @@ import sys
 from typing import TYPE_CHECKING
 
 from stenographer.cli.shared.config import with_config
-from stenographer.lib.transcribe.bark_download import MODEL_NAME
+from stenographer.lib.transcribe.bark_download import ASR_SIZE_TEXT, MODEL_NAME
 
 if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
-
-#: What the ASR build downloads and needs on disk while it runs.
-ASR_SIZE_TEXT = "about 1.6 GB download, 10 GiB free disk while it converts"
 
 #: The ASR model that ``--asr`` builds.
 ASR_MODEL_NAME = MODEL_NAME

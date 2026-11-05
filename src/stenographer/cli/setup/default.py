@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from typing import TextIO
 
-from stenographer.cli.setup.workflow import save_defaults
 from stenographer.cli.shared.terminal import open_console, report_save
+from stenographer.lib.config.document import save_defaults
 from stenographer.lib.config.errors import ConfigPersistenceError
 
 

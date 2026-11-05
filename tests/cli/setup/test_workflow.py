@@ -41,6 +41,7 @@ from stenographer.cli.shared.console import Console
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
 from stenographer.lib.platform.host_guidance import HostGuidance
+from stenographer.lib.refine import client as refine_client
 
 _CONFIG_PATH = pathlib.PurePosixPath("/tmp/custom.toml")
 
@@ -598,10 +599,10 @@ def test_prompt_device_still_offers_manual_entry_when_nothing_was_found():
 
 def test_binding_parsing_rejects_an_empty_and_an_unknown_key(key_vocabulary):
     with pytest.raises(ValueError, match="binding must be non-empty"):
-        setup._parse_binding("   ")
+        setup.validate_binding("   ")
     with pytest.raises(ValueError, match="unknown key"):
-        setup._parse_binding("KEY_NOT_A_KEY")
-    assert setup._parse_binding(" KEY_LEFTCTRL+KEY_F9 ") == "KEY_LEFTCTRL+KEY_F9"
+        setup.validate_binding("KEY_NOT_A_KEY")
+    assert setup.validate_binding(" KEY_LEFTCTRL+KEY_F9 ") == "KEY_LEFTCTRL+KEY_F9"
 
 
 def test_typed_binding_retries_until_the_chord_parses(key_vocabulary):
@@ -1601,7 +1602,7 @@ def test_refine_intro_says_where_the_transcript_would_go():
 def test_a_host_changed_to_non_loopback_is_warned_about_before_the_probe(monkeypatch):
     """Seen to FAIL before the fix: the loopback reassurance printed once at
     the top of the section, for the OLD (loopback) host; a newly typed remote
-    host reached ``_refine_models`` with no warning ever shown for it."""
+    host reached ``installed_model_names`` with no warning ever shown for it."""
     console = _console("yes\nhttps://ollama.example.com:8443\n\n\n\n")
     seen_before_probe: dict[str, str] = {}
 
@@ -1609,7 +1610,7 @@ def test_a_host_changed_to_non_loopback_is_warned_about_before_the_probe(monkeyp
         seen_before_probe["stdout"] = console.stdout.getvalue()
         return []
 
-    monkeypatch.setattr(setup, "_refine_models", fake_refine_models)
+    monkeypatch.setattr(refine_client, "installed_model_names", fake_refine_models)
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
 
@@ -1622,7 +1623,7 @@ def test_a_host_changed_to_non_loopback_is_warned_about_before_the_probe(monkeyp
 
 
 def test_keeping_the_same_non_loopback_host_does_not_double_the_warning(monkeypatch):
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     defaults = Config.defaults()
     remote_config = dataclasses.replace(
         defaults,
@@ -1650,7 +1651,7 @@ def test_moving_from_a_remote_host_to_loopback_gets_the_reassurance_too(monkeypa
         seen_before_probe["stdout"] = console.stdout.getvalue()
         return []
 
-    monkeypatch.setattr(setup, "_refine_models", fake_refine_models)
+    monkeypatch.setattr(refine_client, "installed_model_names", fake_refine_models)
     defaults = Config.defaults()
     remote_config = dataclasses.replace(
         defaults,
@@ -1676,7 +1677,7 @@ def test_moving_from_a_remote_host_to_loopback_gets_the_reassurance_too(monkeypa
 def test_the_quick_wizard_never_re_warns_about_a_host_it_never_asked_for(monkeypatch):
     """``ask_details=False`` skips the host prompt entirely, so the change
     that re-warns after it must be a complete no-op on this path."""
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     defaults = Config.defaults()
     remote_config = dataclasses.replace(
         defaults,
@@ -1707,7 +1708,7 @@ def test_turning_refine_off_never_probes_ollama(monkeypatch):
     def forbidden(host):
         raise AssertionError("a disabled stage must not reach the network")
 
-    monkeypatch.setattr(setup, "_refine_models", forbidden)
+    monkeypatch.setattr(refine_client, "installed_model_names", forbidden)
     console = _console("no\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
@@ -1718,7 +1719,9 @@ def test_turning_refine_off_never_probes_ollama(monkeypatch):
 
 
 def test_enabling_refine_lists_installed_models_and_takes_a_numbered_choice(monkeypatch):
-    monkeypatch.setattr(setup, "_refine_models", lambda host: ["first:tag", "second:tag"])
+    monkeypatch.setattr(
+        refine_client, "installed_model_names", lambda host: ["first:tag", "second:tag"]
+    )
     console = _console("yes\n\n2\n20\nyes\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
@@ -1732,7 +1735,7 @@ def test_enabling_refine_lists_installed_models_and_takes_a_numbered_choice(monk
 
 
 def test_an_absent_ollama_still_lets_the_model_be_named_for_a_later_pull(monkeypatch):
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     console = _console("yes\nsome/other:tag\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=False)
@@ -1743,12 +1746,12 @@ def test_an_absent_ollama_still_lets_the_model_be_named_for_a_later_pull(monkeyp
 
 
 def test_the_empty_listing_message_does_not_claim_the_server_never_answered(monkeypatch):
-    """``_refine_models`` returns ``[]`` both when nothing is listening at the
+    """``installed_model_names`` returns ``[]`` both when nothing is listening at the
     host and when a live Ollama simply has no models installed — the wizard
     cannot tell those apart, and the message must not pretend it can. Seen to
     FAIL before the fix: the old wording asserted unreachability outright,
     which is false in the second case."""
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     console = _console("yes\nsome/other:tag\n")
 
     setup._edit_refine_section(console, Config.defaults(), ask_details=False)
@@ -1788,7 +1791,7 @@ def test_refine_host_parser_rejects_credentials_and_a_hostless_url():
 def test_refine_host_prompt_in_the_wizard_normalizes_before_the_review_screen(monkeypatch):
     """Drives the real wizard prompt (not just the pure parser) to guard the
     seam that used to store the raw text verbatim via ``_prompt_string``."""
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     console = _console("yes\nlocalhost:11434\n\n\n\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
@@ -1797,7 +1800,7 @@ def test_refine_host_prompt_in_the_wizard_normalizes_before_the_review_screen(mo
 
 
 def test_refine_host_prompt_rejects_credentials_and_a_hostless_url_then_retries(monkeypatch):
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     console = _console("yes\nhttp://user:pass@evil:11434\nhttp://\nHTTP://127.0.0.1:11434\n\n\n\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
@@ -1814,7 +1817,7 @@ def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypa
     but broke the real save would be caught here and nowhere else."""
     from stenographer.lib.config.document import ConfigDocument
 
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     console = _console("yes\nlocalhost:11434\n\n\n\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
@@ -1828,7 +1831,7 @@ def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypa
 def test_pressing_enter_on_the_refine_prompt_leaves_it_enabled_by_default(monkeypatch):
     """Refine now defaults to on, so a blank answer must walk into the
     host/model sub-flow rather than the old off-by-default behaviour."""
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     console = _console("\n\n\n\n\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)

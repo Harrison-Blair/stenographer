@@ -410,10 +410,10 @@ def default_model_status() -> tuple[ModelEntry, ...]:
     """Return the speech model and each live model, present or missing on disk."""
     import os
 
-    from stenographer.cli.model.download.handler import ASR_SIZE_TEXT
     from stenographer.lib.live.models import LIVE_MODELS
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
+    from stenographer.lib.transcribe.bark_download import ASR_SIZE_TEXT
 
     live_dir = live_model_dir(current_platform().data_dir(os.environ, pathlib.Path.home()))
     names = {VAD_MODEL.filename: "vad", SPEAKER_MODEL.filename: "speaker"}

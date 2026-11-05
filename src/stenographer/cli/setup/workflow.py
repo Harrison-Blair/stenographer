@@ -30,17 +30,16 @@ from stenographer.cli.shared.terminal import (
 )
 from stenographer.lib.config.constants import (
     ALLOWED_LOG_LEVELS,
-    ALLOWED_REFINE_SCHEMES,
     MAX_REFINE_WORDS,
     MIN_REFINE_WORDS,
 )
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
+from stenographer.lib.hotkey.binding import validate_binding
 
 if TYPE_CHECKING:
     from stenographer.lib.platform.host_guidance import HostGuidance
 
-_CLEAR = "clear"
 _SECTIONS = ("hotkey", "audio", "asr", "feedback", "refine")
 #: The keys the quick wizard edits, in the order its review screen lists them.
 _QUICK_REVIEW_FIELDS = (
@@ -57,13 +56,6 @@ _QUICK_REVIEW_FIELDS = (
     ("refine", "enabled"),
     ("refine", "model"),
 )
-
-
-def save_defaults(path: pathlib.Path):
-    """Write the annotated default config through the shared preservation layer."""
-    from stenographer.lib.config.document import ConfigDocument
-
-    return ConfigDocument.defaults(path).save(Config.defaults())
 
 
 def parse_choice(text: str, current: str, choices: Iterable[str]) -> str:
@@ -259,20 +251,10 @@ def parse_refine_host(text: str, current: str) -> str:
     the whole session at save time. The rejections mirror ``_build_refine``.
     """
 
-    from stenographer.lib.refine.endpoints import host_name, normalize_host, userinfo
+    from stenographer.lib.refine.endpoints import validated_host
 
     value = text.strip()
-    if not value:
-        return current
-    host = normalize_host(value)
-    scheme = host.partition("://")[0]
-    if scheme not in ALLOWED_REFINE_SCHEMES:
-        raise ValueError("must be an http:// or https:// URL")
-    if not host_name(host):
-        raise ValueError("must name a host")
-    if userinfo(host):
-        raise ValueError("must not embed credentials")
-    return host
+    return validated_host(value) if value else current
 
 
 def parse_model_choice(text: str, current: str, choices: Sequence[str]) -> str:
@@ -398,14 +380,6 @@ def _prompt_sound_pack(console: Console, current: str, config_dir: pathlib.Path)
     )
 
 
-def _refine_models(host: str) -> list[str]:
-    """Model tags the configured Ollama reports; ``[]`` when nothing answers."""
-
-    from stenographer.lib.refine.client import installed_model_names
-
-    return installed_model_names(host)
-
-
 def _edit_refine_section(console: Console, config: Config, *, ask_details: bool) -> Config:
     """Prompt the refine keys both wizards share.
 
@@ -415,6 +389,7 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
     the configured host and is skipped entirely while the stage stays off.
     """
 
+    from stenographer.lib.refine.client import installed_model_names
     from stenographer.lib.refine.endpoints import is_loopback
 
     refine = config.refine
@@ -445,7 +420,7 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
         # warning as the only sentence on screen for the whole section.
         if refine.host != previous_host:
             console.write(refine_host_line(refine.host, loopback=is_loopback(refine.host)))
-    installed = _refine_models(refine.host)
+    installed = installed_model_names(refine.host)
     console.write(refine_model_hint())
     if installed:
         console.write("Installed Ollama models:")
@@ -486,10 +461,6 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
     return dataclasses.replace(config, refine=refine)
 
 
-def _edit_refine(console: Console, config: Config) -> Config:
-    return _edit_refine_section(console, config, ask_details=True)
-
-
 def _audio_devices() -> list[tuple[str, str]]:
     """Return selectable input devices. An unusable PortAudio means no suggestions."""
 
@@ -514,7 +485,7 @@ def parse_device_choice(
     value = text.strip()
     if not value:
         return current
-    if value.casefold() in {_CLEAR, "auto", "automatic"}:
+    if value.casefold() in {"clear", "auto", "automatic"}:
         return None
     if value.isdecimal() and 1 <= int(value) <= len(devices):
         return devices[int(value) - 1][0]
@@ -541,26 +512,11 @@ def _prompt_device(
     return console.validated(prompt, lambda text: parse_device_choice(text, current, devices))
 
 
-def _parse_binding(text: str) -> str:
-    value = text.strip()
-    if not value:
-        raise ValueError("binding must be non-empty")
-    from stenographer.lib.hotkey.binding import parse_binding
-    from stenographer.lib.hotkey.errors import BindingError
-    from stenographer.lib.platform import current_platform
-
-    try:
-        parse_binding(value, current_platform().keys())
-    except BindingError as exc:
-        raise ValueError(str(exc)) from exc
-    return value
-
-
 def _prompt_typed_binding(console: Console, current: str, label: str = "Binding") -> str:
     return str(
         console.validated(
             f"{label} [{current}]: ",
-            lambda text: _parse_binding(text.strip() or current),
+            lambda text: validate_binding(text.strip() or current),
         )
     )
 
@@ -790,13 +746,8 @@ def _editors(config_dir: pathlib.Path) -> Mapping[str, Callable[[Console, Config
         "audio": _edit_audio,
         "asr": _edit_asr,
         "feedback": functools.partial(_edit_feedback, config_dir=config_dir),
-        "refine": _edit_refine,
+        "refine": functools.partial(_edit_refine_section, ask_details=True),
     }
-
-
-def _review(console: Console, config: Config) -> None:
-    for line in review_lines(config):
-        console.write(line)
 
 
 def _wizard(console: Console, initial: Config, config_dir: pathlib.Path) -> Config:
@@ -805,7 +756,8 @@ def _wizard(console: Console, initial: Config, config_dir: pathlib.Path) -> Conf
     for section in _SECTIONS:
         config = editors[section](console, config)
     while True:
-        _review(console, config)
+        for line in review_lines(config):
+            console.write(line)
         action = console.validated(
             "Save [Enter/S], Cancel [C], or re-edit "
             "1 Hotkey / 2 Audio / 3 ASR / 4 Feedback / 5 Refine: ",
@@ -943,8 +895,7 @@ def _guided_setup(
         missing_required=False,
     )
     if quick and exit_code == 0:
-        _print_quick_tryout(
-            console,
+        for line in quick_tryout_lines(
             config,
             path,
             guidance,
@@ -952,7 +903,8 @@ def _guided_setup(
             service_enabled=caps.service_enabled,
             service_active=caps.service_active,
             restart_pending=restart_pending,
-        )
+        ):
+            console.write(line)
     return exit_code
 
 
@@ -998,29 +950,6 @@ def _offer_refine_pull(console: Console, config: Config, *, quick: bool) -> bool
         return True
     console.write("Refine model pull complete.")
     return False
-
-
-def _print_quick_tryout(
-    console: Console,
-    config: Config,
-    path: pathlib.Path,
-    guidance: HostGuidance,
-    *,
-    custom_config: bool,
-    service_enabled: str | None,
-    service_active: str | None,
-    restart_pending: bool,
-) -> None:
-    for line in quick_tryout_lines(
-        config,
-        path,
-        guidance,
-        custom_config=custom_config,
-        service_enabled=service_enabled,
-        service_active=service_active,
-        restart_pending=restart_pending,
-    ):
-        console.write(line)
 
 
 def run(
@@ -1072,10 +1001,7 @@ def run(
 
     try:
         result = document.save(reviewed)
-    except ConfigPersistenceError as exc:
-        console.error(str(exc))
-        return 1
-    except ConfigError as exc:
+    except (ConfigPersistenceError, ConfigError) as exc:
         console.error(str(exc))
         return 1
     except KeyboardInterrupt:

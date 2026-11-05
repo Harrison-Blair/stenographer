@@ -34,6 +34,20 @@ def normalize_host(host: str) -> str:
     return f"{scheme}://{rest.rstrip('/')}"
 
 
+def validated_host(text: str) -> str:
+    """Normalize and validate a configured Ollama host."""
+    from stenographer.lib.config.constants import ALLOWED_REFINE_SCHEMES
+
+    host = normalize_host(text)
+    if host.partition("://")[0] not in ALLOWED_REFINE_SCHEMES:
+        raise ValueError("must be an http:// or https:// URL")
+    if not host_name(host):
+        raise ValueError("must name a host")
+    if userinfo(host):
+        raise ValueError("must not embed credentials")
+    return host
+
+
 def userinfo(host: str) -> str:
     """Credentials embedded in *host*, or ``""``. PURE."""
 

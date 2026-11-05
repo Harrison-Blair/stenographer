@@ -474,7 +474,7 @@ class ChecksTab(Vertical):
             self.app.run_worker(self._write_defaults(path), group="setup", exclusive=True)
 
     async def _write_defaults(self, path: pathlib.Path) -> None:
-        from stenographer.cli.setup.workflow import save_defaults
+        from stenographer.lib.config.document import save_defaults
 
         app = self.app
         try:

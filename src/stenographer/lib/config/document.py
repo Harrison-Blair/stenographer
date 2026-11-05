@@ -243,3 +243,8 @@ def _atomic_replace(target: pathlib.Path, content: bytes, mode: int | None) -> N
         if temporary is not None:
             with contextlib.suppress(OSError):
                 temporary.unlink()
+
+
+def save_defaults(path: pathlib.Path) -> SaveResult:
+    """Write the annotated default config through the preservation layer."""
+    return ConfigDocument.defaults(path).save(Config.defaults())
