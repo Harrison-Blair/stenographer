@@ -75,15 +75,23 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             cue_player=_shown(caps.cue_player),
         )
     )
-    for name in ("hotkey", "audio"):
-        section = getattr(cfg, name)
-        values = {
-            (
-                "agent_binding" if name == "hotkey" and field.name == "binding" else field.name
-            ): _shown(getattr(section, field.name))
-            for field in dataclasses.fields(section)
-        }
-        log.info(fmt_event("banner", f"config_{name}", **values))
+    hotkey = {
+        ("agent_binding" if field.name == "binding" else field.name): _shown(
+            getattr(cfg.hotkey, field.name)
+        )
+        for field in dataclasses.fields(cfg.hotkey)
+    }
+    log.info(fmt_event("banner", "config_hotkey", **hotkey))
+    log.info(
+        fmt_event(
+            "banner",
+            "config_audio",
+            **{
+                field.name: _shown(getattr(cfg.audio, field.name))
+                for field in dataclasses.fields(cfg.audio)
+            },
+        )
+    )
     asr = cfg.asr
     log.info(
         fmt_event(
