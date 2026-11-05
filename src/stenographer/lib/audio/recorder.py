@@ -13,15 +13,15 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
+from enum import Enum, auto
 from typing import Any
 
 import numpy as np
 
+from stenographer.lib.audio.callback_clock import CallbackClock
 from stenographer.lib.audio.constants import SAMPLE_RATE
-from stenographer.lib.audio.metrics import elapsed_ms, reduce_clock
 from stenographer.lib.audio.records import CaptureStats
 from stenographer.lib.audio.resample import _resample_poly
-from stenographer.lib.audio.state import RecorderState
 from stenographer.lib.audio.streaming_resampler import StreamingResampler
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 
@@ -38,6 +38,14 @@ _ERR_BAD_CHANNELS = -9998
 
 
 _ERR_BAD_SAMPLE_RATE = -9997
+
+
+class RecorderState(Enum):
+    """Retained audio-stream lifecycle states."""
+
+    UNPREPARED = auto()
+    PREPARED = auto()
+    CAPTURING = auto()
 
 
 class Recorder:
@@ -337,10 +345,9 @@ class Recorder:
             input_frames = self._frames
             overflow = self._overflow
             capped = self._capped
-            callback_clock = reduce_clock(
+            callback_clock = CallbackClock.reduce_clock(
                 self._clock_metadata,
                 rate=self._device_rate,
-                first_callback_at=self._first_callback_at,
             )
             self._state = RecorderState.PREPARED
             if self._streaming:
@@ -381,9 +388,11 @@ class Recorder:
             output_frames=output_frames,
             overflow=overflow,
             capped=capped,
-            first_callback_at=callback_clock.first_callback_at,
-            activation_to_callback_ms=elapsed_ms(
-                self._activation_started_at, callback_clock.first_callback_at
+            first_callback_at=self._first_callback_at,
+            activation_to_callback_ms=(
+                None
+                if self._first_callback_at is None
+                else (self._first_callback_at - self._activation_started_at) * 1000
             ),
             max_adc_gap_ms=callback_clock.max_adc_gap_ms,
             adc_discontinuities=callback_clock.adc_discontinuities,
@@ -466,15 +475,3 @@ class Recorder:
         the capture's cost without the daemon re-deriving it.
         """
         return self._last_capture
-
-    @property
-    def is_active(self) -> bool:
-        return self._state is RecorderState.CAPTURING
-
-    @property
-    def is_prepared(self) -> bool:
-        return self._state is RecorderState.PREPARED
-
-    @property
-    def state(self) -> RecorderState:
-        return self._state

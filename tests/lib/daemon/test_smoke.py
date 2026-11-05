@@ -72,7 +72,7 @@ import numpy as np
 import pytest
 import sounddevice
 
-from stenographer.lib.audio.recorder import Recorder
+from stenographer.lib.audio.recorder import Recorder, RecorderState
 from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.linux.lock import (
     LOCK_PATH,
@@ -93,14 +93,14 @@ def test_prepared_recorder_is_stopped_and_has_no_samples():
     recorder = _recorder()
     try:
         recorder.prepare()
-        assert recorder.is_prepared is True
-        assert recorder.is_active is False
+        assert recorder._state is RecorderState.PREPARED
+        assert recorder._state is not RecorderState.CAPTURING
         assert recorder._stream.active is False
         time.sleep(0.2)
         assert recorder._frames == 0
         assert recorder._blocks == []
         assert recorder.stop().size == 0
-        assert recorder.is_prepared is True
+        assert recorder._state is RecorderState.PREPARED
     finally:
         recorder.close()
 
@@ -118,7 +118,7 @@ def test_two_real_capture_cycles_reuse_one_stream():
             capture_seconds = time.perf_counter() - started_at
             captures.append((recorder.stop(), capture_seconds))
             assert recorder._stream is stream
-            assert recorder.is_prepared is True
+            assert recorder._state is RecorderState.PREPARED
         for samples, capture_seconds in captures:
             assert samples.dtype == np.float32
             assert samples.ndim == 1
@@ -155,7 +155,7 @@ def test_input_overflow_preserves_real_stream_and_buffered_audio(caplog):
 
         assert samples.size > 0
         assert recorder._stream is stream
-        assert recorder.is_prepared is True
+        assert recorder._state is RecorderState.PREPARED
         assert "recorder: input_overflow" in caplog.text
         assert "recorder: capture_failed" not in caplog.text
     finally:
@@ -167,8 +167,8 @@ def test_recorder_close_is_idempotent():
     recorder.prepare()
     recorder.close()
     recorder.close()
-    assert recorder.is_active is False
-    assert recorder.is_prepared is False
+    assert recorder._state is not RecorderState.CAPTURING
+    assert recorder._state is not RecorderState.PREPARED
 
 
 def test_real_lock_path_mutual_exclusion():
