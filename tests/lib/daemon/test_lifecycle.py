@@ -11,6 +11,7 @@ import time
 import numpy as np
 import pytest
 
+from stenographer.lib.audio.recorder import RecorderState
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
@@ -52,8 +53,8 @@ def test_build_wires_collaborators_lazily():
         assert daemon._listener is not None
         assert daemon._deliverer is not None
         assert daemon._worker.is_alive() is False
-        assert daemon._recorder.is_active is False
-        assert daemon._recorder.is_prepared is False
+        assert daemon._recorder._state is not RecorderState.CAPTURING
+        assert daemon._recorder._state is not RecorderState.PREPARED
     finally:
         # stop() before run() must be a safe no-op.
         daemon.stop()

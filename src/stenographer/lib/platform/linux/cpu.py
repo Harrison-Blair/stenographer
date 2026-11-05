@@ -35,11 +35,9 @@ def physical_core_count() -> int | None:
 def count_physical_cores(affinity: set[int], topology_root: Path) -> int | None:
     """Count unique ``(physical_package_id, core_id)`` pairs under *topology_root*.
 
-    ``None`` when the affinity set is empty or any topology file is missing or
+    ``None`` when any topology file is missing or
     unreadable — a partial count would silently under-report the machine.
     """
-    if not affinity:
-        return None
     physical: set[tuple[str, str]] = set()
     try:
         for cpu in affinity:

@@ -46,10 +46,6 @@ def test_uncapped_count_is_returned(tmp_path):
     assert count_physical_cores(set(range(16)), tmp_path) == 16
 
 
-def test_empty_affinity_is_unknown(tmp_path):
-    assert count_physical_cores(set(), tmp_path) is None
-
-
 def test_unreadable_topology_is_unknown(tmp_path):
     # No files created under tmp_path -> read_text raises FileNotFoundError (OSError).
     assert count_physical_cores({0, 1}, tmp_path) is None

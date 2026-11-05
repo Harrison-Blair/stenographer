@@ -62,11 +62,6 @@ class LinuxPlatform(DiagnosticsHostMixin):
 
         return data_dir(env, home)
 
-    def runtime_dir(self, env: Mapping[str, str]) -> Path:
-        from stenographer.lib.platform.linux.dirs import runtime_dir
-
-        return runtime_dir(env)
-
     # --- hotkey / input ---
     def keys(self) -> KeyTable:
         from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable

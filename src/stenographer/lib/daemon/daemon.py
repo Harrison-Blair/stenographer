@@ -777,8 +777,6 @@ class Daemon:
         if self._deliverer is not None:
             with contextlib.suppress(Exception):
                 self._deliverer.close()
-        with contextlib.suppress(Exception):
-            self._feedback.close()
         with self._lock:
             # A recording torn down mid-flight still owes the log its one line;
             # without this a press-then-stop leaves an utterance unaccounted for.

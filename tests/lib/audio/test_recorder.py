@@ -24,9 +24,9 @@ from stenographer.lib.audio.recorder import (
     _ERR_BAD_CHANNELS,
     _ERR_BAD_SAMPLE_RATE,
     Recorder,
+    RecorderState,
 )
 from stenographer.lib.audio.resample import _resample_poly
-from stenographer.lib.audio.state import RecorderState
 
 _LOGGER = "stenographer.lib.audio.recorder"
 
@@ -324,9 +324,9 @@ def test_negotiation_asks_for_the_asr_rate_first_and_retains_a_stopped_stream():
     recorder = _prepared(sounddevice)
 
     assert sounddevice.attempts == [(16000, 2, 1)]
-    assert recorder.state is RecorderState.PREPARED
-    assert recorder.is_prepared is True
-    assert recorder.is_active is False
+    assert recorder._state is RecorderState.PREPARED
+    assert recorder._state is RecorderState.PREPARED
+    assert recorder._state is not RecorderState.CAPTURING
     assert recorder._device_rate == 16000
     assert recorder._channels == 2
     assert recorder._max_frames == 5 * 16000
@@ -366,7 +366,7 @@ def test_an_unrelated_portaudio_error_is_reported_rather_than_retried():
         recorder.prepare(sounddevice)
 
     assert len(sounddevice.attempts) == 1
-    assert recorder.state is RecorderState.UNPREPARED
+    assert recorder._state is RecorderState.UNPREPARED
     assert recorder._stream is None
 
 
@@ -380,7 +380,7 @@ def test_a_device_that_rejects_every_combination_raises_its_own_rejection():
     assert exc.value.args[1] == _ERR_BAD_SAMPLE_RATE
     # Five rates for each of the two channel counts, and nothing retained.
     assert len(sounddevice.attempts) == 10
-    assert recorder.state is RecorderState.UNPREPARED
+    assert recorder._state is RecorderState.UNPREPARED
     assert recorder._stream is None
 
 
@@ -389,7 +389,7 @@ def test_an_unreadable_device_name_does_not_fail_the_negotiation():
 
     recorder = _prepared(sounddevice)
 
-    assert recorder.is_prepared is True
+    assert recorder._state is RecorderState.PREPARED
     assert recorder._device_name is None
 
 
@@ -400,8 +400,8 @@ def test_start_activates_the_retained_stream_and_refuses_a_second_start():
     recorder.start()
 
     assert sounddevice.streams[0].active is True
-    assert recorder.state is RecorderState.CAPTURING
-    assert recorder.is_active is True
+    assert recorder._state is RecorderState.CAPTURING
+    assert recorder._state is RecorderState.CAPTURING
     assert recorder.last_capture is None
     with pytest.raises(RuntimeError, match="already capturing"):
         recorder.start()
@@ -438,7 +438,7 @@ def test_a_mono_capture_returns_its_samples_and_the_cost_of_taking_them():
     assert stats.activation_to_callback_ms is not None
     assert stats.finalize_ms is not None
     # The stream is stopped and retained for the next press, not closed.
-    assert recorder.state is RecorderState.PREPARED
+    assert recorder._state is RecorderState.PREPARED
     assert sounddevice.streams[0].stops == 1
     assert sounddevice.streams[0].closes == 0
 
@@ -601,7 +601,7 @@ def test_stopping_a_merely_prepared_recorder_returns_no_audio():
 
     assert audio.size == 0
     assert audio.dtype == np.float32
-    assert recorder.state is RecorderState.PREPARED
+    assert recorder._state is RecorderState.PREPARED
     assert recorder.last_capture is None
     assert sounddevice.streams[0].stops == 0
 
@@ -618,7 +618,7 @@ def test_a_stream_that_died_during_capture_discards_the_whole_capture(caplog):
 
     # An uncertain capture is never half-delivered: the stream is invalidated
     # and the buffered audio is dropped rather than returned.
-    assert recorder.state is RecorderState.UNPREPARED
+    assert recorder._state is RecorderState.UNPREPARED
     assert recorder.last_capture is None
     assert recorder._blocks == []
     assert sounddevice.streams[0].closes == 1
@@ -638,7 +638,7 @@ def test_a_failing_stream_stop_also_discards_the_capture(caplog):
     with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(FakePortAudioError):
         recorder.stop()
 
-    assert recorder.state is RecorderState.UNPREPARED
+    assert recorder._state is RecorderState.UNPREPARED
     assert recorder.last_capture is None
     assert "phase=stop" in _warnings(caplog)[0]
 
@@ -653,7 +653,7 @@ def test_close_releases_the_stream_and_lets_the_next_press_reselect_a_default():
     recorder.close()
 
     assert sounddevice.streams[0].closes == 1
-    assert recorder.state is RecorderState.UNPREPARED
+    assert recorder._state is RecorderState.UNPREPARED
     assert recorder._stream is None
     # The default may have moved while the daemon was idle.
     assert recorder._selected_device is None
@@ -676,7 +676,7 @@ def test_a_failing_close_is_reported_and_swallowed(caplog):
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         recorder.close()
 
-    assert recorder.state is RecorderState.UNPREPARED
+    assert recorder._state is RecorderState.UNPREPARED
     message = _warnings(caplog)[0]
     assert "recorder: close_failed" in message
     assert "error=FakePortAudioError" in message
@@ -726,7 +726,7 @@ def test_a_device_whose_name_is_not_text_is_simply_unnamed():
 
     recorder = _prepared(sounddevice)
 
-    assert recorder.is_prepared is True
+    assert recorder._state is RecorderState.PREPARED
     assert recorder._device_name is None
 
 
@@ -736,7 +736,7 @@ def test_activation_refuses_to_run_without_a_negotiated_stream():
     with pytest.raises(RuntimeError, match="no prepared stream"):
         recorder._activate(recovery="none")
 
-    assert recorder.state is RecorderState.UNPREPARED
+    assert recorder._state is RecorderState.UNPREPARED
 
 
 def test_a_retained_stream_that_will_not_activate_is_replaced_exactly_once(caplog):
@@ -752,7 +752,7 @@ def test_a_retained_stream_that_will_not_activate_is_replaced_exactly_once(caplo
     assert len(sounddevice.streams) == 2
     assert sounddevice.streams[0].closes == 1
     assert sounddevice.streams[1].active is True
-    assert recorder.state is RecorderState.CAPTURING
+    assert recorder._state is RecorderState.CAPTURING
 
     warnings = _warnings(caplog)
     assert len(warnings) == 1
@@ -787,7 +787,7 @@ def test_a_recovery_that_also_fails_to_activate_gives_up(caplog):
     assert len(sounddevice.attempts) == 2
     assert len(sounddevice.streams) == 2
     assert [stream.closes for stream in sounddevice.streams] == [1, 1]
-    assert recorder.state is RecorderState.UNPREPARED
+    assert recorder._state is RecorderState.UNPREPARED
     assert recorder._stream is None
     warnings = _warnings(caplog)
     assert "recorder: activation_failed" in warnings[0]
@@ -828,7 +828,7 @@ def test_a_later_prepare_reuses_the_module_the_recorder_was_built_on():
     assert recorder._sounddevice is sounddevice
     assert len(sounddevice.attempts) == 2
     assert len(sounddevice.streams) == 2
-    assert recorder.is_prepared is True
+    assert recorder._state is RecorderState.PREPARED
 
 
 def test_preparing_an_already_prepared_recorder_is_a_no_op():

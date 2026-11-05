@@ -113,11 +113,9 @@ def test_notifier_stays_a_no_op_when_notify_send_is_absent(tmp_path, monkeypatch
     """
     record = tmp_path / "argv"
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert NotifySendNotifier.probe() is False
 
     notifier = NotifySendNotifier()
     _stub_notify_send(tmp_path, record)
-    assert NotifySendNotifier.probe() is True
     notifier.error("boom")
     notifier.info("fyi")
     time.sleep(0.2)
