@@ -55,9 +55,7 @@ the application and tests, development scripts, packaging files, workflows,
 and explicitly listed metadata, documentation, and bundled assets. Local
 recordings, downloaded models, caches, build output, and agent/editor settings
 stay ignored. Shared guidance remains in `AGENTS.md` and `CLAUDE.md`.
-The curated [code-smell reference](docs/reference/guru/code-smells.md) and
-[refactoring techniques](docs/reference/guru/refactoring-techniques.md) remain
-tracked together under `docs/reference/guru/`. PyInstaller collects only the
+PyInstaller collects only the
 application entry point, modules, and assets.
 
 For a new file type, documentation file, or asset, update both `.gitignore`

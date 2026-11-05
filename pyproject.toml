@@ -122,7 +122,7 @@ exclude = [
     "!/.github/workflows/",
     "!/.github/workflows/*.yml",
     "!/.github/workflows/*.yaml",
-    # Maintained documentation and curated Refactoring.Guru references.
+    # Maintained documentation.
     "!/docs/",
     "!/docs/architecture.md",
     "!/docs/building.md",
@@ -131,10 +131,6 @@ exclude = [
     "!/docs/hub.md",
     "!/docs/transcription-experiments.md",
     "!/docs/usage.md",
-    "!/docs/reference/",
-    "!/docs/reference/guru/",
-    "!/docs/reference/guru/code-smells.md",
-    "!/docs/reference/guru/refactoring-techniques.md",
     # GitHub Pages site; the icon and font are copied from src/ at deploy time.
     "!/site/",
     "!/site/index.html",
