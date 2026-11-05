@@ -57,7 +57,7 @@ class EngineCard(Frame):
     def state_text(state: str) -> Text:
         """Colour the leading word of the state line by its tone."""
         word = state.split(" ", 1)[0]
-        tone = _STATE_TONES.get(word, "dim")
+        tone = _STATE_TONES[word]
         text = Text(no_wrap=True)
         text.append(word, style=StatusToken.TONES[tone])
         text.append(state[len(word) :])

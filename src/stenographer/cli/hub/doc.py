@@ -24,10 +24,8 @@
 - rename_dialog.py: Rename one speaker of a live or saved session.
 - services.py: Own recording, playback, and shared session services.
 - session_jobs.py: Reprocess saved transcripts with current models and settings.
-- speaker_select.py: Choose a speaker in the rename dialog.
+- speaker_select.py: Choose a speaker and mark the highlighted choice without a fill.
 - transcribe_dialog.py: Choose an audio file and its options; return the file job.
-- speaker_select_overlay.py: Mark the highlighted speaker choice without a fill.
-- selection.py: Render selected rows with an accent marker and no fill.
 - settings_screen.py: Edit the configuration by tab and host the Checks tab.
 - setup_test.py: Run the setup workflow probes behind the Checks test key.
 - vocabulary_dialog.py: Add, edit and delete the refine vocabulary terms.
