@@ -104,12 +104,9 @@ def _validate_output(
     word_timestamps: list[tuple[float, float]],
     word_count: int,
     audio_seconds: float,
-    vad_seconds: float,
 ) -> None:
     """Reject invalid timestamps and decoder-runaway word density. Messages carry
     no transcript content so pathological output never leaks dictated text."""
-    if not math.isfinite(vad_seconds) or vad_seconds < 0:
-        raise PathologicalOutputError("invalid VAD duration")
     tolerance = 1.0
     for start, end in (*segment_timestamps, *word_timestamps):
         if (
@@ -120,7 +117,7 @@ def _validate_output(
             or end > audio_seconds + tolerance
         ):
             raise PathologicalOutputError("invalid decoder timestamp")
-    word_limit = max(_MIN_WORD_LIMIT, math.ceil(_WORDS_PER_VAD_SECOND * vad_seconds))
+    word_limit = max(_MIN_WORD_LIMIT, math.ceil(_WORDS_PER_VAD_SECOND * audio_seconds))
     if word_count > word_limit:
         raise PathologicalOutputError(
             f"decoder word density exceeded limit ({word_count} > {word_limit})"
@@ -131,7 +128,6 @@ def _assemble(
     segments: list[SegmentInfo],
     *,
     audio_seconds: float,
-    vad_seconds: float,
 ) -> TranscriptionResult:
     """Validate the segments and assemble the transcript."""
     text = "".join(seg.text for seg in segments).strip()
@@ -141,8 +137,7 @@ def _assemble(
         word_timestamps=word_timestamps,
         word_count=len(word_timestamps),
         audio_seconds=audio_seconds,
-        vad_seconds=vad_seconds,
     )
     return TranscriptionResult(
-        text=text, duration_seconds=audio_seconds, segments=segments, vad_seconds=vad_seconds
+        text=text, duration_seconds=audio_seconds, segments=segments, vad_seconds=audio_seconds
     )

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import dataclasses
-import math
 
 import numpy as np
 import pytest
@@ -53,7 +52,6 @@ def _valid_kwargs():
         "word_timestamps": [(0.0, 0.5), (0.5, 1.0)],
         "word_count": 2,
         "audio_seconds": 2.0,
-        "vad_seconds": 1.5,
     }
 
 
@@ -76,23 +74,9 @@ def test_validate_output_rejects_timestamp_past_audio():
         _validate_output(**kwargs)
 
 
-def test_validate_output_rejects_nonfinite_vad():
-    kwargs = _valid_kwargs()
-    kwargs["vad_seconds"] = math.inf
-    with pytest.raises(PathologicalOutputError):
-        _validate_output(**kwargs)
-
-
-def test_validate_output_rejects_negative_vad():
-    kwargs = _valid_kwargs()
-    kwargs["vad_seconds"] = -0.1
-    with pytest.raises(PathologicalOutputError):
-        _validate_output(**kwargs)
-
-
 def test_validate_output_rejects_word_density_runaway():
     kwargs = _valid_kwargs()
-    kwargs["vad_seconds"] = 1.0  # limit = max(12, ceil(8*1)) = 12
+    kwargs["audio_seconds"] = 1.0  # limit = max(12, ceil(8*1)) = 12
     kwargs["word_count"] = 13
     with pytest.raises(PathologicalOutputError):
         _validate_output(**kwargs)
@@ -101,7 +85,7 @@ def test_validate_output_rejects_word_density_runaway():
 def test_validate_output_message_has_no_transcript_text():
     # The word "hello" is never passed in; the message must be counts-only.
     kwargs = _valid_kwargs()
-    kwargs["vad_seconds"] = 1.0
+    kwargs["audio_seconds"] = 1.0
     kwargs["word_count"] = 13
     with pytest.raises(PathologicalOutputError) as exc:
         _validate_output(**kwargs)
@@ -118,10 +102,10 @@ def test_assemble_keeps_every_segment_and_concatenates():
     w1 = WordInfo(0.0, 0.5, "hi")
     w2 = WordInfo(1.0, 1.5, "there")
     segments = [_segment(0.0, 0.5, " hi ", [w1]), _segment(1.0, 1.5, "there", [w2])]
-    result = _assemble(segments, audio_seconds=2.0, vad_seconds=1.5)
+    result = _assemble(segments, audio_seconds=2.0)
     assert result.text == "hi there"
     assert result.duration_seconds == 2.0
-    assert result.vad_seconds == 1.5
+    assert result.vad_seconds == 2.0
     assert result.segments == segments
 
 
@@ -129,7 +113,7 @@ def test_assemble_validates_word_density():
     words = [WordInfo(0.0, 0.01, "x") for _ in range(13)]
     segments = [_segment(0.0, 1.0, "x" * 13, words)]
     with pytest.raises(PathologicalOutputError):
-        _assemble(segments, audio_seconds=1.5, vad_seconds=1.0)
+        _assemble(segments, audio_seconds=1.5)
 
 
 def test_segment_info_has_no_speech_probability():

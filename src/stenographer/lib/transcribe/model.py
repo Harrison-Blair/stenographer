@@ -131,7 +131,6 @@ class Model:
         result = _assemble(
             decode_segments(decoded.text, words),
             audio_seconds=audio_seconds,
-            vad_seconds=audio_seconds,
         )
         log.info(
             "asr: decode_complete elapsed_ms=%d audio_frames=%d vad_frames=%d "
@@ -146,5 +145,4 @@ class Model:
         return result
 
     def close(self) -> None:
-        if hasattr(self, "_impl"):
-            del self._impl
+        del self._impl
