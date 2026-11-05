@@ -31,7 +31,7 @@
     <section class="hero">
       <div class="hero-copy">
         <h1>Dictation that stays on your machine.</h1>
-        <p class="lead">Press a hotkey, speak, and your words land at your cursor. Local transcription runs on your own hardware, with no account. Your audio and transcripts never leave your machine.</p>
+        <p class="lead">Press a hotkey, speak, and your words land at your cursor. Local transcription runs on your own hardware, with no account. Your audio stays on your machine. Transcripts stay local by default; a configured remote refine host receives them.</p>
         <div class="cmd" id="quick-install">
           <pre><code>curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start</code></pre>
           <button type="button" id="copy" class="copy" aria-label="Copy the quick-install command">Copy</button>
@@ -81,9 +81,9 @@
 
       <div class="two">
         <div>
-          <h3>What never leaves your machine</h3>
+          <h3>What stays on your machine</h3>
           <ul class="never">
-            <li>Your audio, your transcripts, your configuration, and your device and model names.</li>
+            <li>Your audio, configuration, and device and model names. Transcripts stay local by default; a configured remote refine host receives them.</li>
             <li>Logs carry timings and counts, never what you said.</li>
             <li>The optional pill never sees your transcript or your raw audio.</li>
             <li>Your dictation statistics are local and numeric, yours to export or delete.</li>
@@ -104,7 +104,7 @@ update_check = false</code></pre>
       <ol class="steps">
         <li>
           <b>Check your essentials.</b>
-          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. <code>wl-paste</code>, from the same package, lets it restore your previous clipboard item. Run <code>stenographer doctor</code> and it tells you what you are missing and how to fix it.</p>
+          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. <code>wl-paste</code>, from the same package, lets it restore your previous clipboard item.</p>
         </li>
         <li>
           <b>Run the quick install</b> above, or build it yourself using the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">build guide</a>.
@@ -115,7 +115,7 @@ python3 -m venv .venv
 scripts/install.sh --no-start</code></pre>
         </li>
         <li>
-          <b>Configure it</b> and build the speech model when the wizard offers.
+          <b>Configure it</b> and build the speech model when the wizard offers. Run <code>stenographer doctor</code> to see what you are missing and how to fix it.
           <pre><code>~/.local/bin/stenographer setup --quick</code></pre>
           <p>The build needs <code>python3-venv</code> once. Run <code>sudo apt install python3-venv</code> yourself, then build the model with <code>stenographer model download --asr</code>. It downloads about 1.6 GB, converts the model to int8 ONNX on your machine, and needs 10 GiB of free disk and about 10.2 GiB of RAM while it runs. On the test machine it took about 2 minutes. Speech-model settings from earlier releases stay in your config and are ignored.</p>
           <p>For clearer recognition, choose the intended input with <code>stenographer devices</code>, keep a close microphone about 10–20 cm away, and raise its level only until speech is clear without clipping. A close wired headset often beats a distant microphone.</p>

@@ -173,19 +173,21 @@ or invalid pack is ignored as a unit.
 
 ## View or remove statistics
 
-Statistics are local numeric records. View totals or export them:
+Statistics are local numeric records. Summary, export, and date-range deletion
+default to hotkey records; use `--source all` to include file records. View
+totals or export them:
 
 ```sh
-stenographer stats
-stenographer stats export --format json
-stenographer stats export --format csv --output stats.csv
+stenographer stats --source all
+stenographer stats export --source all --format json
+stenographer stats export --source all --format csv --output stats.csv
 ```
 
 Preview a date-range deletion, then confirm it with `--yes`:
 
 ```sh
-stenographer stats delete --since 2026-09-01 --until 2026-09-07
-stenographer stats delete --since 2026-09-01 --until 2026-09-07 --yes
+stenographer stats delete --source all --since 2026-09-01 --until 2026-09-07
+stenographer stats delete --source all --since 2026-09-01 --until 2026-09-07 --yes
 ```
 
 Preview removal of all sources with `stenographer stats reset`; filters are
@@ -207,7 +209,8 @@ can lose measurements that have not been committed yet.
 ## Understand privacy and network access
 
 The model runs locally. Audio, transcripts, configuration, and device or model
-names do not leave the machine. Logs contain timings and counts, never audio or
+names stay on the machine by default; a configured remote refine host receives
+transcripts. Logs contain timings and counts, never audio or
 transcript text. The lifecycle pill does not receive raw audio or transcript
 text. The hub Record screen saves the audio and transcript that you record only
 in a private session folder; see [saved session files and

@@ -213,13 +213,14 @@ systemctl --user restart stenographer.service
 ## Privacy and more
 
 Model downloads are explicit and dictation runs locally. Audio, transcripts,
-configuration, and device or model names stay on your machine. Logs never
+configuration, and device or model names stay on your machine by default; a
+configured remote refine host receives transcripts. Logs never
 contain transcript text or audio. The hub Record screen saves the requested
 audio and transcript in a private session folder, then saves a new revision
 with batch speaker labels; see the [hub guide](docs/hub.md#record). Revisions
 require readable, valid session metadata when `session.json` exists.
-The only automatic network request that leaves your machine is an optional,
-metadata-only release check; disable it in
+By default, the only automatic network request that leaves your machine is an
+optional, metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
 
 The [terminal hub](docs/hub.md) has three screens: Record, Library, and
