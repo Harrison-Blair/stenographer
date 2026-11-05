@@ -16,7 +16,11 @@ import soundfile
 
 from stenographer.lib.config.models import Config
 from stenographer.lib.files.engine import FilesEngine
+from stenographer.lib.live.phrase_segmenter import Phrase
+from stenographer.lib.live.session_writer import SessionWriter
+from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
+from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import TranscriptionResult
 from tests.lib.platform.support import NullProcessCounters
 from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport
@@ -68,8 +72,6 @@ class FakeSegmenter:
 
 
 def _phrase(start, end, samples):
-    from stenographer.lib.live.phrase_segmenter import Phrase
-
     return Phrase("system", start, end, samples)
 
 
@@ -323,33 +325,11 @@ def test_refine_is_opt_in_and_updates_the_preview(tmp_path):
 
 
 def test_fixed_speaker_count_runs_batch_diarization(tmp_path):
-    class SpeakerTracker:
-        def __init__(self):
-            self.count = 0
-
-        def embed(self, _samples):
-            self.count += 1
-            return np.array([1.0, 0.0] if self.count == 1 else [0.0, 1.0], dtype=np.float32)
-
-        def assign_embedding(self, _embedding, *, duration):
-            return f"speaker-{self.count}"
-
-        def label(self, speaker_id):
-            return f"Speaker {speaker_id.removeprefix('speaker-')}"
-
     started = threading.Event()
     release = threading.Event()
     process = _file_asr_process(started=started, release=release)
-    engine = _engine(
-        tmp_path,
-        process,
-        speaker_tracker_factory=SpeakerTracker,
-    )
-    job = engine.submit(
-        _audio(tmp_path / "speakers.wav"),
-        diarize=True,
-        speaker_count=1,
-    )
+    engine = _engine(tmp_path, process, speaker_tracker_factory=TwoVoiceTracker)
+    job = engine.submit(_audio(tmp_path / "speakers.wav"), diarize=True, speaker_count=1)
     progress_events = []
     job.subscribe(progress_events.append)
     try:
@@ -419,29 +399,18 @@ def _keep_other_folders(tmp_path):
     return other, stray
 
 
-def test_failed_file_session_save_removes_only_its_own_folder(tmp_path, monkeypatch):
-    other, stray = _keep_other_folders(tmp_path)
-    _replace_hook(monkeypatch, "session.json", _raise_injected)
-    engine = _engine(tmp_path, _file_asr_process())
-    job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
-    try:
-        _wait_for(job, "failed")
-        assert job.session_id is None
-        assert sorted(path.name for path in _sessions(tmp_path).iterdir()) == [other.name]
-        assert (other / "keep.txt").read_text(encoding="utf-8") == "keep"
-        assert (stray / "old.md").read_text(encoding="utf-8") == "old"
-    finally:
-        engine.close()
-
-
-def test_cancel_during_file_session_save_removes_only_its_own_folder(tmp_path, monkeypatch):
+@pytest.mark.parametrize("step", ("failed", "cancelled"))
+def test_stopped_file_session_save_removes_only_its_own_folder(tmp_path, monkeypatch, step):
     other, stray = _keep_other_folders(tmp_path)
     holder = {}
-    _replace_hook(monkeypatch, "transcript.md", lambda: holder["job"].cancel())
+    if step == "failed":
+        _replace_hook(monkeypatch, "session.json", _raise_injected)
+    else:
+        _replace_hook(monkeypatch, "transcript.md", lambda: holder["job"].cancel())
     engine = _engine(tmp_path, _file_asr_process())
     holder["job"] = job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
     try:
-        _wait_for(job, "cancelled")
+        _wait_for(job, step)
         assert job.session_id is None
         assert sorted(path.name for path in _sessions(tmp_path).iterdir()) == [other.name]
         assert (other / "keep.txt").read_text(encoding="utf-8") == "keep"
@@ -483,7 +452,6 @@ class FakeHubPlatform:
     ),
 )
 def test_source_name_copy_uses_a_safe_lowercase_suffix(tmp_path, name, copied):
-    from stenographer.lib.sessions import SessionStore
     from stenographer.lib.sessions.jobs import SessionJobs
 
     source = tmp_path / name
@@ -532,8 +500,6 @@ def test_source_name_copy_uses_a_safe_lowercase_suffix(tmp_path, name, copied):
 
 
 def _recording(tmp_path):
-    from stenographer.lib.live.session_writer import SessionWriter
-    from stenographer.lib.live.transcript_line import TranscriptLine
 
     writer = SessionWriter.open(tmp_path / "data", datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC))
     writer.write_audio("mic", np.full(32000, 0.1, dtype=np.float32))
@@ -560,7 +526,6 @@ def _file_rows(session, name):
 
 
 def test_mic_source_job_writes_a_revision_and_keeps_system_lines_and_renames(tmp_path):
-    from stenographer.lib.sessions import SessionStore
 
     session = _recording(tmp_path)
     store = SessionStore(_sessions(tmp_path))
@@ -639,7 +604,6 @@ class TwoVoiceTracker:
 def test_diarized_source_job_numbers_new_speakers_and_keeps_the_other_source(
     tmp_path, source, kept, new_labels
 ):
-    from stenographer.lib.sessions import SessionStore
 
     session = _recording(tmp_path)
     store = SessionStore(_sessions(tmp_path))
@@ -660,7 +624,6 @@ def test_diarized_source_job_numbers_new_speakers_and_keeps_the_other_source(
 
 
 def test_system_source_job_without_diarization_uses_one_speaker(tmp_path):
-    from stenographer.lib.sessions import SessionStore
 
     session = _recording(tmp_path)
     engine = _engine(tmp_path, _file_asr_process())
@@ -679,7 +642,6 @@ def test_system_source_job_without_diarization_uses_one_speaker(tmp_path):
 
 
 def test_file_session_source_job_replaces_all_lines(tmp_path):
-    from stenographer.lib.sessions import SessionStore
 
     engine = _engine(tmp_path, _file_asr_process())
     try:
@@ -789,7 +751,6 @@ def test_revision_job_stopped_while_saving_leaves_the_session_byte_identical(
 
 
 def test_revision_job_stale_revision_keeps_a_rename_made_during_the_job(tmp_path):
-    from stenographer.lib.sessions import SessionStore
 
     session = _recording(tmp_path)
 

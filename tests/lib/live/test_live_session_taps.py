@@ -17,22 +17,18 @@ def wait_until(predicate, timeout=2.0):
     return _wait(predicate, timeout)
 
 
-def _speech(session):
-    return session.speech_detected
-
-
 def test_speech_flag_follows_the_source_segmenter_after_each_block(monkeypatch, tmp_path):
     rig = _make_session(monkeypatch, tmp_path)
     mic_segmenter = next(s for s in rig.segmenters if s.source == "mic")
 
-    assert _speech(rig.session) == {"mic": False, "system": False}
+    assert rig.session.speech_detected == {"mic": False, "system": False}
     mic_segmenter.speech_detected = True
-    assert _speech(rig.session)["mic"] is False
+    assert rig.session.speech_detected["mic"] is False
     rig.recorder.emit(3)
-    assert _speech(rig.session) == {"mic": True, "system": False}
+    assert rig.session.speech_detected == {"mic": True, "system": False}
     mic_segmenter.speech_detected = False
     rig.recorder.emit(3)
-    assert _speech(rig.session)["mic"] is False
+    assert rig.session.speech_detected["mic"] is False
     rig.session.stop()
 
 
@@ -42,18 +38,18 @@ def test_speech_flag_is_false_when_the_source_is_off_paused_or_stopped(monkeypat
         segmenter.speech_detected = True
     rig.recorder.emit(3)
     rig.system.emit(3)
-    assert _speech(rig.session) == {"mic": True, "system": True}
+    assert rig.session.speech_detected == {"mic": True, "system": True}
 
     rig.session.toggle("mic")
-    assert _speech(rig.session) == {"mic": False, "system": True}
+    assert rig.session.speech_detected == {"mic": False, "system": True}
 
     rig.session.pause()
-    assert _speech(rig.session) == {"mic": False, "system": False}
+    assert rig.session.speech_detected == {"mic": False, "system": False}
 
     rig.session.resume()
-    assert _speech(rig.session) == {"mic": False, "system": False}
+    assert rig.session.speech_detected == {"mic": False, "system": False}
     rig.session.stop()
-    assert _speech(rig.session) == {"mic": False, "system": False}
+    assert rig.session.speech_detected == {"mic": False, "system": False}
 
 
 def test_block_listener_gets_read_only_copies_after_the_write(monkeypatch, tmp_path):

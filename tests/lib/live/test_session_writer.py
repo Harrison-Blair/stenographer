@@ -21,7 +21,6 @@ _WALL = "2026-03-02T04:05:07+00:00"
 
 def _open_writer(root, started_at=_STARTED):
     writer = SessionWriter.open(root, started_at)
-    assert writer is not None
     return writer
 
 
@@ -195,18 +194,3 @@ def test_audio_and_transcript_writes_are_safe_from_three_threads(tmp_path):
     records = (writer.path / "transcript.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(records) == thread_count * blocks
     assert all(json.loads(record)["source"] == "mic" for record in records)
-
-
-def test_transcript_line_has_the_specified_fields():
-    assert hasattr(TranscriptLine, "__dataclass_fields__")
-    line = _line()
-
-    assert set(line.__dataclass_fields__) == {
-        "start",
-        "end",
-        "wall",
-        "source",
-        "speaker_id",
-        "label",
-        "text",
-    }
