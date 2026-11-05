@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import math
 import os
@@ -614,8 +613,7 @@ class LiveSession:
                 self._blocks.get_nowait()
             except Empty:
                 break
-        with contextlib.suppress(Full):
-            self._blocks.put_nowait(_STOP)
+        self._blocks.put_nowait(_STOP)
         if thread is not None:
             thread.join(_BLOCK_STOP_WAIT_SECONDS)
 
