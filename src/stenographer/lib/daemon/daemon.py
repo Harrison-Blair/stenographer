@@ -394,17 +394,22 @@ class Daemon:
         if self._refiner is None:
             return
         thread = self._start_daemon_thread(
-            self._refiner.warm, (), "stenographer-refine-warmup", "refine: warm_start_failed"
+            self._refiner.warm,
+            (),
+            "stenographer-refine-warmup",
+            lambda exc: log_failure(
+                log, logging.WARNING, "refine: warm_start_failed", exc, safe=True
+            ),
         )
         if thread is not None:
             self._refine_warmup_thread = thread
 
-    def _start_daemon_thread(self, target, args, name, failure_event):
+    def _start_daemon_thread(self, target, args, name, on_failure):
         thread = threading.Thread(target=target, args=args, name=name, daemon=True)
         try:
             thread.start()
         except RuntimeError as exc:
-            log_failure(log, logging.WARNING, failure_event, exc, safe=True)
+            on_failure(exc)
             return None
         return thread
 
@@ -460,7 +465,9 @@ class Daemon:
             self._warm_model,
             (utterance,),
             "stenographer-model-warmup",
-            "worker: warmup_start_failed",
+            lambda exc: log_failure(
+                log, logging.WARNING, "worker: warmup_start_failed", exc, safe=True
+            ),
         )
         if thread is not None:
             self._warmup_thread = thread
