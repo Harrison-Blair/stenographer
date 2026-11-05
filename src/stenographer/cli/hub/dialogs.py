@@ -7,15 +7,14 @@ from typing import ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
-from textual.widgets import Button, Static
+from textual.widgets import Button
 
+from stenographer.cli.hub.prompt_screen import PromptScreen
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.focus_button import FocusButton
 
 
-class QuitConfirm(ModalScreen[bool]):
+class QuitConfirm(PromptScreen[bool]):
     """Ask before the hub stops work and exits."""
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
@@ -26,30 +25,10 @@ class QuitConfirm(ModalScreen[bool]):
         ("escape", "cancel", "Cancel"),
         Binding("question_mark", "app.help", "Help", show=False),
     ]
-    CSS = """
-    QuitConfirm {
-        align: center middle;
-        background: transparent;
-    }
-    #quit-dialog {
-        width: 64;
-        height: auto;
-        padding: 1 2;
-        border: round $primary;
-        background: transparent;
-    }
-    #quit-prompt {
-        height: auto;
-        padding-bottom: 1;
-    }
-    #quit-buttons {
-        height: 3;
-        align-horizontal: right;
-    }
-    #quit-buttons Button {
-        margin-left: 1;
-    }
-    """
+    CSS = PromptScreen.PROMPT_CSS + "#quit-dialog { width: 64; }"
+    _dialog_id = "quit-dialog"
+    _message_id = "quit-prompt"
+    _buttons_id = "quit-buttons"
 
     def __init__(
         self,
@@ -65,14 +44,11 @@ class QuitConfirm(ModalScreen[bool]):
         self._cancel = cancel
         self._quit_keys = quit_keys
 
-    def compose(self) -> ComposeResult:
-        with Vertical(id="quit-dialog"):
-            yield Static(self._message, id="quit-prompt", markup=False)
-            with Horizontal(id="quit-buttons"):
-                yield FocusButton(HubButton.label_text(self._cancel, "n"), id="cancel-quit")
-                yield FocusButton(
-                    HubButton.label_text(self._confirm, "y"), id="confirm-quit", variant="error"
-                )
+    def prompt_buttons(self) -> ComposeResult:
+        yield FocusButton(HubButton.label_text(self._cancel, "n"), id="cancel-quit")
+        yield FocusButton(
+            HubButton.label_text(self._confirm, "y"), id="confirm-quit", variant="error"
+        )
 
     def on_mount(self) -> None:
         self.query_one("#cancel-quit", Button).focus()

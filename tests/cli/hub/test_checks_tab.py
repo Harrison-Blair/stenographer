@@ -107,6 +107,11 @@ def _button(app, selector: str) -> HubButton:
 # V1: list, detail, card, badge
 
 
+def _select_check(tab, check_id):
+    index = next(i for i, check in enumerate(tab.report.checks) if check.check_id == check_id)
+    tab._select(index)
+
+
 async def test_checks_list_groups_rows_with_glyphs_in_the_board_order():
     app = _app()
     async with app.run_test(size=(150, 45)) as pilot:
@@ -205,13 +210,13 @@ async def test_checks_detail_shows_title_state_explanation_path_and_buttons():
         assert _plain(app, "#checks-warnings-title") == "recent warnings (no transcript text)"
 
         # A passing check without a path or a test: no fix, no test, no path.
-        app.checks_tab.select_check("system_service")
+        _select_check(app.checks_tab, "system_service")
         await pilot.pause()
         assert _plain(app, "#checks-detail-head") == "✓ system service · pass"
         assert _plain(app, "#checks-detail-path") == "checked 13:21"
         assert not _button(app, "#checks-fix").display
         assert _button(app, "#checks-test").display
-        app.checks_tab.select_check("ffmpeg")
+        _select_check(app.checks_tab, "ffmpeg")
         await pilot.pause()
         assert _plain(app, "#checks-detail-head") == f"{FAIL} ffmpeg · failure"
         assert not _button(app, "#checks-test").display
@@ -260,7 +265,7 @@ async def test_checks_card_badge_and_tab_label_follow_the_last_run():
         await _open_checks(pilot)
         card = app.screen.query_one("#sidebar-card", Static).render()
         assert app.screen.query_one("#sidebar-context").border_title == "checks"
-        ran_at = app.checks_tab.ran_at
+        ran_at = app.checks_tab.report.checked_at
         assert card.plain == f"6 pass · 1 warn · 1 fail\nlast run {ran_at:%H:%M}"
         ok = card.get_style_at_offset(0)
         assert ok.rich_style.color.get_truecolor() == Color.parse("#6ee69a").get_truecolor()
@@ -432,7 +437,7 @@ def test_checks_fix_without_a_target_shows_the_hint_in_a_notice():
         app.notify = lambda message, **_kwargs: notices.append(message)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
-            app.checks_tab.select_check("ffmpeg")
+            _select_check(app.checks_tab, "ffmpeg")
             await pilot.pause()
             assert not _button(app, "#checks-fix").display
             await pilot.press("f")

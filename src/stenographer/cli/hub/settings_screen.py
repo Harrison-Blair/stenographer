@@ -175,7 +175,6 @@ class SettingsScreen(HubScreen):
         super().__init__(**kwargs)
         self.checks_tab = checks_tab
         self.tab = "general"
-        self.check_badge: tuple[int, str] | None = None
         self.editing: str | None = None
         self.row_error: tuple[str, str] | None = None
         self._rows: dict[str, Field] = {}
@@ -275,8 +274,10 @@ class SettingsScreen(HubScreen):
         """
         label = Text("▶ " if tab == self.tab else "  ")
         label.append(next(text for name, text, _keys in SETTINGS_TABS if name == tab))
-        if tab == "checks" and self.check_badge is not None:
-            count, tone = self.check_badge
+        report = self.checks_tab.report
+        if tab == "checks" and report is not None and (report.warn_count or report.fail_count):
+            count = report.warn_count + report.fail_count
+            tone = "danger" if report.fail_count else "warn"
             label.append(" ")
             label.append(f"●{count}", style=StatusToken.TONES[tone])
         return label
