@@ -67,6 +67,8 @@ def _refine(
 
 @with_config
 def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
+    import soundfile
+
     from stenographer.lib.audio.gate import speech_gate_stats
     from stenographer.lib.transcribe.pipeline import (
         apply_formatting,
@@ -80,8 +82,10 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.lib.transcribe.utterance_record import UtteranceRecord
 
     path = pathlib.Path(args.file)
-    if not path.exists():
-        print(f"stenographer: file not found: {path}", file=sys.stderr)
+    try:
+        samples, sample_rate = soundfile.read(str(path), dtype="float32", always_2d=True)
+    except Exception as exc:
+        print(f"stenographer: cannot read {path}: {exc}", file=sys.stderr)
         return 2
 
     from stenographer.lib.transcribe import bark_download, model
@@ -92,14 +96,6 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
             file=sys.stderr,
         )
         return 78
-
-    import soundfile
-
-    try:
-        samples, sample_rate = soundfile.read(str(path), dtype="float32", always_2d=True)
-    except Exception as exc:
-        print(f"stenographer: cannot read {path}: {exc}", file=sys.stderr)
-        return 2
 
     from stenographer.lib.audio.resample import _resample_poly
     from stenographer.lib.diagnostics.session import create_session
