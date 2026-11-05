@@ -196,7 +196,7 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics; the summary defaults to hotkey dictations (`--source all` includes file transcriptions).
-- `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
+- `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file; `--raw` skips refinement even when `--refine` is supplied.
 - `stenographer model download [--asr] [--refine] [--live]` — fetch selected models explicitly; flags combine.
 - `stenographer run` — run the daemon in the foreground.
 

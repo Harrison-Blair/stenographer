@@ -81,6 +81,9 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     )
     from stenographer.lib.transcribe.utterance_record import UtteranceRecord
 
+    if args.raw and args.refine:
+        print("stenographer: --raw skips refinement requested by --refine", file=sys.stderr)
+
     path = pathlib.Path(args.file)
     try:
         samples, sample_rate = soundfile.read(str(path), dtype="float32", always_2d=True)

@@ -156,6 +156,9 @@ To try it on a file without touching the daemon's settings:
 stenographer transcribe recording.wav --refine
 ```
 
+When `--raw` and `--refine` are both supplied, `--raw` skips refinement and the
+command prints a notice to standard error.
+
 That flag is a deliberate opt-in and does not read `enabled`, so a configured
 daemon does not make one-off file transcriptions start calling a model.
 
