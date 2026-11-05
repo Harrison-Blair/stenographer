@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -28,15 +27,6 @@ from tests.cli.hub.test_session_jobs import FakePlatform
 from tests.lib.files.test_engine import FakeAsrProcess, FakeAsrTransport, FakeSegmenter
 
 FAIL = "\N{MULTIPLICATION SIGN}"
-
-
-@pytest.fixture(autouse=True)
-def _utc(monkeypatch):
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
 
 
 class RecordingServices(FakeServices):
@@ -313,3 +303,6 @@ def test_transcribe_an_m4a_without_ffmpeg_shows_the_needs_ffmpeg_message(tmp_pat
             assert "\u00d7 needs ffmpeg" in _screen_text(app)
 
     asyncio.run(exercise())
+
+
+pytestmark = pytest.mark.usefixtures("utc")

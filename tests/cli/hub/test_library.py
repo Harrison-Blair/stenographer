@@ -42,15 +42,6 @@ FAILED = "\u00d7 failed"
 FILE_STARTED = datetime(2026, 10, 26, 13, 30, tzinfo=UTC)
 
 
-@pytest.fixture(autouse=True)
-def _utc(monkeypatch):
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
-
-
 class FakeJob:
     """Stand in for ``FileJob``: the test sets each state."""
 
@@ -1129,3 +1120,6 @@ def test_library_storage_card_shortens_the_home_folder(tmp_path, monkeypatch):
             assert str(tmp_path) not in _card(app)
 
     asyncio.run(exercise())
+
+
+pytestmark = pytest.mark.usefixtures("utc")

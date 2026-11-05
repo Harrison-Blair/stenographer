@@ -611,12 +611,4 @@ def test_docs_name_no_files_section():
     assert "Files job" not in text
 
 
-@pytest.fixture(autouse=True)
-def _utc(monkeypatch):
-    import time
-
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
+pytestmark = pytest.mark.usefixtures("utc")
