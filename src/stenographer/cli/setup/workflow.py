@@ -673,14 +673,13 @@ def _edit_feedback_section(
     config_dir: pathlib.Path,
     *,
     notice: Sequence[str],
-    skip_floor_without_overlay: bool,
     ask_log_level: bool,
 ) -> Config:
     """Prompt the feedback keys both wizards share, then the spectrum response.
 
-    The wizards differ only in *notice* (their calibration disclaimer), in
-    whether a disabled overlay skips the spectrum question entirely, and in
-    whether the log threshold is asked at all — it is not an essential.
+    The wizards differ only in *notice* (their calibration disclaimer) and in
+    whether the log threshold is asked at all — it is not an essential. A
+    disabled overlay skips the spectrum question and keeps the current floor.
     """
 
     console.write("\nFeedback")
@@ -708,7 +707,7 @@ def _edit_feedback_section(
     for line in notice:
         console.write(line)
     floor = feedback.spectrum_floor_dbfs
-    if skip_floor_without_overlay and not feedback.overlay:
+    if not feedback.overlay:
         console.write("Overlay is disabled, so display-spectrum calibration was skipped.")
     else:
         # Calibration only reads the (already chosen) input device from here.
@@ -728,7 +727,6 @@ def _edit_feedback(console: Console, config: Config, *, config_dir: pathlib.Path
             "IMPORTANT: spectrum calibration affects only the 18 visual bars.",
             "It never changes capture, min_speech_rms, speech gating, or transcription.",
         ),
-        skip_floor_without_overlay=False,
         ask_log_level=True,
     )
 

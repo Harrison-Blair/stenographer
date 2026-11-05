@@ -659,7 +659,7 @@ def test_manual_floor_offers_a_scalar_default_when_a_profile_is_current():
     assert f"Spectrum floor dBFS [{DEFAULT_SPECTRUM_FLOOR_DBFS};" in console.stdout.getvalue()
 
 
-def test_quick_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_path):
+def test_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_path):
     console = _console("0.9\n\nno\n\n\n")
 
     config = setup._edit_feedback_section(
@@ -667,7 +667,6 @@ def test_quick_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_pa
         Config.defaults(),
         tmp_path,
         notice=("IMPORTANT: bars only.",),
-        skip_floor_without_overlay=True,
         ask_log_level=False,
     )
 
@@ -681,6 +680,26 @@ def test_quick_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_pa
     assert "Spectrum response" not in stdout
 
 
+def test_full_wizard_skips_calibration_and_keeps_the_floor_when_the_overlay_is_off(tmp_path):
+    defaults = Config.defaults()
+    floor = (-52.0,) * 18
+    initial = dataclasses.replace(
+        defaults,
+        feedback=dataclasses.replace(defaults.feedback, spectrum_floor_dbfs=floor),
+    )
+    # The trailing "keep" answers the question if it is asked, so no capture can start.
+    console = _console("\n\nno\n\n\n\nkeep\n")
+
+    config = setup._edit_feedback(console, initial, config_dir=tmp_path)
+
+    assert config.feedback.overlay is False
+    assert config.feedback.spectrum_floor_dbfs == floor
+    stdout = console.stdout.getvalue()
+    assert "Log level" in stdout
+    assert "Spectrum response" not in stdout
+    assert "Overlay is disabled, so display-spectrum calibration was skipped." in stdout
+
+
 def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_path):
     console = _console("\n\n\n\n\ndebug\nkeep\n")
 
@@ -689,7 +708,6 @@ def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_
         Config.defaults(),
         tmp_path,
         notice=("IMPORTANT: bars only.",),
-        skip_floor_without_overlay=False,
         ask_log_level=True,
     )
 

@@ -64,7 +64,6 @@ def _quick_wizard(
             "IMPORTANT: spectrum calibration controls only the 18 display bars.",
             "It does not affect capture, speech detection, audio gates, ASR, or transcription.",
         ),
-        skip_floor_without_overlay=True,
         ask_log_level=False,
     )
 
