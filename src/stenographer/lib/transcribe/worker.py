@@ -63,7 +63,7 @@ class Worker:
         self,
         cfg: AsrConfig,
         *,
-        transport: AsrTransport | None = None,
+        transport: AsrTransport,
         on_model_loading: Callable[[], None] | None = None,
         on_model_loading_finished: Callable[[], None] | None = None,
         on_transcribing: Callable[[], None] | None = None,
@@ -250,10 +250,6 @@ class Worker:
         if callback is not None:
             callback()
 
-    def is_alive(self) -> bool:
-        proc = self._process
-        return proc is not None and proc.is_running()
-
     @property
     def is_model_ready(self) -> bool:
         """Return whether the current live child has confirmed model readiness."""
@@ -281,12 +277,6 @@ class Worker:
             self._cancel_timer()
             self._teardown(graceful=True)
 
-    def __enter__(self) -> Worker:
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.shutdown()
-
     def _spawn(self) -> None:
         previous = self._process
         if previous is not None:
@@ -296,10 +286,6 @@ class Worker:
             )
         self._teardown()
         try:
-            if self._transport is None:
-                from stenographer.lib.platform import current_platform
-
-                self._transport = current_platform().asr_transport()
             self._process = self._transport.spawn(self._cfg, on_log=forward_worker_record)
         except Exception as exc:
             log_failure(log, logging.ERROR, "worker: spawn_failed", exc, safe=True)

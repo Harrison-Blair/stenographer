@@ -164,9 +164,25 @@ def test_failure_measurement_classification(kind, expected):
     assert classify_worker_failure(getattr(errors, kind)("private")) == expected
 
 
-def _worker(transport, *, idle_seconds: float = 0.0, **observers) -> Worker:
-    cfg = replace(Config.loads("").asr, idle_unload_seconds=idle_seconds)
-    return Worker(cfg, transport=transport, **observers)
+@pytest.fixture
+def make_worker():
+    """Build workers over a fake transport and shut each one down after the test."""
+    workers: list[Worker] = []
+
+    def make(transport, *, idle_seconds: float = 0.0, **observers) -> Worker:
+        cfg = replace(Config.loads("").asr, idle_unload_seconds=idle_seconds)
+        worker = Worker(cfg, transport=transport, **observers)
+        workers.append(worker)
+        return worker
+
+    yield make
+    for worker in workers:
+        worker.shutdown()
+
+
+def _child_running(worker: Worker) -> bool:
+    process = worker._process
+    return process is not None and process.is_running()
 
 
 def _observed() -> tuple[list[str], dict]:
@@ -182,71 +198,71 @@ def _observed() -> tuple[list[str], dict]:
     return events, observers
 
 
-def test_warmup_loads_the_model_and_announces_the_lifecycle_in_order():
+def test_warmup_loads_the_model_and_announces_the_lifecycle_in_order(make_worker):
     events, observers = _observed()
     transport = FakeAsrTransport()
 
-    with _worker(transport, **observers) as worker:
-        worker.warmup(7)
+    worker = make_worker(transport, **observers)
+    worker.warmup(7)
 
-        assert transport.spawned[0].sent == [("load", 7)]
-        assert events == ["model_loading", "model_loading_finished"]
-        assert worker.is_model_ready is True
-        assert worker.is_alive() is True
-        assert worker.process_ids == (4321,)
+    assert transport.spawned[0].sent == [("load", 7)]
+    assert events == ["model_loading", "model_loading_finished"]
+    assert worker.is_model_ready is True
+    assert _child_running(worker) is True
+    assert worker.process_ids == (4321,)
 
 
-def test_a_second_warmup_reuses_the_already_loaded_model():
+def test_a_second_warmup_reuses_the_already_loaded_model(make_worker):
     events, observers = _observed()
     transport = FakeAsrTransport()
 
-    with _worker(transport, **observers) as worker:
-        worker.warmup()
-        worker.warmup()
+    worker = make_worker(transport, **observers)
+    worker.warmup()
+    worker.warmup()
 
-        assert transport.spawned[0].sent == [("load", None)]
-        assert events == ["model_loading", "model_loading_finished"]
-        assert len(transport.spawned) == 1
+    assert transport.spawned[0].sent == [("load", None)]
+    assert events == ["model_loading", "model_loading_finished"]
+    assert len(transport.spawned) == 1
 
 
-def test_a_cold_transcription_loads_then_decodes_and_measures_both():
+def test_a_cold_transcription_loads_then_decodes_and_measures_both(make_worker):
     events, observers = _observed()
     transport = FakeAsrTransport()
 
-    with _worker(transport, **observers) as worker:
-        result = worker.transcribe(np.zeros(16000, dtype=np.float32), 5)
+    worker = make_worker(transport, **observers)
+    result = worker.transcribe(np.zeros(16000, dtype=np.float32), 5)
 
-        child = transport.spawned[0]
-        assert [message[0] for message in child.sent] == ["load", "job"]
-        assert child.sent[1][2] == 5
-        assert result.text == "hello there"
-        assert events == [
-            "model_loading",
-            "model_loading_finished",
-            "transcribing",
-        ]
-        timings = worker.last_timings
-        assert timings is not None
-        assert timings.load_ms is not None
-        # decode_ms is the child's own inference measurement, not a round trip.
-        assert timings.decode_ms == 12.5
-        assert timings.round_trip_ms is not None
-        assert timings.lock_wait_ms >= 0.0
+    child = transport.spawned[0]
+    assert [message[0] for message in child.sent] == ["load", "job"]
+    assert child.sent[1][2] == 5
+    assert result.text == "hello there"
+    assert events == [
+        "model_loading",
+        "model_loading_finished",
+        "transcribing",
+    ]
+    timings = worker.last_timings
+    assert timings is not None
+    assert timings.load_ms is not None
+    # decode_ms is the child's own inference measurement, not a round trip.
+    assert timings.decode_ms == 12.5
+    assert timings.round_trip_ms is not None
+    assert timings.lock_wait_ms >= 0.0
 
 
-def test_a_warm_transcription_reports_no_load_of_its_own():
+def test_a_warm_transcription_reports_no_load_of_its_own(make_worker):
     transport = FakeAsrTransport()
 
-    with _worker(transport) as worker:
-        worker.warmup()
-        worker.transcribe(np.zeros(16000, dtype=np.float32))
+    worker = make_worker(transport)
+    worker.warmup()
+    worker.transcribe(np.zeros(16000, dtype=np.float32))
 
-        assert [message[0] for message in transport.spawned[0].sent] == ["load", "job"]
-        assert worker.last_timings.load_ms is None
-        assert worker.last_timings.decode_ms == 12.5
+    assert [message[0] for message in transport.spawned[0].sent] == ["load", "job"]
+    assert worker.last_timings.load_ms is None
+    assert worker.last_timings.decode_ms == 12.5
 
 
-def test_a_child_that_exits_during_a_decode_is_reported_as_crashed(caplog):
+def test_a_child_that_exits_during_a_decode_is_reported_as_crashed(make_worker, caplog):
     def die_on_job(process, message):
         if message[0] == "job":
             process.running = False
@@ -256,62 +272,64 @@ def test_a_child_that_exits_during_a_decode_is_reported_as_crashed(caplog):
 
     transport = FakeAsrTransport(FakeAsrProcess(reply=die_on_job))
 
-    with _worker(transport) as worker, caplog.at_level(logging.ERROR, logger=_WORKER_LOGGER):
+    worker = make_worker(transport)
+    with caplog.at_level(logging.ERROR, logger=_WORKER_LOGGER):
         with pytest.raises(WorkerCrashedError):
             worker.transcribe(np.zeros(16000, dtype=np.float32))
 
         assert "worker: child_exited phase=transcribe exit_code=-11" in caplog.text
-        assert worker.is_alive() is False
+        assert _child_running(worker) is False
         assert worker.is_model_ready is False
         assert transport.spawned[0].closes == [False]
 
 
-def test_a_dead_child_is_replaced_on_the_next_request(caplog):
+def test_a_dead_child_is_replaced_on_the_next_request(make_worker, caplog):
     transport = FakeAsrTransport()
 
-    with _worker(transport) as worker:
+    worker = make_worker(transport)
+    worker.warmup()
+    first = transport.spawned[0]
+    first.running = False
+    first.exit_code = 3
+
+    with caplog.at_level(logging.WARNING, logger=_WORKER_LOGGER):
         worker.warmup()
-        first = transport.spawned[0]
-        first.running = False
-        first.exit_code = 3
 
-        with caplog.at_level(logging.WARNING, logger=_WORKER_LOGGER):
-            worker.warmup()
-
-        assert "worker: replacing_child phase=respawn exit_code=3" in caplog.text
-        assert len(transport.spawned) == 2
-        # The new child is cold: its own model load is requested again.
-        assert transport.spawned[1].sent == [("load", None)]
-        assert worker.is_model_ready is True
+    assert "worker: replacing_child phase=respawn exit_code=3" in caplog.text
+    assert len(transport.spawned) == 2
+    # The new child is cold: its own model load is requested again.
+    assert transport.spawned[1].sent == [("load", None)]
+    assert worker.is_model_ready is True
 
 
-def test_a_transport_that_cannot_spawn_fails_the_request_without_a_child(caplog):
+def test_a_transport_that_cannot_spawn_fails_the_request_without_a_child(make_worker, caplog):
     transport = FakeAsrTransport(error=OSError("no such executable"))
 
-    with _worker(transport) as worker, caplog.at_level(logging.ERROR, logger=_WORKER_LOGGER):
+    worker = make_worker(transport)
+    with caplog.at_level(logging.ERROR, logger=_WORKER_LOGGER):
         with pytest.raises(WorkerError, match="could not start ASR child"):
             worker.warmup()
 
         assert "worker: spawn_failed" in caplog.text
-        assert worker.is_alive() is False
+        assert _child_running(worker) is False
         assert worker.process_ids == ()
 
 
-def test_a_failed_model_load_still_announces_that_loading_ended():
+def test_a_failed_model_load_still_announces_that_loading_ended(make_worker):
     events, observers = _observed()
     transport = FakeAsrTransport(
         FakeAsrProcess(reply=lambda process, message: ("error", "inference", "RuntimeError: x"))
     )
 
-    with _worker(transport, **observers) as worker:
-        with pytest.raises(WorkerError):
-            worker.warmup()
+    worker = make_worker(transport, **observers)
+    with pytest.raises(WorkerError):
+        worker.warmup()
 
-        # Or the overlay keeps its loading border forever.
-        assert events == ["model_loading", "model_loading_finished"]
+    # Or the overlay keeps its loading border forever.
+    assert events == ["model_loading", "model_loading_finished"]
 
 
-def test_a_model_load_failure_keeps_the_child_and_is_typed_by_the_caller():
+def test_a_model_load_failure_keeps_the_child_and_is_typed_by_the_caller(make_worker):
     def fail_to_load(process, message):
         if message[0] == "load":
             return ("error", "inference", "RuntimeError: CUDA unavailable")
@@ -321,25 +339,25 @@ def test_a_model_load_failure_keeps_the_child_and_is_typed_by_the_caller():
         FakeAsrProcess(reply=fail_to_load), FakeAsrProcess(reply=fail_to_load)
     )
 
-    with _worker(transport) as warm_up_worker:
-        # warmup surfaces the child's own error; transcribe re-types it so the
-        # daemon can tell a model failure from a decode failure.
-        with pytest.raises(WorkerError) as warmup_exc:
-            warm_up_worker.warmup()
-        assert not isinstance(warmup_exc.value, WorkerModelError)
-        # A plain decode-side error does not poison the channel.
-        assert warm_up_worker.is_alive() is True
+    warm_up_worker = make_worker(transport)
+    # warmup surfaces the child's own error; transcribe re-types it so the
+    # daemon can tell a model failure from a decode failure.
+    with pytest.raises(WorkerError) as warmup_exc:
+        warm_up_worker.warmup()
+    assert not isinstance(warmup_exc.value, WorkerModelError)
+    # A plain decode-side error does not poison the channel.
+    assert _child_running(warm_up_worker) is True
 
-    with _worker(transport) as worker:
-        with pytest.raises(WorkerModelError, match="model loading failed"):
-            worker.transcribe(np.zeros(16000, dtype=np.float32))
+    worker = make_worker(transport)
+    with pytest.raises(WorkerModelError, match="model loading failed"):
+        worker.transcribe(np.zeros(16000, dtype=np.float32))
 
-        assert isinstance(worker.last_timings.load_ms, float)
-        assert worker.last_timings.decode_ms is None
-        assert worker.is_model_ready is False
+    assert isinstance(worker.last_timings.load_ms, float)
+    assert worker.last_timings.decode_ms is None
+    assert worker.is_model_ready is False
 
 
-def test_a_decode_error_keeps_the_child_for_the_next_utterance():
+def test_a_decode_error_keeps_the_child_for_the_next_utterance(make_worker):
     def fail_to_decode(process, message):
         if message[0] == "job":
             return ("error", "inference", "RuntimeError: boom")
@@ -347,58 +365,58 @@ def test_a_decode_error_keeps_the_child_for_the_next_utterance():
 
     transport = FakeAsrTransport(FakeAsrProcess(reply=fail_to_decode))
 
-    with _worker(transport) as worker:
-        with pytest.raises(WorkerError) as exc:
-            worker.transcribe(np.zeros(16000, dtype=np.float32))
+    worker = make_worker(transport)
+    with pytest.raises(WorkerError) as exc:
+        worker.transcribe(np.zeros(16000, dtype=np.float32))
 
-        assert not isinstance(exc.value, (WorkerModelError, WorkerCrashedError))
-        assert worker.is_alive() is True
-        assert worker.is_model_ready is True
-        assert transport.spawned[0].closes == []
-        assert worker.last_timings.round_trip_ms is not None
-        assert worker.last_timings.decode_ms is None
+    assert not isinstance(exc.value, (WorkerModelError, WorkerCrashedError))
+    assert _child_running(worker) is True
+    assert worker.is_model_ready is True
+    assert transport.spawned[0].closes == []
+    assert worker.last_timings.round_trip_ms is not None
+    assert worker.last_timings.decode_ms is None
 
 
-def test_a_slow_child_is_polled_until_it_answers():
+def test_a_slow_child_is_polled_until_it_answers(make_worker):
     transport = FakeAsrTransport(FakeAsrProcess(timeouts=3))
 
-    with _worker(transport) as worker:
-        worker.warmup()
+    worker = make_worker(transport)
+    worker.warmup()
 
-        # Three empty polls are not a failure; only the deadline is.
-        assert transport.spawned[0].receives == 4
-        assert worker.is_model_ready is True
+    # Three empty polls are not a failure; only the deadline is.
+    assert transport.spawned[0].receives == 4
+    assert worker.is_model_ready is True
 
 
-def test_an_expired_deadline_ends_the_wait(caplog):
+def test_an_expired_deadline_ends_the_wait(make_worker, caplog):
     transport = FakeAsrTransport()
 
-    with _worker(transport) as worker:
-        worker._begin_request()
-        with (
-            caplog.at_level(logging.ERROR, logger=_WORKER_LOGGER),
-            pytest.raises(WorkerTimeoutError, match="timed out during transcribe"),
-        ):
-            worker._wait_for_response("transcribe", deadline=time.monotonic() - 1.0)
+    worker = make_worker(transport)
+    worker._begin_request()
+    with (
+        caplog.at_level(logging.ERROR, logger=_WORKER_LOGGER),
+        pytest.raises(WorkerTimeoutError, match="timed out during transcribe"),
+    ):
+        worker._wait_for_response("transcribe", deadline=time.monotonic() - 1.0)
 
-        assert "worker: request_timeout phase=transcribe" in caplog.text
+    assert "worker: request_timeout phase=transcribe" in caplog.text
 
 
-def test_a_timed_out_request_tears_the_child_down(monkeypatch):
+def test_a_timed_out_request_tears_the_child_down(make_worker, monkeypatch):
     monkeypatch.setattr(worker_module, "_MODEL_LOAD_TIMEOUT_SECONDS", 0.0)
     transport = FakeAsrTransport()
 
-    with _worker(transport) as worker:
-        with pytest.raises(WorkerTimeoutError, match="timed out during model_load"):
-            worker.warmup()
+    worker = make_worker(transport)
+    with pytest.raises(WorkerTimeoutError, match="timed out during model_load"):
+        worker.warmup()
 
-        assert transport.spawned[0].closes == [False]
-        assert worker.is_alive() is False
+    assert transport.spawned[0].closes == [False]
+    assert _child_running(worker) is False
 
 
 @pytest.mark.parametrize("load_timeout, longest_poll", [(120.0, 0.1), (0.03, 0.03)])
 def test_one_poll_never_outlasts_the_poll_interval_or_the_deadline(
-    monkeypatch, load_timeout, longest_poll
+    make_worker, monkeypatch, load_timeout, longest_poll
 ):
     monkeypatch.setattr(worker_module, "_MODEL_LOAD_TIMEOUT_SECONDS", load_timeout)
     polls: list[float] = []
@@ -408,28 +426,28 @@ def test_one_poll_never_outlasts_the_poll_interval_or_the_deadline(
             polls.append(timeout)
             return super().receive(timeout)
 
-    with _worker(FakeAsrTransport(_RecordingProcess())) as worker:
-        worker.warmup()
+    worker = make_worker(FakeAsrTransport(_RecordingProcess()))
+    worker.warmup()
 
     assert 0.0 < polls[0] <= longest_poll
 
 
-def test_shutdown_closes_the_child_gracefully_and_refuses_later_requests():
+def test_shutdown_closes_the_child_gracefully_and_refuses_later_requests(make_worker):
     transport = FakeAsrTransport()
-    worker = _worker(transport)
+    worker = make_worker(transport)
     worker.warmup()
 
     worker.shutdown()
     worker.shutdown()
 
     assert transport.spawned[0].closes == [True]
-    assert worker.is_alive() is False
+    assert _child_running(worker) is False
     with pytest.raises(WorkerError, match="shut down"):
         worker.warmup()
     assert len(transport.spawned) == 1
 
 
-def test_shutdown_during_a_wait_abandons_the_in_flight_request(caplog):
+def test_shutdown_during_a_wait_abandons_the_in_flight_request(make_worker, caplog):
     holder: list[Worker] = []
 
     def shut_down_instead_of_answering(process, message):
@@ -440,133 +458,133 @@ def test_shutdown_during_a_wait_abandons_the_in_flight_request(caplog):
 
     transport = FakeAsrTransport(FakeAsrProcess(reply=shut_down_instead_of_answering))
 
-    with _worker(transport) as worker:
-        holder.append(worker)
-        with (
-            caplog.at_level(logging.INFO, logger=_WORKER_LOGGER),
-            pytest.raises(WorkerError, match="shut down during transcribe"),
-        ):
-            worker.transcribe(np.zeros(16000, dtype=np.float32))
+    worker = make_worker(transport)
+    holder.append(worker)
+    with (
+        caplog.at_level(logging.INFO, logger=_WORKER_LOGGER),
+        pytest.raises(WorkerError, match="shut down during transcribe"),
+    ):
+        worker.transcribe(np.zeros(16000, dtype=np.float32))
 
-        assert "worker: cancelling phase=transcribe reason=shutdown" in caplog.text
-        assert worker.is_alive() is False
+    assert "worker: cancelling phase=transcribe reason=shutdown" in caplog.text
+    assert _child_running(worker) is False
 
 
-def test_the_idle_timer_is_armed_only_while_a_live_child_is_unheld():
+def test_the_idle_timer_is_armed_only_while_a_live_child_is_unheld(make_worker):
     transport = FakeAsrTransport()
 
-    with _worker(transport, idle_seconds=60) as worker:
-        worker.warmup()
-        assert worker._idle_timer is not None
-        assert worker._idle_timer.interval == 60
+    worker = make_worker(transport, idle_seconds=60)
+    worker.warmup()
+    assert worker._idle_timer is not None
+    assert worker._idle_timer.interval == 60
 
-        worker.hold_model()
-        worker._restart_idle_timer()
-        assert worker._idle_timer is None
+    worker.hold_model()
+    worker._restart_idle_timer()
+    assert worker._idle_timer is None
 
-        worker.release_model()
-        assert worker._idle_timer is not None
+    worker.release_model()
+    assert worker._idle_timer is not None
 
 
-def test_idle_eviction_unloads_the_child(caplog):
+def test_idle_eviction_unloads_the_child(make_worker, caplog):
     transport = FakeAsrTransport()
 
-    with _worker(transport, idle_seconds=60) as worker:
-        worker.warmup()
-        with caplog.at_level(logging.INFO, logger=_WORKER_LOGGER):
-            worker._idle_kill()
+    worker = make_worker(transport, idle_seconds=60)
+    worker.warmup()
+    with caplog.at_level(logging.INFO, logger=_WORKER_LOGGER):
+        worker._idle_kill()
 
-        assert "worker: unload phase=idle" in caplog.text
-        assert worker.is_alive() is False
-        assert worker.is_model_ready is False
-        assert transport.spawned[0].closes == [False]
+    assert "worker: unload phase=idle" in caplog.text
+    assert _child_running(worker) is False
+    assert worker.is_model_ready is False
+    assert transport.spawned[0].closes == [False]
 
 
-def test_a_held_model_defers_eviction_and_schedules_a_retry(caplog):
+def test_a_held_model_defers_eviction_and_schedules_a_retry(make_worker, caplog):
     transport = FakeAsrTransport()
 
-    with _worker(transport, idle_seconds=60) as worker:
-        worker.warmup()
-        worker.hold_model()
-        with caplog.at_level(logging.DEBUG, logger=_WORKER_LOGGER):
-            worker._idle_kill()
+    worker = make_worker(transport, idle_seconds=60)
+    worker.warmup()
+    worker.hold_model()
+    with caplog.at_level(logging.DEBUG, logger=_WORKER_LOGGER):
+        worker._idle_kill()
 
-        assert "worker: unload_deferred reason=recording" in caplog.text
-        assert worker.is_alive() is True
-        # A deferred unload must re-arm itself, or the child stays resident
-        # until the process exits.
-        assert worker._idle_timer is not None
+    assert "worker: unload_deferred reason=recording" in caplog.text
+    assert _child_running(worker) is True
+    # A deferred unload must re-arm itself, or the child stays resident
+    # until the process exits.
+    assert worker._idle_timer is not None
 
 
-def test_an_armed_timer_really_evicts_the_child():
+def test_an_armed_timer_really_evicts_the_child(make_worker):
     transport = FakeAsrTransport()
 
     # A sub-second idle budget: the same arming policy the configured seconds
     # use, shortened so the timer can actually be observed firing.
-    with _worker(transport, idle_seconds=0.05) as worker:
-        worker.warmup()
+    worker = make_worker(transport, idle_seconds=0.05)
+    worker.warmup()
 
-        deadline = time.monotonic() + 5.0
-        while worker.is_alive() and time.monotonic() < deadline:
-            time.sleep(0.01)
+    deadline = time.monotonic() + 5.0
+    while _child_running(worker) and time.monotonic() < deadline:
+        time.sleep(0.01)
 
-        assert worker.is_alive() is False
-        assert transport.spawned[0].closes == [False]
+    assert _child_running(worker) is False
+    assert transport.spawned[0].closes == [False]
 
 
-def test_releasing_a_hold_arms_the_timer_even_when_the_lock_is_busy():
+def test_releasing_a_hold_arms_the_timer_even_when_the_lock_is_busy(make_worker):
     transport = FakeAsrTransport()
 
-    with _worker(transport, idle_seconds=60) as worker:
-        worker.warmup()
-        worker.hold_model()
-        worker._restart_idle_timer()
+    worker = make_worker(transport, idle_seconds=60)
+    worker.warmup()
+    worker.hold_model()
+    worker._restart_idle_timer()
+    assert worker._idle_timer is None
+
+    acquired = threading.Event()
+    finish = threading.Event()
+
+    def hold_the_lock():
+        with worker._lock:
+            acquired.set()
+            finish.wait(5.0)
+
+    blocker = threading.Thread(target=hold_the_lock, name="test-lock-holder")
+    blocker.start()
+    try:
+        assert acquired.wait(5.0)
+        # The caller holds the daemon lock here, so this must not block.
+        worker.release_model()
         assert worker._idle_timer is None
+    finally:
+        finish.set()
+        blocker.join(5.0)
 
-        acquired = threading.Event()
-        finish = threading.Event()
-
-        def hold_the_lock():
-            with worker._lock:
-                acquired.set()
-                finish.wait(5.0)
-
-        blocker = threading.Thread(target=hold_the_lock, name="test-lock-holder")
-        blocker.start()
-        try:
-            assert acquired.wait(5.0)
-            # The caller holds the daemon lock here, so this must not block.
-            worker.release_model()
-            assert worker._idle_timer is None
-        finally:
-            finish.set()
-            blocker.join(5.0)
-
-        deadline = time.monotonic() + 5.0
-        while worker._idle_timer is None and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert worker._idle_timer is not None
+    deadline = time.monotonic() + 5.0
+    while worker._idle_timer is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert worker._idle_timer is not None
 
 
-def test_a_worker_without_a_child_registers_no_process_ids():
-    with _worker(FakeAsrTransport()) as worker:
-        assert worker.process_ids == ()
-        assert worker.is_alive() is False
-        assert worker.is_model_ready is False
+def test_a_worker_without_a_child_registers_no_process_ids(make_worker):
+    worker = make_worker(FakeAsrTransport())
+    assert worker.process_ids == ()
+    assert _child_running(worker) is False
+    assert worker.is_model_ready is False
 
 
-def test_model_readiness_belongs_to_the_live_child():
+def test_model_readiness_belongs_to_the_live_child(make_worker):
     transport = FakeAsrTransport()
 
-    with _worker(transport) as worker:
-        worker.warmup()
-        transport.spawned[0].running = False
+    worker = make_worker(transport)
+    worker.warmup()
+    transport.spawned[0].running = False
 
-        # The loaded model died with the child that held it.
-        assert worker.is_model_ready is False
+    # The loaded model died with the child that held it.
+    assert worker.is_model_ready is False
 
 
-def test_a_child_that_dies_during_the_model_load_is_reported_as_crashed():
+def test_a_child_that_dies_during_the_model_load_is_reported_as_crashed(make_worker):
     def die_on_load(process, message):
         process.running = False
         process.exit_code = -9
@@ -574,50 +592,51 @@ def test_a_child_that_dies_during_the_model_load_is_reported_as_crashed():
 
     transport = FakeAsrTransport(FakeAsrProcess(reply=die_on_load))
 
-    with _worker(transport) as worker:
-        # A crash keeps its own type through transcribe: it is not a model
-        # configuration problem the owner could fix.
-        with pytest.raises(WorkerCrashedError):
-            worker.transcribe(np.zeros(16000, dtype=np.float32))
+    worker = make_worker(transport)
+    # A crash keeps its own type through transcribe: it is not a model
+    # configuration problem the owner could fix.
+    with pytest.raises(WorkerCrashedError):
+        worker.transcribe(np.zeros(16000, dtype=np.float32))
 
-        assert worker.last_timings.load_ms is not None
-        assert worker.last_timings.decode_ms is None
+    assert worker.last_timings.load_ms is not None
+    assert worker.last_timings.decode_ms is None
 
 
-def test_idle_unload_deadline_follows_the_armed_idle_timer():
+def test_idle_unload_deadline_follows_the_armed_idle_timer(make_worker):
     transport = FakeAsrTransport()
 
-    with _worker(transport, idle_seconds=30.0) as worker:
-        assert worker.idle_unload_deadline is None
+    worker = make_worker(transport, idle_seconds=30.0)
+    assert worker.idle_unload_deadline is None
 
-        before = time.monotonic()
-        worker.warmup()
-        after = time.monotonic()
-        assert before + 30.0 <= worker.idle_unload_deadline <= after + 30.0
+    before = time.monotonic()
+    worker.warmup()
+    after = time.monotonic()
+    assert before + 30.0 <= worker.idle_unload_deadline <= after + 30.0
 
-        worker.hold_model()
-        worker.warmup()
-        assert worker.idle_unload_deadline is None
+    worker.hold_model()
+    worker.warmup()
+    assert worker.idle_unload_deadline is None
 
+    worker.shutdown()
     assert worker.idle_unload_deadline is None
 
 
-def test_idle_unload_deadline_clears_after_the_idle_unload():
+def test_idle_unload_deadline_clears_after_the_idle_unload(make_worker):
     transport = FakeAsrTransport()
 
-    with _worker(transport, idle_seconds=0.05) as worker:
-        worker.warmup()
-        assert worker.idle_unload_deadline is not None
-        deadline = time.monotonic() + 2.0
-        while worker.is_alive() and time.monotonic() < deadline:
-            time.sleep(0.01)
+    worker = make_worker(transport, idle_seconds=0.05)
+    worker.warmup()
+    assert worker.idle_unload_deadline is not None
+    deadline = time.monotonic() + 2.0
+    while _child_running(worker) and time.monotonic() < deadline:
+        time.sleep(0.01)
 
-        assert worker.is_alive() is False
-        assert worker.idle_unload_deadline is None
+    assert _child_running(worker) is False
+    assert worker.idle_unload_deadline is None
 
 
-def test_idle_unload_deadline_is_none_without_an_idle_timeout():
-    with _worker(FakeAsrTransport(), idle_seconds=0.0) as worker:
-        worker.warmup()
-        assert worker.is_model_ready is True
-        assert worker.idle_unload_deadline is None
+def test_idle_unload_deadline_is_none_without_an_idle_timeout(make_worker):
+    worker = make_worker(FakeAsrTransport(), idle_seconds=0.0)
+    worker.warmup()
+    assert worker.is_model_ready is True
+    assert worker.idle_unload_deadline is None
