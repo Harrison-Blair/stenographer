@@ -170,21 +170,3 @@ def test_timeout_and_frame_due_require_breathing_visibility_and_an_armed_deadlin
     due_at = 10.0 + LOADING_FRAME_INTERVAL
     assert pulse.frame_due(due_at, False) is False
     assert pulse.frame_due(due_at, True) is True
-
-
-def test_disarm_clears_only_the_frame_deadline() -> None:
-    pulse = LoadingPulse()
-    pulse.set_active(LoadingModel.ASR, True)
-    pulse.start_breathing(50.0)
-
-    pulse.disarm_frames()
-
-    assert pulse.next_frame_at is None
-    assert pulse.breathing is True
-    assert pulse.breath_started_at == 50.0
-    assert pulse.timeout(51.0, True) is None
-    assert pulse.frame_due(51.0, True) is False
-
-    pulse.arm(51.0)
-    assert pulse.next_frame_at == pytest.approx(51.0 + LOADING_FRAME_INTERVAL)
-    assert pulse.elapsed(51.0) == 1.0

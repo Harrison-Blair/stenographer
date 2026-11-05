@@ -265,8 +265,6 @@ class X11OverlayBackend(HelperBackend):
             self._stacking_reassert = start_stacking_reassert(
                 epoch=self._window_epoch, now=time.monotonic()
             )
-        if self._pulse.breathing and self._pulse.next_frame_at is None:
-            self._pulse.arm(time.monotonic())
         self._display.flush()
 
     def _upload(self, frame: OverlayFrame) -> None:
@@ -314,7 +312,6 @@ class X11OverlayBackend(HelperBackend):
         self._placement = None
         self._target_position = None
         self._requested_position = None
-        self._pulse.disarm_frames()
         if self._display is not None:
             with contextlib.suppress(Exception):
                 self._display.flush()

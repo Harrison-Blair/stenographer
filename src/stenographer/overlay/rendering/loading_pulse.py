@@ -11,9 +11,8 @@ from stenographer.overlay.rendering.constants import LOADING_FRAME_INTERVAL, LOA
 class LoadingPulse:
     """Pure loading-pulse activity, breath, and frame-deadline math. PURE.
 
-    The class never reads a clock.  Backends stay the owners of deadline
-    lifecycle policy: when to arm the frame cadence, and when destroying or
-    recreating a surface clears (or deliberately preserves) the deadline.
+    The class never reads a clock.  The reducer decides when to arm the frame
+    cadence; destroying or recreating a surface leaves the deadline as it is.
 
     Activity (``loading``) and the breath being drawn (``breath_model``,
     ``breath_started_at``) are deliberately separate: a model can join or
@@ -88,10 +87,6 @@ class LoadingPulse:
     def arm(self, now: float) -> None:
         """Start (or restart) the frame cadence from ``now``."""
         self.next_frame_at = now + LOADING_FRAME_INTERVAL
-
-    def disarm_frames(self) -> None:
-        """Clear the frame deadline without touching activity or the breath."""
-        self.next_frame_at = None
 
     def _next_model(self) -> LoadingModel | None:
         if not self.loading:
