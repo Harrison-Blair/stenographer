@@ -7,6 +7,8 @@ import math
 
 import numpy as np
 
+from stenographer.lib.audio.resample import _polyphase_filter
+
 
 class StreamingResampler:
     """Resample mono float32 blocks while retaining only filter history."""
@@ -17,13 +19,9 @@ class StreamingResampler:
         self._down = rate_in // gcd
         self._rate_in = rate_in
         self._rate_out = rate_out
-        self._n_taps = 2 * 10 * max(self._up, self._down) + 1
+        self._filter = _polyphase_filter(self._up, self._down)
+        self._n_taps = self._filter.size
         self._half = self._n_taps // 2
-        cutoff = 1.0 / max(self._up, self._down)
-        offsets = np.arange(self._n_taps, dtype=np.float64) - self._half
-        self._filter = (
-            np.sinc(cutoff * offsets) * cutoff * np.hanning(self._n_taps) * self._up
-        ).astype(np.float32)
         self._samples = np.empty(0, dtype=np.float32)
         self._buffer_start = 0
         self._input_frames = 0
@@ -35,8 +33,6 @@ class StreamingResampler:
         if block.size == 0:
             return block.copy()
         if self._rate_in == self._rate_out:
-            self._input_frames += block.size
-            self._next_output += block.size
             return block.copy()
 
         self._samples = np.concatenate((self._samples, block))

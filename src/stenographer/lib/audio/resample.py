@@ -8,6 +8,14 @@ import math
 import numpy as np
 
 
+def _polyphase_filter(up: int, down: int) -> np.ndarray:
+    """The Hanning-windowed sinc shared by the batch and streaming resamplers."""
+    n_taps = 2 * 10 * max(up, down) + 1
+    cutoff = 1.0 / max(up, down)
+    n = np.arange(n_taps, dtype=np.float64) - n_taps // 2
+    return (np.sinc(cutoff * n) * cutoff * np.hanning(n_taps) * up).astype(np.float32)
+
+
 def _resample_poly(data: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
     """Polyphase FIR resample of mono float32 audio at rational rates.
 
@@ -21,14 +29,9 @@ def _resample_poly(data: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
     gcd = math.gcd(rate_in, rate_out)
     up = rate_out // gcd
     down = rate_in // gcd
-    if up == 1 and down == 1:
-        return data
-    n_taps = 2 * 10 * max(up, down) + 1
+    filt = _polyphase_filter(up, down)
+    n_taps = filt.size
     half = n_taps // 2
-    cutoff = 1.0 / max(up, down)
-    n = np.arange(n_taps, dtype=np.float64) - half
-    filt = np.sinc(cutoff * n) * cutoff * np.hanning(n_taps)
-    filt = (filt * up).astype(np.float32)
     # Output m taps the virtual full convolution at n = half + m*down; grouping
     # by p = n % up turns each group into a plain convolution with sub-filter
     # filt[p::up], sampled at q = n // up, so no zero-stuffed array is built.
