@@ -13,6 +13,105 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
+This release makes saving, quitting, clipboard restore, and cancellation more
+dependable in dictation and the hub. The hub no longer writes log lines over
+its screen, and spectrum calibration now records only the quiet room.
+
+### Added
+
+- Quit asks one question that lists each action: stop and save the recording,
+  skip the running relabel, and cancel the running file job. On confirmation
+  the hub runs them in order.
+- Record stays on `! SAVE FAILED` with the error and the session ID until the
+  next recording starts. It lists each failure, and each press of `o` shows the
+  next failed session in Library.
+- The Models dialog shows each model's size, and `enter` on a missing or
+  corrupt model starts its download at once. One download runs at a time, and a
+  further one shows a notice.
+- Play on another session stops the running player and starts that session in
+  one press. A notice shows when the player exits with an error.
+- The Record device dialog keeps a disconnected device as an `unavailable`
+  selected row until you choose another.
+- The Record speakers card names a source whose audio could not be saved. That
+  source keeps transcribing, and the recording still saves its transcript.
+- The file browser lists hidden folders, a search with a leading dot finds
+  hidden audio, and a folder that cannot be read shows the reason.
+- The Checks tab keeps each test result with its check and always shows the fix
+  guidance. Defaults warns before it discards unsaved settings.
+- File job progress also advances with the audio position, so a long stretch
+  without phrases no longer holds the percent still.
+- The formatter capitalizes the pronoun `i` when punctuation surrounds it.
+- `setup` skips spectrum calibration in the full wizard when the overlay is
+  off, as the quick wizard does, and keeps the current floor.
+- `sounds --preview` says when muted cues or zero volume make it play at volume
+  0.6, and changes neither setting.
+- `stats` names the source of its summary and reports collection health over
+  all runs, or that no runs are recorded. `stats reset` refuses filters,
+  `--format` and `--output` work only with `stats export`, and a file export
+  confirms its destination.
+- `transcribe --raw --refine` prints a notice that `--raw` skips refinement.
+- `run` lists each missing required capability with its fix when it cannot
+  start.
+- The log records when the overlay helper's stderr file cannot be opened.
+
+### Removed
+
+- The three-second voice capture, its prompt, and the visibility check of
+  spectrum calibration.
+- The `enter` key of the Checks tab that showed or hid the fix guidance.
+
+### Fixed
+
+- The hub no longer writes log lines over its screen. Log lines and the output
+  of child processes stay off the terminal while the hub runs, and the log file
+  still receives every record.
+- A recording that cannot save during a confirmed quit now keeps the hub open
+  on Record, and the save runs before any relabel pass is skipped.
+- `q` and `ctrl+c` no longer confirm the delete and job cancel prompts of
+  Library.
+- A failed stop of an older session is no longer lost when a newer session
+  stops or another stop fails.
+- A player crash just before the next Play press now shows its notice.
+- Opening the application log and the Settings device list no longer stall the
+  hub.
+- The microphone test of Checks shows the real probe error in place of "no
+  audio server".
+- Record meters use the saved spectrum floor for each new recording, and a
+  deleted session clears Record. Export keeps its folder and format after a
+  failure so you can retry.
+- A failed relabel pass shows its reason on Record and keeps the live labels.
+- A corrupt voice model is replaced after the new download passes its hash
+  check, in the Models dialog and in `model download --live`. A file job with
+  an invalid voice-activity model names the command that fixes it.
+- Clipboard restore keeps an item you copied during the delay, including the
+  original chosen from clipboard history, and skips the delay when no paste was
+  attempted. A cancel during the original copy no longer writes the rewrite.
+- Escape now cancels an utterance after the energy gate, during model loading,
+  and during capture finalization right after an earlier delivery.
+- Recording keeps transcribing and stop still finishes when an audio file
+  cannot be written.
+- System audio capture works on PipeWire, and an early `pw-record` exit reports
+  an error.
+- Invalid hotkey bindings, a config file that is not UTF-8, and a non-text
+  vocabulary term are refused before startup, and each error names the setting.
+- Hotkey capture in `setup` completes when a keyboard sends the key release on
+  another interface.
+- Guided setup installs the voice-activity model with the speech model, and
+  offers it alone when only it is missing.
+- A failed `python3 -m venv` during the model build gives a fix that fits any
+  Linux system.
+- `transcribe` reports an unreadable or missing file before it checks the
+  model.
+- Library search finds a recording by its displayed local time, and a file
+  session by its session ID and time.
+- A revision fails and keeps the file when `session.json` is unreadable or
+  invalid, and Library marks a session with an incomplete revision as
+  interrupted.
+- Loopback refine requests bypass environment proxies.
+- A failed replacement during `scripts/install.sh` restores the previous
+  bundle.
+- The overlay keeps its physical DPI scale on the X11 root fallback.
+
 ## [v0.17.0] - 2026-10-28
 
 This is a breaking change: the `stenographer live` command is gone, and the

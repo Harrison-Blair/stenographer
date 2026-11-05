@@ -184,10 +184,11 @@ All of these live under `[stenographer.refine]`.
 
 ### `model`
 
-The default is `gemma4:e2b`. It is chosen by `scripts/refine_bench.py`, which
-runs a fixed corpus of dictated speech past each candidate and scores the
-result for meaning fidelity: does it drop a clause, respell a name, change a
-number, or answer a question it was supposed to leave alone. `gemma4:e2b` was
+The default is `gemma4:e2b`. It was chosen with `scripts/refine_bench.py`, which
+runs a fixed corpus of dictated speech past each candidate and reports its
+timings, memory use, and raw outputs. Those outputs were judged for meaning
+fidelity: does the model drop a clause, respell a name, change a number, or
+answer a question it was supposed to leave alone. `gemma4:e2b` was
 the only model measured that never did. It holds about 1.7 GB of VRAM (the
 speech model runs on the CPU) and takes roughly 2 seconds for a short
 utterance and 5 seconds for a long one once warm.
