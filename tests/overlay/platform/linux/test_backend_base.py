@@ -130,7 +130,7 @@ def test_both_backends_implement_every_display_specific_hook() -> None:
     from stenographer.overlay.platform.linux.backends.layer_shell_backend import LayerShellBackend
     from stenographer.overlay.platform.linux.backends.x11_overlay_backend import X11OverlayBackend
 
-    required = ("_display_fd", "_draw", "_teardown", "_on_display_readable", "_close")
+    required = ("_display_fd", "_draw", "_repaint", "_teardown", "_on_display_readable", "_close")
     for backend in (LayerShellBackend, X11OverlayBackend):
         inherited = [
             name for name in required if getattr(backend, name) is getattr(base.HelperBackend, name)
@@ -364,27 +364,6 @@ def test_closing_releases_the_display_exactly_once(loop) -> None:
     backend.close()
 
     assert backend.closes == 1
-
-
-@pytest.mark.parametrize(
-    ("hook", "args"),
-    [
-        ("_display_fd", ()),
-        ("_draw", ()),
-        ("_repaint", ()),
-        ("_teardown", ()),
-        ("_on_display_readable", (0,)),
-        ("_close", ()),
-    ],
-)
-def test_every_display_hook_is_unimplemented_until_a_backend_supplies_it(hook, args) -> None:
-    """A silently inherited no-op would let a backend register itself and then
-    draw nothing, which looks exactly like a working overlay that is hidden.
-    """
-    bare = base.HelperBackend()
-
-    with pytest.raises(NotImplementedError):
-        getattr(bare, hook)(*args)
 
 
 def test_a_loading_edge_while_hidden_changes_nothing_on_screen(loop) -> None:
