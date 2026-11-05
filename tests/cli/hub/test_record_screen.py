@@ -46,7 +46,6 @@ class FakeLiveSession:
             "mic": "on" if options.get("mic", True) else "off",
             "system": "on" if options.get("system", True) else "off",
         }
-        self.source_reasons = {"mic": None, "system": None}
         self.speech_detected = {"mic": False, "system": False}
         self.levels_dbfs = {"mic": -31.0, "system": -52.0}
         self.meter_floor_dbfs = -70.0

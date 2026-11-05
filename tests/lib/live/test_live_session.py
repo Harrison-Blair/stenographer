@@ -510,7 +510,9 @@ def test_stop_before_start_closes_resources_without_waiting_for_a_consumer(monke
     assert rig.worker.stopped
 
 
-def test_unsupported_system_platform_disables_system_without_blocking_mic(monkeypatch, tmp_path):
+def test_unsupported_system_platform_disables_system_without_blocking_mic(
+    monkeypatch, tmp_path, caplog
+):
     from stenographer.lib.platform.errors import UnsupportedPlatformError
 
     reason = "system audio capture is unavailable"
@@ -522,18 +524,19 @@ def test_unsupported_system_platform_disables_system_without_blocking_mic(monkey
 
     assert rig.session.source_states["mic"] == "on"
     assert rig.session.source_states["system"] == "off"
-    assert rig.session.source_reasons["system"] == reason
+    assert f'live: system_source_unavailable error=UnsupportedPlatformError detail="{reason}"' in (
+        caplog.text
+    )
 
     rig.session.toggle("system")
     assert rig.session.source_states["system"] == "off"
-    assert rig.session.source_reasons["system"] == reason
     rig.session.stop()
     assert rig.writer.closed
     assert rig.worker.stopped
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux PipeWire capture routing")
-def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tmp_path):
+def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tmp_path, caplog):
     from stenographer.lib.platform.linux.system_audio import LinuxSystemAudioCapture
 
     bin_dir = tmp_path / "bin"
@@ -570,10 +573,7 @@ def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tm
         rig.session.start()
 
         assert rig.session.source_states["system"] == "off"
-        assert (
-            rig.session.source_reasons["system"]
-            == "system capture is not linked to the sink monitor"
-        )
+        assert "system capture is not linked to the sink monitor" in caplog.text
         assert not any(source == "system" for source, _samples in rig.writer.audio)
     finally:
         rig.session.stop()
@@ -587,7 +587,7 @@ def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tm
         raise AssertionError("pw-record stayed alive after the link check failed")
 
 
-def test_unavailable_system_source_stays_off_and_exposes_the_reason(monkeypatch, tmp_path):
+def test_unavailable_system_source_stays_off_and_logs_the_reason(monkeypatch, tmp_path, caplog):
     reason = "pw-record is not installed"
     rig = _make_session(
         monkeypatch,
@@ -596,13 +596,14 @@ def test_unavailable_system_source_stays_off_and_exposes_the_reason(monkeypatch,
         availability=(False, reason),
     )
 
+    logged = f'live: system_source_unavailable reason="{reason}"'
     assert rig.session.source_states["system"] == "off"
-    assert rig.session.source_reasons["system"] == reason
+    assert caplog.text.count(logged) == 1
     assert not rig.system.running
 
     rig.session.toggle("system")
     assert rig.session.source_states["system"] == "off"
-    assert rig.session.source_reasons["system"] == reason
+    assert caplog.text.count(logged) == 2
     assert not rig.system.running
 
     rig.session.stop()

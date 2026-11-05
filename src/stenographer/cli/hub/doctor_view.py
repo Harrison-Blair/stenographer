@@ -40,6 +40,7 @@ WARNING_DESCRIPTIONS = {
     "live: relabel_failed": "The speaker relabel pass did not finish.",
     "live: source_start_failed": "A live audio source did not start.",
     "live: system_source_failed": "System audio stopped; the mic went on recording.",
+    "live: system_source_unavailable": "System audio could not be used for this recording.",
     "overlay: helper_restarting": "The overlay helper stopped and was restarted.",
     "overlay: helper_start_failed": "The overlay helper did not start.",
     "overlay: unavailable": "The overlay is not available on this display.",

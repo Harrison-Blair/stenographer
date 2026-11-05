@@ -28,7 +28,6 @@ class FakeSession:
         ]
         self.speakers = (("speaker-1", "Speaker 1"), ("speaker-2", "Speaker 2"))
         self.source_states = {"mic": "on", "system": "on"}
-        self.source_reasons = {"mic": None, "system": None}
         self.levels_dbfs = {"mic": -20.0, "system": -30.0}
         self.meter_floor_dbfs = -70.0
         self.failed_phrase_count = 1
