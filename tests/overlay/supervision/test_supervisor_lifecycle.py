@@ -223,8 +223,14 @@ def host(monkeypatch, tmp_path):
     def install(*, transport=None, error=None):
         monkeypatch.setattr(supervision, "current_platform", lambda: _Platform(transport, error))
 
+    def session(*session_helpers):
+        helpers.extend(session_helpers)
+        transport = _Transport(list(session_helpers))
+        install(transport=transport)
+        return transport
+
     try:
-        yield install, helpers
+        yield install, session
     finally:
         for helper in helpers:
             helper.dispose()
@@ -270,11 +276,9 @@ def test_a_ready_helper_is_fed_state_then_spectrum_then_shutdown(host, superviso
     carry the generation of the recording they belong to, and closing sends
     exactly one command before stdin is closed.
     """
-    install, helpers = host
+    _install, session = host
     helper = _SocketHelper()
-    helpers.append(helper)
-    transport = _Transport([helper])
-    install(transport=transport)
+    transport = session(helper)
 
     instance = supervisor()
     assert transport.attempted.acquire(timeout=_DEADLINE)
@@ -310,11 +314,9 @@ def test_a_ready_helper_is_fed_state_then_spectrum_then_shutdown(host, superviso
 def test_the_spawned_helper_command_is_the_private_re_exec_with_a_log_file(
     host, supervisor
 ) -> None:
-    install, helpers = host
+    _install, session = host
     helper = _SocketHelper()
-    helpers.append(helper)
-    transport = _Transport([helper])
-    install(transport=transport)
+    transport = session(helper)
 
     instance = supervisor()
     assert transport.attempted.acquire(timeout=_DEADLINE)
@@ -333,11 +335,9 @@ def test_a_helper_that_never_announces_readiness_is_replaced_then_abandoned(
     readiness deadline is the only thing that can end the session.
     """
     _short_ready_deadline(monkeypatch)
-    install, helpers = host
+    _install, session = host
     first, second = _SocketHelper(), _SocketHelper()
-    helpers.extend((first, second))
-    transport = _Transport([first, second])
-    install(transport=transport)
+    transport = session(first, second)
 
     with caplog.at_level(logging.WARNING, logger=_LOG):
         instance = supervisor()
@@ -357,11 +357,9 @@ def test_a_malformed_helper_record_fails_the_stream_without_echoing_it(
     stdout has been corrupted by a library's stray write must not put that
     text into the daemon's log.
     """
-    install, helpers = host
+    _install, session = host
     first, second = _SocketHelper(), _SocketHelper()
-    helpers.extend((first, second))
-    transport = _Transport([first, second])
-    install(transport=transport)
+    transport = session(first, second)
 
     with caplog.at_level(logging.WARNING, logger=_LOG):
         instance = supervisor()
@@ -386,11 +384,9 @@ def test_an_unavailable_helper_is_believed_rather_than_restarted(host, superviso
     """An overlay that cannot exist on this session must not spend the restart
     budget: the second attempt would reach the same conclusion.
     """
-    install, helpers = host
+    _install, session = host
     helper = _SocketHelper()
-    helpers.append(helper)
-    transport = _Transport([helper])
-    install(transport=transport)
+    transport = session(helper)
 
     instance = supervisor()
     assert transport.attempted.acquire(timeout=_DEADLINE)
@@ -402,7 +398,7 @@ def test_an_unavailable_helper_is_believed_rather_than_restarted(host, superviso
 
 
 def test_a_transport_that_cannot_spawn_retries_exactly_once(host, supervisor, caplog) -> None:
-    install, _helpers = host
+    install, _session = host
     transport = _Transport(error=OSError("fork failed"))
     install(transport=transport)
 
@@ -418,7 +414,7 @@ def test_a_transport_that_cannot_spawn_retries_exactly_once(host, supervisor, ca
 def test_a_host_without_an_overlay_ends_the_supervisor_thread_immediately(
     host, supervisor, caplog
 ) -> None:
-    install, _helpers = host
+    install, _session = host
     install(error=UnsupportedPlatformError("no overlay on this host"))
 
     with caplog.at_level(logging.INFO, logger=_LOG):
@@ -441,11 +437,9 @@ def test_a_helper_handle_that_breaks_the_serve_loop_is_still_reaped(
         def is_running(self) -> bool:
             raise RuntimeError("host handle went bad")
 
-    install, helpers = host
+    _install, session = host
     broken = _BrokenHelper()
-    helpers.append(broken)
-    transport = _Transport([broken])
-    install(transport=transport)
+    transport = session(broken)
 
     with caplog.at_level(logging.WARNING, logger=_LOG):
         instance = supervisor()
@@ -472,11 +466,9 @@ def test_a_restarted_helper_is_replayed_the_current_state_not_the_history(
     the records are on the wire whatever the replacement then does.
     """
     _short_ready_deadline(monkeypatch)
-    install, helpers = host
+    _install, session = host
     first, second = _SocketHelper(), _SocketHelper()
-    helpers.extend((first, second))
-    transport = _Transport([first, second])
-    install(transport=transport)
+    transport = session(first, second)
 
     instance = supervisor()
     assert transport.attempted.acquire(timeout=_DEADLINE)
@@ -504,11 +496,9 @@ def test_a_backend_lost_after_readiness_is_worth_one_fresh_helper(host, supervis
     that was never there — so unlike an up-front refusal it earns a restart,
     and only the second failure ends the session.
     """
-    install, helpers = host
+    _install, session = host
     helper = _SocketHelper()
-    helpers.append(helper)
-    transport = _Transport([helper])
-    install(transport=transport)
+    transport = session(helper)
 
     with caplog.at_level(logging.WARNING, logger=_LOG):
         instance = supervisor()
@@ -530,11 +520,9 @@ def test_a_helper_that_dies_mid_record_is_reported_as_a_framing_failure(
     """A child killed between two writes leaves half a record in the pipe; the
     parent must notice at end of stream rather than wait for the rest forever.
     """
-    install, helpers = host
+    _install, session = host
     first, second = _SocketHelper(), _SocketHelper()
-    helpers.extend((first, second))
-    transport = _Transport([first, second])
-    install(transport=transport)
+    transport = session(first, second)
 
     with caplog.at_level(logging.WARNING, logger=_LOG):
         instance = supervisor()
@@ -564,11 +552,9 @@ def test_a_helper_whose_stdin_is_gone_is_replaced_rather_than_written_to(host, s
         def write(self, data: bytes) -> None:
             raise BrokenPipeError("the helper is gone")
 
-    install, helpers = host
+    _install, session = host
     first, second = _DeafHelper(), _DeafHelper()
-    helpers.extend((first, second))
-    transport = _Transport([first, second])
-    install(transport=transport)
+    transport = session(first, second)
 
     instance = supervisor()
     assert transport.attempted.acquire(timeout=_DEADLINE)
