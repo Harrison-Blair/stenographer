@@ -6,6 +6,7 @@ import logging
 import mmap
 import os
 import selectors
+from collections.abc import Callable
 
 from pywayland import ffi
 from pywayland.client import Display
@@ -14,7 +15,6 @@ from pywayland.protocol.wayland import WlCompositor, WlOutput, WlShm
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.overlay.platform.linux.backends.base import DISPLAY_KEY
-from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
 from stenographer.overlay.platform.linux.backends.global_removal import GlobalRemoval
 from stenographer.overlay.platform.linux.backends.helper_backend import HelperBackend
 from stenographer.overlay.platform.linux.backends.protocols.fractional_scale_v1 import (
@@ -40,6 +40,7 @@ from stenographer.overlay.platform.linux.backends.wayland_constants import (
     log,
 )
 from stenographer.overlay.protocol.backend import Backend
+from stenographer.overlay.protocol.errors import BackendUnavailableError
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 from stenographer.overlay.rendering.constants import CANVAS_HEIGHT, CANVAS_WIDTH
 from stenographer.overlay.rendering.render import layer_margin_bottom, premultiplied_argb32
@@ -185,35 +186,31 @@ class LayerShellBackend(HelperBackend):
     def _on_output_scale(self, output, factor: int) -> None:
         if output not in self._output_scales:
             return
-        try:
-            old_scale = self._integer_scale()
+
+        def mutate() -> None:
             self._output_scales[output] = max(1, factor)
-            if output in self._entered_outputs and self._integer_scale() != old_scale:
-                self._present_if_configured()
-        except Exception as exc:
-            self._display_lost(exc, "output_scale")
+
+        self._rescale_after(mutate, "output_scale")
 
     def _on_surface_enter(self, _surface, output) -> None:
         if not callback_is_current(_surface, self._surface) or output not in self._output_scales:
             return
-        try:
-            old_scale = self._integer_scale()
-            self._entered_outputs.add(output)
-            if self._integer_scale() != old_scale:
-                self._present_if_configured()
-        except Exception as exc:
-            self._display_lost(exc, "surface_enter")
+        self._rescale_after(lambda: self._entered_outputs.add(output), "surface_enter")
 
     def _on_surface_leave(self, _surface, output) -> None:
         if not callback_is_current(_surface, self._surface) or output not in self._output_scales:
             return
+        self._rescale_after(lambda: self._entered_outputs.discard(output), "surface_leave")
+
+    def _rescale_after(self, mutate: Callable[[], None], where: str) -> None:
+        """Apply one scale input and repaint only if the effective scale moved."""
         try:
             old_scale = self._integer_scale()
-            self._entered_outputs.discard(output)
+            mutate()
             if self._integer_scale() != old_scale:
                 self._present_if_configured()
         except Exception as exc:
-            self._display_lost(exc, "surface_leave")
+            self._display_lost(exc, where)
 
     def _display_lost(self, exc: Exception, where: str) -> None:
         """Mark the connection unusable and say which callback found it out.

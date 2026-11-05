@@ -12,7 +12,6 @@ from Xlib.ext import randr, shape
 
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
-from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
 from stenographer.overlay.platform.linux.backends.helper_backend import HelperBackend
 from stenographer.overlay.platform.linux.backends.monitor import Monitor
 from stenographer.overlay.platform.linux.backends.pict_format import PictFormat
@@ -38,6 +37,7 @@ from stenographer.overlay.platform.linux.backends.x11_constants import (
     log,
 )
 from stenographer.overlay.protocol.backend import Backend
+from stenographer.overlay.protocol.errors import BackendUnavailableError
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 from stenographer.overlay.rendering.frame import OverlayFrame
 from stenographer.overlay.rendering.render import overlay_position, premultiplied_argb32
@@ -265,8 +265,6 @@ class X11OverlayBackend(HelperBackend):
             self._stacking_reassert = start_stacking_reassert(
                 epoch=self._window_epoch, now=time.monotonic()
             )
-        if self._pulse.breathing and self._pulse.next_frame_at is None:
-            self._pulse.arm(time.monotonic())
         self._display.flush()
 
     def _upload(self, frame: OverlayFrame) -> None:
@@ -314,7 +312,6 @@ class X11OverlayBackend(HelperBackend):
         self._placement = None
         self._target_position = None
         self._requested_position = None
-        self._pulse.disarm_frames()
         if self._display is not None:
             with contextlib.suppress(Exception):
                 self._display.flush()
@@ -338,24 +335,23 @@ class X11OverlayBackend(HelperBackend):
             return
         self._set_stacking_properties(self._window)
         self._window.configure(stack_mode=X.Above)
-        if self._target_position is not None and self._requested_position is not None:
-            # Some XWayland compositors translate override-redirect positions
-            # after map when their native monitor layout has negative origins.
-            # RandR exposes only a normalized root, so learn the settled delta
-            # and compensate every later request without compositor-specific IPC.
-            geometry = self._window.get_geometry()
-            translation = (
-                geometry.x - self._requested_position[0],
-                geometry.y - self._requested_position[1],
-            )
-            self._compositor_translation = translation
-            requested_position = (
-                self._target_position[0] - translation[0],
-                self._target_position[1] - translation[1],
-            )
-            if requested_position != self._requested_position:
-                self._requested_position = requested_position
-                self._window.configure(x=requested_position[0], y=requested_position[1])
+        # Some XWayland compositors translate override-redirect positions
+        # after map when their native monitor layout has negative origins.
+        # RandR exposes only a normalized root, so learn the settled delta
+        # and compensate every later request without compositor-specific IPC.
+        geometry = self._window.get_geometry()
+        translation = (
+            geometry.x - self._requested_position[0],
+            geometry.y - self._requested_position[1],
+        )
+        self._compositor_translation = translation
+        requested_position = (
+            self._target_position[0] - translation[0],
+            self._target_position[1] - translation[1],
+        )
+        if requested_position != self._requested_position:
+            self._requested_position = requested_position
+            self._window.configure(x=requested_position[0], y=requested_position[1])
         self._display.flush()
 
     def _display_fd(self) -> int:

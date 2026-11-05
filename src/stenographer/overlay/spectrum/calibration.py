@@ -84,8 +84,6 @@ def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float,
     window_size = max(2, round(sample_rate * WINDOW_SECONDS))
     usable = audio[discard:]
     window_count = usable.size // window_size
-    if window_count < 1:
-        raise CalibrationError("calibration capture is too short")
     windows = usable[: window_count * window_size].reshape(window_count, window_size)
 
     peak = float(np.max(np.abs(windows)))

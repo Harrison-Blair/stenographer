@@ -7,11 +7,10 @@ import sys
 from typing import BinaryIO
 
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
-from stenographer.overlay.helper.errors import _NoBackendError
 from stenographer.overlay.logging.pipeline import setup_helper_logging
 from stenographer.overlay.platform import current_platform
 from stenographer.overlay.protocol.codec import encode_message
-from stenographer.overlay.protocol.errors import ProtocolError
+from stenographer.overlay.protocol.errors import BackendUnavailableError, ProtocolError
 from stenographer.overlay.protocol.messages import (
     ReadyMessage,
     UnavailableMessage,
@@ -28,16 +27,6 @@ def _write_helper_message(stream: BinaryIO, message: ReadyMessage | UnavailableM
     stream.flush()
 
 
-def _reported_reason(exc: BaseException) -> UnavailableReason | None:
-    """The fixed reason a backend attached to its refusal, if it attached one.
-
-    Read by attribute rather than by exception class: ``BackendUnavailableError``
-    lives with the backends inside the platform package, and this module is core.
-    """
-    reason = getattr(exc, "reason", None)
-    return reason if isinstance(reason, UnavailableReason) else None
-
-
 def _select_backend():
     """Construct the first available platform backend; imports stay helper-local."""
     reasons: list[UnavailableReason | None] = []
@@ -45,8 +34,10 @@ def _select_backend():
         try:
             backend = spec.construct()
         except Exception as exc:
-            reason = _reported_reason(exc)
-            if reason is None and isinstance(exc, ImportError):
+            reason = None
+            if isinstance(exc, BackendUnavailableError):
+                reason = exc.reason
+            elif isinstance(exc, ImportError):
                 # A backend module that fails to import before it can raise its
                 # own classified error is still a missing dependency.
                 reason = UnavailableReason.BACKEND_DEPENDENCY_MISSING
@@ -63,7 +54,7 @@ def _select_backend():
             continue
         log.info(fmt_event("overlay_helper", "backend_selected", backend=spec.backend.value))
         return backend
-    raise _NoBackendError(selected_unavailable_reason(reasons))
+    raise BackendUnavailableError(selected_unavailable_reason(reasons))
 
 
 def run_overlay_helper(
@@ -85,7 +76,7 @@ def run_overlay_helper(
     setup_helper_logging()
     try:
         backend = _select_backend()
-    except _NoBackendError as exc:
+    except BackendUnavailableError as exc:
         log.info(fmt_event("overlay_helper", "unavailable", reason=exc.reason.value))
         _write_helper_message(output_stream, UnavailableMessage(exc.reason))
         return 0

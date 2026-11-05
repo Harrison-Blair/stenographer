@@ -20,12 +20,11 @@ import os
 import pytest
 
 from stenographer.lib.platform.errors import UnsupportedPlatformError
-from stenographer.overlay.helper.errors import _NoBackendError
 from stenographer.overlay.helper.execution import _select_backend, run_overlay_helper
 from stenographer.overlay.platform.overlay_backend_spec import OverlayBackendSpec
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.codec import decode_message, encode_message
-from stenographer.overlay.protocol.errors import ProtocolError
+from stenographer.overlay.protocol.errors import BackendUnavailableError, ProtocolError
 from stenographer.overlay.protocol.messages import ReadyMessage, UnavailableMessage
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
@@ -140,13 +139,6 @@ def propagating(monkeypatch):
     monkeypatch.setattr(logging.getLogger("stenographer"), "propagate", True)
 
 
-def test_no_backend_error_carries_the_reason_as_its_whole_text() -> None:
-    error = _NoBackendError(UnavailableReason.X_ARGB_UNAVAILABLE)
-
-    assert error.reason is UnavailableReason.X_ARGB_UNAVAILABLE
-    assert str(error) == "x_argb_unavailable"
-
-
 def test_selection_takes_the_first_usable_backend_and_logs_the_rest(
     monkeypatch, caplog, propagating
 ) -> None:
@@ -156,8 +148,7 @@ def test_selection_takes_the_first_usable_backend_and_logs_the_rest(
     parent is told nothing about it: the helper is the only process that saw it.
     """
     usable = _Backend(Backend.XWAYLAND)
-    refused = RuntimeError("no compositor")
-    refused.reason = UnavailableReason.REQUIRED_GLOBALS_MISSING
+    refused = BackendUnavailableError(UnavailableReason.REQUIRED_GLOBALS_MISSING)
     monkeypatch.setattr(
         _EXECUTION,
         lambda: _Platform((_refusing(Backend.LAYER_SHELL, refused), _offering(usable))),
@@ -186,7 +177,7 @@ def test_a_bare_import_error_is_reported_as_a_missing_dependency(monkeypatch) ->
         lambda: _Platform((_refusing(Backend.LAYER_SHELL, ImportError("no pywayland")),)),
     )
 
-    with pytest.raises(_NoBackendError) as caught:
+    with pytest.raises(BackendUnavailableError) as caught:
         _select_backend()
     assert caught.value.reason is UnavailableReason.BACKEND_DEPENDENCY_MISSING
 
@@ -197,7 +188,7 @@ def test_an_unreported_refusal_keeps_the_unspecific_reason(monkeypatch) -> None:
         lambda: _Platform((_refusing(Backend.XWAYLAND, RuntimeError("boom")),)),
     )
 
-    with pytest.raises(_NoBackendError) as caught:
+    with pytest.raises(BackendUnavailableError) as caught:
         _select_backend()
     assert caught.value.reason is UnavailableReason.BACKENDS_UNAVAILABLE
 
@@ -211,10 +202,8 @@ def test_every_backend_refusing_is_a_clean_exit_with_one_record(
     whole difference between a three-second stall and an immediate diagnosis.
     """
     writer, read_fd = wire
-    wayland = RuntimeError("no wayland")
-    wayland.reason = UnavailableReason.NO_WAYLAND_DISPLAY
-    x11 = RuntimeError("no X")
-    x11.reason = UnavailableReason.X_ARGB_UNAVAILABLE
+    wayland = BackendUnavailableError(UnavailableReason.NO_WAYLAND_DISPLAY)
+    x11 = BackendUnavailableError(UnavailableReason.X_ARGB_UNAVAILABLE)
     monkeypatch.setattr(
         _EXECUTION,
         lambda: _Platform(

@@ -32,10 +32,8 @@ class LinuxHelperProcess:
         stdin.flush()
 
     def close_input(self) -> None:
-        stdin = self._process.stdin
-        if stdin is not None:
-            with contextlib.suppress(OSError):
-                stdin.close()
+        with contextlib.suppress(OSError):
+            self._process.stdin.close()
 
     def wait_readable(self, timeout: float) -> bool:
         return bool(self._selector.select(timeout))
@@ -56,8 +54,6 @@ class LinuxHelperProcess:
     def terminate(self, grace_seconds: float) -> None:
         process = self._process
         if process.poll() is not None:
-            with contextlib.suppress(OSError):
-                process.wait(timeout=0)
             return
         with contextlib.suppress(OSError):
             process.terminate()
@@ -73,7 +69,5 @@ class LinuxHelperProcess:
         with contextlib.suppress(OSError):
             self._selector.close()
         self.close_input()
-        stdout = self._process.stdout
-        if stdout is not None:
-            with contextlib.suppress(OSError):
-                stdout.close()
+        with contextlib.suppress(OSError):
+            self._process.stdout.close()

@@ -21,11 +21,10 @@ from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.platform.linux.backends import helper_backend as base
 from stenographer.overlay.platform.linux.backends.base import next_timeout, probe_backend
-from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.codec import encode_message
 from stenographer.overlay.protocol.command import Command
-from stenographer.overlay.protocol.errors import ProtocolError
+from stenographer.overlay.protocol.errors import BackendUnavailableError, ProtocolError
 from stenographer.overlay.protocol.messages import (
     CommandMessage,
     LoadingActivityMessage,
