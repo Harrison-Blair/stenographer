@@ -175,7 +175,9 @@ or invalid pack is ignored as a unit.
 ## View or remove statistics
 
 Statistics are local numeric records. Summary, export, and date-range deletion
-default to hotkey records; use `--source all` to include file records. View
+default to hotkey records; use `--source all` to include file records. Collection
+health covers all runs, regardless of filters, and reports when no runs have been
+recorded. View
 totals or export them:
 
 ```sh

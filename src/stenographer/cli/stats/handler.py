@@ -91,6 +91,9 @@ def _duration(seconds: float) -> str:
 def _summary(args, store, filters) -> int:
     report = store.report(filters)
     totals = report["totals"]
+    source = filters.source or "all"
+    hint = " (use --source all for all sources)" if source == "hotkey" else ""
+    print(f"Source: {source}{hint}")
     print(f"Recognized words: {totals['recognized_words']:,}")
     print(f"Completed ASR audio: {_duration(totals['asr_audio_s'])}")
     print(f"Utterances: {totals['utterances']:,} · Active days: {totals['active_days']:,}")
@@ -105,8 +108,10 @@ def _summary(args, store, filters) -> int:
             f"p99 {metric['p99']:.1f} ms (n={metric['count']}, missing={metric['missing']})"
         )
     health = report["health"]
-    print(
-        f"Collection: {'degraded' if health['degraded'] else 'available'}; "
-        f"dropped checkpoints: {health['dropped_checkpoints']}"
+    status = (
+        "no runs recorded"
+        if health["runs"] == 0
+        else ("degraded" if health["degraded"] else "available")
     )
+    print(f"Collection (all runs): {status}; dropped checkpoints: {health['dropped_checkpoints']}")
     return 0
