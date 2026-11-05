@@ -26,7 +26,7 @@ from stenographer.lib.sounds.packs import (
 )
 from stenographer.lib.sounds.playback import preview_sound_pack, preview_volume
 from stenographer.lib.sounds.sound_pack import SoundPack
-from stenographer.lib.sounds.validation import _wav_header_ok, _wav_payload_ok
+from stenographer.lib.sounds.validation import _wav_header_ok
 
 _BUNDLED = pathlib.Path(__file__).parents[3] / "src" / "stenographer" / "assets" / "sounds"
 
@@ -293,12 +293,6 @@ def test_effective_name_is_none_when_nothing_resolves(tmp_path):
     bundled.mkdir()
 
     assert effective_sound_pack_name("missing", tmp_path, bundled_root=bundled) is None
-
-
-def test_wav_payload_must_match_the_declared_frame_geometry():
-    assert _wav_payload_ok(4800, 1200, 2, 2) is True
-    assert _wav_payload_ok(4799, 1200, 2, 2) is False
-    assert _wav_payload_ok(0, 0, 1, 2) is True
 
 
 class RecordingCuePlayer:

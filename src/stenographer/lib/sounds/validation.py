@@ -69,7 +69,7 @@ def _valid_wav(path: pathlib.Path) -> bool:
         log_failure(logger, logging.WARNING, "feedback: cue_invalid", exc, safe=True, path=path)
         return False
 
-    if not _wav_payload_ok(len(frames), frame_count, channels, sample_width):
+    if len(frames) != frame_count * channels * sample_width:
         logger.warning(
             fmt_event(
                 "feedback",
@@ -84,8 +84,3 @@ def _valid_wav(path: pathlib.Path) -> bool:
         )
         return False
     return True
-
-
-def _wav_payload_ok(frames_len: int, frame_count: int, channels: int, sample_width: int) -> bool:
-    """A truncated payload must fail validation even when the header parses. PURE."""
-    return frames_len == frame_count * channels * sample_width
