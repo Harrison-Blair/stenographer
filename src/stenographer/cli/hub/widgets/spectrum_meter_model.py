@@ -49,6 +49,11 @@ class SpectrumMeterModel:
         self._level = -math.inf
         self._levels: deque[tuple[float, float]] = deque()
 
+    def set_floor(self, floor_dbfs: object) -> None:
+        """Apply the configured floor to the next recording."""
+        with self._lock:
+            self._analyzer = SpectrumAnalyzer(floor_dbfs)
+
     @property
     def state(self) -> str:
         return self._state

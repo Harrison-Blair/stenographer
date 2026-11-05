@@ -759,3 +759,26 @@ async def test_record_rename_button_in_the_speakers_card_opens_the_dialog(tmp_pa
         await pilot.pause()
         assert ("rename", "speaker-1", "Juliet") in session.actions
         session.release.set()
+
+
+def test_record_meters_use_configured_spectrum_floor(tmp_path):
+    import asyncio
+
+    services, _ = _services(tmp_path)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        default_toml().replace("spectrum_floor_dbfs = -45.0", "spectrum_floor_dbfs = -13.0")
+    )
+    app = _app(services, config_path=config_path)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)):
+            meter = app.record_screen.meters["mic"]
+            meter.set_state("on")
+            samples = (0.01 * np.sin(2 * np.pi * 1000 * np.arange(16000) / 16000)).astype(
+                np.float32
+            )
+            meter.feed(samples)
+            assert all("█" not in row for row in meter.model.rows)
+
+    asyncio.run(exercise())

@@ -235,6 +235,8 @@ class HubApp(App[None]):
         log.info(fmt_event("hub", "screen_changed", screen=name))
         if name == "library":
             self.library_screen.load_sessions()
+        elif name == "record":
+            self.record_screen.refresh_saved()
 
     def _guard_settings(self, proceed: Callable[[], None]) -> None:
         editor = self.config_editor

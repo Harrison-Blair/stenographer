@@ -269,6 +269,8 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
     # Options
 
     def _draw_options(self) -> None:
+        self.query_one("#transcribe-count", Input).disabled = not self.diarize
+        self.query_one("#transcribe-count-button", HubButton).disabled = not self.diarize
         for button_id, value in (
             ("#transcribe-speakers", self.diarize),
             ("#transcribe-refine", self.refine),
@@ -284,6 +286,8 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         self._draw_options()
 
     def action_edit_count(self) -> None:
+        if not self.diarize:
+            return
         self.query_one("#transcribe-count", Input).focus()
 
     def _show_error(self, message: str) -> None:
@@ -309,7 +313,7 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
             self.set_focus(None)
             self._open(entry.path)
             return
-        valid, count = self._speaker_count()
+        valid, count = self._speaker_count() if self.diarize else (True, None)
         if not valid:
             self._show_error(_COUNT_ERROR)
             self.query_one("#transcribe-count", Input).focus()

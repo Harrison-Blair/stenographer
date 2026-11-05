@@ -99,10 +99,7 @@ class RecordScreen(HubScreen):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.split = False
-        self.meters = {
-            "mic": SpectrumMeter("mic", "Default input", id="mic-meter"),
-            "system": SpectrumMeter("system", _SYSTEM_DEVICE, id="system-meter"),
-        }
+        self.meters: dict[str, SpectrumMeter] = {}
         self._state_shown: str | None = None
         self._metered = None
         self._remove_listener: Callable[[], None] | None = None
@@ -113,6 +110,11 @@ class RecordScreen(HubScreen):
         self._transcript_key: object = None
 
     def compose_body(self) -> ComposeResult:
+        floor = self.app.current_config().feedback.spectrum_floor_dbfs
+        self.meters = {
+            "mic": SpectrumMeter("mic", "Default input", floor_dbfs=floor, id="mic-meter"),
+            "system": SpectrumMeter("system", _SYSTEM_DEVICE, floor_dbfs=floor, id="system-meter"),
+        }
         yield Static("", id="section-content", markup=False)
         with Vertical(id="record-body"):
             with Horizontal(id="record-top"):
@@ -432,6 +434,9 @@ class RecordScreen(HubScreen):
         self._metered = session
         if session is None:
             return
+        floor = self.app.current_config().feedback.spectrum_floor_dbfs
+        for meter in self.meters.values():
+            meter.model.set_floor(floor)
         self._session_devices[session.path.name] = self.mic_device()
         add_listener = getattr(session, "add_block_listener", None)
         if add_listener is not None:
@@ -632,6 +637,25 @@ class RecordScreen(HubScreen):
             return
         self.app.refresh_view()
 
+    def refresh_saved(self) -> None:
+        session = self.saved_session
+        if session is not None and not self._stopping(session):
+            self.app.run_worker(
+                self._read_saved(session.path.name), group="record-saved", exclusive=True
+            )
+
+    async def _read_saved(self, session_id: str) -> None:
+        try:
+            detail = await asyncio.to_thread(self.app.services.session_store.read, session_id)
+        except (OSError, ValueError, RuntimeError) as exc:
+            log_failure(log, logging.ERROR, "hub: session_detail_failed", exc, safe=True)
+            self.app.notify("Could not read the saved session.", severity="error")
+        else:
+            saved = self.saved_session
+            if saved is not None and saved.path.name == session_id:
+                self._saved_lines = (session_id, detail.lines)
+                self.app.refresh_view()
+
     def _rename_saved(self, session_id: str, value: tuple[str, str] | None) -> None:
         if value is None:
             return
@@ -646,12 +670,11 @@ class RecordScreen(HubScreen):
         store = app.services.session_store
         try:
             await asyncio.to_thread(store.rename_speaker, session_id, speaker_id, name)
-            detail = await asyncio.to_thread(store.read, session_id)
         except (OSError, ValueError, RuntimeError) as exc:
             log_failure(log, logging.ERROR, "hub: speaker_rename_failed", exc, safe=True)
             app.notify(f"Could not rename the speaker: {exc}", severity="error")
         else:
-            self._saved_lines = (session_id, detail.lines)
+            self.refresh_saved()
             log.info(fmt_event("hub", "speaker_renamed", session_id=session_id))
         finally:
             app.release_session(session_id, owner)

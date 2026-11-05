@@ -60,6 +60,9 @@ class ModelsDialog(Dialog[None]):
 
     def reload(self) -> None:
         self.entries = self._model_status()
+        self._draw()
+
+    def _draw(self) -> None:
         rows = tuple(
             (
                 f"{entry.label} · {entry.name}",
@@ -75,13 +78,14 @@ class ModelsDialog(Dialog[None]):
     def on_row_selected(self, event) -> None:
         event.stop()
         self.index = event.index
-        self.reload()
+        self._draw()
 
     def action_move(self, offset: int) -> None:
         self.index = (self.index + offset) % len(self.entries)
-        self.reload()
+        self._draw()
 
     def action_download(self) -> None:
+        self.reload()
         entry = self.entries[self.index]
         if entry.present:
             self.app.notify(f"The {entry.label} is present.")

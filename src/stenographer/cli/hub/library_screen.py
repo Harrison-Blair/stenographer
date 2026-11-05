@@ -286,10 +286,15 @@ class LibraryScreen(HubScreen):
             (i for i, entry in enumerate(self.entries) if entry.entry_id == self._selected_id),
             None,
         )
-        if not rows:
-            message = self._list_error or (
-                "No matches." if self.search_query.strip() else "No saved sessions."
-            )
+        query = self.search_query.strip()
+        searching = bool(query) and (
+            self._search_matches is None or self._search_matches[0] != query
+        )
+        message = self._list_error or ("Searching…" if searching else "")
+        if message:
+            rows += ((Text(message, style=_DIM), ""),)
+        elif not rows:
+            message = "No matches." if query else "No saved sessions."
             rows = ((Text(message, style=_DIM), ""),)
             index = None
         key = (tuple(row[0].plain for row in rows), index)
@@ -412,6 +417,8 @@ class LibraryScreen(HubScreen):
         for button_id, _key, label, _action, _tone in _ACTIONS:
             labels[button_id] = (label, session_id is None)
         if session_id is not None:
+            if self._detail_id != session_id or self.detail is None:
+                labels["library-rename"] = ("Rename…", True)
             for button_id in ("library-rename", "library-rediarize", "library-retranscribe"):
                 if busy:
                     labels[button_id] = (f"{labels[button_id][0]} · busy", True)
@@ -760,6 +767,8 @@ class LibraryScreen(HubScreen):
             return
         event.stop()
         self.search_query = event.value
+        self._rebuild()
+        self.app.refresh_view()
         self.load_sessions()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -820,6 +829,10 @@ class LibraryScreen(HubScreen):
             app.notify(f"{label} failed: {exc}", severity="error")
             result = None
         else:
+            if label == "Delete":
+                saved = getattr(app.services, "last_saved", None)
+                if saved is not None and saved.path.name == session_id:
+                    app.services.last_saved = None
             app.notify(f"{label} complete.")
         finally:
             app.release_session(session_id, owner)
@@ -838,7 +851,10 @@ class LibraryScreen(HubScreen):
             app.notify("session busy", severity="warning")
             return
         detail = self.detail if self._detail_id == entry.entry_id else None
-        speakers = tuple(self._speaker_ids(detail).items()) if detail is not None else ()
+        if detail is None:
+            app.notify(self._detail_error or "Loading session…", severity="warning")
+            return
+        speakers = tuple(self._speaker_ids(detail).items())
         if not speakers:
             app.notify("This session has no speaker to rename.", severity="warning")
             return
@@ -939,6 +955,11 @@ class LibraryScreen(HubScreen):
     # Transcript scroll
 
     def action_transcribe_file(self) -> None:
+        if self.app.config_editor is not None and self.app.config_editor.read_only:
+            self.app.notify(
+                "Fix the invalid configuration before transcribing files.", severity="error"
+            )
+            return
         log.info(fmt_event("hub", "library_transcribe_opened"))
         self.app.push_screen(TranscribeDialog(self.files_home), self._queue_file)
 

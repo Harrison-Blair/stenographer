@@ -137,7 +137,11 @@ class QuickSetupDialog(Dialog[str]):
             result = await asyncio.to_thread(self._setup_test, area, self.config)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: setup_test_failed", exc, safe=False, step=area)
-            result = f"failed: {type(exc).__name__}"
+            result = (
+                f"failed: {exc}"
+                if area == "hotkey" and isinstance(exc, ValueError)
+                else f"failed: {type(exc).__name__}"
+            )
         else:
             log.info(fmt_event("hub", "setup_test_completed", step=area))
         self.results[area] = result
