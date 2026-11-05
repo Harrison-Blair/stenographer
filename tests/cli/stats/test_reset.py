@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from stenographer.cli.stats.reset.handler import run
+from stenographer.cli.stats.handler import _reset as run
 from stenographer.lib.analytics.filters import Filters
 
-from ..conftest import checkpoint
+from .conftest import checkpoint
 
 
 def test_reset_ignores_the_incoming_filters_and_counts_every_source(seed, capsys):

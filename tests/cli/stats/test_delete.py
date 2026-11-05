@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from stenographer.cli.stats.delete.handler import run
+from stenographer.cli.stats.handler import _delete as run
 from stenographer.lib.analytics.filters import Filters
 
-from ..conftest import checkpoint
+from .conftest import checkpoint
 
 
 def test_preview_counts_the_matching_records_and_deletes_nothing(seed, capsys):
