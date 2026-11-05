@@ -20,12 +20,11 @@ import evdev
 import pytest
 
 from stenographer.cli.setup import workflow as setup
-from stenographer.cli.shared.capability_probe import probe
+from stenographer.cli.shared.capabilities import missing_required, probe
 from stenographer.cli.shared.console import Console
 from stenographer.cli.shared.terminal import restart_service
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
-from stenographer.lib.diagnostics.capabilities import missing_required
 from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.linux.probe import service_status
 from stenographer.lib.transcribe import bark_download

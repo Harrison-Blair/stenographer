@@ -1018,9 +1018,8 @@ def guided(monkeypatch):
     """Run ``_guided_setup`` with the cache, probe, report, and host all supplied."""
 
     from stenographer.cli.doctor import report as doctor
-    from stenographer.cli.shared import capability_probe
+    from stenographer.cli.shared import capabilities as shared_capabilities
     from stenographer.lib import platform as platform_module
-    from stenographer.lib.diagnostics import capabilities as diagnostics
     from stenographer.lib.refine import client as refine_client
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay import platform as overlay_platform_module
@@ -1095,8 +1094,8 @@ def guided(monkeypatch):
 
         monkeypatch.setattr(bark_download, "is_model_cached", is_model_cached)
         monkeypatch.setattr(bark_download, "download_bark_pro", download_bark_pro)
-        monkeypatch.setattr(capability_probe, "probe", probe)
-        monkeypatch.setattr(diagnostics, "missing_required", lambda caps: list(missing))
+        monkeypatch.setattr(shared_capabilities, "probe", probe)
+        monkeypatch.setattr(shared_capabilities, "missing_required", lambda caps: list(missing))
         monkeypatch.setattr(
             doctor,
             "render",

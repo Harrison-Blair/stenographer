@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from stenographer.cli.run import startup
 from stenographer.cli.run.startup import startup_clipboard_backend
-from stenographer.lib.diagnostics.capabilities import REQUIRED
+from stenographer.cli.shared.capabilities import REQUIRED
 from stenographer.lib.config.models import Config
 from stenographer.lib.daemon.daemon import Daemon
 from stenographer.lib.updates import notice
@@ -59,9 +59,7 @@ def test_run_prepares_the_recorder_and_hands_the_notifier_to_the_update_check(
         physical_core_count=lambda: 2,
     )
     monkeypatch.setattr(startup, "current_platform", lambda: host)
-    monkeypatch.setattr(
-        "stenographer.cli.shared.capability_probe.probe", lambda _cfg: _startup_caps()
-    )
+    monkeypatch.setattr("stenographer.cli.shared.capabilities.probe", lambda _cfg: _startup_caps())
     monkeypatch.setattr(Daemon, "build", classmethod(lambda cls, *args, **kwargs: daemon))
     monkeypatch.setattr(notice, "start_background_check", lambda *args: checks.append(args))
     defaults = Config.defaults()

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """``doctor`` rendering: the human half of the capability gate.
 
-The gate itself — :class:`~stenographer.lib.diagnostics.capability_result.Capabilities`,
-``REQUIRED``, :func:`~stenographer.lib.diagnostics.capabilities.probe` and
-:func:`~stenographer.lib.diagnostics.capabilities.missing_required` — is core
-(``stenographer.lib.diagnostics.capabilities``) because the daemon's startup gate shares it.
+The gate itself — :class:`~stenographer.cli.shared.capabilities.Capabilities`,
+``REQUIRED``, :func:`~stenographer.cli.shared.capabilities.probe` and
+:func:`~stenographer.cli.shared.capabilities.missing_required` — is shared
+(``stenographer.cli.shared.capabilities``) because the daemon's startup gate uses it too.
 What lives here is the report layout: the sentence frames and the pure
 :func:`render`, plus :func:`run` for the subcommand. Every host-specific
 word in it — capability labels, fix hints, the service noun and its installer
@@ -24,11 +24,14 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from stenographer.cli.shared.capabilities import Capabilities
-from stenographer.cli.shared.capability_probe import probe
+from stenographer.cli.shared.capabilities import (
+    REQUIRED,
+    Capabilities,
+    missing_required,
+    probe,
+)
 from stenographer.lib.diagnostics import additional_checks
 from stenographer.lib.diagnostics.additional_checks import DiagnosticCheck
-from stenographer.lib.diagnostics.capabilities import REQUIRED, missing_required
 from stenographer.lib.transcribe.bark_download import MODEL_NAME
 from stenographer.overlay.capabilities.models import OverlayCapability
 

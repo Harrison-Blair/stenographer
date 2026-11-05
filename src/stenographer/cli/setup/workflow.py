@@ -815,8 +815,7 @@ def _guided_setup(
     quick: bool = False,
 ) -> int:
     from stenographer.cli.doctor import report as doctor
-    from stenographer.cli.shared.capability_probe import probe
-    from stenographer.lib.diagnostics.capabilities import missing_required
+    from stenographer.cli.shared.capabilities import missing_required, probe
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay.platform import current_platform as overlay_platform

@@ -1,15 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Core capability assembly uses independent library collaborators."""
+"""Capability assembly from the host, the microphone, the model cache, and the overlay."""
 
 from types import SimpleNamespace
 
-from stenographer.lib.diagnostics import capabilities
-from stenographer.lib.diagnostics.capability_result import Capabilities
+from stenographer.cli.shared import capabilities
+from stenographer.cli.shared.capabilities import Capabilities
+from stenographer.lib.config.models import Config
 from stenographer.lib.platform.host_probe import HostProbe
 from stenographer.lib.transcribe import bark_download
+from stenographer.overlay.capabilities.models import OverlayCapability
+from stenographer.overlay.protocol.backend import Backend
 
 
-def test_probe_uses_model_cache_service_and_keeps_display_optional(monkeypatch):
+def test_probe_keeps_the_host_facts_and_gates_on_the_model_cache_not_the_overlay(monkeypatch):
     host = HostProbe(
         key_injector_ok=True,
         hotkey_access_ok=True,
@@ -24,6 +27,13 @@ def test_probe_uses_model_cache_service_and_keeps_display_optional(monkeypatch):
         capabilities, "current_platform", lambda: SimpleNamespace(probe_host=lambda: host)
     )
     monkeypatch.setattr(capabilities, "_has_mic", lambda: True)
+    overlay_args = []
+
+    def probe_overlay(enabled):
+        overlay_args.append(enabled)
+        return OverlayCapability.available(Backend.LAYER_SHELL)
+
+    monkeypatch.setattr(capabilities, "probe_overlay", probe_overlay)
     requested = []
 
     def model_cached(*args, **kwargs):
@@ -31,7 +41,8 @@ def test_probe_uses_model_cache_service_and_keeps_display_optional(monkeypatch):
         return True
 
     monkeypatch.setattr(bark_download, "is_model_cached", model_cached)
-    result = capabilities.probe()
+    cfg = Config.defaults()
+    result = capabilities.probe(cfg)
 
     # The Bark probe takes no model id: one model, one fixed directory.
     assert requested == [((), {})]
@@ -40,7 +51,8 @@ def test_probe_uses_model_cache_service_and_keeps_display_optional(monkeypatch):
     # Restoring the clipboard is a convenience: its reader is never required.
     assert result.clipboard_read_ok is False
     assert capabilities.missing_required(result) == []
-    assert not hasattr(result, "overlay")
+    assert overlay_args == [cfg.feedback.overlay]
+    assert result.overlay.backend is Backend.LAYER_SHELL
 
 
 def test_the_microphone_gate_reads_the_shared_device_enumeration(monkeypatch):

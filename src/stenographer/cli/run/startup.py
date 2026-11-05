@@ -27,7 +27,7 @@ log = logging.getLogger("stenographer.lib.daemon")
 
 def startup_clipboard_backend(caps: Capabilities) -> str | None:
     """Gate daemon startup on the capability requirements and reuse its backend name. PURE."""
-    from stenographer.lib.diagnostics.capabilities import missing_required
+    from stenographer.cli.shared.capabilities import missing_required
 
     if missing_required(caps):
         return None
@@ -48,7 +48,7 @@ def _startup_failure(status: StatusSink, message: str, code: int) -> int:
 
 def run(cfg: Config) -> int:
     """Build and run the daemon. Returns the process exit code."""
-    from stenographer.cli.shared.capability_probe import probe
+    from stenographer.cli.shared.capabilities import probe
     from stenographer.lib.config.paths import resolve_config_path
     from stenographer.lib.hotkey.errors import BindingError
 

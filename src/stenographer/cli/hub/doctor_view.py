@@ -235,7 +235,7 @@ def build_report(config: Config, config_path: pathlib.Path | None = None) -> Doc
     import os
 
     from stenographer.cli.doctor import report as cli_doctor
-    from stenographer.cli.shared.capability_probe import probe
+    from stenographer.cli.shared.capabilities import probe
     from stenographer.lib.diagnostics import additional_checks
     from stenographer.lib.logging.pipeline import log_paths
     from stenographer.lib.platform import current_platform

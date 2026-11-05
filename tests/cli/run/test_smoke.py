@@ -14,9 +14,8 @@ import os
 import pytest
 
 from stenographer.cli.run import startup as daemon
-from stenographer.cli.shared.capability_probe import probe
+from stenographer.cli.shared.capabilities import missing_required, probe
 from stenographer.lib.config.models import Config
-from stenographer.lib.diagnostics.capabilities import missing_required
 from stenographer.lib.platform.linux import lock
 
 pytestmark = pytest.mark.integration
