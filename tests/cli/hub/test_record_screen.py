@@ -14,6 +14,7 @@ import numpy as np
 from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.engine_sampler import EngineSampler
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.services import HubServices
@@ -659,6 +660,41 @@ def test_record_services_choose_sources_and_device_for_this_run_only(tmp_path):
     services.finish_stop(stopped)
     assert services.stopping_sessions == ()
     assert services.wait_for_stops(timeout=0.1)
+
+
+async def test_record_device_dialog_keeps_a_disconnected_device_until_an_explicit_choice(tmp_path):
+    services, _created = _services(tmp_path, (("2", "2: Alpha USB mic"),))
+    services.choose_device("5", "5: Bravo headset")
+    app = _app(services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("d")
+        await pilot.pause()
+        assert "▶ 5: Bravo headset · unavailable" in _screen_text(app)
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ChoiceDialog), "enter must not replace the missing device"
+        assert services.next_device == "5"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert services.next_device == "5"
+
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert services.next_device == "2"
+        assert services.next_device_label == "2: Alpha USB mic"
+
+        services.choose_device("5", "5: Bravo headset")
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("up", "up")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert services.next_device is None
 
 
 def test_record_services_skip_each_pass_and_wait(tmp_path):

@@ -533,14 +533,21 @@ class RecordScreen(HubScreen):
         services = app.services
         devices = await asyncio.to_thread(services.input_devices)
         setting = app.current_config().audio.input_device
-        choices = ((None, None), *devices)
-        selected = next(
-            (index for index, (value, _) in enumerate(choices) if value == services.next_device), 0
-        )
+        choices: tuple[tuple[str | None, str | None], ...] = ((None, None), *devices)
+        current = services.next_device
+        # A chosen device that is gone stays selected, so Enter cannot replace it by accident.
+        unavailable = None
+        if current is not None and all(value != current for value, _ in devices):
+            unavailable = len(choices)
+            label = f"{services.next_device_label or current} · unavailable"
+            choices = (*choices, (current, label))
+        selected = next((index for index, (value, _) in enumerate(choices) if value == current), 0)
         labels = tuple(
             label or f"Settings default · {setting or 'Default input'}" for _, label in choices
         )
-        dialog = ChoiceDialog("Input device", labels, selected, label="Use device")
+        dialog = ChoiceDialog(
+            "Input device", labels, selected, label="Use device", unavailable=unavailable
+        )
         app.push_screen(
             dialog, lambda index: self._choose_device(choices[index] if index is not None else None)
         )

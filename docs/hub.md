@@ -129,10 +129,11 @@ of the next recording; a source that is off shows `off · press m to enable` (or
 `s`). System audio captures the current output mix, not separate applications.
 
 Press `d` (or click `[d] change device…`) while no recording runs to choose the
-input device. The dialog lists each input device and `Settings default`. The
-choice shows in the MIC meter and applies to the next recordings until the hub
-quits. It does not change `config.toml`; the Audio tab of Settings edits the
-saved device.
+input device. The dialog lists each input device and `Settings default`. A
+chosen device that is gone shows as `unavailable` and stays selected until you
+choose another row. The choice shows in the MIC meter and applies to the next
+recordings until the hub quits. It does not change `config.toml`; the Audio tab
+of Settings edits the saved device.
 
 The transcript opens in mixed view, with one time-ordered stream and speaker
 labels. Press `v` (or click `[v] ▶ mixed  split`) to switch to split view,
