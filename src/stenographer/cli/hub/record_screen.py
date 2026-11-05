@@ -154,7 +154,9 @@ class RecordScreen(HubScreen):
 
     @property
     def saved_session(self):
-        return getattr(self.app.services, "last_saved", None)
+        services = self.app.services
+        failed = getattr(services, "failed_session", None)
+        return failed if failed is not None else getattr(services, "last_saved", None)
 
     def record_state(self) -> str:
         services = self.app.services

@@ -65,6 +65,7 @@ class HubServices:
         self._stopping: list[LiveSession] = []
         self._stops_changed = threading.Condition()
         self.last_saved: LiveSession | None = None
+        self.failed_session: LiveSession | None = None
         self.last_stop_error: str | None = None
         self.next_sources = {"mic": True, "system": True}
         self.next_device: str | None = None
@@ -184,6 +185,9 @@ class HubServices:
             self._session = None
             session.stop()
             raise
+        with self._stops_changed:
+            self.failed_session = None
+            self.last_stop_error = None
 
     def stop_recording(self) -> None:
         session = self.begin_stop()
@@ -205,7 +209,6 @@ class HubServices:
             self._session = None
             self._stopping.append(session)
             self.last_saved = session
-            self.last_stop_error = None
         return session
 
     def finish_stop(self, session: LiveSession) -> None:
@@ -214,8 +217,8 @@ class HubServices:
             session.stop()
         except Exception as exc:
             with self._stops_changed:
-                if self.last_saved is session:
-                    self.last_stop_error = str(exc)
+                self.failed_session = session
+                self.last_stop_error = str(exc)
             raise
         finally:
             with self._stops_changed:

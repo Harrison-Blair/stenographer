@@ -749,22 +749,63 @@ async def test_record_failed_stop_shows_a_lasting_failure_and_keeps_library_acce
         assert "SAVE FAILED" not in text
 
 
-def test_record_services_failed_stop_of_an_older_session_leaves_the_newer_one_saved(tmp_path):
+async def test_record_failed_stop_of_an_older_session_still_shows_that_session(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(services)
+    release_older = threading.Event()
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+
+        def slow_failing_stop():
+            assert release_older.wait(5)
+            raise OSError("no space left on device")
+
+        created[0].stop = slow_failing_stop
+        await pilot.press("enter")
+        await _until(pilot, lambda: not services.recording)
+
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[1].release.set()
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == (created[0],))
+
+        release_older.set()
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        assert created[0].path.name in text
+        assert app.record_screen.saved_session is created[0]
+
+
+def test_record_services_keep_a_failed_stop_until_the_next_recording_starts(tmp_path):
     services, created = _services(tmp_path)
     services.start_recording()
     older = services.begin_stop()
     services.start_recording()
-    newer = services.begin_stop()
     _fail_stop(older)
 
+    # The failure arrives during the next recording, and that recording then stops.
     with pytest.raises(OSError, match="no space"):
         services.finish_stop(older)
-
-    assert services.last_saved is newer
-    assert services.last_stop_error is None
-    assert services.stopping_sessions == (newer,)
+    newer = services.begin_stop()
     created[1].release.set()
     services.finish_stop(newer)
+
+    assert services.last_saved is newer
+    assert services.failed_session is older
+    assert services.last_stop_error == "no space left on device"
+
+    services.start_recording()
+    assert services.failed_session is None
+    assert services.last_stop_error is None
+    created[2].release.set()
+    services.stop_recording()
 
 
 def test_record_services_skip_each_pass_and_wait(tmp_path):

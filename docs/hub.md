@@ -115,8 +115,9 @@ several stopped sessions can relabel at the same time. When the pass ends, the
 transcript ends with a marker line such as
 `── saved · 31 phrases · mic.flac 88 MB · system.flac 0.2 MB ──` (only the
 audio files that exist). Press `o` to show the session in Library. If the save
-fails, a notice shows the error and the REC panel stays on `! SAVE FAILED` until
-the next recording stops; `o` still shows what the session folder holds.
+fails, also for an older session that was still saving, a notice shows the error
+and the REC panel shows `! SAVE FAILED` with that session until the next recording
+starts; `o` still shows what the session folder holds.
 
 If you quit while a relabel pass runs, the quit question lists it. Press `y` to
 skip each pass; the hub waits until each session has saved its files, then
