@@ -2,9 +2,13 @@
 """Run the Pages workflow's install-script step under each trigger with a stub curl."""
 
 import os
+import re
 import subprocess
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
 _RELEASE_SCRIPT = "released script\n"
@@ -66,3 +70,32 @@ def test_a_pull_request_build_uses_the_checkout_script(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "_site" / "install.sh").read_text() == _CHECKOUT_SCRIPT
+
+
+@pytest.mark.parametrize(
+    ("event", "ref_input", "expected"),
+    [
+        ("workflow_dispatch", "", "main"),
+        ("workflow_dispatch", "v9.9.9", "v9.9.9"),
+        # No inputs on a pull request; a null or empty ref makes checkout use the merge ref.
+        ("pull_request", None, ""),
+    ],
+    ids=["dispatch-blank", "dispatch-tag", "pull-request"],
+)
+def test_the_checkout_ref_follows_the_trigger_not_the_selected_branch(
+    event: str, ref_input: str | None, expected: str
+) -> None:
+    workflow = (_ROOT / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
+    expression = re.search(r"^ +ref: \$\{\{ (.+) \}\}$", workflow, re.MULTILINE).group(1)
+    # GitHub's || and && keep operands and treat "" and null as false, as Python's do.
+    python_expression = expression.replace("||", "or").replace("&&", "and")
+
+    resolved = eval(
+        python_expression,
+        {
+            "github": SimpleNamespace(event_name=event),
+            "inputs": SimpleNamespace(ref=ref_input),
+        },
+    )
+
+    assert (resolved or "") == expected

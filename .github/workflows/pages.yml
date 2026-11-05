@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || (github.event_name == 'workflow_dispatch' && 'main') || '' }}
           persist-credentials: false
       - name: Assemble static site
         run: |

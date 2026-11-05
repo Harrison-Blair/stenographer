@@ -3,6 +3,8 @@ name: build
 
 # This validates both native bundles but deliberately does not publish them.
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
