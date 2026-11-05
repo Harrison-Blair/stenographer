@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
@@ -326,3 +327,35 @@ def test_list_sessions_reuses_a_summary_until_a_process_changes_the_session(tmp_
     assert [s.session_id for s in store.list_sessions()] == [newer.name, path.name]
     other_process.delete(newer.name)
     assert [s.session_id for s in store.list_sessions()] == [path.name]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_list_sessions_sees_a_permission_change_on_a_session_file(tmp_path):
+    path = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(tmp_path / "sessions")
+    assert not store.list_sessions()[0].interrupted
+
+    transcript = path / "transcript.jsonl"
+    transcript.chmod(0o000)
+    try:
+        assert store.list_sessions()[0].interrupted
+    finally:
+        transcript.chmod(0o644)
+    assert not store.list_sessions()[0].interrupted
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_list_sessions_keeps_other_sessions_when_a_folder_cannot_be_searched(tmp_path):
+    started = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
+    blocked = _write_session(tmp_path, started)
+    other = _write_session(tmp_path, started + timedelta(minutes=1))
+    store = SessionStore(tmp_path / "sessions")
+    store.list_sessions()
+
+    blocked.chmod(0o600)
+    try:
+        summaries = {summary.session_id: summary for summary in store.list_sessions()}
+    finally:
+        blocked.chmod(0o755)
+    assert summaries[blocked.name].interrupted
+    assert not summaries[other.name].interrupted

@@ -51,16 +51,27 @@ def _session_lock(directory: Path) -> threading.RLock:
         return _LOCKS.setdefault(directory, threading.RLock())
 
 
-def _folder_signature(directory: Path) -> frozenset[tuple[str, int, int, int]]:
+def _folder_signature(directory: Path) -> frozenset[tuple[str, int, int, int, int, int]]:
+    """Return what a read depends on; ``st_ctime_ns`` also moves on a permission change."""
     signature = set()
     with os.scandir(directory) as entries:
         for entry in entries:
             try:
                 info = entry.stat(follow_symlinks=False)
-            except FileNotFoundError:
-                # An atomic write renamed its temporary file after the scan listed it.
+            except OSError:
+                # An atomic write renamed its temporary file after the scan listed it, or the
+                # folder cannot be searched. The read reports what this means for the session.
                 continue
-            signature.add((entry.name, info.st_ino, info.st_size, info.st_mtime_ns))
+            signature.add(
+                (
+                    entry.name,
+                    info.st_ino,
+                    info.st_size,
+                    info.st_mode,
+                    info.st_mtime_ns,
+                    info.st_ctime_ns,
+                )
+            )
     return frozenset(signature)
 
 
@@ -81,8 +92,8 @@ class SessionStore:
     def list_sessions(self) -> tuple[SessionSummary, ...]:
         """Return session summaries, newest first.
 
-        A summary stays in memory while the name, inode, size and ``mtime_ns`` of each file in
-        its session folder stay the same, so a change by any process reads the session again.
+        A summary stays in memory while the stat result of each file in its session folder stays
+        the same, so a change by any process, also of permissions, reads the session again.
         """
         session_ids = list_session_ids(self.root)
         for gone in self._summaries.keys() - set(session_ids):
