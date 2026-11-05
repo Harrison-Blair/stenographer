@@ -57,7 +57,6 @@ class HubServices:
         self._session_jobs: SessionJobs | None = None
         self._player_factory = player_factory
         self._player: subprocess.Popen | None = None
-        self._player_pid: int | None = None
         self._player_session_id: str | None = None
         self._player_temp_path: Path | None = None
         self._player_lock = threading.Lock()
@@ -252,19 +251,7 @@ class HubServices:
 
     def toggle_session_playback(self, session_id: str) -> None:
         with self._player_lock:
-            process = self._player
-            if process is not None and process.poll() is None:
-                if self._player_pid is None or process.pid != self._player_pid:
-                    raise RuntimeError("session player process identity changed")
-                process.terminate()
-                log.info(
-                    fmt_event(
-                        "hub",
-                        "session_playback_stopped",
-                        session_id=self._player_session_id,
-                        pid=process.pid,
-                    )
-                )
+            if self._stop_player_locked():
                 return
             if self._player_temp_path is not None:
                 self._player_temp_path.unlink(missing_ok=True)
@@ -276,7 +263,6 @@ class HubServices:
                 mixed_path.unlink(missing_ok=True)
                 raise
             self._player = process
-            self._player_pid = process.pid
             self._player_session_id = session_id
             self._player_temp_path = mixed_path
             log.info(
@@ -291,18 +277,23 @@ class HubServices:
 
     def stop_session_playback(self) -> None:
         with self._player_lock:
-            if self._player is not None and self._player.poll() is None:
-                if self._player_pid is None or self._player.pid != self._player_pid:
-                    raise RuntimeError("session player process identity changed")
-                self._player.terminate()
-                log.info(
-                    fmt_event(
-                        "hub",
-                        "session_playback_stopped",
-                        session_id=self._player_session_id,
-                        pid=self._player.pid,
-                    )
-                )
+            self._stop_player_locked()
+
+    def _stop_player_locked(self) -> bool:
+        """Terminate a running player; return whether one ran."""
+        process = self._player
+        if process is None or process.poll() is not None:
+            return False
+        process.terminate()
+        log.info(
+            fmt_event(
+                "hub",
+                "session_playback_stopped",
+                session_id=self._player_session_id,
+                pid=process.pid,
+            )
+        )
+        return True
 
     def _watch_player(self, process: subprocess.Popen, mixed_path: Path, session_id: str) -> None:
         returncode = process.wait()
@@ -318,7 +309,6 @@ class HubServices:
         with self._player_lock:
             if self._player is process:
                 self._player = None
-                self._player_pid = None
                 self._player_session_id = None
             if self._player_temp_path == mixed_path:
                 self._player_temp_path = None

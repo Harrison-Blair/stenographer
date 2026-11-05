@@ -243,7 +243,6 @@ def test_playback_mixes_saved_sources_and_second_press_stops_own_player(tmp_path
 
     services.toggle_session_playback(session.name)
     mixed_path = Path(commands[0][1])
-    assert services._player_pid == player.pid
     samples, sample_rate = sf.read(mixed_path, dtype="float32")
     services.toggle_session_playback(session.name)
 
