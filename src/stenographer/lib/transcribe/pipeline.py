@@ -72,7 +72,13 @@ def apply_gate(record: UtteranceRecord | None, stats: GateStats, samples: np.nda
     record.peak_rms = stats.peak_rms
     record.frames_above = stats.frames_above
     record.mean_rms = stats.mean_rms
-    record.clipping_fraction = float(np.mean(np.abs(samples) >= 0.999)) if samples.size else 0.0
+    clipped = sum(
+        np.count_nonzero(np.abs(block) >= 0.999)
+        for block in np.nditer(
+            samples, flags=["external_loop", "buffered", "zerosize_ok"], buffersize=65_536
+        )
+    )
+    record.clipping_fraction = float(clipped / samples.size) if samples.size else 0.0
 
 
 def apply_recognition(record: UtteranceRecord | None, result: TranscriptionResult) -> None:

@@ -275,6 +275,25 @@ def test_gate_failure_and_empty_audio_report_no_clipping():
     assert record.clipping_fraction == 0.0
 
 
+def test_clipping_counts_threshold_values_across_blocks():
+    from stenographer.lib.audio.records import GateStats
+    from stenographer.lib.transcribe.pipeline import apply_gate
+
+    record = UtteranceRecord(utt=1)
+    stats = GateStats(
+        peak_rms=0.0, mean_rms=0.0, frames_total=0, frames_above=0, threshold=0.0, passed=True
+    )
+    samples = np.zeros(65_538, dtype=np.float32)
+    samples[0] = 0.999
+    samples[65_535] = -0.999
+    samples[65_536] = 0.998
+    samples[65_537] = 1.0
+
+    apply_gate(record, stats, samples)
+
+    assert record.clipping_fraction == pytest.approx(3 / 65_538)
+
+
 def test_a_warm_model_load_measurement_survives_a_later_warm_transcription():
     from stenographer.lib.transcribe.pipeline import apply_worker_timings
     from stenographer.lib.transcribe.results import WorkerTimings
