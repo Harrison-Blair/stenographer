@@ -416,7 +416,10 @@ class HubApp(App[None]):
         try:
             await asyncio.to_thread(work)
         except Exception as exc:
-            log_failure(log, logging.ERROR, f"hub: {failure_event}", exc, safe=True)
+            if failure_event == "recording_stop_failed":
+                log_failure(log, logging.ERROR, "hub: recording_stop_failed", exc, safe=True)
+            else:
+                log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
             self.notify(f"{failure_text}: {exc}", severity="error")
             self.activity_status = None
             self.refresh_view()
