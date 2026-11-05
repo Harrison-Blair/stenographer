@@ -33,6 +33,7 @@ class EngineCard(Frame):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(title="engine", **kwargs)
+        self._shown_status: EngineStatus | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="engine-model", markup=False)
@@ -46,12 +47,15 @@ class EngineCard(Frame):
         """Update every row from the snapshot."""
         if not self.is_mounted:
             return
+        if status == self._shown_status:
+            return
         self.query_one("#engine-model", Static).update(status.model)
         self.query_one("#engine-state", Static).update(self.state_text(status.state))
         self.query_one("#engine-cpu-app", Gauge).set_percent(status.cpu_app_percent)
         self.query_one("#engine-cpu-all", Gauge).set_percent(status.cpu_all_percent)
         self.query_one("#engine-ram-app", Gauge).set_bytes(status.ram_app_bytes)
         self.query_one("#engine-history", Sparkline).set_values(status.cpu_history)
+        self._shown_status = status
 
     @staticmethod
     def state_text(state: str) -> Text:
