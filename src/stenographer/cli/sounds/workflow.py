@@ -18,13 +18,39 @@ from stenographer.cli.shared.terminal import (
     require_interactive,
     restart_service,
 )
-from stenographer.cli.sounds.menu_action import MenuAction
-from stenographer.cli.sounds.preview import _preview
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 
 if TYPE_CHECKING:
     from stenographer.lib.platform.host_guidance import HostGuidance
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class MenuAction:
+    """A validated sound-menu response."""
+
+    kind: str
+    index: int | None = None
+
+
+def _preview(console: Console, config: Config, pack: object) -> bool:
+    from stenographer.lib.platform import current_platform
+    from stenographer.lib.sounds import playback
+
+    try:
+        player = current_platform().cue_player()
+    except Exception as exc:
+        console.error(f"could not initialize cue playback: {exc}")
+        return False
+    if player is None:
+        console.error("no supported cue player is available")
+        return False
+    try:
+        playback.preview_sound_pack(pack, player, playback.preview_volume(config.feedback))
+    except Exception as exc:
+        console.error(f"sound-pack preview failed: {exc}")
+        return False
+    return True
 
 
 def parse_menu_action(text: str, choice_count: int) -> MenuAction:

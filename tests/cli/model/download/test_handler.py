@@ -28,15 +28,9 @@ class _Terminal(io.StringIO):
 
 
 def test_download_parser_accepts_the_live_model_flag():
-    import argparse
+    from stenographer.cli.parser import build_parser
 
-    from stenographer.cli.model.download.parser import register
-
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest="command")
-    register(subparsers)
-
-    assert parser.parse_args(["download", "--live"]).live is True
+    assert build_parser().parse_args(["model", "download", "--live"]).live is True
 
 
 def test_live_flag_does_not_select_the_asr_model(monkeypatch, capsys):

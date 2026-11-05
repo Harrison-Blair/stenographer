@@ -13,7 +13,7 @@ import io
 import pytest
 
 from stenographer.cli.shared.console import Console
-from stenographer.cli.sounds.preview import _preview
+from stenographer.cli.sounds.workflow import _preview
 from stenographer.lib.config.models import Config
 
 
