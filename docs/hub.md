@@ -312,7 +312,7 @@ cancels the job.
 `x` opens the Export dialog. Press `tab` or click a format to choose `md`,
 `jsonl`, `srt`, or `txt`, and type the folder (default `~/Documents`). Press
 `enter` to export or `escape` to cancel. The notice shows the path of the
-exported file.
+exported file. If export fails, the dialog keeps the folder and format so you can retry.
 
 Re-diarization and re-transcription write new transcript revisions and keep
 previous revisions. If an existing `session.json` is unreadable or invalid,
@@ -343,7 +343,7 @@ dialog. It has a file browser and the job options:
 Press `enter` on a file (or click `[enter] Transcribe`) to queue one job with
 these options; `escape` clears an open search first and otherwise closes the dialog.
 Click `[esc] Cancel` to close the dialog.
-The Library shows the job at once and selects it: a new file row, or the
+If a job fails after producing lines, its failure appears above those lines. The Library shows the job at once and selects it: a new file row, or the
 session row for a revision job. Jobs run one at a time in the background. The
 dialog has no output format or output folder option.
 
@@ -462,7 +462,7 @@ former Doctor and Setup sections. The checks are grouped:
 
 Each row shows a state glyph, the check name, and a short detail that is cut
 to fit: `✓` pass, `!` warning, `×` failure. The detail pane shows the
-selected check with its state word, what the check looks at, the result,
+selected check with its state word, what the check looks at, the result, fix guidance when available,
 `checked HH:MM` and the related path when one applies, and the buttons
 `[f] Fix: …` (for a warning or failure that has a fix), `[t] Test: …` (when
 the area has a test), `[l] Open log`, and `[c] Copy report`.
@@ -478,7 +478,6 @@ no transcript text.
 | Key | Action |
 | --- | --- |
 | `up` / `down` | Select a check. |
-| `enter` | Show or hide how to fix the selected check. |
 | `r` | Run the checks again. |
 | `f` | Fix: open the related Settings tab and row, or the Quick setup or Models dialog. |
 | `t` | Test the area of the selected check. |
@@ -487,6 +486,8 @@ no transcript text.
 | `shift+q` | Open Quick setup. |
 | `m` | Open Models. |
 | `shift+d` | Open Defaults. |
+
+A test result stays with its check, including while it is running. Defaults warns before discarding unsaved settings. Unreadable warning logs are identified in Checks and the copied report.
 
 The microphone test lists the input devices and does not capture audio. The
 sound test plays the preview of the sound pack. The hub does not start or

@@ -222,12 +222,10 @@ async def test_checks_detail_shows_title_state_explanation_path_and_buttons():
         assert not _button(app, "#checks-test").display
 
 
-async def test_checks_enter_shows_the_fix_hint_and_keys_move_in_group_order():
+async def test_checks_shows_the_fix_hint_and_keys_move_in_group_order():
     app = _app()
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
-        assert "Choose another sound pack." not in _plain(app, "#checks-detail-body")
-        await pilot.press("enter")
         assert "how to fix: Choose another sound pack." in _plain(app, "#checks-detail-body")
         order = []
         for _ in range(len(app.checks_tab.report.checks)):

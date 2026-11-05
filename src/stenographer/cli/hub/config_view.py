@@ -12,7 +12,7 @@ from stenographer.lib.config.models import Config
 
 _HELP = {
     "hotkey.binding": "Agent binding for cleanup of agent-directed dictation.",
-    "hotkey.device": "Input device for the hotkey; blank uses the system default.",
+    "hotkey.device": "Hotkey input; blank automatically listens on detected keyboards.",
     "hotkey.cancel_binding": "Global cancel key; blank disables it.",
     "hotkey.mode": "Choose hold, toggle, or hybrid hotkey behavior.",
     "hotkey.hybrid_threshold_seconds": "Press duration that separates a tap from a hold.",
