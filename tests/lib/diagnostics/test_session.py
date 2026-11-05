@@ -9,41 +9,7 @@ from importlib.metadata import version
 from stenographer.lib.analytics.store import Store
 from stenographer.lib.config.models import Config
 from stenographer.lib.diagnostics.session import create_session
-
-
-class _Host:
-    """Host double for session assembly: a real state directory under tmp."""
-
-    name = "test"
-
-    def __init__(self, state_dir, *, broken: bool = False) -> None:
-        self._state_dir = state_dir
-        self._broken = broken
-        self.probed: list[tuple[int, ...]] = []
-
-    def state_dir(self, env, home):
-        return self._state_dir
-
-    def runtime_context(self):
-        if self._broken:
-            raise OSError("host refused to describe itself")
-        return {"os": "test", "architecture": "test64"}
-
-    def physical_core_count(self):
-        return 2
-
-    def resource_probe(self):
-        def probe(pids):
-            self.probed.append(tuple(pids))
-            return {"cpu_seconds": 0.25, "resident_bytes": 2048}
-
-        return probe
-
-    def process_identity(self):
-        return (4242, 1000.0)
-
-    def process_alive(self, pid, started_epoch):
-        return None
+from tests.lib.diagnostics.support import AnalyticsHost as _Host
 
 
 def _configured(*, enabled: bool = True, resource_profiling: bool = True) -> Config:
