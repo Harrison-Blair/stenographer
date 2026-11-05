@@ -155,20 +155,20 @@ class RecordScreen(HubScreen):
     @property
     def saved_session(self):
         services = self.app.services
-        failed = getattr(services, "failed_session", None)
-        return failed if failed is not None else getattr(services, "last_saved", None)
+        failed = self._failed_stops()
+        return failed[-1][0] if failed else getattr(services, "last_saved", None)
 
     def record_state(self) -> str:
         services = self.app.services
         if services.recording:
             session = getattr(services, "session", None)
             return "paused" if session is not None and session.paused else "recording"
-        if self._stop_error() is not None:
+        if self._failed_stops():
             return "failed"
         return "saved" if self.saved_session is not None else "idle"
 
-    def _stop_error(self) -> str | None:
-        return getattr(self.app.services, "last_stop_error", None)
+    def _failed_stops(self) -> list:
+        return getattr(self.app.services, "failed_stops", [])
 
     def _stopping(self, session) -> bool:
         return any(item is session for item in getattr(self.app.services, "stopping_sessions", ()))
@@ -250,7 +250,9 @@ class RecordScreen(HubScreen):
             saved_at = self._saved_at.get(session_id)
             info = f"saved {saved_at:%H:%M}\n{session_id}" if saved_at else session_id
         elif state == "failed":
-            info = f"{self._stop_error()}\n{session.path.name}"
+            info = "\n".join(
+                f"{error}\n{failed.path.name}" for failed, error in reversed(self._failed_stops())
+            )
         else:
             started = session_started_at(session.path.name) if session is not None else None
             info = f"started {started.astimezone():%H:%M}" if started else "started"
@@ -541,6 +543,8 @@ class RecordScreen(HubScreen):
         session = self.saved_session
         if session is not None and not self.app.services.recording:
             self.app.show_library(session.path.name)
+            if self._failed_stops():
+                self.app.services.show_next_failed_stop()
 
     def action_choose_device(self) -> None:
         if self.app.services.recording or self.app.activity_status is not None:

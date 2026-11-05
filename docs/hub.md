@@ -117,7 +117,8 @@ transcript ends with a marker line such as
 audio files that exist). Press `o` to show the session in Library. If the save
 fails, also for an older session that was still saving, a notice shows the error
 and the REC panel shows `! SAVE FAILED` with that session until the next recording
-starts; `o` still shows what the session folder holds.
+starts; `o` still shows what the session folder holds. If several saves fail, the
+panel lists each error and session, and each press of `o` shows the next session.
 
 If you quit while a relabel pass runs, the quit question lists it. Press `y` to
 skip each pass; the hub waits until each session has saved its files, then

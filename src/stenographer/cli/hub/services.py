@@ -65,8 +65,8 @@ class HubServices:
         self._stopping: list[LiveSession] = []
         self._stops_changed = threading.Condition()
         self.last_saved: LiveSession | None = None
-        self.failed_session: LiveSession | None = None
-        self.last_stop_error: str | None = None
+        # Each failed stop and its error since the last recording start; Record shows the last one.
+        self.failed_stops: list[tuple[LiveSession, str]] = []
         self.next_sources = {"mic": True, "system": True}
         self.next_device: str | None = None
         self.next_device_label: str | None = None
@@ -186,8 +186,7 @@ class HubServices:
             session.stop()
             raise
         with self._stops_changed:
-            self.failed_session = None
-            self.last_stop_error = None
+            self.failed_stops = []
 
     def stop_recording(self) -> None:
         session = self.begin_stop()
@@ -217,13 +216,17 @@ class HubServices:
             session.stop()
         except Exception as exc:
             with self._stops_changed:
-                self.failed_session = session
-                self.last_stop_error = str(exc)
+                self.failed_stops.append((session, str(exc)))
             raise
         finally:
             with self._stops_changed:
                 self._stopping.remove(session)
                 self._stops_changed.notify_all()
+
+    def show_next_failed_stop(self) -> None:
+        """Bring the next failed stop forward on Record."""
+        with self._stops_changed:
+            self.failed_stops.insert(0, self.failed_stops.pop())
 
     def skip_relabels(self) -> None:
         """Skip the relabel pass of each stopping session; each keeps its live labels."""

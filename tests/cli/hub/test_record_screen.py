@@ -783,6 +783,57 @@ async def test_record_failed_stop_of_an_older_session_still_shows_that_session(t
         assert app.record_screen.saved_session is created[0]
 
 
+async def test_record_two_failed_stops_keep_each_error_and_library_link(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(services)
+    release_first = threading.Event()
+    release_second = threading.Event()
+
+    def failing_stop(release, error):
+        def stop():
+            assert release.wait(5)
+            raise OSError(error)
+
+        return stop
+
+    created_stops = (
+        failing_stop(release_first, "no space left on device"),
+        failing_stop(release_second, "session folder is gone"),
+    )
+    async with app.run_test(size=(150, 45)) as pilot:
+        for index, stop in enumerate(created_stops):
+            await pilot.press("space")
+            await _until(pilot, lambda: services.recording)
+            created[index].stop = stop
+            await pilot.press("enter")
+            await _until(pilot, lambda: not services.recording)
+        await _until(pilot, lambda: len(services.stopping_sessions) == 2)
+
+        release_first.set()
+        await _until(pilot, lambda: len(services.stopping_sessions) == 1)
+        release_second.set()
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        first, second = created[0].path.name, created[1].path.name
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        for shown in (first, second, "no space left on device", "session folder is gone"):
+            assert shown in text
+
+        opened = []
+        for _ in range(2):
+            await pilot.press("o")
+            await pilot.pause()
+            assert app.current_mode == "library"
+            opened.append(app.library_screen.selected_id)
+            await pilot.press("1")
+            await pilot.pause()
+        assert sorted(opened) == sorted([first, second])
+
+
 def test_record_services_keep_a_failed_stop_until_the_next_recording_starts(tmp_path):
     services, created = _services(tmp_path)
     services.start_recording()
@@ -798,12 +849,10 @@ def test_record_services_keep_a_failed_stop_until_the_next_recording_starts(tmp_
     services.finish_stop(newer)
 
     assert services.last_saved is newer
-    assert services.failed_session is older
-    assert services.last_stop_error == "no space left on device"
+    assert services.failed_stops == [(older, "no space left on device")]
 
     services.start_recording()
-    assert services.failed_session is None
-    assert services.last_stop_error is None
+    assert services.failed_stops == []
     created[2].release.set()
     services.stop_recording()
 
