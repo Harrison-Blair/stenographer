@@ -72,7 +72,6 @@ class FakeServices:
         self.actions: list[tuple] = []
         self.job_started = threading.Event()
         self.release_job = threading.Event()
-        self.play_error: Exception | None = None
 
     @property
     def files_jobs(self):
@@ -94,8 +93,6 @@ class FakeServices:
 
     def toggle_session_playback(self, session_id):
         self.actions.append(("play", session_id))
-        if self.play_error is not None:
-            raise self.play_error
 
     def rediarize(self, session_id):
         self._run_fake_job(session_id, "diarization")
@@ -535,21 +532,6 @@ def test_library_play_rediarize_and_retranscribe_by_key_and_click(tmp_path, by):
         asyncio.run(exercise())
     finally:
         services.release_job.set()
-
-
-def test_library_play_refusal_shows_a_notice(tmp_path):
-    root, _sessions = _library(tmp_path)
-    services = FakeServices(root)
-    services.play_error = ValueError("source audio is missing or invalid")
-    app = HubApp(services)
-
-    async def exercise():
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open_library(pilot, app, 4)
-            await pilot.press("p")
-            await _until(pilot, lambda: "Could not play" in _notices(app))
-
-    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("by", ["key", "click"])
@@ -1092,6 +1074,7 @@ def test_library_play_notice_for_an_invalid_source_file(tmp_path):
             await _open_library(pilot, app, 1)
             await pilot.press("p")
             await _until(pilot, lambda: "source audio is missing or invalid" in _notices(app))
+            assert "Could not play" in _notices(app)
 
     asyncio.run(exercise())
 
