@@ -32,6 +32,7 @@ from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.sparkline import Sparkline
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
+from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -173,6 +174,7 @@ class LibraryScreen(HubScreen):
         self._list_running = False
         self._list_again = False
         self._watch_key: object = None
+        self._poll_key: object = None
         self._rows_key: object = None
         self._transcript_key: object = None
         self._rows = TranscriptRows()
@@ -338,12 +340,12 @@ class LibraryScreen(HubScreen):
     def _draw_detail(self) -> None:
         entry = self.selected_entry
         title, state = self._detail_head(entry)
-        self.query_one("#library-detail-title", Static).update(title)
-        self.query_one("#library-detail-state", Static).update(state)
+        update_changed(self.query_one("#library-detail-title", Static), title)
+        update_changed(self.query_one("#library-detail-state", Static), state)
         detail = self.detail if entry is not None and entry.summary is not None else None
         recording = detail is not None and detail.summary.kind == "rec"
         speakers = self.query_one("#library-speakers", Static)
-        speakers.update(self._speakers_text(detail) if detail is not None else "")
+        update_changed(speakers, self._speakers_text(detail) if detail is not None else "")
         speakers.display = detail is not None
         for spark_id, source in (("#library-mic", "mic"), ("#library-sys", "system")):
             spark = self.query_one(spark_id, Sparkline)
@@ -434,8 +436,8 @@ class LibraryScreen(HubScreen):
                 ("Cancel job…", False) if entry.job_active else ("Remove", False)
             )
         help_line = self.query_one("#library-action-help", Static)
-        help_line.update(
-            "d re-diarize: use Re-transcribe" if entry and entry.kind == "file" else ""
+        update_changed(
+            help_line, "d re-diarize: use Re-transcribe" if entry and entry.kind == "file" else ""
         )
         help_line.display = entry is not None and entry.kind == "file"
         for button_id, (label, disabled) in labels.items():
@@ -651,6 +653,17 @@ class LibraryScreen(HubScreen):
         if reload:
             self.load_sessions()
         elif self.loaded and self.app.current_mode == "library":
+            # Other changes draw through refresh_view; only a job or a busy mark changes alone.
+            entry = self.selected_entry
+            key = (
+                tuple((job.id, job.state, job.progress) for job in self._jobs()),
+                entry is not None
+                and entry.session_id is not None
+                and self.app.is_busy(entry.session_id),
+            )
+            if key == self._poll_key:
+                return
+            self._poll_key = key
             self._rebuild()
             self._load_detail()
             self._draw_list()

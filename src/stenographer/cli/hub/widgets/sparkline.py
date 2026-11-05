@@ -6,6 +6,8 @@ from __future__ import annotations
 from rich.text import Text
 from textual.widgets import Static
 
+from stenographer.cli.hub.widgets.update_changed import update_changed
+
 
 class Sparkline(Static):
     """Show values as ``▁``-``█`` glyphs; the label never goes above the row."""
@@ -38,7 +40,7 @@ class Sparkline(Static):
 
     def set_values(self, values: tuple[float, ...]) -> None:
         """Show the last ``width`` values; an empty series shows a flat dim row."""
-        self.update(self.spark_text(values))
+        update_changed(self, self.spark_text(values))
 
     def spark_text(self, values: tuple[float, ...]) -> Text:
         values = tuple(values)[-self.cells :]

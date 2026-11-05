@@ -20,11 +20,14 @@ class Clock(Digits):
         self.add_class("-record")
 
     def set_seconds(self, seconds: float) -> None:
-        self.update(self.format(seconds))
+        text = self.format(seconds)
+        if text != self.value:
+            self.update(text)
 
     def set_tone(self, tone: str) -> None:
-        self.remove_class("-record", "-saved")
-        self.add_class(f"-{tone}")
+        if not self.has_class(f"-{tone}"):
+            self.remove_class("-record", "-saved")
+            self.add_class(f"-{tone}")
 
     @staticmethod
     def duration(seconds: float) -> str:

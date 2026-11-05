@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from textual.widget import Widget
 from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.app import HubApp
@@ -1003,3 +1004,66 @@ def test_record_meters_use_configured_spectrum_floor(tmp_path):
             assert all("█" not in row for row in meter.model.rows)
 
     asyncio.run(exercise())
+
+
+async def test_record_refresh_without_a_change_requests_no_redraw(tmp_path, monkeypatch):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        app.refresh_view()
+        await pilot.pause()
+
+        requests = []
+        refresh = Widget.refresh
+
+        def count_refresh(widget, *args, **kwargs):
+            if not any(node.id == "engine-card" for node in widget.ancestors_with_self):
+                requests.append(widget)
+            return refresh(widget, *args, **kwargs)
+
+        monkeypatch.setattr(Widget, "refresh", count_refresh)
+        app.refresh_view()
+        assert requests == []
+
+        session.elapsed_seconds += 1
+        app.refresh_view()
+        assert app.screen.query_one("#rec-clock").value == "00:12:09"
+        assert requests
+        session.release.set()
+
+
+async def test_record_transcript_data_follows_lines_and_speakers(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        app.refresh_view()
+        assert [line.text for line in app.record_screen._lines(session)] == [
+            "alpha bravo charlie",
+            "delta echo",
+        ]
+
+        session.lines.append(
+            TranscriptLine(0.5, 0.75, "wall", "system", "speaker-2", "Speaker 2", "earlier")
+        )
+        app.refresh_view()
+        await pilot.pause()
+        assert "earlier" in _screen_text(app)
+        assert "Speaker 2" in _card(app)
+        assert _screen_text(app).index("earlier") < _screen_text(app).index("alpha bravo")
+
+        session.speakers = (("speaker-1", "Speaker 1"), ("speaker-3", "Speaker 3"))
+        app.refresh_view()
+        await pilot.pause()
+        assert "Speaker 3" in _card(app)
+
+        session.lines[0] = replace(session.lines[0], label="Renamed")
+        app.refresh_view()
+        await pilot.pause()
+        assert "Renamed" in _card(app)
+        session.release.set()

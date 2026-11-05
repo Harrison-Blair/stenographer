@@ -9,6 +9,7 @@ from textual import events
 from textual.widgets import Static
 
 from stenographer.cli.hub.widgets.row_selected import RowSelected
+from stenographer.cli.hub.widgets.update_changed import update_changed
 
 _ACCENT_BOLD = "bold #5fd7ff"
 
@@ -40,7 +41,7 @@ class SelectableList(Static):
         """Show ``(main, end)`` rows and mark one as selected."""
         self.rows = tuple(rows)
         self.selected_index = selected_index
-        self.update(self.rows_text(self.size.width))
+        update_changed(self, self.rows_text(self.size.width))
 
     def on_resize(self) -> None:
         self.update(self.rows_text(self.size.width))

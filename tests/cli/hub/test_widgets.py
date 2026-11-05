@@ -10,6 +10,7 @@ from typing import ClassVar
 import pytest
 from rich.color import Color
 from rich.console import Console
+from rich.text import Text
 from textual.app import App
 from textual.binding import Binding
 from textual.widgets import Static
@@ -17,11 +18,13 @@ from textual.widgets import Static
 from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.hub.widgets.transcript_line import TranscriptLine, TranscriptRows
+from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.lib.config.defaults import default_toml
@@ -281,3 +284,34 @@ def test_transcript_rows_reuse_only_a_row_with_the_same_line_and_color():
     assert "Bea" in "".join(
         text for text, _ in _segments(80, rows.rows((renamed,), ("speaker-1",))[0])
     )
+
+
+async def test_update_changed_shows_a_new_style_and_skips_identical_content():
+    widget = Static("", markup=False)
+    app = WidgetApp(widget)
+    async with app.run_test() as pilot:
+        update_changed(widget, Text("alpha", style="#ff0000"))
+        await pilot.pause()
+        shown = widget.content
+
+        update_changed(widget, Text("alpha", style="#ff0000"))
+        assert widget.content is shown
+
+        update_changed(widget, Text("alpha", style="#00ff00"))
+        assert widget.content.style == "#00ff00"
+
+        update_changed(widget, "bravo")
+        assert widget.content == "bravo"
+
+
+async def test_clock_shows_a_new_second_and_tone():
+    clock = Clock()
+    app = WidgetApp(clock)
+    async with app.run_test() as pilot:
+        clock.set_seconds(61.4)
+        clock.set_tone("saved")
+        await pilot.pause()
+        assert clock.value == "00:01:01"
+        assert clock.has_class("-saved") and not clock.has_class("-record")
+        clock.set_tone("record")
+        assert clock.has_class("-record") and not clock.has_class("-saved")

@@ -6,6 +6,8 @@ from __future__ import annotations
 from rich.text import Text
 from textual.widgets import Static
 
+from stenographer.cli.hub.widgets.update_changed import update_changed
+
 _ACCENT = "bold #5fd7ff"
 _DIM = "#8b93a1"
 
@@ -42,7 +44,7 @@ class KeyHints(Static):
             if end:
                 items = self.FOOTER_END + items
         self.items = items
-        self.update(self.hint_text(items, footer=self.footer))
+        update_changed(self, self.hint_text(items, footer=self.footer))
 
     @staticmethod
     def hint_text(items: tuple[tuple[str, str], ...], *, footer: bool) -> Text:

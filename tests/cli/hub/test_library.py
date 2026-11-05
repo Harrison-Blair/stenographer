@@ -1198,3 +1198,39 @@ def test_export_failure_keeps_values_for_retry(tmp_path):
             await _until(pilot, lambda: (output / f"{sessions['relabeled']}.jsonl").exists())
 
     asyncio.run(exercise())
+
+
+async def test_library_poll_draws_only_when_a_job_or_the_busy_mark_changes(tmp_path):
+    root, sessions = _library(tmp_path)
+    services = FakeServices(root)
+    source = tmp_path / "lecture.mp3"
+    job = FakeJob("file-1", source)
+    services.jobs.append(job)
+    app = make_app(tmp_path, services, files_home=tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_library(pilot, app, 5, detail=False)
+        screen = app.library_screen
+        screen.select_entry(sessions["relabeled"])
+        await _until(pilot, lambda: screen.detail is not None, "detail did not load")
+        screen.poll_jobs()
+
+        draws = []
+        draw_list = screen._draw_list
+        screen._draw_list = lambda: (draws.append(1), draw_list())
+        screen.poll_jobs()
+        assert draws == []
+
+        job.progress = FileJobProgress("transcribe", 44, ())
+        screen.poll_jobs()
+        assert draws == [1]
+        assert any("44%" in row for row in _rows(app))
+
+        job.state = "queued"
+        screen.poll_jobs()
+        assert any("queued" in row for row in _rows(app))
+
+        draws.clear()
+        assert app.try_acquire_session(sessions["relabeled"], "other")
+        screen.poll_jobs()
+        assert draws == [1]
+        assert "busy" in str(_button(app, "library-rediarize").label)
