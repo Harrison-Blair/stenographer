@@ -51,7 +51,7 @@ def session_directory(root: Path, session_id: str) -> Path | None:
 def list_session_ids(root: Path) -> list[str]:
     try:
         entries = tuple(root.iterdir())
-    except OSError:
+    except FileNotFoundError:
         return []
     ids = [entry.name for entry in entries if session_directory(root, entry.name)]
     return sorted(ids, key=lambda value: (session_started_at(value), value), reverse=True)
@@ -247,7 +247,7 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
         match = re.fullmatch(r"transcript\.r(\d+)\.(jsonl|md)", candidate.name)
         if match is not None:
             pair = directory / f"transcript.r{match.group(1)}"
-            if not (pair.with_suffix(".jsonl").is_file() and pair.with_suffix(".md").is_file()):
+            if not (Path(f"{pair}.jsonl").is_file() and Path(f"{pair}.md").is_file()):
                 interrupted = True
 
     kind = "file" if metadata.get("kind") == "file" else "rec"

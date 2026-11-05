@@ -409,6 +409,7 @@ def default_model_status() -> tuple[ModelEntry, ...]:
     """Return the speech model and each live model, present or missing on disk."""
     import os
 
+    from stenographer.lib.live.download import _sha256
     from stenographer.lib.live.models import LIVE_MODELS
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
@@ -434,7 +435,8 @@ def default_model_status() -> tuple[ModelEntry, ...]:
                 model_id,
                 labels[model_id],
                 model.filename,
-                (live_dir / model.filename).is_file(),
+                (live_dir / model.filename).is_file()
+                and _sha256(live_dir / model.filename) == model.sha256,
                 sizes[model_id],
             )
         )

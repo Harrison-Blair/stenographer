@@ -321,11 +321,11 @@ class SessionStore:
         if cached is not None and cached[0] == key:
             return cached[1]
         metadata = session_metadata(directory)
+        titles = (session_id, session_started_at(session_id).strftime("%Y-%m-%d %H:%M"))
         if metadata.get("kind") == "file":
             name = metadata.get("source_name")
-            titles = (name,) if isinstance(name, str) else ()
-        else:
-            titles = (session_id, session_started_at(session_id).strftime("%Y-%m-%d %H:%M"))
+            if isinstance(name, str):
+                titles += (name,)
         lines, _ = read_transcript(path)
         texts = tuple(text.casefold() for text in (*titles, *(line.text for line in lines)))
         self._search_texts[session_id] = (key, texts)

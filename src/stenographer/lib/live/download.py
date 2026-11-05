@@ -44,12 +44,7 @@ def download_live_models(
 
     for model in models:
         destination = model_dir / model.filename
-        if destination.exists():
-            if _sha256(destination) != model.sha256:
-                raise LiveDownloadError(
-                    f"Live model {model.filename} is present with an incorrect SHA-256 hash. "
-                    "Remove it and retry."
-                )
+        if destination.is_file() and _sha256(destination) == model.sha256:
             continue
 
         temp_path: Path | None = None

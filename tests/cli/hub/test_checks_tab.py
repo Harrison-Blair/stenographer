@@ -1117,3 +1117,13 @@ async def test_checks_test_result_stays_with_originating_check():
             assert _plain(app, "#checks-test-status") == "test: sound test complete"
     finally:
         release.set()
+
+
+def test_model_status_marks_corrupt_voice_model_missing(tmp_path, monkeypatch):
+    from stenographer.cli.hub import doctor_view
+    from stenographer.lib.live.models import VAD_MODEL
+
+    monkeypatch.setattr(doctor_view, "live_model_dir", lambda data: tmp_path)
+    (tmp_path / VAD_MODEL.filename).write_bytes(b"corrupt")
+    entries = doctor_view.default_model_status()
+    assert next(entry for entry in entries if entry.model_id == "vad").present is False

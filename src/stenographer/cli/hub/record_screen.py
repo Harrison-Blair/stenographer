@@ -305,7 +305,8 @@ class RecordScreen(HubScreen):
             message = "Recording is active. Change screens without stopping it."
         else:
             message = ""
-        key = (lines, speakers, self.split, marker, message)
+        relabel_error = getattr(session, "relabel_error", None) if state == "saved" else None
+        key = (lines, speakers, self.split, marker, message, relabel_error)
         if key == self._transcript_key:
             return
         self._transcript_key = key
@@ -337,6 +338,10 @@ class RecordScreen(HubScreen):
             )
         if marker is not None:
             rows.append(Text(f"── {marker} ──", style="#6ee69a", no_wrap=True))
+        if relabel_error:
+            rows.append(
+                Text(f"Relabeling failed: {relabel_error}. Live labels kept.", style="#ffaf5f")
+            )
         if not lines and message:
             rows.append(Text(message))
         self.query_one("#transcript", TranscriptScroll).update_content(Group(*rows))

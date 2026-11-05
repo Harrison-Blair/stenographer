@@ -217,3 +217,28 @@ def test_reader_orders_equal_start_times_mic_first_then_by_end(tmp_path):
     lines = store.read(session.name).lines
 
     assert [line.speaker_id for line in lines] == ["mic-1", "mic-2", "system-1", "system-2"]
+
+
+def test_incomplete_revision_pair_marks_session_interrupted(tmp_path):
+    session = _file_session(tmp_path / "sessions")
+    (session / "transcript.r2.jsonl").write_text("", encoding="utf-8")
+    assert SessionStore(tmp_path / "sessions").read(session.name).summary.interrupted
+
+
+def test_file_session_search_includes_id_and_start_time(tmp_path):
+    session = _file_session(tmp_path / "sessions")
+    store = SessionStore(tmp_path / "sessions")
+    assert store.search("20260302T040506Z") == (session.name,)
+    assert store.search("2026-03-02 04:05") == (session.name,)
+    assert store.search("standup notes") == (session.name,)
+
+
+def test_session_listing_propagates_access_errors(tmp_path, monkeypatch):
+    from stenographer.lib.sessions.reader import list_session_ids
+
+    def denied(path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(type(tmp_path), "iterdir", denied)
+    with pytest.raises(PermissionError, match="denied"):
+        list_session_ids(tmp_path)

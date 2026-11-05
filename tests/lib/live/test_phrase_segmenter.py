@@ -77,12 +77,12 @@ class FakeSherpa:
 
 def test_phrase_segmenter_uses_d6_vad_values_cuts_long_phrases_and_flushes(monkeypatch):
     vad = FakeVad(
-        active=[FakeSegment(1600, np.ones(25600, dtype=np.float32))],
+        active=[FakeSegment(1600, np.ones(416000, dtype=np.float32))],
         flushed=[FakeSegment(32000, np.ones(4000, dtype=np.float32))],
     )
     sherpa = FakeSherpa(vad)
     monkeypatch.setitem(sys.modules, "sherpa_onnx", sherpa)
-    segmenter = PhraseSegmenter("mic", Path("silero_vad.onnx"), max_phrase_seconds=1)
+    segmenter = PhraseSegmenter("mic", Path("silero_vad.onnx"))
 
     active_phrases = segmenter.accept(np.zeros(40000, dtype=np.float32))
     final_phrases = segmenter.flush()
@@ -91,7 +91,7 @@ def test_phrase_segmenter_uses_d6_vad_values_cuts_long_phrases_and_flushes(monke
     assert sherpa.config.silero_vad.threshold == 0.5
     assert sherpa.config.silero_vad.min_speech_duration == 0.25
     assert sherpa.config.silero_vad.min_silence_duration == 0.6
-    assert sherpa.config.silero_vad.max_speech_duration == 1
+    assert sherpa.config.silero_vad.max_speech_duration == 25
     assert sherpa.config.sample_rate == 16000
     assert sherpa.config.num_threads == 1
     assert sherpa.config.provider == "cpu"
@@ -99,13 +99,13 @@ def test_phrase_segmenter_uses_d6_vad_values_cuts_long_phrases_and_flushes(monke
     assert sum(map(len, vad.accepted)) == 40000
     assert vad.did_flush is True
     assert len(active_phrases) == 2
-    for phrase, (start, end) in zip(active_phrases, [(0.1, 1.1), (1.1, 1.7)], strict=True):
+    for phrase, (start, end) in zip(active_phrases, [(0.1, 25.1), (25.1, 26.1)], strict=True):
         assert phrase.start == pytest.approx(start)
         assert phrase.end == pytest.approx(end)
     assert len(final_phrases) == 1
     assert final_phrases[0].start == pytest.approx(2.0)
     assert final_phrases[0].end == pytest.approx(2.25)
-    assert [phrase.samples.size for phrase in active_phrases] == [16000, 9600]
+    assert [phrase.samples.size for phrase in active_phrases] == [400000, 16000]
     assert final_phrases[0].samples.size == 4000
     phrases = (*active_phrases, *final_phrases)
     assert all(isinstance(phrase, Phrase) and phrase.source == "mic" for phrase in phrases)

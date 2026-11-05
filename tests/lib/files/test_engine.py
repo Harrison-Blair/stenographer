@@ -838,3 +838,15 @@ def test_engine_exposes_its_worker_pids_and_idle_unload_deadline(tmp_path):
         engine.close()
     assert engine.process_ids == ()
     assert engine.idle_unload_deadline is None
+
+
+def test_missing_vad_model_reports_download_command(tmp_path):
+    engine = FilesEngine(
+        Config.defaults(), platform=FakeFilesPlatform(tmp_path / "data", _file_asr_process())
+    )
+    job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
+    try:
+        _wait_for(job, "failed")
+        assert "stenographer model download --live" in job.error
+    finally:
+        engine.close()
