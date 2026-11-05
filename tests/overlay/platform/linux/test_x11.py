@@ -31,6 +31,7 @@ from stenographer.overlay.platform.linux.backends.x11 import (
     stacking_reassert_timeout,
     start_stacking_reassert,
 )
+from stenographer.overlay.platform.linux.backends.x11_overlay_backend import X11OverlayBackend
 from stenographer.overlay.rendering.constants import EDGE_OFFSET
 from stenographer.overlay.rendering.render import overlay_position, render_overlay
 
@@ -52,7 +53,7 @@ def test_pointer_monitor_wins_over_primary_and_disconnected_outputs() -> None:
         _monitor(3, (1920, 0, 2560, 1440), connected=False),
     )
 
-    selected = select_monitor(monitors, pointer=(2500, 500), root_rect=(0, 0, 4480, 1440))
+    selected = select_monitor(monitors, pointer=(2500, 500), root=Monitor(None, 0, 0, 4480, 1440))
 
     assert selected.output == 2
     assert selected.rect == (1920, 0, 2560, 1440)
@@ -60,17 +61,25 @@ def test_pointer_monitor_wins_over_primary_and_disconnected_outputs() -> None:
 
 def test_primary_then_root_are_stable_fallbacks() -> None:
     primary = _monitor(7, (100, 50, 1600, 900), primary=True)
-    assert select_monitor((primary,), pointer=(-10, -10), root_rect=(0, 0, 1920, 1080)) == primary
+    root = Monitor(None, -100, 0, 2000, 1200)
+    assert select_monitor((primary,), pointer=(-10, -10), root=root) == primary
 
-    root = select_monitor((), pointer=(3, 4), root_rect=(-100, 0, 2000, 1200))
-    assert root.output is None
-    assert root.rect == (-100, 0, 2000, 1200)
-    assert root.connected is True
+    assert select_monitor((), pointer=(3, 4), root=root) == root
 
 
-def test_monitor_selection_rejects_invalid_root_geometry() -> None:
-    with pytest.raises(ValueError, match="root"):
-        select_monitor((), pointer=(0, 0), root_rect=(0, 0, 0, 1080))
+def test_root_fallback_scales_from_the_screen_physical_dpi() -> None:
+    # 3840 px across 508 mm is 192 DPI, twice the 96 DPI default.
+    backend = X11OverlayBackend.__new__(X11OverlayBackend)
+    backend._screen = SimpleNamespace(
+        width_in_pixels=3840,
+        height_in_pixels=2160,
+        width_in_mms=508,
+        root=SimpleNamespace(query_pointer=lambda: SimpleNamespace(root_x=5, root_y=5)),
+    )
+    backend._monitors = lambda: ()
+    backend._xft_dpi = lambda: None
+
+    assert backend._scale_for(backend._choose_monitor()) == pytest.approx(2.0)
 
 
 def test_argb_visual_requires_an_authoritative_render_alpha_mask() -> None:

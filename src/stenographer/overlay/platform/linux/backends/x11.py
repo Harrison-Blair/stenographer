@@ -89,16 +89,13 @@ def select_monitor(
     monitors: tuple[Monitor, ...] | list[Monitor],
     *,
     pointer: tuple[int, int],
-    root_rect: tuple[int, int, int, int],
+    root: Monitor,
 ) -> Monitor:
     """Choose pointer output, primary output, then the root screen.
 
     The chosen object can be retained for the whole visible utterance so a
     moving pointer never causes the pill to jump between outputs.
     """
-    root_x, root_y, root_width, root_height = root_rect
-    if root_width <= 0 or root_height <= 0:
-        raise ValueError("root geometry must be positive")
     connected = tuple(monitor for monitor in monitors if _valid_monitor(monitor))
     under_pointer = tuple(monitor for monitor in connected if monitor.contains(pointer))
     if under_pointer:
@@ -106,7 +103,7 @@ def select_monitor(
     primary = next((monitor for monitor in connected if monitor.primary), None)
     if primary is not None:
         return primary
-    return Monitor(None, root_x, root_y, root_width, root_height)
+    return root
 
 
 def parse_xft_dpi(resources: str | bytes | None) -> float | None:
