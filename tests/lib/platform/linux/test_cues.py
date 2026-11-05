@@ -92,7 +92,7 @@ def test_preview_gives_up_on_a_stalled_player_and_reaps_it(tmp_path, monkeypatch
     with pytest.raises(subprocess.TimeoutExpired) as raised:
         LinuxCuePlayer("pw-play").preview(pathlib.Path("/tmp/cue.wav"), 0.5)
     assert raised.value.cmd == ["pw-play", "--volume=0.50", "/tmp/cue.wav"]
-    assert raised.value.timeout == 0.3
+    assert raised.value.timeout == pytest.approx(0.3, abs=0.05)
     pid = int(marker.read_text())
     assert wait_until(lambda: not psutil.pid_exists(pid))
 

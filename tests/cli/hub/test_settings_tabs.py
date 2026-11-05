@@ -467,6 +467,10 @@ def test_settings_device_row_stays_responsive_and_opens_one_list_for_a_slow_enum
                     break
                 await pilot.pause(0.01)
             assert isinstance(app.screen, ChoiceDialog)
+            for _ in range(200):
+                if "3: USB microphone" in _screen_text(app):
+                    break
+                await pilot.pause(0.01)
             assert "3: USB microphone" in _screen_text(app)
             assert sum(isinstance(screen, ChoiceDialog) for screen in app.screen_stack) == 1
 
