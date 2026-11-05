@@ -13,6 +13,8 @@ the entry as the GitHub release body; see [docs/building.md](docs/building.md).
 
 ## [Unreleased]
 
+## [v0.18.0] - 2026-11-05
+
 This release makes saving, quitting, clipboard restore, and cancellation more
 dependable in dictation and the hub. The hub no longer writes log lines over
 its screen, and spectrum calibration now records only the quiet room.
