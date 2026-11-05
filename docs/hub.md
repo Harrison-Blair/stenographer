@@ -8,6 +8,10 @@ terminal, the command prints help instead. The hub is a local, keyboard-driven
 interface with three screens. The daemon and existing commands keep their
 current behavior.
 
+While the hub is open, only the hub writes to the terminal. Log lines and the
+output of its child processes stay off the screen, and the log file still
+receives every record.
+
 ## Screens and keys
 
 Press `1`, `2`, or `3`, or click a row of the navigation list, to show a
