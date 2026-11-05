@@ -19,19 +19,9 @@ from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.errors import SingleInstanceLockError
 
 if TYPE_CHECKING:
-    from stenographer.cli.shared.capabilities import Capabilities
     from stenographer.lib.config.models import Config
 
 log = logging.getLogger("stenographer.lib.daemon")
-
-
-def startup_clipboard_backend(caps: Capabilities) -> str | None:
-    """Gate daemon startup on the capability requirements and reuse its backend name. PURE."""
-    from stenographer.cli.shared.capabilities import missing_required
-
-    if missing_required(caps):
-        return None
-    return caps.clipboard_backend
 
 
 def _startup_failure(status: StatusSink, message: str, code: int) -> int:
@@ -48,7 +38,7 @@ def _startup_failure(status: StatusSink, message: str, code: int) -> int:
 
 def run(cfg: Config) -> int:
     """Build and run the daemon. Returns the process exit code."""
-    from stenographer.cli.shared.capabilities import probe
+    from stenographer.cli.shared.capabilities import missing_required, probe
     from stenographer.lib.config.paths import resolve_config_path
     from stenographer.lib.hotkey.errors import BindingError
 
@@ -56,8 +46,7 @@ def run(cfg: Config) -> int:
     status: StatusSink = NullStatusSink()
     caps = probe(cfg)
     _log_banner(cfg, plat, caps, resolve_config_path(create_parent=False))
-    clipboard_backend = startup_clipboard_backend(caps)
-    if clipboard_backend is None:
+    if missing_required(caps):
         return _startup_failure(
             status, "required capabilities unavailable; run `stenographer doctor`", 78
         )
@@ -70,10 +59,10 @@ def run(cfg: Config) -> int:
         except Exception as exc:
             log_failure(log, logging.WARNING, "overlay: unavailable", exc, safe=True)
 
-    log.info("deliver: configured clipboard_backend=%s", clipboard_backend)
+    log.info("deliver: configured clipboard_backend=%s", caps.clipboard_backend)
     try:
         daemon = Daemon.build(
-            cfg, clipboard_backend=clipboard_backend, status=status, platform=plat
+            cfg, clipboard_backend=caps.clipboard_backend, status=status, platform=plat
         )
     except BindingError as exc:
         return _startup_failure(status, str(exc), 78)
