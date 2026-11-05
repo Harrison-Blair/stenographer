@@ -122,7 +122,9 @@ clipping. A close wired headset often beats a distant microphone. See the
 [microphone and normalization guidance](docs/usage.md#improve-microphone-capture)
 for troubleshooting steps.
 
-Configuration lives at `~/.config/stenographer/config.toml`. For example:
+Configuration defaults to `~/.config/stenographer/config.toml`. Set
+`STENOGRAPHER_CONFIG` to choose a file, or `XDG_CONFIG_HOME` to change the
+default configuration directory. For example:
 
 ```toml
 [stenographer.hotkey]

@@ -27,16 +27,17 @@ prose, no sub-bullets, and no blank lines between bullets. Wrap bullets at 79
 columns with a two-space continuation indent.
 
 A changed default or renamed option belongs under `### Added`, phrased as the
-new behavior ("Uses Underdog Bark 3.0 Pro for dictation, Live, and
-Files").
+new behavior ("Uses Underdog Bark 3.0 Pro for dictation, Record, and
+file jobs").
 Internal-only work — refactoring, test coverage, packaging with no observable
 effect — is folded into the synopsis or left out, never listed as a fix. An
 `[Unreleased]` section may be empty while nothing is pending, and otherwise
 follows the same structure.
 
-`scripts/release_notes.py check` enforces this for the requested release and
-`[Unreleased]`. It
-runs in a manually dispatched release rehearsal and again in the draft-release
+`.venv/bin/python scripts/release_notes.py check X.Y.Z CHANGELOG.md` validates
+the structure for the requested release and `[Unreleased]`; it does not enforce
+the 79-column wrapping convention. It runs in a manually dispatched release
+rehearsal and again in the draft-release
 workflow, so a missing or malformed entry fails before the draft is written.
 
 ## Quick start
@@ -202,7 +203,8 @@ The target system must provide:
 - **libportaudio** (e.g. the `libportaudio2` package) — excluded from the
   bundle by `packaging/hook-sounddevice.py` so the system audio stack is
   used; found at runtime via `packaging/rthooks/py_rth_portaudio.py`.
-- **`wl-copy`** (wl-clipboard) — clipboard delivery.
+- **`wl-copy`** (wl-clipboard) — clipboard delivery with Wayland data control;
+  **`xclip`** provides the X11/XWayland fallback.
 - **`canberra-gtk-play`, `pw-play`, or `paplay`** — audio cues, in preference
   order (degrades to silent if absent).
 - **`/dev/uinput` write access** and membership in the **`input` group** —
