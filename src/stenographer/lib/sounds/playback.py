@@ -16,11 +16,6 @@ from stenographer.lib.sounds.constants import PREVIEW_PAUSE_SECONDS, PREVIEW_VOL
 from stenographer.lib.sounds.sound_pack import SoundPack
 
 
-def cue_audible(mute: bool, volume: float, *, has_player: bool) -> bool:
-    """Whether a cue may make sound at all: unmuted, positive volume, a player. PURE."""
-    return not mute and volume > 0.0 and has_player
-
-
 def preview_volume(cfg: FeedbackConfig) -> float:
     """Return audible preview volume without mutating mute or volume settings."""
     if cfg.mute or cfg.volume <= 0.0:

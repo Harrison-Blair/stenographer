@@ -24,7 +24,7 @@ from stenographer.lib.sounds.packs import (
     resolve_sound_pack,
     sound_pack_cue_paths,
 )
-from stenographer.lib.sounds.playback import cue_audible, preview_sound_pack, preview_volume
+from stenographer.lib.sounds.playback import preview_sound_pack, preview_volume
 from stenographer.lib.sounds.sound_pack import SoundPack
 from stenographer.lib.sounds.validation import _wav_header_ok, _wav_payload_ok
 
@@ -300,20 +300,6 @@ def test_effective_name_is_none_when_nothing_resolves(tmp_path):
     assert effective_sound_pack_name("missing", tmp_path, bundled_root=bundled) is None
 
 
-@pytest.mark.parametrize(
-    ("mute", "volume", "has_player", "expected"),
-    [
-        (False, 0.6, True, True),
-        (True, 0.6, True, False),
-        (False, 0.0, True, False),
-        (False, -0.1, True, False),
-        (False, 0.6, False, False),
-    ],
-)
-def test_cue_audible_needs_unmuted_positive_volume_and_a_player(mute, volume, has_player, expected):
-    assert cue_audible(mute, volume, has_player=has_player) is expected
-
-
 def test_wav_payload_must_match_the_declared_frame_geometry():
     assert _wav_payload_ok(4800, 1200, 2, 2) is True
     assert _wav_payload_ok(4799, 1200, 2, 2) is False
@@ -428,6 +414,7 @@ def test_feedback_plays_nothing_when_inaudible_or_the_cue_is_unknown(tmp_path):
 
     feedback_for(volume=0.25, mute=True).play("record_start")
     feedback_for(volume=0.0, mute=False).play("record_start")
+    feedback_for(volume=-0.1, mute=False).play("record_start")
     feedback_for(volume=0.25, mute=False).play("no_such_cue")
 
     assert player.played == []
