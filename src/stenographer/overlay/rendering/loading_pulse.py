@@ -60,7 +60,7 @@ class LoadingPulse:
         """Return the animation-driving elapsed time, or None while idle."""
         if not self.breathing:
             return None
-        return max(0.0, now - self.breath_started_at)
+        return now - self.breath_started_at
 
     def timeout(self, now: float, visible: bool) -> float | None:
         """Return the wait until the next armed frame, or None when idle."""
