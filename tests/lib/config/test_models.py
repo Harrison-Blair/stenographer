@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import pathlib
 import warnings
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import pytest
 
@@ -45,6 +45,9 @@ def test_defaults_match_spec():
     assert d.feedback.spectrum_floor_dbfs == -45.0
     assert d.feedback.sound_pack == "minimal-ui"
     assert d.feedback.log_level == "info"
+    assert d.analytics == AnalyticsConfig(True, True)
+    assert d.delivery == DeliveryConfig(True, True, 500)
+    assert d.live == LiveConfig(False)
 
 
 #: An ASR section as a Whisper-era release wrote it, with every removed key.
@@ -81,11 +84,6 @@ def test_write_default_round_trips(tmp_path):
     p = tmp_path / "config.toml"
     p.write_bytes(default_toml().encode("utf-8"))
     assert Config.load(p) == Config.defaults()
-
-
-def test_missing_cancel_binding_uses_the_default():
-    cfg = Config.loads('[stenographer.hotkey]\nbinding = "KEY_F8"\n')
-    assert cfg.hotkey.cancel_binding == "KEY_ESC"
 
 
 def test_default_template_takes_its_hotkey_device_comment_from_the_platform():
@@ -125,10 +123,6 @@ def test_default_template_ships_the_two_universal_profile_bindings():
     assert "{" not in text
 
 
-def test_loads_validates_without_a_file():
-    assert Config.loads("[stenographer.asr]\ncpu_threads = 4\n").asr.cpu_threads == 4
-
-
 def test_loads_uses_supplied_path_in_errors():
     path = pathlib.Path("reviewed-config.toml")
     with pytest.raises(ConfigError) as exc:
@@ -142,45 +136,6 @@ def test_load_or_default_writes_missing_file(tmp_path, monkeypatch):
     cfg = load_or_default()
     assert p.is_file()
     assert cfg == Config.defaults()
-
-
-def test_partial_override_leaves_other_keys(tmp_path):
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer.asr]\ncpu_threads = 5\n")
-    cfg = Config.load(p)
-    assert cfg.asr.cpu_threads == 5
-    assert cfg.asr.idle_unload_seconds == Config.defaults().asr.idle_unload_seconds
-    assert cfg.hotkey == Config.defaults().hotkey
-    assert cfg.feedback == Config.defaults().feedback
-
-
-def test_overlay_can_be_disabled_without_restating_feedback_defaults(tmp_path):
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer.feedback]\noverlay = false\n")
-    cfg = Config.load(p)
-    assert cfg.feedback.overlay is False
-    assert cfg.feedback.volume == Config.defaults().feedback.volume
-    assert cfg.feedback.mute == Config.defaults().feedback.mute
-    assert cfg.feedback.spectrum_floor_dbfs == Config.defaults().feedback.spectrum_floor_dbfs
-    assert cfg.feedback.sound_pack == "minimal-ui"
-
-
-def test_update_check_can_be_disabled_without_restating_feedback_defaults(tmp_path):
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer.feedback]\nupdate_check = false\n")
-    cfg = Config.load(p)
-    assert cfg.feedback.update_check is False
-    assert cfg.feedback.overlay == Config.defaults().feedback.overlay
-    assert cfg.feedback.volume == Config.defaults().feedback.volume
-
-
-def test_config_written_before_update_check_existed_opts_in_without_migration(tmp_path):
-    p = tmp_path / "config.toml"
-    original = "[stenographer.feedback]\noverlay = false\n"
-    p.write_text(original)
-
-    assert Config.load(p).feedback.update_check is True
-    assert p.read_text() == original
 
 
 def test_default_template_documents_the_update_check_as_enabled():
@@ -200,68 +155,6 @@ def test_default_template_leaves_no_placeholder_unfilled():
     assert "}" not in rendered
 
 
-def test_old_config_inherits_default_sound_pack_without_migration(tmp_path):
-    p = tmp_path / "config.toml"
-    original = "[stenographer.feedback]\nvolume = 0.25\n"
-    p.write_text(original)
-
-    assert Config.load(p).feedback.sound_pack == "minimal-ui"
-    assert p.read_text() == original
-
-
-@pytest.mark.parametrize(
-    "name",
-    ["legacy", "warm-desk", "a", "a" * 64, "0-quiet"],
-)
-def test_sound_pack_accepts_slug_syntax_without_requiring_availability(tmp_path, name):
-    p = tmp_path / "config.toml"
-    p.write_text(f'[stenographer.feedback]\nsound_pack = "{name}"\n')
-
-    assert Config.load(p).feedback.sound_pack == name
-
-
-@pytest.mark.parametrize("floor", [-96, -45.5, -13])
-def test_spectrum_floor_override_accepts_documented_range(tmp_path, floor):
-    p = tmp_path / "config.toml"
-    p.write_text(f"[stenographer.feedback]\nspectrum_floor_dbfs = {floor}\n")
-
-    assert Config.load(p).feedback.spectrum_floor_dbfs == float(floor)
-
-
-def test_spectrum_floor_accepts_exactly_eighteen_calibrated_bands(tmp_path):
-    p = tmp_path / "config.toml"
-    floors = [float(-80 + index) for index in range(18)]
-    p.write_text(
-        "[stenographer.feedback]\nspectrum_floor_dbfs = ["
-        + ", ".join(str(value) for value in floors)
-        + "]\n"
-    )
-
-    assert Config.load(p).feedback.spectrum_floor_dbfs == tuple(floors)
-
-
-def test_toggle_mode_without_restating_hotkey_defaults(tmp_path):
-    # Seen to FAIL against the pre-change loader (AttributeError: no mode field).
-    p = tmp_path / "config.toml"
-    p.write_text('[stenographer.hotkey]\nmode = "toggle"\n')
-    cfg = Config.load(p)
-    assert cfg.hotkey.mode == "toggle"
-    assert cfg.hotkey.binding == Config.defaults().hotkey.binding
-    assert cfg.hotkey.device == Config.defaults().hotkey.device
-
-
-def test_hybrid_mode_with_its_threshold_without_restating_hotkey_defaults(tmp_path):
-    # Seen to FAIL against the pre-change loader (hotkey.mode: must be one of
-    # hold, toggle -- got 'hybrid').
-    p = tmp_path / "config.toml"
-    p.write_text('[stenographer.hotkey]\nmode = "hybrid"\nhybrid_threshold_seconds = 1.25\n')
-    cfg = Config.load(p)
-    assert cfg.hotkey.mode == "hybrid"
-    assert cfg.hotkey.hybrid_threshold_seconds == 1.25
-    assert cfg.hotkey.binding == Config.defaults().hotkey.binding
-    assert cfg.hotkey.device == Config.defaults().hotkey.device
-
-
 def test_empty_string_is_unset(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text(
@@ -274,15 +167,119 @@ def test_empty_string_is_unset(tmp_path):
     assert cfg.audio.input_device is None
 
 
-def test_unknown_keys_ignored(tmp_path):
-    p = tmp_path / "config.toml"
-    p.write_text("[stenographer.asr]\nbogus = 42\n")
-    assert Config.load(p) == Config.defaults()
+@pytest.mark.parametrize(
+    ("toml_text", "section", "overrides"),
+    [
+        ('[stenographer.hotkey]\nbinding = "KEY_F8"', "hotkey", {"binding": "KEY_F8"}),
+        ("[stenographer.asr]\ncpu_threads = 4", "asr", {"cpu_threads": 4}),
+        ("[stenographer.asr]\ncpu_threads = 5", "asr", {"cpu_threads": 5}),
+        ("[stenographer.feedback]\noverlay = false", "feedback", {"overlay": False}),
+        ("[stenographer.feedback]\nupdate_check = false", "feedback", {"update_check": False}),
+        *[
+            (f'[stenographer.feedback]\nsound_pack = "{name}"', "feedback", {"sound_pack": name})
+            for name in ("legacy", "warm-desk", "a", "a" * 64, "0-quiet")
+        ],
+        *[
+            (
+                f"[stenographer.feedback]\nspectrum_floor_dbfs = {floor}",
+                "feedback",
+                {"spectrum_floor_dbfs": float(floor)},
+            )
+            for floor in (-96, -45.5, -13)
+        ],
+        (
+            "[stenographer.feedback]\nspectrum_floor_dbfs = ["
+            + ", ".join(str(n) for n in range(-80, -62))
+            + "]",
+            "feedback",
+            {
+                "spectrum_floor_dbfs": (
+                    -80.0,
+                    -79.0,
+                    -78.0,
+                    -77.0,
+                    -76.0,
+                    -75.0,
+                    -74.0,
+                    -73.0,
+                    -72.0,
+                    -71.0,
+                    -70.0,
+                    -69.0,
+                    -68.0,
+                    -67.0,
+                    -66.0,
+                    -65.0,
+                    -64.0,
+                    -63.0,
+                )
+            },
+        ),
+        ('[stenographer.hotkey]\nmode = "toggle"', "hotkey", {"mode": "toggle"}),
+        (
+            '[stenographer.hotkey]\nmode = "hybrid"\nhybrid_threshold_seconds = 1.25',
+            "hotkey",
+            {"mode": "hybrid", "hybrid_threshold_seconds": 1.25},
+        ),
+        *[
+            (f'[stenographer.feedback]\nlog_level = "{level}"', "feedback", {"log_level": "debug"})
+            for level in ("debug", "DEBUG", "Debug")
+        ],
+        (
+            "[stenographer.delivery]\ncopy_original = false\n"
+            "restore_clipboard = false\nrestore_delay_ms = 0",
+            "delivery",
+            {"copy_original": False, "restore_clipboard": False, "restore_delay_ms": 0},
+        ),
+        ("[stenographer.live]\ndiarize_mic = true", "live", {"diarize_mic": True}),
+    ],
+)
+def test_partial_overrides_preserve_other_defaults(toml_text, section, overrides):
+    defaults = Config.defaults()
+    assert Config.loads(toml_text) == replace(
+        defaults, **{section: replace(getattr(defaults, section), **overrides)}
+    )
+
+
+def test_old_config_inherits_defaults_without_rewriting(tmp_path):
+    path = tmp_path / "config.toml"
+    content = "[stenographer.feedback]\nmute = true # preserved\n"
+    path.write_text(content)
+    defaults = Config.defaults()
+    assert Config.load(path) == replace(defaults, feedback=replace(defaults.feedback, mute=True))
+    assert path.read_text() == content
 
 
 @pytest.mark.parametrize(
     ("toml_text", "key"),
     [
+        *[
+            (f'[stenographer.analytics]\n{key} = "true"', f"analytics.{key}")
+            for key in ("enabled", "resource_profiling")
+        ],
+        ('[stenographer]\nasr = "medium"', "asr"),
+        ("[stenographer]\nhotkey = 1", "hotkey"),
+        ("[stenographer]\naudio = true", "audio"),
+        ('[stenographer]\nfeedback = "x"', "feedback"),
+        ("this is = = not valid", "<toml>"),
+        *[
+            (f"[stenographer.delivery]\n{line}", key)
+            for line, key in [
+                ("restore_delay_ms = -1", "delivery.restore_delay_ms"),
+                ("restore_delay_ms = 60001", "delivery.restore_delay_ms"),
+                ("restore_delay_ms = true", "delivery.restore_delay_ms"),
+                ("restore_delay_ms = 1.5", "delivery.restore_delay_ms"),
+                ('restore_delay_ms = "500"', "delivery.restore_delay_ms"),
+                ('copy_original = "yes"', "delivery.copy_original"),
+                ("restore_clipboard = 1", "delivery.restore_clipboard"),
+            ]
+        ],
+        ("[stenographer]\ndelivery = 1", "delivery"),
+        *[
+            (f"[stenographer.live]\n{line}", "live.diarize_mic")
+            for line in ('diarize_mic = "yes"', "diarize_mic = 1")
+        ],
+        ("[stenographer]\nlive = 1", "live"),
         ("[stenographer.asr]\ncpu_threads = 100\n", "asr.cpu_threads"),
         ('[stenographer.asr]\ncpu_threads = "x"\n', "asr.cpu_threads"),
         ("[stenographer.asr]\nidle_unload_seconds = -1\n", "asr.idle_unload_seconds"),
@@ -329,113 +326,10 @@ def test_unknown_keys_ignored(tmp_path):
         ("[stenographer.audio]\nmax_recording_seconds = 0\n", "audio.max_recording_seconds"),
     ],
 )
-def test_out_of_range_or_wrong_type_raises(tmp_path, toml_text, key):
-    p = tmp_path / "config.toml"
-    p.write_text(toml_text)
+def test_out_of_range_or_wrong_type_raises(toml_text, key):
     with pytest.raises(ConfigError) as exc:
-        Config.load(p)
+        Config.loads(toml_text)
     assert exc.value.key == key
-
-
-@pytest.mark.parametrize(
-    ("toml_text", "key"),
-    [
-        ('[stenographer]\nasr = "medium"\n', "asr"),
-        ("[stenographer]\nhotkey = 1\n", "hotkey"),
-        ("[stenographer]\naudio = true\n", "audio"),
-        ('[stenographer]\nfeedback = "x"\n', "feedback"),
-    ],
-)
-def test_scalar_section_raises_config_error(tmp_path, toml_text, key):
-    p = tmp_path / "config.toml"
-    p.write_text(toml_text)
-    with pytest.raises(ConfigError) as exc:
-        Config.load(p)
-    assert exc.value.key == key
-
-
-def test_malformed_toml_raises(tmp_path):
-    p = tmp_path / "config.toml"
-    p.write_text("this is = = not valid")
-    with pytest.raises(ConfigError) as exc:
-        Config.load(p)
-    assert exc.value.key == "<toml>"
-
-
-@pytest.mark.parametrize("written", ["debug", "DEBUG", "Debug"])
-def test_log_level_is_case_insensitive_and_stored_folded(tmp_path, written):
-    """The threshold is a level name, not a token: spelling it loudly still works.
-
-    Seen to FAIL against a plain ``choice`` validator (``"DEBUG"`` raised a
-    key-scoped ConfigError instead of loading).
-    """
-
-    p = tmp_path / "config.toml"
-    p.write_text(f'[stenographer.feedback]\nlog_level = "{written}"\n')
-
-    assert Config.load(p).feedback.log_level == "debug"
-
-
-def test_analytics_settings_default_without_rewriting_old_files(tmp_path):
-    path = tmp_path / "config.toml"
-    content = "[stenographer.feedback]\nmute = true # preserved\n"
-    path.write_text(content)
-    cfg = Config.load(path)
-    assert cfg.analytics == AnalyticsConfig(True, True)
-    assert path.read_text() == content
-    for key in ("enabled", "resource_profiling"):
-        with pytest.raises(ConfigError) as error:
-            Config.loads(f'[stenographer.analytics]\n{key} = "true"')
-        assert error.value.key == f"analytics.{key}"
-
-
-def test_delivery_settings_default_without_rewriting_old_files(tmp_path):
-    path = tmp_path / "config.toml"
-    content = "[stenographer.feedback]\nmute = true # preserved\n"
-    path.write_text(content)
-
-    cfg = Config.load(path)
-
-    assert cfg.delivery == DeliveryConfig(
-        copy_original=True, restore_clipboard=True, restore_delay_ms=500
-    )
-    assert Config.defaults().delivery == cfg.delivery
-    assert path.read_text() == content
-
-
-def test_delivery_settings_load_from_their_section():
-    cfg = Config.loads(
-        "[stenographer.delivery]\n"
-        "copy_original = false\nrestore_clipboard = false\nrestore_delay_ms = 0\n"
-    )
-
-    assert cfg.delivery == DeliveryConfig(
-        copy_original=False, restore_clipboard=False, restore_delay_ms=0
-    )
-
-
-@pytest.mark.parametrize(
-    ("line", "key"),
-    [
-        ("restore_delay_ms = -1", "delivery.restore_delay_ms"),
-        ("restore_delay_ms = 60001", "delivery.restore_delay_ms"),
-        ("restore_delay_ms = true", "delivery.restore_delay_ms"),
-        ("restore_delay_ms = 1.5", "delivery.restore_delay_ms"),
-        ('restore_delay_ms = "500"', "delivery.restore_delay_ms"),
-        ('copy_original = "yes"', "delivery.copy_original"),
-        ("restore_clipboard = 1", "delivery.restore_clipboard"),
-    ],
-)
-def test_invalid_delivery_settings_raise(line, key):
-    with pytest.raises(ConfigError) as error:
-        Config.loads(f"[stenographer.delivery]\n{line}\n")
-    assert error.value.key == key
-
-
-def test_a_scalar_delivery_section_raises():
-    with pytest.raises(ConfigError) as error:
-        Config.loads("[stenographer]\ndelivery = 1\n")
-    assert error.value.key == "delivery"
 
 
 def test_default_template_documents_the_delivery_section(tmp_path):
@@ -446,37 +340,6 @@ def test_default_template_documents_the_delivery_section(tmp_path):
     assert "[stenographer.delivery]" in text
     assert "restore_delay_ms = 500" in text
     assert Config.load(p).delivery == DeliveryConfig()
-
-
-def test_live_mic_diarization_defaults_off_without_rewriting_old_files(tmp_path):
-    path = tmp_path / "config.toml"
-    content = "[stenographer.feedback]\nmute = true # preserved\n"
-    path.write_text(content)
-
-    cfg = Config.load(path)
-
-    assert cfg.live == LiveConfig(diarize_mic=False)
-    assert Config.defaults().live.diarize_mic is False
-    assert path.read_text() == content
-
-
-def test_live_mic_diarization_loads_from_its_section():
-    cfg = Config.loads("[stenographer.live]\ndiarize_mic = true\n")
-
-    assert cfg.live.diarize_mic is True
-
-
-@pytest.mark.parametrize("line", ['diarize_mic = "yes"', "diarize_mic = 1"])
-def test_invalid_live_settings_raise(line):
-    with pytest.raises(ConfigError) as error:
-        Config.loads(f"[stenographer.live]\n{line}\n")
-    assert error.value.key == "live.diarize_mic"
-
-
-def test_a_scalar_live_section_raises():
-    with pytest.raises(ConfigError) as error:
-        Config.loads("[stenographer]\nlive = 1\n")
-    assert error.value.key == "live"
 
 
 def test_default_template_documents_the_live_section(tmp_path):

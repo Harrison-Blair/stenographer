@@ -29,16 +29,26 @@ from stenographer.lib.analytics.store import Store
 from stenographer.lib.transcribe.text import count_words
 
 
-def checkpoint(identity="run:1", revision=0, phase="accepted_start", **metrics):
+def checkpoint(
+    identity="run:1",
+    revision=0,
+    phase="accepted_start",
+    *,
+    outcome=None,
+    source="hotkey",
+    run_id="run",
+    started_at="2026-01-01T12:00:00.000000+00:00",
+    **metrics,
+):
     return {
         "id": identity,
-        "run_id": "run",
-        "source": "hotkey",
-        "started_at": "2026-01-01T12:00:00.000000+00:00",
+        "run_id": run_id,
+        "source": source,
+        "started_at": started_at,
         "updated_at": "2026-01-01T12:00:01.000000+00:00",
         "revision": revision,
         "phase": phase,
-        "outcome": None,
+        "outcome": outcome,
         "context": {"model": "medium.en", "device": "USB mic"},
         "metrics": metrics,
     }
@@ -60,10 +70,8 @@ def test_words_and_percentiles_have_one_definition():
 
 
 def test_missing_measurements_remain_unknown_and_headlines_survive_failed_delivery():
-    accepted = checkpoint(recognized_words=12, asr_audio_s=5.75)
-    accepted["outcome"] = "copy_failed"
-    empty = checkpoint("run:2", asr_audio_s=3.25, recognized_words=0)
-    empty["outcome"] = "empty"
+    accepted = checkpoint(recognized_words=12, asr_audio_s=5.75, outcome="copy_failed")
+    empty = checkpoint("run:2", asr_audio_s=3.25, recognized_words=0, outcome="empty")
     rejected = checkpoint("run:3", capture_s=2)
     result = summarize([accepted, empty, rejected])
     assert result["totals"]["recognized_words"] == 12
@@ -118,8 +126,7 @@ def test_checkpoint_revision_deduplication_order_and_terminal_seal(tmp_path):
     )
     with pytest.raises(ValueError):
         store.write_checkpoint(checkpoint(revision=3, phase="secured_capture"))
-    terminal = checkpoint(revision=3, phase="terminal", recognized_words=7)
-    terminal["outcome"] = "cancelled"
+    terminal = checkpoint(revision=3, phase="terminal", recognized_words=7, outcome="cancelled")
     assert store.write_checkpoint(terminal)
     assert not store.write_checkpoint(checkpoint(revision=4, phase="terminal", recognized_words=99))
     assert store.report()["totals"]["recognized_words"] == 7
@@ -133,8 +140,9 @@ def test_delete_suppresses_delayed_starts_and_checkpoints_and_future_work_surviv
     assert store.delete() == 1
     assert not store.write_checkpoint(checkpoint(revision=3, recognized_words=9))
     assert not store.write_checkpoint(checkpoint("run:queued", recognized_words=10))
-    future = checkpoint("run:future", recognized_words=5)
-    future["started_at"] = "2999-01-01T00:00:00.000000+00:00"
+    future = checkpoint(
+        "run:future", recognized_words=5, started_at="2999-01-01T00:00:00.000000+00:00"
+    )
     assert store.write_checkpoint(future)
     assert store.report()["totals"]["recognized_words"] == 5
     assert store.timeline("run:1") == []
@@ -143,8 +151,7 @@ def test_delete_suppresses_delayed_starts_and_checkpoints_and_future_work_surviv
 def test_filters_exports_and_file_source_separation(tmp_path):
     store = Store(tmp_path / "analytics.db")
     store.write_checkpoint(checkpoint(recognized_words=3))
-    other = checkpoint("run:file", recognized_words=6)
-    other["source"] = "file"
+    other = checkpoint("run:file", recognized_words=6, source="file")
     other["context"] = {"model": "small.en", "app_version": "1.0"}
     store.write_checkpoint(other)
     assert store.report()["totals"]["recognized_words"] == 3
@@ -178,12 +185,6 @@ def test_unsupported_schema_is_never_overwritten(tmp_path):
         Store(path).records()
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 99
-
-
-def test_reading_an_absent_database_does_not_create_it(tmp_path):
-    path = tmp_path / "missing" / "analytics.db"
-    assert Store(path).report()["totals"]["utterances"] == 0
-    assert not path.exists()
 
 
 def test_async_writer_persists_cumulative_accepted_recognition_on_cancel(
@@ -278,8 +279,7 @@ def test_liveness_recovery_preserves_unknown_process_and_checkpoint_timeline(tmp
     store.register_run("run", {}, (123, 100.0))
     store.register_run("unknown", {}, (456, 200.0))
     store.write_checkpoint(checkpoint())
-    other = checkpoint("unknown:1")
-    other["run_id"] = "unknown"
+    other = checkpoint("unknown:1", run_id="unknown")
     store.write_checkpoint(other)
     # An injected pure identity lookup expresses evidence without pretending to probe an OS.
     evidence = {(123, 100.0): False, (456, 200.0): None}
@@ -298,15 +298,6 @@ def test_resource_boundary_observations_cannot_hide_missed_intervals():
     assert "app_cpu_s" not in summary.metrics(12)
     assert summary.metrics(12)["app_cpu_samples"] == 1
     assert summary.context() == {"resource_availability": "gpu:gpu_probe_failed"}
-
-
-def test_privacy_rejection_also_applies_to_direct_database_writes(tmp_path):
-    store = Store(tmp_path / "analytics.db")
-    record = checkpoint()
-    record["outcome"] = "private_transcript"
-    with pytest.raises(ValueError, match="vocabulary"):
-        store.write_checkpoint(record)
-    assert not store.path.exists()
 
 
 @pytest.mark.parametrize("outcome", ["cancelled", "copy_failed", "chord_failed"])
@@ -438,13 +429,11 @@ def test_delayed_filter_match_deletes_earlier_incomplete_snapshot(tmp_path, lear
     store.write_checkpoint(initial)
     filters = Filters(device="USB mic") if learned == "device" else Filters(outcome="decode_failed")
     assert store.delete(filters) == 0
-    update = checkpoint(revision=1, phase="terminal")
-    update["outcome"] = "decode_failed"
+    update = checkpoint(revision=1, phase="terminal", outcome="decode_failed")
     assert not store.write_checkpoint(update)
     assert store.records(Filters(source=None)) == []
     assert store.timeline(initial["id"]) == []
-    later = checkpoint(revision=2, phase="terminal", recognized_words=8)
-    later["outcome"] = "success"
+    later = checkpoint(revision=2, phase="terminal", recognized_words=8, outcome="success")
     assert not store.write_checkpoint(later)
 
 
@@ -775,23 +764,23 @@ def test_a_run_records_the_process_identity_it_may_later_be_judged_by(tmp_path, 
     assert asked == []
 
 
-def test_direct_writes_reject_unknown_phases_and_foreign_sources(tmp_path):
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("outcome", "private_transcript"), ("phase", "invented_phase"), ("source", "screen_reader")],
+)
+def test_direct_writes_reject_invalid_vocabulary(tmp_path, key, value):
     store = Store(tmp_path / "analytics.db")
-    unknown_phase = checkpoint()
-    unknown_phase["phase"] = "invented_phase"
-    foreign_source = checkpoint()
-    foreign_source["source"] = "screen_reader"
-
+    record = checkpoint()
+    record[key] = value
     with pytest.raises(ValueError, match="vocabulary"):
-        store.write_checkpoint(unknown_phase)
-    with pytest.raises(ValueError, match="vocabulary"):
-        store.write_checkpoint(foreign_source)
+        store.write_checkpoint(record)
     assert not store.path.exists()
 
 
 def test_absent_history_answers_every_read_without_creating_it(tmp_path):
     store = Store(tmp_path / "missing" / "analytics.db")
 
+    assert store.report()["totals"]["utterances"] == 0
     assert store.timeline("run:1") == []
     assert store.recover_interrupted(lambda pid, started: False) == 0
     assert store.records() == []
