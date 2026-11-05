@@ -35,10 +35,6 @@ class WorkerTimeoutError(WorkerError):
     """A fixed inference or model-loading deadline expired."""
 
 
-class _WorkerTimeoutError(WorkerTimeoutError):
-    """An internal phase deadline expired while the child remained alive."""
-
-
 class BarkDownloadError(RuntimeError):
     """A step of the Bark Pro download, conversion or install failed.
 

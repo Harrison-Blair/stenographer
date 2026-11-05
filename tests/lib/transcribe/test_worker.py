@@ -24,7 +24,7 @@ from stenographer.lib.transcribe.errors import (
     WorkerModelError,
     WorkerPathologicalError,
     WorkerProtocolError,
-    _WorkerTimeoutError,
+    WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker import Worker
@@ -126,7 +126,7 @@ def test_malformed_worker_errors_require_teardown():
 
 
 def test_timeout_errors_require_teardown():
-    assert should_teardown_for_response_error(_WorkerTimeoutError("timed out")) is True
+    assert should_teardown_for_response_error(WorkerTimeoutError("timed out")) is True
 
 
 def test_decode_timeout_has_sixty_second_floor():
@@ -470,7 +470,7 @@ def test_an_expired_deadline_ends_the_wait(caplog):
         worker._begin_request()
         with (
             caplog.at_level(logging.ERROR, logger=_WORKER_LOGGER),
-            pytest.raises(_WorkerTimeoutError, match="timed out during transcribe"),
+            pytest.raises(WorkerTimeoutError, match="timed out during transcribe"),
         ):
             worker._wait_for_response("transcribe", deadline=time.monotonic() - 1.0)
 
