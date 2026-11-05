@@ -23,7 +23,7 @@ class Field(Static):
     }
     """
     LABEL_WIDTH = 20
-    CONTROL_WIDTH = 24
+    CONTROL_WIDTH = 30
 
     def __init__(
         self,

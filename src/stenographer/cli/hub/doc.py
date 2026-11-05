@@ -15,8 +15,6 @@
 - export_dialog.py: Choose the export format and folder of a saved session.
 - handler.py: Prepare the hub and run its Textual app.
 - hub_screen.py: Compose the sidebar, body, and footer shared by each screen.
-- files_entry.py: Describe one directory or audio file in the Transcribe browser.
-- library_entry.py: Describe one Library row: a session, a file job, or both.
 - library_screen.py: List, search, and act on sessions and file jobs; queue a file.
 - models_dialog.py: Show each model as present or missing and download one.
 - quick_setup_dialog.py: Test and edit input access, microphone, and hotkey.

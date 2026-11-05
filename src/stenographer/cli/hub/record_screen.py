@@ -52,7 +52,6 @@ _RECORD_HINTS = (("m", "mic"), ("s", "system"), ("v", "view"))
 class RecordScreen(HubScreen):
     """Record, pause, stop and save; watch the meters and the transcript; rename speakers."""
 
-    SCREEN_NAME = "record"
     SCREEN_TITLE = "Record"
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         Binding("space", "record_toggle", "Record, pause or resume"),
@@ -573,20 +572,8 @@ class RecordScreen(HubScreen):
         app.activity_status = None
         app.refresh_view()
 
-    def _transcript(self) -> TranscriptScroll:
-        return self.query_one("#transcript", TranscriptScroll)
-
     def action_scroll_line(self, offset: int) -> None:
         self._transcript().scroll_line(offset)
-
-    def action_scroll_page(self, offset: int) -> None:
-        self._transcript().scroll_page(offset)
-
-    def action_scroll_home(self) -> None:
-        self._transcript().scroll_top()
-
-    def action_scroll_end(self) -> None:
-        self._transcript().scroll_bottom()
 
     def action_toggle_view(self) -> None:
         self.split = not self.split
