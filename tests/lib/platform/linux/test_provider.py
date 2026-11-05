@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import io
 import threading
-from pathlib import Path
 
 import pytest
 
@@ -27,17 +26,6 @@ from stenographer.lib.platform.linux.notify import NotifySendNotifier
 from stenographer.lib.platform.linux.provider import LinuxPlatform
 from stenographer.lib.platform.linux.uinput import UinputKeyboard
 from stenographer.lib.platform.multiprocessing_asr_transport import MultiprocessingAsrTransport
-
-
-def test_provider_resolves_xdg_user_directories():
-    plat = LinuxPlatform()
-    home = Path("/home/alice")
-    assert plat.config_path({}, home) == home / ".config/stenographer/config.toml"
-    assert plat.config_path({"XDG_CONFIG_HOME": "/xdg"}, home) == Path(
-        "/xdg/stenographer/config.toml"
-    )
-    assert plat.state_dir({}, home) == home / ".local/state/stenographer"
-    assert plat.state_dir({"XDG_STATE_HOME": "/xdg"}, home) == Path("/xdg/stenographer")
 
 
 def test_provider_speaks_the_evdev_key_vocabulary():

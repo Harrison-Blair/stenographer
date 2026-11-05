@@ -24,12 +24,12 @@ from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.hotkey.chord_tracker import ChordTracker
 from stenographer.lib.logging.pipeline import UtteranceFilter
 from stenographer.lib.platform.errors import UnsupportedPlatformError
-from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.refine.cancellation import never_cancelled
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED, RefineResult
 from stenographer.lib.transcribe.results import TranscriptionResult, WorkerTimings
 from stenographer.lib.transcribe.text import count_words
+from tests.lib.platform.support import NullProcessCounters
 
 # Never a substring of any field name, level, subsystem, or path in the log.
 CANARY = "supercalifragilisticexpialidocious"

@@ -17,8 +17,8 @@ import soundfile
 from stenographer.lib.config.models import Config
 from stenographer.lib.files.engine import FilesEngine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
-from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.transcribe.results import TranscriptionResult
+from tests.lib.platform.support import NullProcessCounters
 from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport
 from tests.support import wait_until
 
