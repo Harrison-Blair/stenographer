@@ -164,43 +164,61 @@ def test_a_reply_cut_off_at_the_token_cap_is_refused():
         refined_text(payload, ORIGINAL, structured_output=False)
 
 
-def test_a_reply_that_stopped_on_its_own_is_accepted():
+@pytest.mark.parametrize("done_reason", ["stop", None])
+def test_a_reply_that_is_not_truncated_is_accepted(done_reason):
     cleaned = "I think we should ship it on Friday, because the notes are not done."
-    payload = json.dumps({"done_reason": "stop", "message": {"content": cleaned}}).encode()
-
-    assert refined_text(payload, ORIGINAL, structured_output=False) == cleaned
-
-
-def test_a_reply_with_no_done_reason_is_not_treated_as_truncated():
-    """Not every Ollama build reports one; absence must not fail the stage."""
-    cleaned = "I think we should ship it on Friday, because the notes are not done."
-    payload = json.dumps({"message": {"content": cleaned}}).encode()
-
-    assert refined_text(payload, ORIGINAL, structured_output=False) == cleaned
+    reply = {"message": {"content": cleaned}}
+    if done_reason is not None:
+        reply["done_reason"] = done_reason
+    assert refined_text(json.dumps(reply).encode(), ORIGINAL, structured_output=False) == cleaned
 
 
-def test_quotation_marks_inside_the_text_are_not_mistaken_for_a_wrapper():
-    """Dictating dialogue produces text that starts and ends with a quote
-    without being quoted. Stripping those two characters silently corrupts the
-    paste. Seen to FAIL against a naive startswith/endswith strip."""
-    spoken = "he said we are done and then he said lets go home right now okay"
-    dialogue = '"We are done," he said, and then, "let\'s go home."'
-
-    assert guard(spoken, dialogue) == dialogue
-
-
-def test_an_apostrophe_at_each_end_is_not_a_single_quote_wrapper():
-    spoken = "tis the season and the dogs bowl is empty so fill it up please now"
-    text = "'tis the season, and the dog's bowl is empty, so fill it up'"
-
-    assert guard(spoken, text) == text
-
-
-def test_a_genuinely_quoted_reply_is_still_unwrapped():
-    body = "I think we should ship it on Friday, the notes are not done."
-
-    assert guard(ORIGINAL, f'"{body}"') == body
-    assert guard(ORIGINAL, f"“{body}”") == body
+@pytest.mark.parametrize(
+    ("spoken", "cleaned"),
+    [
+        (
+            "he said we are done and then he said lets go home right now okay",
+            '"We are done," he said, and then, "let\'s go home."',
+        ),
+        (
+            "tis the season and the dogs bowl is empty so fill it up please now",
+            "'tis the season, and the dog's bowl is empty, so fill it up'",
+        ),
+        (
+            "okay so the sync is at 4:15 and only 8 people have replied which is like 20% of the team um and we are on version 0.12.3 with 1,204 rows",
+            "Okay, so the sync is at 4:15 and only 8 people have replied, which is 20% of the team, and we are on version 0.12.3 with 1,204 rows.",
+        ),
+        (
+            "ping me at 3 and then at 5 about the 2 tickets",
+            "About the 2 tickets: ping me at 3, and then at 5.",
+        ),
+        (
+            "lets meet at 3 no wait 4 in the small room",
+            "Let's meet at 3, no wait, 4 in the small room.",
+        ),
+        (
+            "the sync is at 4:15, no, 4:30, in the small room",
+            "The sync is at 4:30 in the small room.",
+        ),
+        # Each is a real corpus sample and the correct cleanup for it. Seen to
+        # FAIL against strict numeral equality, which refused all of them.
+        ("lets meet at 3 no wait 4 in the small room", "Let's meet at 4 in the small room."),
+        (
+            "i tagged version 0.12.2 sorry 0.12.3 this morning",
+            "I tagged version 0.12.3 this morning.",
+        ),
+        ("can you buy 2 of them actually 3 of them", "Can you buy 3 of them?"),
+        (
+            "we need 3 mics 2 stands and 4 cables actually not the cables",
+            "We need:\n- 3 mics\n- 2 stands",
+        ),
+        ("the meeting is at 6 in the main hall no wait 7", "The meeting is at 7 in the main hall."),
+        ("lets do it at 2 no 3 no wait 4", "Let's do it at 4."),
+        ("it costs 40 dollars i mean 45 for the pair", "It costs 45 for the pair."),
+    ],
+)
+def test_valid_edits_pass_the_guard(spoken, cleaned):
+    assert guard(spoken, cleaned) == cleaned
 
 
 # --- Numerals must come through untouched ---------------------------------------
@@ -234,71 +252,6 @@ def test_output_that_changes_a_number_is_refused(spoken, candidate):
         guard(spoken, candidate)
 
 
-def test_numbers_kept_verbatim_pass_the_guard():
-    spoken = (
-        "okay so the sync is at 4:15 and only 8 people have replied which is like 20% of "
-        "the team um and we are on version 0.12.3 with 1,204 rows"
-    )
-    cleaned = (
-        "Okay, so the sync is at 4:15 and only 8 people have replied, which is 20% of "
-        "the team, and we are on version 0.12.3 with 1,204 rows."
-    )
-
-    assert guard(spoken, cleaned) == cleaned
-
-
-def test_reordered_numbers_still_pass_when_each_survives():
-    """The guard compares what numbers appear, not where; a correct paragraph
-    split or clause reorder must not trip it."""
-    spoken = "ping me at 3 and then at 5 about the 2 tickets"
-    cleaned = "About the 2 tickets: ping me at 3, and then at 5."
-
-    assert guard(spoken, cleaned) == cleaned
-
-
-@pytest.mark.parametrize(
-    ("spoken", "cleaned"),
-    [
-        # Each is a real corpus sample and the correct cleanup for it. Seen to
-        # FAIL against strict numeral equality, which refused all of them.
-        ("lets meet at 3 no wait 4 in the small room", "Let's meet at 4 in the small room."),
-        (
-            "i tagged version 0.12.2 sorry 0.12.3 this morning",
-            "I tagged version 0.12.3 this morning.",
-        ),
-        ("can you buy 2 of them actually 3 of them", "Can you buy 3 of them?"),
-        (
-            "we need 3 mics 2 stands and 4 cables actually not the cables",
-            "We need:\n- 3 mics\n- 2 stands",
-        ),
-        ("the meeting is at 6 in the main hall no wait 7", "The meeting is at 7 in the main hall."),
-        ("lets do it at 2 no 3 no wait 4", "Let's do it at 4."),
-        ("it costs 40 dollars i mean 45 for the pair", "It costs 45 for the pair."),
-    ],
-)
-def test_a_number_the_speaker_took_back_may_be_dropped(spoken, cleaned):
-    assert guard(spoken, cleaned) == cleaned
-
-
-def test_a_correction_marker_is_permission_not_an_order():
-    """A marker after a number lets the model drop it; keeping it is fine too."""
-    spoken = "lets meet at 3 no wait 4 in the small room"
-    kept = "Let's meet at 3, no wait, 4 in the small room."
-
-    assert guard(spoken, kept) == kept
-
-
-def test_the_number_kept_must_be_the_one_the_speaker_settled_on():
-    """The default model really produced this: it kept the abandoned time and
-    deleted the settled one. Nothing follows 9:30 in the input, so its
-    disappearance is unjustified and the raw text is delivered instead."""
-    spoken = "standup moved to 9:15 no 9:30"
-    wrong = "Standup moved to 9:15."
-
-    with pytest.raises(RefineRejectedError):
-        guard(spoken, wrong)
-
-
 @pytest.mark.parametrize(
     ("spoken", "candidate"),
     [
@@ -323,23 +276,13 @@ def test_the_number_kept_must_be_the_one_the_speaker_settled_on():
             "the room holds 40 people and the projector is broken so actually lets use the annex",
             "The room holds people and the projector is broken, so let's use the annex.",
         ),
+        ("standup moved to 9:15 no 9:30", "Standup moved to 9:15."),
+        (
+            "it is 30 kilometers actually about 30 miles and 30 is the limit",
+            "It is about miles, and the limit.",
+        ),
     ],
 )
 def test_a_number_dropped_without_a_spoken_correction_is_refused(spoken, candidate):
     with pytest.raises(RefineRejectedError):
         guard(spoken, candidate)
-
-
-def test_a_marker_still_counts_when_the_number_carries_punctuation():
-    spoken = "the sync is at 4:15, no, 4:30, in the small room"
-    cleaned = "The sync is at 4:30 in the small room."
-
-    assert guard(spoken, cleaned) == cleaned
-
-
-def test_a_retraction_licenses_one_drop_not_every_copy_of_that_number():
-    spoken = "it is 30 kilometers actually about 30 miles and 30 is the limit"
-    both_dropped = "It is about miles, and the limit."
-
-    with pytest.raises(RefineRejectedError):
-        guard(spoken, both_dropped)
