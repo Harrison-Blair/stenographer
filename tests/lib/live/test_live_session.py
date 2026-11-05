@@ -955,3 +955,118 @@ def test_live_session_exposes_its_worker_pids_and_idle_unload_deadline(monkeypat
 
     assert rig.session.process_ids == (4321,)
     assert rig.session.idle_unload_deadline == 12.5
+
+
+def test_a_mic_block_is_accepted_while_a_speaker_embedding_runs(monkeypatch, tmp_path):
+    accepted_during_embed = []
+
+    class BlockingProbeTracker(VoiceSpeakerTracker):
+        def embed(self, samples):
+            if not accepted_during_embed:
+                block = Thread(target=rig.recorder.emit, args=(4,), daemon=True)
+                block.start()
+                block.join(timeout=0.5)
+                accepted_during_embed.append(not block.is_alive())
+            return super().embed(samples)
+
+    rig = _make_session(
+        monkeypatch, tmp_path, tracker=BlockingProbeTracker, diarize_mic=True, system=False
+    )
+    processed = _wait_for_lines(rig.session, 2)
+
+    rig.recorder.emit(1)
+
+    assert processed.wait(timeout=2)
+    assert accepted_during_embed == [True]
+    rig.session.stop()
+
+
+def _counting_tracker(created, *, fail=False):
+    class CountingTracker(VoiceSpeakerTracker):
+        def __init__(self, *args, label_prefix="Speaker", **kwargs):
+            if fail:
+                raise RuntimeError("fake model failure")
+            created.append(label_prefix)
+            super().__init__(*args, label_prefix=label_prefix, **kwargs)
+
+    return CountingTracker
+
+
+def test_a_mic_only_session_loads_no_speaker_model(monkeypatch, tmp_path):
+    created = []
+
+    rig = _make_session(monkeypatch, tmp_path, system=False, tracker=_counting_tracker(created))
+
+    assert created == []
+    rig.session.stop()
+    assert created == []
+
+
+def test_a_session_with_system_audio_loads_its_speaker_model_at_construction(monkeypatch, tmp_path):
+    created = []
+
+    rig = _make_session(monkeypatch, tmp_path, start=False, tracker=_counting_tracker(created))
+
+    assert created == ["Speaker"]
+    rig.session.start()
+    rig.session.stop()
+    assert created == ["Speaker"]
+
+
+def test_system_toggled_on_later_gets_labels_and_a_relabel_pass(monkeypatch, tmp_path):
+    created = []
+    rig = _make_session(monkeypatch, tmp_path, system=False, tracker=_counting_tracker(created))
+    processed = _wait_for_lines(rig.session, 2)
+
+    rig.recorder.emit(1)
+    rig.session.toggle("system")
+    rig.system.emit(1)
+    assert processed.wait(timeout=1)
+
+    assert created == ["Speaker"]
+    assert rig.session.source_states["system"] == "on"
+    assert rig.session.speakers == (("speaker-1", "Speaker 1"),)
+    rig.session.rename("speaker-1", "Alice")
+    rig.session.toggle("system")
+    rig.session.toggle("system")
+    assert created == ["Speaker"]
+
+    rig.session.stop()
+
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+    assert detail.revision == "transcript.r2.jsonl"
+    assert {(line.source, line.speaker_id) for line in detail.lines} == {
+        ("mic", "you"),
+        ("system", "speaker-1"),
+    }
+
+
+def test_system_toggled_on_later_keeps_system_speakers_listed_first(monkeypatch, tmp_path):
+    rig = _make_session(
+        monkeypatch, tmp_path, system=False, tracker=VoiceSpeakerTracker, diarize_mic=True
+    )
+    processed = _wait_for_lines(rig.session, 2)
+
+    rig.recorder.emit(1)
+    rig.session.toggle("system")
+    rig.system.emit(1)
+    assert processed.wait(timeout=1)
+
+    assert rig.session.speakers == (("speaker-1", "Speaker 1"), ("room-1", "Room 1"))
+    rig.session.stop()
+
+
+def test_a_speaker_model_that_fails_on_toggle_leaves_system_off_and_mic_running(
+    monkeypatch, tmp_path
+):
+    rig = _make_session(
+        monkeypatch, tmp_path, system=False, tracker=_counting_tracker([], fail=True)
+    )
+    processed = _wait_for_lines(rig.session, 1)
+
+    rig.session.toggle("system")
+
+    assert rig.session.source_states["system"] == "off"
+    rig.recorder.emit(1)
+    assert processed.wait(timeout=1)
+    rig.session.stop()

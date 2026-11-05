@@ -275,7 +275,7 @@ class SessionStore:
 
     def export(self, session_id: str, output_folder: str | Path, format: str) -> Path:
         """Export the current transcript to the requested output folder."""
-        detail = self.read(session_id)
+        detail = read_session(self._directory(session_id), session_id, with_activity=False)
         return export_transcript(
             detail.lines,
             output_folder,
@@ -295,7 +295,7 @@ class SessionStore:
         if not cleaned_name:
             raise ValueError("speaker name must not be empty")
         with _session_lock(self.root / session_id):
-            detail = self.read(session_id)
+            detail = read_session(self._directory(session_id), session_id, with_activity=False)
             if not any(line.speaker_id == speaker_id for line in detail.lines):
                 raise ValueError(f"speaker not found: {speaker_id}")
             renamed = tuple(
