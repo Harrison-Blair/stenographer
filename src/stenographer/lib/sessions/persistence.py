@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -12,13 +13,7 @@ from pathlib import Path
 def atomic_write_private(path: Path, content: bytes) -> None:
     temporary: Path | None = None
     try:
-        fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-        temporary = Path(name)
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.chmod(0o600)
+        temporary = write_private_temporary(path.parent, path.name, content)
         os.replace(temporary, path)
         temporary = None
     except OSError as exc:
@@ -43,3 +38,10 @@ def write_private_temporary(directory: Path, name: str, content: bytes) -> Path:
         temporary.unlink(missing_ok=True)
         raise
     return temporary
+
+
+def write_session_json(directory: Path, metadata: dict) -> None:
+    atomic_write_private(
+        directory / "session.json",
+        (json.dumps(metadata, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"),
+    )

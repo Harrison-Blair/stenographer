@@ -6,24 +6,23 @@ from __future__ import annotations
 import os
 import threading
 from dataclasses import replace
-from datetime import UTC, datetime
 
-import numpy as np
 import pytest
 
-from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionWriteCancelledError, StaleRevisionError
+from tests.lib.sessions.helpers import make_recording
 
 
 def _session(data_root):
-    writer = SessionWriter.open(data_root, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
-    writer.write_audio("system", np.zeros(16000, dtype=np.float32))
-    writer.append_line(TranscriptLine(0.0, 0.5, "", "system", "speaker-1", "Speaker 1", "alpha"))
-    writer.append_line(TranscriptLine(0.5, 1.0, "", "system", "speaker-2", "Speaker 2", "bravo"))
-    writer.close()
-    return writer.path
+    return make_recording(
+        data_root,
+        [
+            TranscriptLine(0.0, 0.5, "", "system", "speaker-1", "Speaker 1", "alpha"),
+            TranscriptLine(0.5, 1.0, "", "system", "speaker-2", "Speaker 2", "bravo"),
+        ],
+    )
 
 
 def _snapshot(directory):

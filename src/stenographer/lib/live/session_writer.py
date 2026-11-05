@@ -18,7 +18,7 @@ import soundfile as sf
 
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event
-from stenographer.lib.sessions.persistence import atomic_write_private
+from stenographer.lib.sessions.persistence import write_session_json
 
 log = logging.getLogger(__name__)
 _SAMPLE_RATE = 16000
@@ -133,10 +133,7 @@ class SessionWriter:
             self._write_metadata(metadata)
 
     def _write_metadata(self, metadata: dict) -> None:
-        atomic_write_private(
-            self.path / "session.json",
-            (json.dumps(metadata, sort_keys=True) + "\n").encode("utf-8"),
-        )
+        write_session_json(self.path, metadata)
 
     def close(self) -> None:
         with self._lock:

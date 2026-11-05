@@ -9,8 +9,9 @@ import os
 import re
 import shutil
 import stat
+import threading
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -23,7 +24,11 @@ from stenographer.lib.sessions.errors import (
 )
 from stenographer.lib.sessions.exporter import export_transcript, render_transcript
 from stenographer.lib.sessions.models import SessionDetail, SessionSummary
-from stenographer.lib.sessions.persistence import atomic_write_private, write_private_temporary
+from stenographer.lib.sessions.persistence import (
+    atomic_write_private,
+    write_private_temporary,
+    write_session_json,
+)
 from stenographer.lib.sessions.reader import (
     current_revision,
     list_session_ids,
@@ -34,10 +39,16 @@ from stenographer.lib.sessions.reader import (
     session_started_at,
     source_file_path,
 )
-from stenographer.lib.sessions.session_locks import SessionLocks
 
 _SOURCE_SUFFIX = re.compile(r"[A-Za-z0-9]{1,8}\Z")
 _RECORDED_SOURCES = ("mic.flac", "system.flac")
+_LOCKS: dict[Path, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _session_lock(directory: Path) -> threading.RLock:
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(directory, threading.RLock())
 
 
 class SessionStore:
@@ -46,6 +57,12 @@ class SessionStore:
     def __init__(self, sessions_root: str | Path) -> None:
         self.root = Path(sessions_root).expanduser().resolve(strict=False)
         self._search_texts: dict[str, tuple[tuple[str, int], tuple[str, ...]]] = {}
+
+    def _directory(self, session_id: str) -> Path:
+        directory = session_directory(self.root, session_id)
+        if directory is None:
+            raise SessionNotFoundError(f"session not found: {session_id}")
+        return directory
 
     def list_sessions(self) -> tuple[SessionSummary, ...]:
         """Return session summaries, newest first."""
@@ -77,9 +94,7 @@ class SessionStore:
 
     def read(self, session_id: str) -> SessionDetail:
         """Read the transcript and derive talk time and FLAC activity on demand."""
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
+        directory = self._directory(session_id)
         return read_session(directory, session_id, with_activity=True)
 
     def write_revision(
@@ -98,15 +113,9 @@ class SessionStore:
         final names, and ``session.json`` is replaced last. An error or a cancel at any
         step removes each file that this call made.
         """
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
-        if not isinstance(method, str) or not method.strip():
-            raise ValueError("revision method must not be empty")
+        directory = self._directory(session_id)
         revised = tuple(lines)
-        if any(not isinstance(line, TranscriptLine) for line in revised):
-            raise TypeError("revision lines must be TranscriptLine values")
-        with SessionLocks.lock(self.root, session_id):
+        with _session_lock(self.root / session_id):
             original = directory / "transcript.jsonl"
             if not original.is_file():
                 raise FileNotFoundError(f"original transcript is missing: {original}")
@@ -135,9 +144,7 @@ class SessionStore:
                 )
             markdown_name = filename.removesuffix(".jsonl") + ".md"
             directory.chmod(0o700)
-            jsonl = "".join(
-                json.dumps(asdict(line), ensure_ascii=False) + "\n" for line in revised
-            ).encode("utf-8")
+            jsonl = render_transcript(revised, "jsonl").encode("utf-8")
             markdown = render_transcript(revised, "md").encode("utf-8")
             metadata = {
                 **metadata,
@@ -156,7 +163,7 @@ class SessionStore:
                 os.replace(made[1], directory / markdown_name)
                 made[1] = directory / markdown_name
                 self._check_cancel(should_cancel)
-                atomic_write_private(directory / "session.json", self._metadata_bytes(metadata))
+                write_session_json(directory, metadata)
             except BaseException:
                 for path in made:
                     with contextlib.suppress(OSError):
@@ -166,10 +173,8 @@ class SessionStore:
 
     def next_revision_name(self, session_id: str) -> str:
         """Return the file name that the next revision of this session gets."""
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
-        with SessionLocks.lock(self.root, session_id):
+        directory = self._directory(session_id)
+        with _session_lock(self.root / session_id):
             return self._next_revision_name(directory)
 
     def create_file_session(
@@ -200,7 +205,7 @@ class SessionStore:
             except FileExistsError:
                 started_at += timedelta(seconds=1)
         try:
-            with SessionLocks.lock(self.root, session_id):
+            with _session_lock(self.root / session_id):
                 directory.chmod(0o700)
                 suffix = source.suffix[1:]
                 extension = suffix.lower() if _SOURCE_SUFFIX.fullmatch(suffix) else "bin"
@@ -214,9 +219,7 @@ class SessionStore:
                 self._check_cancel(should_cancel)
                 atomic_write_private(
                     directory / "transcript.jsonl",
-                    "".join(
-                        json.dumps(asdict(line), ensure_ascii=False) + "\n" for line in rows
-                    ).encode("utf-8"),
+                    render_transcript(rows, "jsonl").encode("utf-8"),
                 )
                 self._check_cancel(should_cancel)
                 atomic_write_private(
@@ -230,7 +233,7 @@ class SessionStore:
                     "source_file": source_file,
                     "source_name": source.name,
                 }
-                atomic_write_private(directory / "session.json", self._metadata_bytes(metadata))
+                write_session_json(directory, metadata)
         except BaseException:
             shutil.rmtree(directory, ignore_errors=True)
             raise
@@ -238,9 +241,7 @@ class SessionStore:
 
     def source_audio(self, session_id: str) -> Path:
         """Return the validated copied source audio of a file session."""
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
+        directory = self._directory(session_id)
         metadata = session_metadata(directory)
         if metadata.get("kind") != "file":
             raise SessionSourceError(f"session is not a file session: {session_id}")
@@ -284,10 +285,8 @@ class SessionStore:
 
     def delete(self, session_id: str) -> None:
         """Delete one explicitly named session folder below the sessions root."""
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
-        with SessionLocks.lock(self.root, session_id):
+        directory = self._directory(session_id)
+        with _session_lock(self.root / session_id):
             shutil.rmtree(directory)
 
     def rename_speaker(self, session_id: str, speaker_id: str, name: str) -> str:
@@ -295,7 +294,7 @@ class SessionStore:
         cleaned_name = name.strip()
         if not cleaned_name:
             raise ValueError("speaker name must not be empty")
-        with SessionLocks.lock(self.root, session_id):
+        with _session_lock(self.root / session_id):
             detail = self.read(session_id)
             if not any(line.speaker_id == speaker_id for line in detail.lines):
                 raise ValueError(f"speaker not found: {speaker_id}")
@@ -340,10 +339,6 @@ class SessionStore:
         ):
             number += 1
         return f"transcript.r{number}.jsonl"
-
-    @staticmethod
-    def _metadata_bytes(metadata: dict) -> bytes:
-        return (json.dumps(metadata, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
 
     @staticmethod
     def _check_cancel(should_cancel: Callable[[], bool] | None) -> None:

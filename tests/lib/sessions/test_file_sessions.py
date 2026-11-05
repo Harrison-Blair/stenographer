@@ -11,10 +11,10 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError
+from tests.lib.sessions.helpers import make_recording
 
 _STARTED = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
 
@@ -24,11 +24,9 @@ def _line(start, end, source, speaker_id, label, text="alpha bravo"):
 
 
 def _recording(data_root, started_at=_STARTED):
-    writer = SessionWriter.open(data_root, started_at)
-    writer.write_audio("system", np.zeros(16000, dtype=np.float32))
-    writer.append_line(_line(0.0, 0.5, "system", "speaker-1", "Speaker 1"))
-    writer.close()
-    return writer.path
+    return make_recording(
+        data_root, [_line(0.0, 0.5, "system", "speaker-1", "Speaker 1")], started_at
+    )
 
 
 def _file_session(sessions_root, *, metadata=None, transcript=True, source=b"RIFFdata"):

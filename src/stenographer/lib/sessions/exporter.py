@@ -33,8 +33,6 @@ def _srt_timestamp(seconds: float) -> str:
 
 def render_transcript(lines: Iterable[TranscriptLine], format: str) -> str:
     """Render transcript lines as Markdown, JSONL, SRT, or plain text."""
-    if format not in SUPPORTED_FORMATS:
-        raise ValueError(f"unsupported transcript format: {format}")
     rows = tuple(lines)
     if format == "jsonl":
         return "".join(json.dumps(asdict(line), ensure_ascii=False) + "\n" for line in rows)

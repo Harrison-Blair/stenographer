@@ -29,5 +29,4 @@ class SessionDetail:
     talk_time: dict[str, float]
     activity: dict[str, tuple[float, ...]]
     revision: str
-    labels_revised: bool = False
     diarize_mic: bool = False
