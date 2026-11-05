@@ -187,8 +187,8 @@ def test_confirmation_plan(monkeypatch, installed, expected):
     )
     output = console.stdout.getvalue()
     assert (
-        "download and convert the ASR model Underdog Bark 3.0 Pro (about 1.6 GB download, 10 GiB free disk while it converts)"
-        in output
+        "download and convert the ASR model Underdog Bark 3.0 Pro "
+        "(about 1.6 GB download, 10 GiB free disk while it converts)" in output
     )
     assert expected + " via http://127.0.0.1:11434" in output
 
