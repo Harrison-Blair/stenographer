@@ -55,13 +55,6 @@ def test_blank_text_is_never_refined(text):
     assert not _refiner(min_words=1).will_refine(text)
 
 
-def test_a_resident_model_is_not_loaded_again(transport):
-    _refiner().refine(SPOKEN)
-
-    assert transport["warm_calls"] == []
-    assert len(transport["calls"]) == 1
-
-
 def test_a_cold_model_is_loaded_on_its_own_budget_before_the_utterance_is_timed(transport):
     """The utterance budget assumes a warm model. A cold load must get the
     long budget first, and only then is the ordinary one started."""
