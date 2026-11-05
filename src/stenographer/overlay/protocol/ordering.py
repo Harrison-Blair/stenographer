@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 
 from stenographer.lib.contracts.overlay_state import OverlayState
+from stenographer.lib.contracts.publication import TRANSIENT_STATES
 from stenographer.overlay.protocol.codec import decode_message
 from stenographer.overlay.protocol.constants import (
     CANCELLED_DISPLAY_SECONDS,
@@ -90,11 +91,6 @@ def transient_display_seconds(state: OverlayState) -> float | None:
     """Return the self-expiry window for a transient state, if it has one. PURE."""
     if state is OverlayState.ERROR:
         return ERROR_DISPLAY_SECONDS
-    if state in {
-        OverlayState.CANCELLED,
-        OverlayState.APPLIED,
-        OverlayState.SKIPPED,
-        OverlayState.FALLBACK,
-    }:
+    if state in TRANSIENT_STATES:
         return CANCELLED_DISPLAY_SECONDS
     return None
