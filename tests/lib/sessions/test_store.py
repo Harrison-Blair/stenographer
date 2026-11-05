@@ -113,6 +113,24 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
     assert store.read(session.name).revision == revision
 
 
+def test_export_and_rename_do_not_decode_recorded_audio(tmp_path, monkeypatch):
+    from stenographer.lib.sessions import reader
+
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(session.parent)
+
+    def no_decode(_path):
+        raise AssertionError("audio was decoded")
+
+    monkeypatch.setattr(reader, "_activity", no_decode)
+
+    exported = store.export(session.name, tmp_path / "exports", "md")
+    revision = store.rename_speaker(session.name, "speaker-1", "Bob")
+
+    assert "**Alice:**" in exported.read_text(encoding="utf-8")
+    assert revision == "transcript.r2.jsonl"
+
+
 def test_session_and_shared_exporters_write_all_formats_privately(tmp_path):
     session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
     store = SessionStore(tmp_path / "sessions")
