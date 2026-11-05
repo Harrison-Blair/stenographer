@@ -97,6 +97,7 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         self.search_term = ""
         self.entries: tuple[BrowserEntry, ...] = ()
         self.selected_index = 0
+        self.browser_error = ""
         self.diarize = True
         self.refine = False
 
@@ -151,18 +152,22 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
 
     def _refresh_entries(self) -> None:
         directory = self.directory
+        self.browser_error = ""
         try:
             children = tuple(directory.iterdir())
-        except OSError:
+        except OSError as exc:
             children = ()
+            self.browser_error = f"Cannot read folder: {exc.strerror or str(exc)}"
         needle = self.search_term.casefold()
         found = []
         for path in children:
-            if path.name.startswith(".") or needle not in path.name.casefold():
+            if needle not in path.name.casefold():
                 continue
             try:
                 is_dir = path.is_dir()
             except OSError:
+                continue
+            if not is_dir and path.name.startswith(".") and not needle.startswith("."):
                 continue
             if not is_dir and path.suffix.lower() not in AUDIO_SUFFIXES:
                 continue
@@ -202,7 +207,9 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
             else:
                 duration = entry.duration_seconds
                 rows.append((entry.path.name, "" if duration is None else Clock.duration(duration)))
-        if not rows or (len(rows) == 1 and self.entries[0].path == self.directory.parent):
+        if self.browser_error:
+            rows.append((Text(self.browser_error, style=_DIM), ""))
+        elif not rows or (len(rows) == 1 and self.entries[0].path == self.directory.parent):
             rows.append((Text("no audio files or folders match", style=_DIM), ""))
         self.query_one("#transcribe-list", SelectableList).set_rows(
             tuple(rows), self.selected_index if self.entries else None

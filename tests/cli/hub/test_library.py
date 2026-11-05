@@ -231,8 +231,8 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
             assert "[n] + Transcribe a file…" in text
             hints = app.screen.query_one("#key-hints", Static).render().plain
             assert hints == (
-                "n transcribe file · / search · p play · r rename · d re-diarize · "
-                "t re-transcribe · x export · del delete · 1 2 3 screens · ? help · q quit"
+                "? help · q quit · n transcribe file · / search · p play · r rename · "
+                "d re-diarize · t re-transcribe · x export · del delete · 1 2 3 screens"
             )
 
             # The interrupted label carries the danger tone in addition to its "!" glyph.

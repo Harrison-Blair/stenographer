@@ -50,7 +50,7 @@ class Field(Static):
         table = Table.grid(padding=(0, 1), expand=True)
         table.add_column(width=2, no_wrap=True)
         table.add_column(width=self.LABEL_WIDTH, no_wrap=True, overflow="ellipsis")
-        table.add_column(width=self.CONTROL_WIDTH, no_wrap=True, overflow="ellipsis")
+        table.add_column(width=self.CONTROL_WIDTH, overflow="fold")
         table.add_column(ratio=1)
         style = _ACCENT_BOLD if self.focused else None
         table.add_row(

@@ -131,14 +131,14 @@ def test_widget_status_token_is_a_glyph_and_a_word():
     assert StatusToken.text("●", "recording", "danger").plain == "● recording"
 
 
-async def test_widget_footer_key_hints_end_with_help_and_quit():
+async def test_widget_footer_key_hints_start_with_help_and_quit():
     hints = KeyHints(id="hints")
     app = WidgetApp(hints)
     async with app.run_test(size=(60, 3)) as pilot:
         await pilot.pause()
         hints.set_hints(("n", "new"), ("q", "quit"))
         text = hints.render()
-        assert text.plain == "n new · ? help · q quit"
+        assert text.plain == "? help · q quit · n new"
         assert _accent(text.get_style_at_offset(0).rich_style)
         assert _accent(text.get_style_at_offset(text.plain.index("?")).rich_style)
 
@@ -150,7 +150,7 @@ async def test_help_overlay_lists_every_active_binding_and_closes(screen):
         app.show_screen(screen)
         await pilot.pause()
         hints = str(app.screen.query_one("#key-hints", Static).render())
-        assert hints.endswith("? help · q quit")
+        assert hints.startswith("? help · q quit")
         active = app.screen.active_bindings
         shown = [(key, item.binding) for key, item in active.items() if item.binding.show]
         await pilot.press("question_mark")
@@ -247,3 +247,13 @@ def test_widget_dialog_marks_the_focused_button_with_a_glyph(dialog):
             assert {focused, moved} <= set(labels)
 
     asyncio.run(exercise())
+
+
+def test_field_wraps_long_control_values():
+    from stenographer.cli.hub.widgets.field import Field
+
+    field = Field("Device", "abcdefghijklmnopqrstuvwxyz0123456789")
+    rendered = "".join(segment.text for segment in Console(width=100).render(field.row()))
+    assert "abcdefghijklmnopqrstuvwxyz0123" in rendered
+    assert "456789" in rendered
+    assert "…" not in rendered

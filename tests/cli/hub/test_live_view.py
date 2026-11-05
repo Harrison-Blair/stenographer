@@ -128,7 +128,7 @@ async def test_pilot_live_has_board_panels_and_captioned_split_columns():
             assert you_style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
             assert you_style.bgcolor is None or you_style.bgcolor.is_default
         assert not app.screen.query_one("#section-content", Static).display
-        assert "1 2 3 screens · ? help · q quit" in mixed
+        assert "? help · q quit" in mixed
 
         await pilot.press("v")
         split = _screen_text(app)
@@ -273,8 +273,8 @@ async def test_record_footer_matches_the_board_hint_row():
         await pilot.pause()
         hints = app.screen.query_one("#key-hints", Static).render().plain
         assert hints == (
-            "enter stop & save · space pause · m mic · s system"
-            " · v view · r rename · 1 2 3 screens · ? help · q quit"
+            "? help · q quit · enter stop & save · space pause · m mic · s system"
+            " · v view · r rename · 1 2 3 screens"
         )
 
 
