@@ -101,7 +101,7 @@ def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
                 assert label in text, label
             assert "Language" not in text
             rows = _list_rows(app)
-            assert rows[0].strip() == ".."
+            assert rows[0] == "  .."
             assert rows[1] == "▶ meetings/"
             assert rows[2].startswith("  alpha.wav") and rows[2].endswith("0:02")
             assert rows[3].startswith("  bravo.flac") and rows[3].endswith("1:15")

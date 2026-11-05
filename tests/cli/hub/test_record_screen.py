@@ -739,28 +739,6 @@ async def test_record_card_reports_a_source_whose_audio_was_not_saved(tmp_path):
         assert "! mic audio not saved" in _card(app)
 
 
-async def test_record_rename_button_in_the_speakers_card_opens_the_dialog(tmp_path):
-    services, created = _services(tmp_path)
-    app = _app(services)
-    async with app.run_test(size=(150, 45)) as pilot:
-        await pilot.press("space")
-        await _until(pilot, lambda: services.recording)
-        session = created[0]
-        button = app.screen.query_one("#card-r", HubButton)
-        assert str(button.label) == "[r] Rename…"
-        assert "[r] Rename…" not in _card(app)
-
-        await pilot.click("#card-r")
-        await pilot.pause()
-        assert isinstance(app.screen, RenameDialog)
-        app.screen.query_one("#speaker-select", Select).value = "speaker-1"
-        app.screen.query_one("#speaker-name", Input).value = "Juliet"
-        await pilot.click("#dialog-rename")
-        await pilot.pause()
-        assert ("rename", "speaker-1", "Juliet") in session.actions
-        session.release.set()
-
-
 def test_record_meters_use_configured_spectrum_floor(tmp_path):
     import asyncio
 

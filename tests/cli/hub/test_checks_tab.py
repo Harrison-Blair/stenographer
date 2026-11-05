@@ -1057,8 +1057,6 @@ def test_checks_refine_service_check_asks_nothing_when_refine_is_off(monkeypatch
 
 
 def test_checks_models_step_probes_the_installed_bark_model(monkeypatch, tmp_path):
-    # The root conftest does not redirect XDG_DATA_HOME; never touch the real one.
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     import json
     import os
     from pathlib import Path

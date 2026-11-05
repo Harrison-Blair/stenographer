@@ -114,23 +114,40 @@ async def test_pilot_quit_asks_before_saving_a_recording():
         assert not services.recording
 
 
-async def test_pilot_slow_recording_start_keeps_hub_responsive():
+@pytest.mark.parametrize(
+    ("initial_state", "event_prefix", "expected_text", "screen_key", "expected_mode"),
+    [
+        (None, "start", "Starting recording...", "2", "library"),
+        ("recording", "stop", "Saving recording...", "2", "library"),
+        ("files_running", "cancel", "Canceling the file job...", "3", "settings"),
+    ],
+)
+async def test_pilot_slow_work_keeps_hub_responsive(
+    initial_state, event_prefix, expected_text, screen_key, expected_mode
+):
     services = FakeServices()
-    services.start_entered = threading.Event()
-    services.start_release = threading.Event()
+    if initial_state is not None:
+        setattr(services, initial_state, True)
+    entered, release = threading.Event(), threading.Event()
+    setattr(services, f"{event_prefix}_entered", entered)
+    setattr(services, f"{event_prefix}_release", release)
     app = HubApp(services)
     async with app.run_test() as pilot:
-        start_task = asyncio.create_task(pilot.press("space"))
+        if initial_state is None:
+            task = asyncio.create_task(pilot.press("space"))
+        else:
+            await pilot.press("q")
+            task = asyncio.create_task(pilot.click("#confirm-quit"))
         try:
-            assert await asyncio.to_thread(services.start_entered.wait, 1)
+            assert await asyncio.to_thread(entered.wait, 1)
             await asyncio.sleep(0.05)
             content = str(app.record_screen.query_one("#section-content", Static).render())
-            assert "Starting recording..." in content
-            await pilot.press("2")
-            assert app.current_mode == "library"
+            assert expected_text in content
+            await pilot.press(screen_key)
+            assert app.current_mode == expected_mode
         finally:
-            services.start_release.set()
-            await start_task
+            release.set()
+            await task
 
 
 async def test_pilot_lifecycle_worker_finishes_after_hub_screen_unmount_without_failure():
@@ -175,48 +192,6 @@ async def test_pilot_app_shutdown_during_lifecycle_work_does_not_fail_refresh():
         if worker is not None:
             await worker
     assert services.recording
-
-
-async def test_pilot_slow_recording_save_keeps_hub_responsive():
-    services = FakeServices()
-    services.recording = True
-    services.stop_entered = threading.Event()
-    services.stop_release = threading.Event()
-    app = HubApp(services)
-    async with app.run_test() as pilot:
-        await pilot.press("q")
-        confirm_task = asyncio.create_task(pilot.click("#confirm-quit"))
-        try:
-            assert await asyncio.to_thread(services.stop_entered.wait, 1)
-            await asyncio.sleep(0.05)
-            content = str(app.record_screen.query_one("#section-content", Static).render())
-            assert "Saving recording..." in content
-            await pilot.press("2")
-            assert app.current_mode == "library"
-        finally:
-            services.stop_release.set()
-            await confirm_task
-
-
-async def test_pilot_slow_files_cancel_keeps_hub_responsive():
-    services = FakeServices()
-    services.files_running = True
-    services.cancel_entered = threading.Event()
-    services.cancel_release = threading.Event()
-    app = HubApp(services)
-    async with app.run_test() as pilot:
-        await pilot.press("q")
-        cancel_task = asyncio.create_task(pilot.click("#confirm-quit"))
-        try:
-            assert await asyncio.to_thread(services.cancel_entered.wait, 1)
-            await asyncio.sleep(0.05)
-            content = str(app.record_screen.query_one("#section-content", Static).render())
-            assert "Canceling the file job..." in content
-            await pilot.press("3")
-            assert app.current_mode == "settings"
-        finally:
-            services.cancel_release.set()
-            await cancel_task
 
 
 @pytest.mark.parametrize("confirm_key", ["ctrl+c", "q"])

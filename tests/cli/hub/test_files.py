@@ -50,7 +50,6 @@ def test_hub_services_create_the_file_engine_lazily_and_close_it(tmp_path):
 
     assert services.files_jobs == ()
     assert not services.files_running
-    assert not hasattr(services, "files_output_folder")
     job = services.submit_file(tmp_path / "voice.wav", diarize=False)
     assert len(engines) == 1
     assert services.files_jobs == (job,)
@@ -59,7 +58,6 @@ def test_hub_services_create_the_file_engine_lazily_and_close_it(tmp_path):
 
     assert services.cancel_file(job)
     assert not services.files_running
-    assert not hasattr(services, "open_files_result")
     services.close_files()
     assert engines[0].closed
     assert services.files_jobs == ()

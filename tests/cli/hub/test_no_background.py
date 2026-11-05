@@ -160,23 +160,6 @@ async def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
     assert not errors, "\n".join(errors)
 
 
-def test_transcribe_dialog_rows_keep_base_alignment(tmp_path):
-    (tmp_path / "folder").mkdir()
-    (tmp_path / "sample.wav").touch()
-    app = HubApp(FakeServices(), files_home=tmp_path)
-
-    async def exercise():
-        async with app.run_test(size=(120, 36)) as pilot:
-            await pilot.press("2", "n")
-            await pilot.pause()
-            rows = app.screen.query_one("#transcribe-list", Static).render().plain.splitlines()
-            assert rows[0] == "  .."
-            assert rows[1] == "▶ folder/"
-            assert rows[2].startswith("  sample.wav")
-
-    asyncio.run(exercise())
-
-
 def test_blank_input_cursor_is_accent_underlined_without_a_fill():
     app = HubApp(FakeServices())
 
