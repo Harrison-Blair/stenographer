@@ -465,7 +465,7 @@ class Daemon:
         if thread is not None:
             self._warmup_thread = thread
 
-    def on_toggle_press(self, *, profile: RefineProfile | None = None) -> None:
+    def on_toggle_press(self, *, profile: RefineProfile = RefineProfile.AGENT) -> None:
         """Toggle and hybrid modes: one press starts a recording, the next press stops it."""
         with self._lock:
             action = toggle_action(
@@ -547,7 +547,7 @@ class Daemon:
             timer.cancel()
             self._max_timer = None
 
-    def on_key_down(self, *, profile: RefineProfile | None = None) -> None:
+    def on_key_down(self, *, profile: RefineProfile = RefineProfile.AGENT) -> None:
         with self._lock:
             if not can_start(self._recording, self._busy, self._stop_event.is_set()):
                 if self._busy and self._record is not None:
@@ -714,6 +714,7 @@ class Daemon:
         record = self._record
         outcome_name = Outcome.ERROR.name
         try:
+            assert self._record_profile is not None
             outcome_name = self._pipeline.run(
                 samples,
                 utterance=self._utterance_id,

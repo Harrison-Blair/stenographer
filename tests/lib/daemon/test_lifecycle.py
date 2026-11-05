@@ -727,7 +727,7 @@ def test_stop_waits_for_an_in_flight_refine_before_unloading_the_model():
         def last_result(self):
             return None
 
-        def refine(self, text: str, *, cancelled=never_cancelled) -> str:
+        def refine(self, text: str, *, profile, cancelled=never_cancelled) -> str:
             order.append("refine")
             refine_entered.set()
             hold_refine.wait(timeout=5.0)
@@ -802,7 +802,7 @@ def test_stop_joins_the_pipeline_thread_before_calling_unload(monkeypatch):
         def last_result(self):
             return None
 
-        def refine(self, text: str, *, cancelled=never_cancelled) -> str:
+        def refine(self, text: str, *, profile, cancelled=never_cancelled) -> str:
             return text
 
         def unload(self) -> None:

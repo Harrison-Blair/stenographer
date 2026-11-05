@@ -93,7 +93,7 @@ class UtterancePipeline:
         *,
         utterance: int,
         record: UtteranceRecord | None,
-        profile: RefineProfile | None = None,
+        profile: RefineProfile,
     ) -> str:
         """Run the ordered stages and report the existing terminal outcome name."""
         outcome_name = Outcome.ERROR.name
@@ -243,7 +243,7 @@ class UtterancePipeline:
         text: str,
         record: UtteranceRecord | None,
         *,
-        profile: RefineProfile | None = None,
+        profile: RefineProfile,
     ) -> str:
         """Run the optional cleanup stage. Never raises; never loses the text.
 
@@ -269,14 +269,10 @@ class UtterancePipeline:
         accepted = text
         try:
             if self._refiner is None or not self._refiner.will_refine(text):
-                if profile is not None:
-                    self._refine_display_state = OverlayState.SKIPPED
+                self._refine_display_state = OverlayState.SKIPPED
                 return text
             self._publish_state(OverlayState.REFINING)
-            if profile is None:
-                refined = self._refiner.refine(text, cancelled=self._cancelled)
-            else:
-                refined = self._refiner.refine(text, profile=profile, cancelled=self._cancelled)
+            refined = self._refiner.refine(text, profile=profile, cancelled=self._cancelled)
             # A refiner that broke its contract and returned nothing must not
             # cost the utterance; the formatted transcript stays deliverable.
             accepted = refined if refined.strip() else text
@@ -286,17 +282,15 @@ class UtterancePipeline:
                 delivered=accepted if accepted != text else None,
             )
             self._telemetry.checkpoint(record, "accepted_refinement")
-            if profile is not None:
-                result = self._refiner.last_result
-                self._refine_display_state = (
-                    OverlayState.APPLIED
-                    if result is not None and result.outcome == OUTCOME_APPLIED
-                    else OverlayState.FALLBACK
-                )
+            result = self._refiner.last_result
+            self._refine_display_state = (
+                OverlayState.APPLIED
+                if result is not None and result.outcome == OUTCOME_APPLIED
+                else OverlayState.FALLBACK
+            )
         except Exception as exc:
             log_failure(log, logging.WARNING, "pipeline: refine_failed", exc, safe=False)
-            if profile is not None:
-                self._refine_display_state = OverlayState.FALLBACK
+            self._refine_display_state = OverlayState.FALLBACK
         return accepted
 
     def _restore_clipboard(self, record: UtteranceRecord | None) -> None:
