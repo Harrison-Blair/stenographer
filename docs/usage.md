@@ -20,6 +20,8 @@ For common settings only, use `stenographer setup --quick`. The wizard can
 check the microphone, clipboard, model, and input permissions, and offers the
 separate ASR and voice-activity model download. Nothing is downloaded until you
 choose it. Use hub Settings or the configuration file for the remaining settings.
+Spectrum calibration records only the quiet room, and both wizards skip it and
+keep the current floor when the overlay is off.
 
 ## Build the speech model
 
