@@ -328,7 +328,6 @@ class LiveSession:
 
     def toggle(self, source: str) -> None:
         """Toggle one source. An unavailable source keeps its reason until retried."""
-        self._validate_source(source)
         with self._control_lock:
             if self._stopped:
                 return
@@ -387,8 +386,6 @@ class LiveSession:
         with self._control_lock:
             if self._stop_started:
                 self._skip_relabel.set()
-                return
-            if self._stopped:
                 return
             self._stop_started = True
             self._close_block_delivery()
@@ -582,8 +579,6 @@ class LiveSession:
                 if not self._active[source] or self._paused or self._stopped:
                     return
                 segmenter = self._segmenters[source]
-                if segmenter is None:
-                    return
                 self._source_seen[source] = True
                 self._write_audio(source, samples)
                 rms = float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
@@ -693,7 +688,6 @@ class LiveSession:
                     embedding,
                     duration=phrase.end - phrase.start,
                 )
-                label = tracker.label(speaker_id)
         with self._lock:
             if tracker is not None:
                 label = tracker.label(speaker_id)
@@ -754,8 +748,3 @@ class LiveSession:
             return
         self._elapsed_before_run += max(0.0, self._monotonic() - self._run_started_at)
         self._run_started_at = None
-
-    @staticmethod
-    def _validate_source(source: str) -> None:
-        if source not in {"mic", "system"}:
-            raise ValueError(f"unknown live source: {source}")
