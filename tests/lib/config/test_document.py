@@ -35,7 +35,6 @@ binding = "KEY_F8"
 """
 
 
-
 def _load_document(tmp_path, content):
     path = tmp_path / "config.toml"
     path.write_text(content, encoding="utf-8")

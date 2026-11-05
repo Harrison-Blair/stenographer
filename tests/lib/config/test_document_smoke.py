@@ -3,13 +3,12 @@
 
 from __future__ import annotations
 
-from stenographer.lib.config.defaults import default_toml
-
 import datetime
 from dataclasses import replace
 
 import pytest
 
+from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.document import ConfigDocument
 from stenographer.lib.config.errors import ConfigChangedError
 from stenographer.lib.config.models import Config

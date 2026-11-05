@@ -6,10 +6,9 @@ from __future__ import annotations
 import pathlib
 from dataclasses import asdict, replace
 
-from stenographer.lib.config.document import ConfigDocument
+from stenographer.lib.config.document import ConfigDocument, SaveResult
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
-from stenographer.lib.config.document import SaveResult
 
 _HELP = {
     "hotkey.binding": "Agent binding for cleanup of agent-directed dictation.",

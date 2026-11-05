@@ -152,16 +152,9 @@ class Config:
             asr=_build_asr(merged["asr"], path),
             feedback=_build_feedback(merged["feedback"], path),
             refine=_build_refine(merged["refine"], path),
-            analytics=AnalyticsConfig(
-                enabled=_Reader(merged["analytics"], path, "analytics").bool("enabled"),
-                resource_profiling=_Reader(merged["analytics"], path, "analytics").bool(
-                    "resource_profiling"
-                ),
-            ),
+            analytics=_build_analytics(merged["analytics"], path),
             delivery=_build_delivery(merged["delivery"], path),
-            live=LiveConfig(
-                diarize_mic=_Reader(merged["live"], path, "live").bool("diarize_mic"),
-            ),
+            live=_build_live(merged["live"], path),
         )
 
 
@@ -444,6 +437,18 @@ def _vocabulary(r: _Reader, path: pathlib.Path) -> tuple[str, ...]:
             raise ConfigError(path, key, f"term {position} repeats an earlier term")
         seen.add(folded)
     return terms
+
+
+def _build_analytics(table: dict, path: pathlib.Path) -> AnalyticsConfig:
+    r = _Reader(table, path, "analytics")
+    return AnalyticsConfig(
+        enabled=r.bool("enabled"), resource_profiling=r.bool("resource_profiling")
+    )
+
+
+def _build_live(table: dict, path: pathlib.Path) -> LiveConfig:
+    r = _Reader(table, path, "live")
+    return LiveConfig(diarize_mic=r.bool("diarize_mic"))
 
 
 def _build_delivery(table: dict, path: pathlib.Path) -> DeliveryConfig:

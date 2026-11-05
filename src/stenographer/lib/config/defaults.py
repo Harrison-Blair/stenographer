@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+
 def default_toml() -> str:
     """The annotated default config, with the host's ``hotkey.device`` comment.
 

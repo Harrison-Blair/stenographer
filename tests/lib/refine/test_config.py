@@ -14,7 +14,6 @@ from stenographer.lib.config.models import Config, RefineConfig
 from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUTPUT
 
 
-
 def _load_document(tmp_path, content):
     path = tmp_path / "config.toml"
     path.write_text(content, encoding="utf-8")
@@ -106,8 +105,8 @@ def test_render_materializes_every_refine_key_in_declaration_order(tmp_path):
 def test_save_round_trips_a_configured_refine_section_through_preservation(tmp_path):
     """Seen to FAIL before ``refine`` joined ``Config.loads``'s section tuple:
     the rendered document reloaded with the defaults and ``render`` raised."""
-    source = _load_document(tmp_path, 
-        "# hand-written preface\n[stenographer.refine]\nenabled = true # mine\n"
+    source = _load_document(
+        tmp_path, "# hand-written preface\n[stenographer.refine]\nenabled = true # mine\n"
     )
     reviewed = replace(
         source.config,

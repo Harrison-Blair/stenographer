@@ -20,12 +20,12 @@ the network or the ASR stack.
 
 from __future__ import annotations
 
-from stenographer.lib.config.defaults import default_toml
-
 import pathlib
 
 import numpy as np
 import pytest
+
+from stenographer.lib.config.defaults import default_toml
 
 pytestmark = pytest.mark.integration
 
@@ -72,7 +72,6 @@ def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_transcribe_48k_stereo_matches_16k_mono(tmp_path, monkeypatch, capsys):
-    from stenographer import config
     from stenographer.cli import main
 
     config_path = tmp_path / "config.toml"
@@ -98,7 +97,6 @@ def test_cli_transcribe_48k_stereo_matches_16k_mono(tmp_path, monkeypatch, capsy
 
 @pytest.mark.parametrize("input_kind", ["corrupt", "directory"])
 def test_cli_transcribe_read_failure_is_concise(input_kind, tmp_path, monkeypatch, capsys):
-    from stenographer import config
     from stenographer.cli import main
 
     config_path = tmp_path / "config.toml"
