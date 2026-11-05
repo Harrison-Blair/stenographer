@@ -16,6 +16,11 @@ machine-supplied clip; nothing is mocked. The whole module is collected only
 with STENOGRAPHER_INTEGRATION=1, and skipped further unless the model is cached
 locally and the fixture WAV is present — so the default unit run never touches
 the network or the ASR stack.
+
+Supply a short mono, 16 kHz speech recording at tests/fixtures/speech_16k.wav.
+For example, record it on the development machine with:
+    arecord -f S16_LE -r 16000 -c 1 -d 3 tests/fixtures/speech_16k.wav
+
 """
 
 from __future__ import annotations

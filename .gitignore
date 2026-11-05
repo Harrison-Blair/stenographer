@@ -59,7 +59,6 @@
 !/tests/
 !/tests/**/
 !/tests/**/*.py
-!/tests/fixtures/README.md
 !/tests/**/*.jsonl
 
 # Development and installation scripts.
