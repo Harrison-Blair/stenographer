@@ -249,8 +249,8 @@ created only for sources that were active during the session:
 - `session.json` records the current transcript revision. A session recorded
   with microphone diarization has it from the start, with `"diarize_mic": true`.
 
-These files are user data that you request when you record. The hub writes
-transcript text and audio only to this session folder. Logs and analytics do
+These files are user data that you request when you record. The hub recording writes audio and transcripts to the session folder. A requested
+export writes a transcript to the selected folder. Logs and analytics do
 not contain transcript text or audio. See the [privacy
 notes](usage.md#understand-privacy-and-network-access) for other Stenographer
 network behavior.
@@ -329,7 +329,7 @@ Press `n` or click `[n] + Transcribe a file…` to open the Transcribe a file
 dialog. It has a file browser and the job options:
 
 - The browser starts in your home folder. It lists `..`, the folders, and the
-  supported audio files of the current folder with their duration; names that
+  supported audio files of the current folder, with durations when soundfile can determine them; names that
   start with a dot are hidden. Press `up` and `down` (or click a row) to select
   an entry. Press `enter` on a folder to open it. Press `/` to search names in
   the current folder; `escape` clears the search.
@@ -341,7 +341,8 @@ dialog. It has a file browser and the job options:
   default.
 
 Press `enter` on a file (or click `[enter] Transcribe`) to queue one job with
-these options; press `escape` (or click `[esc] Cancel`) to close the dialog.
+these options; `escape` clears an open search first and otherwise closes the dialog.
+Click `[esc] Cancel` to close the dialog.
 The Library shows the job at once and selects it: a new file row, or the
 session row for a revision job. Jobs run one at a time in the background. The
 dialog has no output format or output folder option.
