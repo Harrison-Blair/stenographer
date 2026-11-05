@@ -16,10 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from stenographer.lib.config.models import Config
-from stenographer.lib.refine.client import installed_model_names
-from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 from stenographer.lib.refine.results import OUTCOME_APPLIED
+from tests.lib.refine.helpers import installed_refiner as installed_refiner
 
 pytestmark = pytest.mark.integration
 
@@ -29,27 +27,8 @@ SPOKEN = (
 )
 
 
-@pytest.fixture
-def refiner() -> OllamaRefiner:
-    section = Config.defaults().refine
-    installed = installed_model_names(section.host)
-    if not installed:
-        pytest.skip(f"no Ollama answered at {section.host}")
-    if section.model not in installed:
-        pytest.skip(f"{section.model} is not installed; this suite never pulls models")
-    built = OllamaRefiner(
-        host=section.host,
-        model=section.model,
-        min_words=section.min_words,
-        structured_output=section.structured_output,
-        keep_alive=Config.defaults().asr.idle_unload_seconds,
-    )
-    if not built.warm():
-        pytest.skip(f"{section.model} could not be loaded on {section.host}")
-    return built
-
-
-def test_a_real_model_cleans_a_dictated_sentence_within_the_budget(refiner):
+def test_a_real_model_cleans_a_dictated_sentence_within_the_budget(installed_refiner):
+    refiner = installed_refiner
     refined = refiner.refine(SPOKEN)
 
     result = refiner.last_result
