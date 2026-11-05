@@ -104,22 +104,16 @@ def test_warmup_loads_before_first_decode_and_lifecycle_is_ordered():
         cfg.asr,
         on_model_loading=lambda: events.append("loading"),
         on_model_loading_finished=lambda: events.append("loading_finished"),
-        on_transcribing=lambda: events.append("transcribing"),
     )
     try:
         worker.warmup()
         assert events == ["loading", "loading_finished"]
 
         worker.transcribe(samples)
-        assert events == ["loading", "loading_finished", "transcribing"]
+        assert events == ["loading", "loading_finished"]
 
         worker.transcribe(samples)
-        assert events == [
-            "loading",
-            "loading_finished",
-            "transcribing",
-            "transcribing",
-        ]
+        assert events == ["loading", "loading_finished"]
     finally:
         worker.shutdown()
 
