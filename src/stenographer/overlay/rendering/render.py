@@ -31,7 +31,7 @@ from stenographer.overlay.rendering.constants import (
     _PILL_FILL,
     _PROFILE_LABEL_EXTRA,
     _SHADOW_BLUR,
-    _SHADOW_FILL,
+    _SHADOW_ALPHA,
     _SHADOW_OFFSET_Y,
     _SPECTRUM_BAR_GAP,
     _SPECTRUM_BAR_WIDTH,
@@ -189,7 +189,7 @@ def _render_static_high_resolution(
     shadow_draw.rounded_rectangle(
         _exclusive_box(shadow_bounds),
         radius=_scaled(_CORNER_RADIUS, scale) * factor,
-        fill=_SHADOW_FILL[3],
+        fill=_SHADOW_ALPHA,
     )
     shadow = shadow.filter(ImageFilter.GaussianBlur(radius=_scaled(_SHADOW_BLUR, scale) * factor))
     high.putalpha(shadow)
