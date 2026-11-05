@@ -186,7 +186,9 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   On Record, press `space` to start and `enter` to stop and save; the hub stays
   open while the speaker relabel pass runs; a skipped or failed
   pass saves the speakers and names shown on screen, numbered from 1, and a failure
-  shows the reason.
+  shows the reason. Long lines that hold a clear change of speaker are split into
+  separate lines when a recording stops, when a file job ends, and on Re-diarize and
+  Re-transcribe. Overlapping speech stays on one line.
   `o` opens the saved session in
   Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,

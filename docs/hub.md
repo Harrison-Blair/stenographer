@@ -303,8 +303,8 @@ the transcript. Each action is a button that prints its key:
 | `escape` | Clear the search. |
 | `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. On another session, `p` stops the audio that plays and starts that session. A notice shows when the player exits with an error. |
 | `r` | Rename a speaker of the session. Speakers that share a name are one row, and all of them get the new name. |
-| `d` | Re-diarize the session. A file session cannot: use Re-transcribe. |
-| `t` | Re-transcribe the session. |
+| `d` | Re-diarize the session. This also needs the speech model. A file session cannot: use Re-transcribe. |
+| `t` | Re-transcribe the session and group its speakers again, so labels can change. This also needs the speaker model when a source has speaker separation. |
 | `x` | Export the transcript. |
 | `delete` | Delete the session after confirmation. On a queued or running job, cancel it after confirmation. |
 | `pageup` / `pagedown`, `home` / `end` | Scroll the transcript. |
@@ -331,6 +331,10 @@ Record screen. Re-diarization relabels microphone lines as `Room N` speakers onl
 for a session recorded with microphone diarization (`"diarize_mic": true` in its
 `session.json`). For other sessions, including older ones, it relabels system
 lines only and microphone lines stay `You`. `r` can rename room speakers.
+
+A long phrase can hold more than one speaker. For phrases of 6 s or more on a source with speaker separation, Stenographer compares 3 s slices with the voices of the grouped speakers. When another speaker clearly leads for two slices in a row, it cuts the phrase at the quietest point near the change, decodes each part again, and groups the speakers again, so one line becomes several, each under its own speaker. If any part decodes to no text, the phrase stays whole, so no words are lost. Overlapping speech stays on one line. A microphone without diarization stays `You`.
+
+This runs at four points: during the relabel pass when a recording stops (`q` skips it with that pass); on Re-diarize, which therefore also needs the speech model; on Re-transcribe, which also needs the speaker model when a source has speaker separation; and at the end of a file job, which keeps a speaker count you set. Re-transcribe now groups speakers again, so speaker labels can change; given names carry over. On an imported file it groups automatically and ignores a count set at import, so it can change the speaker count. A file session with one speaker keeps its labels and is not split. If all phrases of a file session are shorter than 1.2 s, Re-transcribe gives it one speaker. Stopping a long recording takes a little longer: about 1% of its length on the sessions measured.
 
 ### Transcribe a file
 
