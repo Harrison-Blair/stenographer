@@ -428,7 +428,7 @@ def test_refine_loading_publish_happens_while_the_open_load_counter_is_locked():
     seen_locked: list[bool] = []
 
     class _LockCheckingStatus:
-        def publish(self, state):
+        def publish(self, state, profile=None):
             return 0
 
         def loading_activity(self, model, active):

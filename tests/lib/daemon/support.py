@@ -286,10 +286,12 @@ class _Status:
 
     def __init__(self) -> None:
         self.states: list[OverlayState] = []
+        self.profiles: list[RefineProfile | None] = []
         self.loading: list[tuple[LoadingModel, bool]] = []
 
-    def publish(self, state: OverlayState) -> int:
+    def publish(self, state: OverlayState, profile: RefineProfile | None = None) -> int:
         self.states.append(state)
+        self.profiles.append(profile)
         return len(self.states)
 
     def loading_activity(self, model: LoadingModel, active: bool) -> None:

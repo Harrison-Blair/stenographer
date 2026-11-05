@@ -23,7 +23,7 @@ class _BrokenStatus:
     def __init__(self) -> None:
         self.attempts: list[object] = []
 
-    def publish(self, state: OverlayState) -> int:
+    def publish(self, state: OverlayState, profile: object = None) -> int:
         self.attempts.append(state)
         raise RuntimeError("overlay pipe closed")
 

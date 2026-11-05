@@ -277,11 +277,7 @@ class Daemon:
     def _publish_status(self, state: OverlayState) -> None:
         """Enqueue fixed lifecycle metadata without allowing overlay failure through."""
         try:
-            publish_profiled = getattr(self._status, "publish_profiled", None)
-            if publish_profiled is None:
-                self._status.publish(state)
-            else:
-                publish_profiled(state, self._record_profile)
+            self._status.publish(state, self._record_profile)
         except Exception as exc:
             log_failure(
                 log, logging.WARNING, "overlay: publish_failed", exc, safe=True, state=state.value
