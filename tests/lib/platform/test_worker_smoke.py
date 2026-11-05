@@ -92,21 +92,19 @@ def test_warmup_loads_before_first_decode_and_lifecycle_is_ordered():
     worker = Worker(
         cfg.asr,
         on_model_loading=lambda: events.append("loading"),
-        on_model_ready=lambda: events.append("ready"),
         on_model_loading_finished=lambda: events.append("loading_finished"),
         on_transcribing=lambda: events.append("transcribing"),
     )
     try:
         worker.warmup()
-        assert events == ["loading", "ready", "loading_finished"]
+        assert events == ["loading", "loading_finished"]
 
         worker.transcribe(samples)
-        assert events == ["loading", "ready", "loading_finished", "transcribing"]
+        assert events == ["loading", "loading_finished", "transcribing"]
 
         worker.transcribe(samples)
         assert events == [
             "loading",
-            "ready",
             "loading_finished",
             "transcribing",
             "transcribing",
@@ -123,7 +121,6 @@ def test_failed_real_model_load_still_reports_loading_finished(tmp_path, monkeyp
     worker = Worker(
         cfg,
         on_model_loading=lambda: events.append("loading"),
-        on_model_ready=lambda: events.append("ready"),
         on_model_loading_finished=lambda: events.append("loading_finished"),
     )
     try:

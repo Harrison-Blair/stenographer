@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure inference-worker protocol, lifecycle, and timeout policies."""
+"""Pure inference-worker protocol and timeout policies."""
 
 from __future__ import annotations
 
@@ -14,8 +14,10 @@ from stenographer.lib.transcribe.errors import (
     WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import TranscriptionResult
-from stenographer.lib.transcribe.worker_event import WorkerEvent
-from stenographer.lib.transcribe.worker_lifecycle import WorkerLifecycle
+
+MODEL_READY = "model_ready"
+"""What ``interpret_response`` returns for the child's metadata-only ready reply."""
+
 
 _POLL_SECONDS = 0.1
 
@@ -37,25 +39,6 @@ def classify_worker_failure(exc: WorkerError) -> str:
     if isinstance(exc, WorkerModelError):
         return "model_failed"
     return "decode_failed"
-
-
-def lifecycle_transition(
-    *, model_loaded: bool, event: WorkerEvent | None = None
-) -> tuple[WorkerLifecycle, ...]:
-    """Return the observer signals for a model-load boundary. PURE.
-
-    A cold load first announces loading; the child's metadata-only ready event
-    then announces readiness. The caller emits ``MODEL_LOADING_FINISHED`` after
-    either readiness or failure. Warm-up and transcription share this transition,
-    while ``TRANSCRIBING`` remains a separate signal emitted only immediately
-    before a decode. A ready event after the model is already marked loaded is
-    a protocol violation rather than a second lifecycle.
-    """
-    if event is None:
-        return () if model_loaded else (WorkerLifecycle.MODEL_LOADING,)
-    if event is WorkerEvent.MODEL_READY and not model_loaded:
-        return (WorkerLifecycle.MODEL_READY,)
-    raise WorkerProtocolError("unexpected model-ready worker event")
 
 
 def should_arm_idle_timer(
@@ -105,13 +88,13 @@ def error_is_safe_to_render(exc: Exception) -> bool:
     return isinstance(exc, PathologicalOutputError)
 
 
-def interpret_response(message: object) -> TranscriptionResult | WorkerEvent:
+def interpret_response(message: object) -> TranscriptionResult | str:
     """Parent-side: turn a child response tuple into a result or a typed raise.
     Malformed messages are described by SHAPE only, never by echoed payload."""
     if isinstance(message, tuple) and message:
         tag = message[0]
         if tag == "model_ready" and len(message) == 1:
-            return WorkerEvent.MODEL_READY
+            return MODEL_READY
         if tag == "ok" and len(message) == 2 and isinstance(message[1], TranscriptionResult):
             return message[1]
         if tag == "error" and len(message) == 3:

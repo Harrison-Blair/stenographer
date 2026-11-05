@@ -28,14 +28,12 @@ from stenographer.lib.transcribe.errors import (
 )
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker import Worker
-from stenographer.lib.transcribe.worker_event import WorkerEvent
-from stenographer.lib.transcribe.worker_lifecycle import WorkerLifecycle
 from stenographer.lib.transcribe.worker_policy import (
+    MODEL_READY,
     classify_error,
     decode_timeout_seconds,
     error_is_safe_to_render,
     interpret_response,
-    lifecycle_transition,
     response_poll_timeout,
     should_arm_idle_timer,
     should_teardown_for_response_error,
@@ -51,7 +49,7 @@ def test_interpret_response_returns_ok_result():
 
 
 def test_interpret_response_returns_metadata_only_model_ready_event():
-    assert interpret_response(("model_ready",)) is WorkerEvent.MODEL_READY
+    assert interpret_response(("model_ready",)) is MODEL_READY
 
 
 def test_interpret_response_pathological_raises():
@@ -124,21 +122,6 @@ def test_response_poll_timeout_clamps_to_remaining_deadline():
     assert response_poll_timeout(now=100.0, deadline=100.03) == pytest.approx(0.03)
     assert response_poll_timeout(now=100.0, deadline=100.0) == 0.0
     assert response_poll_timeout(now=100.0, deadline=99.0) == 0.0
-
-
-def test_cold_and_warm_lifecycle_ordering():
-    cold_start = lifecycle_transition(model_loaded=False)
-    cold_ready = lifecycle_transition(model_loaded=False, event=WorkerEvent.MODEL_READY)
-    assert cold_start + cold_ready == (
-        WorkerLifecycle.MODEL_LOADING,
-        WorkerLifecycle.MODEL_READY,
-    )
-    assert lifecycle_transition(model_loaded=True) == ()
-
-
-def test_duplicate_model_ready_is_a_protocol_error():
-    with pytest.raises(WorkerProtocolError):
-        lifecycle_transition(model_loaded=True, event=WorkerEvent.MODEL_READY)
 
 
 def test_should_arm_idle_timer_when_idle_and_unheld():
@@ -244,7 +227,6 @@ def _observed() -> tuple[list[str], dict]:
         name: (lambda event=event: events.append(event))
         for name, event in (
             ("on_model_loading", "model_loading"),
-            ("on_model_ready", "model_ready"),
             ("on_model_loading_finished", "model_loading_finished"),
             ("on_transcribing", "transcribing"),
         )
@@ -260,7 +242,7 @@ def test_warmup_loads_the_model_and_announces_the_lifecycle_in_order():
         worker.warmup(7)
 
         assert transport.spawned[0].sent == [("load", 7)]
-        assert events == ["model_loading", "model_ready", "model_loading_finished"]
+        assert events == ["model_loading", "model_loading_finished"]
         assert worker.is_model_ready is True
         assert worker.is_alive() is True
         assert worker.process_ids == (4321,)
@@ -275,7 +257,7 @@ def test_a_second_warmup_reuses_the_already_loaded_model():
         worker.warmup()
 
         assert transport.spawned[0].sent == [("load", None)]
-        assert events == ["model_loading", "model_ready", "model_loading_finished"]
+        assert events == ["model_loading", "model_loading_finished"]
         assert len(transport.spawned) == 1
 
 
@@ -292,7 +274,6 @@ def test_a_cold_transcription_loads_then_decodes_and_measures_both():
         assert result.text == "hello there"
         assert events == [
             "model_loading",
-            "model_ready",
             "model_loading_finished",
             "transcribing",
         ]

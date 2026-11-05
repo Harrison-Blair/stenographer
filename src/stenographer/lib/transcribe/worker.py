@@ -41,12 +41,10 @@ from stenographer.lib.transcribe.errors import (
     WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import WorkerTimings
-from stenographer.lib.transcribe.worker_event import WorkerEvent
-from stenographer.lib.transcribe.worker_lifecycle import WorkerLifecycle
 from stenographer.lib.transcribe.worker_policy import (
+    MODEL_READY,
     decode_timeout_seconds,
     interpret_response,
-    lifecycle_transition,
     response_poll_timeout,
     should_arm_idle_timer,
     should_teardown_for_response_error,
@@ -68,13 +66,11 @@ class Worker:
         *,
         transport: AsrTransport | None = None,
         on_model_loading: Callable[[], None] | None = None,
-        on_model_ready: Callable[[], None] | None = None,
         on_model_loading_finished: Callable[[], None] | None = None,
         on_transcribing: Callable[[], None] | None = None,
     ) -> None:
         self._cfg = cfg
         self._on_model_loading = on_model_loading
-        self._on_model_ready = on_model_ready
         self._on_model_loading_finished = on_model_loading_finished
         self._on_transcribing = on_transcribing
         self._idle_seconds = cfg.idle_unload_seconds
@@ -162,7 +158,7 @@ class Worker:
                 raise WorkerModelError("model loading failed") from exc
             load_ms = (time.perf_counter() - load_started_at) * 1000.0 if loaded else None
             self._abort_if_shutdown_requested("transcribe")
-            self._emit_lifecycle((WorkerLifecycle.TRANSCRIBING,))
+            self._notify(self._on_transcribing)
             decode_started_at = time.perf_counter()
             self._process.send(("job", samples, utterance))
             try:
@@ -170,7 +166,7 @@ class Worker:
                 interpreted = self._wait_for_response(
                     "transcribe", deadline=time.monotonic() + timeout_seconds
                 )
-                if isinstance(interpreted, WorkerEvent):
+                if interpreted is MODEL_READY:
                     raise WorkerProtocolError("unexpected model-ready event during transcription")
             except WorkerError as exc:
                 self.last_timings = WorkerTimings(
@@ -202,26 +198,22 @@ class Worker:
         """Load the model if it is cold. True when this call did the loading."""
         if self._model_ready.is_set():
             return False
-        self._emit_lifecycle(lifecycle_transition(model_loaded=False))
+        self._notify(self._on_model_loading)
         try:
             self._process.send(("load", utterance))
             interpreted = self._wait_for_response(
                 "model_load", deadline=time.monotonic() + _MODEL_LOAD_TIMEOUT_SECONDS
             )
-            if interpreted is not WorkerEvent.MODEL_READY:
+            if interpreted is not MODEL_READY:
                 raise WorkerProtocolError("worker result arrived before model-ready event")
-            lifecycle = lifecycle_transition(model_loaded=False, event=interpreted)
             self._model_ready.set()
-            self._emit_lifecycle(lifecycle)
             return True
         finally:
             # The optional observer is the source of display-only activity
             # metadata.  It must clear the border after both ready and error.
-            self._emit_lifecycle((WorkerLifecycle.MODEL_LOADING_FINISHED,))
+            self._notify(self._on_model_loading_finished)
 
-    def _wait_for_response(
-        self, phase: str, *, deadline: float
-    ) -> TranscriptionResult | WorkerEvent:
+    def _wait_for_response(self, phase: str, *, deadline: float) -> TranscriptionResult | str:
         while True:
             self._abort_if_shutdown_requested(phase)
             if not self._process.is_running():
@@ -256,16 +248,6 @@ class Worker:
         log.info("worker: cancelling phase=%s reason=shutdown", phase)
         self._teardown()
         raise WorkerError(f"ASR worker shut down during {phase}")
-
-    def _emit_lifecycle(self, events: tuple[WorkerLifecycle, ...]) -> None:
-        callbacks = {
-            WorkerLifecycle.MODEL_LOADING: self._on_model_loading,
-            WorkerLifecycle.MODEL_READY: self._on_model_ready,
-            WorkerLifecycle.MODEL_LOADING_FINISHED: self._on_model_loading_finished,
-            WorkerLifecycle.TRANSCRIBING: self._on_transcribing,
-        }
-        for event in events:
-            self._notify(callbacks[event])
 
     @staticmethod
     def _notify(callback: Callable[[], None] | None) -> None:
