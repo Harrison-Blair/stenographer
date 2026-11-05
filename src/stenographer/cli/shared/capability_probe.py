@@ -10,7 +10,7 @@ from stenographer.overlay.capabilities.probe import probe_overlay
 
 def probe(cfg) -> Capabilities:
     """Collect independent library and overlay results for terminal workflows."""
-    core = probe_core(cfg)
+    core = probe_core()
     return Capabilities(
         **{field.name: getattr(core, field.name) for field in fields(core)},
         overlay=probe_overlay(cfg.feedback.overlay),

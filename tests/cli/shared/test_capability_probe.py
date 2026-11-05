@@ -26,7 +26,7 @@ def test_probe_copies_every_core_field_and_appends_the_overlay_result(monkeypatc
     seen: list[object] = []
     cfg = Config.defaults()
 
-    monkeypatch.setattr(capability_probe, "probe_core", lambda config: seen.append(config) or core)
+    monkeypatch.setattr(capability_probe, "probe_core", lambda: core)
     monkeypatch.setattr(
         capability_probe,
         "probe_overlay",
@@ -35,7 +35,7 @@ def test_probe_copies_every_core_field_and_appends_the_overlay_result(monkeypatc
 
     caps = capability_probe.probe(cfg)
 
-    assert seen == [cfg, cfg.feedback.overlay]
+    assert seen == [cfg.feedback.overlay]
     assert caps.clipboard_backend == "wl-copy"
     assert caps.hotkey_access_ok is False
     assert caps.service_active == "active"

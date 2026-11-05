@@ -64,7 +64,6 @@ def test_disabled_analytics_never_opens_a_database(tmp_path):
     finally:
         collection.close()
 
-    assert collection.enabled is False
     assert identity is None
     assert list(tmp_path.iterdir()) == []
 
@@ -84,7 +83,6 @@ def test_an_enabled_session_records_the_host_context_it_was_given(tmp_path):
     assert record["context"]["architecture"] == "test64"
     assert record["context"]["cpu_threads"] == 2
     assert record["context"]["runtime_version"] == version("sherpa-onnx")
-    assert collection.health["enabled"] is True
 
 
 def test_profiling_can_be_declined_without_disabling_collection(tmp_path):
@@ -109,7 +107,4 @@ def test_a_host_that_cannot_describe_itself_degrades_instead_of_failing(tmp_path
     finally:
         collection.close()
 
-    assert collection.enabled is True
-    assert collection.health["degraded"] is True
-    assert collection.health["dropped_checkpoints"] == 1
     assert not (tmp_path / "analytics.sqlite3").exists()

@@ -1,14 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from stenographer.lib.platform import current_platform
-
-if TYPE_CHECKING:
-    from stenographer.lib.config.models import Config
+import dataclasses
 
 from stenographer.lib.diagnostics.capability_result import Capabilities
+from stenographer.lib.platform import current_platform
 
 REQUIRED: tuple[str, ...] = (
     "key_injector_ok",
@@ -25,22 +21,15 @@ def _has_mic() -> bool:
     return has_input_device(query_devices().devices)
 
 
-def probe(cfg: Config) -> Capabilities:
+def probe() -> Capabilities:
     """Read-only environment probe: no writes, no network, no device opens."""
     from stenographer.lib.transcribe import bark_download
 
     host = current_platform().probe_host()
     return Capabilities(
-        key_injector_ok=host.key_injector_ok,
-        hotkey_access_ok=host.hotkey_access_ok,
+        **dataclasses.asdict(host),
         has_mic=_has_mic(),
         model_cached=bark_download.is_model_cached(),
-        clipboard_ok=host.clipboard_ok,
-        clipboard_backend=host.clipboard_backend,
-        clipboard_read_ok=host.clipboard_read_ok,
-        cue_player=host.cue_player,
-        service_enabled=host.service_enabled,
-        service_active=host.service_active,
     )
 
 

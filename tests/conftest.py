@@ -139,7 +139,7 @@ def drain_analytics():
     def drain(session):
         # Verify persistence independently of the daemon's two-second shutdown
         # budget, allowing for slow CI disks while retaining a bounded failure.
-        assert session.close(timeout=15), session.health
+        assert session.close(timeout=15)
 
     return drain
 
