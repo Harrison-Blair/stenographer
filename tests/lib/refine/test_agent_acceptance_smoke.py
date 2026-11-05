@@ -20,11 +20,12 @@ from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 from stenographer.lib.refine.policy import keep_alive_for
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED
-from tests.lib.refine.test_refine_smoke import json
-import re
-from pathlib import Pathfiner as production_refiner
+from tests.lib.refine.test_refine_smoke import refiner as production_refiner
 
-_PRESERVE = "Preserve every fact, request, uncertainty, condition, and authorization limit in the spoken input: "
+_PRESERVE = (
+    "Preserve every fact, request, uncertainty, condition, and authorization limit "
+    "in the spoken input: "
+)
 _rows = [
     json.loads(line)
     for line in Path(__file__)
