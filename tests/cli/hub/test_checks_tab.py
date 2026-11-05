@@ -265,7 +265,7 @@ async def test_checks_card_badge_and_tab_label_follow_the_last_run():
         await _open_checks(pilot)
         card = app.screen.query_one("#sidebar-card", Static).render()
         assert app.screen.query_one("#sidebar-context").border_title == "checks"
-        ran_at = app.checks_tab.ran_at
+        ran_at = app.checks_tab.report.checked_at
         assert card.plain == f"6 pass · 1 warn · 1 fail\nlast run {ran_at:%H:%M}"
         ok = card.get_style_at_offset(0)
         assert ok.rich_style.color.get_truecolor() == Color.parse("#6ee69a").get_truecolor()

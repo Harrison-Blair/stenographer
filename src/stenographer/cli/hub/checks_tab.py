@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
 import logging
 import pathlib
 from typing import TYPE_CHECKING, ClassVar
@@ -167,7 +166,6 @@ class ChecksTab(Vertical):
         self.checking = False
         self.index = 0
         self.details = False
-        self.ran_at: datetime.datetime | None = None
         self.test_status = ""
 
     def compose(self) -> ComposeResult:
@@ -228,7 +226,7 @@ class ChecksTab(Vertical):
         report = self.report
         if report is None:
             return Text("Checking…" if self.checking else "No check run yet.")
-        ran_at = self.ran_at.strftime("%H:%M") if self.ran_at is not None else "—"
+        ran_at = report.checked_at.strftime("%H:%M")
         card = Text()
         counts = (
             (report.ok_count, "pass", "ok"),
@@ -358,7 +356,6 @@ class ChecksTab(Vertical):
                 (),
             )
         self.report = report
-        self.ran_at = datetime.datetime.now()
         log.info(
             fmt_event(
                 "hub", "doctor_checked", warn_count=report.warn_count, fail_count=report.fail_count
@@ -368,7 +365,7 @@ class ChecksTab(Vertical):
         self.details = False
         self.test_status = ""
         self.checking = False
-        app.set_check_summary(report.ok_count, report.warn_count, report.fail_count, self.ran_at)
+        app.refresh_view()
 
     def _select(self, index: int) -> None:
         self.index = index

@@ -102,12 +102,14 @@ async def test_shell_nav_badges_show_recording_paused_entries_and_check_results(
         assert _nav_rows(app)[0].split() == ["▶", "1", "Record"]
 
         assert _nav_rows(app)[2].split() == ["3", "Settings"]
-        now = datetime(2026, 10, 27, 13, 3, tzinfo=UTC)
-        app.set_check_summary(5, 0, 0, now)
+        app.checks_tab.report = _report("ok")
+        app.refresh_view()
         assert _nav_rows(app)[2].split() == ["3", "Settings"]
-        app.set_check_summary(3, 2, 0, now)
+        app.checks_tab.report = _report("warn", "warn")
+        app.refresh_view()
         assert _nav_rows(app)[2].endswith("2 W")
-        app.set_check_summary(3, 2, 1, now)
+        app.checks_tab.report = _report("warn", "warn", "fail")
+        app.refresh_view()
         assert _nav_rows(app)[2].endswith("1 F")
 
     sessions_root = tmp_path / "sessions"
@@ -260,13 +262,15 @@ async def test_shell_set_check_summary_sets_badge_checks_tab_label_and_checks_ca
     app = HubApp(IdleServices(), doctor_probe=lambda _config: _report("ok", "warn"))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3")
-        app.set_check_summary(4, 2, 1, datetime(2026, 10, 27, 13, 3))
+        app.checks_tab.report = _report("warn", "warn", "fail")
+        app.refresh_view()
         assert _nav_rows(app)[2].endswith("1 F")
         assert str(app.screen.query_one("#tab-checks").label) == "  Checks ●3"
         await pilot.pause()
         tab = app.screen.query_one("#tab-checks")
         assert tab.content_size.width >= len("  Checks ●3"), "the tab grows with its label"
 
+        app.checks_tab.report = None
         await pilot.press("left")
         await pilot.pause()
         card = app.screen.query_one("#sidebar-card", Static).render().plain
