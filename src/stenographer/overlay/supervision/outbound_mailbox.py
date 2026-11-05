@@ -8,7 +8,6 @@ from collections import deque
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.refine.profiles import RefineProfile
-from stenographer.overlay.protocol.codec import encode_message
 from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.messages import (
     CommandMessage,
@@ -71,8 +70,6 @@ class OutboundMailbox:
             if len(self._pending) == self._capacity:
                 self._pending.popleft()
             self._pending.append(message)
-        while len(self._pending) > self._capacity:
-            self._pending.popleft()
 
     def _generation(self) -> int:
         generation = self._next_generation
@@ -110,9 +107,7 @@ class OutboundMailbox:
             present = model in self._loading_models
             if self._closed or self._disabled or active == present:
                 return
-            message = LoadingActivityMessage(model, active)
-            encode_message(message)
-            self._append(message)
+            self._append(LoadingActivityMessage(model, active))
             if active:
                 self._loading_models.append(model)
             else:
@@ -147,7 +142,6 @@ class OutboundMailbox:
             ):
                 return None
             message = SpectrumMessage(generation, self._next_sequence, levels)
-            encode_message(message)
             self._next_sequence += 1
             self._spectrum_pending = message
             return message.sequence
