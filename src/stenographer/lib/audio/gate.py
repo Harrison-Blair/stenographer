@@ -29,7 +29,10 @@ def speech_gate_stats(samples: np.ndarray, sample_rate: int, min_rms: float) -> 
     if n_frames == 0:
         return GateStats(0.0, 0.0, 0, 0, min_rms, min_rms <= 0)
     trimmed = audio[: n_frames * frame].reshape(n_frames, frame)
-    rms = np.sqrt(np.mean(trimmed * trimmed, axis=1))
+    rms = np.empty(n_frames, dtype=np.float32)
+    for start in range(0, n_frames, 100):
+        chunk = trimmed[start : start + 100]
+        rms[start : start + len(chunk)] = np.sqrt(np.mean(chunk * chunk, axis=1))
     loud = rms > min_rms
     passed = min_rms <= 0 or (n_frames >= 2 and bool(np.any(loud[:-1] & loud[1:])))
     return GateStats(
