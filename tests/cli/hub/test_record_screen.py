@@ -51,6 +51,7 @@ class FakeLiveSession:
         self.levels_dbfs = {"mic": -31.0, "system": -52.0}
         self.meter_floor_dbfs = -70.0
         self.failed_phrase_count = 0
+        self.audio_failed_sources = ()
         self.queue_depth = 0
         self.idle_unload_deadline = None
         self.process_ids = ()
@@ -768,6 +769,24 @@ def test_record_meter_head_clicks_match_their_keys(tmp_path):
             await pilot.click("#system-meter", offset=(2, 1))
             await _until(pilot, lambda: ("toggle", "system") in session.actions)
             session.release.set()
+
+    asyncio.run(exercise())
+
+
+def test_record_card_reports_a_source_whose_audio_was_not_saved(tmp_path):
+    async def exercise():
+        services, created = _services(tmp_path)
+        app = _app(services)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await pilot.press("space")
+            await _until(pilot, lambda: services.recording)
+            app.refresh_view()
+            await pilot.pause()
+            assert "not saved" not in _card(app)
+            created[-1].audio_failed_sources = ("mic",)
+            app.refresh_view()
+            await pilot.pause()
+            assert "! mic audio not saved" in _card(app)
 
     asyncio.run(exercise())
 

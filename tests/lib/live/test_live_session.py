@@ -671,6 +671,49 @@ def test_failed_phrase_increments_the_failure_count(monkeypatch, tmp_path, caplo
     session.stop()
 
 
+def test_audio_write_failure_keeps_transcribing_and_reports_the_source(
+    monkeypatch, tmp_path, caplog
+):
+    session, writer, _worker, _system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, system=False
+    )
+    # The real writer refuses to replace an existing audio file.
+    (session.path / "mic.flac").touch()
+
+    recorder.emit(1)
+    recorder.emit(1)
+    session._queue.join()
+
+    assert [line.text for line in session.lines] == ["spoken words", "spoken words"]
+    assert session.audio_failed_sources == ("mic",)
+    assert len(writer.audio) == 1
+    assert caplog.text.count("live: audio_save_failed") == 1
+    session.stop()
+    assert session.audio_failed_sources == ("mic",)
+    assert (session.path / "transcript.md").exists()
+
+
+def test_stop_finishes_when_padding_fails(monkeypatch, tmp_path):
+    clock = FakeClock()
+    session, writer, worker, system, recorder, _segmenters = _make_session(
+        monkeypatch, tmp_path, clock=clock
+    )
+    system.emit(1)
+    clock.now = 1.0
+    (session.path / "mic.flac").touch()
+
+    session.stop()
+
+    assert session.audio_failed_sources == ("mic",)
+    assert not recorder.running
+    assert not system.running
+    assert [line.text for line in session.lines] == ["spoken words"]
+    assert writer.closed
+    assert worker.stopped
+    assert (session.path / "transcript.md").exists()
+    assert session.relabel_status == ""
+
+
 def test_transcript_line_values_use_the_source_session_clock():
     line = TranscriptLine(1.0, 2.0, "wall", "system", "speaker-1", "Speaker 1", "words")
 

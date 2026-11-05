@@ -34,6 +34,7 @@ WARNING_DESCRIPTIONS = {
     "hub: session_job_failed": "A session job did not finish.",
     "hub: setup_test_failed": "A Checks test did not finish.",
     "live: model_load_failed": "A live model did not load.",
+    "live: audio_save_failed": "Session audio could not be saved.",
     "live: phrase_failed": "One live phrase was not transcribed.",
     "live: relabel_failed": "The speaker relabel pass did not finish.",
     "live: source_start_failed": "A live audio source did not start.",

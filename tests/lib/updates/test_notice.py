@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 
 import pytest
 
@@ -401,9 +400,6 @@ def test_start_background_check_runs_off_a_daemon_thread(tmp_path):
 @pytest.mark.integration
 def test_fetch_latest_tag_returns_a_parseable_tag():
     """The real redirect: one HEAD to GitHub, tag only, no download."""
-
-    if os.environ.get("STENOGRAPHER_INTEGRATION") != "1":
-        pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1")
 
     tag = fetch_latest_tag()
 

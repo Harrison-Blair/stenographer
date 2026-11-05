@@ -76,7 +76,7 @@
         <li><b>Local transcription</b><span>Underdog Bark 3.0 Pro by Conway Research runs on your CPU through sherpa-onnx. You build the model once on your machine, and only when you ask for it.</span></li>
         <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Agent can rephrase, reorder, group ideas, and remove repetitions. Its prompt requires every distinct detail and authorization limit to survive. Agent trusts the model: it has no semantic or length-ratio checks, so names, numbers, negations, uncertainty, or authorization may change. It retains format, empty-output, truncation, and wrapper checks. General keeps its original cleanup, length, and numeral checks. Detected failures fall back to the formatted transcript.</span></li>
         <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key. When Agent rewrites the text, the original is copied just before it, so your clipboard history keeps both.</span></li>
-        <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. About half a second later, your previous clipboard item is back.</span></li>
+        <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. About half a second later, your previous clipboard item is back, unless you copied something newer.</span></li>
       </ol>
 
       <div class="two">

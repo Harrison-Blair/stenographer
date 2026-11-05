@@ -89,6 +89,8 @@ Press Escape while recording or while the result is being delivered. The audio
 and transcript are discarded, and nothing is pasted. The focused application
 still receives the Escape keypress. If cancellation happens during ASR decode,
 the run finishes at the next decode boundary, but the result is still discarded.
+If Agent's unrefined transcript is being copied when you cancel, the rewrite is
+not copied, and your previous clipboard item comes back.
 
 Set `cancel_binding = ""` to disable this behavior, or choose another evdev
 `KEY_*` name for the binding.
@@ -97,8 +99,9 @@ Set `cancel_binding = ""` to disable this behavior, or choose another evdev
 
 The daemon puts your previous clipboard item back after each paste. It saves
 the clipboard before it copies the transcript, pastes, plays the delivered
-sound, waits `restore_delay_ms`, and then writes the saved item back. The
-primary selection keeps the transcript. The saved item is held in memory only
+sound, waits `restore_delay_ms`, and then writes the saved item back. If you
+copied something else during the wait, your newer item stays and the saved item
+is dropped. The primary selection keeps the transcript. The saved item is held in memory only
 until it is restored, and it is never logged.
 
 When Agent rewrites the text, the unrefined transcript is copied just before
@@ -122,6 +125,8 @@ Limits:
 - The daemon stays busy for `restore_delay_ms` after each paste. A hotkey press
   in that window is ignored. Escape no longer cancels, because the text is
   already pasted.
+- A later copy of exactly the transcript text looks like the transcript, so the
+  saved item replaces it.
 - If an application reads the paste late and gets your previous item, increase
   `restore_delay_ms`.
 - Saving waits at most one second and keeps at most 64 MiB. A slower or larger

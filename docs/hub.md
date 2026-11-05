@@ -140,9 +140,11 @@ the bottom. If you scroll up, refreshes do not move the view; press `end` or
 scroll to the bottom to follow new lines again.
 
 The `speakers` card lists each speaker with its talk time, the count of failed
-phrases when there are any, and `[r] Rename…`. Press `r` (or click the card) to
-open the Rename speaker dialog: choose the speaker, type the new name, and press
-`enter` (or click `[enter] Rename`); `escape` cancels. During a recording, the
+phrases when there are any, a `! mic audio not saved` line when a source's audio
+cannot be written, and `[r] Rename…`. After such a failure the source keeps
+transcribing, its audio file ends at the failure, and the recording still saves
+its transcript. Press `r` (or click the card) to open the Rename speaker dialog:
+choose the speaker, type the new name, and press `enter` (or click `[enter] Rename`); `escape` cancels. During a recording, the
 rename changes the live labels. On a saved session, the rename writes a new
 transcript revision of that session.
 
