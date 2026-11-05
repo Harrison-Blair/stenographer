@@ -458,9 +458,7 @@ class SettingsScreen(HubScreen):
     def list_devices(self, dotted_key: str) -> list[tuple[str, str]]:
         """Return ``(value, label)`` of each device the sound or input server lists."""
         if dotted_key == "audio.input_device":
-            from stenographer.lib.audio.probe import input_device_choices, query_devices
-
-            return input_device_choices(query_devices().devices)
+            return self.app.services.input_devices()
         from stenographer.lib.platform import current_platform
 
         return current_platform().hotkey_devices()

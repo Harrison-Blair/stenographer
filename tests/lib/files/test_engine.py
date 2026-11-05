@@ -428,8 +428,8 @@ class FakeHubPlatform:
     ),
 )
 def test_source_name_copy_uses_a_safe_lowercase_suffix(tmp_path, name, copied):
-    from stenographer.cli.hub.session_jobs import SessionJobs
     from stenographer.lib.sessions import SessionStore
+    from stenographer.lib.sessions.jobs import SessionJobs
 
     source = tmp_path / name
     soundfile.write(source, np.full(32000, 0.1, dtype=np.float32), 16000, format="WAV")

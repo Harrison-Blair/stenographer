@@ -23,7 +23,6 @@
 - record_screen.py: Record, stop and save, watch meters and transcript, rename speakers.
 - rename_dialog.py: Rename one speaker of a live or saved session.
 - services.py: Own recording, playback, and shared session services.
-- session_jobs.py: Reprocess saved transcripts with current models and settings.
 - speaker_select.py: Choose a speaker and mark the highlighted choice without a fill.
 - transcribe_dialog.py: Choose an audio file and its options; return the file job.
 - settings_screen.py: Edit the configuration by tab and host the Checks tab.

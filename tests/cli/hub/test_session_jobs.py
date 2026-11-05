@@ -14,7 +14,6 @@ import pytest
 import soundfile as sf
 
 from stenographer.cli.hub.services import HubServices
-from stenographer.cli.hub.session_jobs import SessionJobs
 from stenographer.lib.config.models import Config
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.session_writer import SessionWriter
@@ -22,6 +21,7 @@ from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError, StaleRevisionError
+from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
 
 
@@ -243,7 +243,6 @@ def test_playback_mixes_saved_sources_and_second_press_stops_own_player(tmp_path
 
     services.toggle_session_playback(session.name)
     mixed_path = Path(commands[0][1])
-    assert services._player_pid == player.pid
     samples, sample_rate = sf.read(mixed_path, dtype="float32")
     services.toggle_session_playback(session.name)
 

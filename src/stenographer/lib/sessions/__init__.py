@@ -6,6 +6,7 @@
 - ``store.py`` exposes safe session operations and an in-memory title and
   transcript search.
 - ``exporter.py`` renders transcripts for session and file exports.
+- ``jobs.py`` reprocesses saved sessions and writes their audio for playback.
 - ``persistence.py`` writes private session files atomically.
 - ``errors.py`` defines session storage errors.
 """

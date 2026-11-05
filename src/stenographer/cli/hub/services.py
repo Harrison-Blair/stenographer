@@ -6,29 +6,22 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-import tempfile
 import threading
-from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import numpy as np
-import soundfile as sf
-
-from stenographer.cli.hub.session_jobs import SessionJobs
-from stenographer.lib.audio.constants import SAMPLE_RATE
-from stenographer.lib.files.media import inspect_media, iter_media_audio
 from stenographer.lib.live.live_session import LiveSession
 from stenographer.lib.live.models import LIVE_MODELS, live_model_dir
 from stenographer.lib.logging.pipeline import fmt_event
 from stenographer.lib.sessions import SessionStore
-from stenographer.lib.sessions.errors import SessionNotFoundError
-from stenographer.lib.sessions.reader import session_directory, session_metadata
+from stenographer.lib.sessions.jobs import SessionJobs
 
 log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
+
+    import numpy as np
 
     from stenographer.lib.config.models import Config
     from stenographer.lib.files.engine import FilesEngine
@@ -57,7 +50,6 @@ class HubServices:
         self._session_jobs: SessionJobs | None = None
         self._player_factory = player_factory
         self._player: subprocess.Popen | None = None
-        self._player_pid: int | None = None
         self._player_session_id: str | None = None
         self._player_temp_path: Path | None = None
         self._player_lock = threading.Lock()
@@ -105,7 +97,12 @@ class HubServices:
     @property
     def session_jobs(self) -> SessionJobs:
         if self._session_jobs is None:
-            self._session_jobs = SessionJobs(self.session_store, self._config, self._platform)
+            self._session_jobs = SessionJobs(
+                self.session_store,
+                self._config,
+                self._platform,
+                media_decoder=self._media_decoder,
+            )
         return self._session_jobs
 
     @property
@@ -252,31 +249,18 @@ class HubServices:
 
     def toggle_session_playback(self, session_id: str) -> None:
         with self._player_lock:
-            process = self._player
-            if process is not None and process.poll() is None:
-                if self._player_pid is None or process.pid != self._player_pid:
-                    raise RuntimeError("session player process identity changed")
-                process.terminate()
-                log.info(
-                    fmt_event(
-                        "hub",
-                        "session_playback_stopped",
-                        session_id=self._player_session_id,
-                        pid=process.pid,
-                    )
-                )
+            if self._stop_player_locked():
                 return
             if self._player_temp_path is not None:
                 self._player_temp_path.unlink(missing_ok=True)
                 self._player_temp_path = None
-            mixed_path = self._write_play_audio(session_id)
+            mixed_path = self.session_jobs.write_play_audio(session_id)
             try:
                 process = self._player_factory(["pw-play", str(mixed_path)])
             except Exception:
                 mixed_path.unlink(missing_ok=True)
                 raise
             self._player = process
-            self._player_pid = process.pid
             self._player_session_id = session_id
             self._player_temp_path = mixed_path
             log.info(
@@ -291,18 +275,23 @@ class HubServices:
 
     def stop_session_playback(self) -> None:
         with self._player_lock:
-            if self._player is not None and self._player.poll() is None:
-                if self._player_pid is None or self._player.pid != self._player_pid:
-                    raise RuntimeError("session player process identity changed")
-                self._player.terminate()
-                log.info(
-                    fmt_event(
-                        "hub",
-                        "session_playback_stopped",
-                        session_id=self._player_session_id,
-                        pid=self._player.pid,
-                    )
-                )
+            self._stop_player_locked()
+
+    def _stop_player_locked(self) -> bool:
+        """Terminate a running player; return whether one ran."""
+        process = self._player
+        if process is None or process.poll() is not None:
+            return False
+        process.terminate()
+        log.info(
+            fmt_event(
+                "hub",
+                "session_playback_stopped",
+                session_id=self._player_session_id,
+                pid=process.pid,
+            )
+        )
+        return True
 
     def _watch_player(self, process: subprocess.Popen, mixed_path: Path, session_id: str) -> None:
         returncode = process.wait()
@@ -318,77 +307,10 @@ class HubServices:
         with self._player_lock:
             if self._player is process:
                 self._player = None
-                self._player_pid = None
                 self._player_session_id = None
             if self._player_temp_path == mixed_path:
                 self._player_temp_path = None
             mixed_path.unlink(missing_ok=True)
-
-    def _write_play_audio(self, session_id: str) -> Path:
-        directory = session_directory(self.session_store.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
-        if session_metadata(directory).get("kind") == "file":
-            return self._write_source_audio(self.session_store.source_audio(session_id))
-        return self._write_mixed_audio(directory, session_id)
-
-    def _write_source_audio(self, source: Path) -> Path:
-        """Decode the copied source of a file session into a private temporary WAV file."""
-        if self._media_decoder is not None:
-            blocks = self._media_decoder(source)
-        else:
-            decoder = self._platform.ffmpeg_decoder()
-            blocks = iter_media_audio(source, inspect_media(source, decoder), decoder)
-        fd, name = tempfile.mkstemp(prefix="stenographer-session-", suffix=".wav")
-        os.close(fd)
-        path = Path(name)
-        try:
-            with sf.SoundFile(path, "w", SAMPLE_RATE, 1, format="WAV", subtype="PCM_16") as output:
-                for block in blocks:
-                    output.write(np.clip(block, -1.0, 1.0))
-        except Exception:
-            path.unlink(missing_ok=True)
-            raise
-        finally:
-            blocks.close()
-        return path
-
-    def _write_mixed_audio(self, directory: Path, session_id: str) -> Path:
-        paths = [directory / "mic.flac", directory / "system.flac"]
-        with ExitStack() as stack:
-            streams = [stack.enter_context(sf.SoundFile(path)) for path in paths if path.is_file()]
-            if not streams:
-                raise FileNotFoundError(f"session has no audio: {session_id}")
-            sample_rate = streams[0].samplerate
-            if any(stream.samplerate != sample_rate for stream in streams):
-                raise ValueError("session audio sources use different sample rates")
-            total_frames = max(stream.frames for stream in streams)
-            fd, name = tempfile.mkstemp(prefix="stenographer-session-", suffix=".wav")
-            os.close(fd)
-            mixed_path = Path(name)
-            try:
-                with sf.SoundFile(
-                    mixed_path,
-                    mode="w",
-                    samplerate=sample_rate,
-                    channels=1,
-                    format="WAV",
-                    subtype="PCM_16",
-                ) as output:
-                    for start in range(0, total_frames, 65_536):
-                        count = min(65_536, total_frames - start)
-                        mixed = np.zeros(count, dtype=np.float32)
-                        for stream in streams:
-                            available = min(count, max(0, stream.frames - start))
-                            if available:
-                                stream.seek(start)
-                                samples = stream.read(available, dtype="float32", always_2d=True)
-                                mixed[: len(samples)] += np.mean(samples, axis=1, dtype=np.float32)
-                        output.write(np.clip(mixed, -1.0, 1.0))
-            except Exception:
-                mixed_path.unlink(missing_ok=True)
-                raise
-        return mixed_path
 
     def cancel_files(self) -> None:
         engine = self._files_engine

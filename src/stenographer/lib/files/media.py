@@ -60,6 +60,11 @@ def _ffmpeg_media_info(path: Path, decoder: FfmpegDecoder) -> MediaInfo:
     )
 
 
+def decode_media(path: str | Path, decoder: FfmpegDecoder) -> Generator[np.ndarray]:
+    """Inspect *path* and yield its audio as ``iter_media_audio`` does."""
+    return iter_media_audio(path, inspect_media(path, decoder), decoder)
+
+
 def iter_media_audio(
     path: str | Path,
     info: MediaInfo,
