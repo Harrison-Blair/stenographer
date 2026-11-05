@@ -202,9 +202,6 @@ class HubApp(App[None]):
         ``disabled`` shows as disabled.
         """
         self._context_cards[screen] = (title, content, buttons, disabled)
-        hub_screen = self.hub_screens[screen]
-        if screen == self.current_mode and hub_screen.ready:
-            hub_screen.query_one(Sidebar).show_context(content, title, buttons, disabled)
 
     def try_acquire_session(self, session_id: str, owner: str) -> bool:
         """Mark a session busy for ``owner``; false when another owner holds it."""
