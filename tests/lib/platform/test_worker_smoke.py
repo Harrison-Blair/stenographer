@@ -37,6 +37,7 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import setup_logging, shutdown_logging
 from stenographer.lib.platform import asr as transport_module
 from stenographer.lib.transcribe import worker as worker_module
+from stenographer.lib.transcribe import worker_policy
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.worker import Worker
 
@@ -203,8 +204,8 @@ def test_decode_timeout_reaps_suspended_child_then_respawns(monkeypatch):
         with monkeypatch.context() as shortened:
             shortened.setattr(worker_module, "_POLL_SECONDS", 0.01)
             shortened.setattr(transport_module, "_JOIN_SECONDS", 0.25)
-            shortened.setattr(worker_module, "_DECODE_MIN_TIMEOUT_SECONDS", 0.25)
-            shortened.setattr(worker_module, "_DECODE_REALTIME_MULTIPLIER", 0.0)
+            shortened.setattr(worker_policy, "_DECODE_MIN_TIMEOUT_SECONDS", 0.25)
+            shortened.setattr(worker_policy, "_DECODE_REALTIME_MULTIPLIER", 0.0)
             with pytest.raises(WorkerError, match="timed out during transcribe"):
                 worker.transcribe(samples)
 

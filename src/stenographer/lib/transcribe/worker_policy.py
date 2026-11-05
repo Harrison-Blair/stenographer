@@ -19,9 +19,6 @@ MODEL_READY = "model_ready"
 """What ``interpret_response`` returns for the child's metadata-only ready reply."""
 
 
-_POLL_SECONDS = 0.1
-
-
 _DECODE_MIN_TIMEOUT_SECONDS = 60.0
 
 
@@ -52,21 +49,11 @@ def should_arm_idle_timer(
     return idle_seconds > 0 and not hold_active and not shutdown_requested and process_alive
 
 
-def should_teardown_for_response_error(exc: WorkerError) -> bool:
-    """Malformed or timed-out protocol poisons the channel. PURE."""
-    return isinstance(exc, (WorkerProtocolError, WorkerTimeoutError))
-
-
 def decode_timeout_seconds(sample_frames: int) -> float:
     """Return the fixed decode deadline budget for 16 kHz audio. PURE."""
     return max(
         _DECODE_MIN_TIMEOUT_SECONDS, _DECODE_REALTIME_MULTIPLIER * sample_frames / SAMPLE_RATE
     )
-
-
-def response_poll_timeout(*, now: float, deadline: float) -> float:
-    """Clamp one queue poll to the remaining phase deadline. PURE."""
-    return max(0.0, min(_POLL_SECONDS, deadline - now))
 
 
 def classify_error(exc: Exception) -> tuple[str, str]:

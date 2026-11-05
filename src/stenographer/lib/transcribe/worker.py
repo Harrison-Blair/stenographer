@@ -45,15 +45,16 @@ from stenographer.lib.transcribe.worker_policy import (
     MODEL_READY,
     decode_timeout_seconds,
     interpret_response,
-    response_poll_timeout,
     should_arm_idle_timer,
-    should_teardown_for_response_error,
 )
 
 log = logging.getLogger(__name__)
 
 
 _MODEL_LOAD_TIMEOUT_SECONDS = 120.0
+
+
+_POLL_SECONDS = 0.1
 
 
 class Worker:
@@ -162,9 +163,9 @@ class Worker:
             decode_started_at = time.perf_counter()
             self._process.send(("job", samples, utterance))
             try:
-                timeout_seconds = decode_timeout_seconds(samples.shape[0])
                 interpreted = self._wait_for_response(
-                    "transcribe", deadline=time.monotonic() + timeout_seconds
+                    "transcribe",
+                    deadline=time.monotonic() + decode_timeout_seconds(samples.shape[0]),
                 )
                 if interpreted is MODEL_READY:
                     raise WorkerProtocolError("unexpected model-ready event during transcription")
@@ -224,7 +225,7 @@ class Worker:
                 )
                 self._teardown()
                 raise WorkerCrashedError(f"ASR child exited during {phase}")
-            poll_timeout = response_poll_timeout(now=time.monotonic(), deadline=deadline)
+            poll_timeout = max(0.0, min(_POLL_SECONDS, deadline - time.monotonic()))
             if poll_timeout == 0:
                 log.error("worker: request_timeout phase=%s", phase)
                 raise WorkerTimeoutError(f"ASR worker timed out during {phase}")
@@ -236,7 +237,8 @@ class Worker:
             return interpret_response(message)
 
     def _finish_response_error(self, exc: WorkerError) -> None:
-        if should_teardown_for_response_error(exc):
+        # A malformed or timed-out exchange poisons the channel.
+        if isinstance(exc, (WorkerProtocolError, WorkerTimeoutError)):
             self._teardown()
         else:
             self._restart_idle_timer()

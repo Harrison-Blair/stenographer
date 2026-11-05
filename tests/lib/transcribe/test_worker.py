@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from stenographer.lib.config.models import Config
+from stenographer.lib.transcribe import worker as worker_module
 from stenographer.lib.transcribe.errors import (
     PathologicalOutputError,
     WorkerCrashedError,
@@ -34,9 +35,7 @@ from stenographer.lib.transcribe.worker_policy import (
     decode_timeout_seconds,
     error_is_safe_to_render,
     interpret_response,
-    response_poll_timeout,
     should_arm_idle_timer,
-    should_teardown_for_response_error,
 )
 from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport, _reply_normally, _result
 
@@ -93,17 +92,6 @@ def test_legitimate_worker_errors_do_not_become_protocol_errors():
         with pytest.raises(WorkerError) as exc:
             interpret_response(message)
         assert not isinstance(exc.value, WorkerProtocolError)
-        assert should_teardown_for_response_error(exc.value) is False
-
-
-def test_malformed_worker_errors_require_teardown():
-    with pytest.raises(WorkerProtocolError) as exc:
-        interpret_response(("bogus", "secret"))
-    assert should_teardown_for_response_error(exc.value) is True
-
-
-def test_timeout_errors_require_teardown():
-    assert should_teardown_for_response_error(WorkerTimeoutError("timed out")) is True
 
 
 def test_decode_timeout_has_sixty_second_floor():
@@ -115,13 +103,6 @@ def test_decode_timeout_has_sixty_second_floor():
 def test_decode_timeout_is_four_times_actual_audio_duration():
     assert decode_timeout_seconds(16_000 * 20) == 80.0
     assert decode_timeout_seconds(16_000 * 125) == 500.0
-
-
-def test_response_poll_timeout_clamps_to_remaining_deadline():
-    assert response_poll_timeout(now=100.0, deadline=200.0) == 0.1
-    assert response_poll_timeout(now=100.0, deadline=100.03) == pytest.approx(0.03)
-    assert response_poll_timeout(now=100.0, deadline=100.0) == 0.0
-    assert response_poll_timeout(now=100.0, deadline=99.0) == 0.0
 
 
 def test_should_arm_idle_timer_when_idle_and_unheld():
@@ -435,6 +416,36 @@ def test_an_expired_deadline_ends_the_wait(caplog):
             worker._wait_for_response("transcribe", deadline=time.monotonic() - 1.0)
 
         assert "worker: request_timeout phase=transcribe" in caplog.text
+
+
+def test_a_timed_out_request_tears_the_child_down(monkeypatch):
+    monkeypatch.setattr(worker_module, "_MODEL_LOAD_TIMEOUT_SECONDS", 0.0)
+    transport = FakeAsrTransport()
+
+    with _worker(transport) as worker:
+        with pytest.raises(WorkerTimeoutError, match="timed out during model_load"):
+            worker.warmup()
+
+        assert transport.spawned[0].closes == [False]
+        assert worker.is_alive() is False
+
+
+@pytest.mark.parametrize("load_timeout, longest_poll", [(120.0, 0.1), (0.03, 0.03)])
+def test_one_poll_never_outlasts_the_poll_interval_or_the_deadline(
+    monkeypatch, load_timeout, longest_poll
+):
+    monkeypatch.setattr(worker_module, "_MODEL_LOAD_TIMEOUT_SECONDS", load_timeout)
+    polls: list[float] = []
+
+    class _RecordingProcess(FakeAsrProcess):
+        def receive(self, timeout: float):
+            polls.append(timeout)
+            return super().receive(timeout)
+
+    with _worker(FakeAsrTransport(_RecordingProcess())) as worker:
+        worker.warmup()
+
+    assert 0.0 < polls[0] <= longest_poll
 
 
 def test_shutdown_closes_the_child_gracefully_and_refuses_later_requests():
