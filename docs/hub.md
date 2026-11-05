@@ -308,7 +308,9 @@ cancels the job.
 exported file.
 
 Re-diarization and re-transcription write new transcript revisions and keep
-previous revisions. Re-labeling uses the same speaker similarity limits as the
+previous revisions. If an existing `session.json` is unreadable or invalid,
+the revision fails to preserve its metadata. Older sessions without that file
+can still be revised. Re-labeling uses the same speaker similarity limits as the
 Record screen. Re-diarization relabels microphone lines as `Room N` speakers only
 for a session recorded with microphone diarization (`"diarize_mic": true` in its
 `session.json`). For other sessions, including older ones, it relabels system
