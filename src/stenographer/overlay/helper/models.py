@@ -9,10 +9,6 @@ class HelperControlState:
     unavailable: bool = False
     lost: bool = False
 
-    @property
-    def expected_exit(self) -> bool:
-        return self.unavailable
-
 
 @dataclass(frozen=True)
 class HelperControlTransition:

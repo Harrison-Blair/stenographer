@@ -25,7 +25,6 @@ from stenographer.overlay.protocol.messages import (
     StateMessage,
 )
 from stenographer.overlay.supervision.constants import _POLL_SECONDS, _SPECTRUM_INTERVAL
-from stenographer.overlay.supervision.models import RestartBudget, _ProcessOutcome
 from stenographer.overlay.supervision.outbound_mailbox import OutboundMailbox
 from stenographer.overlay.supervision.policy import (
     _helper_stderr_path,
@@ -287,21 +286,6 @@ def test_mailbox_cancelled_timeout_is_short_and_generation_guarded():
     assert mailbox.current_state == StateMessage(newer, OverlayState.RECORDING)
 
 
-def test_restart_budget_allows_exactly_one_unexpected_restart():
-    budget = RestartBudget(1)
-
-    assert budget.on_exit(unexpected=True) is True
-    assert budget.on_exit(unexpected=True) is False
-    assert budget.on_exit(unexpected=True) is False
-
-
-def test_expected_exit_never_spends_or_uses_restart_budget():
-    budget = RestartBudget(1)
-
-    assert budget.on_exit(unexpected=False) is False
-    assert budget.on_exit(unexpected=True) is True
-
-
 @pytest.mark.parametrize("capacity", [0, -1, True, False, 8.0, "8"])
 def test_mailbox_capacity_must_be_a_real_positive_integer(capacity: object) -> None:
     """``True`` is an ``int`` in Python: a bool capacity would silently make a
@@ -444,20 +428,6 @@ def test_a_blocking_take_returns_a_waiting_record_without_waiting() -> None:
     mailbox.publish(OverlayState.ERROR)
 
     assert mailbox.take(timeout=10.0) == StateMessage(0, OverlayState.ERROR)
-
-
-@pytest.mark.parametrize("remaining", [-1, True])
-def test_a_restart_budget_must_be_a_real_non_negative_count(remaining: object) -> None:
-    with pytest.raises(ValueError, match="non-negative integer"):
-        RestartBudget(remaining)
-
-
-def test_a_process_outcome_is_only_unavailable_when_the_helper_said_so() -> None:
-    """An expected exit is not the same as an overlay that cannot exist: only
-    the second one stops the supervisor from ever trying again.
-    """
-    assert _ProcessOutcome(True).unavailable is False
-    assert _ProcessOutcome(False, True).unavailable is True
 
 
 def test_the_helper_stderr_file_is_created_under_the_state_directory(tmp_path, monkeypatch) -> None:

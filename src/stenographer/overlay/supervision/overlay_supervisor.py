@@ -35,7 +35,6 @@ from stenographer.overlay.supervision.constants import (
     _THREAD_JOIN_SECONDS,
     log,
 )
-from stenographer.overlay.supervision.models import RestartBudget, _ProcessOutcome
 from stenographer.overlay.supervision.outbound_mailbox import OutboundMailbox
 from stenographer.overlay.supervision.policy import (
     _helper_stderr_path,
@@ -79,7 +78,7 @@ class OverlaySupervisor:
             self._thread.join(timeout=_THREAD_JOIN_SECONDS)
 
     def _thread_main(self) -> None:
-        budget = RestartBudget(1)
+        restarts_left = 1
         command = helper_command(sys.executable, frozen=bool(getattr(sys, "frozen", False)))
         try:
             try:
@@ -93,22 +92,24 @@ class OverlaySupervisor:
                     helper = transport.spawn(command, stderr_path=_helper_stderr_path())
                 except (OSError, ValueError) as exc:
                     log.warning("overlay: helper_start_failed error_type=%s", type(exc).__name__)
-                    if not budget.on_exit(unexpected=True):
+                    if restarts_left == 0:
                         return
+                    restarts_left -= 1
                     continue
 
                 try:
-                    outcome = self._serve(helper)
+                    final_exit = self._serve(helper)
                 except Exception as exc:
                     log.warning("overlay: supervisor_failed error_type=%s", type(exc).__name__)
                     helper.close()
                     self._reap(helper, expected=False)
-                    outcome = _ProcessOutcome(False)
-                if outcome.unavailable or outcome.expected:
+                    final_exit = False
+                if final_exit:
                     return
-                if not budget.on_exit(unexpected=True):
+                if restarts_left == 0:
                     log.warning("overlay: helper_disabled reason=restart_budget_exhausted")
                     return
+                restarts_left -= 1
                 log.warning("overlay: helper_restarting")
         finally:
             self._mailbox.disable()
@@ -143,7 +144,8 @@ class OverlaySupervisor:
         self._last_analysis_at = now
         self._mailbox.publish_spectrum(current.generation, levels)
 
-    def _serve(self, helper: HelperProcess) -> _ProcessOutcome:
+    def _serve(self, helper: HelperProcess) -> bool:
+        """Run one helper process and return whether its exit ends the supervisor."""
         reader = LineReader()
         control_state = HelperControlState()
         started_at = time.monotonic()
@@ -156,7 +158,7 @@ class OverlaySupervisor:
             if not self._write(helper, replay):
                 helper.close()
                 self._reap(helper, expected=False)
-                return _ProcessOutcome(False)
+                return False
 
         try:
             stream_failed = False
@@ -203,7 +205,7 @@ class OverlaySupervisor:
                                 control = decode_message(record)
                                 transition = reduce_helper_control(control_state, control)
                                 control_state = transition.state
-                                expected_exit |= control_state.expected_exit
+                                expected_exit |= control_state.unavailable
                                 stream_failed |= transition.stop
                                 if transition.event == "ready":
                                     log.info("overlay: ready backend=%s", transition.value)
@@ -228,7 +230,7 @@ class OverlaySupervisor:
         finally:
             helper.close()
             self._reap(helper, expected=expected_exit)
-        return _ProcessOutcome(expected_exit, control_state.unavailable)
+        return expected_exit
 
     @staticmethod
     def _write(helper: HelperProcess, message: ProtocolMessage) -> bool:
