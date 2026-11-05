@@ -12,8 +12,6 @@ class LineReader:
         self._buffer = bytearray()
 
     def feed(self, chunk: bytes) -> list[bytes]:
-        if not chunk:
-            return []
         self._buffer.extend(chunk)
         records = []
         while (newline := self._buffer.find(b"\n")) >= 0:
