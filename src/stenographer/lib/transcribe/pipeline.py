@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from stenographer.lib.delivery.timings import DeliveryTimings
     from stenographer.lib.refine.results import RefineResult
     from stenographer.lib.transcribe.results import TranscriptionResult
-    from stenographer.lib.transcribe.worker_timings import WorkerTimings
+    from stenographer.lib.transcribe.results import WorkerTimings
 
 from stenographer.lib.transcribe.utterance_record import UtteranceRecord
 

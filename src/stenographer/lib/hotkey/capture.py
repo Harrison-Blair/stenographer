@@ -12,8 +12,27 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from stenographer.lib.platform.key_table import KeyTable
 
-from stenographer.lib.hotkey.capture_records import CaptureState, KeyEvent
-from stenographer.lib.hotkey.errors import BindingCaptureError
+from stenographer.lib.hotkey.binding import parse_binding
+from stenographer.lib.hotkey.errors import BindingCaptureError, BindingError
+
+
+@dataclasses.dataclass(frozen=True)
+class CaptureState:
+    """State accumulated while capturing one key or chord."""
+
+    held: frozenset[tuple[str, int]] = frozenset()
+    codes: tuple[int, ...] = ()
+    complete: bool = False
+    timed_out: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class KeyEvent:
+    """One device-scoped key transition; ``None`` represents timeout."""
+
+    device: str
+    code: int
+    value: int
 
 
 def reduce_capture(state: CaptureState, event: KeyEvent | None) -> CaptureState:
@@ -60,9 +79,6 @@ def serialize_capture(state: CaptureState, keys: KeyTable) -> str:
     if not state.complete:
         raise BindingCaptureError("binding capture did not complete")
     spec = "+".join(_canonical_key_name(code, keys) for code in state.codes)
-    from stenographer.lib.hotkey.binding import parse_binding
-    from stenographer.lib.hotkey.errors import BindingError
-
     try:
         parse_binding(spec, keys)
     except BindingError as exc:

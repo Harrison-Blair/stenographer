@@ -54,7 +54,7 @@ from stenographer.lib.transcribe.worker_policy import (
     should_arm_idle_timer,
     should_teardown_for_response_error,
 )
-from stenographer.lib.transcribe.worker_timings import WorkerTimings
+from stenographer.lib.transcribe.results import WorkerTimings
 
 log = logging.getLogger(__name__)
 

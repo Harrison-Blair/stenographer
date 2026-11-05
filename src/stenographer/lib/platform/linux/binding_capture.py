@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import evdev
 
 from stenographer.lib.hotkey.capture import reduce_capture, serialize_capture
-from stenographer.lib.hotkey.capture_records import CaptureState, KeyEvent
+from stenographer.lib.hotkey.capture import CaptureState, KeyEvent
 from stenographer.lib.hotkey.errors import BindingCaptureError
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
 from stenographer.lib.platform.linux.hotkey import auto_detect_paths
