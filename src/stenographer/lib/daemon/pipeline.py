@@ -110,7 +110,12 @@ class UtterancePipeline:
         try:
             if self._cancelled():
                 return cancelled_outcome()
-            if not self._gate(samples, record):
+            gate_passed = self._gate(samples, record)
+            if self._cancelled():
+                if record is not None:
+                    record.failure = None
+                return cancelled_outcome()
+            if not gate_passed:
                 outcome_name = Outcome.SILENT.name
                 self._publish_state(OverlayState.HIDDEN)
                 return outcome_name

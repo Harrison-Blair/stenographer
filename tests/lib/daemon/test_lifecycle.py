@@ -319,7 +319,7 @@ def test_stop_closes_a_latched_hybrid_recording_as_cancelled(daemon_logs):
 
 
 def test_build_wires_the_worker_callbacks_onto_this_daemon(tmp_path, monkeypatch):
-    # The three callbacks are closures over a daemon that does not exist yet
+    # The two callbacks are closures over a daemon that does not exist yet
     # when ``Worker`` is constructed. Seen to FAIL against closures bound to a
     # ``daemon`` name captured before assignment (NameError on the first cold
     # load) and against a build that never passed them to the worker at all.
@@ -343,7 +343,6 @@ def test_build_wires_the_worker_callbacks_onto_this_daemon(tmp_path, monkeypatch
         assert status.loading == [(LoadingModel.ASR, True)]
         daemon._worker._on_model_loading_finished()
         assert status.loading == [(LoadingModel.ASR, True), (LoadingModel.ASR, False)]
-
     finally:
         daemon.stop()
 

@@ -313,11 +313,34 @@ def test_a_cancel_before_the_gate_skips_every_later_stage():
     assert reported.failures == []
 
 
+def test_cancel_during_rejected_gate_is_cancelled():
+    daemon = _daemon(samples=_SILENCE)
+    cancelled = False
+    pipeline, reported = _pipeline(daemon, cancelled=lambda: cancelled)
+    gate = pipeline._gate
+
+    def cancel_during_gate(samples, record):
+        nonlocal cancelled
+        passed = gate(samples, record)
+        cancelled = True
+        return passed
+
+    pipeline._gate = cancel_during_gate
+    record = _record()
+    assert (
+        pipeline.run(_SILENCE, utterance=1, record=record, profile=RefineProfile.AGENT)
+        == "CANCELLED"
+    )
+    assert record.failure is None
+    assert reported.states == [OverlayState.CANCELLED]
+    assert daemon._worker.utterances == []
+
+
 def test_a_cancel_racing_a_transcription_failure_is_reported_as_cancelled(daemon_logs):
     # The user let go of the cancel binding while the decode was already
     # failing: the failure must not become an error pill after the cancel.
     daemon = _daemon(error=WorkerError(f"inference blew up on {CANARY}"))
-    cancelled = _CountingCancel(after=1)
+    cancelled = _CountingCancel(after=2)
     pipeline, reported = _pipeline(daemon, cancelled=cancelled)
     record = _record()
 
@@ -370,7 +393,7 @@ def test_a_chord_failure_after_a_confirmed_copy_keeps_the_copied_words(daemon_lo
 def test_a_cancel_during_delivery_is_reported_as_cancelled(daemon_logs):
     daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
     deliverer = _StubDeliverer(error=RuntimeError("clipboard refused"))
-    cancelled = _CountingCancel(after=2)
+    cancelled = _CountingCancel(after=3)
     pipeline, reported = _pipeline(daemon, deliverer=deliverer, cancelled=cancelled)
     record = _record()
 
@@ -390,7 +413,7 @@ def test_a_cancel_that_withheld_the_chord_clears_the_failure():
     # is the user's own doing, not a copy failure to report.
     daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
     deliverer = _StubDeliverer(result=False)
-    cancelled = _CountingCancel(after=2)
+    cancelled = _CountingCancel(after=3)
     pipeline, reported = _pipeline(daemon, deliverer=deliverer, cancelled=cancelled)
     record = _record()
 
@@ -469,7 +492,7 @@ def test_a_run_without_a_record_still_reports_its_outcome(daemon_logs):
     assert failed.failures == ["delivery failed"]
 
     refused, cancelled = _pipeline(
-        daemon, deliverer=_StubDeliverer(result=False), cancelled=_CountingCancel(after=2)
+        daemon, deliverer=_StubDeliverer(result=False), cancelled=_CountingCancel(after=3)
     )
     assert (
         refused.run(_SPEECH, utterance=3, record=None, profile=RefineProfile.AGENT) == "CANCELLED"
