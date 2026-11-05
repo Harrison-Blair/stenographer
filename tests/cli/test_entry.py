@@ -390,3 +390,70 @@ def test_cli_module_has_no_heavy_imports():
         check=True,
     )
     assert result.stdout.strip() == ""
+
+
+def test_command_surface():
+    parser = build_parser()
+    help_text = parser.format_help()
+    assert "{run,transcribe,model,doctor,devices,setup,sounds,completion,stats}" in help_text
+    examples = [
+        (["run"], {"command": "run"}),
+        (
+            ["transcribe", "clip.wav", "--raw", "--refine"],
+            {"file": "clip.wav", "raw": True, "refine": True},
+        ),
+        (
+            ["model", "download", "--asr", "--refine", "--live"],
+            {"model_command": "download", "asr": True, "refine": True, "live": True},
+        ),
+        (["doctor"], {"command": "doctor"}),
+        (["devices"], {"command": "devices"}),
+        (["setup", "--quick"], {"quick": True}),
+        (["setup", "--default"], {"default": True}),
+        (["sounds", "--list"], {"list_packs": True}),
+        (["sounds", "--preview", "pack"], {"preview": "pack"}),
+        (["completion", "fish"], {"shell": "fish"}),
+        (
+            [
+                "stats",
+                "export",
+                "--source",
+                "file",
+                "--since",
+                "2020-01-01",
+                "--until",
+                "2020-01-02",
+                "--model",
+                "m",
+                "--app-version",
+                "v",
+                "--device",
+                "d",
+                "--outcome",
+                "o",
+                "--format",
+                "csv",
+                "--output",
+                "out",
+                "--yes",
+            ],
+            {
+                "stats_command": "export",
+                "source": "file",
+                "since": "2020-01-01",
+                "until": "2020-01-02",
+                "model": "m",
+                "app_version": "v",
+                "device": "d",
+                "outcome": "o",
+                "format": "csv",
+                "output": "out",
+                "yes": True,
+            },
+        ),
+    ]
+    for argv, expected in examples:
+        parsed = vars(parser.parse_args(argv))
+        assert all(parsed[key] == value for key, value in expected.items())
+    with pytest.raises(SystemExit):
+        parser.parse_args(["model"])

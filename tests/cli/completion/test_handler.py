@@ -9,7 +9,7 @@ import re
 import pytest
 
 from stenographer.cli.completion.handler import completion_definition
-from stenographer.cli.completion.parser import SUPPORTED_SHELLS
+from stenographer.cli.parser import SUPPORTED_SHELLS
 from stenographer.cli.entry import dispatch
 from stenographer.cli.parser import build_parser
 

@@ -3,22 +3,34 @@
 
 from __future__ import annotations
 
+import importlib
 import multiprocessing
 import sys
 from collections.abc import Sequence
 
-from stenographer.cli.commands.registry import COMMANDS, resolve_command
 from stenographer.cli.parser import build_parser
 
 
-def dispatch(argv: Sequence[str] | None = None) -> int:
+_HANDLERS = {
+    "run": "stenographer.cli.run.handler:cmd_run",
+    "transcribe": "stenographer.cli.transcribe.handler:cmd_transcribe",
+    "model": "stenographer.cli.model.download.handler:cmd_model_download",
+    "doctor": "stenographer.cli.doctor.handler:cmd_doctor",
+    "devices": "stenographer.cli.devices.handler:cmd_devices",
+    "setup": "stenographer.cli.setup.handler:cmd_setup",
+    "sounds": "stenographer.cli.sounds.handler:cmd_sounds",
+    "completion": "stenographer.cli.completion.handler:cmd_completion",
+    "stats": "stenographer.cli.stats.handler:cmd_stats",
+}
+
+
+def dispatch(arguments: Sequence[str]) -> int:
     """Parse ``argv`` and dispatch; startup boundaries belong in :func:`main`.
 
     Handlers are imported lazily per command so no subcommand pays for
     another's heavy dependencies.
     """
     parser = build_parser()
-    arguments = tuple(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(arguments)
 
     if args.command is None:
@@ -28,7 +40,8 @@ def dispatch(argv: Sequence[str] | None = None) -> int:
             return cmd_hub(args)
         parser.print_help()
         return 0
-    return resolve_command(COMMANDS, args.command).load_handler()(args)
+    module, name = _HANDLERS[args.command].split(":")
+    return getattr(importlib.import_module(module), name)(args)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
