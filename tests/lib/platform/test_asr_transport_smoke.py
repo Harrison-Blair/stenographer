@@ -32,7 +32,7 @@ def test_native_asr_transport_contract_and_child_log_drain(tmp_path):
         with pytest.raises(TimeoutError):
             process.receive(0.01)
         set_utterance(99)
-        # Deliberately exercise a real child's pre-load refusal: no model or
+        # Deliberately exercise a real child's pre-load decode failure: no model or
         # audio is needed to verify transport and privacy-safe log forwarding.
         process.send(("job", (), 7))
         response = process.receive(15)
