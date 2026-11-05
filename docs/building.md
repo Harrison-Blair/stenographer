@@ -155,7 +155,8 @@ reliable total work estimate. Full tool output goes to `dist/build.log` /
 `dist/install.log` (dumped on failure); pass `--verbose` to stream the raw
 output instead.
 
-To force a fresh build and immediately install it, run:
+If overlay backend imports fail in a source installation, force a fresh build
+and immediately install it by running:
 
 ```sh
 scripts/reinstall.sh

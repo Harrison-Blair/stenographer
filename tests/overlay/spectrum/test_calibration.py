@@ -86,7 +86,10 @@ def test_estimator_rejects_strongly_nonstationary_capture() -> None:
     midpoint = audio.size // 2
     audio[midpoint:] = _tone(10.0 ** (-35.0 / 20.0), seconds=_SECONDS / 2.0)
 
-    with pytest.raises(CalibrationError, match="nonstationary"):
+    with pytest.raises(
+        CalibrationError,
+        match="room noise changed during calibration; keep the room quiet and retry",
+    ):
         _estimate_spectrum_floor(audio)
 
 

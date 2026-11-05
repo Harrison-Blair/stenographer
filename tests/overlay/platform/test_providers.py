@@ -99,4 +99,8 @@ def test_linux_guidance_names_both_backends_and_a_fix_for_every_x_refusal() -> N
         UnavailableReason.X_EXTENSIONS_UNAVAILABLE,
         UnavailableReason.BACKEND_DEPENDENCY_MISSING,
     }
+    assert guidance.overlay_fix_hints[UnavailableReason.BACKEND_DEPENDENCY_MISSING] == (
+        "overlay backend imports failed; reinstall Stenographer "
+        "using the documented installation method"
+    )
     assert "layer-shell or XWayland" in guidance.overlay_fix_hint_default
