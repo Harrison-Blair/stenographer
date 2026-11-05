@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
 
-from stenographer.lib.analytics.metrics import clean_context, clean_metrics
+from stenographer.lib.analytics.metrics import PHASES, clean_context, clean_metrics
 from stenographer.lib.analytics.resources import ResourceSummary
 
 
@@ -53,3 +53,28 @@ class Checkpoint:
 class QueuedCheckpoint:
     checkpoint: Checkpoint
     resource: ResourceSummary | None = None
+
+
+def advance_checkpoint(
+    old: Checkpoint,
+    phase: str,
+    *,
+    updated_at: str,
+    monotonic_now: float,
+    metrics: Mapping[str, object] | None = None,
+    context: Mapping[str, object] | None = None,
+    outcome: str | None = None,
+) -> Checkpoint:
+    """Advance revision and phase while retaining cumulative measurements. PURE."""
+    if PHASES.index(phase) < PHASES.index(old.phase):
+        raise ValueError("Checkpoint phase cannot regress")
+    return replace(
+        old,
+        updated_at=updated_at,
+        revision=old.revision + 1,
+        phase=phase,
+        outcome=outcome or old.outcome,
+        metrics={**old.metrics, **clean_metrics(metrics or {})},
+        context={**old.context, **clean_context(context or {})},
+        monotonic_finished=monotonic_now if phase == "terminal" else old.monotonic_finished,
+    )

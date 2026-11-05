@@ -5,11 +5,19 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+from datetime import UTC, date, datetime, time, timedelta
 
 from stenographer.lib.analytics.filters import Filters
-from stenographer.lib.analytics.metrics import local_date_bound
-from stenographer.lib.analytics.paths import database_path
-from stenographer.lib.analytics.store import Store
+from stenographer.lib.analytics.store import Store, database_path
+from stenographer.lib.platform import current_platform
+
+
+def local_date_bound(value: str, *, end: bool = False) -> str:
+    """Local calendar day to UTC; end bounds are exclusive next-day midnight."""
+    day = date.fromisoformat(value)
+    if end:
+        day += timedelta(days=1)
+    return datetime.combine(day, time.min).astimezone(UTC).isoformat(timespec="microseconds")
 
 
 def cmd_stats(args) -> int:
@@ -23,9 +31,7 @@ def cmd_stats(args) -> int:
             device=args.device,
             outcome=args.outcome,
         )
-        if filters.since and filters.until and filters.since >= filters.until:
-            raise ValueError("The start date must not be after the end date.")
-        store = Store(database_path())
+        store = Store(database_path(current_platform()))
         if args.stats_command == "reset":
             from stenographer.cli.stats.reset.handler import run
         elif args.stats_command == "delete":

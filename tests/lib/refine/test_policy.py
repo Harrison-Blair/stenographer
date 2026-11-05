@@ -42,7 +42,7 @@ def test_blank_text_is_never_refined_whatever_the_threshold(text):
 def test_threshold_counts_words_the_way_analytics_does():
     """A count that disagreed with ``recognized_words`` would make a summary
     line contradict itself: 12 words recorded, refine skipped at min_words=10."""
-    from stenographer.lib.analytics.metrics import count_words
+    from stenographer.lib.transcribe.text import count_words
 
     spoken = "it's a well-known problem, isn't it? 42 times over"
     assert word_count(spoken) == count_words(spoken)

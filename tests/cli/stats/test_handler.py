@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import json
 
-from stenographer.cli.stats.handler import cmd_stats
-from stenographer.lib.analytics.metrics import local_date_bound
+from stenographer.cli.stats.handler import cmd_stats, local_date_bound
 
 from .conftest import checkpoint
 

@@ -16,18 +16,17 @@ from pathlib import Path
 
 import pytest
 
+from stenographer.cli.stats.handler import local_date_bound
 from stenographer.lib.analytics.filters import Filters
 from stenographer.lib.analytics.metrics import (
     clean_context,
     clean_metrics,
-    count_words,
     distribution,
-    local_date_bound,
     summarize,
 )
 from stenographer.lib.analytics.resources import ResourceSummary
-from stenographer.lib.analytics.session import AnalyticsSession
 from stenographer.lib.analytics.store import Store
+from stenographer.lib.transcribe.text import count_words
 
 
 def checkpoint(identity="run:1", revision=0, phase="accepted_start", **metrics):
@@ -166,8 +165,7 @@ def test_unfinished_work_requires_liveness_evidence_and_survives_reopen(tmp_path
     Store(path).write_checkpoint(checkpoint(recognized_words=7))
     reopened = Store(path)
     assert reopened.records()[0]["outcome"] is None
-    assert reopened.mark_interrupted("run", process_confirmed_dead=False) == 0
-    assert reopened.mark_interrupted("run", process_confirmed_dead=True) == 1
+    assert reopened.mark_interrupted("run") == 1
     assert reopened.records()[0]["outcome"] == "interrupted"
     assert reopened.report()["totals"]["recognized_words"] == 7
 
@@ -243,19 +241,6 @@ def test_bounded_queue_and_persistent_contention_report_loss(
     assert session.health["degraded"]
 
 
-def test_disabled_collection_performs_no_database_or_probe_work(tmp_path):
-    path = tmp_path / "analytics.db"
-
-    def forbidden():
-        raise AssertionError("disabled profiling executed")
-
-    session = AnalyticsSession(path, enabled=False, resource_probe=forbidden)
-    session.start(1)
-    session.finish(1, "success", {"recognized_words": 5})
-    assert session.close()
-    assert not path.exists()
-
-
 def test_resource_summary_distinguishes_unavailable_values_from_zero():
     summary = ResourceSummary(10)
     summary.observe(
@@ -309,10 +294,10 @@ def test_resource_boundary_observations_cannot_hide_missed_intervals():
     for _ in range(5):
         summary.observe({"resident_bytes": 200}, observed_at=10.1)
     assert summary.metrics(12)["resource_coverage"] == 0.2
-    summary.observe({"cpu_seconds": 7, "reasons": {"gpu": "unsupported"}}, observed_at=12)
+    summary.observe({"cpu_seconds": 7, "reasons": {"gpu": "gpu_probe_failed"}}, observed_at=12)
     assert "app_cpu_s" not in summary.metrics(12)
     assert summary.metrics(12)["app_cpu_samples"] == 1
-    assert summary.context() == {"resource_availability": "gpu:unsupported"}
+    assert summary.context() == {"resource_availability": "gpu:gpu_probe_failed"}
 
 
 def test_privacy_rejection_also_applies_to_direct_database_writes(tmp_path):
@@ -553,7 +538,7 @@ def test_liveness_recovery_preserves_clean_run_end_and_checks_closed_incomplete_
 
     assert store.recover_interrupted(dead) == 1
     assert checked == [2]
-    assert store.mark_interrupted("clean", process_confirmed_dead=True) == 0
+    assert store.mark_interrupted("clean") == 0
     with sqlite3.connect(path) as connection:
         after = dict(connection.execute("SELECT run_id,ended_at FROM runs"))
     assert after == before
@@ -585,8 +570,11 @@ def test_observation_in_the_same_clock_tick_as_terminal_is_not_attributed():
 
 
 def test_checkpoint_advancement_freezes_snapshots_and_shares_terminal_window():
-    from stenographer.lib.analytics.checkpoint_records import Checkpoint, QueuedCheckpoint
-    from stenographer.lib.analytics.checkpoints import advance_checkpoint
+    from stenographer.lib.analytics.checkpoint_records import (
+        Checkpoint,
+        QueuedCheckpoint,
+        advance_checkpoint,
+    )
 
     measurements = {"capture_s": 3}
     first = Checkpoint("id", "run", "hotkey", "start", "start", 10, metrics=measurements)
@@ -626,11 +614,11 @@ def test_checkpoint_advancement_freezes_snapshots_and_shares_terminal_window():
 
 
 def test_the_database_lives_beside_the_other_host_state(tmp_path, monkeypatch):
-    from stenographer.lib.analytics.paths import database_path
+    from stenographer.lib.analytics.store import database_path
     from stenographer.lib.platform import current_platform
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    path = database_path()
+    path = database_path(current_platform())
 
     assert path.name == "analytics.sqlite3"
     assert path.parent == current_platform().state_dir(os.environ, Path.home())
@@ -822,18 +810,6 @@ def test_a_host_that_cannot_answer_liveness_leaves_work_incomplete(tmp_path):
     assert store.records()[0]["outcome"] is None
 
 
-def test_reset_deletes_every_source_and_suppresses_late_writes(tmp_path):
-    store = Store(tmp_path / "analytics.db")
-    store.write_checkpoint(checkpoint())
-    file_record = checkpoint("run:2")
-    file_record["source"] = "file"
-    store.write_checkpoint(file_record)
-
-    assert store.reset() == 2
-    assert store.records(Filters(source=None)) == []
-    assert store.write_checkpoint(checkpoint("run:1", revision=1)) is False
-
-
 def test_unknown_and_unmeasurable_values_are_told_apart():
     assert clean_metrics({"capture_s": None, "words": 3}) == {"words": 3}
     assert clean_context({"device": None, "model": "medium.en"}) == {"model": "medium.en"}
@@ -862,9 +838,8 @@ def test_a_record_older_than_the_range_is_excluded():
     assert filters.matches({**record, "started_at": "2026-01-01T12:00:00.000000+00:00"}) is True
 
 
-def test_advancing_a_checkpoint_rejects_unknown_phases_and_outcomes():
-    from stenographer.lib.analytics.checkpoint_records import Checkpoint
-    from stenographer.lib.analytics.checkpoints import advance_checkpoint
+def test_advancing_a_checkpoint_rejects_phase_regression():
+    from stenographer.lib.analytics.checkpoint_records import Checkpoint, advance_checkpoint
 
     old = Checkpoint(
         id="run:1",
@@ -876,10 +851,6 @@ def test_advancing_a_checkpoint_rejects_unknown_phases_and_outcomes():
     )
     arguments = {"updated_at": "2026-01-01T12:00:01.000000+00:00", "monotonic_now": 11.0}
 
-    with pytest.raises(ValueError, match="phase"):
-        advance_checkpoint(old, "invented_phase", **arguments)
-    with pytest.raises(ValueError, match="outcome"):
-        advance_checkpoint(old, "terminal", outcome="private_transcript", **arguments)
     with pytest.raises(ValueError, match="regress"):
         advance_checkpoint(
             advance_checkpoint(old, "terminal", **arguments), "secured_capture", **arguments

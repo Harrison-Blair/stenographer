@@ -38,36 +38,21 @@ class ResourceSummary:
         if isinstance(reasons, Mapping):
             for key, value in reasons.items():
                 if key in (
-                    "app",
                     "application",
                     "host",
                     "host_cpu",
                     "gpu",
-                    "cpu_seconds",
-                    "resident_bytes",
-                    "host_cpu_percent",
-                    "host_memory_used_bytes",
-                    "gpu_utilization_percent",
-                    "gpu_memory_used_bytes",
                 ):
                     # Only fixed categories are retained, never a provider exception message.
                     reason = (
                         value
                         if value
                         in (
-                            "unsupported",
                             "unavailable",
-                            "permission_denied",
-                            "dependency_missing",
-                            "not_supported",
-                            "process_unavailable",
-                            "probe_failed",
-                            "shared_memory",
                             "registered_process_unavailable",
                             "baseline_required",
                             "host_probe_unavailable",
                             "gpu_probe_failed",
-                            "gpu_unavailable_shared_memory_is_not_vram",
                             "native_gpu_probe_unavailable",
                         )
                         else "unavailable"
