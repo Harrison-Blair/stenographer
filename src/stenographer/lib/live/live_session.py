@@ -126,6 +126,7 @@ class LiveSession:
         self._source_seen = {"mic": False, "system": False}
         self._lines: list[TranscriptLine] = []
         self._failed_phrase_count = 0
+        self._audio_failed: list[str] = []
         self._subscribers: list[Callable[[TranscriptLine], None]] = []
         self._paused = False
         self._stopped = False
@@ -161,7 +162,7 @@ class LiveSession:
             self._subscribers.append(callback)
 
     def add_block_listener(self, listener: Callable[[str, np.ndarray], None]) -> Callable[[], None]:
-        """Send ``(source, samples)`` of each written block to *listener* on a delivery thread.
+        """Send ``(source, samples)`` of each accepted block to *listener* on a delivery thread.
 
         Return a function that removes the listener.
         """
@@ -240,6 +241,12 @@ class LiveSession:
     def failed_phrase_count(self) -> int:
         with self._lock:
             return self._failed_phrase_count
+
+    @property
+    def audio_failed_sources(self) -> tuple[str, ...]:
+        """Return the sources whose audio stopped saving; their phrases still transcribe."""
+        with self._lock:
+            return tuple(self._audio_failed)
 
     @property
     def paused(self) -> bool:
@@ -580,8 +587,7 @@ class LiveSession:
                 if segmenter is None:
                     return
                 self._source_seen[source] = True
-                self._writer.write_audio(source, samples)
-                self._source_samples[source] += samples.size
+                self._write_audio(source, samples)
                 rms = float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
                 self._levels[source] = 20 * math.log10(rms) if rms > 0 else float("-inf")
                 phrases = segmenter.accept(samples)
@@ -715,13 +721,35 @@ class LiveSession:
             except Exception as exc:
                 log_failure(log, logging.WARNING, "live: subscriber_failed", exc, safe=False)
 
+    def _write_audio(self, source: str, samples: np.ndarray) -> None:
+        if source in self._audio_failed:
+            return
+        try:
+            self._writer.write_audio(source, samples)
+        except Exception as exc:
+            self._mark_audio_failed(source, exc)
+        else:
+            self._source_samples[source] += samples.size
+
     def _pad_source(self, source: str, duration: float) -> None:
+        if source in self._audio_failed:
+            return
         target_samples = max(0, round(duration * _SAMPLE_RATE))
         missing = target_samples - self._source_samples[source]
         if missing <= 0:
             return
-        self._writer.write_silence(source, missing / _SAMPLE_RATE)
-        self._source_samples[source] += missing
+        try:
+            self._writer.write_silence(source, missing / _SAMPLE_RATE)
+        except Exception as exc:
+            self._mark_audio_failed(source, exc)
+        else:
+            self._source_samples[source] += missing
+
+    def _mark_audio_failed(self, source: str, exc: Exception) -> None:
+        """Stop saving this source: a later write would put its audio out of step."""
+        with self._lock:
+            self._audio_failed.append(source)
+        log_failure(log, logging.WARNING, "live: audio_save_failed", exc, safe=True, source=source)
 
     def _freeze_clock(self) -> None:
         if self._run_started_at is None:

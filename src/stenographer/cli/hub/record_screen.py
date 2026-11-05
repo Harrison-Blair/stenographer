@@ -401,6 +401,9 @@ class RecordScreen(HubScreen):
         if failed:
             noun = "phrase" if failed == 1 else "phrases"
             card.append(f"\n! {failed} {noun} failed", style="#ffaf5f")
+        unsaved = getattr(session, "audio_failed_sources", ()) if session is not None else ()
+        if unsaved:
+            card.append(f"\n! {', '.join(unsaved)} audio not saved", style="#ffaf5f")
         if self._rename_busy(session):
             card.append("\n\nrename busy", style="#8b93a1")
         return card
