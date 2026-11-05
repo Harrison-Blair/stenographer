@@ -21,7 +21,6 @@ from stenographer.cli.hub.checks_tab import ChecksTab
 from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.config_dialog import ConfigPrompt
 from stenographer.cli.hub.defaults_dialog import DefaultsDialog
-from stenographer.cli.hub.device_dialog import DeviceDialog
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, ModelEntry
 from stenographer.cli.hub.export_dialog import ExportDialog
@@ -227,7 +226,7 @@ STATES = {
     ),
 }
 DIALOGS = {
-    "record-device": ("record", lambda p: _record(p, "d"), DeviceDialog),
+    "record-device": ("record", lambda p: _record(p, "d"), ChoiceDialog),
     "record-rename": ("record", lambda p: _record(p, "record", "r"), RenameDialog),
     "record-quit": ("record", lambda p: _record(p, "record", "q"), QuitConfirm),
     "saved-rename": ("record", lambda p: _record(p, "record", "save", "r"), RenameDialog),

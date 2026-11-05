@@ -15,7 +15,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
-from stenographer.cli.hub.device_dialog import DeviceDialog
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.hub_screen import HubScreen
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.widgets.button import HubButton
@@ -523,12 +523,17 @@ class RecordScreen(HubScreen):
         services = app.services
         devices = await asyncio.to_thread(services.input_devices)
         setting = app.current_config().audio.input_device
-        dialog = DeviceDialog(
-            devices,
-            setting=str(setting) if setting else "Default input",
-            current=services.next_device,
+        choices = ((None, None), *devices)
+        selected = next(
+            (index for index, (value, _) in enumerate(choices) if value == services.next_device), 0
         )
-        app.push_screen(dialog, self._choose_device)
+        labels = tuple(
+            label or f"Settings default · {setting or 'Default input'}" for _, label in choices
+        )
+        dialog = ChoiceDialog("Input device", labels, selected, label="Use device")
+        app.push_screen(
+            dialog, lambda index: self._choose_device(choices[index] if index is not None else None)
+        )
 
     def _choose_device(self, choice: tuple[str | None, str | None] | None) -> None:
         if choice is None:

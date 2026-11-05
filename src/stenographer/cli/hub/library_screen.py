@@ -466,8 +466,11 @@ class LibraryScreen(HubScreen):
             )
             for line in lines
         ]
-        if not rows and message:
-            rows.append(Text(message, style=_DIM))
+        failed = (
+            entry is not None and entry.summary is None and entry.job.state in _FAILED_JOB_STATES
+        )
+        if message and (not rows or failed):
+            rows.insert(0, Text(message, style=_DIM))
         self.query_one("#library-transcript", TranscriptScroll).update_content(Group(*rows))
 
     # Loading
@@ -869,22 +872,19 @@ class LibraryScreen(HubScreen):
         entry = self._selected_session()
         if entry is None or self.store is None:
             return
-        self.app.push_screen(ExportDialog(entry.entry_id), partial(self._export, entry.entry_id))
 
-    def _export(self, session_id: str, value: tuple[str, pathlib.Path] | None) -> None:
-        if value is not None:
-            self.app.run_worker(partial(self._write_export, session_id, *value))
-
-    async def _write_export(self, session_id: str, format_name: str, folder: pathlib.Path) -> None:
-        app = self.app
-        try:
-            path = await asyncio.to_thread(self.store.export, session_id, folder, format_name)
-        except Exception as exc:
-            log_failure(log, logging.ERROR, "hub: session_export_failed", exc, safe=True)
-            app.notify(f"Could not export this session: {exc}", severity="error")
-        else:
+        async def export(format_name: str, folder: pathlib.Path) -> pathlib.Path:
+            try:
+                path = await asyncio.to_thread(
+                    self.store.export, entry.entry_id, folder, format_name
+                )
+            except Exception as exc:
+                log_failure(log, logging.ERROR, "hub: session_export_failed", exc, safe=True)
+                raise
             log.info(fmt_event("hub", "session_exported", format=format_name))
-            app.notify(f"Exported to {path}")
+            return path
+
+        self.app.push_screen(ExportDialog(entry.entry_id, export))
 
     def action_session_delete(self) -> None:
         app = self.app

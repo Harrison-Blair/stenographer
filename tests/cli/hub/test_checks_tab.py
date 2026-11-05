@@ -222,12 +222,10 @@ async def test_checks_detail_shows_title_state_explanation_path_and_buttons():
         assert not _button(app, "#checks-test").display
 
 
-async def test_checks_enter_shows_the_fix_hint_and_keys_move_in_group_order():
+async def test_checks_shows_the_fix_hint_and_keys_move_in_group_order():
     app = _app()
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
-        assert "Choose another sound pack." not in _plain(app, "#checks-detail-body")
-        await pilot.press("enter")
         assert "how to fix: Choose another sound pack." in _plain(app, "#checks-detail-body")
         order = []
         for _ in range(len(app.checks_tab.report.checks)):
@@ -1082,3 +1080,40 @@ def test_checks_models_step_probes_the_installed_bark_model(monkeypatch, tmp_pat
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     assert test_step("models", config, tmp_path).startswith("ASR model cached")
+
+
+def test_unreadable_log_is_reported_without_path(tmp_path):
+    warnings = recent_warnings((tmp_path, tmp_path / "absent"))
+    report = DoctorReport((), warnings)
+    assert report.warning_lines() == ("A warning log could not be read.",)
+    assert "A warning log could not be read." in report.report_text()
+    assert str(tmp_path) not in report.report_text()
+
+
+async def test_checks_test_result_stays_with_originating_check():
+    started = threading.Event()
+    release = threading.Event()
+
+    def setup_test(_area, _config):
+        started.set()
+        release.wait(5)
+        return "sound test complete"
+
+    app = _app(setup_test=setup_test)
+    try:
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_checks(pilot)
+            await pilot.press("t")
+            await _settle(pilot, started.is_set)
+            await pilot.press("down")
+            assert _plain(app, "#checks-test-status") == ""
+            release.set()
+            await _settle(
+                pilot,
+                lambda: app.checks_tab._test_statuses.get("cue_player") == "sound test complete",
+            )
+            assert _plain(app, "#checks-test-status") == ""
+            _select_check(app.checks_tab, "cue_player")
+            assert _plain(app, "#checks-test-status") == "test: sound test complete"
+    finally:
+        release.set()

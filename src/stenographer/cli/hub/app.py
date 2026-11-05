@@ -408,6 +408,7 @@ class HubApp(App[None]):
         log.info(fmt_event("hub", "quit_confirmed", work=work, confirmed=bool(confirmed)))
         if not confirmed:
             return
+        self._switch("record")
         self.activity_status = status
         self.refresh_view()
         self.run_worker(worker_factory(), name=name, group="hub-work")

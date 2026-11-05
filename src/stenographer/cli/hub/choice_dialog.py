@@ -26,8 +26,11 @@ class ChoiceDialog(Dialog[int | None]):
         ("enter", "choose", "Choose the option"),
     ]
 
-    def __init__(self, title: str, options: tuple[str, ...], selected: int) -> None:
+    def __init__(
+        self, title: str, options: tuple[str, ...], selected: int, *, label: str = "Choose"
+    ) -> None:
         super().__init__(title)
+        self.label = label
         self.options = options
         self.selected = selected
 
@@ -38,7 +41,7 @@ class ChoiceDialog(Dialog[int | None]):
         self._show()
 
     def buttons(self) -> tuple[tuple[str, str, str], ...]:
-        return (("esc", "Cancel", "cancel"), ("enter", "Choose", "choose"))
+        return (("esc", "Cancel", "cancel"), ("enter", self.label, "choose"))
 
     def _show(self) -> None:
         rows = tuple((option, "") for option in self.options)
@@ -53,4 +56,5 @@ class ChoiceDialog(Dialog[int | None]):
 
     def on_row_selected(self, event: RowSelected) -> None:
         event.stop()
-        self.dismiss(event.index)
+        self.selected = event.index
+        self._show()

@@ -249,8 +249,8 @@ created only for sources that were active during the session:
 - `session.json` records the current transcript revision. A session recorded
   with microphone diarization has it from the start, with `"diarize_mic": true`.
 
-These files are user data that you request when you record. The hub writes
-transcript text and audio only to this session folder. Logs and analytics do
+These files are user data that you request when you record. The hub recording writes audio and transcripts to the session folder. A requested
+export writes a transcript to the selected folder. Logs and analytics do
 not contain transcript text or audio. See the [privacy
 notes](usage.md#understand-privacy-and-network-access) for other Stenographer
 network behavior.
@@ -312,7 +312,7 @@ cancels the job.
 `x` opens the Export dialog. Press `tab` or click a format to choose `md`,
 `jsonl`, `srt`, or `txt`, and type the folder (default `~/Documents`). Press
 `enter` to export or `escape` to cancel. The notice shows the path of the
-exported file.
+exported file. If export fails, the dialog keeps the folder and format so you can retry.
 
 Re-diarization and re-transcription write new transcript revisions and keep
 previous revisions. If an existing `session.json` is unreadable or invalid,
@@ -329,7 +329,7 @@ Press `n` or click `[n] + Transcribe a file…` to open the Transcribe a file
 dialog. It has a file browser and the job options:
 
 - The browser starts in your home folder. It lists `..`, the folders, and the
-  supported audio files of the current folder with their duration; names that
+  supported audio files of the current folder, with durations when soundfile can determine them; names that
   start with a dot are hidden. Press `up` and `down` (or click a row) to select
   an entry. Press `enter` on a folder to open it. Press `/` to search names in
   the current folder; `escape` clears the search.
@@ -341,8 +341,9 @@ dialog. It has a file browser and the job options:
   default.
 
 Press `enter` on a file (or click `[enter] Transcribe`) to queue one job with
-these options; press `escape` (or click `[esc] Cancel`) to close the dialog.
-The Library shows the job at once and selects it: a new file row, or the
+these options; `escape` clears an open search first and otherwise closes the dialog.
+Click `[esc] Cancel` to close the dialog.
+If a job fails after producing lines, its failure appears above those lines. The Library shows the job at once and selects it: a new file row, or the
 session row for a revision job. Jobs run one at a time in the background. The
 dialog has no output format or output folder option.
 
@@ -461,7 +462,7 @@ former Doctor and Setup sections. The checks are grouped:
 
 Each row shows a state glyph, the check name, and a short detail that is cut
 to fit: `✓` pass, `!` warning, `×` failure. The detail pane shows the
-selected check with its state word, what the check looks at, the result,
+selected check with its state word, what the check looks at, the result, fix guidance when available,
 `checked HH:MM` and the related path when one applies, and the buttons
 `[f] Fix: …` (for a warning or failure that has a fix), `[t] Test: …` (when
 the area has a test), `[l] Open log`, and `[c] Copy report`.
@@ -477,7 +478,6 @@ no transcript text.
 | Key | Action |
 | --- | --- |
 | `up` / `down` | Select a check. |
-| `enter` | Show or hide how to fix the selected check. |
 | `r` | Run the checks again. |
 | `f` | Fix: open the related Settings tab and row, or the Quick setup or Models dialog. |
 | `t` | Test the area of the selected check. |
@@ -486,6 +486,8 @@ no transcript text.
 | `shift+q` | Open Quick setup. |
 | `m` | Open Models. |
 | `shift+d` | Open Defaults. |
+
+A test result stays with its check, including while it is running. Defaults warns before discarding unsaved settings. Unreadable warning logs are identified in Checks and the copied report.
 
 The microphone test lists the input devices and does not capture audio. The
 sound test plays the preview of the sound pack. The hub does not start or

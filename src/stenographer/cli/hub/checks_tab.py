@@ -20,6 +20,7 @@ from stenographer.cli.hub.doctor_view import (
     DOCTOR_STATE_GLYPHS,
     DOCTOR_STATE_TONES,
     DOCTOR_STATE_WORDS,
+    UNREADABLE_LOG,
     DoctorCheck,
     DoctorReport,
 )
@@ -78,7 +79,6 @@ class ChecksTab(Vertical):
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("up", "move_check(-1)", "Previous check"),
         ("down", "move_check(1)", "Next check"),
-        ("enter", "toggle_details", "Show or hide how to fix the check"),
         ("r", "run_checks", "Run the checks again"),
         ("f", "fix", "Fix the selected check"),
         ("t", "test", "Test the area of the selected check"),
@@ -165,8 +165,12 @@ class ChecksTab(Vertical):
         self.report: DoctorReport | None = None
         self.checking = False
         self.index = 0
-        self.details = False
-        self.test_status = ""
+        self._test_statuses: dict[str, str] = {}
+
+    @property
+    def test_status(self) -> str:
+        check = self.selected
+        return self._test_statuses.get(check.check_id, "") if check else ""
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="checks-body"):
@@ -179,7 +183,7 @@ class ChecksTab(Vertical):
                             section.add_class("-later")
                         yield section
                         yield SelectableList(id=f"checks-{group}")
-                yield Static("↑↓ check · enter details · t test", id="checks-list-hint")
+                yield Static("↑↓ check · t test", id="checks-list-hint")
             with Frame(id="checks-detail", variant="fill"):
                 yield Static("", id="checks-detail-head", markup=False)
                 yield Static("", id="checks-detail-body", markup=False)
@@ -214,7 +218,6 @@ class ChecksTab(Vertical):
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
         return (
             ("↑↓", "check"),
-            ("enter", "details"),
             ("t", "test"),
             ("f", "fix"),
             ("r", "run again"),
@@ -264,7 +267,7 @@ class ChecksTab(Vertical):
             title.append(f" {check.label} · {DOCTOR_STATE_WORDS[check.status]}")
             head.update(title)
             lines = [line for line in (check.explanation, check.detail) if line]
-            if self.details and check.fix:
+            if check.fix:
                 lines.append(f"how to fix: {check.fix}")
             body.update("\n".join(lines))
             checked = f"checked {self.report.checked_at:%H:%M}"
@@ -283,7 +286,8 @@ class ChecksTab(Vertical):
 
     def _warnings_text(self) -> Text:
         entries = self.report.warning_entries() if self.report is not None else ()
-        if not entries:
+        unreadable = self.report is not None and UNREADABLE_LOG in self.report.warnings
+        if not entries and not unreadable:
             return Text("No recent warnings.", style=StatusToken.TONES["dim"])
         text = Text()
         for time, level, token, description in entries:
@@ -296,6 +300,10 @@ class ChecksTab(Vertical):
             text.append(f"  {token}")
             if description:
                 text.append(f"\n{'':7}{description}", style=StatusToken.TONES["dim"])
+        if unreadable:
+            if text:
+                text.append("\n")
+            text.append(UNREADABLE_LOG, style=StatusToken.TONES["dim"])
         return text
 
     def _refresh_checks(self):
@@ -362,15 +370,11 @@ class ChecksTab(Vertical):
             )
         )
         self.index = report.first_issue_index
-        self.details = False
-        self.test_status = ""
         self.checking = False
         app.refresh_view()
 
     def _select(self, index: int) -> None:
         self.index = index
-        self.details = False
-        self.test_status = ""
         log.info(
             fmt_event("hub", "doctor_check_selected", check=self.report.checks[index].check_id)
         )
@@ -393,11 +397,6 @@ class ChecksTab(Vertical):
         if report is None or not report.checks:
             return
         self._select((self.index + offset) % len(report.checks))
-
-    def action_toggle_details(self) -> None:
-        self.details = not self.details
-        log.info(fmt_event("hub", "doctor_details_toggled", expanded=self.details))
-        self.app.refresh_view()
 
     def action_fix(self) -> None:
         check = self.selected
@@ -424,20 +423,22 @@ class ChecksTab(Vertical):
         if entry is None:
             self.app.notify("This check has no test.")
             return
-        self.test_status = "running…"
+        if self._test_statuses.get(check.check_id) == "running…":
+            return
+        self._test_statuses[check.check_id] = "running…"
         self.app.refresh_view()
-        self.app.run_worker(self._run_test(entry[1]), group="setup-test", exclusive=True)
+        self.app.run_worker(self._run_test(check.check_id, entry[1]), group="setup-test")
 
-    async def _run_test(self, area: str) -> None:
+    async def _run_test(self, check_id: str, area: str) -> None:
         log.info(fmt_event("hub", "setup_test_started", step=area))
         try:
             result = await asyncio.to_thread(self._setup_test, area, self.app.current_config())
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: setup_test_failed", exc, safe=False, step=area)
-            self.test_status = f"failed: {type(exc).__name__}"
+            self._test_statuses[check_id] = f"failed: {type(exc).__name__}"
             self.app.notify("The setup test failed; see the log.", severity="error")
         else:
-            self.test_status = result
+            self._test_statuses[check_id] = result
             log.info(fmt_event("hub", "setup_test_completed", step=area))
         self.app.refresh_view()
 
@@ -491,7 +492,10 @@ class ChecksTab(Vertical):
         path = app.config_editor.path if app.config_editor is not None else resolve_config_path()
         log.info(fmt_event("hub", "setup_defaults_requested"))
         app.push_screen(
-            DefaultsDialog(path), lambda confirmed: self._defaults_closed(path, confirmed)
+            DefaultsDialog(
+                path, app.config_editor.unsaved_change_count if app.config_editor else 0
+            ),
+            lambda confirmed: self._defaults_closed(path, confirmed),
         )
 
     def _defaults_closed(self, path: pathlib.Path, confirmed: bool | None) -> None:

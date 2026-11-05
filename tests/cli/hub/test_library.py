@@ -1173,3 +1173,28 @@ def test_library_storage_card_shortens_the_home_folder(tmp_path, monkeypatch):
 
 
 pytestmark = pytest.mark.usefixtures("utc")
+
+
+def test_export_failure_keeps_values_for_retry(tmp_path):
+    root, sessions = _library(tmp_path)
+    app = HubApp(FakeServices(root))
+    invalid = tmp_path / "not-a-folder"
+    invalid.write_text("file")
+    output = tmp_path / "exports"
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 4)
+            await pilot.press("x", "tab")
+            folder = app.screen.query_one("#export-folder", Input)
+            folder.value = str(invalid)
+            await pilot.press("enter")
+            await _until(pilot, lambda: "Could not export" in _screen_text(app))
+            assert isinstance(app.screen, ExportDialog)
+            assert folder.value == str(invalid)
+            assert app.screen.export_format == "jsonl"
+            folder.value = str(output)
+            await pilot.press("enter")
+            await _until(pilot, lambda: (output / f"{sessions['relabeled']}.jsonl").exists())
+
+    asyncio.run(exercise())

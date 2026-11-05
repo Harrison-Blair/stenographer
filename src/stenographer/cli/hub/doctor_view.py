@@ -18,6 +18,7 @@ _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _EVENT = re.compile(r"([a-z][a-z0-9_-]*):\s+([a-z][a-z0-9_-]*)\b")
 _WARNING = re.compile(r"(\d{2}:\d{2}):\d{2} (WARN|ERROR) (\S+: \S+)\Z")
 _TAIL_WINDOW_BYTES = 256 * 1024
+UNREADABLE_LOG = "A warning log could not be read."
 CHECK_GROUPS = ("input", "engine", "other")
 DOCTOR_STATE_GLYPHS = {"ok": "✓", "warn": "!", "fail": "\N{MULTIPLICATION SIGN}"}
 DOCTOR_STATE_WORDS = {"ok": "pass", "warn": "warning", "fail": "failure"}
@@ -127,6 +128,8 @@ class DoctorReport:
             lines.append(f"{time}  {level:<5}  {token}")
             if description:
                 lines.append(f"{'':7}{description}")
+        if UNREADABLE_LOG in self.warnings:
+            lines.append(UNREADABLE_LOG)
         return tuple(lines)
 
     def report_text(self) -> str:
@@ -180,20 +183,27 @@ def safe_warning_lines(text: str, limit: int = 10) -> tuple[str, ...]:
 def recent_warnings(paths: tuple[pathlib.Path, ...], limit: int = 10) -> tuple[str, ...]:
     """Read a bounded tail from each log and return safe recent warning summaries."""
     records: list[tuple[str, str]] = []
+    unreadable = False
     for path in paths:
         try:
             size = path.stat().st_size
             with path.open("rb") as handle:
                 handle.seek(max(0, size - _TAIL_WINDOW_BYTES))
                 text = handle.read().decode("utf-8", errors="replace")
+        except FileNotFoundError:
+            continue
         except OSError:
+            unreadable = True
             continue
         for raw_line in text.splitlines():
             safe = safe_warning_lines(raw_line, limit=1)
             if safe:
                 columns = raw_line.split(maxsplit=1)
                 records.append((f"{columns[0]} {columns[1]}", safe[0]))
-    return tuple(line for _, line in sorted(records)[-limit:])
+    return (
+        *tuple(line for _, line in sorted(records)[-limit:]),
+        *((UNREADABLE_LOG,) if unreadable else ()),
+    )
 
 
 def _refine_check(config: Config) -> DoctorCheck:
