@@ -36,30 +36,14 @@ from stenographer.cli.setup.workflow import (
     restart_eligible,
     review_lines,
 )
-from stenographer.cli.shared.capabilities import Capabilities
-from stenographer.cli.shared.console import Console
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
-from stenographer.lib.platform.host_guidance import HostGuidance
 from stenographer.lib.refine import client as refine_client
+from tests.cli.support import GUIDANCE as _GUIDANCE
+from tests.cli.support import capabilities, document
+from tests.cli.support import console as _console
 
 _CONFIG_PATH = pathlib.PurePosixPath("/tmp/custom.toml")
-
-_GUIDANCE = HostGuidance(
-    capability_labels={},
-    capability_fix_hints={},
-    clipboard_fix_hints={},
-    clipboard_fix_hint_default="enable a pasteboard",
-    service_noun="host agent",
-    service_name="steno-agent",
-    service_installer="steno-agent install",
-    service_unknown_detail="cannot query the agent manager",
-    service_start_command="steno-agent start",
-    service_restart_command="steno-agent restart",
-    service_log_command="steno-agent logs -f",
-    hotkey_device_comment="device id; empty auto-detects",
-    run_with_config=lambda path: f"STENO_CONFIG={path} stenographer run",
-)
 
 
 def _tryout(**overrides) -> list[str]:
@@ -510,10 +494,6 @@ class _Keys:
         from stenographer.lib.hotkey.keycodes import CODE_NAMES
 
         return CODE_NAMES.get(code)
-
-
-def _console(answers: str = "") -> Console:
-    return Console(io.StringIO(answers), io.StringIO(), io.StringIO())
 
 
 @pytest.fixture
@@ -1017,21 +997,8 @@ def test_a_failed_capture_may_keep_the_current_binding(binding_capture):
     assert result == "KEY_RIGHTCTRL"
 
 
-def _caps(**overrides) -> Capabilities:
-    state = {
-        "key_injector_ok": True,
-        "hotkey_access_ok": True,
-        "has_mic": True,
-        "model_cached": True,
-        "clipboard_ok": True,
-        "clipboard_backend": "wl-copy",
-        "clipboard_read_ok": True,
-        "cue_player": "paplay",
-        "service_enabled": "enabled",
-        "service_active": "active",
-    }
-    state.update(overrides)
-    return Capabilities(**state)
+def _caps(**overrides):
+    return capabilities(**({"cue_player": "paplay"} | overrides))
 
 
 @pytest.fixture
@@ -1452,19 +1419,10 @@ def test_offer_refine_pull_reports_an_unreachable_ollama_without_prompting(monke
 def _document_double(tmp_path, *, save=None):
     from stenographer.lib.config.document import SaveResult
 
-    path = tmp_path / "config.toml"
+    def save_document(config, path):
+        return save(config) if save is not None else SaveResult(True, path)
 
-    class Document:
-        def __init__(self):
-            self.path = path
-            self.config = Config.defaults()
-
-        def save(self, config):
-            if save is not None:
-                return save(config)
-            return SaveResult(True, path)
-
-    return Document()
+    return document(tmp_path, save=save_document)
 
 
 @pytest.fixture

@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from stenographer.cli.stats.handler import _duration, _summary as run
+from stenographer.cli.stats.handler import _duration
+from stenographer.cli.stats.handler import _summary as run
 from stenographer.lib.analytics.filters import Filters
 
 from .conftest import checkpoint
