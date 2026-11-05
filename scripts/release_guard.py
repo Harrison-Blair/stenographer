@@ -160,8 +160,11 @@ def plan_release(
         candidate = (major, minor, patch + 1)
     version = ".".join(str(part) for part in candidate)
 
-    state = analyze_releases(pages, version, expected_target_commit, check_drafts=check_drafts)
     tag_names = set(tags)
+    if version in tag_names:
+        raise ReleaseGuardError(f"a Git tag already exists for v{version}")
+
+    state = analyze_releases(pages, version, expected_target_commit, check_drafts=check_drafts)
     assert isinstance(pages, list)  # Validated by analyze_releases.
     for page in pages:
         for release in page:
