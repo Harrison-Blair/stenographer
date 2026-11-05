@@ -28,7 +28,6 @@ import time
 from typing import TYPE_CHECKING
 
 from stenographer.cli.shared.config import with_config
-from stenographer.cli.shared.errors import _fatal
 from stenographer.lib.audio.constants import SAMPLE_RATE
 
 if TYPE_CHECKING:
@@ -88,7 +87,11 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.lib.transcribe import bark_download, model
 
     if not bark_download.is_model_cached():
-        return _fatal("ASR model not found; run `stenographer model download --asr`")
+        print(
+            "stenographer: ASR model not found; run `stenographer model download --asr`",
+            file=sys.stderr,
+        )
+        return 78
 
     import soundfile
 
