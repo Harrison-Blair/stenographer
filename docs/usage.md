@@ -93,6 +93,8 @@ the run finishes at the next decode boundary, but the result is still discarded.
 If Agent's unrefined transcript is being copied when you cancel, the rewrite is
 not copied, and your previous clipboard item comes back.
 
+The formatter capitalizes the pronoun `i`, including when surrounded by punctuation.
+
 Invalid binding errors identify the affected `hotkey` setting.
 
 Set `cancel_binding = ""` to disable this behavior, or choose another evdev
