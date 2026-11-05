@@ -122,22 +122,20 @@ def test_quick_review_rejects_reedit_actions():
 
 
 @pytest.mark.parametrize(
-    ("changed", "custom", "missing", "active", "expected"),
+    ("changed", "custom", "active", "expected"),
     [
-        (True, False, False, "active", True),
-        (False, False, False, "active", False),
-        (True, True, False, "active", False),
-        (True, False, True, "active", False),
-        (True, False, False, "inactive", False),
-        (True, False, False, None, False),
+        (True, False, "active", True),
+        (False, False, "active", False),
+        (True, True, "active", False),
+        (True, False, "inactive", False),
+        (True, False, None, False),
     ],
 )
-def test_restart_eligibility(changed, custom, missing, active, expected):
+def test_restart_eligibility(changed, custom, active, expected):
     assert (
         restart_eligible(
             config_changed=changed,
             custom_config=custom,
-            missing_required=missing,
             service_active=active,
         )
         is expected

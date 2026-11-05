@@ -178,7 +178,6 @@ def test_restart_policy_uses_real_user_service_status():
     assert setup.restart_eligible(
         config_changed=True,
         custom_config=False,
-        missing_required=False,
         service_active=active,
     ) is (active == "active")
 

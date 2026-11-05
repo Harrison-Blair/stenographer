@@ -140,14 +140,11 @@ def restart_eligible(
     *,
     config_changed: bool,
     custom_config: bool,
-    missing_required: bool,
     service_active: str | None,
 ) -> bool:
     """Whether setup may offer a service restart."""
 
-    return (
-        config_changed and not custom_config and not missing_required and service_active == "active"
-    )
+    return config_changed and not custom_config and service_active == "active"
 
 
 def followup_exit_code(*, operational_failure: bool, missing_required: bool) -> int:
@@ -868,7 +865,6 @@ def _guided_setup(
     if restart_eligible(
         config_changed=changed,
         custom_config=custom_config,
-        missing_required=False,
         service_active=caps.service_active,
     ):
         if ask_yes_no(
