@@ -136,27 +136,6 @@ def parse_quick_review_action(text: str) -> str:
     raise ValueError("choose Save or Cancel")
 
 
-def restart_eligible(
-    *,
-    config_changed: bool,
-    custom_config: bool,
-    service_active: str | None,
-) -> bool:
-    """Whether setup may offer a service restart."""
-
-    return config_changed and not custom_config and service_active == "active"
-
-
-def followup_exit_code(*, operational_failure: bool, missing_required: bool) -> int:
-    """Operational failures take precedence over a doctor capability failure."""
-
-    if operational_failure:
-        return 1
-    if missing_required:
-        return 78
-    return 0
-
-
 def _display_optional(value: object) -> str:
     return "automatic/unset" if value is None else str(value)
 
@@ -880,14 +859,10 @@ def _guided_setup(
     missing = bool(missing_required(caps))
     if missing:
         console.write("Service restart skipped until required capabilities are available.")
-        return followup_exit_code(operational_failure=operational_failure, missing_required=True)
+        return 1 if operational_failure else 78
 
     restart_pending = False
-    if restart_eligible(
-        config_changed=changed,
-        custom_config=custom_config,
-        service_active=caps.service_active,
-    ):
+    if changed and not custom_config and caps.service_active == "active":
         if ask_yes_no(
             console,
             f"Restart the active {guidance.service_name} to apply changes?",
@@ -907,10 +882,7 @@ def _guided_setup(
                 "Service is not active; setup did not start it. "
                 f"Run `{guidance.service_start_command}` when ready."
             )
-    exit_code = followup_exit_code(
-        operational_failure=operational_failure,
-        missing_required=False,
-    )
+    exit_code = 1 if operational_failure else 0
     if quick and exit_code == 0:
         for line in quick_tryout_lines(
             config,

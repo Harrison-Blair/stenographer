@@ -26,7 +26,6 @@ from stenographer.cli.shared.terminal import restart_service
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.platform import current_platform
-from stenographer.lib.platform.linux.probe import service_status
 from stenographer.lib.transcribe import bark_download
 from stenographer.overlay.spectrum.calibration import calibrate_spectrum_profile
 
@@ -169,16 +168,6 @@ def test_real_quick_setup_persists_and_runs_guided_checks(tmp_path, monkeypatch)
     assert "systemd unit:" in output
     if exit_code == 0:
         assert "Try a real dictation" in output
-
-
-def test_restart_policy_uses_real_user_service_status():
-    _, active = service_status()
-
-    assert setup.restart_eligible(
-        config_changed=True,
-        custom_config=False,
-        service_active=active,
-    ) is (active == "active")
 
 
 def test_real_active_service_restart():
