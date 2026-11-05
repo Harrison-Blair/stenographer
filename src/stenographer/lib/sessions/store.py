@@ -54,6 +54,12 @@ class SessionStore:
         self.root = Path(sessions_root).expanduser().resolve(strict=False)
         self._search_texts: dict[str, tuple[tuple[str, int], tuple[str, ...]]] = {}
 
+    def _directory(self, session_id: str) -> Path:
+        directory = session_directory(self.root, session_id)
+        if directory is None:
+            raise SessionNotFoundError(f"session not found: {session_id}")
+        return directory
+
     def list_sessions(self) -> tuple[SessionSummary, ...]:
         """Return session summaries, newest first."""
         summaries = []
@@ -84,9 +90,7 @@ class SessionStore:
 
     def read(self, session_id: str) -> SessionDetail:
         """Read the transcript and derive talk time and FLAC activity on demand."""
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
+        directory = self._directory(session_id)
         return read_session(directory, session_id, with_activity=True)
 
     def write_revision(
@@ -105,9 +109,7 @@ class SessionStore:
         final names, and ``session.json`` is replaced last. An error or a cancel at any
         step removes each file that this call made.
         """
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
+        directory = self._directory(session_id)
         if not isinstance(method, str) or not method.strip():
             raise ValueError("revision method must not be empty")
         revised = tuple(lines)
@@ -173,9 +175,7 @@ class SessionStore:
 
     def next_revision_name(self, session_id: str) -> str:
         """Return the file name that the next revision of this session gets."""
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
+        directory = self._directory(session_id)
         with _session_lock(self.root / session_id):
             return self._next_revision_name(directory)
 
@@ -245,9 +245,7 @@ class SessionStore:
 
     def source_audio(self, session_id: str) -> Path:
         """Return the validated copied source audio of a file session."""
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
+        directory = self._directory(session_id)
         metadata = session_metadata(directory)
         if metadata.get("kind") != "file":
             raise SessionSourceError(f"session is not a file session: {session_id}")
@@ -291,9 +289,7 @@ class SessionStore:
 
     def delete(self, session_id: str) -> None:
         """Delete one explicitly named session folder below the sessions root."""
-        directory = session_directory(self.root, session_id)
-        if directory is None:
-            raise SessionNotFoundError(f"session not found: {session_id}")
+        directory = self._directory(session_id)
         with _session_lock(self.root / session_id):
             shutil.rmtree(directory)
 
