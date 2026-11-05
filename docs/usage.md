@@ -200,7 +200,8 @@ can lose measurements that have not been committed yet.
 ## Understand privacy and network access
 
 The model runs locally. Audio, transcripts, configuration, and device or model
-names do not leave the machine. Logs contain timings and counts, never audio or
+names stay on the machine by default; a configured remote refine host receives
+transcripts. Logs contain timings and counts, never audio or
 transcript text. The lifecycle pill does not receive raw audio or transcript
 text. The hub Record screen saves the audio and transcript that you record only
 in a private session folder; see [saved session files and
