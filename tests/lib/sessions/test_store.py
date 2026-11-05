@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
+import pytest
 
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -253,3 +254,27 @@ def test_mic_diarization_flag_survives_revisions_and_old_sessions_read_false(tmp
     assert renamed.revision == "transcript.r2.jsonl"
     assert renamed.diarize_mic is True
     assert store.read(old.name).diarize_mic is False
+
+
+@pytest.mark.parametrize("content", [b"{truncated", b"[]", b"\xff"])
+def test_revision_refuses_to_replace_invalid_metadata(tmp_path, content):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    metadata = session / "session.json"
+    metadata.write_bytes(content)
+    store = SessionStore(tmp_path / "sessions")
+
+    with pytest.raises((ValueError, UnicodeError)):
+        store.rename_speaker(session.name, "speaker-1", "Bob")
+
+    assert metadata.read_bytes() == content
+    assert not (session / "transcript.r2.jsonl").exists()
+    assert not (session / "transcript.r2.md").exists()
+
+
+def test_revision_allows_absent_legacy_metadata(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    (session / "session.json").unlink()
+    store = SessionStore(tmp_path / "sessions")
+
+    assert store.rename_speaker(session.name, "speaker-1", "Bob") == "transcript.r2.jsonl"
+    assert store.read(session.name).lines[0].label == "Bob"

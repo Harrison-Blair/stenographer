@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
@@ -109,6 +110,17 @@ class SessionStore:
             original = directory / "transcript.jsonl"
             if not original.is_file():
                 raise FileNotFoundError(f"original transcript is missing: {original}")
+            metadata_path = directory / "session.json"
+            try:
+                metadata_mode = metadata_path.lstat().st_mode
+            except FileNotFoundError:
+                metadata = {}
+            else:
+                if not stat.S_ISREG(metadata_mode):
+                    raise ValueError(f"session metadata is not a regular file: {metadata_path}")
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if not isinstance(metadata, dict):
+                    raise ValueError(f"session metadata is not an object: {metadata_path}")
             current, _, _ = current_revision(directory)
             if current != expected_revision:
                 raise StaleRevisionError(
@@ -128,7 +140,7 @@ class SessionStore:
             ).encode("utf-8")
             markdown = render_transcript(revised, "md").encode("utf-8")
             metadata = {
-                **session_metadata(directory),
+                **metadata,
                 "current_revision": filename,
                 "method": method.strip(),
             }
