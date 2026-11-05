@@ -29,8 +29,6 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
-from stenographer.lib.logging.utterance_filter import UtteranceFilter
-from stenographer.lib.logging.worker_log_relay import WorkerLogRelay
 from stenographer.lib.platform import current_platform
 
 if TYPE_CHECKING:
@@ -54,6 +52,31 @@ _stderr_level_pinned = False
 _utterance: int | None = None
 _forward_lock = threading.Lock()
 _worker_drains: set[Callable[[], None]] = set()
+
+
+class UtteranceFilter(logging.Filter):
+    """Stamp the current utterance id on each record it passes.
+
+    It belongs on the queue handler, not on the ``stenographer`` logger: every
+    module logs through ``getLogger(__name__)``, and a logger's own filters run
+    only for records emitted on that exact logger. Handler filters run in
+    ``Handler.handle`` — in the thread that emitted the record, before the
+    queue hands it to the listener.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        number = _utterance
+        record.utt_suffix = "" if number is None else f" utt={number}"
+        return True
+
+
+class WorkerLogRelay(logging.handlers.QueueListener):
+    def __init__(self, log_queue, *, on_log: Callable[[logging.LogRecord], None]):
+        super().__init__(log_queue)
+        self._on_log = on_log
+
+    def handle(self, record: logging.LogRecord) -> None:
+        self._on_log(record)
 
 
 def log_paths(
@@ -169,7 +192,6 @@ def setup_logging(
 
     if _listener is None:
         stream_handler = logging.StreamHandler(resolved_stderr)
-        _mark_owned(stream_handler)
         stream_handler.setFormatter(
             logging.Formatter(
                 stderr_format(journal_attached=current_platform().journal_attached(resolved_env)),
@@ -215,21 +237,13 @@ def flush_logging() -> None:
         listener.start()
 
 
-def owned_handlers(logger: logging.Logger | None = None) -> tuple[logging.Handler, ...]:
+def owned_handlers() -> tuple[logging.Handler, ...]:
     """Return the real sinks this module owns, never the queue forwarder.
 
     Used internally for sink configuration and inspection. Child relays receive
     only ``forward_worker_record`` and cannot write through these handlers.
     """
-    target = logging.getLogger(_LOGGER_NAME) if logger is None else logger
-    attached = tuple(
-        handler
-        for handler in target.handlers
-        if getattr(handler, _HANDLER_MARKER, False)
-        and not isinstance(handler, logging.handlers.QueueHandler)
-    )
-    listener = _listener
-    return attached + (tuple(listener.handlers) if listener is not None else ())
+    return tuple(_listener.handlers) if _listener is not None else ()
 
 
 def forward_worker_record(record: logging.LogRecord) -> None:
@@ -381,7 +395,6 @@ def _build_file_handler(
             ),
         )
         return None
-    _mark_owned(file_handler)
     # Unconditionally DEBUG: the file is the report, and a threshold applied
     # here cannot be lifted after the failure it was supposed to explain.
     file_handler.setLevel(logging.DEBUG)

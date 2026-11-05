@@ -25,7 +25,7 @@ from stenographer.lib.daemon.pipeline import UtterancePipeline
 from stenographer.lib.daemon.policy import cancel_state
 from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.hotkey.chord_tracker import ChordTracker
-from stenographer.lib.logging.utterance_filter import UtteranceFilter
+from stenographer.lib.logging.pipeline import UtteranceFilter
 from stenographer.lib.platform.errors import UnsupportedPlatformError
 from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.refine.cancellation import never_cancelled

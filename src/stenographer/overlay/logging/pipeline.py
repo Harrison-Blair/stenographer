@@ -14,13 +14,13 @@ from stenographer.lib.logging.pipeline import (
     _FORMAT,
     _FORMAT_DEFAULTS,
     _LOGGER_NAME,
+    UtteranceFilter,
     _emit_file_warning,
     _mark_owned,
     fmt_event,
     log_paths,
     resolve_log_level,
 )
-from stenographer.lib.logging.utterance_filter import UtteranceFilter
 
 _HELPER_MAX_BYTES = 1024 * 1024
 
