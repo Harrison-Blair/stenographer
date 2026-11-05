@@ -8,7 +8,7 @@ only asserted here. Pure: no probe, no subprocess, no device.
 
 from __future__ import annotations
 
-from stenographer.lib.diagnostics.capabilities import REQUIRED
+from stenographer.cli.shared.capabilities import REQUIRED
 from stenographer.lib.platform.linux.guidance import guidance, run_with_config
 
 # Spelled out here rather than imported: the point is to pin the wording, so

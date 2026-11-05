@@ -27,9 +27,7 @@ def _overlay_backend_name(overlay: OverlayCapability) -> str:
         return "disabled"
     if overlay.backend is not None:
         return overlay.backend.value
-    if overlay.reason is not None:
-        return f"unavailable_{overlay.reason.value}"
-    return "unknown"
+    return f"unavailable_{overlay.reason.value}"
 
 
 def _shown(value: object) -> object:

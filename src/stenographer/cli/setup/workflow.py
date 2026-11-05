@@ -140,14 +140,11 @@ def restart_eligible(
     *,
     config_changed: bool,
     custom_config: bool,
-    missing_required: bool,
     service_active: str | None,
 ) -> bool:
     """Whether setup may offer a service restart."""
 
-    return (
-        config_changed and not custom_config and not missing_required and service_active == "active"
-    )
+    return config_changed and not custom_config and service_active == "active"
 
 
 def followup_exit_code(*, operational_failure: bool, missing_required: bool) -> int:
@@ -784,15 +781,15 @@ def _capture_or_choose_binding(
     if action == "type":
         return _prompt_typed_binding(console, current)
 
-    from stenographer.cli.setup.binding_capture import capture_binding
     from stenographer.lib.hotkey.errors import BindingCaptureError
+    from stenographer.lib.platform import current_platform
 
     while True:
         console.write(
             "Press and release one key or a held chord now (15-second timeout; Ctrl-C cancels)."
         )
         try:
-            captured = capture_binding(console.stdin, device, timeout=15.0)
+            captured = current_platform().capture_binding(console.stdin, device, timeout=15.0)
         except BindingCaptureError as exc:
             console.error(f"binding capture failed: {exc}")
         else:
@@ -818,8 +815,7 @@ def _guided_setup(
     quick: bool = False,
 ) -> int:
     from stenographer.cli.doctor import report as doctor
-    from stenographer.cli.shared.capability_probe import probe
-    from stenographer.lib.diagnostics.capabilities import missing_required
+    from stenographer.cli.shared.capabilities import missing_required, probe
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay.platform import current_platform as overlay_platform
@@ -868,7 +864,6 @@ def _guided_setup(
     if restart_eligible(
         config_changed=changed,
         custom_config=custom_config,
-        missing_required=False,
         service_active=caps.service_active,
     ):
         if ask_yes_no(

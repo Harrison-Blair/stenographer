@@ -2,7 +2,7 @@
 """Pure-logic tests for the doctor report: the gate decision, the log tail, and
 rendering only.
 
-The gate (``stenographer.lib.diagnostics.capabilities``) and its rendering (``cli/doctor.py``)
+The gate (``stenographer.cli.shared.capabilities``) and its rendering (``cli/doctor.py``)
 are exercised together here because the report is driven by ``REQUIRED``. The
 "Logs" section is split the same way: ``run`` reads the files, and only its
 classification — ``tail_errors`` — is asserted here, over log text written in
@@ -27,8 +27,8 @@ import pathlib
 import pytest
 
 from stenographer.cli.doctor import report as doctor
+from stenographer.cli.shared.capabilities import missing_required
 from stenographer.lib.config.models import Config
-from stenographer.lib.diagnostics.capabilities import missing_required
 from stenographer.lib.platform.host_guidance import HostGuidance
 from stenographer.overlay.capabilities.models import OverlayCapability
 from stenographer.overlay.platform.guidance import OverlayGuidance

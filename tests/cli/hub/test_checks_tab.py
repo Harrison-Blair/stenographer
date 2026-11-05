@@ -983,7 +983,7 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
         overlay=OverlayCapability.unavailable(UnavailableReason.NO_X_DISPLAY),
     )
     data_dir = tmp_path / "data"
-    monkeypatch.setattr("stenographer.cli.shared.capability_probe.probe", lambda _config: caps)
+    monkeypatch.setattr("stenographer.cli.shared.capabilities.probe", lambda _config: caps)
     monkeypatch.setattr(
         platform_module,
         "current_platform",

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Menu, listing, selection, restart-policy, and command-run tests for sound packs.
 
-The pure halves are asserted directly; ``run`` and ``_post_save`` are driven
+The pure helpers are asserted directly; ``run`` and ``_post_save`` are driven
 over string streams with the configuration document, the pack API, and the host
 provider supplied, so no cue is ever played and no service is ever restarted.
 """
@@ -22,9 +22,6 @@ from stenographer.cli.sounds.workflow import (
     format_pack_lines,
     parse_menu_action,
     parse_sound_pack_choice,
-    post_save_lines,
-    restart_disposition,
-    selection_may_prompt,
 )
 from stenographer.lib.config.models import Config
 from tests.cli.support import GUIDANCE as _GUIDANCE
@@ -123,71 +120,6 @@ def test_menu_appends_the_unavailable_note_for_a_configured_pack_that_is_gone():
         "  2. minimal-ui (bundled, effective)",
         "  configured: gone-pack (unavailable)",
     ]
-
-
-@pytest.mark.parametrize(
-    ("action", "expected"),
-    [
-        ("none", []),
-        ("custom-guidance", ["Custom STENOGRAPHER_CONFIG path: service restart was not offered."]),
-        (
-            "restart-guidance",
-            [
-                "Restart the daemon to apply the sound pack; for the standard active service, "
-                "run `steno-agent restart`."
-            ],
-        ),
-        (
-            "unknown-guidance",
-            [
-                "Could not determine steno-agent status; restart the daemon manually "
-                "to apply the sound pack."
-            ],
-        ),
-        (
-            "inactive-guidance",
-            [
-                "Service is not active; sounds did not start it. "
-                "Run `steno-agent start` when ready; the new pack applies when it starts."
-            ],
-        ),
-    ],
-)
-def test_post_save_guidance_arms_report_and_succeed(action, expected):
-    assert post_save_lines(action, _GUIDANCE) == (expected, 0)
-
-
-def test_post_save_leaves_the_offer_restart_arm_to_the_caller():
-    assert post_save_lines("offer-restart", _GUIDANCE) is None
-
-
-@pytest.mark.parametrize(
-    ("changed", "custom", "interactive", "active", "expected"),
-    [
-        (False, False, True, "active", "none"),
-        (True, True, True, "active", "custom-guidance"),
-        (True, False, False, "active", "restart-guidance"),
-        (True, False, True, "active", "offer-restart"),
-        (True, False, True, "inactive", "inactive-guidance"),
-        (True, False, True, "failed", "inactive-guidance"),
-        (True, False, True, None, "unknown-guidance"),
-    ],
-)
-def test_restart_disposition(changed, custom, interactive, active, expected):
-    assert (
-        restart_disposition(
-            changed=changed,
-            custom_config=custom,
-            interactive=interactive,
-            service_active=active,
-        )
-        == expected
-    )
-
-
-def test_only_tty_selection_may_offer_restart_prompt():
-    assert selection_may_prompt(terminal=True) is True
-    assert selection_may_prompt(terminal=False) is False
 
 
 def _menu(monkeypatch, answers: str, packs, *, load, preview, discover):
@@ -371,10 +303,11 @@ def test_post_save_reports_an_unreadable_service_status_and_fails(monkeypatch):
     assert stdout == "Restart the daemon manually to apply the saved sound pack.\n"
 
 
-def test_post_save_prints_the_guidance_arm_without_prompting(monkeypatch):
+@pytest.mark.parametrize("state", ["inactive", "failed"])
+def test_post_save_prints_the_guidance_arm_without_prompting(monkeypatch, state):
     from stenographer.lib import platform as platform_module
 
-    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active="inactive"))
+    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active=state))
 
     code, stdout, stderr = _post_save(changed=True, custom_config=False, interactive=True)
 
@@ -382,6 +315,47 @@ def test_post_save_prints_the_guidance_arm_without_prompting(monkeypatch):
     assert stdout == (
         "Service is not active; sounds did not start it. "
         "Run `steno-agent start` when ready; the new pack applies when it starts.\n"
+    )
+    assert stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("custom", "interactive"),
+    [(True, True), (True, False), (False, False)],
+    ids=["custom-terminal", "custom-piped", "standard-piped"],
+)
+def test_post_save_without_a_prompt_never_probes_the_host(monkeypatch, custom, interactive):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(
+        platform_module,
+        "current_platform",
+        _platform(probe_error=AssertionError("the host was probed")),
+    )
+
+    code, stdout, stderr = _post_save(changed=True, custom_config=custom, interactive=interactive)
+
+    assert code == 0
+    assert stdout == (
+        "Custom STENOGRAPHER_CONFIG path: service restart was not offered.\n"
+        if custom
+        else "Restart the daemon to apply the sound pack; for the standard active service, "
+        "run `steno-agent restart`.\n"
+    )
+    assert stderr == ""
+
+
+def test_post_save_reports_an_unknown_service_state_without_prompting(monkeypatch):
+    from stenographer.lib import platform as platform_module
+
+    monkeypatch.setattr(platform_module, "current_platform", _platform(service_active=None))
+
+    code, stdout, stderr = _post_save(changed=True, custom_config=False, interactive=True)
+
+    assert code == 0
+    assert stdout == (
+        "Could not determine steno-agent status; restart the daemon manually "
+        "to apply the sound pack.\n"
     )
     assert stderr == ""
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, TextIO
+from typing import TextIO
 
 from stenographer.cli.shared.console import Console
 from stenographer.cli.shared.terminal import (
@@ -21,9 +21,6 @@ from stenographer.cli.shared.terminal import (
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 from stenographer.lib.sounds import packs as sound_packs
-
-if TYPE_CHECKING:
-    from stenographer.lib.platform.host_guidance import HostGuidance
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -119,64 +116,6 @@ def format_pack_lines(
     return lines
 
 
-def restart_disposition(
-    *,
-    changed: bool,
-    custom_config: bool,
-    interactive: bool,
-    service_active: str | None,
-) -> str:
-    """Return the post-save restart action without performing host I/O."""
-
-    if not changed:
-        return "none"
-    if custom_config:
-        return "custom-guidance"
-    if not interactive:
-        return "restart-guidance"
-    if service_active == "active":
-        return "offer-restart"
-    if service_active is None:
-        return "unknown-guidance"
-    return "inactive-guidance"
-
-
-def post_save_lines(action: str, guidance: HostGuidance) -> tuple[list[str], int] | None:
-    """Render the guidance a non-interactive restart disposition prints, with its exit code.
-
-    ``None`` means the disposition is not one of the print-and-return arms —
-    today only ``offer-restart``, whose prompt I/O stays with the caller.
-    """
-
-    if action == "none":
-        return [], 0
-    if action == "custom-guidance":
-        return ["Custom STENOGRAPHER_CONFIG path: service restart was not offered."], 0
-    if action == "restart-guidance":
-        return [
-            "Restart the daemon to apply the sound pack; for the standard active service, run "
-            f"`{guidance.service_restart_command}`."
-        ], 0
-    if action == "unknown-guidance":
-        return [
-            f"Could not determine {guidance.service_name} status; restart the daemon manually "
-            "to apply the sound pack."
-        ], 0
-    if action == "inactive-guidance":
-        return [
-            "Service is not active; sounds did not start it. "
-            f"Run `{guidance.service_start_command}` when ready; "
-            "the new pack applies when it starts."
-        ], 0
-    return None
-
-
-def selection_may_prompt(*, terminal: bool) -> bool:
-    """Menu and direct selections may prompt after saving only on a terminal."""
-
-    return terminal
-
-
 def _effective_name(config: Config, config_dir: pathlib.Path) -> str | None:
     return sound_packs.effective_sound_pack_name(config.feedback.sound_pack, config_dir)
 
@@ -227,27 +166,36 @@ def _post_save(
     from stenographer.lib.platform import current_platform
 
     guidance = current_platform().guidance()
-    service_active: str | None = None
-    if changed and interactive and not custom_config:
-        try:
-            service_active = current_platform().probe_host().service_active
-        except Exception as exc:
-            console.error(f"could not determine {guidance.service_name} status: {exc}")
-            console.write("Restart the daemon manually to apply the saved sound pack.")
-            return 1
-
-    action = restart_disposition(
-        changed=changed,
-        custom_config=custom_config,
-        interactive=interactive,
-        service_active=service_active,
-    )
-    reported = post_save_lines(action, guidance)
-    if reported is not None:
-        lines, exit_code = reported
-        for line in lines:
-            console.write(line)
-        return exit_code
+    if not changed:
+        return 0
+    if custom_config:
+        console.write("Custom STENOGRAPHER_CONFIG path: service restart was not offered.")
+        return 0
+    if not interactive:
+        console.write(
+            "Restart the daemon to apply the sound pack; for the standard active service, run "
+            f"`{guidance.service_restart_command}`."
+        )
+        return 0
+    try:
+        service_active = current_platform().probe_host().service_active
+    except Exception as exc:
+        console.error(f"could not determine {guidance.service_name} status: {exc}")
+        console.write("Restart the daemon manually to apply the saved sound pack.")
+        return 1
+    if service_active is None:
+        console.write(
+            f"Could not determine {guidance.service_name} status; restart the daemon manually "
+            "to apply the sound pack."
+        )
+        return 0
+    if service_active != "active":
+        console.write(
+            "Service is not active; sounds did not start it. "
+            f"Run `{guidance.service_start_command}` when ready; "
+            "the new pack applies when it starts."
+        )
+        return 0
     if not ask_yes_no(
         console,
         f"Restart the active {guidance.service_name} to apply the sound pack?",
@@ -350,7 +298,7 @@ def run(
             console,
             changed=result.changed,
             custom_config=custom_config_selected(),
-            interactive=selection_may_prompt(terminal=interactive),
+            interactive=interactive,
         )
     except (KeyboardInterrupt, EOFError):
         console.write()
