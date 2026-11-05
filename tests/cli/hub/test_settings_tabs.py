@@ -103,39 +103,36 @@ async def _select(pilot, label):
     raise AssertionError(f"no row {label}")
 
 
-def test_settings_each_key_sits_in_its_tab_as_one_field_row(tmp_path):
-    async def exercise():
-        app = _app(tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot)
-            every_key = set(app.config_editor.all_keys)
-            seen = set()
-            for tab, keys in TAB_KEYS.items():
-                app.settings_screen.select_tab(tab)
-                await pilot.pause()
-                assert app.config_editor.visible_keys == keys
-                assert len(_fields(app)) == len(keys)
-                seen.update(keys)
-            assert seen == every_key
-
-            app.settings_screen.select_tab("recognition")
+async def test_settings_each_key_sits_in_its_tab_as_one_field_row(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot)
+        every_key = set(app.config_editor.all_keys)
+        seen = set()
+        for tab, keys in TAB_KEYS.items():
+            app.settings_screen.select_tab(tab)
             await pilot.pause()
-            labels = [field.label for field in _fields(app)]
-            assert labels == [
-                "Idle unload",
-                "CPU threads",
-                "Vocabulary",
-                "Refine",
-                "Host",
-                "Model",
-                "Minimum words",
-                "Structured output",
-            ]
-            text = _screen_text(app)
-            assert "▶ Recognition" in text
-            assert "applies to new sessions and jobs" in text
+            assert app.config_editor.visible_keys == keys
+            assert len(_fields(app)) == len(keys)
+            seen.update(keys)
+        assert seen == every_key
 
-    asyncio.run(exercise())
+        app.settings_screen.select_tab("recognition")
+        await pilot.pause()
+        labels = [field.label for field in _fields(app)]
+        assert labels == [
+            "Idle unload",
+            "CPU threads",
+            "Vocabulary",
+            "Refine",
+            "Host",
+            "Model",
+            "Minimum words",
+            "Structured output",
+        ]
+        text = _screen_text(app)
+        assert "▶ Recognition" in text
+        assert "applies to new sessions and jobs" in text
 
 
 def test_settings_rows_draw_the_control_that_fits_the_key(tmp_path):
@@ -162,28 +159,25 @@ def test_settings_rows_draw_the_control_that_fits_the_key(tmp_path):
     asyncio.run(exercise())
 
 
-def test_settings_number_row_rejects_letters_and_marks_the_unsaved_change(tmp_path):
-    async def exercise():
-        app = _app(tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, "recognition")
-            assert not any(field.changed for field in _fields(app))
-            await pilot.press("enter")
-            await pilot.pause()
-            editor_input = app.screen.focused
-            assert isinstance(editor_input, Input)
-            await pilot.press("ctrl+a", "ctrl+k", "x", "6", "y", "0")
-            assert editor_input.value == "60"
-            await pilot.press("enter")
-            await pilot.pause()
-            assert app.config_editor.config.asr.idle_unload_seconds == 60
-            assert not app.screen.query(Input)
-            row = _field(app, "Idle unload")
-            assert row.changed and _plain(row).strip() == "60 s"
-            assert "● 1 unsaved change" in _screen_text(app)
-            assert "[ctrl+s] Save 1 change" in _screen_text(app)
-
-    asyncio.run(exercise())
+async def test_settings_number_row_rejects_letters_and_marks_the_unsaved_change(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot, "recognition")
+        assert not any(field.changed for field in _fields(app))
+        await pilot.press("enter")
+        await pilot.pause()
+        editor_input = app.screen.focused
+        assert isinstance(editor_input, Input)
+        await pilot.press("ctrl+a", "ctrl+k", "x", "6", "y", "0")
+        assert editor_input.value == "60"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.config_editor.config.asr.idle_unload_seconds == 60
+        assert not app.screen.query(Input)
+        row = _field(app, "Idle unload")
+        assert row.changed and _plain(row).strip() == "60 s"
+        assert "● 1 unsaved change" in _screen_text(app)
+        assert "[ctrl+s] Save 1 change" in _screen_text(app)
 
 
 def test_settings_dot_marks_a_change_from_the_saved_file_not_the_default(tmp_path):
@@ -208,44 +202,41 @@ def test_settings_dot_marks_a_change_from_the_saved_file_not_the_default(tmp_pat
     asyncio.run(exercise())
 
 
-def test_settings_space_toggles_and_undo_reset_and_discard_all(tmp_path):
-    async def exercise():
-        path = _config_path(tmp_path)
-        app = HubApp(IdleServices(), config_path=path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, "recognition")
-            await _select(pilot, "Refine")
-            await pilot.press("space")
-            await pilot.pause()
-            assert app.config_editor.config.refine.enabled is False
-            assert _plain(_field(app, "Refine")) == "( ) off"
-            await pilot.press("down", "down", "down", "down", "space")
-            await pilot.pause()
-            assert app.config_editor.unsaved_change_count == 2
-            await pilot.press("u")
-            assert app.config_editor.unsaved_change_count == 1
-            await _select(pilot, "Refine")
-            await pilot.press("shift+d")
-            await pilot.pause()
-            assert app.config_editor.config.refine.enabled is True
-            assert not app.config_editor.dirty
+async def test_settings_space_toggles_and_undo_reset_and_discard_all(tmp_path):
+    path = _config_path(tmp_path)
+    app = HubApp(IdleServices(), config_path=path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot, "recognition")
+        await _select(pilot, "Refine")
+        await pilot.press("space")
+        await pilot.pause()
+        assert app.config_editor.config.refine.enabled is False
+        assert _plain(_field(app, "Refine")) == "( ) off"
+        await pilot.press("down", "down", "down", "down", "space")
+        await pilot.pause()
+        assert app.config_editor.unsaved_change_count == 2
+        await pilot.press("u")
+        assert app.config_editor.unsaved_change_count == 1
+        await _select(pilot, "Refine")
+        await pilot.press("shift+d")
+        await pilot.pause()
+        assert app.config_editor.config.refine.enabled is True
+        assert not app.config_editor.dirty
 
-            await pilot.press("space")
-            await pilot.click("#config-discard")
-            await pilot.pause()
-            assert "Discard 1 unsaved change?" in _screen_text(app)
-            await pilot.press("n")
-            await pilot.pause()
-            assert app.config_editor.dirty
-            await pilot.click("#config-discard")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
-            assert not app.config_editor.dirty
-            assert app.config_editor.config.refine.enabled is True
-            assert Config.load(path) == app.config_editor.config
-
-    asyncio.run(exercise())
+        await pilot.press("space")
+        await pilot.click("#config-discard")
+        await pilot.pause()
+        assert "Discard 1 unsaved change?" in _screen_text(app)
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.config_editor.dirty
+        await pilot.click("#config-discard")
+        await pilot.pause()
+        await pilot.press("y")
+        await pilot.pause()
+        assert not app.config_editor.dirty
+        assert app.config_editor.config.refine.enabled is True
+        assert Config.load(path) == app.config_editor.config
 
 
 def test_settings_choice_and_device_rows_open_their_lists(tmp_path):
@@ -310,42 +301,36 @@ def test_settings_save_keeps_a_backup_and_a_comment(tmp_path):
     asyncio.run(exercise())
 
 
-def test_settings_ctrl_s_saves_the_value_typed_in_the_row(tmp_path):
-    async def exercise():
-        path = _config_path(tmp_path)
-        app = HubApp(IdleServices(), config_path=path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, "recognition")
-            await pilot.press("enter", "ctrl+a", "ctrl+k", "7", "5", "ctrl+s")
-            await pilot.pause()
-            assert Config.load(path).asr.idle_unload_seconds == 75
-
-    asyncio.run(exercise())
+async def test_settings_ctrl_s_saves_the_value_typed_in_the_row(tmp_path):
+    path = _config_path(tmp_path)
+    app = HubApp(IdleServices(), config_path=path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot, "recognition")
+        await pilot.press("enter", "ctrl+a", "ctrl+k", "7", "5", "ctrl+s")
+        await pilot.pause()
+        assert Config.load(path).asr.idle_unload_seconds == 75
 
 
-def test_settings_letters_go_to_a_focused_text_input(tmp_path):
-    async def exercise():
-        app = _app(tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, "recognition")
-            await _select(pilot, "Model")
-            await pilot.press("enter")
-            await pilot.pause()
-            await pilot.press("ctrl+a", "ctrl+k", *"Du/1q", "space", "x")
-            await pilot.pause()
-            assert app.screen.focused.value == "Du/1q x"
-            assert app.current_mode == "settings" and app.is_running
-            assert app.settings_screen.tab == "recognition"
-            assert not app.config_editor.dirty
-            await pilot.press("escape")
-            await pilot.pause()
-            assert not app.screen.query(Input)
-            assert not app.config_editor.dirty
-            await pilot.press("enter", "ctrl+a", "ctrl+k", *"small", "enter")
-            await pilot.pause()
-            assert app.config_editor.config.refine.model == "small"
-
-    asyncio.run(exercise())
+async def test_settings_letters_go_to_a_focused_text_input(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot, "recognition")
+        await _select(pilot, "Model")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("ctrl+a", "ctrl+k", *"Du/1q", "space", "x")
+        await pilot.pause()
+        assert app.screen.focused.value == "Du/1q x"
+        assert app.current_mode == "settings" and app.is_running
+        assert app.settings_screen.tab == "recognition"
+        assert not app.config_editor.dirty
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.screen.query(Input)
+        assert not app.config_editor.dirty
+        await pilot.press("enter", "ctrl+a", "ctrl+k", *"small", "enter")
+        await pilot.pause()
+        assert app.config_editor.config.refine.model == "small"
 
 
 @pytest.mark.parametrize(
@@ -357,67 +342,55 @@ def test_settings_letters_go_to_a_focused_text_input(tmp_path):
         ("live.diarize_mic", "live", "Separate room speakers"),
     ],
 )
-def test_settings_open_setting_selects_the_row_on_each_tab(tmp_path, key, tab, label):
-    async def exercise():
-        app = _app(tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.pause()
-            app.config_editor.edit("hotkey.binding", "KEY_F9")
-            app.open_setting(key)
-            await pilot.pause()
-            assert app.settings_screen.tab == tab
-            assert app.config_editor.selected_key == key
-            assert [field.label for field in _fields(app) if field.focused] == [label]
-            assert app.config_editor.config.hotkey.binding == "KEY_F9"
-
-    asyncio.run(exercise())
+async def test_settings_open_setting_selects_the_row_on_each_tab(tmp_path, key, tab, label):
+    app = _app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        app.config_editor.edit("hotkey.binding", "KEY_F9")
+        app.open_setting(key)
+        await pilot.pause()
+        assert app.settings_screen.tab == tab
+        assert app.config_editor.selected_key == key
+        assert [field.label for field in _fields(app) if field.focused] == [label]
+        assert app.config_editor.config.hotkey.binding == "KEY_F9"
 
 
-def test_settings_search_finds_names_across_tabs_and_escape_clears(tmp_path):
-    async def exercise():
-        app = _app(tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot)
-            await pilot.press("slash", *"threads", "enter")
-            await pilot.pause()
-            assert [field.label for field in _fields(app)] == ["CPU threads"]
-            assert "search: threads" in _screen_text(app)
-            await pilot.press("escape")
-            await pilot.pause()
-            assert app.config_editor.visible_keys == TAB_KEYS["general"]
-
-    asyncio.run(exercise())
+async def test_settings_search_finds_names_across_tabs_and_escape_clears(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot)
+        await pilot.press("slash", *"threads", "enter")
+        await pilot.pause()
+        assert [field.label for field in _fields(app)] == ["CPU threads"]
+        assert "search: threads" in _screen_text(app)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.config_editor.visible_keys == TAB_KEYS["general"]
 
 
-def test_settings_footer_and_buttons_print_their_keys(tmp_path):
-    async def exercise():
-        app = _app(tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot)
-            text = _screen_text(app)
-            for label in ("[ctrl+s] Save 0 changes", "[u] Undo", "[D] Reset row", "Discard all"):
-                assert label in text
-            hints = text.splitlines()[-1]
-            assert "space toggle" in hints and "D reset" in hints
-
-    asyncio.run(exercise())
+async def test_settings_footer_and_buttons_print_their_keys(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot)
+        text = _screen_text(app)
+        for label in ("[ctrl+s] Save 0 changes", "[u] Undo", "[D] Reset row", "Discard all"):
+            assert label in text
+        hints = text.splitlines()[-1]
+        assert "space toggle" in hints and "D reset" in hints
 
 
-def test_settings_click_selects_a_row_and_a_second_click_edits_it(tmp_path):
-    async def exercise():
-        app = _app(tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, "recognition")
-            await pilot.click(_field(app, "CPU threads"))
-            await pilot.pause()
-            assert app.config_editor.selected_key == "asr.cpu_threads"
-            assert not app.screen.query(Input)
-            await pilot.click(_field(app, "CPU threads"))
-            await pilot.pause()
-            assert app.settings_screen.editing == "asr.cpu_threads"
-            assert isinstance(app.screen.focused, Input)
-
-    asyncio.run(exercise())
+async def test_settings_click_selects_a_row_and_a_second_click_edits_it(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot, "recognition")
+        await pilot.click(_field(app, "CPU threads"))
+        await pilot.pause()
+        assert app.config_editor.selected_key == "asr.cpu_threads"
+        assert not app.screen.query(Input)
+        await pilot.click(_field(app, "CPU threads"))
+        await pilot.pause()
+        assert app.settings_screen.editing == "asr.cpu_threads"
+        assert isinstance(app.screen.focused, Input)
 
 
 def _row_text(app, label: str) -> str:
@@ -432,40 +405,34 @@ def _row_text(app, label: str) -> str:
         ("recognition", "Host", tuple("ftp://x"), f"{FAIL} "),
     ],
 )
-def test_settings_row_input_shows_its_rejection_on_screen(tmp_path, tab, label, typed, error):
-    async def exercise():
-        app = _app(tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, tab)
-            await _select(pilot, label)
-            await pilot.press("enter", "ctrl+a", "ctrl+k", *typed, "enter")
-            await pilot.pause()
-            assert isinstance(app.screen.focused, Input), "the input stays open"
-            assert error in _row_text(app, label)
-            await pilot.press("escape")
-            await pilot.pause()
-            assert FAIL not in _screen_text(app)
-
-    asyncio.run(exercise())
+async def test_settings_row_input_shows_its_rejection_on_screen(tmp_path, tab, label, typed, error):
+    app = _app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot, tab)
+        await _select(pilot, label)
+        await pilot.press("enter", "ctrl+a", "ctrl+k", *typed, "enter")
+        await pilot.pause()
+        assert isinstance(app.screen.focused, Input), "the input stays open"
+        assert error in _row_text(app, label)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert FAIL not in _screen_text(app)
 
 
-def test_settings_choice_row_shows_a_rejected_value_on_screen(tmp_path, monkeypatch):
-    async def exercise():
-        app = _app(tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot)
-            await _select(pilot, "Hotkey mode")
+async def test_settings_choice_row_shows_a_rejected_value_on_screen(tmp_path, monkeypatch):
+    app = _app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open(pilot)
+        await _select(pilot, "Hotkey mode")
 
-            def reject(key, _value):
-                raise ConfigError(app.config_editor.path, key, "is not allowed here")
+        def reject(key, _value):
+            raise ConfigError(app.config_editor.path, key, "is not allowed here")
 
-            monkeypatch.setattr(app.config_editor, "set_value", reject)
-            await pilot.press("enter", "up", "enter")
-            await pilot.pause()
-            assert f"{FAIL} is not allowed here" in _row_text(app, "Hotkey mode")
-            monkeypatch.undo()
-            await pilot.press("enter", "up", "enter")
-            await pilot.pause()
-            assert FAIL not in _screen_text(app)
-
-    asyncio.run(exercise())
+        monkeypatch.setattr(app.config_editor, "set_value", reject)
+        await pilot.press("enter", "up", "enter")
+        await pilot.pause()
+        assert f"{FAIL} is not allowed here" in _row_text(app, "Hotkey mode")
+        monkeypatch.undo()
+        await pilot.press("enter", "up", "enter")
+        await pilot.pause()
+        assert FAIL not in _screen_text(app)
