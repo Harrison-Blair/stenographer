@@ -137,14 +137,6 @@ def test_loading_activity_is_ordered_without_resetting_recording_slots():
     assert mailbox.take_nowait() == SpectrumMessage(generation, 1, (2,) * SPECTRUM_BANDS)
 
 
-def test_loading_activity_requires_a_loading_model_and_a_strict_boolean():
-    mailbox = OutboundMailbox()
-    with pytest.raises(TypeError, match="LoadingModel"):
-        mailbox.loading_activity("asr", True)
-    with pytest.raises(TypeError, match="boolean"):
-        mailbox.loading_activity(LoadingModel.ASR, 1)
-
-
 def test_mailbox_transition_discards_prior_recording_frames_and_takes_priority():
     mailbox = OutboundMailbox()
     recording = mailbox.publish(OverlayState.RECORDING)
@@ -287,11 +279,6 @@ def test_mailbox_capacity_must_be_a_real_positive_integer(capacity: object) -> N
     """
     with pytest.raises(ValueError, match="positive integer"):
         OutboundMailbox(capacity=capacity)
-
-
-def test_mailbox_publish_requires_a_real_overlay_state() -> None:
-    with pytest.raises(TypeError, match="OverlayState"):
-        OutboundMailbox().publish("recording")
 
 
 def test_a_closed_mailbox_accepts_nothing_but_still_reports_the_last_state() -> None:

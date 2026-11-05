@@ -77,8 +77,6 @@ class OutboundMailbox:
         return generation
 
     def publish(self, state: OverlayState, profile: RefineProfile | None = None) -> int:
-        if not isinstance(state, OverlayState):
-            raise TypeError("state must be an OverlayState")
         with self._lock:
             if self._closed or self._disabled:
                 return self._current_state.generation
@@ -99,10 +97,6 @@ class OutboundMailbox:
 
     def loading_activity(self, model: LoadingModel, active: bool) -> None:
         """Queue a boolean activity edge without disturbing recording slots."""
-        if not isinstance(model, LoadingModel):
-            raise TypeError("loading model must be a LoadingModel")
-        if not isinstance(active, bool):
-            raise TypeError("loading activity must be a boolean")
         with self._lock:
             present = model in self._loading_models
             if self._closed or self._disabled or active == present:
