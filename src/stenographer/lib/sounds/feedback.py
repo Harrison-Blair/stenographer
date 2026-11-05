@@ -23,14 +23,12 @@ class Feedback:
         cfg: FeedbackConfig,
         player: CuePlayer | None,
         config_dir: pathlib.Path,
-        asset_root: pathlib.Path | None = None,
     ) -> None:
         self._cfg = cfg
         self._player = player
         self._pack = resolve_sound_pack(
             cfg.sound_pack,
             config_dir,
-            bundled_root=asset_root,
         )
 
     @property
@@ -45,6 +43,3 @@ class Feedback:
         if path is None:
             return
         self._player.play(path, self._cfg.volume)
-
-    def close(self) -> None:
-        return None

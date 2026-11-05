@@ -85,8 +85,6 @@ class _Feedback:
     def play(self, name: str) -> None:
         self.cues.append(name)
 
-    def close(self) -> None: ...
-
 
 class _Notifier:
     def __init__(self) -> None:
