@@ -41,9 +41,8 @@ def flush_wants_write(result: int, error_number: int) -> bool:
 
 
 def choose_scale_plan(*, integer_scale: int, preferred_scale_120: int | None = None) -> ScalePlan:
-    """Select fractional scaling only when a valid preferred scale is present."""
-    integer_scale = max(1, integer_scale)
-    if preferred_scale_120 is not None and preferred_scale_120 > 0:
+    """Select fractional scaling only when a preferred scale is present."""
+    if preferred_scale_120 is not None:
         return ScalePlan(
             render_scale=preferred_scale_120 / 120,
             buffer_scale=1,
