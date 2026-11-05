@@ -25,6 +25,7 @@ from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
+from tests.cli.hub.support import _card, _screen_text
 
 MIC_BYTES = 88 * 1024 * 1024
 SYSTEM_BYTES = 209_716
@@ -162,23 +163,12 @@ def _app(services, **kwargs) -> HubApp:
     return HubApp(services, engine_sampler=sampler, **kwargs)
 
 
-def _screen_text(app: HubApp) -> str:
-    return "\n".join(
-        "".join(segment.text for segment in strip._segments)
-        for strip in app.screen._compositor.render_strips()
-    )
-
-
 def _hints(app: HubApp) -> str:
     return app.screen.query_one("#key-hints", Static).render().plain
 
 
 def _engine_state(app: HubApp) -> str:
     return str(app.screen.query_one("#engine-state", Static).render())
-
-
-def _card(app: HubApp) -> str:
-    return str(app.screen.query_one("#sidebar-card", Static).render())
 
 
 async def _until(pilot, condition, message="condition not met") -> None:

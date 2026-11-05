@@ -16,6 +16,7 @@ from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.lib.live.transcript_line import TranscriptLine
+from tests.cli.hub.support import _screen_text
 
 
 class FakeSession:
@@ -82,13 +83,6 @@ class FakeServices:
     def cancel_files(self):
         self.actions.append("cancel-files")
         self.files_running = False
-
-
-def _screen_text(app: HubApp) -> str:
-    return "\n".join(
-        "".join(segment.text for segment in strip._segments)
-        for strip in app.screen._compositor.render_strips()
-    )
 
 
 def test_pilot_live_has_board_panels_and_captioned_split_columns():

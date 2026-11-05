@@ -22,12 +22,7 @@ from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.config.defaults import default_toml
-
-
-class IdleServices:
-    recording = False
-    files_running = False
-    session = None
+from tests.cli.hub.support import IdleServices
 
 
 class WidgetApp(App[None]):

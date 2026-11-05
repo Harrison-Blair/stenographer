@@ -22,7 +22,8 @@ from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
 from stenographer.lib.sessions import SessionStore
-from tests.cli.hub.test_library import FakeServices, _library, _rows, _screen_text, _until
+from tests.cli.hub.support import _screen_text
+from tests.cli.hub.test_library import FakeServices, _library, _rows, _until
 from tests.cli.hub.test_session_jobs import FakePlatform
 from tests.lib.files.test_engine import FakeAsrProcess, FakeAsrTransport, FakeSegmenter
 

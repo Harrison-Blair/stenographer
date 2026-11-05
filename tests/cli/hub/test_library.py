@@ -33,6 +33,7 @@ from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError
+from tests.cli.hub.support import _card, _screen_text
 from tests.cli.hub.test_session_jobs import FakePlatform, FakePlayer
 
 REC_RELABELED = datetime(2026, 10, 27, 13, 3, tzinfo=UTC)
@@ -161,19 +162,8 @@ def _library(tmp_path: Path):
     return root, sessions
 
 
-def _screen_text(app: HubApp) -> str:
-    return "\n".join(
-        "".join(segment.text for segment in strip._segments)
-        for strip in app.screen._compositor.render_strips()
-    )
-
-
 def _rows(app: HubApp) -> list[str]:
     return app.screen.query_one("#library-list", Static).render().plain.splitlines()
-
-
-def _card(app: HubApp) -> str:
-    return str(app.screen.query_one("#sidebar-card", Static).render())
 
 
 def _button(app: HubApp, button_id: str) -> HubButton:

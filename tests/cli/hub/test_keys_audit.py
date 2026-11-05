@@ -39,11 +39,12 @@ from stenographer.cli.hub.widgets.focus_button import FocusButton
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.sidebar import Sidebar
+from tests.cli.hub.support import _config_path
 from tests.cli.hub.test_library import FakeServices as LibraryServices
 from tests.cli.hub.test_library import _library
 from tests.cli.hub.test_record_screen import _app as record_app
 from tests.cli.hub.test_record_screen import _services as record_services
-from tests.cli.hub.test_settings_tabs import _config_path, _select
+from tests.cli.hub.test_settings_tabs import _select
 
 REPO = Path(__file__).resolve().parents[3]
 
