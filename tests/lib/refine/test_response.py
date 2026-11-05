@@ -185,8 +185,10 @@ def test_a_reply_that_is_not_truncated_is_accepted(done_reason):
             "'tis the season, and the dog's bowl is empty, so fill it up'",
         ),
         (
-            "okay so the sync is at 4:15 and only 8 people have replied which is like 20% of the team um and we are on version 0.12.3 with 1,204 rows",
-            "Okay, so the sync is at 4:15 and only 8 people have replied, which is 20% of the team, and we are on version 0.12.3 with 1,204 rows.",
+            "okay so the sync is at 4:15 and only 8 people have replied which is like 20% of "
+            "the team um and we are on version 0.12.3 with 1,204 rows",
+            "Okay, so the sync is at 4:15 and only 8 people have replied, which is 20% of "
+            "the team, and we are on version 0.12.3 with 1,204 rows.",
         ),
         (
             "ping me at 3 and then at 5 about the 2 tickets",
