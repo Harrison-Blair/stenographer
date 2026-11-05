@@ -298,9 +298,9 @@ def group_and_split(
                 if parts:
                     splits[index] = parts
             checked_seconds += line.end - line.start
-            # A rounding step at the last phrase must not pass the start of the next stage.
-            share = (_CHECKED_SHARE - _GROUPED_SHARE) * checked_seconds / total_seconds
-            progress(min(_CHECKED_SHARE, _GROUPED_SHARE + share))
+            progress(
+                _GROUPED_SHARE + (_CHECKED_SHARE - _GROUPED_SHARE) * checked_seconds / total_seconds
+            )
     if not splits:
         progress(1.0)
         return unchanged
