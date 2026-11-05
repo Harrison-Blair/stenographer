@@ -20,19 +20,30 @@ _ASSETS = [
     "quick-install.sh",
 ]
 # Models the release endpoint: a POST or PATCH sets the draft flag, and an upload
-# adds the assets that the next read reports.
+# adds the assets that the next read reports. A write answers with the release
+# unless the caller filters it down to the ID. PUBLISH_REFUSED leaves a release a
+# draft.
 _GH = r"""#!/bin/bash
 printf '%s\n' "$*" >> "$GH_LOG"
+release() {
+    jq -n --arg tag "$PLANNED_TAG" --arg sha "$GITHUB_SHA" \
+        --argjson draft "$(cat "$DRAFT_STATE")" --rawfile uploaded "$UPLOADED" \
+        '{draft: $draft, tag_name: $tag, target_commitish: $sha,
+          assets: ($uploaded | split("\n") | map(select(. != "")) | map({name: .}))}'
+}
 case "$*" in
     "api --paginate --slurp "*) echo '[[]]' ;;
     "api -X POST "*|"api -X PATCH "*)
         for argument in "$@"; do
             case "${argument}" in
                 draft=true) echo true > "$DRAFT_STATE" ;;
-                draft=false) echo false > "$DRAFT_STATE" ;;
+                draft=false) [[ -n "$PUBLISH_REFUSED" ]] || echo false > "$DRAFT_STATE" ;;
             esac
         done
-        echo 42
+        case " $* " in
+            *" --jq .id "*) echo 42 ;;
+            *) release ;;
+        esac
         ;;
     "release upload "*)
         shift 3
@@ -41,12 +52,7 @@ case "$*" in
             [[ "${name}" == "$LOSE_UPLOAD" ]] || echo "${name}" >> "$UPLOADED"
         done
         ;;
-    "api repos/owner/name/releases/42")
-        jq -n --arg tag "$PLANNED_TAG" --arg sha "$GITHUB_SHA" \
-            --argjson draft "$(cat "$DRAFT_STATE")" --rawfile uploaded "$UPLOADED" \
-            '{draft: $draft, tag_name: $tag, target_commitish: $sha,
-              assets: ($uploaded | split("\n") | map(select(. != "")) | map({name: .}))}'
-        ;;
+    "api repos/owner/name/releases/42") release ;;
     *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
 """
@@ -72,7 +78,7 @@ def _publish_step_script() -> str:
 
 
 def _run_publish_step(
-    tmp_path: Path, *, draft_id: str = "", lose_upload: str = ""
+    tmp_path: Path, *, draft_id: str = "", lose_upload: str = "", publish_refused: str = ""
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     commands = tmp_path / "commands"
     commands.mkdir()
@@ -101,6 +107,7 @@ def _run_publish_step(
             "DRAFT_STATE": str(tmp_path / "draft-state"),
             "UPLOADED": str(tmp_path / "uploaded"),
             "LOSE_UPLOAD": lose_upload,
+            "PUBLISH_REFUSED": publish_refused,
             "PLANNED_TAG": _TAG,
             "PLANNED_DRAFT_ID": draft_id,
             "EXPECTED_TAG": _TAG,
@@ -129,6 +136,8 @@ def test_a_new_release_gets_generated_notes_and_publishes_after_every_upload(
     publish = next(i for i, call in enumerate(calls) if "draft=false" in call)
     assert upload < publish
     assert calls[publish].startswith("api -X PATCH")
+    # A failed read after publication would strand the release and its site deploy.
+    assert publish == len(calls) - 1
 
 
 def test_a_retry_refreshes_the_draft_and_leaves_its_notes_alone(tmp_path: Path) -> None:
@@ -143,10 +152,18 @@ def test_a_retry_refreshes_the_draft_and_leaves_its_notes_alone(tmp_path: Path) 
     assert any("draft=false" in call for call in calls)
 
 
-def test_a_published_release_missing_an_asset_fails_the_run(tmp_path: Path) -> None:
-    result, _ = _run_publish_step(tmp_path, lose_upload="quick-install.sh")
+def test_a_draft_missing_an_asset_is_never_published(tmp_path: Path) -> None:
+    result, calls = _run_publish_step(tmp_path, lose_upload="quick-install.sh")
 
     assert result.returncode != 0
+    assert not any("draft=false" in call for call in calls)
+
+
+def test_a_publish_response_that_is_still_a_draft_fails_the_run(tmp_path: Path) -> None:
+    result, calls = _run_publish_step(tmp_path, publish_refused="1")
+
+    assert result.returncode != 0
+    assert any("draft=false" in call for call in calls)
 
 
 def test_the_install_script_is_attested_but_not_listed_in_the_checksums() -> None:

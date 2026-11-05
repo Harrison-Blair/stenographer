@@ -72,8 +72,8 @@ gh workflow run release.yml --ref main -f bump=minor
 The `bump` input is `patch`, `minor`, or `major`. The workflow calculates `X.Y.Z`
 from the highest stable `vX.Y.Z` tag. After lint, non-integration tests, and both
 native standalone builds pass, it creates a GitHub draft with generated notes,
-uploads every asset, publishes the draft, and checks that the published release
-has these six assets:
+uploads every asset, checks that the draft has these six assets, and publishes
+it:
 
 - `stenographer-X.Y.Z-linux-x86_64.tar.gz`
 - `stenographer-X.Y.Z-linux-aarch64.tar.gz`
@@ -86,12 +86,12 @@ Each standalone archive contains the complete onedir bundle and `LICENSE`.
 The workflow checks every SHA-256 entry and records signed provenance for all
 six files. `SHA256SUMS` lists the four archives, not `quick-install.sh`. The
 draft stage exists so that a user never sees a release with missing files, and
-so that a failed run can retry.
+so that a run that failed before publishing can be retried.
 
 Publishing then starts the `pages` workflow, because a release published with
 the workflow token does not trigger other workflows. It builds the site from the
-new tag and serves the release's `quick-install.sh` as `install.sh`. If only that
-step fails, start the deploy again:
+new tag and serves the release's `quick-install.sh` as `install.sh`. If the
+release is published but the site did not deploy, start the deploy by hand:
 
 ```sh
 gh workflow run pages.yml --ref main -f ref=vX.Y.Z
@@ -100,12 +100,17 @@ gh workflow run pages.yml --ref main -f ref=vX.Y.Z
 A manual `pages` run with no `ref` builds `main`. Either way it downloads
 `install.sh` from the latest release, and fails if the download fails.
 
+Never rerun a release that is already published, even if its run failed: a rerun
+of failed jobs stops at the guard, and a rerun of all jobs or a new run publishes
+the next version from the same commit.
+
 The planner reads the complete Git tag history, rejects malformed `v` tags,
 requires every published GitHub release to retain its stable tag, refuses an
 existing candidate tag, and rechecks the chosen predecessor tag and commit
 before attestation and before changing the draft. A single matching draft is
-refreshed only when it already targets the dispatch commit, making same-commit
-retries safe with the same bump; a refresh leaves the draft's notes alone.
+refreshed only when it already targets the dispatch commit, so a run that failed
+before publishing can be retried from the same commit with the same bump; a
+refresh leaves the draft's notes alone.
 Unrelated, foreign-commit, or duplicate drafts fail closed. A draft left by a
 failed run therefore blocks a release from a newer commit until the draft is
 deleted.

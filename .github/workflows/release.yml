@@ -384,14 +384,20 @@ jobs:
           done
           gh release upload "${TAG}" "${asset_paths[@]}"
 
-          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
-            -f "tag_name=${TAG}" -F draft=false > /dev/null
           gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
-            > "${RUNNER_TEMP}/release-published.json"
+            > "${RUNNER_TEMP}/draft-uploaded.json"
           jq -e --arg tag "${TAG}" \
-            '.draft == false and .tag_name == $tag
+            '.draft == true and .tag_name == $tag
               and ([.assets[].name] | sort) == ($ARGS.positional | sort)' \
-            "${RUNNER_TEMP}/release-published.json" --args "${assets[@]}" > /dev/null
+            "${RUNNER_TEMP}/draft-uploaded.json" --args "${assets[@]}" > /dev/null
+
+          # Nothing but the deploy follows publication: a published release must
+          # not be rerun, because a new run would publish the next version.
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            -f "tag_name=${TAG}" -F draft=false \
+            > "${RUNNER_TEMP}/release-published.json"
+          jq -e --arg tag "${TAG}" '.draft == false and .tag_name == $tag' \
+            "${RUNNER_TEMP}/release-published.json" > /dev/null
       # A release published with the workflow token does not trigger other workflows.
       - name: Start the site deploy
         env:
