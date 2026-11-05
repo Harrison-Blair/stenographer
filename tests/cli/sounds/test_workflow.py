@@ -467,7 +467,7 @@ def _api(packs=("legacy", "warm-desk"), *, loadable=("legacy", "warm-desk"), dis
 
 
 def _document(tmp_path, saved, *, changed=True, error=None):
-    from stenographer.lib.config.save_result import SaveResult
+    from stenographer.lib.config.document import SaveResult
 
     path = tmp_path / "config.toml"
 

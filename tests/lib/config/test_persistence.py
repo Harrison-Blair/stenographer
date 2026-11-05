@@ -8,8 +8,7 @@ import pathlib
 
 import pytest
 
-from stenographer.lib.config.errors import ConfigPersistenceError
-from stenographer.lib.config.persistence import (
+from stenographer.lib.config.document import (
     _atomic_replace,
     _existing_mode,
     _read_current,
@@ -17,6 +16,7 @@ from stenographer.lib.config.persistence import (
     _timestamp,
     _write_backup,
 )
+from stenographer.lib.config.errors import ConfigPersistenceError
 
 
 def _symlink_loop(directory: pathlib.Path) -> pathlib.Path:
