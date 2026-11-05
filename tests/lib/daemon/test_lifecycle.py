@@ -189,6 +189,42 @@ def test_cancel_during_capture_finalization_never_starts_pipeline(daemon_logs):
     assert "outcome=CANCELLED" in _summary(daemon_logs)
 
 
+def test_cancel_during_finalization_after_a_delivered_utterance_still_cancels(daemon_logs):
+    class _CancelingRecorder(_Recorder):
+        cancel = None
+
+        def stop(self) -> np.ndarray:
+            samples = super().stop()
+            if self.cancel is not None:
+                self.cancel()
+            return samples
+
+    daemon = _daemon(result=TranscriptionResult(text="one two", duration_seconds=1.0))
+    recorder = _CancelingRecorder(_SPEECH)
+    daemon._recorder = recorder
+    try:
+        daemon.on_key_down()
+        daemon.on_key_up()
+        first_pipeline = daemon._pipeline_thread
+        first_pipeline.join(timeout=2.0)
+        assert not first_pipeline.is_alive()
+        assert len(daemon._deliverer.delivered) == 1
+
+        recorder.cancel = daemon.on_cancel
+        daemon.on_key_down()
+        daemon.on_key_up()
+        if daemon._pipeline_thread is not first_pipeline:
+            daemon._pipeline_thread.join(timeout=2.0)
+        second_pipeline = daemon._pipeline_thread
+    finally:
+        daemon.stop()
+
+    assert second_pipeline is first_pipeline
+    assert len(daemon._worker.utterances) == 1
+    assert len(daemon._deliverer.delivered) == 1
+    assert "outcome=CANCELLED" in daemon_logs.text
+
+
 def test_cancel_while_busy_discards_result_before_delivery(daemon_logs):
     daemon, status = _daemon_with_status(
         result=TranscriptionResult(text="never", duration_seconds=1.0)

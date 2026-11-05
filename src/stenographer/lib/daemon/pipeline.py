@@ -52,7 +52,8 @@ class UtterancePipeline:
     it never retains samples, transcript text, or a record between runs.
 
     ``delivered`` is True from the moment a run chooses DELIVERED until the
-    next run starts, so the daemon can ignore a cancel during the restore.
+    daemon clears it for the next utterance, before that utterance can take a
+    cancel as busy, so the daemon ignores a cancel only during this restore.
     """
 
     def __init__(
@@ -98,7 +99,6 @@ class UtterancePipeline:
         """Run the ordered stages and report the existing terminal outcome name."""
         outcome_name = Outcome.ERROR.name
         self._refine_display_state = None
-        self.delivered = False
         delivery_attempted = False
 
         def cancelled_outcome() -> str:

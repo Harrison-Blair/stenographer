@@ -639,6 +639,7 @@ class Daemon:
                 return
             self._mark_stopped()
             self._busy = True
+            self._pipeline.delivered = False
             # The pill stays up across the release: it is the only sign that
             # the tool is still working until the paste lands, so the release
             # moves it to TRANSCRIBING rather than hiding it. Every exit from
