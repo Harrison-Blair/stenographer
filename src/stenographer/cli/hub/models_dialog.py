@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, ClassVar
 from textual.binding import Binding
 from textual.widgets import Static
 
-from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.widgets.dialog import Dialog
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
@@ -18,6 +17,7 @@ from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 
 if TYPE_CHECKING:
+    import threading
     from collections.abc import Callable
 
     from textual.app import ComposeResult
@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 
 
 class ModelsDialog(Dialog[None]):
-    """List the models; ``enter`` downloads the selected missing model after a confirmation."""
+    """List the models; ``enter`` downloads the selected missing model."""
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("up", "move(-1)", "Previous model"),
@@ -40,10 +40,12 @@ class ModelsDialog(Dialog[None]):
         self,
         model_status: Callable[[], tuple[ModelEntry, ...]],
         model_download: Callable[[str], None],
+        download_lock: threading.Lock,
     ) -> None:
         super().__init__("Models")
         self._model_status = model_status
         self._model_download = model_download
+        self._download_lock = download_lock
         self.entries: tuple[ModelEntry, ...] = ()
         self.index = 0
         self.status = ""
@@ -53,7 +55,7 @@ class ModelsDialog(Dialog[None]):
         yield Static("", id="models-status", markup=False)
 
     def buttons(self) -> tuple[tuple[str, str, str], ...]:
-        return (("esc", "Close", "cancel"), ("enter", "Download…", "download"))
+        return (("esc", "Close", "cancel"), ("enter", "Download", "download"))
 
     def on_mount(self) -> None:
         self.reload()
@@ -65,7 +67,7 @@ class ModelsDialog(Dialog[None]):
     def _draw(self) -> None:
         rows = tuple(
             (
-                f"{entry.label} · {entry.name}",
+                f"{entry.label} · {entry.name} · {entry.size}",
                 StatusToken.text("✓", "present", "ok")
                 if entry.present
                 else StatusToken.text(DOCTOR_STATE_GLYPHS["fail"], "missing", "danger"),
@@ -90,32 +92,24 @@ class ModelsDialog(Dialog[None]):
         if entry.present:
             self.app.notify(f"The {entry.label} is present.")
             return
-        log.info(fmt_event("hub", "setup_model_download_prompted", model=entry.model_id))
-        self.app.push_screen(
-            QuitConfirm(
-                f"Download {entry.label} {entry.name} now? ({entry.size})",
-                confirm="Download",
-            ),
-            lambda confirmed: self._confirmed(entry, confirmed),
-        )
+        self.run_worker(self._download(entry), group="model-download")
 
-    def _confirmed(self, entry: ModelEntry, confirmed: bool | None) -> None:
-        log.info(
-            fmt_event(
-                "hub",
-                "setup_model_download_confirmed",
-                model=entry.model_id,
-                confirmed=bool(confirmed),
-            )
-        )
-        if confirmed:
-            self.status = f"downloading {entry.label}…"
-            self.reload()
-            self.run_worker(self._download(entry), group="model-download", exclusive=True)
+    def _download_and_release(self, model_id: str) -> None:
+        try:
+            self._model_download(model_id)
+        finally:
+            self._download_lock.release()
 
     async def _download(self, entry: ModelEntry) -> None:
+        # The lock outlives this dialog: closing it ends this worker, not the download thread.
+        if not self._download_lock.acquire(blocking=False):
+            self.app.notify("A model download is running.", severity="warning")
+            return
+        log.info(fmt_event("hub", "setup_model_download_started", model=entry.model_id))
+        self.status = f"downloading {entry.label}…"
+        self.reload()
         try:
-            await asyncio.to_thread(self._model_download, entry.model_id)
+            await asyncio.to_thread(self._download_and_release, entry.model_id)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: setup_model_download_failed", exc, safe=True)
             self.status = f"{DOCTOR_STATE_GLYPHS['fail']} download failed: {exc}"

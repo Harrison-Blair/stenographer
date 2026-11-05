@@ -505,9 +505,11 @@ The dialogs:
 - **Quick setup** shows input access, microphone, and hotkey with their state
   and current value. Press `t` to test the selected step and `e` to open its
   setting.
-- **Models** shows the speech model and the two voice models as present or
-  missing or corrupt. Press `enter` on a missing or corrupt model to download it after a
-  confirmation; a corrupt file is replaced only after the download is verified.
+- **Models** shows the speech model and the two voice models with their size,
+  as present or missing or corrupt. Press `enter` on a missing or corrupt model
+  to download it; a corrupt file is replaced only after the download is
+  verified. One download runs at a time; a notice shows when another one is
+  running.
 - **Defaults** writes the default configuration after a confirmation and
   keeps the current file as a timestamped backup.
 

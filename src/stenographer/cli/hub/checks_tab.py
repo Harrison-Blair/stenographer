@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import pathlib
+import threading
 from typing import TYPE_CHECKING, ClassVar
 
 from rich.text import Text
@@ -158,6 +159,7 @@ class ChecksTab(Vertical):
         self._doctor_probe = doctor_probe
         self._setup_test = setup_test
         self._model_download = model_download
+        self._model_download_lock = threading.Lock()
         self._model_status = model_status
         self._open_log = open_log
         self._copy_report = copy_report
@@ -491,7 +493,9 @@ class ChecksTab(Vertical):
 
     def action_models(self) -> None:
         log.info(fmt_event("hub", "models_opened"))
-        self.app.push_screen(ModelsDialog(self._model_status, self._model_download))
+        self.app.push_screen(
+            ModelsDialog(self._model_status, self._model_download, self._model_download_lock)
+        )
 
     def action_defaults(self) -> None:
         from stenographer.lib.config.paths import resolve_config_path
