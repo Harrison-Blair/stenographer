@@ -3,15 +3,9 @@
 
 from __future__ import annotations
 
-import io
-
 import pytest
 
-from stenographer.cli.shared.console import Console
-
-
-def _console(answers: str = "") -> Console:
-    return Console(io.StringIO(answers), io.StringIO(), io.StringIO())
+from tests.cli.support import console as _console
 
 
 def test_ask_echoes_the_prompt_and_strips_only_the_line_ending():

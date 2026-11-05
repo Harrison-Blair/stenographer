@@ -18,13 +18,7 @@ from stenographer.cli.shared.terminal import (
     require_interactive,
 )
 from stenographer.lib.config.document import SaveResult
-
-
-class _Terminal(io.StringIO):
-    """A stream that claims to be a terminal."""
-
-    def isatty(self) -> bool:
-        return True
+from tests.cli.support import Terminal as _Terminal
 
 
 @pytest.mark.parametrize(

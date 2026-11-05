@@ -8,10 +8,10 @@ import io
 import json
 from types import SimpleNamespace
 
-from stenographer.cli.stats.export.handler import run
+from stenographer.cli.stats.handler import _export as run
 from stenographer.lib.analytics.filters import Filters
 
-from ..conftest import checkpoint
+from .conftest import checkpoint
 
 
 def test_json_export_to_stdout_carries_the_matching_records(seed, capsys):

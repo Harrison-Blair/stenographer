@@ -20,26 +20,18 @@ from stenographer.lib.config.models import Config
 from stenographer.overlay.capabilities.models import OverlayCapability
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
+from tests.cli.support import capabilities
 
 _CONFIG_PATH = pathlib.PurePosixPath("/cfg/config.toml")
 
 
-def _capabilities(**overrides) -> Capabilities:
-    state = {
-        "key_injector_ok": True,
-        "hotkey_access_ok": True,
-        "has_mic": True,
-        "model_cached": True,
-        "clipboard_ok": True,
-        "clipboard_backend": "wl-copy",
-        "clipboard_read_ok": True,
-        "cue_player": "pulse",
-        "service_enabled": "enabled",
-        "service_active": "active",
-        "overlay": OverlayCapability.available(Backend.LAYER_SHELL),
-    }
-    state.update(overrides)
-    return Capabilities(**state)
+def _capabilities(**overrides):
+    return capabilities(
+        **(
+            {"cue_player": "pulse", "overlay": OverlayCapability.available(Backend.LAYER_SHELL)}
+            | overrides
+        )
+    )
 
 
 def _platform(cores: int | None = 6) -> SimpleNamespace:

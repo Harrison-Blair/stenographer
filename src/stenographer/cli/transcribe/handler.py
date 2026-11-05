@@ -46,7 +46,7 @@ def _refine(
     from stenographer.lib.refine.factory import build_refiner
     from stenographer.lib.transcribe.pipeline import apply_refinement
 
-    if args.raw or not getattr(args, "refine", False) or not text.strip():
+    if args.raw or not args.refine:
         return text
     refiner = build_refiner(
         cfg.refine,
@@ -114,7 +114,6 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     record.in_frames = int(samples.shape[0])
     record.capture_s = record.in_frames / sample_rate
     m = None
-    text = ""
     terminal = "error"
     try:
         finalize_started_at = time.perf_counter()

@@ -6,6 +6,7 @@ from __future__ import annotations
 import sqlite3
 import sys
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 
 from stenographer.lib.analytics.filters import Filters
 from stenographer.lib.analytics.store import Store, database_path
@@ -32,15 +33,8 @@ def cmd_stats(args) -> int:
             outcome=args.outcome,
         )
         store = Store(database_path(current_platform()))
-        if args.stats_command == "reset":
-            from stenographer.cli.stats.reset.handler import run
-        elif args.stats_command == "delete":
-            from stenographer.cli.stats.delete.handler import run
-        elif args.stats_command == "export":
-            from stenographer.cli.stats.export.handler import run
-        else:
-            from stenographer.cli.stats.summary.handler import run
-        return run(args, store, filters)
+        actions = {"reset": _reset, "delete": _delete, "export": _export, "summary": _summary}
+        return actions.get(args.stats_command, _summary)(args, store, filters)
     except (ValueError, OSError, sqlite3.Error) as exc:
         # Exception messages can contain database paths. Show only the safe category.
         print(
@@ -49,3 +43,57 @@ def cmd_stats(args) -> int:
             file=sys.stderr,
         )
         return 78
+
+
+def _delete(args, store, filters) -> int:
+    count = store.preview_delete(filters)
+    print(f"Records selected for deletion: {count}")
+    if not args.yes:
+        print("Run again with --yes to confirm. Queued matching checkpoints are suppressed.")
+        return 0
+    print(f"Deleted {store.delete(filters)} records.")
+    return 0
+
+
+def _export(args, store, filters) -> int:
+    content = store.export_csv(filters) if args.format == "csv" else store.export_json(filters)
+    if args.output:
+        Path(args.output).write_text(content, encoding="utf-8")
+    else:
+        print(content, end="" if content.endswith("\n") else "\n")
+    return 0
+
+
+def _reset(args, store, filters) -> int:
+    return _delete(args, store, Filters(source=None))
+
+
+def _duration(seconds: float) -> str:
+    value = int(seconds)
+    hours, remainder = divmod(value, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02}:{minutes:02}:{seconds:02}"
+
+
+def _summary(args, store, filters) -> int:
+    report = store.report(filters)
+    totals = report["totals"]
+    print(f"Recognized words: {totals['recognized_words']:,}")
+    print(f"Completed ASR audio: {_duration(totals['asr_audio_s'])}")
+    print(f"Utterances: {totals['utterances']:,} · Active days: {totals['active_days']:,}")
+    print(f"Clipboard-confirmed words: {totals['copied_words']:,}")
+    print(f"Paste-chord words: {totals['chord_words']:,}")
+    print(f"Incomplete utterances: {totals['incomplete']:,}")
+    for name, metric in report["metrics"].items():
+        if not name.endswith("_ms") or not metric["count"]:
+            continue
+        print(
+            f"{name}: average {metric['average']:.1f}, p95 {metric['p95']:.1f}, "
+            f"p99 {metric['p99']:.1f} ms (n={metric['count']}, missing={metric['missing']})"
+        )
+    health = report["health"]
+    print(
+        f"Collection: {'degraded' if health['degraded'] else 'available'}; "
+        f"dropped checkpoints: {health['dropped_checkpoints']}"
+    )
+    return 0

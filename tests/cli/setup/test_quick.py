@@ -7,18 +7,12 @@ shares with the full wizard, so nothing here reaches PortAudio or ``/dev/input``
 
 from __future__ import annotations
 
-import io
-
 import pytest
 
 from stenographer.cli.setup import quick as quick_setup
 from stenographer.cli.setup.errors import SetupCancelledError
-from stenographer.cli.shared.console import Console
 from stenographer.lib.config.models import Config
-
-
-def _console(answers: str) -> Console:
-    return Console(io.StringIO(answers), io.StringIO(), io.StringIO())
+from tests.cli.support import console as _console
 
 
 @pytest.fixture

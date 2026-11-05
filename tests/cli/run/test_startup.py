@@ -6,27 +6,13 @@ from __future__ import annotations
 import dataclasses
 
 from stenographer.cli.run.startup import startup_clipboard_backend
-from stenographer.cli.shared.capabilities import Capabilities
 from stenographer.lib.diagnostics.capabilities import REQUIRED
 from stenographer.overlay.capabilities.models import OverlayCapability
+from tests.cli.support import capabilities
 
 
-def _startup_caps(**overrides) -> Capabilities:
-    fields = {
-        "key_injector_ok": True,
-        "hotkey_access_ok": True,
-        "has_mic": True,
-        "model_cached": True,
-        "clipboard_ok": True,
-        "clipboard_backend": "wl-copy",
-        "clipboard_read_ok": True,
-        "cue_player": "pw-play",
-        "service_enabled": "enabled",
-        "service_active": "active",
-        "overlay": OverlayCapability.disabled(),
-    }
-    fields.update(overrides)
-    return Capabilities(**fields)
+def _startup_caps(**overrides):
+    return capabilities(**({"overlay": OverlayCapability.disabled()} | overrides))
 
 
 def test_startup_gate_tracks_every_current_doctor_requirement():

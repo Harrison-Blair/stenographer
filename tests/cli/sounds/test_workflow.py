@@ -27,27 +27,14 @@ from stenographer.cli.sounds.workflow import (
     selection_may_prompt,
 )
 from stenographer.lib.config.models import Config
-from stenographer.lib.platform.host_guidance import HostGuidance
+from tests.cli.support import GUIDANCE as _GUIDANCE
+from tests.cli.support import Terminal as _Terminal
+from tests.cli.support import document
 
 _BUNDLED = ("legacy", "warm-desk", "soft-electronic", "minimal-ui")
 
 # Host prose is an input: every word below differs from the Linux provider's, so
 # a hardcoded command in sounds.py cannot pass these cases.
-_GUIDANCE = HostGuidance(
-    capability_labels={},
-    capability_fix_hints={},
-    clipboard_fix_hints={},
-    clipboard_fix_hint_default="enable a pasteboard",
-    service_noun="host agent",
-    service_name="steno-agent",
-    service_installer="steno-agent install",
-    service_unknown_detail="cannot query the agent manager",
-    service_start_command="steno-agent start",
-    service_restart_command="steno-agent restart",
-    service_log_command="steno-agent logs -f",
-    hotkey_device_comment="device id; empty auto-detects",
-    run_with_config=lambda path: f"STENO_CONFIG={path} stenographer run",
-)
 
 
 @pytest.mark.parametrize(
@@ -305,13 +292,6 @@ def test_sounds_applies_the_loaded_log_level_before_discovery(monkeypatch, tmp_p
     assert events == ["level:warning", "discover"]
 
 
-class _Terminal(io.StringIO):
-    """A stream that claims to be a terminal."""
-
-    def isatty(self) -> bool:
-        return True
-
-
 def _platform(*, service_active="active", restart=(True, ""), probe_error=None):
     class Plat:
         def guidance(self):
@@ -478,20 +458,13 @@ def _api(packs=("legacy", "warm-desk"), *, loadable=("legacy", "warm-desk"), dis
 def _document(tmp_path, saved, *, changed=True, error=None):
     from stenographer.lib.config.document import SaveResult
 
-    path = tmp_path / "config.toml"
+    def save_document(config, path):
+        if error is not None:
+            raise error
+        saved.append(config)
+        return SaveResult(changed, path)
 
-    class Document:
-        def __init__(self):
-            self.path = path
-            self.config = Config.defaults()
-
-        def save(self, config):
-            if error is not None:
-                raise error
-            saved.append(config)
-            return SaveResult(changed, path)
-
-    return Document()
+    return document(tmp_path, save=save_document)
 
 
 @pytest.fixture

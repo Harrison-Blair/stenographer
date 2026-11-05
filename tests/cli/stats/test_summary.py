@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-from stenographer.cli.stats.summary.handler import _duration, run
+from stenographer.cli.stats.handler import _duration
+from stenographer.cli.stats.handler import _summary as run
 from stenographer.lib.analytics.filters import Filters
 
-from ..conftest import checkpoint
+from .conftest import checkpoint
 
 
 def test_duration_renders_hours_minutes_and_seconds_zero_padded():

@@ -18,13 +18,7 @@ from stenographer.cli.model.download.handler import (
 )
 from stenographer.cli.shared.console import Console
 from stenographer.lib.config.models import Config
-
-
-class _Terminal(io.StringIO):
-    """A stream that claims to be a terminal, so ``console.interactive`` is True."""
-
-    def isatty(self) -> bool:
-        return True
+from tests.cli.support import Terminal as _Terminal
 
 
 def test_download_parser_accepts_the_live_model_flag():

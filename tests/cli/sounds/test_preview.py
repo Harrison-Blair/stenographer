@@ -8,17 +8,12 @@ seams the preview goes through, and both are supplied by the test.
 from __future__ import annotations
 
 import dataclasses
-import io
 
 import pytest
 
-from stenographer.cli.shared.console import Console
 from stenographer.cli.sounds.workflow import _preview
 from stenographer.lib.config.models import Config
-
-
-def _console() -> Console:
-    return Console(io.StringIO(), io.StringIO(), io.StringIO())
+from tests.cli.support import console as _console
 
 
 def _platform(player):
