@@ -332,3 +332,47 @@ def test_terminal_streams_come_back_when_the_app_crashes(monkeypatch, tmp_path, 
     captured = capfd.readouterr()
     assert captured.out == "crash-fd1"
     assert captured.err == "crash-fd2"
+
+
+class _SlowStderr:
+    """A text stream over fd 2 that makes the logging listener lag behind its queue."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text):
+        time.sleep(0.3)
+        return self._stream.write(text)
+
+    def flush(self):
+        self._stream.flush()
+
+
+def test_records_queued_around_the_app_land_on_their_own_side(monkeypatch, tmp_path, capfd):
+    from stenographer.lib.logging.pipeline import setup_logging, shutdown_logging
+
+    record_log = logging.getLogger("stenographer.cli.hub.test")
+
+    def run_app(_services, _editor):
+        # Outlast the stream delay: a lagging startup record must not land here.
+        time.sleep(0.5)
+        record_log.warning("queued-by-the-app")
+
+    handler = _prepare_hub(monkeypatch, tmp_path, run_app)
+    shutdown_logging()
+    capfd.readouterr()
+    with open(2, "w", closefd=False) as terminal_stderr:
+        setup_logging(
+            env={"XDG_STATE_HOME": str(tmp_path)},
+            home=tmp_path,
+            stderr=_SlowStderr(terminal_stderr),
+        )
+        try:
+            record_log.warning("queued-before-the-app")
+            assert handler.cmd_hub(SimpleNamespace()) == 0
+        finally:
+            shutdown_logging()
+
+    written = capfd.readouterr().err
+    assert "queued-before-the-app" in written
+    assert "queued-by-the-app" not in written

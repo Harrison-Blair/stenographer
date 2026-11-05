@@ -15,7 +15,12 @@ from stenographer.cli.hub.services import HubServices
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
 from stenographer.lib.config.paths import load_or_default, resolve_config_path
-from stenographer.lib.logging.pipeline import apply_stderr_level, fmt_event, log_failure
+from stenographer.lib.logging.pipeline import (
+    apply_stderr_level,
+    flush_logging,
+    fmt_event,
+    log_failure,
+)
 from stenographer.lib.platform import current_platform
 
 log = logging.getLogger(__name__)
@@ -37,6 +42,8 @@ def _terminal_only_for_app() -> Iterator[None]:
     with its crash report on ``sys.stderr``; both get private terminal streams.
     """
     originals = (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)
+    # Each record lands on the side of the app where it was logged.
+    flush_logging()
     sys.stdout.flush()
     sys.stderr.flush()
     app_stdout = open(  # noqa: SIM115
@@ -54,6 +61,7 @@ def _terminal_only_for_app() -> Iterator[None]:
     try:
         yield
     finally:
+        flush_logging()
         sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__ = originals
         app_stdout.flush()
         app_stderr.flush()

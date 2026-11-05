@@ -204,6 +204,18 @@ def apply_stderr_level(level: str) -> None:
     _set_stderr_level(resolve_log_level(level))
 
 
+def flush_logging() -> None:
+    """Return once the sinks have taken every record queued so far.
+
+    Stopping the listener drains the queue up to its sentinel. Records queued
+    behind the sentinel wait for the restarted listener.
+    """
+    listener = _listener
+    if listener is not None:
+        listener.stop()
+        listener.start()
+
+
 def owned_handlers(logger: logging.Logger | None = None) -> tuple[logging.Handler, ...]:
     """Return the real sinks this module owns, never the queue forwarder.
 
