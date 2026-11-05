@@ -443,11 +443,14 @@ class ChecksTab(Vertical):
         self.app.refresh_view()
 
     def action_open_log(self) -> None:
+        log.info(fmt_event("hub", "doctor_log_open_requested"))
+        self.app.run_worker(self._open_application_log(), group="open-log")
+
+    async def _open_application_log(self) -> None:
         from stenographer.lib.logging.pipeline import log_paths
 
-        log.info(fmt_event("hub", "doctor_log_open_requested"))
         try:
-            opened = self._open_log(log_paths()[0])
+            opened = await asyncio.to_thread(self._open_log, log_paths()[0])
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: doctor_log_open_failed", exc, safe=False)
             opened = False
