@@ -33,10 +33,13 @@ import uuid
 import pytest
 
 from stenographer.lib.delivery.deliverer import Deliverer
-from stenographer.lib.platform.linux.clipboard import copy_for_backend, detect_clipboard_backend
-from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+from stenographer.lib.platform.linux.clipboard import (
+    ClipboardBackend,
+    copy_for_backend,
+    detect_clipboard_backend,
+)
 from stenographer.lib.platform.linux.process import child_env
-from stenographer.lib.platform.linux.uinput_keyboard import UinputKeyboard
+from stenographer.lib.platform.linux.uinput import UinputKeyboard
 
 pytestmark = pytest.mark.integration
 

@@ -15,8 +15,11 @@ import pathlib
 import shutil
 
 from stenographer.lib.platform.host_probe import HostProbe
-from stenographer.lib.platform.linux.clipboard import clipboard_read_available, probe_clipboard
-from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+from stenographer.lib.platform.linux.clipboard import (
+    ClipboardBackend,
+    clipboard_read_available,
+    probe_clipboard,
+)
 from stenographer.lib.platform.linux.cues import detect_player
 from stenographer.lib.platform.linux.probe import (
     in_input_group,

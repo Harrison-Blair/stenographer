@@ -27,13 +27,13 @@ from stenographer.lib.platform.linux.clipboard import (
     restore_clipboard,
     restore_clipboard_x11,
 )
-from stenographer.lib.platform.linux.evdev_hotkey_listener import EvdevHotkeyListener
+from stenographer.lib.platform.linux.cues import LinuxCuePlayer
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
-from stenographer.lib.platform.linux.flock_single_instance_lock import FlockSingleInstanceLock
-from stenographer.lib.platform.linux.linux_cue_player import LinuxCuePlayer
-from stenographer.lib.platform.linux.notify_send_notifier import NotifySendNotifier
+from stenographer.lib.platform.linux.hotkey import EvdevHotkeyListener
+from stenographer.lib.platform.linux.lock import FlockSingleInstanceLock
+from stenographer.lib.platform.linux.notify import NotifySendNotifier
 from stenographer.lib.platform.linux.provider import LinuxPlatform
-from stenographer.lib.platform.linux.uinput_keyboard import UinputKeyboard
+from stenographer.lib.platform.linux.uinput import UinputKeyboard
 from stenographer.lib.platform.multiprocessing_asr_transport import MultiprocessingAsrTransport
 
 

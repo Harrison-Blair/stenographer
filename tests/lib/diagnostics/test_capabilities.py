@@ -49,7 +49,7 @@ def test_the_microphone_gate_reads_the_shared_device_enumeration(monkeypatch):
     # One enumeration answers the whole program; the gate is the pure reading
     # of it, so a host with only output devices must fail the gate.
     from stenographer.lib.audio import probe as audio_probe
-    from stenographer.lib.audio.device_query import DeviceQuery
+    from stenographer.lib.audio.probe import DeviceQuery
 
     outputs_only = DeviceQuery(
         devices=({"name": "speakers", "max_input_channels": 0},), default_device=(None, 0)

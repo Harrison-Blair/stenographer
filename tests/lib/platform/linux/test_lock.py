@@ -67,7 +67,7 @@ def test_flock_single_instance_lock_excludes_a_second_holder_until_released(tmp_
     proven by what it enables — the loser can then take the lock — rather than
     by inspecting the descriptor.
     """
-    from stenographer.lib.platform.linux.flock_single_instance_lock import FlockSingleInstanceLock
+    from stenographer.lib.platform.linux.lock import FlockSingleInstanceLock
 
     path = tmp_path / "stenographer.lock"
     first = FlockSingleInstanceLock(path)
@@ -95,6 +95,6 @@ def test_flock_single_instance_lock_excludes_a_second_holder_until_released(tmp_
 def test_flock_single_instance_lock_defaults_to_the_runtime_lock_path():
     # The default is the shared runtime path, so two daemons contend without
     # either being told where the lock lives. Nothing is acquired here.
-    from stenographer.lib.platform.linux.flock_single_instance_lock import FlockSingleInstanceLock
+    from stenographer.lib.platform.linux.lock import FlockSingleInstanceLock
 
     assert FlockSingleInstanceLock()._path == LOCK_PATH

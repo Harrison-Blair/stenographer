@@ -45,7 +45,7 @@ def test_linux_provider_resolves_the_shared_key_vocabulary():
 
 
 def test_linux_provider_names_stop_reasons_without_raising():
-    from stenographer.lib.platform.linux.support import signal_reason
+    from stenographer.lib.platform.linux.provider import signal_reason
 
     assert signal_reason(signal.SIGINT) == "SIGINT"
     assert signal_reason(signal.SIGTERM) == "SIGTERM"

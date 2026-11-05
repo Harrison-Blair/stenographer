@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
+import enum
 import logging
 import os
 import selectors
@@ -10,15 +11,14 @@ import time
 from typing import TYPE_CHECKING
 
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
-from stenographer.lib.platform.clipboard_snapshot import ClipboardSnapshot
 from stenographer.lib.platform.linux.process import child_env
+from stenographer.lib.platform.types import ClipboardSnapshot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer
 
-from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +60,11 @@ _SENSITIVE_TYPE = "x-kde-passwordManagerHint"
 
 
 _DATA_CONTROL_GLOBALS = frozenset({"ext_data_control_manager_v1", "zwlr_data_control_manager_v1"})
+
+
+class ClipboardBackend(enum.Enum):
+    WL_COPY = "wl-copy"
+    X11 = "x11"
 
 
 def pick_backend(globals_seen: set[str] | None, *, have_display: bool) -> ClipboardBackend:

@@ -12,7 +12,7 @@ import pytest
 from stenographer.cli.hub import engine_sampler
 from stenographer.cli.hub.engine_sampler import EngineSampler
 from stenographer.cli.hub.engine_status import EngineStatus
-from stenographer.lib.platform.linux.proc_counters import LinuxProcessCounters
+from stenographer.lib.platform.linux.cpu import LinuxProcessCounters
 from stenographer.lib.platform.null_process_counters import NullProcessCounters
 
 HUB_PID = 100
@@ -351,9 +351,9 @@ def test_engine_gauges_stay_none_on_a_host_without_counters(tmp_path):
 
 
 def test_engine_sampler_and_its_linux_counters_import_no_subprocess():
-    from stenographer.lib.platform.linux import cpu, proc_counters
+    from stenographer.lib.platform.linux import cpu
 
-    for module in (engine_sampler, proc_counters, cpu):
+    for module in (engine_sampler, cpu):
         tree = ast.parse(inspect.getsource(module))
         imported = {
             alias.name.split(".")[0]

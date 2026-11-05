@@ -21,7 +21,7 @@ def test_default_input_index_normalises_unusable_pairs_to_the_sentinel():
 
 def test_listing_prints_only_input_devices_and_marks_the_default(monkeypatch, capsys):
     from stenographer.cli.devices import handler
-    from stenographer.lib.audio.device_query import DeviceQuery
+    from stenographer.lib.audio.probe import DeviceQuery
 
     query = DeviceQuery(
         devices=(
@@ -42,7 +42,7 @@ def test_listing_prints_only_input_devices_and_marks_the_default(monkeypatch, ca
 
 def test_listing_says_so_when_no_device_can_record(monkeypatch, capsys):
     from stenographer.cli.devices import handler
-    from stenographer.lib.audio.device_query import DeviceQuery
+    from stenographer.lib.audio.probe import DeviceQuery
 
     monkeypatch.setattr(
         handler,
@@ -59,7 +59,7 @@ def test_listing_says_so_when_no_device_can_record(monkeypatch, capsys):
 
 def test_an_unusable_audio_stack_is_reported_on_stderr_and_fails(monkeypatch, capsys):
     from stenographer.cli.devices import handler
-    from stenographer.lib.audio.device_query import DeviceQuery
+    from stenographer.lib.audio.probe import DeviceQuery
 
     monkeypatch.setattr(
         handler,

@@ -110,9 +110,9 @@ def test_dynamic_linux_log_fields_use_the_privacy_safe_renderers():
 
     platform_root = SRC_ROOT / "lib" / "platform" / "linux"
     paths = (
-        platform_root / "evdev_hotkey_listener.py",
-        platform_root / "notify_send_notifier.py",
-        platform_root / "notify_send_notifier.py",
+        platform_root / "hotkey.py",
+        platform_root / "notify.py",
+        platform_root / "notify.py",
     )
     actual = {
         (path.name, ast.unparse(node))
@@ -122,29 +122,29 @@ def test_dynamic_linux_log_fields_use_the_privacy_safe_renderers():
     }
     expected = {
         (
-            "evdev_hotkey_listener.py",
+            "hotkey.py",
             shape(
                 "logger.info(fmt_event('hotkey', 'listening', "
                 "device=device.path, name=device.name))"
             ),
         ),
         (
-            "evdev_hotkey_listener.py",
+            "hotkey.py",
             shape("logger.info(fmt_event('hotkey', 'hotplug', device=path, name=device.name))"),
         ),
         (
-            "evdev_hotkey_listener.py",
+            "hotkey.py",
             shape(
                 "log_failure(logger, logging.WARNING, 'hotkey: device_lost', exc, "
                 "safe=True, device=device.path)"
             ),
         ),
         (
-            "notify_send_notifier.py",
+            "notify.py",
             shape("log_failure(log, logging.DEBUG, 'notify: icon_unavailable', exc, safe=True)"),
         ),
         (
-            "notify_send_notifier.py",
+            "notify.py",
             shape("log_failure(log, logging.DEBUG, 'notify: send_failed', exc, safe=True)"),
         ),
     }

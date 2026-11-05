@@ -46,7 +46,7 @@ def test_keyboard_opens_no_device_until_a_chord_is_sent():
     so the daemon can build an injector on a host that has no uinput at all.
     Closing twice is a no-op, because daemon shutdown may unwind twice.
     """
-    from stenographer.lib.platform.linux.uinput_keyboard import UinputKeyboard
+    from stenographer.lib.platform.linux.uinput import UinputKeyboard
 
     keyboard = UinputKeyboard()
     with keyboard as entered:
