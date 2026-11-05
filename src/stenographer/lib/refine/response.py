@@ -135,7 +135,7 @@ def _wraps(value: str, opening: str, closing: str) -> bool:
     single-quote reading, which is what makes ``'tis ... the dog's bowl'`` safe.
     """
 
-    if len(value) < 2 or not value.startswith(opening) or not value.endswith(closing):
+    if not value.startswith(opening) or not value.endswith(closing):
         return False
     if opening == closing:
         return value.count(opening) == 2
@@ -209,11 +209,8 @@ def basic_format(original: str, candidate: str) -> str:
     _, still_wrapped = _strip_one_wrapper(stripped)
     if still_wrapped:
         raise RefineRejectedError("output was wrapped")
-    if not stripped.strip():
+    if not stripped:
         raise RefineRejectedError("output was empty")
-    reference = original.strip()
-    if not reference:
-        raise RefineRejectedError("input was empty")
     return stripped
 
 

@@ -357,10 +357,11 @@ class Daemon:
         missing Ollama must not delay the first press, and the refiner logs its
         own failure and then simply falls open on every utterance.
         """
-        warm = getattr(self._refiner, "warm", None)
-        if warm is None:
+        if self._refiner is None:
             return
-        thread = threading.Thread(target=warm, name="stenographer-refine-warmup", daemon=True)
+        thread = threading.Thread(
+            target=self._refiner.warm, name="stenographer-refine-warmup", daemon=True
+        )
         try:
             thread.start()
         except RuntimeError as exc:
@@ -408,11 +409,10 @@ class Daemon:
         warmup = self._refine_warmup_thread
         if warmup is not None:
             warmup.join(timeout=min(_REFINE_WARMUP_JOIN_SECONDS, remaining_seconds(deadline)))
-        unload = getattr(self._refiner, "unload", None)
-        if unload is None:
+        if self._refiner is None:
             return
         try:
-            unload()
+            self._refiner.unload()
         except Exception as exc:
             log_failure(log, logging.DEBUG, "refine: unload_failed", exc, safe=True)
 

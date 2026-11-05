@@ -16,9 +16,9 @@ import soundfile
 from stenographer.cli.transcribe.handler import cmd_transcribe
 from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.config.models import Config
-from stenographer.lib.refine.policy import should_refine
 from stenographer.lib.refine.results import RefineResult
 from stenographer.lib.transcribe.results import TranscriptionResult
+from stenographer.lib.transcribe.text import count_words
 
 #: Twelve words: over the ten-word refine threshold.
 SPOKEN = "um i think we should ship it on thursday no wait friday"
@@ -294,7 +294,7 @@ class _Refiner:
         self.last_result = RefineResult("applied", chars_in=0, chars_out=0, duration_ms=3.0)
 
     def will_refine(self, text: str) -> bool:
-        return should_refine(text, 10)
+        return count_words(text) >= 10
 
     def refine(self, text: str) -> str:
         self.calls.append(text)

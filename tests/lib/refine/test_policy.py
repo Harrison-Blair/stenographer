@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The two arithmetic decisions of the refine stage, and the endpoint vocabulary."""
+"""The refine endpoint vocabulary."""
 
 from __future__ import annotations
 
@@ -12,57 +12,6 @@ from stenographer.lib.refine.endpoints import (
     normalize_host,
     qualify_tag,
 )
-from stenographer.lib.refine.policy import (
-    COLD_LOAD_TIMEOUT_SECONDS,
-    INDEFINITE_KEEP_ALIVE,
-    keep_alive_for,
-    should_refine,
-    timeout_seconds,
-    word_count,
-)
-
-
-def test_threshold_admits_exactly_min_words_and_refuses_one_short():
-    ten = "one two three four five six seven eight nine ten"
-
-    assert word_count(ten) == 10
-    assert should_refine(ten, 10) is True
-    assert should_refine("one two three four five six seven eight nine", 10) is False
-
-
-@pytest.mark.parametrize("text", ["", "   ", "\n\t "])
-def test_blank_text_is_never_refined_whatever_the_threshold(text):
-    assert should_refine(text, 1) is False
-
-
-def test_threshold_counts_words_the_way_analytics_does():
-    """A count that disagreed with ``recognized_words`` would make a summary
-    line contradict itself: 12 words recorded, refine skipped at min_words=10."""
-    from stenographer.lib.transcribe.text import count_words
-
-    spoken = "it's a well-known problem, isn't it? 42 times over"
-    assert word_count(spoken) == count_words(spoken)
-
-
-def test_timeout_is_ten_seconds_plus_sixty_milliseconds_per_word():
-    assert timeout_seconds(0) == pytest.approx(10.0)
-    assert timeout_seconds(10) == pytest.approx(10.6)
-    assert timeout_seconds(200) == pytest.approx(22.0)
-    # A negative count cannot shorten the budget below its fixed floor.
-    assert timeout_seconds(-5) == pytest.approx(10.0)
-
-
-def test_a_cold_load_gets_its_own_two_minute_budget_outside_the_utterance_one():
-    """Loading a model into VRAM is not decoding; it must never be charged
-    against the ten-second utterance budget and must still end eventually."""
-    assert pytest.approx(120.0) == COLD_LOAD_TIMEOUT_SECONDS
-    assert timeout_seconds(1000) < COLD_LOAD_TIMEOUT_SECONDS
-
-
-def test_keep_alive_follows_the_asr_idle_window_and_never_expires_at_zero():
-    assert keep_alive_for(900) == 900
-    assert keep_alive_for(0) == INDEFINITE_KEEP_ALIVE
-    assert keep_alive_for(-1) == INDEFINITE_KEEP_ALIVE
 
 
 @pytest.mark.parametrize(

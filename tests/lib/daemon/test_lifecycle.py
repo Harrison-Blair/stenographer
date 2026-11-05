@@ -16,7 +16,6 @@ from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.daemon import Daemon
 from stenographer.lib.refine.cancellation import never_cancelled
-from stenographer.lib.refine.null_refiner import NullRefiner
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.results import TranscriptionResult
 
@@ -485,7 +484,7 @@ def test_the_built_daemon_hands_its_refine_observers_to_the_refiner(monkeypatch)
 
     def fake_build_refiner(cfg, **kwargs):
         captured.update(kwargs)
-        return NullRefiner()
+        return None
 
     # Patched before construction: `_daemon()` builds `Daemon(...)` directly,
     # which calls `build_refiner` from inside `__init__`.

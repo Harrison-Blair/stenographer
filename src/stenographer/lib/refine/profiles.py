@@ -11,7 +11,3 @@ class RefineProfile(StrEnum):
 
     AGENT = "agent"
     GENERAL = "general"
-
-    @classmethod
-    def default(cls) -> RefineProfile:
-        return cls.AGENT

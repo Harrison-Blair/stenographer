@@ -11,9 +11,8 @@ from stenographer.lib.refine.request import build_messages
 from stenographer.lib.refine.response import basic_format
 
 
-def test_exactly_two_builtin_profiles_with_agent_as_default():
+def test_exactly_two_builtin_profiles():
     assert tuple(RefineProfile) == (RefineProfile.AGENT, RefineProfile.GENERAL)
-    assert RefineProfile.default() is RefineProfile.AGENT
 
 
 def test_profiles_use_separate_prompts_and_general_keeps_the_cleanup_prompt():

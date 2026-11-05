@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.asr_transport import AsrTransport
     from stenographer.lib.platform.ffmpeg_decoder import FfmpegDecoder
     from stenographer.lib.platform.platform import Platform
-    from stenographer.lib.refine.text_refiner import TextRefiner
+    from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 
 log = logging.getLogger(__name__)
 _STOP = object()
@@ -56,7 +56,7 @@ class FilesEngine:
         platform: Platform | None = None,
         segmenter_factory: Callable[[], object] | None = None,
         speaker_tracker_factory: Callable[[], object] | None = None,
-        refiner_factory: Callable[[Config], TextRefiner] | None = None,
+        refiner_factory: Callable[[Config], OllamaRefiner | None] | None = None,
         session_store: SessionStore | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -327,7 +327,7 @@ class FilesEngine:
         job._update("diarize", 95, 0.0, tuple(result))
         return result
 
-    def _make_refiner(self) -> TextRefiner:
+    def _make_refiner(self) -> OllamaRefiner | None:
         if self._refiner_factory is not None:
             return self._refiner_factory(self._config)
         from stenographer.lib.refine.factory import build_refiner

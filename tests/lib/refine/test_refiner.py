@@ -20,7 +20,6 @@ from stenographer.lib.config.models import Config, RefineConfig
 from stenographer.lib.refine import ollama_refiner
 from stenographer.lib.refine.errors import RefineTimeoutError, RefineTransportError
 from stenographer.lib.refine.factory import build_refiner
-from stenographer.lib.refine.null_refiner import NullRefiner
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 from stenographer.lib.refine.prompt import RESPONSE_KEY
 from stenographer.lib.refine.results import (
@@ -102,12 +101,21 @@ def test_a_clean_reply_is_delivered_and_measured(transport):
     assert result.duration_ms is not None and result.duration_ms >= 0
 
 
-def test_the_time_budget_sent_follows_the_word_count(transport):
-    from stenographer.lib.refine.policy import timeout_seconds, word_count
+def test_threshold_admits_exactly_min_words_and_refuses_one_short():
+    refiner = _refiner(min_words=10)
+    assert refiner.will_refine("one two three four five six seven eight nine ten")
+    assert not refiner.will_refine("one two three four five six seven eight nine")
 
+
+@pytest.mark.parametrize("text", ["", "   ", "\n\t "])
+def test_blank_text_is_never_refined(text):
+    assert not _refiner(min_words=1).will_refine(text)
+
+
+def test_the_time_budget_sent_follows_the_word_count(transport):
     _refiner().refine(SPOKEN)
 
-    assert transport["calls"][0]["timeout"] == pytest.approx(timeout_seconds(word_count(SPOKEN)))
+    assert transport["calls"][0]["timeout"] == pytest.approx(10.78)
 
 
 def test_a_resident_model_is_not_loaded_again(transport):
@@ -120,12 +128,6 @@ def test_a_resident_model_is_not_loaded_again(transport):
 def test_a_cold_model_is_loaded_on_its_own_budget_before_the_utterance_is_timed(transport):
     """The utterance budget assumes a warm model. A cold load must get the
     long budget first, and only then is the ordinary one started."""
-    from stenographer.lib.refine.policy import (
-        COLD_LOAD_TIMEOUT_SECONDS,
-        timeout_seconds,
-        word_count,
-    )
-
     transport["loaded"] = False
     refiner = _refiner(keep_alive=-1)
 
@@ -135,9 +137,9 @@ def test_a_cold_model_is_loaded_on_its_own_budget_before_the_utterance_is_timed(
     (warm,) = transport["warm_calls"]
     assert warm["model"] == "test-model"
     assert warm["keep_alive"] == -1
-    assert warm["timeout"] == pytest.approx(COLD_LOAD_TIMEOUT_SECONDS)
+    assert warm["timeout"] == pytest.approx(120.0)
     (chat,) = transport["calls"]
-    assert chat["timeout"] == pytest.approx(timeout_seconds(word_count(SPOKEN)))
+    assert chat["timeout"] == pytest.approx(10.78)
 
 
 @pytest.mark.parametrize(
@@ -303,14 +305,6 @@ def test_plain_text_replies_work_without_the_schema(transport):
     assert _refiner(structured_output=False).refine(SPOKEN) == CLEANED
 
 
-def test_the_disabled_stage_is_an_object_not_a_special_case():
-    refiner = NullRefiner()
-
-    assert refiner.will_refine("anything at all, however long it happens to be") is False
-    assert refiner.refine(SPOKEN) == SPOKEN
-    assert refiner.last_result is None
-
-
 @pytest.mark.parametrize(
     "section",
     [
@@ -320,7 +314,7 @@ def test_the_disabled_stage_is_an_object_not_a_special_case():
     ],
 )
 def test_the_factory_builds_nothing_that_can_reach_the_network(section):
-    assert isinstance(build_refiner(section, idle_unload_seconds=900), NullRefiner)
+    assert build_refiner(section, idle_unload_seconds=900) is None
 
 
 def test_the_factory_carries_the_asr_idle_window_into_keep_alive():
@@ -328,6 +322,7 @@ def test_the_factory_carries_the_asr_idle_window_into_keep_alive():
 
     assert isinstance(refiner, OllamaRefiner)
     assert refiner._keep_alive == -1
+    assert build_refiner(RefineConfig(enabled=True), idle_unload_seconds=-1)._keep_alive == -1
     assert build_refiner(RefineConfig(enabled=True), idle_unload_seconds=60)._keep_alive == 60
 
 
@@ -336,14 +331,14 @@ def test_an_explicit_opt_in_does_not_need_the_daemon_setting():
     section = dataclasses.replace(Config.defaults().refine, enabled=False)
 
     assert section.enabled is False
-    assert isinstance(build_refiner(section, idle_unload_seconds=900), NullRefiner)
+    assert build_refiner(section, idle_unload_seconds=900) is None
     assert isinstance(build_refiner(section, idle_unload_seconds=900, enabled=True), OllamaRefiner)
 
 
 def test_an_explicit_opt_out_overrides_an_enabled_config():
     section = dataclasses.replace(Config.defaults().refine, enabled=True)
 
-    assert isinstance(build_refiner(section, idle_unload_seconds=900, enabled=False), NullRefiner)
+    assert build_refiner(section, idle_unload_seconds=900, enabled=False) is None
 
 
 def test_the_factory_passes_the_loading_observers_through():

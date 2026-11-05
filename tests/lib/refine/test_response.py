@@ -135,11 +135,6 @@ def test_a_second_wrapping_pair_is_a_refusal_not_another_strip():
         guard(ORIGINAL, f'```\n"{body}"\n```')
 
 
-def test_an_empty_input_cannot_be_used_as_a_length_reference():
-    with pytest.raises(RefineRejectedError):
-        guard("   ", "anything at all")
-
-
 def test_refined_text_parses_and_guards_in_one_step():
     cleaned = "I think we should ship it on Friday, because the notes are not done."
     payload = _reply(json.dumps({RESPONSE_KEY: cleaned}))

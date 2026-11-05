@@ -54,7 +54,7 @@ def _refine(
         idle_unload_seconds=cfg.asr.idle_unload_seconds,
         enabled=True,
     )
-    if not refiner.will_refine(text):
+    if refiner is None or not refiner.will_refine(text):
         return text
     refined = refiner.refine(text)
     accepted = refined if refined.strip() else text

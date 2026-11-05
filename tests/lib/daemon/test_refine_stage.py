@@ -352,9 +352,8 @@ def test_a_refiner_that_cannot_unload_does_not_break_shutdown():
 
 
 def test_a_refiner_without_an_unload_is_simply_left_alone():
-    """``NullRefiner`` is the disabled stage and has nothing to release."""
-    from stenographer.lib.refine.null_refiner import NullRefiner
+    """A disabled stage has nothing to release."""
 
-    daemon = _daemon(result=_result(LONG), refiner=NullRefiner())
+    daemon = _daemon(result=_result(LONG), refiner=None)
 
     daemon.stop()
