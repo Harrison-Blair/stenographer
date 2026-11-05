@@ -25,7 +25,8 @@ from stenographer.lib.sessions import SessionStore
 from tests.cli.hub.support import _screen_text
 from tests.cli.hub.test_library import FakeServices, _library, _rows, _until
 from tests.cli.hub.test_session_jobs import FakePlatform
-from tests.lib.files.test_engine import FakeAsrProcess, FakeAsrTransport, FakeSegmenter
+from tests.lib.files.test_engine import FakeSegmenter, _file_asr_process
+from tests.lib.transcribe.support import FakeAsrTransport
 
 FAIL = "\N{MULTIPLICATION SIGN}"
 
@@ -213,7 +214,7 @@ def _engine_app(tmp_path: Path, home: Path, *, decoder=None) -> tuple[HubApp, Pa
             config,
             data_dir=data,
             decoder=decoder or SubprocessFfmpegDecoder(),
-            transport=FakeAsrTransport(FakeAsrProcess()),
+            transport=FakeAsrTransport(_file_asr_process()),
             segmenter_factory=FakeSegmenter,
             clock=lambda: datetime(2026, 10, 27, 9, 0, tzinfo=UTC),
         )

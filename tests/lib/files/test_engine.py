@@ -6,7 +6,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-import queue
 import shutil
 import threading
 import time
@@ -21,59 +20,29 @@ from stenographer.lib.files.engine import FilesEngine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
 from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.transcribe.results import TranscriptionResult
+from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport
 
 
-class FakeAsrProcess:
-    def __init__(self, *, started=None, release=None):
-        self.pid = 713
-        self.exit_code = None
-        self.running = True
-        self.sent = []
-        self.results = queue.Queue()
-        self.started = started
-        self.release = release
-        self.decode_count = 0
-
-    def is_running(self):
-        return self.running
-
-    def send(self, message):
-        self.sent.append(message)
+def _file_asr_process(*, started=None, release=None):
+    def reply(process, message):
         if message[0] == "load":
-            self.results.put(("model_ready",))
-        elif message[0] == "job":
-            self.decode_count += 1
-            if self.started is not None and self.decode_count == 1:
-                self.started.set()
-                assert self.release.wait(5)
-            self.results.put(
-                (
-                    "ok",
-                    TranscriptionResult(
-                        text=f"recognized phrase {self.decode_count}",
-                        duration_seconds=1.0,
-                    ),
-                )
+            return ("model_ready",)
+        if message[0] == "job":
+            process.decode_count += 1
+            if started is not None and process.decode_count == 1:
+                started.set()
+                assert release.wait(5)
+            return (
+                "ok",
+                TranscriptionResult(
+                    text=f"recognized phrase {process.decode_count}", duration_seconds=1.0
+                ),
             )
+        return None
 
-    def receive(self, timeout):
-        try:
-            return self.results.get(timeout=timeout)
-        except queue.Empty:
-            raise TimeoutError from None
-
-    def close(self, graceful=False):
-        self.running = False
-
-
-class FakeAsrTransport:
-    def __init__(self, process):
-        self.process = process
-        self.spawned = []
-
-    def spawn(self, _config, *, on_log):
-        self.spawned.append(self.process)
-        return self.process
+    process = FakeAsrProcess(pid=713, reply=reply)
+    process.decode_count = 0
+    return process
 
 
 class FakeSegmenter:
@@ -140,7 +109,7 @@ def _transcript_rows(directory, name="transcript.jsonl"):
 
 
 def test_file_job_writes_phrase_text_to_a_new_file_session_and_progress_preview(tmp_path):
-    process = FakeAsrProcess()
+    process = _file_asr_process()
     engine = _engine(tmp_path, process)
     source = _audio(tmp_path / "Meeting Notes.WAV")
     job = engine.submit(source, diarize=False)
@@ -186,7 +155,7 @@ def test_file_job_writes_phrase_text_to_a_new_file_session_and_progress_preview(
 def test_file_session_name_adds_one_second_while_the_name_exists(tmp_path):
     for name in ("20260302T040506Z", "20260302T040507Z"):
         (_sessions(tmp_path) / name).mkdir(parents=True)
-    engine = _engine(tmp_path, FakeAsrProcess())
+    engine = _engine(tmp_path, _file_asr_process())
     job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
     try:
         assert job.wait(5) == "completed"
@@ -204,7 +173,7 @@ def test_file_session_name_adds_one_second_while_the_name_exists(tmp_path):
 def test_cancel_finishes_current_phrase_without_saving_output(tmp_path):
     started = threading.Event()
     release = threading.Event()
-    process = FakeAsrProcess(started=started, release=release)
+    process = _file_asr_process(started=started, release=release)
     engine = _engine(tmp_path, process)
     job = engine.submit(_audio(tmp_path / "cancel.wav"), diarize=False)
     progress_events = []
@@ -226,7 +195,7 @@ def test_cancel_finishes_current_phrase_without_saving_output(tmp_path):
 def test_jobs_run_in_fifo_order(tmp_path):
     started = threading.Event()
     release = threading.Event()
-    process = FakeAsrProcess(started=started, release=release)
+    process = _file_asr_process(started=started, release=release)
     engine = _engine(tmp_path, process)
     first = engine.submit(_audio(tmp_path / "first.wav"), diarize=False)
     try:
@@ -249,7 +218,7 @@ def test_jobs_run_in_fifo_order(tmp_path):
 
 def test_missing_ffmpeg_blocks_an_unsupported_file_before_asr_starts(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", "")
-    process = FakeAsrProcess()
+    process = _file_asr_process()
     engine = _engine(tmp_path, process)
     path = tmp_path / "voice.m4a"
     path.touch()
@@ -272,7 +241,7 @@ def test_refine_is_opt_in_and_updates_the_preview(tmp_path):
         def refine(self, text, *, cancelled):
             return f"clean {text}"
 
-    process = FakeAsrProcess()
+    process = _file_asr_process()
     engine = _engine(tmp_path, process, refiner_factory=lambda _config: Refiner())
     job = engine.submit(
         _audio(tmp_path / "refine.wav"),
@@ -305,7 +274,7 @@ def test_fixed_speaker_count_runs_batch_diarization(tmp_path):
 
     started = threading.Event()
     release = threading.Event()
-    process = FakeAsrProcess(started=started, release=release)
+    process = _file_asr_process(started=started, release=release)
     engine = _engine(
         tmp_path,
         process,
@@ -342,7 +311,7 @@ def test_a_file_job_refine_request_carries_the_vocabulary(tmp_path, ollama_wire)
         config,
         data_dir=tmp_path / "data",
         decoder=SubprocessFfmpegDecoder(),
-        transport=FakeAsrTransport(FakeAsrProcess()),
+        transport=FakeAsrTransport(_file_asr_process()),
         segmenter_factory=FakeSegmenter,
     )
     job = engine.submit(_audio(tmp_path / "refine.wav"), diarize=False, refine=True)
@@ -390,7 +359,7 @@ def _keep_other_folders(tmp_path):
 def test_failed_file_session_save_removes_only_its_own_folder(tmp_path, monkeypatch):
     other, stray = _keep_other_folders(tmp_path)
     _replace_hook(monkeypatch, "session.json", _raise_injected)
-    engine = _engine(tmp_path, FakeAsrProcess())
+    engine = _engine(tmp_path, _file_asr_process())
     job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
     try:
         assert job.wait(5) == "failed"
@@ -406,7 +375,7 @@ def test_cancel_during_file_session_save_removes_only_its_own_folder(tmp_path, m
     other, stray = _keep_other_folders(tmp_path)
     holder = {}
     _replace_hook(monkeypatch, "transcript.md", lambda: holder["job"].cancel())
-    engine = _engine(tmp_path, FakeAsrProcess())
+    engine = _engine(tmp_path, _file_asr_process())
     holder["job"] = job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
     try:
         assert job.wait(5) == "cancelled"
@@ -458,7 +427,7 @@ def test_source_name_copy_uses_a_safe_lowercase_suffix(tmp_path, name, copied):
 
     source = tmp_path / name
     soundfile.write(source, np.full(32000, 0.1, dtype=np.float32), 16000, format="WAV")
-    engine = _engine(tmp_path, FakeAsrProcess())
+    engine = _engine(tmp_path, _file_asr_process())
     job = engine.submit(source, diarize=False)
     try:
         assert job.wait(5) == "completed"
@@ -535,7 +504,7 @@ def test_mic_source_job_writes_a_revision_and_keeps_system_lines_and_renames(tmp
     session = _recording(tmp_path)
     store = SessionStore(_sessions(tmp_path))
     store.rename_speaker(session.name, "speaker-1", "Alice")
-    engine = _engine(tmp_path, FakeAsrProcess())
+    engine = _engine(tmp_path, _file_asr_process())
     try:
         job = engine.submit(session / "mic.flac", diarize=False)
         assert job.wait(5) == "completed"
@@ -613,7 +582,7 @@ def test_diarized_source_job_numbers_new_speakers_and_keeps_the_other_source(
 
     session = _recording(tmp_path)
     store = SessionStore(_sessions(tmp_path))
-    engine = _engine(tmp_path, FakeAsrProcess(), speaker_tracker_factory=TwoVoiceTracker)
+    engine = _engine(tmp_path, _file_asr_process(), speaker_tracker_factory=TwoVoiceTracker)
     try:
         job = engine.submit(session / f"{source}.flac", diarize=True, speaker_count=2)
         assert job.wait(5) == "completed"
@@ -633,7 +602,7 @@ def test_system_source_job_without_diarization_uses_one_speaker(tmp_path):
     from stenographer.lib.sessions import SessionStore
 
     session = _recording(tmp_path)
-    engine = _engine(tmp_path, FakeAsrProcess())
+    engine = _engine(tmp_path, _file_asr_process())
     try:
         job = engine.submit(session / "system.flac", diarize=False)
         assert job.wait(5) == "completed"
@@ -651,7 +620,7 @@ def test_system_source_job_without_diarization_uses_one_speaker(tmp_path):
 def test_file_session_source_job_replaces_all_lines(tmp_path):
     from stenographer.lib.sessions import SessionStore
 
-    engine = _engine(tmp_path, FakeAsrProcess())
+    engine = _engine(tmp_path, _file_asr_process())
     try:
         first = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
         assert first.wait(5) == "completed"
@@ -696,7 +665,7 @@ def test_source_paths_that_leave_a_session_folder_make_a_new_session(tmp_path, l
         path = nested / "mic.flac"
         shutil.copyfile(session / "mic.flac", path)
         before = _snapshot_tree(session)
-    engine = _engine(tmp_path, FakeAsrProcess())
+    engine = _engine(tmp_path, _file_asr_process())
     try:
         job = engine.submit(path, diarize=False)
         assert job.wait(5) == "completed"
@@ -721,7 +690,7 @@ def test_cancelled_revision_job_leaves_the_session_byte_identical(tmp_path):
     before = _snapshot(session)
     started = threading.Event()
     release = threading.Event()
-    engine = _engine(tmp_path, FakeAsrProcess(started=started, release=release))
+    engine = _engine(tmp_path, _file_asr_process(started=started, release=release))
     try:
         job = engine.submit(session / "mic.flac", diarize=False)
         assert started.wait(5)
@@ -747,7 +716,7 @@ def test_revision_job_stopped_while_saving_leaves_the_session_byte_identical(
         _replace_hook(monkeypatch, "session.json", _raise_injected)
     else:
         _replace_hook(monkeypatch, "transcript.r2.md", lambda: holder["job"].cancel())
-    engine = _engine(tmp_path, FakeAsrProcess())
+    engine = _engine(tmp_path, _file_asr_process())
     try:
         holder["job"] = job = engine.submit(session / "mic.flac", diarize=False)
         assert job.wait(5) == step
@@ -773,7 +742,9 @@ def test_revision_job_stale_revision_keeps_a_rename_made_during_the_job(tmp_path
                 SessionStore(self.root).rename_speaker(session_id, "speaker-1", "Alice")
             return detail
 
-    engine = _engine(tmp_path, FakeAsrProcess(), session_store=RenameAfterRead(_sessions(tmp_path)))
+    engine = _engine(
+        tmp_path, _file_asr_process(), session_store=RenameAfterRead(_sessions(tmp_path))
+    )
     try:
         job = engine.submit(session / "mic.flac", diarize=False)
         assert job.wait(5) == "failed"
@@ -792,7 +763,7 @@ def test_revision_job_stale_revision_keeps_a_rename_made_during_the_job(tmp_path
 
 
 def test_engine_exposes_its_worker_pids_and_idle_unload_deadline(tmp_path):
-    process = FakeAsrProcess()
+    process = _file_asr_process()
     engine = _engine(tmp_path, process)
     try:
         assert engine.process_ids == ()
