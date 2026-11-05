@@ -424,24 +424,21 @@ def test_help_overlay_shows_every_shown_binding_of_the_dialog(tmp_path, name):
     _run_state(tmp_path, DIALOGS, name, check)
 
 
-def test_help_overlay_scrolls_its_rows_and_keeps_its_close_button_on_a_short_terminal():
-    async def exercise():
-        app = HubApp(SettingsServices())
-        async with app.run_test(size=(150, 20)) as pilot:
-            await pilot.press("2")
-            await pilot.pause()
-            await pilot.press("question_mark")
-            await pilot.pause()
-            overlay = app.screen
-            assert isinstance(overlay, HelpOverlay)
-            assert "[esc] Close" in _screen_text(app)
-            assert "Previous entry" in _screen_text(app)
-            body = overlay.body_widget()
-            body.scroll_end(animate=False)
-            await pilot.pause()
-            assert overlay.rows[-1][1] in _screen_text(app)
-
-    asyncio.run(exercise())
+async def test_help_overlay_scrolls_its_rows_and_keeps_its_close_button_on_a_short_terminal():
+    app = HubApp(SettingsServices())
+    async with app.run_test(size=(150, 20)) as pilot:
+        await pilot.press("2")
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        overlay = app.screen
+        assert isinstance(overlay, HelpOverlay)
+        assert "[esc] Close" in _screen_text(app)
+        assert "Previous entry" in _screen_text(app)
+        body = overlay.body_widget()
+        body.scroll_end(animate=False)
+        await pilot.pause()
+        assert overlay.rows[-1][1] in _screen_text(app)
 
 
 # AC2: clicks
@@ -489,24 +486,21 @@ def test_each_button_click_runs_the_action_of_its_key(tmp_path, name):
     _run_state(tmp_path, {**STATES, **DIALOGS}, name, check)
 
 
-def test_nav_rows_and_settings_tabs_answer_a_click(tmp_path):
-    async def exercise():
-        app = _make_app("settings", tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
+async def test_nav_rows_and_settings_tabs_answer_a_click(tmp_path):
+    app = _make_app("settings", tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        for row, screen in ((1, "library"), (2, "settings"), (0, "record")):
+            assert await pilot.click("#sidebar", offset=(4, row))
             await pilot.pause()
-            for row, screen in ((1, "library"), (2, "settings"), (0, "record")):
-                assert await pilot.click("#sidebar", offset=(4, row))
-                await pilot.pause()
-                assert app.current_mode == screen
-            await pilot.press("3")
+            assert app.current_mode == screen
+        await pilot.press("3")
+        await pilot.pause()
+        for tab in ("audio", "recognition", "live", "checks", "general"):
+            assert await pilot.click(f"#tab-{tab}")
             await pilot.pause()
-            for tab in ("audio", "recognition", "live", "checks", "general"):
-                assert await pilot.click(f"#tab-{tab}")
-                await pilot.pause()
-                assert app.settings_screen.tab == tab
-                assert app.screen.query_one(f"#tab-{tab}", HubButton).label.plain.startswith("▶")
-
-    asyncio.run(exercise())
+            assert app.settings_screen.tab == tab
+            assert app.screen.query_one(f"#tab-{tab}", HubButton).label.plain.startswith("▶")
 
 
 def test_context_card_buttons_run_the_action_of_their_key(tmp_path):

@@ -107,35 +107,32 @@ def _button(app, selector: str) -> HubButton:
 # V1: list, detail, card, badge
 
 
-def test_checks_list_groups_rows_with_glyphs_in_the_board_order():
-    async def exercise():
-        app = _app()
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open_checks(pilot)
-            assert _plain(app, "#checks-section-input") == "input"
-            assert _plain(app, "#checks-section-engine") == "engine"
-            assert _plain(app, "#checks-section-other") == "other"
-            inputs = _plain(app, "#checks-input").splitlines()
-            assert [row[2:].split()[1] for row in inputs] == [
-                "input",
-                "microphone",
-                "hotkey",
-                "sounds",
-            ]
-            assert inputs[0].startswith("  ✓ input access")
-            assert "uinput group ok" in inputs[0]
-            assert inputs[3].startswith("▶ ! sounds")
-            engine = _plain(app, "#checks-engine").splitlines()
-            assert [row[4:18].strip() for row in engine] == [
-                "speech model",
-                "voice models",
-                "system service",
-            ]
-            other = _plain(app, "#checks-other").splitlines()
-            assert other == [other[0]]
-            assert other[0].startswith(f"  {FAIL} ffmpeg")
-
-    asyncio.run(exercise())
+async def test_checks_list_groups_rows_with_glyphs_in_the_board_order():
+    app = _app()
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_checks(pilot)
+        assert _plain(app, "#checks-section-input") == "input"
+        assert _plain(app, "#checks-section-engine") == "engine"
+        assert _plain(app, "#checks-section-other") == "other"
+        inputs = _plain(app, "#checks-input").splitlines()
+        assert [row[2:].split()[1] for row in inputs] == [
+            "input",
+            "microphone",
+            "hotkey",
+            "sounds",
+        ]
+        assert inputs[0].startswith("  ✓ input access")
+        assert "uinput group ok" in inputs[0]
+        assert inputs[3].startswith("▶ ! sounds")
+        engine = _plain(app, "#checks-engine").splitlines()
+        assert [row[4:18].strip() for row in engine] == [
+            "speech model",
+            "voice models",
+            "system service",
+        ]
+        other = _plain(app, "#checks-other").splitlines()
+        assert other == [other[0]]
+        assert other[0].startswith(f"  {FAIL} ffmpeg")
 
 
 def test_checks_rows_cut_a_long_detail_and_never_wrap():
@@ -155,139 +152,124 @@ def test_checks_rows_cut_a_long_detail_and_never_wrap():
     asyncio.run(exercise())
 
 
-def test_checks_glyphs_carry_the_state_and_colour_only_adds():
-    async def exercise():
-        app = _app()
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open_checks(pilot)
+async def test_checks_glyphs_carry_the_state_and_colour_only_adds():
+    app = _app()
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_checks(pilot)
+        await pilot.press("down")
+        for selector, glyph, tone in (
+            ("#checks-input", "✓", "#6ee69a"),
+            ("#checks-other", FAIL, "#ff875f"),
+        ):
+            text = app.screen.query_one(selector, Static).render()
+            style = text.get_style_at_offset(text.plain.index(glyph))
+            assert style.rich_style.color.get_truecolor() == Color.parse(tone).get_truecolor()
+            label = text.get_style_at_offset(text.plain.index(glyph) + 2)
+            assert label.rich_style.color is None, "only the glyph takes the state colour"
+        head = app.screen.query_one("#checks-detail-head", Static).render()
+        assert head.get_style_at_offset(0).rich_style.color is not None
+        assert head.get_style_at_offset(2).rich_style.color is None
+
+
+async def test_checks_detail_shows_title_state_explanation_path_and_buttons():
+    app = _app()
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_checks(pilot)
+        assert app.checks_tab.selected.check_id == "cue_player"
+        assert _plain(app, "#checks-detail-head") == "! sounds · warning"
+        body = _plain(app, "#checks-detail-body")
+        assert "The sound pack bravo has no charlie cue." in body
+        assert "pack bravo · 1 cue missing" in body
+        assert _plain(app, "#checks-detail-path") == "checked 13:21 · /tmp/sounds/bravo"
+        labels = [
+            str(_button(app, selector).label)
+            for selector in ("#checks-fix", "#checks-test", "#checks-log", "#checks-copy")
+        ]
+        assert labels == [
+            "[f] Fix: choose a sound pack",
+            "[t] Test: play cues",
+            "[l] Open log",
+            "[c] Copy report",
+        ]
+        assert all(_button(app, f"#checks-{name}").display for name in ("fix", "test"))
+        dialogs = [
+            str(_button(app, selector).label)
+            for selector in ("#checks-quick", "#checks-models", "#checks-defaults")
+        ]
+        assert dialogs == ["[Q] Quick setup…", "[m] Models…", "[D] Defaults…"]
+        assert not app.screen.query("#checks-run"), "Run again is in the context card"
+        frame = app.screen.query_one("#checks-detail").content_region
+        for name in ("fix", "test", "log", "copy", "quick", "models", "defaults"):
+            region = _button(app, f"#checks-{name}").region
+            assert frame.contains_region(region), f"{name} is cut at 150 x 45"
+        assert _plain(app, "#checks-warnings-title") == "recent warnings (no transcript text)"
+
+        # A passing check without a path or a test: no fix, no test, no path.
+        app.checks_tab.select_check("system_service")
+        await pilot.pause()
+        assert _plain(app, "#checks-detail-head") == "✓ system service · pass"
+        assert _plain(app, "#checks-detail-path") == "checked 13:21"
+        assert not _button(app, "#checks-fix").display
+        assert _button(app, "#checks-test").display
+        app.checks_tab.select_check("ffmpeg")
+        await pilot.pause()
+        assert _plain(app, "#checks-detail-head") == f"{FAIL} ffmpeg · failure"
+        assert not _button(app, "#checks-test").display
+
+
+async def test_checks_enter_shows_the_fix_hint_and_keys_move_in_group_order():
+    app = _app()
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_checks(pilot)
+        assert "Choose another sound pack." not in _plain(app, "#checks-detail-body")
+        await pilot.press("enter")
+        assert "how to fix: Choose another sound pack." in _plain(app, "#checks-detail-body")
+        order = []
+        for _ in range(len(app.checks_tab.report.checks)):
             await pilot.press("down")
-            for selector, glyph, tone in (
-                ("#checks-input", "✓", "#6ee69a"),
-                ("#checks-other", FAIL, "#ff875f"),
-            ):
-                text = app.screen.query_one(selector, Static).render()
-                style = text.get_style_at_offset(text.plain.index(glyph))
-                assert style.rich_style.color.get_truecolor() == Color.parse(tone).get_truecolor()
-                label = text.get_style_at_offset(text.plain.index(glyph) + 2)
-                assert label.rich_style.color is None, "only the glyph takes the state colour"
-            head = app.screen.query_one("#checks-detail-head", Static).render()
-            assert head.get_style_at_offset(0).rich_style.color is not None
-            assert head.get_style_at_offset(2).rich_style.color is None
-
-    asyncio.run(exercise())
-
-
-def test_checks_detail_shows_title_state_explanation_path_and_buttons():
-    async def exercise():
-        app = _app()
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open_checks(pilot)
-            assert app.checks_tab.selected.check_id == "cue_player"
-            assert _plain(app, "#checks-detail-head") == "! sounds · warning"
-            body = _plain(app, "#checks-detail-body")
-            assert "The sound pack bravo has no charlie cue." in body
-            assert "pack bravo · 1 cue missing" in body
-            assert _plain(app, "#checks-detail-path") == "checked 13:21 · /tmp/sounds/bravo"
-            labels = [
-                str(_button(app, selector).label)
-                for selector in ("#checks-fix", "#checks-test", "#checks-log", "#checks-copy")
-            ]
-            assert labels == [
-                "[f] Fix: choose a sound pack",
-                "[t] Test: play cues",
-                "[l] Open log",
-                "[c] Copy report",
-            ]
-            assert all(_button(app, f"#checks-{name}").display for name in ("fix", "test"))
-            dialogs = [
-                str(_button(app, selector).label)
-                for selector in ("#checks-quick", "#checks-models", "#checks-defaults")
-            ]
-            assert dialogs == ["[Q] Quick setup…", "[m] Models…", "[D] Defaults…"]
-            assert not app.screen.query("#checks-run"), "Run again is in the context card"
-            frame = app.screen.query_one("#checks-detail").content_region
-            for name in ("fix", "test", "log", "copy", "quick", "models", "defaults"):
-                region = _button(app, f"#checks-{name}").region
-                assert frame.contains_region(region), f"{name} is cut at 150 x 45"
-            assert _plain(app, "#checks-warnings-title") == "recent warnings (no transcript text)"
-
-            # A passing check without a path or a test: no fix, no test, no path.
-            app.checks_tab.select_check("system_service")
-            await pilot.pause()
-            assert _plain(app, "#checks-detail-head") == "✓ system service · pass"
-            assert _plain(app, "#checks-detail-path") == "checked 13:21"
-            assert not _button(app, "#checks-fix").display
-            assert _button(app, "#checks-test").display
-            app.checks_tab.select_check("ffmpeg")
-            await pilot.pause()
-            assert _plain(app, "#checks-detail-head") == f"{FAIL} ffmpeg · failure"
-            assert not _button(app, "#checks-test").display
-
-    asyncio.run(exercise())
+            order.append(app.checks_tab.selected.label)
+        assert order == [
+            "speech model",
+            "voice models",
+            "system service",
+            "ffmpeg",
+            "input access",
+            "microphone",
+            "hotkey",
+            "sounds",
+        ]
+        await pilot.press("up")
+        assert app.checks_tab.selected.label == "hotkey"
+        assert _plain(app, "#checks-input").splitlines()[2].startswith("▶ ✓ hotkey")
 
 
-def test_checks_enter_shows_the_fix_hint_and_keys_move_in_group_order():
-    async def exercise():
-        app = _app()
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open_checks(pilot)
-            assert "Choose another sound pack." not in _plain(app, "#checks-detail-body")
-            await pilot.press("enter")
-            assert "how to fix: Choose another sound pack." in _plain(app, "#checks-detail-body")
-            order = []
-            for _ in range(len(app.checks_tab.report.checks)):
-                await pilot.press("down")
-                order.append(app.checks_tab.selected.label)
-            assert order == [
-                "speech model",
-                "voice models",
-                "system service",
-                "ffmpeg",
-                "input access",
-                "microphone",
-                "hotkey",
-                "sounds",
-            ]
-            await pilot.press("up")
-            assert app.checks_tab.selected.label == "hotkey"
-            assert _plain(app, "#checks-input").splitlines()[2].startswith("▶ ✓ hotkey")
-
-    asyncio.run(exercise())
+async def test_checks_click_on_a_row_selects_that_check():
+    app = _app()
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_checks(pilot)
+        await pilot.click("#checks-engine", offset=(4, 1))
+        await pilot.pause()
+        assert app.checks_tab.selected.label == "voice models"
+        assert _plain(app, "#checks-detail-head") == "✓ voice models · pass"
+        assert app.current_mode == "settings"
 
 
-def test_checks_click_on_a_row_selects_that_check():
-    async def exercise():
-        app = _app()
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open_checks(pilot)
-            await pilot.click("#checks-engine", offset=(4, 1))
-            await pilot.pause()
-            assert app.checks_tab.selected.label == "voice models"
-            assert _plain(app, "#checks-detail-head") == "✓ voice models · pass"
-            assert app.current_mode == "settings"
+async def test_checks_card_badge_and_tab_label_follow_the_last_run():
+    app = _app()
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_checks(pilot)
+        card = app.screen.query_one("#sidebar-card", Static).render()
+        assert app.screen.query_one("#sidebar-context").border_title == "checks"
+        ran_at = app.checks_tab.ran_at
+        assert card.plain == f"6 pass · 1 warn · 1 fail\nlast run {ran_at:%H:%M}"
+        ok = card.get_style_at_offset(0)
+        assert ok.rich_style.color.get_truecolor() == Color.parse("#6ee69a").get_truecolor()
+        zero = card.get_style_at_offset(card.plain.index("1 fail"))
+        assert zero.rich_style.color is not None
 
-    asyncio.run(exercise())
-
-
-def test_checks_card_badge_and_tab_label_follow_the_last_run():
-    async def exercise():
-        app = _app()
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open_checks(pilot)
-            card = app.screen.query_one("#sidebar-card", Static).render()
-            assert app.screen.query_one("#sidebar-context").border_title == "checks"
-            ran_at = app.checks_tab.ran_at
-            assert card.plain == f"6 pass · 1 warn · 1 fail\nlast run {ran_at:%H:%M}"
-            ok = card.get_style_at_offset(0)
-            assert ok.rich_style.color.get_truecolor() == Color.parse("#6ee69a").get_truecolor()
-            zero = card.get_style_at_offset(card.plain.index("1 fail"))
-            assert zero.rich_style.color is not None
-
-            nav = app.screen.query_one("#sidebar", Static).render().plain.splitlines()
-            assert nav[2].endswith("1 F")
-            assert str(_button(app, "#tab-checks").label) == "▶ Checks ●2"
-
-    asyncio.run(exercise())
+        nav = app.screen.query_one("#sidebar", Static).render().plain.splitlines()
+        assert nav[2].endswith("1 F")
+        assert str(_button(app, "#tab-checks").label) == "▶ Checks ●2"
 
 
 def test_checks_slow_run_leaves_the_app_answering_keys():
@@ -887,22 +869,19 @@ def test_checks_defaults_dialog_writes_defaults_with_a_backup_or_cancels(tmp_pat
     assert backups[0].read_bytes() == original
 
 
-def test_checks_settings_quit_prompts_to_save_draft_changes(tmp_path):
-    async def exercise():
-        path = tmp_path / "config.toml"
-        editor = ConfigEditor(path)
-        editor.edit("audio.input_device", "alpha microphone")
-        app = _app(DoctorReport((), ()), config_editor=editor)
-        async with app.run_test() as pilot:
-            await _open_checks(pilot)
-            await pilot.press("q")
-            prompt = str(app.screen.query_one("#config-prompt-message", Static).render()).casefold()
-            assert "save or discard" in prompt
-            await pilot.click("#choice-save")
+async def test_checks_settings_quit_prompts_to_save_draft_changes(tmp_path):
+    path = tmp_path / "config.toml"
+    editor = ConfigEditor(path)
+    editor.edit("audio.input_device", "alpha microphone")
+    app = _app(DoctorReport((), ()), config_editor=editor)
+    async with app.run_test() as pilot:
+        await _open_checks(pilot)
+        await pilot.press("q")
+        prompt = str(app.screen.query_one("#config-prompt-message", Static).render()).casefold()
+        assert "save or discard" in prompt
+        await pilot.click("#choice-save")
 
-        assert Config.loads(path.read_text()).audio.input_device == "alpha microphone"
-
-    asyncio.run(exercise())
+    assert Config.loads(path.read_text()).audio.input_device == "alpha microphone"
 
 
 # Check data
