@@ -358,7 +358,7 @@ class LibraryScreen(HubScreen):
         for label, seconds in detail.talk_time.items():
             if text:
                 text.append("   ")
-            speaker_id = ids.get(label, label)
+            speaker_id = ids[label]
             color = speaker_color(
                 speaker_id, tuple(ids.values()), source=self._source_of(detail, label)
             )
@@ -966,7 +966,7 @@ class LibraryScreen(HubScreen):
             app.notify("Could not queue this file.", severity="error")
             job = None
         finally:
-            self.files_submitting = max(0, self.files_submitting - 1)
+            self.files_submitting -= 1
         if job is None or not app.is_running:
             return
         # The job was queued when it was submitted, so the poll sees its end even when it ends

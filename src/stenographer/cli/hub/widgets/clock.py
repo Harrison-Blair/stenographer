@@ -15,9 +15,9 @@ class Clock(Digits):
     Clock.-saved { color: #6ee69a; }
     """
 
-    def __init__(self, seconds: float = 0, *, tone: str = "record", **kwargs) -> None:
-        super().__init__(self.format(seconds), **kwargs)
-        self.add_class(f"-{tone}")
+    def __init__(self, **kwargs) -> None:
+        super().__init__(self.format(0), **kwargs)
+        self.add_class("-record")
 
     def set_seconds(self, seconds: float) -> None:
         self.update(self.format(seconds))
@@ -28,7 +28,7 @@ class Clock(Digits):
 
     @staticmethod
     def format(seconds: float) -> str:
-        whole = max(0, int(seconds))
+        whole = int(seconds)
         hours, remainder = divmod(whole, 3600)
         minutes, seconds = divmod(remainder, 60)
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"

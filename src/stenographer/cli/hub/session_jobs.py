@@ -84,8 +84,6 @@ class SessionJobs:
                 relabeled = relabel_system_lines(
                     source_lines, embeddings, label_prefix=prefixes[source]
                 )
-                if relabeled is None:
-                    raise RuntimeError("speaker relabeling was cancelled")
                 for index, revised in zip(source_indices, relabeled, strict=True):
                     lines[index] = revised
         return self._store.write_revision(

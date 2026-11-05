@@ -304,7 +304,7 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
     @staticmethod
     def clock(seconds: float) -> str:
         """Return ``m:ss`` or ``h:mm:ss``."""
-        total = max(0, int(seconds))
+        total = int(seconds)
         hours, remainder = divmod(total, 3600)
         minutes, second = divmod(remainder, 60)
         return f"{hours}:{minutes:02d}:{second:02d}" if hours else f"{minutes}:{second:02d}"

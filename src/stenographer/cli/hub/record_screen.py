@@ -193,7 +193,7 @@ class RecordScreen(HubScreen):
         lines = self._lines(shown)
         speakers = self._speaker_rows(shown, lines)
         self._draw_rec_panel(state, shown)
-        self._draw_meters(state, live)
+        self._draw_meters(live)
         self._draw_transcript(state, shown, lines, speakers)
         app.set_context_card(
             "record",
@@ -264,7 +264,7 @@ class RecordScreen(HubScreen):
         button.action_name = action
         button.set_label(label)
 
-    def _draw_meters(self, state: str, session) -> None:
+    def _draw_meters(self, session) -> None:
         services = self.app.services
         sources = getattr(services, "next_sources", {"mic": True, "system": True})
         speech = getattr(session, "speech_detected", {}) if session is not None else {}

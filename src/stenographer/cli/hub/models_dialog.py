@@ -60,7 +60,6 @@ class ModelsDialog(Dialog[None]):
 
     def reload(self) -> None:
         self.entries = self._model_status()
-        self.index = min(self.index, max(0, len(self.entries) - 1))
         rows = tuple(
             (
                 f"{entry.label} · {entry.name}",
@@ -79,13 +78,10 @@ class ModelsDialog(Dialog[None]):
         self.reload()
 
     def action_move(self, offset: int) -> None:
-        if self.entries:
-            self.index = (self.index + offset) % len(self.entries)
-            self.reload()
+        self.index = (self.index + offset) % len(self.entries)
+        self.reload()
 
     def action_download(self) -> None:
-        if not self.entries:
-            return
         entry = self.entries[self.index]
         if entry.present:
             self.app.notify(f"The {entry.label} is present.")

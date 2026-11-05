@@ -406,8 +406,6 @@ class SettingsScreen(HubScreen):
             if value is None:
                 return _DEFAULT_DEVICE[key]
             return self._device_labels.get(key, {}).get(str(value), str(value))
-        if editor.kind(key) == "list":
-            return f"{len(value)} terms"
         if value is None:
             return "(none)"
         return editor.format_value(value)
