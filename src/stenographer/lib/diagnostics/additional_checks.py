@@ -122,13 +122,11 @@ def python_venv_check(python: str | None = None) -> DiagnosticCheck:
     return DiagnosticCheck("python_venv", "ok", f"`{python} -m venv` works", "")
 
 
-def collect_additional_checks(
-    *, live_model_dir: pathlib.Path | None = None
-) -> tuple[DiagnosticCheck, ...]:
+def collect_additional_checks() -> tuple[DiagnosticCheck, ...]:
     """Collect optional checks that never change the required capability gate."""
     return (
         system_capture_check(),
-        live_models_check(live_model_dir),
+        live_models_check(),
         ffmpeg_check(),
         python_venv_check(),
     )

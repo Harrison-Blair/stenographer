@@ -11,6 +11,7 @@ from io import StringIO
 import pytest
 
 from stenographer.lib.logging.pipeline import (
+    UtteranceFilter,
     apply_stderr_level,
     fmt_event,
     log_failure,
@@ -22,7 +23,6 @@ from stenographer.lib.logging.pipeline import (
     shutdown_logging,
     stderr_format,
 )
-from stenographer.lib.logging.utterance_filter import UtteranceFilter
 
 CANARY = "canary-" + "the quick brown fox"
 

@@ -3,7 +3,6 @@
 
 from types import SimpleNamespace
 
-from stenographer.lib.config.models import Config
 from stenographer.lib.diagnostics import capabilities
 from stenographer.lib.diagnostics.capability_result import Capabilities
 from stenographer.lib.platform.host_probe import HostProbe
@@ -32,8 +31,7 @@ def test_probe_uses_model_cache_service_and_keeps_display_optional(monkeypatch):
         return True
 
     monkeypatch.setattr(bark_download, "is_model_cached", model_cached)
-    config = Config.defaults()
-    result = capabilities.probe(config)
+    result = capabilities.probe()
 
     # The Bark probe takes no model id: one model, one fixed directory.
     assert requested == [((), {})]

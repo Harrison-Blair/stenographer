@@ -61,11 +61,9 @@ class RecordingNotifier:
         ("v1.2.3", (1, 2, 3)),
         ("1.2.3", (1, 2, 3)),
         ("v0.11.5", (0, 11, 5)),
-        ("https://github.com/Harrison-Blair/stenographer/releases/tag/v0.12.0", (0, 12, 0)),
-        ("https://github.com/Harrison-Blair/stenographer/releases/tag/v0.12.0/", (0, 12, 0)),
     ],
 )
-def test_parse_release_tag_accepts_tags_and_urls(text, expected):
+def test_parse_release_tag_accepts_tags(text, expected):
     assert parse_release_tag(text) == expected
 
 
@@ -171,7 +169,7 @@ def test_evaluate_notifies_despite_a_future_notified_at():
 def test_evaluate_notifies_when_installed_is_behind():
     updated, message = evaluate(CheckRecord(), "0.11.5", "v0.12.0", 1000.0)
 
-    assert updated == CheckRecord(checked_at=1000.0, latest="v0.12.0", notified_at=1000.0)
+    assert updated == CheckRecord(latest="v0.12.0", notified_at=1000.0)
     assert message == notification_message("0.11.5", "v0.12.0")
 
 
@@ -179,7 +177,7 @@ def test_evaluate_is_silent_when_versions_match():
     updated, message = evaluate(CheckRecord(), "0.11.5", "v0.11.5", 1000.0)
 
     assert message is None
-    assert updated == CheckRecord(checked_at=1000.0, latest="v0.11.5")
+    assert updated == CheckRecord(latest="v0.11.5")
 
 
 def test_evaluate_is_silent_when_installed_is_ahead():
@@ -261,15 +259,6 @@ def test_tag_from_location_rejects_anything_but_our_release_tag_url(url):
     """A redirect we did not expect must never reach the notification text."""
 
     assert tag_from_location(url) is None
-
-
-def test_notification_message_can_never_render_a_url():
-    """Rendered from the parsed tuple, so even a URL collapses to digits."""
-
-    message = notification_message("0.11.5", f"{TAG_URL}v0.12.0")
-
-    assert "/" not in message
-    assert message == notification_message("0.11.5", "v0.12.0")
 
 
 def test_notification_message_never_shows_the_v_prefix():
@@ -406,7 +395,6 @@ def test_fetch_latest_tag_returns_a_parseable_tag():
     assert tag is not None
     assert parse_release_tag(tag) is not None
     # Pins what no offline test can reach: the redirect target is reduced to a
-    # bare tag, not carried through whole. parse_release_tag alone would accept
-    # the full URL, so assert the shape directly.
+    # bare tag, not carried through whole.
     assert "/" not in tag
     assert tag == tag_from_location(f"{TAG_URL}{tag}")

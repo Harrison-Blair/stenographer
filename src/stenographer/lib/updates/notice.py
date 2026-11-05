@@ -68,11 +68,9 @@ def _last_segment(text: str) -> str:
 
 
 def parse_release_tag(text: str) -> tuple[int, int, int] | None:
-    """``"v1.2.3"``, ``"1.2.3"`` or a URL ending in one, else ``None``."""
+    """``"v1.2.3"`` or ``"1.2.3"``, else ``None``."""
 
-    if not text:
-        return None
-    match = _TAG_RE.fullmatch(_last_segment(text))
+    match = _TAG_RE.fullmatch(text)
     if match is None:
         return None
     major, minor, patch = match.groups()
@@ -144,10 +142,7 @@ def evaluate(
 ) -> tuple[CheckRecord, str | None]:
     """Fold one (possibly absent) fetch into a new record and an optional notice."""
 
-    if fetched is None:
-        updated = record
-    else:
-        updated = dataclasses.replace(record, latest=fetched, checked_at=now)
+    updated = record if fetched is None else dataclasses.replace(record, latest=fetched)
 
     latest = updated.latest
     latest_version = parse_release_tag(latest) if latest else None
@@ -234,15 +229,9 @@ def run_check(
         moment = now()
         attempted = needs_fetch(record, moment)
         fetched = fetch() if attempted else None
+        if attempted:
+            record = dataclasses.replace(record, checked_at=moment)
         updated, message = evaluate(record, installed, fetched, moment)
-        if attempted and fetched is None:
-            # A completed round-trip that yielded no usable tag (error page,
-            # prerelease) still spends the TTL; otherwise every daemon start
-            # would make a fresh request forever. This cannot live in
-            # ``evaluate``, whose ``fetched is None`` branch also means "no
-            # fetch was attempted" — stamping there would push the window
-            # forward on restarts that never touched the network.
-            updated = dataclasses.replace(updated, checked_at=moment)
         log.debug(
             "update_check: evaluated installed=%s latest=%s fetched=%s notify=%s",
             installed,

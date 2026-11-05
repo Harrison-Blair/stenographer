@@ -7,20 +7,8 @@ from __future__ import annotations
 class Collection:
     """Fail-open instrumentation facade shared by both transcription entry points."""
 
-    def __init__(self, *, enabled: bool, session=None, failures: int = 0):
-        self.enabled = enabled
+    def __init__(self, *, session=None):
         self._session = session
-        self._failures = failures
-
-    @property
-    def health(self) -> dict:
-        health = self._session.health if self._session is not None else {}
-        return {
-            **health,
-            "enabled": self.enabled,
-            "degraded": bool(self._failures or health.get("degraded")),
-            "dropped_checkpoints": self._failures + health.get("dropped_checkpoints", 0),
-        }
 
     def _call(self, method, *args, **kwargs):
         if self._session is None:
@@ -28,7 +16,6 @@ class Collection:
         try:
             return getattr(self._session, method)(*args, **kwargs)
         except Exception:
-            self._failures += 1
             return None
 
     def start(self, utterance_id, **kwargs):
