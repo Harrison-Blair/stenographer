@@ -135,7 +135,8 @@ def voice_change_cuts(
     runs = _voice_runs(leaders)
     if not any(speaker != speaker_id for speaker, _, _ in runs):
         return ()
-    return tuple(_quietest_sample(samples, *between) for between in _change_slices(leaders, runs))
+    changes = _change_slices(leaders, runs, speaker_id)
+    return tuple(_quietest_sample(samples, *between) for between in changes)
 
 
 def _voice_runs(leaders: Sequence[str | None]) -> list[tuple[str, int, int]]:
@@ -160,25 +161,24 @@ def _voice_runs(leaders: Sequence[str | None]) -> list[tuple[str, int, int]]:
 
 
 def _change_slices(
-    leaders: Sequence[str | None], runs: Sequence[tuple[str, int, int]]
+    leaders: Sequence[str | None], runs: Sequence[tuple[str, int, int]], speaker_id: str
 ) -> list[tuple[int, int]]:
     """Return the two slices that hold each voice change.
 
     Unclear slices at the ends of a phrase show no change. One clear slice of another
-    speaker there does, because the stretch next to it has its own run.
+    speaker there ends a run of another voice, but it is no change next to a run of the
+    phrase's own speaker, because a change needs two slices in a row.
     """
     changes = []
-    if runs:
-        speaker, first, _ = runs[0]
-        before = [i for i in range(first) if leaders[i] not in (None, speaker)]
-        if before:
-            changes.append((before[-1], first))
+    speaker, first, _ = runs[0]
+    before = [i for i in range(first) if leaders[i] not in (None, speaker)]
+    if before and speaker != speaker_id:
+        changes.append((before[-1], first))
     changes.extend((left[2], right[1]) for left, right in itertools.pairwise(runs))
-    if runs:
-        speaker, _, last = runs[-1]
-        after = [i for i in range(last + 1, len(leaders)) if leaders[i] not in (None, speaker)]
-        if after:
-            changes.append((last, after[0]))
+    speaker, _, last = runs[-1]
+    after = [i for i in range(last + 1, len(leaders)) if leaders[i] not in (None, speaker)]
+    if after and speaker != speaker_id:
+        changes.append((last, after[0]))
     return changes
 
 

@@ -943,6 +943,42 @@ def test_a_file_job_refines_split_parts(tmp_path):
         engine.close()
 
 
+def test_a_cancel_while_a_part_decodes_ends_the_split_with_the_lines_before_it(tmp_path):
+    holder = {}
+
+    def reply(process, message):
+        if message[0] == "load":
+            return ("model_ready",)
+        if message[0] == "job":
+            process.decode_count += 1
+            # Three decodes are the phrases, so the fourth is the first part of the split.
+            if process.decode_count == 4:
+                holder["engine"].jobs[-1].cancel()
+            return (
+                "ok",
+                TranscriptionResult(
+                    text=f"recognized phrase {process.decode_count}", duration_seconds=1.0
+                ),
+            )
+        return None
+
+    process = FakeAsrProcess(pid=713, reply=reply)
+    process.decode_count = 0
+    engine = _engine(tmp_path, process, speaker_tracker_factory=LevelTracker)
+    holder["engine"] = engine
+    engine._segmenter_factory = VoiceChangeSegmenter
+    source = tmp_path / "meeting.wav"
+    soundfile.write(source, _voice_change_samples(), 16000)
+    job = engine.submit(source, diarize=True)
+    try:
+        _wait_for(job, "cancelled")
+        assert process.decode_count == 4
+        assert len(job.progress.completed_lines) == 3
+        assert not _sessions(tmp_path).exists() or not list(_sessions(tmp_path).iterdir())
+    finally:
+        engine.close()
+
+
 def test_a_file_job_without_diarization_does_not_split(tmp_path):
     process = _file_asr_process()
     engine, job = _voice_change_job(tmp_path, process, diarize=False)
