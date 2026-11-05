@@ -24,7 +24,7 @@ from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.spectrum_meter import SpectrumMeter
 from stenographer.cli.hub.widgets.status_token import StatusToken
-from stenographer.cli.hub.widgets.transcript_line import TranscriptLine
+from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
 from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -109,6 +109,7 @@ class RecordScreen(HubScreen):
         self._saved_at: dict[str, datetime] = {}
         self._saved_lines: tuple[str, tuple] | None = None
         self._transcript_key: object = None
+        self._rows = TranscriptRows()
 
     def compose_body(self) -> ComposeResult:
         floor = self.app.current_config().feedback.spectrum_floor_dbfs
@@ -347,18 +348,7 @@ class RecordScreen(HubScreen):
                 Text("SYSTEM · everyone else", style="bold #ffaf5f"),
             )
             rows.append(header)
-        for line in lines:
-            color = speaker_color(line.speaker_id, speaker_ids, source=line.source)
-            rows.append(
-                TranscriptLine.row(
-                    line.start,
-                    line.label,
-                    line.text,
-                    color=color,
-                    source=line.source,
-                    layout=layout,
-                )
-            )
+        rows.extend(self._rows.rows(lines, speaker_ids, layout=layout))
         if marker is not None:
             rows.append(Text(f"── {marker} ──", style="#6ee69a", no_wrap=True))
         if relabel_error:

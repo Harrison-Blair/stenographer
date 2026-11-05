@@ -31,7 +31,7 @@ from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.sparkline import Sparkline
 from stenographer.cli.hub.widgets.status_token import StatusToken
-from stenographer.cli.hub.widgets.transcript_line import TranscriptLine
+from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
 from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -175,6 +175,7 @@ class LibraryScreen(HubScreen):
         self._watch_key: object = None
         self._rows_key: object = None
         self._transcript_key: object = None
+        self._rows = TranscriptRows()
 
     def compose_body(self) -> ComposeResult:
         with Horizontal(id="library-body"):
@@ -463,16 +464,7 @@ class LibraryScreen(HubScreen):
             return
         self._transcript_key = key
         ids = tuple(dict.fromkeys(line.speaker_id for line in lines))
-        rows: list = [
-            TranscriptLine.row(
-                line.start,
-                line.label,
-                line.text,
-                color=speaker_color(line.speaker_id, ids, source=line.source),
-                source=line.source,
-            )
-            for line in lines
-        ]
+        rows: list = self._rows.rows(lines, ids)
         failed = (
             entry is not None and entry.summary is None and entry.job.state in _FAILED_JOB_STATES
         )

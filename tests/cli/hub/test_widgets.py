@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import ClassVar
 
 import pytest
@@ -20,8 +21,11 @@ from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
+from stenographer.cli.hub.widgets.transcript_line import TranscriptLine, TranscriptRows
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
+from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.lib.config.defaults import default_toml
+from stenographer.lib.live.transcript_line import TranscriptLine as LiveLine
 from tests.cli.hub.support import IdleServices, make_app
 
 
@@ -233,3 +237,47 @@ def test_field_wraps_long_control_values():
     assert "abcdefghijklmnopqrstuvwxyz0123" in rendered
     assert "456789" in rendered
     assert "…" not in rendered
+
+
+def _segments(console_width: int, renderable) -> list[tuple[str, object]]:
+    console = Console(width=console_width, color_system="truecolor")
+    return [(segment.text, segment.style) for segment in console.render(renderable)]
+
+
+_TRANSCRIPT_LINE = LiveLine(1.0, 2.0, "", "system", "speaker-1", "Ann", "alpha bravo " * 12)
+
+
+@pytest.mark.parametrize("layout", ["mixed", "split"])
+def test_transcript_row_renders_like_its_table_at_each_width(layout):
+    ids = ("speaker-1",)
+    row = TranscriptRows().rows((_TRANSCRIPT_LINE,), ids, layout=layout)[0]
+    color = speaker_color("speaker-1", ids, source="system")
+    table = TranscriptLine.row(
+        1.0, "Ann", "alpha bravo " * 12, color=color, source="system", layout=layout
+    )
+    for width in (120, 40, 120):
+        assert _segments(width, row) == _segments(width, table)
+
+
+def test_transcript_rows_reuse_only_a_row_with_the_same_line_and_color():
+    rows = TranscriptRows()
+    second = LiveLine(3.0, 4.0, "", "mic", "you", "You", "charlie")
+    first_row = rows.rows((_TRANSCRIPT_LINE,), ("speaker-1",))[0]
+    assert rows.rows((_TRANSCRIPT_LINE, second), ("speaker-1",))[0] is first_row
+
+    other_order = ("speaker-2", "speaker-1")
+    assert speaker_color("speaker-1", other_order) != speaker_color("speaker-1", ("speaker-1",))
+    recolored = rows.rows((_TRANSCRIPT_LINE,), other_order)[0]
+    expected = TranscriptLine.row(
+        1.0,
+        "Ann",
+        "alpha bravo " * 12,
+        color=speaker_color("speaker-1", other_order, source="system"),
+        source="system",
+    )
+    assert _segments(80, recolored) == _segments(80, expected)
+
+    renamed = replace(_TRANSCRIPT_LINE, label="Bea")
+    assert "Bea" in "".join(
+        text for text, _ in _segments(80, rows.rows((renamed,), ("speaker-1",))[0])
+    )
