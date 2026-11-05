@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from types import SimpleNamespace
 
 import pytest
 from textual.screen import Screen
 from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 
 
@@ -101,7 +103,7 @@ async def test_pilot_quit_asks_before_saving_a_recording():
     async with app.run_test() as pilot:
         await pilot.press("ctrl+c")
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-        assert prompt == "Stop recording and save before quitting?"
+        assert prompt == "Quit and do this first?\n· Stop and save the recording."
         assert str(app.screen.query_one("#cancel-quit").label) == "▶ [n] Keep recording"
         assert str(app.screen.query_one("#confirm-quit").label) == "  [y] Save and quit"
         await pilot.click("#cancel-quit")
@@ -232,6 +234,90 @@ async def test_pilot_quit_keys_confirm_recording_prompt(confirm_key):
         assert services.actions == ["stop-recording"]
 
 
+class WorkServices(FakeServices):
+    """Hold a recording, a relabel pass and a file job at the same time."""
+
+    def __init__(self):
+        super().__init__()
+        self.recording = True
+        self.files_running = True
+        self.stopping = (SimpleNamespace(relabel_progress=(1, 3)),)
+        self.stop_error = None
+
+    @property
+    def stopping_sessions(self):
+        return self.stopping
+
+    def skip_relabels(self):
+        self.actions.append("skip-relabels")
+
+    def wait_for_stops(self):
+        self.actions.append("wait-for-stops")
+        self.stopping = ()
+
+    def stop_recording(self):
+        if self.stop_error is not None:
+            self.actions.append("stop-recording-failed")
+            raise self.stop_error
+        super().stop_recording()
+
+
+async def test_pilot_quit_asks_once_for_all_active_work_and_runs_it_in_order():
+    services = WorkServices()
+    app = HubApp(services)
+    async with app.run_test() as pilot:
+        await pilot.press("q")
+        await pilot.pause()
+        prompt = str(app.screen.query_one("#quit-prompt", Static).render())
+        assert prompt == (
+            "Quit and do this first?\n"
+            "· Stop and save the recording.\n"
+            "· Skip the running relabel; those sessions keep their live labels.\n"
+            "· Cancel the running file job."
+        )
+        await pilot.press("n")
+        await pilot.pause()
+        assert services.actions == []
+        assert app.is_running
+
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("y")
+        for _ in range(100):
+            if not app.is_running:
+                break
+            assert not isinstance(app.screen, QuitConfirm), "the hub asked a second time"
+            await pilot.pause(0.02)
+        assert not app.is_running
+    assert services.actions == [
+        "skip-relabels",
+        "stop-recording",
+        "wait-for-stops",
+        "cancel-files",
+    ]
+
+
+async def test_pilot_quit_keeps_the_hub_open_when_the_recording_cannot_save():
+    services = WorkServices()
+    services.stop_error = OSError("no space left on device")
+    app = HubApp(services)
+    async with app.run_test() as pilot:
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("y")
+        for _ in range(100):
+            if "stop-recording-failed" in services.actions and app.activity_status is None:
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+        assert app.is_running
+        assert app.activity_status is None
+        assert services.files_running, "a failed save must not cancel the file job"
+        assert "cancel-files" not in services.actions
+        notices = [str(notice.message) for notice in app._notifications]
+        assert "Could not save the recording: no space left on device" in notices
+
+
 async def test_pilot_quit_asks_before_cancelling_a_files_job():
     services = FakeServices()
     services.files_running = True
@@ -239,7 +325,7 @@ async def test_pilot_quit_asks_before_cancelling_a_files_job():
     async with app.run_test() as pilot:
         await pilot.press("q")
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-        assert prompt == "Cancel the running file job before quitting?"
+        assert prompt == "Quit and do this first?\n· Cancel the running file job."
         await pilot.click("#cancel-quit")
         assert services.actions == []
         assert services.files_running

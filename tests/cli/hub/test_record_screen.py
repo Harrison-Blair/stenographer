@@ -377,7 +377,10 @@ async def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
         await pilot.press("q")
         await pilot.pause()
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-        assert prompt == "Relabel is still running. Quit and keep the live labels?"
+        assert prompt == (
+            "Quit and do this first?\n"
+            "· Skip the running relabel; those sessions keep their live labels."
+        )
         await pilot.press("n")
         await pilot.pause()
         assert app.is_running
@@ -399,7 +402,7 @@ async def test_record_quit_while_recording_asks_then_saves(tmp_path):
         await pilot.press("q")
         await pilot.pause()
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-        assert prompt == "Stop recording and save before quitting?"
+        assert prompt == "Quit and do this first?\n· Stop and save the recording."
         await pilot.press("n")
         assert services.recording
         created[0].release.set()

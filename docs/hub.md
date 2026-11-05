@@ -63,13 +63,15 @@ session is active, `space` pauses or resumes it. Recording continues when you
 change screens. The hub runs recording start, stop, and save work in the
 background so the interface can remain responsive.
 
-Press `q` or `ctrl+c` to quit. When a recording is active, the hub asks "Stop
-recording and save before quitting?" Press `y`, `q`, or `ctrl+c` (or click
-`[y] Save and quit`) to stop and save; press `n` or `escape` (or click
-`[n] Keep recording`) to keep recording. When a file job is running, the hub
-asks before it cancels the job and quits. A cancelled file job does not leave
-a partial output file. If a start, stop, or save operation is still in
-progress, wait for its status to finish before you send another quit key.
+Press `q` or `ctrl+c` to quit. When work is active, the hub asks one question
+that lists each action: stop and save the recording, skip the running relabel,
+and cancel the running file job. Press `y`, `q`, or `ctrl+c` (or click the
+confirm button) to run the actions in order and quit; press `n` or `escape` (or
+click the cancel button) to keep working. If the recording cannot save or the
+file job cannot cancel, a notice shows the error and the hub stays open. A
+cancelled file job does not leave a partial output file. If a start, stop, or
+save operation is still in progress, wait for its status to finish before you
+send another quit key.
 
 If Settings has unsaved changes, the hub asks whether to save, discard, or stay
 before it leaves Settings or quits. A tab change inside Settings keeps the
@@ -116,10 +118,10 @@ audio files that exist). Press `o` to show the session in Library. If the save
 fails, a notice shows the error and the REC panel stays on `! SAVE FAILED` until
 the next recording stops; `o` still shows what the session folder holds.
 
-If you quit while a relabel pass runs, the hub asks "Relabel is still running.
-Quit and keep the live labels?" Press `y` to skip each pass; the hub waits until
-each session has saved its files, then quits. The saved session keeps the
-labels that it had during the recording. Press `n` to keep the hub open.
+If you quit while a relabel pass runs, the quit question lists it. Press `y` to
+skip each pass; the hub waits until each session has saved its files, then
+quits. The saved session keeps the labels that it had during the recording.
+Press `n` to keep the hub open.
 
 Each meter shows 18 frequency bands in 8 rows, the band labels
 `100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS, and a
