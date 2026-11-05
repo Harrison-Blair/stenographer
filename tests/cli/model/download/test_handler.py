@@ -10,21 +10,12 @@ import io
 import pytest
 
 from stenographer.cli.model.download.handler import (
-    DECLINED_HINT,
     cmd_model_download,
-    plan_lines,
-    selection,
     size_phrase,
 )
 from stenographer.cli.shared.console import Console
 from stenographer.lib.config.models import Config
 from tests.cli.support import Terminal as _Terminal
-
-
-def test_download_parser_accepts_the_live_model_flag():
-    from stenographer.cli.parser import build_parser
-
-    assert build_parser().parse_args(["model", "download", "--live"]).live is True
 
 
 def test_live_flag_does_not_select_the_asr_model(monkeypatch, capsys):
@@ -35,8 +26,11 @@ def test_live_flag_does_not_select_the_asr_model(monkeypatch, capsys):
     monkeypatch.setattr(handler, "_download_live", lambda: 0)
     monkeypatch.setattr(bark_download, "download_bark_pro", lambda *a, **kw: asr_calls.append(a))
 
+    from stenographer.cli.parser import build_parser
+
+    parser = build_parser()
     result = cmd_model_download.__wrapped__(
-        argparse.Namespace(live=True, asr=False, refine=False), Config.defaults()
+        parser.parse_args(["model", "download", "--live"]), Config.defaults()
     )
 
     assert result == 0
@@ -74,7 +68,7 @@ def test_asr_builds_bark_pro_prints_the_attribution_and_fetches_only_the_vad(asr
     calls, _, data_dir = asr_seams
 
     result = cmd_model_download.__wrapped__(
-        argparse.Namespace(asr=True, refine=False), Config.defaults()
+        argparse.Namespace(asr=True, refine=False, live=False), Config.defaults()
     )
 
     assert result == 0
@@ -93,7 +87,12 @@ def test_asr_reports_a_present_model_without_rebuilding_claims(asr_seams, capsys
     _, state, _ = asr_seams
     state["built"], state["vad"] = False, ()
 
-    assert cmd_model_download.__wrapped__(argparse.Namespace(), Config.defaults()) == 0
+    assert (
+        cmd_model_download.__wrapped__(
+            argparse.Namespace(asr=False, refine=False, live=False), Config.defaults()
+        )
+        == 0
+    )
 
     out = capsys.readouterr().out
     assert "ASR model already present at" in out
@@ -106,7 +105,12 @@ def test_a_failed_asr_build_is_not_reported_as_a_success(asr_seams, capsys):
     calls, state, _ = asr_seams
     state["error"] = BarkDownloadError("Free-space check failed: free some disk space")
 
-    assert cmd_model_download.__wrapped__(argparse.Namespace(), Config.defaults()) == 1
+    assert (
+        cmd_model_download.__wrapped__(
+            argparse.Namespace(asr=False, refine=False, live=False), Config.defaults()
+        )
+        == 1
+    )
 
     captured = capsys.readouterr()
     assert captured.err == (
@@ -117,90 +121,76 @@ def test_a_failed_asr_build_is_not_reported_as_a_success(asr_seams, capsys):
     assert [call for call in calls if call.startswith("live")] == []
 
 
-def test_neither_flag_without_a_terminal_keeps_the_historical_asr_only_behavior():
-    """An existing script that ran `stenographer model download` must not
-    silently start a second multi-gigabyte pull it never asked for."""
-    assert selection(argparse.Namespace(), interactive=False, refine_enabled=True) == (True, False)
-    assert selection(
-        argparse.Namespace(asr=False, refine=False), interactive=True, refine_enabled=True
-    ) == (True, True)
+@pytest.mark.parametrize(
+    ("asr", "refine", "interactive", "enabled", "expected"),
+    [
+        (False, False, False, True, ["asr"]),
+        (False, False, True, False, ["asr"]),
+        (False, False, True, True, ["asr", "refine"]),
+        (True, False, True, True, ["asr"]),
+        (False, True, False, False, ["refine"]),
+        (True, True, True, True, ["asr", "refine"]),
+    ],
+)
+def test_selection_at_command_level(monkeypatch, asr, refine, interactive, enabled, expected):
+    from stenographer.cli.model.download import handler
+    from stenographer.cli.shared import terminal
+    from stenographer.lib.refine import client
 
-
-def test_an_explicit_opt_out_of_refine_suppresses_the_combined_offer():
-    """`refine.enabled = false` must be respected even on a TTY: the combined
-    offer only appears for someone who has not turned refine off."""
-    assert selection(argparse.Namespace(), interactive=True, refine_enabled=False) == (True, False)
-    assert selection(
-        argparse.Namespace(asr=False, refine=False), interactive=True, refine_enabled=False
-    ) == (True, False)
+    calls = []
+    monkeypatch.setattr(handler, "_download_asr", lambda: calls.append("asr") or 0)
+    monkeypatch.setattr(handler, "_pull_refine", lambda cfg: calls.append("refine") or 0)
+    monkeypatch.setattr(client, "installed_model_bytes", lambda *args: None)
+    monkeypatch.setattr(terminal, "ask_yes_no", lambda *args, **kwargs: True)
+    stream = _Terminal() if interactive else io.StringIO()
+    monkeypatch.setattr(terminal, "open_console", lambda *_: Console(stream, stream, io.StringIO()))
+    cfg = Config.defaults()
+    cfg = dataclasses.replace(cfg, refine=dataclasses.replace(cfg.refine, enabled=enabled))
+    assert (
+        cmd_model_download.__wrapped__(argparse.Namespace(asr=asr, refine=refine, live=False), cfg)
+        == 0
+    )
+    assert calls == expected
 
 
 @pytest.mark.parametrize(
-    ("asr", "refine", "expected"),
-    [(True, False, (True, False)), (False, True, (False, True)), (True, True, (True, True))],
+    ("installed", "approximate", "expected"),
+    [
+        (3_389_983_735, 9.9, "already installed, 3.4 GB"),
+        (None, 3.4, "about 3.4 GB"),
+        (None, None, "size unknown"),
+    ],
 )
-def test_an_explicit_flag_selects_only_what_it_names(asr, refine, expected):
-    args = argparse.Namespace(asr=asr, refine=refine)
-
-    assert selection(args, interactive=True, refine_enabled=True) == expected
-    assert selection(args, interactive=False, refine_enabled=True) == expected
+def test_size_phrase(installed, approximate, expected):
+    assert size_phrase(installed, approximate) == expected
 
 
-def test_an_explicit_refine_flag_forces_the_pull_even_when_refine_is_disabled():
-    """`--refine` is a deliberate opt-in and must override `refine.enabled`."""
-    args = argparse.Namespace(asr=False, refine=True)
+@pytest.mark.parametrize(
+    ("installed", "expected"),
+    [
+        (None, "download the refine model some:tag (size unknown)"),
+        (3_400_000_000, "verify the refine model some:tag (already installed, 3.4 GB)"),
+    ],
+)
+def test_confirmation_plan(monkeypatch, installed, expected):
+    from stenographer.cli.shared import terminal
+    from stenographer.lib.refine import client
 
-    assert selection(args, interactive=True, refine_enabled=False) == (False, True)
-    assert selection(args, interactive=False, refine_enabled=False) == (False, True)
-
-
-def test_an_installed_model_is_reported_at_its_real_size_not_the_table():
-    assert size_phrase(3_389_983_735, 9.9) == "already installed, 3.4 GB"
-
-
-def test_a_known_model_is_sized_from_the_table_before_it_exists_locally():
-    assert size_phrase(None, 3.4) == "about 3.4 GB"
-
-
-def test_an_unknown_model_is_never_guessed_at():
-    assert size_phrase(None, None) == "size unknown"
-
-
-def _plan_cfg():
-    defaults = Config.defaults()
-    return dataclasses.replace(
-        defaults,
-        refine=dataclasses.replace(defaults.refine, model="some:tag"),
+    monkeypatch.setattr(client, "installed_model_bytes", lambda *args: installed)
+    console = Console(_Terminal("\n"), _Terminal(), io.StringIO())
+    monkeypatch.setattr(terminal, "open_console", lambda *_: console)
+    cfg = Config.defaults()
+    cfg = dataclasses.replace(cfg, refine=dataclasses.replace(cfg.refine, model="some:tag"))
+    assert (
+        cmd_model_download.__wrapped__(argparse.Namespace(asr=False, refine=False, live=False), cfg)
+        == 0
     )
-
-
-def test_the_confirmation_states_both_models_their_sizes_and_the_host():
-    cfg = _plan_cfg()
-
-    lines = plan_lines(cfg, asr=True, refine=True, refine_size="about 3.4 GB")
-
-    assert lines == [
-        "download and convert the ASR model Underdog Bark 3.0 Pro "
-        "(about 1.6 GB download, 10 GiB free disk while it converts)",
-        "download the refine model some:tag (about 3.4 GB) via http://127.0.0.1:11434",
-    ]
-    assert plan_lines(cfg, asr=True, refine=False, refine_size=None) == lines[:1]
-
-
-def test_a_refine_model_ollama_already_has_is_not_announced_as_a_download():
-    """Claiming a multi-gigabyte download is about to start when it is not is
-    how a confirm prompt stops being read."""
-    lines = plan_lines(
-        _plan_cfg(),
-        asr=False,
-        refine=True,
-        refine_size=size_phrase(3_400_000_000, None),
+    output = console.stdout.getvalue()
+    assert (
+        "download and convert the ASR model Underdog Bark 3.0 Pro (about 1.6 GB download, 10 GiB free disk while it converts)"
+        in output
     )
-
-    assert lines == [
-        "verify the refine model some:tag (already installed, 3.4 GB) via http://127.0.0.1:11434"
-    ]
-    assert "download" not in lines[0]
+    assert expected + " via http://127.0.0.1:11434" in output
 
 
 def test_a_refine_pull_that_ollama_refuses_is_not_reported_as_a_success(monkeypatch, capsys):
@@ -214,7 +204,7 @@ def test_a_refine_pull_that_ollama_refuses_is_not_reported_as_a_success(monkeypa
 
     assert (
         cmd_model_download.__wrapped__(
-            argparse.Namespace(asr=False, refine=True), Config.defaults()
+            argparse.Namespace(asr=False, refine=True, live=False), Config.defaults()
         )
         == 1
     )
@@ -241,15 +231,13 @@ def test_a_stray_enter_declines_the_combined_offer_instead_of_starting_it(monkey
     console = Console(_Terminal("\n"), _Terminal(), io.StringIO())
     monkeypatch.setattr(terminal, "open_console", lambda *_: console)
 
-    result = cmd_model_download.__wrapped__(argparse.Namespace(), Config.defaults())
+    result = cmd_model_download.__wrapped__(
+        argparse.Namespace(asr=False, refine=False, live=False), Config.defaults()
+    )
 
     assert result == 0
     assert asr_calls == []
     assert refine_calls == []
     assert "Nothing was downloaded." in console.stdout.getvalue()
-
-
-def test_declining_the_combined_offer_names_the_flag_for_fetching_only_one():
-    """Saying no to both must not be a dead end for someone who wanted one."""
-    assert "--asr" in DECLINED_HINT
-    assert "--refine" in DECLINED_HINT
+    assert "--asr" in console.stdout.getvalue()
+    assert "--refine" in console.stdout.getvalue()
