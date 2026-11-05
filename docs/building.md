@@ -139,7 +139,8 @@ distribution, and `SHA256SUMS`, verifies both archives, and runs the source
 distribution's `scripts/install.sh` on the prebuilt bundle. Renaming any of
 those assets breaks it. It installs, updates, and repairs with the same command,
 always reinstalling, and keeps the service state: a running service restarts on
-the new version, and a stopped service or a new install stays stopped.
+the new version, a stopped service stays stopped, and a disabled service stays
+disabled. A new install is enabled and stays stopped.
 
 The native ARM runner validates packaging, executable architecture, `--version`,
 and `--help`; it cannot validate Wayland, microphone, or uinput behavior. Before

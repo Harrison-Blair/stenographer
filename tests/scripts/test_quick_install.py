@@ -39,6 +39,11 @@ _SYSTEMCTL = """#!/bin/sh
 echo "$*" >> "$SERVICE_LOG"
 case "$2" in
     is-active) [ "$(cat "$SERVICE_STATE")" = active ] ;;
+    is-enabled)
+        cat "$UNIT_STATE" 2>/dev/null || echo not-found
+        [ "$(cat "$UNIT_STATE" 2>/dev/null)" = enabled ]
+        ;;
+    enable) echo enabled > "$UNIT_STATE" ;;
     start) echo active > "$SERVICE_STATE" ;;
     stop) echo stopped > "$SERVICE_STATE" ;;
 esac
@@ -64,6 +69,10 @@ class Machine:
         return (self.tmp_path / "service-state").read_text().strip()
 
     @property
+    def unit_state(self) -> str:
+        return (self.tmp_path / "unit-state").read_text().strip()
+
+    @property
     def service_calls(self) -> list[str]:
         return (self.tmp_path / "service-log").read_text().splitlines()
 
@@ -73,6 +82,9 @@ class Machine:
 
     def set_service(self, state: str) -> None:
         (self.tmp_path / "service-state").write_text(f"{state}\n")
+
+    def set_unit(self, state: str) -> None:
+        (self.tmp_path / "unit-state").write_text(f"{state}\n")
 
     def install_old_version(self) -> None:
         binary = self.home / ".local/share/stenographer/stenographer"
@@ -144,6 +156,7 @@ def _machine(tmp_path: Path, sdist_tree: Path) -> Machine:
             "FIXTURES": str(tmp_path / "fixtures"),
             "SERVICE_LOG": str(tmp_path / "service-log"),
             "SERVICE_STATE": str(tmp_path / "service-state"),
+            "UNIT_STATE": str(tmp_path / "unit-state"),
             "INSTALLER_ARGS": str(tmp_path / "installer-args"),
         },
     )
@@ -206,6 +219,7 @@ def test_a_new_install_stays_stopped_and_prints_the_setup_step(real_installer: M
     assert result.returncode == 0, result.stderr
     assert real_installer.service_state == "stopped"
     assert "--user start stenographer.service" not in real_installer.service_calls
+    assert real_installer.unit_state == "enabled"
     assert real_installer.launcher.is_symlink()
     assert _SETUP_STEP in result.stdout
 
@@ -219,6 +233,68 @@ def test_running_again_repairs_an_installation(real_installer: Machine) -> None:
     assert result.returncode == 0, result.stderr
     assert real_installer.installed_version() == _INSTALLED_MARKER
     assert _SETUP_STEP not in result.stdout
+
+
+def test_a_disabled_service_stays_disabled_and_stopped(real_installer: Machine) -> None:
+    real_installer.install_old_version()
+    real_installer.set_unit("disabled")
+
+    result = real_installer.run()
+
+    assert result.returncode == 0, result.stderr
+    assert real_installer.unit_state == "disabled"
+    assert real_installer.service_state == "stopped"
+    assert "--user enable stenographer.service" not in real_installer.service_calls
+    assert real_installer.installed_version() == _INSTALLED_MARKER
+
+
+def test_a_running_disabled_service_restarts_and_stays_disabled(real_installer: Machine) -> None:
+    real_installer.install_old_version()
+    real_installer.set_service("active")
+    real_installer.set_unit("disabled")
+
+    result = real_installer.run()
+
+    assert result.returncode == 0, result.stderr
+    assert real_installer.unit_state == "disabled"
+    assert real_installer.service_state == "active"
+    calls = real_installer.service_calls
+    assert calls.index("--user stop stenographer.service") < calls.index(
+        "--user start stenographer.service"
+    )
+    assert real_installer.installed_version() == _INSTALLED_MARKER
+
+
+def test_an_enabled_service_stays_enabled(real_installer: Machine) -> None:
+    real_installer.install_old_version()
+    real_installer.set_unit("enabled")
+
+    result = real_installer.run()
+
+    assert result.returncode == 0, result.stderr
+    assert real_installer.unit_state == "enabled"
+    assert real_installer.service_state == "stopped"
+
+
+@pytest.mark.parametrize(
+    ("service", "options", "expected"),
+    [
+        ("stopped", [], ["--no-start", "--no-enable"]),
+        ("stopped", ["--no-enable"], ["--no-enable", "--no-start"]),
+        ("active", ["--no-start"], ["--no-start", "--no-enable"]),
+    ],
+)
+def test_install_options_for_a_disabled_service(
+    recording_installer: Machine, service: str, options: list[str], expected: list[str]
+) -> None:
+    recording_installer.set_service(service)
+    recording_installer.set_unit("disabled")
+
+    result = recording_installer.run(*options)
+
+    assert result.returncode == 0, result.stderr
+    assert recording_installer.installer_args == expected
+    assert "--user start stenographer.service" not in recording_installer.service_calls
 
 
 @pytest.mark.parametrize(

@@ -36,7 +36,7 @@
           <pre><code>curl -fsSL https://harrison-blair.github.io/stenographer/install.sh | bash</code></pre>
           <button type="button" id="copy" class="copy" aria-label="Copy the install and update command">Copy</button>
         </div>
-        <p class="fine">You need Linux on x86_64 or AArch64, a Wayland session, and a systemd user manager. The same command installs and updates. It downloads the latest release, verifies it against <code>SHA256SUMS</code>, and installs the user service for you. A new install leaves the service stopped. An update restarts a running service on the new version, and a stopped service stays stopped. You do not need Python or build tools to install. The model build is a separate choice, and it needs your system <code>python3-venv</code> package.</p>
+        <p class="fine">You need Linux on x86_64 or AArch64, a Wayland session, and a systemd user manager. The same command installs and updates. It downloads the latest release, verifies it against <code>SHA256SUMS</code>, and installs the user service for you. A new install leaves the service stopped. An update restarts a running service on the new version, a stopped service stays stopped, and a disabled service stays disabled. You do not need Python or build tools to install. The model build is a separate choice, and it needs your system <code>python3-venv</code> package.</p>
         <div class="cta">
           <a class="btn" href="#install">Install</a>
           <a class="btn ghost" href="https://github.com/Harrison-Blair/stenographer#readme">Read the README</a>

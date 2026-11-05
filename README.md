@@ -49,8 +49,8 @@ curl -fsSL https://harrison-blair.github.io/stenographer/install.sh | bash
 The same command installs and updates. It verifies and installs the latest
 prebuilt bundle and user service. A new install leaves the service stopped and
 prints the setup step, so you can configure it and build the model. An update
-keeps the service state: a running service restarts on the new version, and a
-stopped service stays stopped. The install needs no Python or build tools; the
+keeps the service state: a running service restarts on the new version, a stopped
+service stays stopped, and a disabled service stays disabled. The install needs no Python or build tools; the
 later model build needs the system `python3-venv` package. For another
 architecture or a local build,
 see [docs/building.md](docs/building.md).
