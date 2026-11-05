@@ -147,9 +147,9 @@ libffi development headers (for example `build-essential`, `python3-dev`,
 `libwayland-dev`, and `libffi-dev` on Debian-family systems). These are build
 requirements only; the onedir bundle contains the completed CFFI extension.
 
-`scripts/build.sh` and `scripts/install.sh` show elapsed time and the current
-phase in animated progress bars, with the last three log lines beneath them.
-The build also shows measured hook and hidden-import counts. Both deliberately
+`scripts/build.sh` and `scripts/install.sh` show elapsed time in animated
+progress bars, with the last three log lines beneath them. The installer also
+shows the current phase. Both deliberately
 omit an overall percentage and ETA because their underlying tools expose no
 reliable total work estimate. Full tool output goes to `dist/build.log` /
 `dist/install.log` (dumped on failure); pass `--verbose` to stream the raw

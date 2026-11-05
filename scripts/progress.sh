@@ -152,3 +152,21 @@ progress_fail() {
         printf '  FAILED after %s\n' "$(_progress_elapsed)"
     fi
 }
+
+# run_logged CMD... — run a command, hiding its output in $LOG unless verbose.
+# Quiet mode backgrounds the command and redraws while it waits so the log
+# tail beneath the bar stays live; wait recovers the real exit status.
+run_logged() {
+    if [[ "${VERBOSE}" -eq 1 ]]; then
+        "$@"
+    else
+        "$@" &>> "${LOG}" &
+        local pid=$!
+        while kill -0 "${pid}" 2>/dev/null; do
+            progress_tick
+            sleep 0.15
+        done
+        wait "${pid}"
+    fi
+}
+

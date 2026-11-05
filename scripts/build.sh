@@ -35,77 +35,7 @@ else
 
     progress_indeterminate_start "building" "preparing build"
     progress_tail "${LOG}"
-    .venv/bin/pyinstaller --noconfirm --clean packaging/stenographer.spec &> "${LOG}" &
-    build_pid=$!
-
-    build_phase="preparing build"
-    hook_count=0
-    hidden_import_count=0
-    last_log_line=0
-
-    build_counter() {
-        local counter=""
-        if ((hook_count > 0)); then
-            counter="${hook_count} hooks"
-        fi
-        if ((hidden_import_count > 0)); then
-            [[ -n "${counter}" ]] && counter+=", "
-            counter+="${hidden_import_count} hidden"
-        fi
-        printf '%s' "${counter}"
-    }
-
-    # Consume each new log line once. This preserves even very short phase
-    # transitions and counts only work PyInstaller has explicitly reported.
-    read_build_activity() {
-        local current_log_line line
-        current_log_line=$(wc -l < "${LOG}")
-        ((current_log_line > last_log_line)) || return 0
-
-        while IFS= read -r line; do
-            case "${line}" in
-                *"Processing "*" hook "*) ((hook_count += 1)) ;;
-                *"Analyzing hidden import "*) ((hidden_import_count += 1)) ;;
-            esac
-            case "${line}" in
-                *"Running Analysis "*)
-                    build_phase="dependency analysis"
-                    progress_activity "${build_phase}" "$(build_counter)"
-                    ;;
-                *"Processing module hooks (post-graph stage)"*)
-                    build_phase="post-graph hooks"
-                    progress_activity "${build_phase}" "$(build_counter)"
-                    ;;
-                *"Building PYZ (ZlibArchive)"*)
-                    build_phase="creating PYZ"
-                    progress_activity "${build_phase}" "$(build_counter)"
-                    ;;
-                *"Building PKG (CArchive)"*)
-                    build_phase="packaging"
-                    progress_activity "${build_phase}" "$(build_counter)"
-                    ;;
-                *"Building EXE from "*)
-                    build_phase="assembling executable"
-                    progress_activity "${build_phase}" "$(build_counter)"
-                    ;;
-                *"Building COLLECT "*)
-                    build_phase="collecting bundle"
-                    progress_activity "${build_phase}" "$(build_counter)"
-                    ;;
-            esac
-        done < <(sed -n "$((last_log_line + 1)),${current_log_line}p" "${LOG}")
-        last_log_line=${current_log_line}
-        progress_activity "${build_phase}" "$(build_counter)"
-    }
-
-    while kill -0 "${build_pid}" 2>/dev/null; do
-        read_build_activity
-        progress_tick
-        sleep 0.15
-    done
-    read_build_activity
-
-    if ! wait "${build_pid}"; then
+    if ! run_logged .venv/bin/pyinstaller --noconfirm --clean packaging/stenographer.spec; then
         progress_fail
         echo
         tail -n 20 "${LOG}"
