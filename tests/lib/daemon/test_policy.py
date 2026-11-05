@@ -13,25 +13,12 @@ from stenographer.lib.daemon.policy import (
     cancel_action,
     cancel_state,
     classify_pipeline,
-    edge_handlers,
     hybrid_release_action,
     ignored_edge_reason,
     max_duration_applies,
     remaining_seconds,
     toggle_action,
 )
-
-
-class _EdgeSpy:
-    """Stands in for a Daemon: edge_handlers only reads bound methods."""
-
-    def on_key_down(self) -> None: ...
-
-    def on_key_up(self) -> None: ...
-
-    def on_toggle_press(self) -> None: ...
-
-    def on_hybrid_release(self) -> None: ...
 
 
 def test_gate_failure_is_silent():
@@ -146,24 +133,6 @@ def test_cancel_action_prioritizes_recording_then_pipeline():
 def test_cancel_state_hides_during_shutdown():
     assert cancel_state(shutting_down=False) is OverlayState.CANCELLED
     assert cancel_state(shutting_down=True) is OverlayState.HIDDEN
-
-
-def test_edge_handlers_map_mode_to_rising_and_falling_callbacks():
-    # Seen to FAIL against a mapping that ignores the mode and returns the hold
-    # pair for both. Pure: no platform, no listener, no device.
-    daemon = _EdgeSpy()
-
-    assert edge_handlers(daemon, "hold") == (daemon.on_key_down, daemon.on_key_up)
-
-    on_start, on_stop = edge_handlers(daemon, "toggle")
-    assert on_start == daemon.on_toggle_press
-    # Only presses drive the session: the falling edge must be inert.
-    assert on_stop not in (daemon.on_key_up, daemon.on_key_down)
-    assert on_stop() is None
-
-    on_start, on_stop = edge_handlers(daemon, "hybrid")
-    assert on_start == daemon.on_toggle_press
-    assert on_stop == daemon.on_hybrid_release
 
 
 def test_remaining_seconds_counts_down_to_a_future_deadline():

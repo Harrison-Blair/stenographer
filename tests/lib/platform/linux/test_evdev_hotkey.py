@@ -67,15 +67,15 @@ class FakeDevice:
         self.closed = True
 
 
-def _listener(device_path=None, *, chord=_CHORD_KEY):
+def _listener(device_path=None):
     """A listener whose edges are recorded, wired to no device at all."""
     edges: list[str] = []
     listener = EvdevHotkeyListener(
-        chord=frozenset({chord}),
         device_path=device_path,
-        on_start=lambda: edges.append("start"),
-        on_stop=lambda: edges.append("stop"),
         lock=threading.RLock(),
+        bindings={"default": frozenset({_CHORD_KEY})},
+        on_binding_start=lambda _name: edges.append("start"),
+        on_binding_stop=lambda _name: edges.append("stop"),
     )
     return listener, edges
 
@@ -135,11 +135,11 @@ def test_unopenable_explicit_device_backs_off_instead_of_spinning():
     Seen to FAIL against the pre-fix listener (count in the thousands).
     """
     listener = EvdevHotkeyListener(
-        chord=parse_binding("KEY_RIGHTALT", EvdevKeyTable()),
         device_path="/dev/input/stenographer-nonexistent",
-        on_start=lambda: None,
-        on_stop=lambda: None,
         lock=threading.RLock(),
+        bindings={"default": parse_binding("KEY_RIGHTALT", EvdevKeyTable())},
+        on_binding_start=lambda _name: None,
+        on_binding_stop=lambda _name: None,
     )
     calls = {"n": 0}
     real_resolve = listener._resolve_paths
@@ -318,14 +318,12 @@ def test_losing_one_device_keeps_the_others_and_reports_the_falling_edge():
     lost = FakeDevice("/dev/fake0")
     kept = FakeDevice("/dev/fake1")
     _register(listener, lost, kept)
-    listener._held_by_device[id(lost)] = {_CHORD_KEY}
-    with listener._held_lock:
-        listener._rebuild_held()
-    listener._active = True
+    listener._key_event(id(lost), _CHORD_KEY, 1)
+    assert edges == ["start"]
 
     listener._device_lost(lost)
 
-    assert edges == ["stop"]
+    assert edges == ["start", "stop"]
     assert lost.closed is True
     assert kept.closed is False
     assert listener._devices == [kept]
@@ -426,10 +424,8 @@ def test_stop_closes_every_device_and_joins_every_reader():
     listener, edges = _listener()
     devices = [FakeDevice("/dev/fake0"), FakeDevice("/dev/fake1")]
     _register(listener, *devices)
-    listener._held_by_device[id(devices[0])] = {_CHORD_KEY}
-    with listener._held_lock:
-        listener._rebuild_held()
-    listener._active = True
+    listener._key_event(id(devices[0]), _CHORD_KEY, 1)
+    assert edges == ["start"]
     gate = threading.Event()
     reader = threading.Thread(target=lambda: gate.wait(10), daemon=True)
     reader.start()
@@ -443,8 +439,8 @@ def test_stop_closes_every_device_and_joins_every_reader():
     assert listener._held == set()
     assert listener._readers == []
     # The edge state is forgotten, so the next press is a rising edge again.
-    assert listener._active is False
-    assert edges == []
+    assert listener._selected_binding is None
+    assert edges == ["start"]
 
 
 def test_reacquire_backs_off_between_scans_instead_of_spinning():

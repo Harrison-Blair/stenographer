@@ -59,11 +59,11 @@ def test_provider_speaks_the_evdev_key_vocabulary():
 
 def test_provider_builds_an_evdev_listener_without_touching_a_device():
     listener = LinuxPlatform().hotkey_listener(
-        chord=frozenset({97}),
         device="/dev/input/event9",
-        on_start=lambda: None,
-        on_stop=lambda: None,
         lock=threading.RLock(),
+        bindings={"default": frozenset({97})},
+        on_binding_start=lambda _name: None,
+        on_binding_stop=lambda _name: None,
         cancel=frozenset({1}),
     )
     assert isinstance(listener, EvdevHotkeyListener)

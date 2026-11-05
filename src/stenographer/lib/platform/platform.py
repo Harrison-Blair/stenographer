@@ -56,14 +56,11 @@ class Platform(Protocol):
     def hotkey_listener(
         self,
         *,
-        chord: frozenset[int],
         device: str | None,
-        on_start: Callable[[], None],
-        on_stop: Callable[[], None],
         lock: threading.RLock,
-        bindings: dict[str, frozenset[int]] | None = None,
-        on_binding_start: Callable[[str], None] | None = None,
-        on_binding_stop: Callable[[str], None] | None = None,
+        bindings: dict[str, frozenset[int]],
+        on_binding_start: Callable[[str], None],
+        on_binding_stop: Callable[[str], None],
         cancel: frozenset[int] = frozenset(),
         on_cancel: Callable[[], None] | None = None,
     ) -> HotkeyListener: ...

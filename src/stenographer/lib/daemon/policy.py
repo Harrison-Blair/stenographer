@@ -4,34 +4,10 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.outcome import Outcome
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from stenographer.lib.daemon.daemon import Daemon
-
-
-def _ignore_edge() -> None:
-    """Falling-edge sink for toggle mode: only presses drive the session."""
-
-
-def edge_handlers(daemon: Daemon, mode: str) -> tuple[Callable[[], None], Callable[[], None]]:
-    """Map ``hotkey.mode`` onto the (rising, falling) edge callbacks.
-
-    In toggle mode only presses drive the session, so the falling edge is inert;
-    hybrid shares that press and gives the falling edge to ``on_hybrid_release``,
-    which decides latch vs stop.
-    PURE given *daemon*: it reads no config and touches no platform surface.
-    """
-    if mode == "toggle":
-        return daemon.on_toggle_press, _ignore_edge
-    if mode == "hybrid":
-        return daemon.on_toggle_press, daemon.on_hybrid_release
-    return daemon.on_key_down, daemon.on_key_up
 
 
 def classify_pipeline(

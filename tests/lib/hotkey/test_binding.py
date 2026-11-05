@@ -99,9 +99,9 @@ def test_edge_maps_all_four_combinations():
 def _tracker(chord: frozenset[int], *devices: int) -> tuple[ChordTracker, list[str]]:
     events: list[str] = []
     tracker = ChordTracker(
-        chord=chord,
-        on_start=lambda: events.append("start"),
-        on_stop=lambda: events.append("stop"),
+        bindings={"default": chord},
+        on_binding_start=lambda _name: events.append("start"),
+        on_binding_stop=lambda _name: events.append("stop"),
         lock=threading.RLock(),
     )
     tracker._held_by_device = {device: set() for device in devices}
@@ -150,9 +150,9 @@ def test_tracker_rejects_unregistered_device():
 def test_tracker_reports_cancel_only_on_the_rising_edge():
     cancels: list[str] = []
     tracker = ChordTracker(
-        chord=frozenset({100}),
-        on_start=lambda: None,
-        on_stop=lambda: None,
+        bindings={"default": frozenset({100})},
+        on_binding_start=lambda _name: None,
+        on_binding_stop=lambda _name: None,
         lock=threading.RLock(),
         cancel=frozenset({1}),
         on_cancel=lambda: cancels.append("cancel"),
@@ -171,9 +171,9 @@ def test_tracker_reports_cancel_only_on_the_rising_edge():
 def test_tracker_keeps_cancel_and_main_chords_independent_while_held():
     events: list[str] = []
     tracker = ChordTracker(
-        chord=frozenset({29, 30}),
-        on_start=lambda: events.append("start"),
-        on_stop=lambda: events.append("stop"),
+        bindings={"default": frozenset({29, 30})},
+        on_binding_start=lambda _name: events.append("start"),
+        on_binding_stop=lambda _name: events.append("stop"),
         lock=threading.RLock(),
         cancel=frozenset({1}),
         on_cancel=lambda: events.append("cancel"),
@@ -281,11 +281,11 @@ def test_an_edge_that_arrives_during_shutdown_is_not_dispatched():
     tracker, events = _tracker(frozenset({100}), 1)
     tracker._stop_event.set()
 
-    tracker._update(True)
+    tracker._update_bindings({"default": True})
     tracker._update_cancel(True)
 
     assert events == []
-    assert tracker._active is False
+    assert tracker._selected_binding is None
     assert tracker._cancel_active is False
 
 
@@ -295,31 +295,38 @@ def test_two_readers_seeing_the_same_press_dispatch_only_one_edge():
     The losing reader is held at the lock until the winner's edge has landed,
     so it re-reads the settled state and finds no transition left to report.
     Seen to FAIL against a tracker that decided the edge before taking the
-    lock (both readers fire on_start).
+    lock (both readers fire the start callback).
     """
     events: list[str] = []
     lock = _HandoffLock()
     tracker = ChordTracker(
-        chord=frozenset({100}),
-        on_start=lambda: events.append("start"),
-        on_stop=lambda: events.append("stop"),
+        bindings={"default": frozenset({100})},
+        on_binding_start=lambda _name: events.append("start"),
+        on_binding_stop=lambda _name: events.append("stop"),
         lock=lock,
         cancel=frozenset({1}),
         on_cancel=lambda: events.append("cancel"),
     )
 
+    def bindings_won():
+        tracker._selected_binding = "default"
+        tracker._binding_active["default"] = True
+
+    def cancel_won():
+        tracker._cancel_active = True
+
     dispatchers = (
-        (tracker._update, "_active"),
-        (tracker._update_cancel, "_cancel_active"),
+        (tracker._update_bindings, {"default": True}, bindings_won),
+        (tracker._update_cancel, True, cancel_won),
     )
-    for dispatch, settled in dispatchers:
+    for dispatch, is_active, other_reader_wins in dispatchers:
         lock.reached.clear()
         lock.proceed.clear()
-        loser = threading.Thread(target=dispatch, args=(True,), daemon=True)
+        loser = threading.Thread(target=dispatch, args=(is_active,), daemon=True)
         loser.start()
         assert lock.reached.wait(10)
         # The other reader's edge won the race while this one waited.
-        setattr(tracker, settled, True)
+        other_reader_wins()
         lock.proceed.set()
         loser.join(timeout=10)
         assert loser.is_alive() is False

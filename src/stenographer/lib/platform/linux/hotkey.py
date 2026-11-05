@@ -127,21 +127,15 @@ class EvdevHotkeyListener(ChordTracker):
     def __init__(
         self,
         *,
-        chord: frozenset[int],
         device_path: str | None,
-        on_start: Callable[[], None],
-        on_stop: Callable[[], None],
         lock: threading.RLock,
-        bindings: dict[str, frozenset[int]] | None = None,
-        on_binding_start: Callable[[str], None] | None = None,
-        on_binding_stop: Callable[[str], None] | None = None,
+        bindings: dict[str, frozenset[int]],
+        on_binding_start: Callable[[str], None],
+        on_binding_stop: Callable[[str], None],
         cancel: frozenset[int] = frozenset(),
         on_cancel: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(
-            chord=chord,
-            on_start=on_start,
-            on_stop=on_stop,
             lock=lock,
             bindings=bindings,
             on_binding_start=on_binding_start,
@@ -323,10 +317,4 @@ class EvdevHotkeyListener(ChordTracker):
             with contextlib.suppress(OSError):
                 device.close()
             if not self._stop_event.is_set():
-                if self._selected_binding is None and self._active:
-                    # A legacy single-binding listener may have been armed
-                    # before profile bindings existed; preserve its device-loss
-                    # falling edge during the compatibility window.
-                    self._update(active_bindings[next(iter(self._bindings))])
-                else:
-                    self._update_bindings(active_bindings)
+                self._update_bindings(active_bindings)
