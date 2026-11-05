@@ -327,14 +327,14 @@ class RecordScreen(HubScreen):
         for line in lines:
             color = speaker_color(line.speaker_id, speaker_ids, source=line.source)
             rows.append(
-                TranscriptLine(
+                TranscriptLine.row(
                     line.start,
                     line.label,
                     line.text,
                     color=color,
                     source=line.source,
                     layout=layout,
-                ).row()
+                )
             )
         if marker is not None:
             rows.append(Text(f"── {marker} ──", style="#6ee69a", no_wrap=True))

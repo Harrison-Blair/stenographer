@@ -429,13 +429,13 @@ class LibraryScreen(HubScreen):
         self._transcript_key = key
         ids = tuple(dict.fromkeys(line.speaker_id for line in lines))
         rows: list = [
-            TranscriptLine(
+            TranscriptLine.row(
                 line.start,
                 line.label,
                 line.text,
                 color=speaker_color(line.speaker_id, ids, source=line.source),
                 source=line.source,
-            ).row()
+            )
             for line in lines
         ]
         if not rows and message:

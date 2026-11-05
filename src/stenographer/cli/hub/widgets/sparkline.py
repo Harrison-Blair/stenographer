@@ -51,7 +51,7 @@ class Sparkline(Static):
         text = Text(no_wrap=True)
         if not self.label_after:
             text.append(f"{self.spark_label} ", style="#8b93a1")
-        text.append(glyphs.ljust(self.cells, "·") if values else "·" * self.cells, style=self.color)
+        text.append(glyphs.ljust(self.cells, "·"), style=self.color)
         if self.label_after:
             text.append(f" {self.spark_label}", style="#8b93a1")
         return text
