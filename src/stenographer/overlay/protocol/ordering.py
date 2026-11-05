@@ -14,6 +14,7 @@ from stenographer.overlay.protocol.errors import ProtocolError
 from stenographer.overlay.protocol.line_reader import LineReader
 from stenographer.overlay.protocol.messages import (
     CommandMessage,
+    DisplayRecord,
     LoadingActivityMessage,
     SpectrumMessage,
     StateMessage,
@@ -47,13 +48,10 @@ def selected_unavailable_reason(
 
 
 def coalesce_spectrum_messages(
-    messages: Iterable[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage],
-) -> tuple[
-    StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage,
-    ...,
-]:
+    messages: Iterable[DisplayRecord],
+) -> tuple[DisplayRecord, ...]:
     """Replace adjacent spectrum frames while retaining every ordering barrier."""
-    pending: list[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage] = []
+    pending: list[DisplayRecord] = []
     for message in messages:
         if (
             isinstance(message, SpectrumMessage)
@@ -70,13 +68,13 @@ def drain_display_stream(
     chunk: bytes,
     reader: LineReader,
     gate: DisplayMessageGate,
-) -> tuple[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage, ...]:
+) -> tuple[DisplayRecord, ...]:
     """Frame, decode, gate, and coalesce one chunk of the parent display stream.
 
     Only display and command records are valid from the parent; any other
     protocol message raises ``ProtocolError`` without reflecting its content.
     """
-    accepted: list[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage] = []
+    accepted: list[DisplayRecord] = []
     for record in reader.feed(chunk):
         message = decode_message(record)
         if isinstance(message, StateMessage | SpectrumMessage | LoadingActivityMessage):

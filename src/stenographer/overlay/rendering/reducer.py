@@ -11,15 +11,13 @@ from stenographer.overlay.protocol.command import Command
 from stenographer.overlay.protocol.errors import ProtocolError
 from stenographer.overlay.protocol.messages import (
     CommandMessage,
+    DisplayRecord,
     LoadingActivityMessage,
     SpectrumMessage,
     StateMessage,
 )
 from stenographer.overlay.rendering.display_intent import DisplayIntent
 from stenographer.overlay.rendering.loading_pulse import LoadingPulse
-
-DisplayRecord = StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage
-
 
 _SILENT_LEVELS = (0,) * SPECTRUM_BANDS
 
