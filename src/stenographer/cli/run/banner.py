@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import sys
 from typing import TYPE_CHECKING
@@ -74,27 +75,15 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             cue_player=_shown(caps.cue_player),
         )
     )
-    log.info(
-        fmt_event(
-            "banner",
-            "config_hotkey",
-            agent_binding=cfg.hotkey.binding,
-            general_binding=cfg.hotkey.general_binding,
-            cancel_binding=_shown(cfg.hotkey.cancel_binding),
-            device=_shown(cfg.hotkey.device),
-            mode=cfg.hotkey.mode,
-            hybrid_threshold_seconds=cfg.hotkey.hybrid_threshold_seconds,
-        )
-    )
-    log.info(
-        fmt_event(
-            "banner",
-            "config_audio",
-            input_device=_shown(cfg.audio.input_device),
-            min_speech_rms=cfg.audio.min_speech_rms,
-            max_recording_seconds=cfg.audio.max_recording_seconds,
-        )
-    )
+    for name in ("hotkey", "audio"):
+        section = getattr(cfg, name)
+        values = {
+            (
+                "agent_binding" if name == "hotkey" and field.name == "binding" else field.name
+            ): _shown(getattr(section, field.name))
+            for field in dataclasses.fields(section)
+        }
+        log.info(fmt_event("banner", f"config_{name}", **values))
     asr = cfg.asr
     log.info(
         fmt_event(
@@ -106,18 +95,14 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             resolved_cpu_threads=resolve_cpu_threads(asr.cpu_threads, plat.physical_core_count()),
         )
     )
-    feedback = cfg.feedback
     log.info(
         fmt_event(
             "banner",
             "config_feedback",
-            volume=feedback.volume,
-            mute=_shown(feedback.mute),
-            overlay=_shown(feedback.overlay),
-            update_check=_shown(feedback.update_check),
-            spectrum_floor_dbfs=_shown(feedback.spectrum_floor_dbfs),
-            sound_pack=feedback.sound_pack,
-            log_level=feedback.log_level,
+            **{
+                field.name: _shown(getattr(cfg.feedback, field.name))
+                for field in dataclasses.fields(cfg.feedback)
+            },
         )
     )
     refine = cfg.refine
