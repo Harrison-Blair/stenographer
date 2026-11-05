@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import ClassVar
 
 from rich.color import Color
-from rich.text import Text
 from textual.scrollbar import ScrollBar
 from textual.widgets import Input, Static
 
@@ -50,10 +49,6 @@ class FakeServices:
     recording = False
     files_running = False
     session = None
-
-
-def _plain(renderable) -> str:
-    return renderable.plain if isinstance(renderable, Text) else renderable
 
 
 def _painted_backgrounds(app, label: str, errors: list[str]) -> int:

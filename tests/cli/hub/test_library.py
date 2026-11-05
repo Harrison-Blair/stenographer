@@ -1030,7 +1030,7 @@ def test_library_play_refuses_an_invalid_source_file(tmp_path, monkeypatch):
     assert list(_private_tmp(tmp_path).iterdir()) == []
 
 
-def test_library_play_notice_for_an_invalid_source_file(tmp_path, monkeypatch):
+def test_library_play_notice_for_an_invalid_source_file(tmp_path):
     root = tmp_path / "sessions"
     session_id = _write_file_session(root, tmp_path)
     metadata_path = root / session_id / "session.json"
