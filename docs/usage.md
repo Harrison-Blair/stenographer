@@ -45,7 +45,7 @@ your config file. Stenographer ignores them and saves keep them unchanged; you
 can delete them by hand. The speech model keeps fillers such as "um" in every
 mode; [refine](refine.md) removes them from dictations of 10 or more words (the
 default `min_words`). For live capture,
-see [Record live audio](#record-live-audio).
+see [Record live audio](hub.md#record).
 
 The configuration file is:
 
@@ -221,47 +221,12 @@ local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
 
 ## Open the terminal hub
 
-Run `stenographer` with no arguments in a terminal to open the hub. It starts
-on Live; press `space` when you want to start recording. If stdin or stdout is
-not a terminal, the command prints help. Existing subcommands keep their
-current behavior.
+Run `stenographer` with no arguments in a terminal to open the hub. If stdin
+or stdout is not a terminal, the command prints help. See the [hub guide](hub.md)
+for recording, transcribing files, and separating speakers.
 
-In the hub, press `2` for Library, then `n` to open the Transcribe a file
-dialog. The browser starts in your home folder. Use `up` and `down` to select
-an entry, `enter` to open a folder, and `/` to filter names in the current
-folder. Press `s` for Separate speakers (on by default), `r` for Refine text
-(off by default), and `c` to type the speaker count: `auto` or a whole number
-above 0. Press `enter` on a file to queue it; the Library shows and selects
-the job at once. Jobs run one at a time and continue when you change screens.
-
-Each job saves its result as a session folder in the sessions folder next to
-your recordings: a private copy of the source file, `transcript.jsonl`,
-`transcript.md`, and `session.json`. A job on `mic.flac` or `system.flac` of a
-recording saves a new transcript revision of that recording instead. Select
-the row in Library to see the progress and the finished lines, and use `x` to
-export the transcript. See [the hub guide](hub.md#transcribe-a-file) for the
-paths and details.
-
-## Record live audio
-
-The Record screen of the hub transcribes the microphone and full system mix.
-Download its voice and speaker models with
-`stenographer model download --live`; build the ASR model separately with
-`stenographer model download --asr`. See the [Record section of the hub
-guide](hub.md#record) for source controls, saved files, privacy, and limits.
-
-To separate several speakers who share one microphone, turn on microphone
-diarization in the config:
-
-```toml
-[stenographer.live]
-diarize_mic = true   # default false: every microphone line is "You"
-```
-
-Microphone speakers then get labels such as `Room 1` and `Room 2`, separate
-from the system `Speaker N` labels. The Live tab of hub Settings edits the
-setting; it applies when a recording starts. See
-[separate the speakers in a room](hub.md#separate-the-speakers-in-a-room).
+Download the voice and speaker models with `stenographer model download --live`;
+build the ASR model separately with `stenographer model download --asr`.
 
 ## Troubleshoot a running service
 

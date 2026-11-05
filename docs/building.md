@@ -34,7 +34,8 @@ effect — is folded into the synopsis or left out, never listed as a fix. An
 `[Unreleased]` section may be empty while nothing is pending, and otherwise
 follows the same structure.
 
-`scripts/release_notes.py check` enforces this for every entry in the file. It
+`scripts/release_notes.py check` enforces this for the requested release and
+`[Unreleased]`. It
 runs in a manually dispatched release rehearsal and again in the draft-release
 workflow, so a missing or malformed entry fails before the draft is written.
 
@@ -54,9 +55,7 @@ the application and tests, development scripts, packaging files, workflows,
 and explicitly listed metadata, documentation, and bundled assets. Local
 recordings, downloaded models, caches, build output, and agent/editor settings
 stay ignored. Shared guidance remains in `AGENTS.md` and `CLAUDE.md`.
-The curated [code-smell reference](docs/reference/guru/code-smells.md) and
-[refactoring techniques](docs/reference/guru/refactoring-techniques.md) remain
-tracked together under `docs/reference/guru/`. PyInstaller collects only the
+PyInstaller collects only the
 application entry point, modules, and assets.
 
 For a new file type, documentation file, or asset, update both `.gitignore`

@@ -180,7 +180,7 @@ def _validate_unreleased(text: str) -> None:
 
 
 def parse_changelog(text: str) -> tuple[ReleaseNote, ...]:
-    """Parse all release entries in newest-first order, rejecting malformed ones."""
+    """Parse release entries in file order, checking their headings and dates."""
 
     _validate_unreleased(text)
 
@@ -206,7 +206,6 @@ def parse_changelog(text: str) -> tuple[ReleaseNote, ...]:
         body = text[match.end() : body_end].strip()
         if not body:
             raise ReleaseNotesError(f"empty release body for {version}")
-        _validate_body(version, body, require_section=True)
         notes.append(ReleaseNote(version=version, published=published, body=body))
 
     return tuple(notes)
@@ -218,6 +217,7 @@ def note_for_version(text: str, version: str) -> ReleaseNote:
     normalized = _normalize_version(version)
     for note in parse_changelog(text):
         if note.version == normalized:
+            _validate_body(note.version, note.body, require_section=True)
             return note
     raise ReleaseNotesError(f"no release entry for {normalized}")
 
