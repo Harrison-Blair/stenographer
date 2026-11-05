@@ -15,7 +15,8 @@ stenographer setup
 
 For common settings only, use `stenographer setup --quick`. The wizard can
 check the microphone, clipboard, model, and input permissions, and offers the
-separate model download. Nothing is downloaded until you choose it.
+separate ASR and voice-activity model download. Nothing is downloaded until you
+choose it.
 
 ## Build the speech model
 

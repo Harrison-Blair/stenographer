@@ -57,33 +57,22 @@ def _download_asr() -> int:
     import os
     from pathlib import Path
 
-    from stenographer.lib.live.download import download_live_models
     from stenographer.lib.live.errors import LiveDownloadError
-    from stenographer.lib.live.models import VAD_MODEL
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.lib.transcribe.errors import BarkDownloadError
 
     data_dir = current_platform().data_dir(os.environ, Path.home())
     try:
-        built = bark_download.download_bark_pro(
+        bark_download.install_dictation_models(
             data_dir, on_step=lambda line: print(f"stenographer: {line}", flush=True)
         )
     except BarkDownloadError as exc:
         print(f"stenographer: could not install the ASR model: {exc}", file=sys.stderr)
         return 1
-    status = "installed" if built else "already present"
-    print(f"stenographer: ASR model {status} at {bark_download.model_dir(data_dir)}")
-    print(f"stenographer: {bark_download.ATTRIBUTION}")
-
-    vad = (VAD_MODEL,)
-    try:
-        downloaded = download_live_models(data_dir, models=vad)
     except LiveDownloadError as exc:
         print(f"stenographer: could not download the VAD model: {exc}", file=sys.stderr)
         return 1
-    status = "downloaded" if downloaded else "already present"
-    print(f"stenographer: VAD model {VAD_MODEL.filename} {status}")
     return 0
 
 

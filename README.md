@@ -91,8 +91,8 @@ systemctl --user start stenographer.service
 ```
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
-offers the separate ASR model download. Use plain `setup` to review every
-setting.
+offers the separate ASR and voice-activity model download. Use plain `setup` to
+review every setting.
 
 ## Speech model
 
