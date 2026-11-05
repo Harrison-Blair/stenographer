@@ -1084,7 +1084,7 @@ def guided(monkeypatch):
                 raise probe_error
             return probed
 
-        def installed_model_names(host, *, timeout=refine_client.PROBE_TIMEOUT_SECONDS):
+        def installed_model_names(host):
             # Never let a default (refine-enabled) config reach a real Ollama
             # from a unit test: `refine_installed` fakes the listing instead.
             events.append(f"refine-probe:{host}")

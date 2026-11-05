@@ -6,15 +6,11 @@ from __future__ import annotations
 import pytest
 
 from stenographer.lib.refine.endpoints import (
-    chat_url,
-    generate_url,
+    api_url,
     host_name,
     is_loopback,
     normalize_host,
-    ps_url,
-    pull_url,
     qualify_tag,
-    tags_url,
 )
 from stenographer.lib.refine.policy import (
     COLD_LOAD_TIMEOUT_SECONDS,
@@ -121,11 +117,11 @@ def test_anything_not_provably_local_is_reported_as_remote(host):
 def test_endpoints_are_built_from_one_normalized_host():
     host = "127.0.0.1:11434/"
 
-    assert chat_url(host) == "http://127.0.0.1:11434/api/chat"
-    assert tags_url(host) == "http://127.0.0.1:11434/api/tags"
-    assert pull_url(host) == "http://127.0.0.1:11434/api/pull"
-    assert generate_url(host) == "http://127.0.0.1:11434/api/generate"
-    assert ps_url(host) == "http://127.0.0.1:11434/api/ps"
+    assert api_url(host, "chat") == "http://127.0.0.1:11434/api/chat"
+    assert api_url(host, "tags") == "http://127.0.0.1:11434/api/tags"
+    assert api_url(host, "pull") == "http://127.0.0.1:11434/api/pull"
+    assert api_url(host, "generate") == "http://127.0.0.1:11434/api/generate"
+    assert api_url(host, "ps") == "http://127.0.0.1:11434/api/ps"
 
 
 @pytest.mark.parametrize(

@@ -327,8 +327,8 @@ def test_the_factory_carries_the_asr_idle_window_into_keep_alive():
     refiner = build_refiner(RefineConfig(enabled=True), idle_unload_seconds=0)
 
     assert isinstance(refiner, OllamaRefiner)
-    assert refiner.keep_alive == -1
-    assert build_refiner(RefineConfig(enabled=True), idle_unload_seconds=60).keep_alive == 60
+    assert refiner._keep_alive == -1
+    assert build_refiner(RefineConfig(enabled=True), idle_unload_seconds=60)._keep_alive == 60
 
 
 def test_an_explicit_opt_in_does_not_need_the_daemon_setting():
