@@ -7,6 +7,7 @@ from itertools import pairwise
 
 import numpy as np
 
+from stenographer.lib.config.constants import MAX_SPECTRUM_FLOOR_DBFS, MIN_SPECTRUM_FLOOR_DBFS
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.overlay.spectrum.band_analysis import _BandAnalysis
 
@@ -23,12 +24,6 @@ LOW_FREQUENCY_HZ = 80.0
 
 
 HIGH_FREQUENCY_HZ = 8000.0
-
-
-MIN_SPECTRUM_FLOOR_DBFS = -96.0
-
-
-MAX_SPECTRUM_FLOOR_DBFS = -13.0
 
 
 DEFAULT_SPECTRUM_FLOOR_DBFS = -45.0
