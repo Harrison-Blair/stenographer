@@ -12,6 +12,8 @@ import numpy as np
 MINIMUM_SPEECH_DURATION_SECONDS = 1.2
 # Below this score, continuity is a safer assignment for a short phrase.
 _SHORT_PHRASE_FALLBACK_SIMILARITY = 0.25
+_THRESHOLD = 0.50
+_NUM_THREADS = 2
 
 
 @dataclass
@@ -81,30 +83,24 @@ class SpeakerTracker:
     def __init__(
         self,
         model_path: str | Path,
-        threshold: float = 0.50,
-        num_threads: int = 2,
         *,
         label_prefix: str = "Speaker",
     ):
         import sherpa_onnx
 
         config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(
-            model=str(model_path), num_threads=num_threads, debug=False, provider="cpu"
+            model=str(model_path), num_threads=_NUM_THREADS, debug=False, provider="cpu"
         )
         self._extractor = sherpa_onnx.SpeakerEmbeddingExtractor(config)
         self._label_prefix = label_prefix
         self._id_prefix = f"{label_prefix.lower()}-"
-        self._clustering = SpeakerClustering(threshold, id_prefix=label_prefix.lower())
+        self._clustering = SpeakerClustering(_THRESHOLD, id_prefix=label_prefix.lower())
         self._names: dict[str, str] = {}
 
     @property
     def speaker_ids(self) -> tuple[str, ...]:
         """Return the known speaker IDs in order of appearance."""
         return tuple(speaker.speaker_id for speaker in self._clustering.speakers)
-
-    def assign(self, samples: np.ndarray, *, duration: float | None = None) -> str:
-        """Return the speaker ID for an audio phrase."""
-        return self.assign_embedding(self.embed(samples), duration=duration)
 
     def embed(self, samples: np.ndarray) -> np.ndarray:
         """Return the speaker embedding for an audio phrase."""
@@ -123,15 +119,11 @@ class SpeakerTracker:
 
     def label(self, speaker_id: str) -> str:
         """Return the display label for a speaker ID."""
-        if speaker_id == "you":
-            return "You"
         number = speaker_id.removeprefix(self._id_prefix)
         return self._names.get(speaker_id, f"{self._label_prefix} {number}")
 
     def rename(self, speaker_id: str, name: str) -> None:
         """Set a display label for a speaker ID."""
-        if speaker_id == "you":
-            raise ValueError("The microphone source cannot be renamed")
         label = name.strip()
         if not label:
             raise ValueError("Speaker name cannot be empty")
