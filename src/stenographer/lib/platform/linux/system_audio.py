@@ -32,27 +32,10 @@ class LinuxSystemAudioCapture:
     def __init__(self) -> None:
         self._process: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
-        self._callback: SystemAudioBlockCallback | None = None
         self._stopping = threading.Event()
 
-    def available(self) -> tuple[bool, str | None]:
-        if shutil.which("pw-record") is None:
-            return False, "pw-record is not installed"
-        if link_inspector() is None:
-            return (
-                False,
-                "pw-link and pw-dump are not installed; cannot verify system capture routing",
-            )
-        sink, reason = self._default_sink()
-        if reason is not None:
-            return False, reason
-        if not sink:
-            return False, "pactl get-default-sink returned no sink name"
-        return True, None
-
-    def start(self, on_block: SystemAudioBlockCallback) -> None:
-        if self._process is not None:
-            raise SystemAudioCaptureError("system audio capture is already running")
+    def _prerequisites(self) -> tuple[str, tuple[str, str], str]:
+        """Return pw-record, the link inspector, and the default sink, or raise why not."""
         executable = shutil.which("pw-record")
         if executable is None:
             raise SystemAudioCaptureError("pw-record is not installed")
@@ -61,9 +44,19 @@ class LinuxSystemAudioCapture:
             raise SystemAudioCaptureError(
                 "pw-link and pw-dump are not installed; cannot verify system capture routing"
             )
-        sink, reason = self._default_sink()
-        if reason is not None or not sink:
-            raise SystemAudioCaptureError(reason or "pactl returned no default sink")
+        return executable, inspector, self._default_sink()
+
+    def available(self) -> tuple[bool, str | None]:
+        try:
+            self._prerequisites()
+        except SystemAudioCaptureError as exc:
+            return False, str(exc)
+        return True, None
+
+    def start(self, on_block: SystemAudioBlockCallback) -> None:
+        if self._process is not None:
+            raise SystemAudioCaptureError("system audio capture is already running")
+        executable, inspector, sink = self._prerequisites()
         command = [
             executable,
             "-P",
@@ -90,24 +83,23 @@ class LinuxSystemAudioCapture:
 
         try:
             self._wait_for_sink_monitor(process, sink, inspector)
-            self._discard_pending_audio(process)
+            try:
+                self._discard_pending_audio(process)
+            except OSError as exc:
+                raise SystemAudioCaptureError(
+                    "could not discard audio captured before system link verification"
+                ) from exc
         except SystemAudioCaptureError:
             self._terminate_process(process)
             if process.stdout is not None:
                 process.stdout.close()
             raise
-        except OSError as exc:
-            self._terminate_process(process)
-            if process.stdout is not None:
-                process.stdout.close()
-            raise SystemAudioCaptureError(
-                "could not discard audio captured before system link verification"
-            ) from exc
 
-        self._callback = on_block
         self._stopping.clear()
         self._process = process
-        self._thread = threading.Thread(target=self._read_stdout, args=(process,), daemon=True)
+        self._thread = threading.Thread(
+            target=self._read_stdout, args=(process, on_block), daemon=True
+        )
         self._thread.start()
 
     def _wait_for_sink_monitor(
@@ -175,12 +167,11 @@ class LinuxSystemAudioCapture:
         if process.stdout is not None:
             process.stdout.close()
         self._process = None
-        self._callback = None
 
-    def _default_sink(self) -> tuple[str | None, str | None]:
+    def _default_sink(self) -> str:
         pactl = shutil.which("pactl")
         if pactl is None:
-            return None, "pactl is not installed"
+            raise SystemAudioCaptureError("pactl is not installed")
         try:
             result = subprocess.run(
                 [pactl, "get-default-sink"],
@@ -189,14 +180,14 @@ class LinuxSystemAudioCapture:
                 check=True,
                 timeout=5,
             )
-        except (OSError, subprocess.SubprocessError):
-            return None, "pactl could not get the default sink"
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SystemAudioCaptureError("pactl could not get the default sink") from exc
         sink = result.stdout.strip()
         if not sink:
-            return None, "pactl get-default-sink returned no sink name"
-        return sink, None
+            raise SystemAudioCaptureError("pactl get-default-sink returned no sink name")
+        return sink
 
-    def _read_stdout(self, process: subprocess.Popen) -> None:
+    def _read_stdout(self, process: subprocess.Popen, on_block: SystemAudioBlockCallback) -> None:
         assert process.stdout is not None
         pending = bytearray()
         read_error: SystemAudioCaptureError | None = None
@@ -208,7 +199,7 @@ class LinuxSystemAudioCapture:
                 pending.extend(chunk)
                 full_bytes = len(pending) - len(pending) % 4
                 while full_bytes >= _BLOCK_FRAMES * 4:
-                    self._emit(pending[: _BLOCK_FRAMES * 4])
+                    self._emit(on_block, pending[: _BLOCK_FRAMES * 4])
                     del pending[: _BLOCK_FRAMES * 4]
                     full_bytes -= _BLOCK_FRAMES * 4
             if len(pending) % 4:
@@ -216,30 +207,30 @@ class LinuxSystemAudioCapture:
                     "pw-record ended in the middle of a float32 sample"
                 )
             elif pending:
-                self._emit(pending)
+                self._emit(on_block, pending)
         except OSError:
             read_error = SystemAudioCaptureError("could not read pw-record audio")
 
         if read_error is not None:
-            self._report_error(read_error)
+            self._report_error(on_block, read_error)
         elif not self._stopping.is_set():
             status = process.wait()
             self._report_error(
-                SystemAudioCaptureError(f"pw-record exited unexpectedly with status {status}")
+                on_block,
+                SystemAudioCaptureError(f"pw-record exited unexpectedly with status {status}"),
             )
 
-    def _emit(self, raw: bytes | bytearray) -> None:
-        if self._callback is None:
-            return
+    @staticmethod
+    def _emit(on_block: SystemAudioBlockCallback, raw: bytes | bytearray) -> None:
         block = np.frombuffer(raw, dtype=np.float32).copy()
         try:
-            self._callback(block)
+            on_block(block)
         except Exception:
             return
 
-    def _report_error(self, error: SystemAudioCaptureError) -> None:
-        if self._callback is not None:
-            try:
-                self._callback(error)
-            except Exception:
-                return
+    @staticmethod
+    def _report_error(on_block: SystemAudioBlockCallback, error: SystemAudioCaptureError) -> None:
+        try:
+            on_block(error)
+        except Exception:
+            return
