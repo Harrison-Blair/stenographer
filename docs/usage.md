@@ -15,7 +15,8 @@ stenographer setup
 
 For common settings only, use `stenographer setup --quick`. The wizard can
 check the microphone, clipboard, model, and input permissions, and offers the
-separate model download. Nothing is downloaded until you choose it.
+separate ASR and voice-activity model download. Nothing is downloaded until you
+choose it.
 
 ## Build the speech model
 
@@ -143,6 +144,9 @@ List or preview the bundled packs without changing the selection:
 stenographer sounds --list
 stenographer sounds --preview warm-desk
 ```
+
+When cues are muted or volume is zero, a preview says so and plays at volume 0.6
+without changing either setting.
 
 Select a pack for the daemon:
 

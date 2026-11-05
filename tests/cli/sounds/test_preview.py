@@ -100,3 +100,43 @@ def test_a_successful_preview_passes_the_pack_player_and_audible_volume(
     assert _preview(console, config, pack) is True
     assert calls == [(pack, player, expected)]
     assert console.stderr.getvalue() == ""
+
+
+@pytest.mark.parametrize(("mute", "volume"), [(True, 0.4), (True, 0.6), (False, 0.0)])
+def test_a_preview_that_overrides_silence_says_so_and_changes_no_setting(
+    monkeypatch,
+    mute,
+    volume,
+):
+    from stenographer.lib import platform as platform_module
+    from stenographer.lib.sounds import playback
+
+    monkeypatch.setattr(platform_module, "current_platform", _platform(object()))
+    monkeypatch.setattr(playback, "preview_sound_pack", lambda one, two, three: None)
+    defaults = Config.defaults()
+    feedback = dataclasses.replace(defaults.feedback, mute=mute, volume=volume)
+    config = dataclasses.replace(defaults, feedback=feedback)
+    console = _console()
+
+    assert _preview(console, config, object()) is True
+    assert console.stdout.getvalue() == (
+        "Cues are muted or at volume zero: this preview plays at volume 0.6 "
+        "and changes neither setting.\n"
+    )
+
+
+def test_a_preview_at_the_configured_volume_prints_no_note(monkeypatch):
+    from stenographer.lib import platform as platform_module
+    from stenographer.lib.sounds import playback
+
+    monkeypatch.setattr(platform_module, "current_platform", _platform(object()))
+    monkeypatch.setattr(playback, "preview_sound_pack", lambda one, two, three: None)
+    defaults = Config.defaults()
+    config = dataclasses.replace(
+        defaults,
+        feedback=dataclasses.replace(defaults.feedback, mute=False, volume=0.4),
+    )
+    console = _console()
+
+    assert _preview(console, config, object()) is True
+    assert console.stdout.getvalue() == ""

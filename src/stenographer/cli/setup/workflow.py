@@ -673,14 +673,13 @@ def _edit_feedback_section(
     config_dir: pathlib.Path,
     *,
     notice: Sequence[str],
-    skip_floor_without_overlay: bool,
     ask_log_level: bool,
 ) -> Config:
     """Prompt the feedback keys both wizards share, then the spectrum response.
 
-    The wizards differ only in *notice* (their calibration disclaimer), in
-    whether a disabled overlay skips the spectrum question entirely, and in
-    whether the log threshold is asked at all — it is not an essential.
+    The wizards differ only in *notice* (their calibration disclaimer) and in
+    whether the log threshold is asked at all — it is not an essential. A
+    disabled overlay skips the spectrum question and keeps the current floor.
     """
 
     console.write("\nFeedback")
@@ -708,7 +707,7 @@ def _edit_feedback_section(
     for line in notice:
         console.write(line)
     floor = feedback.spectrum_floor_dbfs
-    if skip_floor_without_overlay and not feedback.overlay:
+    if not feedback.overlay:
         console.write("Overlay is disabled, so display-spectrum calibration was skipped.")
     else:
         # Calibration only reads the (already chosen) input device from here.
@@ -728,7 +727,6 @@ def _edit_feedback(console: Console, config: Config, *, config_dir: pathlib.Path
             "IMPORTANT: spectrum calibration affects only the 18 visual bars.",
             "It never changes capture, min_speech_rms, speech gating, or transcription.",
         ),
-        skip_floor_without_overlay=False,
         ask_log_level=True,
     )
 
@@ -814,6 +812,7 @@ def _guided_setup(
 ) -> int:
     from stenographer.cli.doctor import report as doctor
     from stenographer.cli.shared.capabilities import missing_required, probe
+    from stenographer.lib.live.models import VAD_MODEL, live_model_dir
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay.platform import current_platform as overlay_platform
@@ -827,19 +826,28 @@ def _guided_setup(
         console.error(f"could not inspect the model cache: {exc}")
         cached = False
         operational_failure = True
+    offer = None
     if not cached:
         console.write(
             "\nThe ASR model Underdog Bark 3.0 Pro is not installed. stenographer builds it on "
-            "this machine (download is approximately 1.6 GB; needs 10 GiB free disk)."
+            "this machine (download is approximately 1.6 GB; needs 10 GiB free disk). "
+            "It also downloads the Silero voice-activity model."
         )
-        if ask_yes_no(console, "Download and convert it now?", default=quick):
-            try:
-                bark_download.download_bark_pro(data_dir, on_step=console.write)
-            except Exception as exc:
-                console.error(f"model download failed: {exc}")
-                operational_failure = True
-            else:
-                console.write(f"Model download complete. {bark_download.ATTRIBUTION}.")
+        offer = "Download and convert it now?"
+    elif not (live_model_dir(data_dir) / VAD_MODEL.filename).is_file():
+        console.write(
+            "\nThe Silero voice-activity model that dictation needs is not installed "
+            "(download is about 0.6 MB)."
+        )
+        offer = "Download it now?"
+    if offer is not None and ask_yes_no(console, offer, default=quick):
+        try:
+            bark_download.install_dictation_models(data_dir, on_step=console.write)
+        except Exception as exc:
+            console.error(f"model download failed: {exc}")
+            operational_failure = True
+        else:
+            console.write("Model download complete.")
 
     if config.refine.enabled:
         operational_failure |= _offer_refine_pull(console, config, quick=quick)

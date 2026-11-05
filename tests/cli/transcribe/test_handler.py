@@ -146,7 +146,7 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
         assert capsys.readouterr().out == "Sensitive transcript \n"
 
 
-def test_a_missing_file_is_refused_before_the_model_cache_is_consulted(
+def test_a_missing_file_gets_the_cannot_read_error_before_the_model_cache_is_consulted(
     monkeypatch,
     tmp_path,
     capsys,
@@ -163,9 +163,27 @@ def test_a_missing_file_is_refused_before_the_model_cache_is_consulted(
     assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 2
 
     captured = capsys.readouterr()
-    assert captured.err == f"stenographer: file not found: {path}\n"
+    assert captured.err.startswith(f"stenographer: cannot read {path}: ")
+    assert captured.err.count("\n") == 1
     assert captured.out == ""
     assert consulted == []
+
+
+def test_an_unreadable_file_is_reported_before_an_uncached_model(monkeypatch, tmp_path, capsys):
+    # The real Bark probe over an empty data dir: no model installed.
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    from stenographer.cli.transcribe.handler import cmd_transcribe
+
+    path = tmp_path / "clip.wav"
+    path.write_bytes(b"RIFF not really a wave file at all")
+
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
+
+    assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 2
+
+    captured = capsys.readouterr()
+    assert captured.err.startswith(f"stenographer: cannot read {path}: ")
+    assert captured.out == ""
 
 
 def test_an_uncached_model_is_refused_with_the_download_instruction(

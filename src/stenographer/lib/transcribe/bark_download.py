@@ -242,6 +242,24 @@ def _install(out_dir: Path, target: Path, build_dir: Path) -> None:
     os.replace(out_dir, target)
 
 
+def install_dictation_models(data_dir: Path, *, on_step: Callable[[str], None]) -> None:
+    """Install what dictation needs: the Bark model, then the Silero VAD model.
+
+    Raises ``BarkDownloadError`` or ``LiveDownloadError``; a model that is already
+    present is reported through *on_step* and not fetched again.
+    """
+    from stenographer.lib.live.download import download_live_models
+    from stenographer.lib.live.models import VAD_MODEL
+
+    built = download_bark_pro(data_dir, on_step=on_step)
+    status = "installed" if built else "already present"
+    on_step(f"ASR model {status} at {model_dir(data_dir)}")
+    on_step(ATTRIBUTION)
+    downloaded = download_live_models(data_dir, models=(VAD_MODEL,))
+    status = "downloaded" if downloaded else "already present"
+    on_step(f"VAD model {VAD_MODEL.filename} {status}")
+
+
 def download_bark_pro(
     data_dir: Path,
     *,

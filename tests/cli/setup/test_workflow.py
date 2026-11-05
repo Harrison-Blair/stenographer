@@ -659,7 +659,7 @@ def test_manual_floor_offers_a_scalar_default_when_a_profile_is_current():
     assert f"Spectrum floor dBFS [{DEFAULT_SPECTRUM_FLOOR_DBFS};" in console.stdout.getvalue()
 
 
-def test_quick_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_path):
+def test_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_path):
     console = _console("0.9\n\nno\n\n\n")
 
     config = setup._edit_feedback_section(
@@ -667,7 +667,6 @@ def test_quick_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_pa
         Config.defaults(),
         tmp_path,
         notice=("IMPORTANT: bars only.",),
-        skip_floor_without_overlay=True,
         ask_log_level=False,
     )
 
@@ -681,6 +680,26 @@ def test_quick_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_pa
     assert "Spectrum response" not in stdout
 
 
+def test_full_wizard_skips_calibration_and_keeps_the_floor_when_the_overlay_is_off(tmp_path):
+    defaults = Config.defaults()
+    floor = (-52.0,) * 18
+    initial = dataclasses.replace(
+        defaults,
+        feedback=dataclasses.replace(defaults.feedback, spectrum_floor_dbfs=floor),
+    )
+    # The trailing "keep" answers the question if it is asked, so no capture can start.
+    console = _console("\n\nno\n\n\n\nkeep\n")
+
+    config = setup._edit_feedback(console, initial, config_dir=tmp_path)
+
+    assert config.feedback.overlay is False
+    assert config.feedback.spectrum_floor_dbfs == floor
+    stdout = console.stdout.getvalue()
+    assert "Log level" in stdout
+    assert "Spectrum response" not in stdout
+    assert "Overlay is disabled, so display-spectrum calibration was skipped." in stdout
+
+
 def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_path):
     console = _console("\n\n\n\n\ndebug\nkeep\n")
 
@@ -689,7 +708,6 @@ def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_
         Config.defaults(),
         tmp_path,
         notice=("IMPORTANT: bars only.",),
-        skip_floor_without_overlay=False,
         ask_log_level=True,
     )
 
@@ -996,17 +1014,20 @@ def _caps(**overrides):
 
 
 @pytest.fixture
-def guided(monkeypatch):
+def guided(monkeypatch, tmp_path):
     """Run ``_guided_setup`` with the cache, probe, report, and host all supplied."""
 
     from stenographer.cli.doctor import report as doctor
     from stenographer.cli.shared import capabilities as shared_capabilities
     from stenographer.lib import platform as platform_module
+    from stenographer.lib.live import download as live_download
+    from stenographer.lib.live.models import VAD_MODEL, live_model_dir
     from stenographer.lib.refine import client as refine_client
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay import platform as overlay_platform_module
 
     events: list[str] = []
+    data_root = tmp_path / "data"
 
     def install(
         *,
@@ -1014,6 +1035,8 @@ def guided(monkeypatch):
         cached=True,
         cache_error=None,
         download_error=None,
+        vad_present=True,
+        vad_error=None,
         caps=None,
         probe_error=None,
         missing=(),
@@ -1027,17 +1050,28 @@ def guided(monkeypatch):
     ):
         probed = _caps() if caps is None else caps
         used_config = Config.defaults() if config is None else config
+        vad_dir = live_model_dir(data_root)
+        vad_dir.mkdir(parents=True)
+        if vad_present:
+            (vad_dir / VAD_MODEL.filename).touch()
 
         def is_model_cached(data_dir):
-            events.append(f"cache:{data_dir}")
+            events.append(f"cache:{data_dir.name}")
             if cache_error is not None:
                 raise cache_error
             return cached
 
         def download_bark_pro(data_dir, *, on_step):
-            events.append(f"download:{data_dir}")
+            events.append(f"download:{data_dir.name}")
             if download_error is not None:
                 raise download_error
+            return not cached
+
+        def download_live_models(data_dir, *, models):
+            events.append(f"vad:{data_dir.name}:{models[0].filename}")
+            if vad_error is not None:
+                raise vad_error
+            return (models[0].filename,)
 
         def probe(cfg):
             events.append("probe")
@@ -1064,7 +1098,7 @@ def guided(monkeypatch):
                 return _GUIDANCE
 
             def data_dir(self, env, home):
-                return pathlib.Path("/data")
+                return data_root
 
             def restart_service(self):
                 events.append("restart")
@@ -1076,6 +1110,7 @@ def guided(monkeypatch):
 
         monkeypatch.setattr(bark_download, "is_model_cached", is_model_cached)
         monkeypatch.setattr(bark_download, "download_bark_pro", download_bark_pro)
+        monkeypatch.setattr(live_download, "download_live_models", download_live_models)
         monkeypatch.setattr(shared_capabilities, "probe", probe)
         monkeypatch.setattr(shared_capabilities, "missing_required", lambda caps: list(missing))
         monkeypatch.setattr(
@@ -1108,7 +1143,7 @@ def test_guided_setup_prints_the_doctor_report_and_succeeds(guided):
     assert code == 0
     assert "== doctor report ==" in stdout
     assert events == [
-        "cache:/data",
+        "cache:data",
         "refine-probe:http://127.0.0.1:11434",
         "probe",
     ]
@@ -1124,7 +1159,7 @@ def test_guided_setup_offers_the_download_of_an_uncached_model_and_takes_no_for_
         in stdout
     )
     assert "Download and convert it now? [y/N]: " in stdout
-    assert "download:/data" not in events
+    assert "download:data" not in events
 
 
 def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
@@ -1132,8 +1167,56 @@ def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
 
     assert code == 0
     assert "Download and convert it now? [Y/n]: " in stdout
-    assert "download:/data" in events
+    assert "download:data" in events
     assert "Model download complete." in stdout
+
+
+def test_guided_download_also_fetches_the_dictation_vad_model(guided):
+    code, stdout, stderr, events = guided(
+        cached=False, vad_present=False, answers="\n", changed=False, quick=True
+    )
+
+    assert code == 0
+    assert stderr == ""
+    assert events.index("download:data") < events.index("vad:data:silero_vad.onnx")
+    assert "Silero voice-activity model" in stdout
+    assert "VAD model silero_vad.onnx downloaded" in stdout
+    assert "Model download complete." in stdout
+
+
+def test_guided_setup_offers_a_vad_model_missing_beside_an_installed_asr_model(guided):
+    code, stdout, stderr, events = guided(vad_present=False, answers="y\n", changed=False)
+
+    assert code == 0
+    assert stderr == ""
+    assert "is not installed. stenographer builds it" not in stdout
+    assert "voice-activity model that dictation needs is not installed" in stdout
+    assert "Download it now? [y/N]: " in stdout
+    assert "vad:data:silero_vad.onnx" in events
+    assert "ASR model already present" in stdout
+
+
+def test_guided_setup_takes_no_for_an_answer_on_a_missing_vad_model(guided):
+    code, stdout, _, events = guided(vad_present=False, answers="\n", changed=False)
+
+    assert code == 0
+    assert "Download it now? [y/N]: " in stdout
+    assert not [event for event in events if event.startswith(("download:", "vad:"))]
+
+
+def test_guided_setup_reports_a_failed_vad_download_as_an_operational_failure(guided):
+    from stenographer.lib.live.errors import LiveDownloadError
+
+    code, stdout, stderr, _ = guided(
+        vad_present=False,
+        answers="y\n",
+        vad_error=LiveDownloadError("checksum mismatch"),
+        changed=False,
+    )
+
+    assert code == 1
+    assert stderr == "stenographer: model download failed: checksum mismatch\n"
+    assert "Model download complete." not in stdout
 
 
 def test_guided_setup_reports_a_failed_download_as_an_operational_failure(guided):
@@ -1248,7 +1331,7 @@ def test_guided_setup_reports_a_failed_refine_pull_as_an_operational_failure(gui
     assert code == 1
     assert stderr == "stenographer: refine model pull failed: boom\n"
     assert events == [
-        "cache:/data",
+        "cache:data",
         "refine-probe:http://127.0.0.1:11434",
         "refine-pull:gemma4:e2b",
         "probe",

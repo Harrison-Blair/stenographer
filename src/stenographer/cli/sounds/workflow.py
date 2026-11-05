@@ -34,6 +34,7 @@ class MenuAction:
 def _preview(console: Console, config: Config, pack: object) -> bool:
     from stenographer.lib.platform import current_platform
     from stenographer.lib.sounds import playback
+    from stenographer.lib.sounds.constants import PREVIEW_VOLUME_WHEN_MUTED
 
     try:
         player = current_platform().cue_player()
@@ -43,6 +44,11 @@ def _preview(console: Console, config: Config, pack: object) -> bool:
     if player is None:
         console.error("no supported cue player is available")
         return False
+    if config.feedback.mute or config.feedback.volume <= 0.0:
+        console.write(
+            f"Cues are muted or at volume zero: this preview plays at volume "
+            f"{PREVIEW_VOLUME_WHEN_MUTED} and changes neither setting."
+        )
     try:
         playback.preview_sound_pack(pack, player, playback.preview_volume(config.feedback))
     except Exception as exc:
