@@ -52,7 +52,7 @@ def num_predict_for(words: int) -> int:
     whole time budget doing it.
     """
 
-    return min(NUM_PREDICT_MAX, NUM_PREDICT_BASE + NUM_PREDICT_PER_WORD * max(0, words))
+    return min(NUM_PREDICT_MAX, NUM_PREDICT_BASE + NUM_PREDICT_PER_WORD * words)
 
 
 def _assistant_turn(cleaned: str, *, structured_output: bool) -> str:

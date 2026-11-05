@@ -26,14 +26,6 @@ OUTCOME_REJECTED = "rejected"
 #: used. Nothing was wrong with the model or the host.
 OUTCOME_CANCELLED = "cancelled"
 
-#: Outcomes that mean a request was actually sent and did not succeed.
-FAILURE_OUTCOMES = frozenset({OUTCOME_TIMEOUT, OUTCOME_FAILED, OUTCOME_REJECTED})
-
-#: Outcomes that charge no attempt to the model: below the word threshold, or
-#: withdrawn before any reply mattered. An analytics run that counted either as
-#: an attempt would report a refine rate the user never asked for.
-NON_ATTEMPT_OUTCOMES = frozenset({OUTCOME_SKIPPED, OUTCOME_CANCELLED})
-
 
 @dataclass(frozen=True)
 class RefineResult:
@@ -54,10 +46,11 @@ class RefineResult:
     def attempted(self) -> bool:
         """Whether a request was actually sent to the model."""
 
-        return self.outcome not in NON_ATTEMPT_OUTCOMES
+        # Skipped and cancelled outcomes charge no attempt to the model.
+        return self.outcome not in {OUTCOME_SKIPPED, OUTCOME_CANCELLED}
 
     @property
     def failed(self) -> bool:
         """Whether an attempt was made and did not produce usable text."""
 
-        return self.outcome in FAILURE_OUTCOMES
+        return self.outcome in {OUTCOME_TIMEOUT, OUTCOME_FAILED, OUTCOME_REJECTED}

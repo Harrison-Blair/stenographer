@@ -17,12 +17,6 @@ from stenographer.lib.refine.errors import (
     RefineRejectedError,
     RefineTimeoutError,
 )
-from stenographer.lib.refine.policy import (
-    COLD_LOAD_TIMEOUT_SECONDS,
-    should_refine,
-    timeout_seconds,
-    word_count,
-)
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.request import build_chat_body
 from stenographer.lib.refine.response import refined_text, restore_trailing_space
@@ -35,9 +29,22 @@ from stenographer.lib.refine.results import (
     OUTCOME_TIMEOUT,
     RefineResult,
 )
+from stenographer.lib.transcribe.text import count_words
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+#: Fixed part of the per-utterance budget: model scheduling plus first token.
+TIMEOUT_BASE_SECONDS = 10.0
+
+#: Marginal part: roughly the decode cost of one more spoken word.
+TIMEOUT_PER_WORD_SECONDS = 0.06
+
+#: How long one utterance may wait for a model that is not resident to load.
+#: The reply budget above assumes a warm model; a cold load is paged in from
+#: disk and can take far longer than any reply, so it gets its own budget and
+#: the reply budget starts only once the model is up.
+COLD_LOAD_TIMEOUT_SECONDS = 120.0
 
 log = logging.getLogger("stenographer.lib.refine")
 
@@ -105,7 +112,7 @@ class OllamaRefiner:
         whether or not anybody looked first.
         """
 
-        return should_refine(text, self._min_words)
+        return count_words(text) >= self._min_words
 
     def warm(self) -> bool:
         """Resident the model ahead of the first utterance. Never raises.
@@ -180,11 +187,11 @@ class OllamaRefiner:
         never cancels, so a caller that has nothing to say is unaffected.
         """
 
-        words = word_count(text)
-        if not should_refine(text, self._min_words):
+        if not self.will_refine(text):
             self._last_result = RefineResult(OUTCOME_SKIPPED, chars_in=len(text))
             return text
         started_at = time.perf_counter()
+        words = count_words(text)
         body = build_chat_body(
             text,
             model=self._model,
@@ -201,7 +208,9 @@ class OllamaRefiner:
             self._check_stopped(cancelled)
             self._ensure_loaded(cancelled)
             self._check_stopped(cancelled)
-            payload = post_chat(self._host, body, timeout=timeout_seconds(words))
+            payload = post_chat(
+                self._host, body, timeout=TIMEOUT_BASE_SECONDS + TIMEOUT_PER_WORD_SECONDS * words
+            )
             self._check_stopped(cancelled)
             candidate = refined_text(
                 payload,
@@ -333,7 +342,7 @@ class OllamaRefiner:
     def _ensure_loaded(self, cancelled: Callable[[], bool]) -> None:
         """Wait for a cold model to load before the reply budget starts.
 
-        The per-utterance budget in :func:`timeout_seconds` prices a reply
+        The per-utterance reply timeout prices a reply
         from a resident model. When the model has been evicted — the ASR idle
         window passed, or Ollama made room for something else — the same chat
         request would first page it back in, spend the whole budget doing so,

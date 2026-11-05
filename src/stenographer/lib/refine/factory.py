@@ -1,24 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Turn one ``[stenographer.refine]`` section into the refiner to use.
-
-The one place that knows a disabled stage is a :class:`NullRefiner` rather than
-``None``, so the daemon, ``transcribe --refine``, and any future caller cannot
-disagree about it.
-"""
+"""Turn one ``[stenographer.refine]`` section into the refiner to use."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from stenographer.lib.refine.null_refiner import NullRefiner
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
-from stenographer.lib.refine.policy import keep_alive_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from stenographer.lib.config.models import RefineConfig
-    from stenographer.lib.refine.text_refiner import TextRefiner
 
 
 def build_refiner(
@@ -28,7 +20,7 @@ def build_refiner(
     enabled: bool | None = None,
     on_model_loading: Callable[[], None] | None = None,
     on_model_loading_finished: Callable[[], None] | None = None,
-) -> TextRefiner:
+) -> OllamaRefiner | None:
     """Build the configured refiner.
 
     *enabled* overrides ``cfg.enabled`` for the one caller that opts in per
@@ -38,13 +30,13 @@ def build_refiner(
 
     active = cfg.enabled if enabled is None else enabled
     if not active or not cfg.model.strip() or not cfg.host.strip():
-        return NullRefiner()
+        return None
     return OllamaRefiner(
         host=cfg.host,
         model=cfg.model,
         min_words=cfg.min_words,
         structured_output=cfg.structured_output,
-        keep_alive=keep_alive_for(idle_unload_seconds),
+        keep_alive=-1 if idle_unload_seconds <= 0 else int(idle_unload_seconds),
         vocabulary=cfg.vocabulary,
         on_model_loading=on_model_loading,
         on_model_loading_finished=on_model_loading_finished,

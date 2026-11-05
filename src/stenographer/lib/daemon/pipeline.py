@@ -13,7 +13,6 @@ from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.policy import classify_pipeline
 from stenographer.lib.logging.pipeline import log_failure
-from stenographer.lib.refine.null_refiner import NullRefiner
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED
 from stenographer.lib.transcribe.errors import WorkerError, WorkerPathologicalError
@@ -38,7 +37,7 @@ if TYPE_CHECKING:
 
     from stenographer.lib.daemon.telemetry import UtteranceTelemetry
     from stenographer.lib.delivery.deliverer import Deliverer
-    from stenographer.lib.refine.text_refiner import TextRefiner
+    from stenographer.lib.refine.ollama_refiner import OllamaRefiner
     from stenographer.lib.transcribe.utterance_record import UtteranceRecord
     from stenographer.lib.transcribe.worker import Worker
 
@@ -62,7 +61,7 @@ class UtterancePipeline:
         min_speech_rms: float,
         worker: Worker,
         deliverer: Deliverer,
-        refiner: TextRefiner | None = None,
+        refiner: OllamaRefiner | None = None,
         telemetry: UtteranceTelemetry,
         publish_state: Callable[[OverlayState], None],
         fail: Callable[[str], None],
@@ -77,7 +76,7 @@ class UtterancePipeline:
         self._speech_filter = speech_filter
         self._worker = worker
         self._deliverer = deliverer
-        self._refiner = refiner if refiner is not None else NullRefiner()
+        self._refiner = refiner
         self._telemetry = telemetry
         self._publish_state = publish_state
         self._fail = fail
@@ -275,7 +274,7 @@ class UtterancePipeline:
         """
         accepted = text
         try:
-            if not self._refiner.will_refine(text):
+            if self._refiner is None or not self._refiner.will_refine(text):
                 if profile is not None:
                     self._refine_display_state = OverlayState.SKIPPED
                 return text

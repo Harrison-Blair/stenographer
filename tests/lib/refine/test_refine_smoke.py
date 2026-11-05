@@ -19,7 +19,6 @@ import pytest
 from stenographer.lib.config.models import Config
 from stenographer.lib.refine.client import installed_model_names
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
-from stenographer.lib.refine.policy import keep_alive_for
 from stenographer.lib.refine.results import OUTCOME_APPLIED
 
 pytestmark = pytest.mark.integration
@@ -43,7 +42,7 @@ def refiner() -> OllamaRefiner:
         model=section.model,
         min_words=section.min_words,
         structured_output=section.structured_output,
-        keep_alive=keep_alive_for(Config.defaults().asr.idle_unload_seconds),
+        keep_alive=Config.defaults().asr.idle_unload_seconds,
     )
     if not built.warm():
         pytest.skip(f"{section.model} could not be loaded on {section.host}")
