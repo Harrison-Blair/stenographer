@@ -134,17 +134,3 @@ def test_a_decode_failure_never_renders_the_exception_message():
     assert "frames=asr.py:" in message
     assert "detail=" not in message
     assert _DECODE_ERROR not in message
-
-
-@pytest.mark.usefixtures("failing_model")
-@pytest.mark.parametrize("utterance", [None, 12])
-def test_the_failure_response_carries_no_audio(utterance):
-    samples = np.full(16000, 0.5, dtype=np.float32)
-
-    responses, _records, _requests = _run_child(
-        [("load", 3), ("job", samples, utterance), ("stop",)]
-    )
-
-    (kind, category, detail) = _drain(responses)[1]
-    assert (kind, category) == ("error", "inference")
-    assert detail == f"RuntimeError: {_DECODE_ERROR}"

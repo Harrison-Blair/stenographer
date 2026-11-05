@@ -13,7 +13,7 @@ from stenographer.cli.hub import engine_sampler
 from stenographer.cli.hub.engine_sampler import EngineSampler
 from stenographer.cli.hub.engine_status import EngineStatus
 from stenographer.lib.platform.linux.cpu import LinuxProcessCounters
-from stenographer.lib.platform.null_process_counters import NullProcessCounters
+from tests.lib.platform.support import NullProcessCounters
 
 HUB_PID = 100
 LIVE_PID = 200

@@ -3,45 +3,37 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from stenographer.lib.platform.linux.dirs import (
-    config_path,
-    data_dir,
-    journal_attached,
-    runtime_dir,
-    state_dir,
+import pytest
+
+from stenographer.lib.platform.linux.dirs import journal_attached, runtime_dir
+from stenographer.lib.platform.linux.provider import LinuxPlatform
+
+
+@pytest.mark.parametrize(
+    ("method", "env", "expected"),
+    [
+        pytest.param(
+            "config_path",
+            {"XDG_CONFIG_HOME": "/cfg"},
+            "/cfg/stenographer/config.toml",
+            id="config_xdg",
+        ),
+        pytest.param(
+            "config_path", {}, "/home/alice/.config/stenographer/config.toml", id="config_home"
+        ),
+        pytest.param(
+            "state_dir", {"XDG_STATE_HOME": "/state"}, "/state/stenographer", id="state_xdg"
+        ),
+        pytest.param("state_dir", {}, "/home/alice/.local/state/stenographer", id="state_home"),
+        pytest.param("data_dir", {"XDG_DATA_HOME": "/data"}, "/data/stenographer", id="data_xdg"),
+        pytest.param("data_dir", {}, "/home/alice/.local/share/stenographer", id="data_home"),
+    ],
 )
-
-
-def test_config_path_prefers_xdg_config_home():
-    assert config_path({"XDG_CONFIG_HOME": "/cfg"}, Path("/home/alice")) == Path(
-        "/cfg/stenographer/config.toml"
-    )
-
-
-def test_config_path_falls_back_below_home():
-    assert config_path({}, Path("/home/alice")) == Path(
-        "/home/alice/.config/stenographer/config.toml"
-    )
-
-
-def test_resolve_state_dir_prefers_xdg_state_home():
-    assert state_dir({"XDG_STATE_HOME": "/state"}, Path("/home/alice")) == Path(
-        "/state/stenographer"
-    )
-
-
-def test_resolve_state_dir_falls_back_below_home():
-    assert state_dir({}, Path("/home/alice")) == Path("/home/alice/.local/state/stenographer")
-
-
-def test_resolve_data_dir_prefers_xdg_data_home():
-    assert data_dir({"XDG_DATA_HOME": "/data"}, Path("/home/alice")) == Path("/data/stenographer")
-
-
-def test_resolve_data_dir_falls_back_below_home():
-    assert data_dir({}, Path("/home/alice")) == Path("/home/alice/.local/share/stenographer")
+def test_provider_resolves_xdg_directories(method, env, expected):
+    assert getattr(LinuxPlatform(), method)(env, Path("/home/alice")) == Path(expected)
 
 
 def test_runtime_dir_prefers_xdg_runtime_dir():
@@ -49,7 +41,7 @@ def test_runtime_dir_prefers_xdg_runtime_dir():
 
 
 def test_runtime_dir_falls_back_to_run_user_uid():
-    assert runtime_dir({}).parent == Path("/run/user")
+    assert runtime_dir({}) == Path(f"/run/user/{os.getuid()}")
 
 
 def test_journal_attached_follows_the_systemd_variable():

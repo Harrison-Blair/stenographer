@@ -22,9 +22,9 @@ from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
 from tests.cli.hub.support import _card, _screen_text
+from tests.lib.platform.support import NullProcessCounters
 
 MIC_BYTES = 88 * 1024 * 1024
 SYSTEM_BYTES = 209_716
