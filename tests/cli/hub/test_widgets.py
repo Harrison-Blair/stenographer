@@ -4,24 +4,32 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import ClassVar
 
 import pytest
 from rich.color import Color
 from rich.console import Console
+from rich.text import Text
 from textual.app import App
 from textual.binding import Binding
 from textual.widgets import Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
+from stenographer.cli.hub.widgets.transcript_line import TranscriptLine, TranscriptRows
+from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
+from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.lib.config.defaults import default_toml
-from tests.cli.hub.support import IdleServices
+from stenographer.lib.live.transcript_line import TranscriptLine as LiveLine
+from tests.cli.hub.support import IdleServices, make_app
 
 
 class WidgetApp(App[None]):
@@ -67,7 +75,7 @@ async def test_widget_button_click_runs_the_action_of_its_key():
 async def test_widget_settings_tab_click_matches_the_tab_keys(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(default_toml(), encoding="utf-8")
-    app = HubApp(IdleServices(), config_path=path)
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3", "right", "right")
         by_keys = (app.settings_screen.tab, app.config_editor.visible_keys)
@@ -119,8 +127,8 @@ async def test_widget_footer_key_hints_start_with_help_and_quit():
 
 
 @pytest.mark.parametrize("screen", ["record", "library", "settings"])
-async def test_help_overlay_lists_every_active_binding_and_closes(screen):
-    app = HubApp(IdleServices())
+async def test_help_overlay_lists_every_active_binding_and_closes(screen, tmp_path):
+    app = make_app(tmp_path, IdleServices())
     async with app.run_test(size=(150, 45)) as pilot:
         app.show_screen(screen)
         await pilot.pause()
@@ -159,8 +167,8 @@ def test_help_every_hub_binding_has_a_help_row():
     assert missing == []
 
 
-async def test_help_rows_name_keys_and_skip_hidden_bindings():
-    app = HubApp(IdleServices())
+async def test_help_rows_name_keys_and_skip_hidden_bindings(tmp_path):
+    app = make_app(tmp_path, IdleServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         rows = dict(HelpOverlay.help_rows(app.screen.active_bindings))
@@ -232,3 +240,78 @@ def test_field_wraps_long_control_values():
     assert "abcdefghijklmnopqrstuvwxyz0123" in rendered
     assert "456789" in rendered
     assert "…" not in rendered
+
+
+def _segments(console_width: int, renderable) -> list[tuple[str, object]]:
+    console = Console(width=console_width, color_system="truecolor")
+    return [(segment.text, segment.style) for segment in console.render(renderable)]
+
+
+_TRANSCRIPT_LINE = LiveLine(1.0, 2.0, "", "system", "speaker-1", "Ann", "alpha bravo " * 12)
+
+
+@pytest.mark.parametrize("layout", ["mixed", "split"])
+def test_transcript_row_renders_like_its_table_at_each_width(layout):
+    ids = ("speaker-1",)
+    row = TranscriptRows().rows((_TRANSCRIPT_LINE,), ids, layout=layout)[0]
+    color = speaker_color("speaker-1", ids, source="system")
+    table = TranscriptLine.row(
+        1.0, "Ann", "alpha bravo " * 12, color=color, source="system", layout=layout
+    )
+    for width in (120, 40, 120):
+        assert _segments(width, row) == _segments(width, table)
+
+
+def test_transcript_rows_reuse_only_a_row_with_the_same_line_and_color():
+    rows = TranscriptRows()
+    second = LiveLine(3.0, 4.0, "", "mic", "you", "You", "charlie")
+    first_row = rows.rows((_TRANSCRIPT_LINE,), ("speaker-1",))[0]
+    assert rows.rows((_TRANSCRIPT_LINE, second), ("speaker-1",))[0] is first_row
+
+    other_order = ("speaker-2", "speaker-1")
+    assert speaker_color("speaker-1", other_order) != speaker_color("speaker-1", ("speaker-1",))
+    recolored = rows.rows((_TRANSCRIPT_LINE,), other_order)[0]
+    expected = TranscriptLine.row(
+        1.0,
+        "Ann",
+        "alpha bravo " * 12,
+        color=speaker_color("speaker-1", other_order, source="system"),
+        source="system",
+    )
+    assert _segments(80, recolored) == _segments(80, expected)
+
+    renamed = replace(_TRANSCRIPT_LINE, label="Bea")
+    assert "Bea" in "".join(
+        text for text, _ in _segments(80, rows.rows((renamed,), ("speaker-1",))[0])
+    )
+
+
+async def test_update_changed_shows_a_new_style_and_skips_identical_content():
+    widget = Static("", markup=False)
+    app = WidgetApp(widget)
+    async with app.run_test() as pilot:
+        update_changed(widget, Text("alpha", style="#ff0000"))
+        await pilot.pause()
+        shown = widget.content
+
+        update_changed(widget, Text("alpha", style="#ff0000"))
+        assert widget.content is shown
+
+        update_changed(widget, Text("alpha", style="#00ff00"))
+        assert widget.content.style == "#00ff00"
+
+        update_changed(widget, "bravo")
+        assert widget.content == "bravo"
+
+
+async def test_clock_shows_a_new_second_and_tone():
+    clock = Clock()
+    app = WidgetApp(clock)
+    async with app.run_test() as pilot:
+        clock.set_seconds(61.4)
+        clock.set_tone("saved")
+        await pilot.pause()
+        assert clock.value == "00:01:01"
+        assert clock.has_class("-saved") and not clock.has_class("-record")
+        clock.set_tone("record")
+        assert clock.has_class("-record") and not clock.has_class("-saved")

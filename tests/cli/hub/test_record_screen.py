@@ -12,10 +12,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from textual.widget import Widget
 from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.choice_dialog import ChoiceDialog
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.engine_sampler import EngineSampler
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.services import HubServices
@@ -25,7 +27,7 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
-from tests.cli.hub.support import _card, _screen_text
+from tests.cli.hub.support import _card, _screen_text, make_app
 from tests.lib.platform.support import NullProcessCounters
 
 MIC_BYTES = 88 * 1024 * 1024
@@ -158,9 +160,9 @@ def _services(tmp_path: Path, devices=()):
     return services, created
 
 
-def _app(services, **kwargs) -> HubApp:
+def _app(tmp_path, services, **kwargs) -> HubApp:
     sampler = EngineSampler(services, counters=NullProcessCounters(), cpu_count=1)
-    return HubApp(services, engine_sampler=sampler, **kwargs)
+    return make_app(tmp_path, services, engine_sampler=sampler, **kwargs)
 
 
 def _hints(app: HubApp) -> str:
@@ -192,7 +194,7 @@ SAVED_HINTS = (
 
 async def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         text = _screen_text(app)
@@ -276,7 +278,7 @@ async def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(t
 
 async def test_record_rename_button_is_disabled_while_the_session_is_busy(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         await pilot.press("space")
@@ -305,7 +307,7 @@ async def test_record_rename_button_is_disabled_while_the_session_is_busy(tmp_pa
 
 async def test_record_saved_buttons_by_click_match_their_keys(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         await pilot.click("#rec-primary")
@@ -329,7 +331,7 @@ async def test_record_saved_buttons_by_click_match_their_keys(tmp_path):
 
 async def test_record_overlapping_stops_keep_the_first_on_the_engine_card(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         for _ in range(2):
@@ -364,7 +366,7 @@ async def test_record_overlapping_stops_keep_the_first_on_the_engine_card(tmp_pa
 
 async def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         for _ in range(2):
@@ -396,7 +398,7 @@ async def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
 @pytest.mark.parametrize("fails_during", ["prompt", "wait"])
 async def test_record_quit_stays_open_when_a_running_stop_fails(tmp_path, fails_during):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     release = threading.Event()
 
     def slow_failing_stop():
@@ -441,7 +443,7 @@ async def test_record_quit_stays_open_when_a_running_stop_fails(tmp_path, fails_
 
 async def test_record_quit_while_recording_asks_then_saves(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("space")
         await _until(pilot, lambda: services.recording)
@@ -460,7 +462,7 @@ async def test_record_quit_while_recording_asks_then_saves(tmp_path):
 
 async def test_record_meters_follow_blocks_speech_and_source_choice(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         mic = app.screen.query_one("#mic-meter")
@@ -519,7 +521,7 @@ async def test_record_device_dialog_sets_the_next_session_device_only(tmp_path):
     before = config_path.read_bytes()
     devices = (("2", "2: Alpha USB mic"), ("5", "5: Bravo headset"))
     services, created = _services(tmp_path, devices)
-    app = _app(services, config_path=config_path)
+    app = _app(tmp_path, services, config_editor=ConfigEditor(config_path))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("d")
         await pilot.pause()
@@ -554,7 +556,7 @@ async def test_record_device_dialog_sets_the_next_session_device_only(tmp_path):
 
 async def test_record_transcript_split_view_and_talk_time(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("space")
         await _until(pilot, lambda: services.recording)
@@ -583,7 +585,7 @@ async def test_record_transcript_split_view_and_talk_time(tmp_path):
 
 async def test_record_transcript_follows_at_bottom_and_holds_when_scrolled_up(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.press("space")
         await _until(pilot, lambda: services.recording)
@@ -616,7 +618,7 @@ async def test_record_transcript_follows_at_bottom_and_holds_when_scrolled_up(tm
 
 async def test_record_rename_on_the_live_session_by_key_and_by_click(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("space")
         await _until(pilot, lambda: services.recording)
@@ -655,7 +657,7 @@ async def test_record_rename_on_the_live_session_by_key_and_by_click(tmp_path):
 
 async def test_record_rename_on_the_saved_session_writes_a_revision(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("space")
         await _until(pilot, lambda: services.recording)
@@ -715,7 +717,7 @@ def test_record_services_choose_sources_and_device_for_this_run_only(tmp_path):
 async def test_record_device_dialog_keeps_a_disconnected_device_until_an_explicit_choice(tmp_path):
     services, _created = _services(tmp_path, (("2", "2: Alpha USB mic"),))
     services.choose_device("5", "5: Bravo headset")
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("d")
         await pilot.pause()
@@ -756,7 +758,7 @@ def _fail_stop(session):
 
 async def test_record_failed_stop_shows_a_lasting_failure_and_keeps_library_access(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("space")
         await _until(pilot, lambda: services.recording)
@@ -797,7 +799,7 @@ async def test_record_failed_stop_shows_a_lasting_failure_and_keeps_library_acce
 
 async def test_record_failed_stop_of_an_older_session_still_shows_that_session(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     release_older = threading.Event()
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("space")
@@ -831,7 +833,7 @@ async def test_record_failed_stop_of_an_older_session_still_shows_that_session(t
 
 async def test_record_two_failed_stops_keep_each_error_and_library_link(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     release_first = threading.Event()
     release_second = threading.Event()
 
@@ -924,7 +926,7 @@ def test_record_services_skip_each_pass_and_wait(tmp_path):
 
 async def test_record_meter_head_clicks_match_their_keys(tmp_path):
     services, created = _services(tmp_path, devices=[(3, "USB mic")])
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         mic = app.screen.query_one("#mic-meter")
@@ -968,7 +970,7 @@ async def test_record_meter_head_clicks_match_their_keys(tmp_path):
 
 async def test_record_card_reports_a_source_whose_audio_was_not_saved(tmp_path):
     services, created = _services(tmp_path)
-    app = _app(services)
+    app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("space")
         await _until(pilot, lambda: services.recording)
@@ -989,7 +991,7 @@ def test_record_meters_use_configured_spectrum_floor(tmp_path):
     config_path.write_text(
         default_toml().replace("spectrum_floor_dbfs = -45.0", "spectrum_floor_dbfs = -13.0")
     )
-    app = _app(services, config_path=config_path)
+    app = _app(tmp_path, services, config_editor=ConfigEditor(config_path))
 
     async def exercise():
         async with app.run_test(size=(150, 45)):
@@ -1002,3 +1004,66 @@ def test_record_meters_use_configured_spectrum_floor(tmp_path):
             assert all("█" not in row for row in meter.model.rows)
 
     asyncio.run(exercise())
+
+
+async def test_record_refresh_without_a_change_requests_no_redraw(tmp_path, monkeypatch):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        app.refresh_view()
+        await pilot.pause()
+
+        requests = []
+        refresh = Widget.refresh
+
+        def count_refresh(widget, *args, **kwargs):
+            if not any(node.id == "engine-card" for node in widget.ancestors_with_self):
+                requests.append(widget)
+            return refresh(widget, *args, **kwargs)
+
+        monkeypatch.setattr(Widget, "refresh", count_refresh)
+        app.refresh_view()
+        assert requests == []
+
+        session.elapsed_seconds += 1
+        app.refresh_view()
+        assert app.screen.query_one("#rec-clock").value == "00:12:09"
+        assert requests
+        session.release.set()
+
+
+async def test_record_transcript_data_follows_lines_and_speakers(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        app.refresh_view()
+        assert [line.text for line in app.record_screen._lines(session)] == [
+            "alpha bravo charlie",
+            "delta echo",
+        ]
+
+        session.lines.append(
+            TranscriptLine(0.5, 0.75, "wall", "system", "speaker-2", "Speaker 2", "earlier")
+        )
+        app.refresh_view()
+        await pilot.pause()
+        assert "earlier" in _screen_text(app)
+        assert "Speaker 2" in _card(app)
+        assert _screen_text(app).index("earlier") < _screen_text(app).index("alpha bravo")
+
+        session.speakers = (("speaker-1", "Speaker 1"), ("speaker-3", "Speaker 3"))
+        app.refresh_view()
+        await pilot.pause()
+        assert "Speaker 3" in _card(app)
+
+        session.lines[0] = replace(session.lines[0], label="Renamed")
+        app.refresh_view()
+        await pilot.pause()
+        assert "Renamed" in _card(app)
+        session.release.set()

@@ -8,6 +8,7 @@ import asyncio
 from textual.widgets import Input
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.vocabulary_dialog import VocabularyDialog
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
@@ -40,7 +41,7 @@ def test_settings_vocabulary_row_counts_terms_and_done_makes_an_unsaved_change(t
 
     async def exercise():
         path = _config_path(tmp_path, _WITH_TERMS)
-        app = HubApp(IdleServices(), config_path=path)
+        app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_vocabulary(pilot)
             text = _screen_text(app)
@@ -73,7 +74,7 @@ def test_settings_vocabulary_row_counts_terms_and_done_makes_an_unsaved_change(t
 
 
 async def test_settings_vocabulary_rejects_bad_terms_with_the_config_rules(tmp_path):
-    app = HubApp(IdleServices(), config_path=_config_path(tmp_path, _WITH_TERMS))
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(_config_path(tmp_path, _WITH_TERMS)))
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_vocabulary(pilot)
         dialog = app.screen
@@ -102,7 +103,7 @@ async def test_settings_vocabulary_rejects_bad_terms_with_the_config_rules(tmp_p
 
 
 async def test_settings_vocabulary_shows_the_rejection_inside_the_open_editor(tmp_path):
-    app = HubApp(IdleServices(), config_path=_config_path(tmp_path))
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_vocabulary(pilot)
         await pilot.press("a", "space", "enter")

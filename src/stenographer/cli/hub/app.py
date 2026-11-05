@@ -82,8 +82,7 @@ class HubApp(App[None]):
         self,
         services,
         *,
-        config_editor: ConfigEditor | None = None,
-        config_path: pathlib.Path | None = None,
+        config_editor: ConfigEditor,
         setup_test: Callable[[str, Config], str] | None = None,
         model_download: Callable[[str], None] | None = None,
         model_status: Callable[[], tuple[ModelEntry, ...]] | None = None,
@@ -95,9 +94,7 @@ class HubApp(App[None]):
     ) -> None:
         super().__init__(ansi_color=True)
         self.services = services
-        self.config_editor = config_editor or (
-            ConfigEditor(config_path) if config_path is not None else None
-        )
+        self.config_editor = config_editor
         self.activity_status: str | None = None
         self.engine_sampler = engine_sampler or EngineSampler(services)
         self._context_cards: dict[str, tuple[str, RenderableType, CardButtons, frozenset[str]]] = {}
@@ -136,7 +133,7 @@ class HubApp(App[None]):
         self.engine_sampler.sample()
         self.set_interval(0.1, self._refresh_live)
         self.set_interval(1.0, self._sample_engine)
-        if self.config_editor is not None and self.config_editor.read_only:
+        if self.config_editor.read_only:
             self.notify(
                 "Invalid configuration. Open Settings to view the error and fix "
                 f"{self.config_editor.path}.",
@@ -238,8 +235,7 @@ class HubApp(App[None]):
             self.record_screen.refresh_saved()
 
     def _guard_settings(self, proceed: Callable[[], None]) -> None:
-        editor = self.config_editor
-        if self.current_mode != "settings" or editor is None or not editor.dirty:
+        if self.current_mode != "settings" or not self.config_editor.dirty:
             proceed()
             return
         self._prompt_unsaved(proceed)
@@ -258,7 +254,7 @@ class HubApp(App[None]):
             return
         if choice == "save" and not self.save_config():
             return
-        if choice == "discard" and self.config_editor is not None:
+        if choice == "discard":
             self.config_editor.discard()
         proceed()
 
@@ -323,14 +319,12 @@ class HubApp(App[None]):
     # Shared state
 
     def current_config(self) -> Config:
-        editor = self.config_editor
-        if editor is not None and editor.config is not None:
-            return editor.config
-        return Config.defaults()
+        config = self.config_editor.config
+        return config if config is not None else Config.defaults()
 
     def save_config(self) -> bool:
         editor = self.config_editor
-        if editor is None or editor.read_only:
+        if editor.read_only:
             return False
         try:
             result = editor.save()
@@ -352,22 +346,14 @@ class HubApp(App[None]):
         return True
 
     def _default_setup_test(self, step_id: str, config: Config) -> str:
-        from stenographer.lib.config.paths import resolve_config_path
-
-        config_dir = (
-            self.config_editor.path.parent
-            if self.config_editor is not None
-            else resolve_config_path().parent
-        )
-        return test_setup_step(step_id, config, config_dir)
+        return test_setup_step(step_id, config, self.config_editor.path.parent)
 
     # Quit rules (README §4.1)
 
     def action_request_quit(self) -> None:
         if self.activity_status is not None:
             return
-        editor = self.config_editor
-        if editor is not None and editor.dirty:
+        if self.config_editor.dirty:
             self._prompt_unsaved(self.action_request_quit)
             return
         self._continue_quit()

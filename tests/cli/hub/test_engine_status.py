@@ -392,7 +392,7 @@ def test_engine_sampler_feeds_the_sidebar_engine_card(tmp_path):
 
     from textual.widgets import Static
 
-    from stenographer.cli.hub.app import HubApp
+    from tests.cli.hub.support import make_app
 
     clock = FakeClock()
     proc = FakeProc(tmp_path)
@@ -400,7 +400,8 @@ def test_engine_sampler_feeds_the_sidebar_engine_card(tmp_path):
     proc.process(HUB_PID, 0, 1)
     services = SimpleNamespace(recording=False, files_running=False)
     sampler = _sampler(services, tmp_path, clock)
-    app = HubApp(
+    app = make_app(
+        tmp_path,
         services,
         engine_sampler=sampler,
         doctor_probe=lambda _config: None,

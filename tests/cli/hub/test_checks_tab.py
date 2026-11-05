@@ -34,6 +34,7 @@ from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.document import ConfigDocument
 from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
+from tests.cli.hub.support import make_app
 
 MARKER = "zuluprivatemarker"
 FAIL = "\N{MULTIPLICATION SIGN}"
@@ -76,11 +77,11 @@ def _board_report(warnings=()) -> DoctorReport:
     )
 
 
-def _app(report=None, **kwargs) -> HubApp:
+def _app(tmp_path, report=None, **kwargs) -> HubApp:
     if report is None:
         report = _board_report()
     kwargs.setdefault("doctor_probe", lambda _config: report)
-    return HubApp(FakeServices(), **kwargs)
+    return make_app(tmp_path, FakeServices(), **kwargs)
 
 
 async def _open_checks(pilot) -> None:
@@ -112,8 +113,8 @@ def _select_check(tab, check_id):
     tab._select(index)
 
 
-async def test_checks_list_groups_rows_with_glyphs_in_the_board_order():
-    app = _app()
+async def test_checks_list_groups_rows_with_glyphs_in_the_board_order(tmp_path):
+    app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
         assert _plain(app, "#checks-section-input") == "input"
@@ -140,12 +141,12 @@ async def test_checks_list_groups_rows_with_glyphs_in_the_board_order():
         assert other[0].startswith(f"  {FAIL} ffmpeg")
 
 
-def test_checks_rows_cut_a_long_detail_and_never_wrap():
+def test_checks_rows_cut_a_long_detail_and_never_wrap(tmp_path):
     long_detail = "alpha bravo charlie delta echo foxtrot golf hotel india juliett " * 3
     report = DoctorReport((_check("has_mic", "microphone", "input", detail=long_detail),), ())
 
     async def exercise():
-        app = _app(report)
+        app = _app(tmp_path, report)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             rows = _plain(app, "#checks-input").splitlines()
@@ -157,8 +158,8 @@ def test_checks_rows_cut_a_long_detail_and_never_wrap():
     asyncio.run(exercise())
 
 
-async def test_checks_glyphs_carry_the_state_and_colour_only_adds():
-    app = _app()
+async def test_checks_glyphs_carry_the_state_and_colour_only_adds(tmp_path):
+    app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
         await pilot.press("down")
@@ -176,8 +177,8 @@ async def test_checks_glyphs_carry_the_state_and_colour_only_adds():
         assert head.get_style_at_offset(2).rich_style.color is None
 
 
-async def test_checks_detail_shows_title_state_explanation_path_and_buttons():
-    app = _app()
+async def test_checks_detail_shows_title_state_explanation_path_and_buttons(tmp_path):
+    app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
         assert app.checks_tab.selected.check_id == "cue_player"
@@ -222,8 +223,8 @@ async def test_checks_detail_shows_title_state_explanation_path_and_buttons():
         assert not _button(app, "#checks-test").display
 
 
-async def test_checks_shows_the_fix_hint_and_keys_move_in_group_order():
-    app = _app()
+async def test_checks_shows_the_fix_hint_and_keys_move_in_group_order(tmp_path):
+    app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
         assert "how to fix: Choose another sound pack." in _plain(app, "#checks-detail-body")
@@ -246,8 +247,8 @@ async def test_checks_shows_the_fix_hint_and_keys_move_in_group_order():
         assert _plain(app, "#checks-input").splitlines()[2].startswith("▶ ✓ hotkey")
 
 
-async def test_checks_click_on_a_row_selects_that_check():
-    app = _app()
+async def test_checks_click_on_a_row_selects_that_check(tmp_path):
+    app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
         await pilot.click("#checks-engine", offset=(4, 1))
@@ -257,8 +258,8 @@ async def test_checks_click_on_a_row_selects_that_check():
         assert app.current_mode == "settings"
 
 
-async def test_checks_card_badge_and_tab_label_follow_the_last_run():
-    app = _app()
+async def test_checks_card_badge_and_tab_label_follow_the_last_run(tmp_path):
+    app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
         card = app.screen.query_one("#sidebar-card", Static).render()
@@ -275,7 +276,7 @@ async def test_checks_card_badge_and_tab_label_follow_the_last_run():
         assert str(_button(app, "#tab-checks").label) == "▶ Checks ●2"
 
 
-def test_checks_slow_run_leaves_the_app_answering_keys():
+def test_checks_slow_run_leaves_the_app_answering_keys(tmp_path):
     release = threading.Event()
     started = threading.Event()
 
@@ -285,7 +286,7 @@ def test_checks_slow_run_leaves_the_app_answering_keys():
         return _board_report()
 
     async def exercise():
-        app = _app(doctor_probe=slow_probe)
+        app = _app(tmp_path, doctor_probe=slow_probe)
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("3", "left")
             await _settle(pilot, started.is_set)
@@ -308,7 +309,7 @@ def test_checks_slow_run_leaves_the_app_answering_keys():
         release.set()
 
 
-def test_checks_run_again_replaces_the_results():
+def test_checks_run_again_replaces_the_results(tmp_path):
     reports = [
         _board_report(),
         DoctorReport((_check("has_mic", "microphone", "input", "fail", "no device", "x"),), ()),
@@ -320,7 +321,7 @@ def test_checks_run_again_replaces_the_results():
         return reports[len(calls) - 1]
 
     async def exercise():
-        app = _app(doctor_probe=probe)
+        app = _app(tmp_path, doctor_probe=probe)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             first = app.checks_tab.report
@@ -343,7 +344,7 @@ def test_checks_run_again_replaces_the_results():
     asyncio.run(exercise())
 
 
-def test_checks_card_run_again_button_starts_a_new_run():
+def test_checks_card_run_again_button_starts_a_new_run(tmp_path):
     calls = []
 
     def probe(_config):
@@ -351,7 +352,7 @@ def test_checks_card_run_again_button_starts_a_new_run():
         return _board_report()
 
     async def exercise():
-        app = _app(doctor_probe=probe)
+        app = _app(tmp_path, doctor_probe=probe)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             first = app.checks_tab.report
@@ -394,7 +395,7 @@ def test_checks_fix_opens_the_setting_row_or_the_dialog(tmp_path, check_id, expe
     report = DoctorReport((_check(check_id, check_id, "engine", "warn", "x", "y"),), ())
 
     async def exercise():
-        app = _app(report, config_editor=ConfigEditor(path), model_status=lambda: ())
+        app = _app(tmp_path, report, config_editor=ConfigEditor(path), model_status=lambda: ())
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             assert _button(app, "#checks-fix").display
@@ -416,7 +417,7 @@ def test_checks_fix_click_runs_the_same_fix_as_the_key(tmp_path):
     path.write_text(default_toml(), encoding="utf-8")
 
     async def exercise():
-        app = _app(config_editor=ConfigEditor(path))
+        app = _app(tmp_path, config_editor=ConfigEditor(path))
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.click("#checks-fix")
@@ -427,11 +428,11 @@ def test_checks_fix_click_runs_the_same_fix_as_the_key(tmp_path):
     asyncio.run(exercise())
 
 
-def test_checks_fix_without_a_target_shows_the_hint_in_a_notice():
+def test_checks_fix_without_a_target_shows_the_hint_in_a_notice(tmp_path):
     notices = []
 
     async def exercise():
-        app = _app()
+        app = _app(tmp_path)
         app.notify = lambda message, **_kwargs: notices.append(message)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
@@ -457,7 +458,7 @@ def test_checks_fix_without_a_target_shows_the_hint_in_a_notice():
         ("system_service", "system_service", "service state"),
     ],
 )
-def test_checks_test_runs_the_setup_test_of_the_area(check_id, area, label):
+def test_checks_test_runs_the_setup_test_of_the_area(check_id, area, label, tmp_path):
     report = DoctorReport((_check(check_id, check_id, "input", "warn", "x", "y"),), ())
     areas = []
 
@@ -466,7 +467,7 @@ def test_checks_test_runs_the_setup_test_of_the_area(check_id, area, label):
         return f"tested {step}"
 
     async def exercise():
-        app = _app(report, setup_test=setup_test)
+        app = _app(tmp_path, report, setup_test=setup_test)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             assert str(_button(app, "#checks-test").label) == f"[t] Test: {label}"
@@ -479,7 +480,7 @@ def test_checks_test_runs_the_setup_test_of_the_area(check_id, area, label):
     asyncio.run(exercise())
 
 
-def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch):
+def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch, tmp_path):
     # A fake module in place of sounddevice: importing the real one initializes
     # PortAudio, which fails on a machine with no audio server (CI).
     def no_capture(*_args, **_kwargs):
@@ -499,7 +500,7 @@ def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch):
     report = DoctorReport((_check("has_mic", "microphone", "input"),), ())
 
     async def exercise():
-        app = _app(report)
+        app = _app(tmp_path, report)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("t")
@@ -526,7 +527,7 @@ def test_checks_microphone_test_shows_the_probe_error(monkeypatch, tmp_path):
     report = DoctorReport((_check("has_mic", "microphone", "input"),), ())
 
     async def exercise():
-        app = _app(report)
+        app = _app(tmp_path, report)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("t")
@@ -573,7 +574,7 @@ def test_checks_sounds_test_plays_the_preview_through_the_preview_path(monkeypat
     report = DoctorReport((_check("cue_player", "sounds", "input"),), ())
 
     async def exercise():
-        app = _app(report, config_editor=ConfigEditor(path))
+        app = _app(tmp_path, report, config_editor=ConfigEditor(path))
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("t")
@@ -587,13 +588,13 @@ def test_checks_sounds_test_plays_the_preview_through_the_preview_path(monkeypat
     asyncio.run(exercise())
 
 
-def test_checks_open_log_calls_the_opener_with_the_log_path():
+def test_checks_open_log_calls_the_opener_with_the_log_path(tmp_path):
     from stenographer.lib.logging.pipeline import log_paths
 
     opened = []
 
     async def exercise():
-        app = _app(open_log=lambda path: opened.append(path) or True)
+        app = _app(tmp_path, open_log=lambda path: opened.append(path) or True)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("l")
@@ -604,12 +605,12 @@ def test_checks_open_log_calls_the_opener_with_the_log_path():
     assert opened == [log_paths()[0], log_paths()[0]]
 
 
-def test_checks_copy_report_puts_the_report_on_the_clipboard():
+def test_checks_copy_report_puts_the_report_on_the_clipboard(tmp_path):
     clipboard = []
     warnings = ("13:03:10 WARN live: system_source_failed", "10:41:00 ERROR alpha: bravo")
 
     async def exercise():
-        app = _app(_board_report(warnings), copy_report=clipboard.append)
+        app = _app(tmp_path, _board_report(warnings), copy_report=clipboard.append)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("c")
@@ -662,7 +663,7 @@ def test_checks_recent_warnings_never_show_a_message_exception_or_field(tmp_path
     clipboard = []
 
     async def exercise():
-        app = _app(report, copy_report=clipboard.append)
+        app = _app(tmp_path, report, copy_report=clipboard.append)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             shown = _plain(app, "#checks-warnings")
@@ -682,11 +683,11 @@ def test_checks_recent_warnings_never_show_a_message_exception_or_field(tmp_path
     assert "hub: setup_test_failed" in clipboard[0]
 
 
-def test_checks_warning_levels_have_a_word_and_a_colour():
+def test_checks_warning_levels_have_a_word_and_a_colour(tmp_path):
     warnings = ("21:11:37 WARN overlay: helper_restarting", "21:10:03 ERROR audio: device_lost")
 
     async def exercise():
-        app = _app(_board_report(warnings))
+        app = _app(tmp_path, _board_report(warnings))
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             text = app.screen.query_one("#checks-warnings", Static).render()
@@ -712,7 +713,7 @@ def test_checks_quick_setup_tests_edits_and_closes(tmp_path):
         return f"tested {step}"
 
     async def exercise():
-        app = _app(config_editor=ConfigEditor(path), setup_test=setup_test)
+        app = _app(tmp_path, config_editor=ConfigEditor(path), setup_test=setup_test)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("shift+q")
@@ -751,7 +752,7 @@ def test_checks_quick_setup_tests_edits_and_closes(tmp_path):
     asyncio.run(exercise())
 
 
-def test_checks_models_dialog_shows_each_model_and_downloads_directly():
+def test_checks_models_dialog_shows_each_model_and_downloads_directly(tmp_path):
     present = {"asr": False, "vad": True, "speaker": False}
     downloads = []
 
@@ -767,7 +768,7 @@ def test_checks_models_dialog_shows_each_model_and_downloads_directly():
         present[model_id] = True
 
     async def exercise():
-        app = _app(model_status=model_status, model_download=model_download)
+        app = _app(tmp_path, model_status=model_status, model_download=model_download)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("m")
@@ -799,7 +800,7 @@ def test_checks_models_dialog_shows_each_model_and_downloads_directly():
     asyncio.run(exercise())
 
 
-def test_checks_models_dialog_allows_one_download_also_after_a_reopen():
+def test_checks_models_dialog_allows_one_download_also_after_a_reopen(tmp_path):
     release = threading.Event()
     downloads = []
 
@@ -814,7 +815,7 @@ def test_checks_models_dialog_allows_one_download_also_after_a_reopen():
         assert release.wait(5)
 
     async def exercise():
-        app = _app(model_status=model_status, model_download=model_download)
+        app = _app(tmp_path, model_status=model_status, model_download=model_download)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("m")
@@ -888,7 +889,7 @@ def test_checks_defaults_dialog_writes_defaults_with_a_backup_or_cancels(tmp_pat
     original = path.read_bytes()
 
     async def exercise():
-        app = _app(config_editor=ConfigEditor(path))
+        app = _app(tmp_path, config_editor=ConfigEditor(path))
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("shift+d")
@@ -920,7 +921,7 @@ async def test_checks_settings_quit_prompts_to_save_draft_changes(tmp_path):
     path = tmp_path / "config.toml"
     editor = ConfigEditor(path)
     editor.edit("audio.input_device", "alpha microphone")
-    app = _app(DoctorReport((), ()), config_editor=editor)
+    app = _app(tmp_path, DoctorReport((), ()), config_editor=editor)
     async with app.run_test() as pilot:
         await _open_checks(pilot)
         await pilot.press("q")
@@ -1132,7 +1133,7 @@ def test_unreadable_log_is_reported_without_path(tmp_path):
     assert str(tmp_path) not in report.report_text()
 
 
-async def test_checks_test_result_stays_with_originating_check():
+async def test_checks_test_result_stays_with_originating_check(tmp_path):
     started = threading.Event()
     release = threading.Event()
 
@@ -1141,7 +1142,7 @@ async def test_checks_test_result_stays_with_originating_check():
         release.wait(5)
         return "sound test complete"
 
-    app = _app(setup_test=setup_test)
+    app = _app(tmp_path, setup_test=setup_test)
     try:
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
@@ -1171,7 +1172,7 @@ def test_model_status_marks_corrupt_voice_model_missing(tmp_path, monkeypatch):
     assert next(entry for entry in entries if entry.model_id == "vad").present is False
 
 
-def test_checks_open_log_leaves_the_interface_running_while_the_opener_blocks():
+def test_checks_open_log_leaves_the_interface_running_while_the_opener_blocks(tmp_path):
     release = threading.Event()
     released = []
 
@@ -1180,7 +1181,7 @@ def test_checks_open_log_leaves_the_interface_running_while_the_opener_blocks():
         return True
 
     async def exercise():
-        app = _app(open_log=slow_opener)
+        app = _app(tmp_path, open_log=slow_opener)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("l")
@@ -1191,12 +1192,12 @@ def test_checks_open_log_leaves_the_interface_running_while_the_opener_blocks():
     assert released == [True]
 
 
-def test_checks_open_log_warns_when_the_opener_returns_false_or_raises():
+def test_checks_open_log_warns_when_the_opener_returns_false_or_raises(tmp_path):
     def raises(_path):
         raise OSError("alpha")
 
     async def exercise(opener):
-        app = _app(open_log=opener)
+        app = _app(tmp_path, open_log=opener)
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             await pilot.press("l")

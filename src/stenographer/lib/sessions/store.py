@@ -51,12 +51,37 @@ def _session_lock(directory: Path) -> threading.RLock:
         return _LOCKS.setdefault(directory, threading.RLock())
 
 
+def _folder_signature(directory: Path) -> frozenset[tuple[str, int, int, int, int, int]]:
+    """Return what a read depends on; ``st_ctime_ns`` also moves on a permission change."""
+    signature = set()
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            try:
+                info = entry.stat(follow_symlinks=False)
+            except OSError:
+                # An atomic write renamed its temporary file after the scan listed it, or the
+                # folder cannot be searched. The read reports what this means for the session.
+                continue
+            signature.add(
+                (
+                    entry.name,
+                    info.st_ino,
+                    info.st_size,
+                    info.st_mode,
+                    info.st_mtime_ns,
+                    info.st_ctime_ns,
+                )
+            )
+    return frozenset(signature)
+
+
 class SessionStore:
     """Access session folders below an explicit sessions root."""
 
     def __init__(self, sessions_root: str | Path) -> None:
         self.root = Path(sessions_root).expanduser().resolve(strict=False)
         self._search_texts: dict[str, tuple[tuple[str, int], tuple[str, ...]]] = {}
+        self._summaries: dict[str, tuple[frozenset, SessionSummary]] = {}
 
     def _directory(self, session_id: str) -> Path:
         directory = session_directory(self.root, session_id)
@@ -65,12 +90,26 @@ class SessionStore:
         return directory
 
     def list_sessions(self) -> tuple[SessionSummary, ...]:
-        """Return session summaries, newest first."""
+        """Return session summaries, newest first.
+
+        A summary stays in memory while the stat result of each file in its session folder stays
+        the same, so a change by any process, also of permissions, reads the session again.
+        """
+        session_ids = list_session_ids(self.root)
+        for gone in self._summaries.keys() - set(session_ids):
+            del self._summaries[gone]
         summaries = []
-        for session_id in list_session_ids(self.root):
+        for session_id in session_ids:
             directory = session_directory(self.root, session_id)
-            if directory is not None:
-                summaries.append(read_session(directory, session_id, with_activity=False).summary)
+            if directory is None:
+                continue
+            # Before the read: a write during the read then fails the next comparison.
+            signature = _folder_signature(directory)
+            cached = self._summaries.get(session_id)
+            if cached is None or cached[0] != signature:
+                summary = read_session(directory, session_id, with_activity=False).summary
+                cached = self._summaries[session_id] = (signature, summary)
+            summaries.append(cached[1])
         return tuple(summaries)
 
     def search(self, query: str) -> tuple[str, ...]:

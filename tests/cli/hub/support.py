@@ -4,6 +4,7 @@
 from textual.widgets import Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.widgets.field import Field
 from stenographer.lib.config.defaults import default_toml
 
@@ -33,3 +34,10 @@ def _screen_text(app: HubApp) -> str:
 
 def _card(app: HubApp) -> str:
     return str(app.screen.query_one("#sidebar-card", Static).render())
+
+
+def make_app(tmp_path, services, **kwargs) -> HubApp:
+    """Return a hub on ``services``; a config of defaults in ``tmp_path`` backs its editor."""
+    if "config_editor" not in kwargs:
+        kwargs["config_editor"] = ConfigEditor(_config_path(tmp_path))
+    return HubApp(services, **kwargs)

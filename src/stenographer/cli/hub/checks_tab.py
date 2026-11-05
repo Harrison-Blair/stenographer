@@ -498,15 +498,11 @@ class ChecksTab(Vertical):
         )
 
     def action_defaults(self) -> None:
-        from stenographer.lib.config.paths import resolve_config_path
-
         app = self.app
-        path = app.config_editor.path if app.config_editor is not None else resolve_config_path()
+        path = app.config_editor.path
         log.info(fmt_event("hub", "setup_defaults_requested"))
         app.push_screen(
-            DefaultsDialog(
-                path, app.config_editor.unsaved_change_count if app.config_editor else 0
-            ),
+            DefaultsDialog(path, app.config_editor.unsaved_change_count),
             lambda confirmed: self._defaults_closed(path, confirmed),
         )
 

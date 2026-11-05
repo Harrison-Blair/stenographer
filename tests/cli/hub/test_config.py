@@ -9,6 +9,7 @@ from rich.color import Color
 from textual.widgets import Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.widgets.field import Field
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
@@ -42,7 +43,7 @@ def _notification_messages(app):
 
 
 async def test_settings_general_tab_shows_values_defaults_and_help(tmp_path):
-    app = HubApp(FakeServices(), config_path=_config_path(tmp_path))
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
     async with app.run_test() as pilot:
         await pilot.press("3")
         await pilot.pause()
@@ -57,7 +58,7 @@ async def test_settings_general_tab_shows_values_defaults_and_help(tmp_path):
 
 
 async def test_settings_tab_keys_follow_the_tab_mapping_and_rows_move(tmp_path):
-    app = HubApp(FakeServices(), config_path=_config_path(tmp_path))
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3", "right", "right")
         await pilot.pause()
@@ -92,7 +93,7 @@ def test_config_settings_use_one_compact_label_value_help_row_per_key(tmp_path):
     content = default_toml().replace("cpu_threads = 0", "cpu_threads = 5")
 
     async def exercise():
-        app = HubApp(FakeServices(), config_path=_config_path(tmp_path, content))
+        app = HubApp(FakeServices(), config_editor=ConfigEditor(_config_path(tmp_path, content)))
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("3", "right", "right")
             await pilot.pause()
@@ -108,7 +109,7 @@ def test_config_settings_use_one_compact_label_value_help_row_per_key(tmp_path):
 
 
 async def test_config_focused_row_is_bold_accent_and_unsaved_change_has_warn_dot(tmp_path):
-    app = HubApp(FakeServices(), config_path=_config_path(tmp_path))
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3", "right", "right", "down", "enter", "ctrl+a", "ctrl+k", "5")
         await pilot.press("enter")
@@ -127,7 +128,7 @@ async def test_config_focused_row_is_bold_accent_and_unsaved_change_has_warn_dot
 
 
 async def test_config_shows_the_default_only_in_the_focused_row_help(tmp_path):
-    app = HubApp(FakeServices(), config_path=_config_path(tmp_path))
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3", "right", "right")
         await pilot.pause()
@@ -140,7 +141,7 @@ async def test_config_shows_the_default_only_in_the_focused_row_help(tmp_path):
 
 async def test_config_sidebar_card_shows_path_and_unsaved_change_count(tmp_path):
     path = _config_path(tmp_path)
-    app = HubApp(FakeServices(), config_path=path)
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(path))
     async with app.run_test() as pilot:
         await pilot.press("3")
         card = app.screen.query_one("#sidebar-card", Static)
@@ -163,7 +164,7 @@ async def test_config_sidebar_card_shows_path_and_unsaved_change_count(tmp_path)
 
 async def test_edit_undo_and_reset_use_validated_config_values(tmp_path):
     path = _config_path(tmp_path)
-    app = HubApp(FakeServices(), config_path=path)
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(path))
     async with app.run_test() as pilot:
         await _edit_cpu_threads(pilot, "3")
         assert app.config_editor.config.asr.cpu_threads == 3
@@ -180,7 +181,7 @@ async def test_edit_undo_and_reset_use_validated_config_values(tmp_path):
 
 async def test_config_live_group_edits_and_saves_mic_diarization(tmp_path):
     path = _config_path(tmp_path)
-    app = HubApp(FakeServices(), config_path=path)
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(path))
     async with app.run_test() as pilot:
         await pilot.press("3", "/")
         await pilot.press(*tuple("live.diarize_mic"), "enter")
@@ -194,7 +195,7 @@ async def test_config_live_group_edits_and_saves_mic_diarization(tmp_path):
 
 
 async def test_invalid_edit_is_rejected_by_config_validation(tmp_path):
-    app = HubApp(FakeServices(), config_path=_config_path(tmp_path))
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
     async with app.run_test() as pilot:
         await _edit_cpu_threads(pilot, "100")
         assert app.config_editor.config.asr.cpu_threads == Config.defaults().asr.cpu_threads
@@ -204,7 +205,7 @@ async def test_invalid_edit_is_rejected_by_config_validation(tmp_path):
 
 async def test_conflict_keeps_external_config_and_unsaved_draft(tmp_path):
     path = _config_path(tmp_path)
-    app = HubApp(FakeServices(), config_path=path)
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(path))
     async with app.run_test() as pilot:
         await _edit_cpu_threads(pilot, "5")
         external = path.read_bytes() + b"\n# external edit\n"
@@ -220,7 +221,7 @@ async def test_conflict_keeps_external_config_and_unsaved_draft(tmp_path):
 
 async def test_invalid_config_is_read_only_and_shows_error_and_fix_path(tmp_path):
     path = _config_path(tmp_path, "[stenographer.asr]\ncpu_threads = 100\n")
-    app = HubApp(FakeServices(), config_path=path)
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(path))
     async with app.run_test() as pilot:
         await pilot.press("3", "enter", "ctrl+s")
         await pilot.pause()
@@ -235,7 +236,7 @@ async def test_invalid_config_is_read_only_and_shows_error_and_fix_path(tmp_path
 
 async def test_search_selects_a_key_and_unsaved_navigation_asks_for_discard(tmp_path):
     path = _config_path(tmp_path)
-    app = HubApp(FakeServices(), config_path=path)
+    app = HubApp(FakeServices(), config_editor=ConfigEditor(path))
     async with app.run_test() as pilot:
         await pilot.press("3", "/")
         await pilot.press(*tuple("asr.cpu_threads"), "enter")

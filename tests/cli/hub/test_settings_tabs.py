@@ -11,6 +11,7 @@ from textual.widgets import Input
 
 from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.choice_dialog import ChoiceDialog
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.widgets.field import Field
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
@@ -70,7 +71,7 @@ TAB_KEYS = {
 
 
 def _app(tmp_path, content=None, devices=None):
-    app = HubApp(IdleServices(), config_path=_config_path(tmp_path, content))
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(_config_path(tmp_path, content)))
     app.settings_screen.list_devices = lambda _key: list(devices or ())
     return app
 
@@ -206,7 +207,7 @@ def test_settings_dot_marks_a_change_from_the_saved_file_not_the_default(tmp_pat
 
 async def test_settings_space_toggles_and_undo_reset_and_discard_all(tmp_path):
     path = _config_path(tmp_path)
-    app = HubApp(IdleServices(), config_path=path)
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
     async with app.run_test(size=(150, 45)) as pilot:
         await _open(pilot, "recognition")
         await _select(pilot, "Refine")
@@ -282,7 +283,7 @@ def test_settings_save_keeps_a_backup_and_a_comment(tmp_path):
 
     async def exercise():
         path = _config_path(tmp_path, content)
-        app = HubApp(IdleServices(), config_path=path)
+        app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
         async with app.run_test(size=(150, 45)) as pilot:
             await _open(pilot, "recognition")
             assert "backups\nnone yet" in app.screen.query_one("#sidebar-card").render().plain
@@ -307,7 +308,7 @@ def test_settings_save_keeps_a_backup_and_a_comment(tmp_path):
 
 async def test_settings_ctrl_s_saves_the_value_typed_in_the_row(tmp_path):
     path = _config_path(tmp_path)
-    app = HubApp(IdleServices(), config_path=path)
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
     async with app.run_test(size=(150, 45)) as pilot:
         await _open(pilot, "recognition")
         await pilot.press("enter", "ctrl+a", "ctrl+k", "7", "5", "ctrl+s")

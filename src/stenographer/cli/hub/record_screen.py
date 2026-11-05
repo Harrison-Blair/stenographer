@@ -24,7 +24,8 @@ from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.spectrum_meter import SpectrumMeter
 from stenographer.cli.hub.widgets.status_token import StatusToken
-from stenographer.cli.hub.widgets.transcript_line import TranscriptLine
+from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
+from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -109,6 +110,9 @@ class RecordScreen(HubScreen):
         self._saved_at: dict[str, datetime] = {}
         self._saved_lines: tuple[str, tuple] | None = None
         self._transcript_key: object = None
+        self._transcript_data_key: object = None
+        self._transcript_data_value: tuple[tuple, tuple] = ((), ())
+        self._rows = TranscriptRows()
 
     def compose_body(self) -> ComposeResult:
         floor = self.app.current_config().feedback.spectrum_floor_dbfs
@@ -192,15 +196,14 @@ class RecordScreen(HubScreen):
             self._state_shown = state
             self.refresh_bindings()
         activity = self.query_one("#section-content", Static)
-        activity.update(app.activity_status or "")
+        update_changed(activity, app.activity_status or "")
         activity.display = app.activity_status is not None
         self.query_one("#record-body").display = app.activity_status is None
 
         live = self.session
         self._attach_meters(live)
         shown = live if live is not None else self.saved_session if state != "idle" else None
-        lines = self._lines(shown)
-        speakers = self._speaker_rows(shown, lines)
+        lines, speakers = self._transcript_data(shown)
         self._draw_rec_panel(state, shown)
         self._draw_meters(live)
         self._draw_transcript(state, shown, lines, speakers)
@@ -239,7 +242,9 @@ class RecordScreen(HubScreen):
         return (*items, ("1 2 3", "screens"))
 
     def _draw_rec_panel(self, state: str, session) -> None:
-        self.query_one("#rec-state", Static).update(StatusToken.text(*_STATE_TOKENS[state]))
+        update_changed(
+            self.query_one("#rec-state", Static), StatusToken.text(*_STATE_TOKENS[state])
+        )
         clock = self.query_one("#rec-clock", Clock)
         clock.set_seconds(session.elapsed_seconds if session is not None else 0)
         clock.set_tone("saved" if state == "saved" else "record")
@@ -256,7 +261,7 @@ class RecordScreen(HubScreen):
         else:
             started = session_started_at(session.path.name) if session is not None else None
             info = f"started {started.astimezone():%H:%M}" if started else "started"
-        self.query_one("#rec-info", Static).update(info)
+        update_changed(self.query_one("#rec-info", Static), info)
 
         primary = self.query_one("#rec-primary", HubButton)
         secondary = self.query_one("#rec-secondary", HubButton)
@@ -313,7 +318,7 @@ class RecordScreen(HubScreen):
         relabeling = state == "saved" and self._stopping(session)
         if relabeling:
             title += " · relabeling…"
-        self.query_one("#transcript-title", Static).update(title)
+        update_changed(self.query_one("#transcript-title", Static), title)
         view = "▶ mixed  split" if not self.split else "mixed  ▶ split"
         self._set_button(self.query_one("#view-button", HubButton), "v", view, "toggle_view")
         follow = ("End", "follow") if state in {"recording", "paused"} else ("Home/End", "top/end")
@@ -347,18 +352,7 @@ class RecordScreen(HubScreen):
                 Text("SYSTEM · everyone else", style="bold #ffaf5f"),
             )
             rows.append(header)
-        for line in lines:
-            color = speaker_color(line.speaker_id, speaker_ids, source=line.source)
-            rows.append(
-                TranscriptLine.row(
-                    line.start,
-                    line.label,
-                    line.text,
-                    color=color,
-                    source=line.source,
-                    layout=layout,
-                )
-            )
+        rows.extend(self._rows.rows(lines, speaker_ids, layout=layout))
         if marker is not None:
             rows.append(Text(f"── {marker} ──", style="#6ee69a", no_wrap=True))
         if relabel_error:
@@ -369,14 +363,24 @@ class RecordScreen(HubScreen):
             rows.append(Text(message))
         self.query_one("#transcript", TranscriptScroll).update_content(Group(*rows))
 
-    def _lines(self, session) -> tuple:
+    def _transcript_data(self, session) -> tuple[tuple, tuple]:
+        """Return the sorted lines and speaker rows; compute them again only on a change."""
+        key = (self._source_lines(session), getattr(session, "speakers", ()))
+        if self._transcript_data_key != key:
+            self._transcript_data_key = key
+            lines = self._lines(session)
+            self._transcript_data_value = (lines, self._speaker_rows(session, lines))
+        return self._transcript_data_value
+
+    def _source_lines(self, session) -> tuple:
         if session is None:
             return ()
         if self._saved_lines is not None and self._saved_lines[0] == session.path.name:
-            lines = self._saved_lines[1]
-        else:
-            lines = session.lines
-        return tuple(sorted(lines, key=lambda line: line.start))
+            return tuple(self._saved_lines[1])
+        return tuple(session.lines)
+
+    def _lines(self, session) -> tuple:
+        return tuple(sorted(self._source_lines(session), key=lambda line: line.start))
 
     @staticmethod
     def _speaker_rows(session, lines: tuple) -> tuple[tuple[str, str, float], ...]:
@@ -488,7 +492,7 @@ class RecordScreen(HubScreen):
             status = "Resuming recording..." if session.paused else "Pausing recording..."
             self._run_live_action(action, status=status, name="toggle-recording")
             return
-        if app.config_editor is not None and app.config_editor.read_only:
+        if app.config_editor.read_only:
             app.notify("Fix the invalid configuration before recording.", severity="error")
             return
         app.activity_status = "Starting recording..."

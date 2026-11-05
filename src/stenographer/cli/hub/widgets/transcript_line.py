@@ -3,10 +3,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from rich.table import Table
 from rich.text import Text
 
 from stenographer.cli.hub.widgets.clock import Clock
+from stenographer.cli.shared.speaker_colors import speaker_color
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from rich.console import Console, ConsoleOptions, RenderResult
 
 _DIM = "#8b93a1"
 
@@ -43,3 +51,51 @@ class TranscriptLine:
             table.add_column(ratio=1)
             table.add_row(time, Text(label, style=who_style), Text(body))
         return table
+
+
+class _RenderedRow:
+    """Keep the segments of one row: Textual renders the whole transcript on each new line."""
+
+    def __init__(self, table: Table) -> None:
+        self._table = table
+        self._width: int | None = None
+        self._segments: tuple = ()
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        if options.max_width != self._width:
+            self._width = options.max_width
+            self._segments = tuple(console.render(self._table, options))
+        yield from self._segments
+
+
+class TranscriptRows:
+    """Make the rows of a transcript; a line with the same color and layout keeps its row."""
+
+    def __init__(self) -> None:
+        self._rows: dict[tuple, _RenderedRow] = {}
+
+    def rows(
+        self, lines: Iterable, speaker_ids: tuple[str, ...], *, layout: str = "mixed"
+    ) -> list[_RenderedRow]:
+        """Return one row per line; forget the rows of lines that are gone."""
+        kept: dict[tuple, _RenderedRow] = {}
+        rows = []
+        for line in lines:
+            color = speaker_color(line.speaker_id, speaker_ids, source=line.source)
+            key = (line, color, layout)
+            row = kept.get(key) or self._rows.get(key)
+            if row is None:
+                row = _RenderedRow(
+                    TranscriptLine.row(
+                        line.start,
+                        line.label,
+                        line.text,
+                        color=color,
+                        source=line.source,
+                        layout=layout,
+                    )
+                )
+            kept[key] = row
+            rows.append(row)
+        self._rows = kept
+        return rows

@@ -22,7 +22,7 @@ from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
 from stenographer.lib.sessions import SessionStore
-from tests.cli.hub.support import _screen_text
+from tests.cli.hub.support import _screen_text, make_app
 from tests.cli.hub.test_library import FakeServices, _library, _rows, _until
 from tests.cli.hub.test_session_jobs import FakePlatform
 from tests.lib.files.test_engine import FakeSegmenter, _file_asr_process
@@ -79,7 +79,7 @@ async def _search(pilot, text: str) -> None:
 
 def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
     home = _home(tmp_path)
-    app = HubApp(RecordingServices(tmp_path / "sessions"), files_home=home)
+    app = make_app(tmp_path, RecordingServices(tmp_path / "sessions"), files_home=home)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -133,7 +133,7 @@ def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
 def test_transcribe_options_and_an_invalid_speaker_count(tmp_path, by):
     home = _home(tmp_path)
     services = RecordingServices(tmp_path / "sessions")
-    app = HubApp(services, files_home=home)
+    app = make_app(tmp_path, services, files_home=home)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -177,7 +177,7 @@ def test_transcribe_queues_one_job_and_the_library_selects_its_row(tmp_path):
     root, _sessions = _library(tmp_path)
     home = _home(tmp_path)
     services = RecordingServices(root)
-    app = HubApp(services, files_home=home)
+    app = make_app(tmp_path, services, files_home=home)
     screen = app.library_screen
 
     async def exercise():
@@ -225,7 +225,7 @@ def _engine_app(tmp_path: Path, home: Path, *, decoder=None) -> tuple[HubApp, Pa
         session_store=SessionStore(sessions),
         files_engine_factory=make_engine,
     )
-    return HubApp(services, files_home=home), sessions
+    return make_app(tmp_path, services, files_home=home), sessions
 
 
 def _recording(tmp_path: Path) -> Path:
@@ -315,7 +315,7 @@ def test_hidden_folders_and_audio_search(tmp_path):
     hidden = home / ".local"
     hidden.mkdir()
     _write_audio(hidden / ".recording.wav")
-    app = HubApp(RecordingServices(tmp_path / "sessions"), files_home=home)
+    app = make_app(tmp_path, RecordingServices(tmp_path / "sessions"), files_home=home)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -335,7 +335,7 @@ def test_unreadable_folder_shows_error_and_parent(tmp_path):
     home = _home(tmp_path)
     vanished = home / "vanished"
     vanished.mkdir()
-    app = HubApp(RecordingServices(tmp_path / "sessions"), files_home=home)
+    app = make_app(tmp_path, RecordingServices(tmp_path / "sessions"), files_home=home)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
