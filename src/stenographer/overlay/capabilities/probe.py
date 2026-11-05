@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from stenographer.overlay.capabilities.models import OverlayCapability
 from stenographer.overlay.platform import current_platform
-from stenographer.overlay.protocol.ordering import selected_unavailable_reason
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
 
@@ -18,6 +17,8 @@ def probe_overlay(enabled: bool) -> OverlayCapability:
         if reason is None:
             return OverlayCapability.available(spec.backend)
         reasons.append(reason)
+    from stenographer.overlay.protocol.ordering import selected_unavailable_reason
+
     # The same fold the helper applies to its construct failures, so what
     # ``doctor`` reports and what the helper logs cannot disagree.
     return OverlayCapability.unavailable(selected_unavailable_reason(reasons))

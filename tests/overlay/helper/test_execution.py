@@ -30,7 +30,7 @@ from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
 _EXECUTION = "stenographer.overlay.helper.execution.current_platform"
 
-_LOG = "stenographer.overlay.supervision.constants"
+_LOG = "stenographer.overlay.helper.execution"
 
 
 class _Platform:

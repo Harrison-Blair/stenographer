@@ -19,7 +19,8 @@ from stenographer.overlay.protocol.ordering import (
     selected_unavailable_reason,
 )
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
-from stenographer.overlay.supervision.constants import log
+
+log = logging.getLogger(__name__)
 
 
 def _write_helper_message(stream: BinaryIO, message: ReadyMessage | UnavailableMessage) -> None:
