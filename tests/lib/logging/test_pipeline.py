@@ -11,7 +11,6 @@ from io import StringIO
 import pytest
 
 from stenographer.lib.logging.pipeline import (
-    UtteranceFilter,
     apply_stderr_level,
     fmt_event,
     log_failure,
@@ -155,102 +154,76 @@ def test_invalid_file_path_value_falls_back_safely(tmp_path):
         shutdown_logging()
 
 
-def test_fmt_event_renders_fields_in_call_order_and_omits_missing_ones():
-    assert fmt_event("recorder", "captured") == "recorder: captured"
-    assert (
-        fmt_event("recorder", "captured", frames=1200, rate_hz=16000, overflow=0)
-        == "recorder: captured frames=1200 rate_hz=16000 overflow=0"
-    )
-    # A measurement that was never taken is absent, not "None".
-    assert fmt_event("pipeline", "done", outcome="SILENT", decode_ms=None) == (
-        "pipeline: done outcome=SILENT"
-    )
-    # A quiet mic's floor must survive rendering, and computed float noise must not.
-    assert fmt_event("audio", "gate", threshold=0.0005, peak=0.1 + 0.2) == (
-        "audio: gate threshold=0.0005 peak=0.3"
-    )
-
-
-def test_fmt_event_quotes_only_the_values_that_would_break_key_equals_value():
-    # An argv, a PortAudio device name, a user path and an OS error's own text
-    # all carry spaces, and a bare one silently turns one field into several.
-    # Seen to FAIL against the unquoted renderer: `argv=xclip -selection
-    # clipboard` parses as argv=xclip plus two junk tokens.
-    assert fmt_event("deliver", "copy_failed", argv="xclip -selection clipboard") == (
-        'deliver: copy_failed argv="xclip -selection clipboard"'
-    )
-    assert fmt_event("logging", "file_unavailable", detail="[Errno 13] Permission denied") == (
-        'logging: file_unavailable detail="[Errno 13] Permission denied"'
-    )
-    assert fmt_event("banner", "config_audio", input_device="HD Webcam C910: USB Audio") == (
-        'banner: config_audio input_device="HD Webcam C910: USB Audio"'
-    )
-    # A path only earns quotes when it actually contains a space.
-    assert fmt_event("banner", "build", config="/home/u/.config/stenographer/config.toml") == (
-        "banner: build config=/home/u/.config/stenographer/config.toml"
-    )
-    assert fmt_event("banner", "build", config="/home/u/my configs/config.toml") == (
-        'banner: build config="/home/u/my configs/config.toml"'
-    )
-
-
-def test_fmt_event_keeps_a_multi_line_value_on_one_physical_line():
-    """Seen to FAIL when the quoted branch only escaped quotes and backslashes."""
-
-    line = fmt_event("asr", "job_failed", detail="line one\nline two")
-    assert "\n" not in line
-    assert line == 'asr: job_failed detail="line one\\nline two"'
-
-
 @pytest.mark.parametrize(
-    ("control", "escaped"),
+    ("subsystem", "event", "fields", "expected"),
     [
-        ("\x00", "\\u0000"),
-        ("\x07", "\\u0007"),
-        ("\x1b", "\\u001b"),
-        ("\x7f", "\\u007f"),
-        ("\x85", "\\u0085"),
+        ("recorder", "captured", {}, "recorder: captured"),
+        (
+            "recorder",
+            "captured",
+            {"frames": 1200, "rate_hz": 16000, "overflow": 0},
+            "recorder: captured frames=1200 rate_hz=16000 overflow=0",
+        ),
+        (
+            "pipeline",
+            "done",
+            {"outcome": "SILENT", "decode_ms": None},
+            "pipeline: done outcome=SILENT",
+        ),
+        (
+            "audio",
+            "gate",
+            {"threshold": 0.0005, "peak": 0.1 + 0.2},
+            "audio: gate threshold=0.0005 peak=0.3",
+        ),
+        (
+            "deliver",
+            "copy_failed",
+            {"argv": "xclip -selection clipboard"},
+            'deliver: copy_failed argv="xclip -selection clipboard"',
+        ),
+        (
+            "banner",
+            "build",
+            {"config": "/home/u/.config/stenographer/config.toml"},
+            "banner: build config=/home/u/.config/stenographer/config.toml",
+        ),
+        (
+            "banner",
+            "build",
+            {"config": "/home/u/my configs/config.toml"},
+            'banner: build config="/home/u/my configs/config.toml"',
+        ),
+        (
+            "asr",
+            "job_failed",
+            {"detail": "line one\nline two"},
+            r'asr: job_failed detail="line one\nline two"',
+        ),
+        *[
+            (
+                "helper",
+                "failed",
+                {"detail": f"café{control}"},
+                f'helper: failed detail="caf\\u00e9{escaped}"',
+            )
+            for control, escaped in [
+                ("\x00", r"\u0000"),
+                ("\x07", r"\u0007"),
+                ("\x1b", r"\u001b"),
+                ("\x7f", r"\u007f"),
+                ("\x85", r"\u0085"),
+            ]
+        ],
+        ("helper", "failed", {"detail": "café"}, "helper: failed detail=café"),
+        ("helper", "failed", {"detail": "café noir"}, 'helper: failed detail="café noir"'),
+        ("helper", "failed", {"detail": 'say "hi"'}, r'helper: failed detail="say \"hi\""'),
+        ("helper", "failed", {"detail": "a \\ b"}, r'helper: failed detail="a \\ b"'),
+        ("helper", "failed", {"detail": r"C:\Users"}, r"helper: failed detail=C:\Users"),
     ],
 )
-def test_fmt_event_ascii_escapes_every_control_character(control, escaped):
-    line = fmt_event("helper", "failed", detail=f"café{control}")
-
-    assert line == f'helper: failed detail="caf\\u00e9{escaped}"'
-    assert control not in line
-
-
-def test_fmt_event_keeps_ordinary_unicode_unescaped():
-    assert fmt_event("helper", "failed", detail="café") == "helper: failed detail=café"
-    assert fmt_event("helper", "failed", detail="café noir") == (
-        'helper: failed detail="café noir"'
-    )
-
-
-def test_fmt_event_escapes_quotes_and_backslashes_inside_a_quoted_value():
-    # The closing quote has to stay findable, so an embedded quote or backslash
-    # is escaped. Seen to FAIL against a renderer that only wrapped in quotes.
-    assert fmt_event("helper", "failed", detail='say "hi"') == (
-        'helper: failed detail="say \\"hi\\""'
-    )
-    assert fmt_event("helper", "failed", detail="a \\ b") == 'helper: failed detail="a \\\\ b"'
-    # A value needing no quotes keeps its backslashes bare: nothing to break.
-    assert fmt_event("helper", "failed", detail="C:\\Users") == "helper: failed detail=C:\\Users"
-
-
-def test_utterance_filter_stamps_the_current_id_and_clears_it(captured):
-    logger, stream = captured
-    # On the handler, as production installs it: filters run in Handler.handle.
-    logger.handlers[0].addFilter(UtteranceFilter())
-    try:
-        set_utterance(7)
-        logger.info(fmt_event("pipeline", "started"))
-        set_utterance(None)
-        logger.info(fmt_event("pipeline", "idle"))
-    finally:
-        set_utterance(None)
-
-    assert "INFO utt=7 pipeline: started" in stream.getvalue()
-    assert "INFO pipeline: idle\n" in stream.getvalue()
+def test_fmt_event_renders_fields(subsystem, event, fields, expected):
+    assert fmt_event(subsystem, event, **fields) == expected
 
 
 def test_setup_wires_the_utterance_stamp_onto_module_loggers(tmp_path):
@@ -267,6 +240,8 @@ def test_setup_wires_the_utterance_stamp_onto_module_loggers(tmp_path):
     try:
         set_utterance(7)
         logging.getLogger("stenographer.lib.daemon").info(fmt_event("pipeline", "started"))
+        set_utterance(None)
+        logging.getLogger("stenographer.lib.daemon").info(fmt_event("pipeline", "idle"))
     finally:
         set_utterance(None)
         shutdown_logging()
@@ -274,6 +249,7 @@ def test_setup_wires_the_utterance_stamp_onto_module_loggers(tmp_path):
     # Ahead of the message, so it can never trail a traceback the queue
     # handler merged into the record's text.
     assert "utt=7 pipeline: started" in stream.getvalue()
+    assert "INFO stenographer.lib.daemon pipeline: idle\n" in stream.getvalue()
 
 
 def test_log_failure_unsafe_never_renders_the_exception_message(captured):
