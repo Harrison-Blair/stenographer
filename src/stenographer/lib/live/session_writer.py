@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict
@@ -18,7 +17,8 @@ import soundfile as sf
 
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event
-from stenographer.lib.sessions.persistence import write_session_json
+from stenographer.lib.sessions.exporter import format_timestamp
+from stenographer.lib.sessions.persistence import atomic_write_private, write_session_json
 
 log = logging.getLogger(__name__)
 _SAMPLE_RATE = 16000
@@ -164,9 +164,6 @@ class SessionWriter:
 
     def _write_markdown(self) -> None:
         duration = max(self._source_samples.values(), default=0) / _SAMPLE_RATE
-        whole_seconds = int(duration)
-        hours, remainder = divmod(whole_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
         sources = list(
             dict.fromkeys([*self._source_samples, *(line.source for line in self._lines)])
         )
@@ -174,26 +171,13 @@ class SessionWriter:
             "# Session transcript",
             "",
             f"- Started: {self.started_at.isoformat().replace('+00:00', 'Z')}",
-            f"- Duration: {hours:02d}:{minutes:02d}:{seconds:02d}",
+            f"- Duration: {format_timestamp(duration)}",
             f"- Sources: {', '.join(sources)}",
             "",
         ]
         for line in self._lines:
-            timestamp = int(line.start)
-            hours, remainder = divmod(timestamp, 3600)
-            minutes, seconds = divmod(remainder, 60)
             label = self._labels.get(line.speaker_id, line.label)
-            lines.append(f"[{hours:02d}:{minutes:02d}:{seconds:02d}] **{label}:** {line.text}")
+            lines.append(f"[{format_timestamp(line.start)}] **{label}:** {line.text}")
         content = "\n".join(lines) + "\n"
 
-        fd, temporary_name = tempfile.mkstemp(prefix=".transcript-", suffix=".tmp", dir=self.path)
-        temporary_path = Path(temporary_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
-                stream.write(content)
-                stream.flush()
-            os.chmod(temporary_path, 0o600)
-            os.replace(temporary_path, self.path / "transcript.md")
-        except Exception:
-            temporary_path.unlink(missing_ok=True)
-            raise
+        atomic_write_private(self.path / "transcript.md", content.encode("utf-8"))

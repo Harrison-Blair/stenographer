@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from stenographer.lib.live.models import LIVE_MODELS
+from stenographer.lib.live.models import LIVE_MODELS, live_model_dir
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ def live_models_check(model_dir: pathlib.Path | None = None) -> DiagnosticCheck:
     if model_dir is None:
         from stenographer.lib.platform import current_platform
 
-        model_dir = current_platform().data_dir(os.environ, pathlib.Path.home()) / "models" / "live"
+        model_dir = live_model_dir(current_platform().data_dir(os.environ, pathlib.Path.home()))
     missing = [
         model.filename for model in LIVE_MODELS if not (model_dir / model.filename).is_file()
     ]

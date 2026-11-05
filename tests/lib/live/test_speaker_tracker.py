@@ -12,8 +12,7 @@ import pytest
 import soundfile
 
 from stenographer.lib.live.models import LIVE_MODELS
-from stenographer.lib.live.speaker import SpeakerClustering
-from stenographer.lib.live.speaker_tracker import SpeakerTracker
+from stenographer.lib.live.speaker_tracker import SpeakerClustering, SpeakerTracker
 from stenographer.lib.platform import current_platform
 
 

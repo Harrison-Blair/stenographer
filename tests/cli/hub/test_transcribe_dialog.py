@@ -205,11 +205,19 @@ def _engine_app(tmp_path: Path, home: Path, *, decoder=None) -> tuple[HubApp, Pa
     sessions = data / "sessions"
 
     def make_engine(config, *, platform):
+        class FilesPlatform:
+            def data_dir(self, _env, _home):
+                return data
+
+            def ffmpeg_decoder(self):
+                return decoder or SubprocessFfmpegDecoder()
+
+            def asr_transport(self):
+                return FakeAsrTransport(_file_asr_process())
+
         return FilesEngine(
             config,
-            data_dir=data,
-            decoder=decoder or SubprocessFfmpegDecoder(),
-            transport=FakeAsrTransport(_file_asr_process()),
+            platform=FilesPlatform(),
             segmenter_factory=FakeSegmenter,
             clock=lambda: datetime(2026, 10, 27, 9, 0, tzinfo=UTC),
         )

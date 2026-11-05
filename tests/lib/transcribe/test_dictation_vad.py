@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from stenographer.lib.live.phrase import Phrase
+from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.transcribe.dictation_vad import dictation_speech, keep_speech
 
 _RATE = 16000

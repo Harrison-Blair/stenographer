@@ -50,7 +50,7 @@ class FakeJob:
         self.id = job_id
         self.options = SimpleNamespace(path=path, diarize=True, speaker_count=None, refine=False)
         self.state = state
-        self.progress = FileJobProgress("transcribe", percent, None, ())
+        self.progress = FileJobProgress("transcribe", percent, ())
         self.session_id: str | None = None
         self.error: str | None = None
         self.cancel_requested = False
@@ -730,7 +730,6 @@ def test_library_job_rows_complete_fail_and_cancel(tmp_path):
     done.progress = FileJobProgress(
         "transcribe",
         60,
-        None,
         (TranscriptLine(0.0, 1.0, "", "file", "speaker-1", "Speaker 1", "juliet kilo lima"),),
     )
     failing = FakeJob("file-2", sources / "broken.mp3", state="queued", percent=0)
@@ -809,7 +808,7 @@ def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
             assert "queued" in _rows(app)[0]
 
             job.state = "running"
-            job.progress = FileJobProgress("transcribe", 37, None, ())
+            job.progress = FileJobProgress("transcribe", 37, ())
             await _until(pilot, lambda: "37%" in _rows(app)[0])
             app.refresh_view()
             await pilot.pause()
@@ -835,7 +834,7 @@ def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
             await pilot.press("slash", *"mic.flac")
             await _until(pilot, lambda: [e.entry_id for e in screen.entries] == [live])
             second.state = "running"
-            second.progress = FileJobProgress("transcribe", 80, None, ())
+            second.progress = FileJobProgress("transcribe", 80, ())
             await _until(pilot, lambda: "80%" in _rows(app)[0])
             second.session_id = live
             second.state = "completed"

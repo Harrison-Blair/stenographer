@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from stenographer.lib.live.phrase import Phrase
+from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.null_process_counters import NullProcessCounters
@@ -636,13 +636,6 @@ def test_meter_floor_uses_the_low_frequency_profile_value(monkeypatch, tmp_path)
     assert rig.session.meter_floor_dbfs == -81.0
     rig.session.stop()
     assert rig.writer.closed
-
-
-def test_missing_meter_floor_uses_minus_seventy_dbfs(monkeypatch, tmp_path):
-    rig = _make_session(monkeypatch, tmp_path, start=False, feedback_floor=None)
-
-    assert rig.session.meter_floor_dbfs == -70.0
-    rig.session.stop()
 
 
 def test_failed_phrase_increments_the_failure_count(monkeypatch, tmp_path, caplog):

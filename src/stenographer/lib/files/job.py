@@ -28,12 +28,11 @@ class FileJob:
         self._media_info = media_info
         self._lock = threading.Lock()
         self._cancel_event = threading.Event()
-        self._finished = threading.Event()
         self._state = "queued"
         self._error: str | None = None
         self._session_id: str | None = None
         self._started_at: float | None = None
-        self._progress = FileJobProgress("transcribe", 0, None, ())
+        self._progress = FileJobProgress("transcribe", 0, ())
         self._progress_listeners: list[Callable[[FileJobProgress], None]] = []
 
     @property
@@ -89,11 +88,6 @@ class FileJob:
             log.info(fmt_event("files", "job_cancel_requested", job_id=self.id))
         return True
 
-    def wait(self, timeout: float | None = None) -> str:
-        """Wait for a terminal state and return the current state."""
-        self._finished.wait(timeout)
-        return self.state
-
     def _set_media_info(self, media_info: MediaInfo) -> None:
         with self._lock:
             self._media_info = media_info
@@ -102,7 +96,6 @@ class FileJob:
         with self._lock:
             if self._cancel_event.is_set():
                 self._state = "cancelled"
-                self._finished.set()
                 started = False
             else:
                 self._state = "running"
@@ -118,7 +111,6 @@ class FileJob:
         self,
         stage: str,
         percent: int,
-        eta_seconds: float | None,
         lines: tuple[TranscriptLine, ...],
     ) -> None:
         with self._lock:
@@ -126,7 +118,6 @@ class FileJob:
             self._progress = FileJobProgress(
                 stage,
                 min(100, max(0, int(percent))),
-                None if eta_seconds is None else max(0.0, eta_seconds),
                 tuple(lines),
             )
             progress = self._progress
@@ -138,9 +129,8 @@ class FileJob:
     def _complete(self, session_id: str, lines: tuple[TranscriptLine, ...]) -> None:
         with self._lock:
             self._session_id = session_id
-            self._progress = FileJobProgress("save", 100, 0.0, lines)
+            self._progress = FileJobProgress("save", 100, lines)
             self._state = "completed"
-            self._finished.set()
             progress = self._progress
             listeners = tuple(self._progress_listeners)
         log.info(fmt_event("files", "job_completed", job_id=self.id))
@@ -148,11 +138,8 @@ class FileJob:
 
     def _cancelled(self, lines: tuple[TranscriptLine, ...]) -> None:
         with self._lock:
-            self._progress = FileJobProgress(
-                self._progress.stage, self._progress.percent, None, lines
-            )
+            self._progress = FileJobProgress(self._progress.stage, self._progress.percent, lines)
             self._state = "cancelled"
-            self._finished.set()
             progress = self._progress
             listeners = tuple(self._progress_listeners)
         log.info(fmt_event("files", "job_cancelled", job_id=self.id))
@@ -162,14 +149,12 @@ class FileJob:
         with self._lock:
             self._error = error
             self._state = "failed"
-            self._finished.set()
         log.info(fmt_event("files", "job_failed", job_id=self.id, error=error))
 
     def _needs_ffmpeg(self) -> None:
         with self._lock:
             self._error = "needs ffmpeg"
             self._state = "needs_ffmpeg"
-            self._finished.set()
         log.info(fmt_event("files", "job_blocked", job_id=self.id, reason="needs_ffmpeg"))
 
     @staticmethod
@@ -177,7 +162,4 @@ class FileJob:
         listeners: tuple[Callable[[FileJobProgress], None], ...], progress: FileJobProgress
     ) -> None:
         for listener in listeners:
-            try:
-                listener(progress)
-            except Exception as exc:
-                log.warning("files: progress_listener_failed error=%s", type(exc).__name__)
+            listener(progress)

@@ -3,11 +3,21 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from stenographer.lib.live.phrase import Phrase
+
+@dataclass(frozen=True)
+class Phrase:
+    """One VAD speech interval with times in the session clock."""
+
+    source: str
+    start: float
+    end: float
+    samples: np.ndarray
+
 
 _RATE = 16000
 _VAD_WINDOW = 512
