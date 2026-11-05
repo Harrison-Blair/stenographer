@@ -316,6 +316,40 @@ def test_playback_reports_a_player_that_exits_with_an_error(tmp_path):
     assert failures.get(timeout=1) == 3
 
 
+def test_playback_reports_a_crash_that_the_next_play_press_overtakes(tmp_path):
+    class CrashedPlayer(FakePlayer):
+        """The process has exited; its watcher has not returned from ``wait`` yet."""
+
+        def poll(self):
+            return 3
+
+        def wait(self):
+            self.finished.wait()
+            return 3
+
+    sessions_root = tmp_path / "sessions"
+    first = _write_session(sessions_root)
+    second = sessions_root / "20261020T011219Z"
+    shutil.copytree(first, second)
+    players = [CrashedPlayer(), FakePlayer()]
+    remaining = iter(players)
+    failures = queue.Queue()
+    services = HubServices(
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        session_store=SessionStore(sessions_root),
+        player_factory=lambda _command: next(remaining),
+    )
+
+    services.toggle_session_playback(first.name, on_failure=failures.put)
+    services.toggle_session_playback(second.name, on_failure=failures.put)
+    assert not players[0].terminated
+    players[0].finished.set()
+
+    assert failures.get(timeout=1) == 3
+    services.stop_session_playback()
+
+
 def test_playback_does_not_report_a_stop_or_a_clean_end(tmp_path):
     services, first, second, players = _two_session_services(tmp_path)
     failures = []

@@ -53,6 +53,7 @@ class HubServices:
         self._player_session_id: str | None = None
         self._player_temp_path: Path | None = None
         self._player_lock = threading.Lock()
+        self._stopped_players: set[subprocess.Popen] = set()
         self._session: LiveSession | None = None
         self._files_engine_factory = files_engine_factory
         self._files_engine = None
@@ -291,6 +292,7 @@ class HubServices:
         process = self._player
         if process is None or process.poll() is not None:
             return False
+        self._stopped_players.add(process)
         process.terminate()
         log.info(
             fmt_event(
@@ -322,14 +324,15 @@ class HubServices:
             )
         )
         with self._player_lock:
-            ended_by_itself = self._player is process
-            if ended_by_itself:
+            stopped = process in self._stopped_players
+            self._stopped_players.discard(process)
+            if self._player is process:
                 self._player = None
                 self._player_session_id = None
             if self._player_temp_path == mixed_path:
                 self._player_temp_path = None
             mixed_path.unlink(missing_ok=True)
-        if ended_by_itself and returncode != 0 and on_failure is not None:
+        if not stopped and returncode != 0 and on_failure is not None:
             on_failure(returncode)
 
     def cancel_files(self) -> None:
