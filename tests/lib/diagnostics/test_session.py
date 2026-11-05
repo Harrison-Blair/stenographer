@@ -9,41 +9,7 @@ from importlib.metadata import version
 from stenographer.lib.analytics.store import Store
 from stenographer.lib.config.models import Config
 from stenographer.lib.diagnostics.session import create_session
-
-
-class _Host:
-    """Host double for session assembly: a real state directory under tmp."""
-
-    name = "test"
-
-    def __init__(self, state_dir, *, broken: bool = False) -> None:
-        self._state_dir = state_dir
-        self._broken = broken
-        self.probed: list[tuple[int, ...]] = []
-
-    def state_dir(self, env, home):
-        return self._state_dir
-
-    def runtime_context(self):
-        if self._broken:
-            raise OSError("host refused to describe itself")
-        return {"os": "test", "architecture": "test64"}
-
-    def physical_core_count(self):
-        return 2
-
-    def resource_probe(self):
-        def probe(pids):
-            self.probed.append(tuple(pids))
-            return {"cpu_seconds": 0.25, "resident_bytes": 2048}
-
-        return probe
-
-    def process_identity(self):
-        return (4242, 1000.0)
-
-    def process_alive(self, pid, started_epoch):
-        return None
+from tests.lib.diagnostics.support import AnalyticsHost as _Host
 
 
 def _configured(*, enabled: bool = True, resource_profiling: bool = True) -> Config:
@@ -64,7 +30,6 @@ def test_disabled_analytics_never_opens_a_database(tmp_path):
     finally:
         collection.close()
 
-    assert collection.enabled is False
     assert identity is None
     assert list(tmp_path.iterdir()) == []
 
@@ -84,7 +49,6 @@ def test_an_enabled_session_records_the_host_context_it_was_given(tmp_path):
     assert record["context"]["architecture"] == "test64"
     assert record["context"]["cpu_threads"] == 2
     assert record["context"]["runtime_version"] == version("sherpa-onnx")
-    assert collection.health["enabled"] is True
 
 
 def test_profiling_can_be_declined_without_disabling_collection(tmp_path):
@@ -109,7 +73,4 @@ def test_a_host_that_cannot_describe_itself_degrades_instead_of_failing(tmp_path
     finally:
         collection.close()
 
-    assert collection.enabled is True
-    assert collection.health["degraded"] is True
-    assert collection.health["dropped_checkpoints"] == 1
     assert not (tmp_path / "analytics.sqlite3").exists()

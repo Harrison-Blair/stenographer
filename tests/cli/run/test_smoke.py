@@ -14,9 +14,8 @@ import os
 import pytest
 
 from stenographer.cli.run import startup as daemon
-from stenographer.cli.shared.capability_probe import probe
+from stenographer.cli.shared.capabilities import missing_required, probe
 from stenographer.lib.config.models import Config
-from stenographer.lib.diagnostics.capabilities import missing_required
 from stenographer.lib.platform.linux import lock
 
 pytestmark = pytest.mark.integration
@@ -39,6 +38,7 @@ def test_missing_required_capability_precedes_real_lock(capsys):
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err == (
-        "stenographer: required capabilities unavailable; run `stenographer doctor`\n"
-    )
+    assert "required capabilities unavailable" in captured.err
+    guidance = daemon.current_platform().guidance()
+    for name in missing:
+        assert guidance.capability_labels[name] in captured.err

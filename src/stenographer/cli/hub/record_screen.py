@@ -15,7 +15,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
-from stenographer.cli.hub.device_dialog import DeviceDialog
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.hub_screen import HubScreen
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.widgets.button import HubButton
@@ -24,7 +24,8 @@ from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.spectrum_meter import SpectrumMeter
 from stenographer.cli.hub.widgets.status_token import StatusToken
-from stenographer.cli.hub.widgets.transcript_line import TranscriptLine
+from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
+from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -45,6 +46,7 @@ _STATE_TOKENS = {
     "recording": ("●", "REC", "danger"),
     "paused": ("Ⅱ", "PAUSED", "warn"),
     "saved": ("■", "SAVED", "ok"),
+    "failed": ("!", "SAVE FAILED", "danger"),
 }
 _RECORD_HINTS = (("m", "mic"), ("s", "system"), ("v", "view"))
 
@@ -52,7 +54,6 @@ _RECORD_HINTS = (("m", "mic"), ("s", "system"), ("v", "view"))
 class RecordScreen(HubScreen):
     """Record, pause, stop and save; watch the meters and the transcript; rename speakers."""
 
-    SCREEN_NAME = "record"
     SCREEN_TITLE = "Record"
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         Binding("space", "record_toggle", "Record, pause or resume"),
@@ -100,10 +101,7 @@ class RecordScreen(HubScreen):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.split = False
-        self.meters = {
-            "mic": SpectrumMeter("mic", "Default input", id="mic-meter"),
-            "system": SpectrumMeter("system", _SYSTEM_DEVICE, id="system-meter"),
-        }
+        self.meters: dict[str, SpectrumMeter] = {}
         self._state_shown: str | None = None
         self._metered = None
         self._remove_listener: Callable[[], None] | None = None
@@ -112,8 +110,16 @@ class RecordScreen(HubScreen):
         self._saved_at: dict[str, datetime] = {}
         self._saved_lines: tuple[str, tuple] | None = None
         self._transcript_key: object = None
+        self._transcript_data_key: object = None
+        self._transcript_data_value: tuple[tuple, tuple] = ((), ())
+        self._rows = TranscriptRows()
 
     def compose_body(self) -> ComposeResult:
+        floor = self.app.current_config().feedback.spectrum_floor_dbfs
+        self.meters = {
+            "mic": SpectrumMeter("mic", "Default input", floor_dbfs=floor, id="mic-meter"),
+            "system": SpectrumMeter("system", _SYSTEM_DEVICE, floor_dbfs=floor, id="system-meter"),
+        }
         yield Static("", id="section-content", markup=False)
         with Vertical(id="record-body"):
             with Horizontal(id="record-top"):
@@ -152,14 +158,21 @@ class RecordScreen(HubScreen):
 
     @property
     def saved_session(self):
-        return getattr(self.app.services, "last_saved", None)
+        services = self.app.services
+        failed = self._failed_stops()
+        return failed[-1][0] if failed else getattr(services, "last_saved", None)
 
     def record_state(self) -> str:
         services = self.app.services
         if services.recording:
             session = getattr(services, "session", None)
             return "paused" if session is not None and session.paused else "recording"
+        if self._failed_stops():
+            return "failed"
         return "saved" if self.saved_session is not None else "idle"
+
+    def _failed_stops(self) -> list:
+        return getattr(self.app.services, "failed_stops", [])
 
     def _stopping(self, session) -> bool:
         return any(item is session for item in getattr(self.app.services, "stopping_sessions", ()))
@@ -169,9 +182,9 @@ class RecordScreen(HubScreen):
         if action == "stop":
             return state in {"recording", "paused"}
         if action == "choose_device":
-            return state in {"idle", "saved"}
+            return state in {"idle", "saved", "failed"}
         if action == "open_library":
-            return state == "saved"
+            return state in {"saved", "failed"}
         return True
 
     # Drawing
@@ -183,24 +196,25 @@ class RecordScreen(HubScreen):
             self._state_shown = state
             self.refresh_bindings()
         activity = self.query_one("#section-content", Static)
-        activity.update(app.activity_status or "")
+        update_changed(activity, app.activity_status or "")
         activity.display = app.activity_status is not None
         self.query_one("#record-body").display = app.activity_status is None
 
         live = self.session
         self._attach_meters(live)
-        shown = live if live is not None else self.saved_session if state == "saved" else None
-        lines = self._lines(shown)
-        speakers = self._speaker_rows(shown, lines)
+        shown = live if live is not None else self.saved_session if state != "idle" else None
+        lines, speakers = self._transcript_data(shown)
         self._draw_rec_panel(state, shown)
-        self._draw_meters(state, live)
+        self._draw_meters(live)
         self._draw_transcript(state, shown, lines, speakers)
         app.set_context_card(
             "record",
             self._speakers_card(shown, speakers),
             title="speakers",
             buttons=(("Rename…", "r", self.action_rename_speaker),),
-            disabled=frozenset({"r"}) if self._rename_busy(shown) else frozenset(),
+            disabled=frozenset({"r"})
+            if state == "failed" or self._rename_busy(shown)
+            else frozenset(),
         )
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
@@ -216,12 +230,21 @@ class RecordScreen(HubScreen):
                 *_RECORD_HINTS,
                 ("r", "rename"),
             )
+        elif state == "failed":
+            items = (
+                ("space", "record again"),
+                ("o", "open in Library"),
+                ("d", "device"),
+                *_RECORD_HINTS,
+            )
         else:
             items = (("space", "record"), ("d", "device"), *_RECORD_HINTS)
         return (*items, ("1 2 3", "screens"))
 
     def _draw_rec_panel(self, state: str, session) -> None:
-        self.query_one("#rec-state", Static).update(StatusToken.text(*_STATE_TOKENS[state]))
+        update_changed(
+            self.query_one("#rec-state", Static), StatusToken.text(*_STATE_TOKENS[state])
+        )
         clock = self.query_one("#rec-clock", Clock)
         clock.set_seconds(session.elapsed_seconds if session is not None else 0)
         clock.set_tone("saved" if state == "saved" else "record")
@@ -231,10 +254,14 @@ class RecordScreen(HubScreen):
             session_id = session.path.name
             saved_at = self._saved_at.get(session_id)
             info = f"saved {saved_at:%H:%M}\n{session_id}" if saved_at else session_id
+        elif state == "failed":
+            info = "\n".join(
+                f"{error}\n{failed.path.name}" for failed, error in reversed(self._failed_stops())
+            )
         else:
             started = session_started_at(session.path.name) if session is not None else None
             info = f"started {started.astimezone():%H:%M}" if started else "started"
-        self.query_one("#rec-info", Static).update(info)
+        update_changed(self.query_one("#rec-info", Static), info)
 
         primary = self.query_one("#rec-primary", HubButton)
         secondary = self.query_one("#rec-secondary", HubButton)
@@ -244,13 +271,13 @@ class RecordScreen(HubScreen):
             self._set_button(
                 secondary, "space", "▶ Resume" if resume else "Ⅱ Pause", "record_toggle"
             )
-        elif state == "saved":
+        elif state in {"saved", "failed"}:
             self._set_button(primary, "space", "● Record again", "record_toggle")
             self._set_button(secondary, "o", "Open in Library", "open_library")
         else:
             self._set_button(primary, "space", "● Record", "record_toggle")
         secondary.display = state != "idle"
-        self.query_one("#device-button").visible = state in {"idle", "saved"}
+        self.query_one("#device-button").visible = state in {"idle", "saved", "failed"}
 
     @staticmethod
     def _set_button(button: HubButton, key: str, label: str, action: str) -> None:
@@ -264,7 +291,7 @@ class RecordScreen(HubScreen):
         button.action_name = action
         button.set_label(label)
 
-    def _draw_meters(self, state: str, session) -> None:
+    def _draw_meters(self, session) -> None:
         services = self.app.services
         sources = getattr(services, "next_sources", {"mic": True, "system": True})
         speech = getattr(session, "speech_detected", {}) if session is not None else {}
@@ -291,7 +318,7 @@ class RecordScreen(HubScreen):
         relabeling = state == "saved" and self._stopping(session)
         if relabeling:
             title += " · relabeling…"
-        self.query_one("#transcript-title", Static).update(title)
+        update_changed(self.query_one("#transcript-title", Static), title)
         view = "▶ mixed  split" if not self.split else "mixed  ▶ split"
         self._set_button(self.query_one("#view-button", HubButton), "v", view, "toggle_view")
         follow = ("End", "follow") if state in {"recording", "paused"} else ("Home/End", "top/end")
@@ -306,7 +333,8 @@ class RecordScreen(HubScreen):
             message = "Recording is active. Change screens without stopping it."
         else:
             message = ""
-        key = (lines, speakers, self.split, marker, message)
+        relabel_error = getattr(session, "relabel_error", None) if state == "saved" else None
+        key = (lines, speakers, self.split, marker, message, relabel_error)
         if key == self._transcript_key:
             return
         self._transcript_key = key
@@ -324,32 +352,35 @@ class RecordScreen(HubScreen):
                 Text("SYSTEM · everyone else", style="bold #ffaf5f"),
             )
             rows.append(header)
-        for line in lines:
-            color = speaker_color(line.speaker_id, speaker_ids, source=line.source)
-            rows.append(
-                TranscriptLine(
-                    line.start,
-                    line.label,
-                    line.text,
-                    color=color,
-                    source=line.source,
-                    layout=layout,
-                ).row()
-            )
+        rows.extend(self._rows.rows(lines, speaker_ids, layout=layout))
         if marker is not None:
             rows.append(Text(f"── {marker} ──", style="#6ee69a", no_wrap=True))
+        if relabel_error:
+            rows.append(
+                Text(f"Relabeling failed: {relabel_error}. Live labels kept.", style="#ffaf5f")
+            )
         if not lines and message:
             rows.append(Text(message))
         self.query_one("#transcript", TranscriptScroll).update_content(Group(*rows))
 
-    def _lines(self, session) -> tuple:
+    def _transcript_data(self, session) -> tuple[tuple, tuple]:
+        """Return the sorted lines and speaker rows; compute them again only on a change."""
+        key = (self._source_lines(session), getattr(session, "speakers", ()))
+        if self._transcript_data_key != key:
+            self._transcript_data_key = key
+            lines = self._lines(session)
+            self._transcript_data_value = (lines, self._speaker_rows(session, lines))
+        return self._transcript_data_value
+
+    def _source_lines(self, session) -> tuple:
         if session is None:
             return ()
         if self._saved_lines is not None and self._saved_lines[0] == session.path.name:
-            lines = self._saved_lines[1]
-        else:
-            lines = session.lines
-        return tuple(sorted(lines, key=lambda line: line.start))
+            return tuple(self._saved_lines[1])
+        return tuple(session.lines)
+
+    def _lines(self, session) -> tuple:
+        return tuple(sorted(self._source_lines(session), key=lambda line: line.start))
 
     @staticmethod
     def _speaker_rows(session, lines: tuple) -> tuple[tuple[str, str, float], ...]:
@@ -401,6 +432,9 @@ class RecordScreen(HubScreen):
         if failed:
             noun = "phrase" if failed == 1 else "phrases"
             card.append(f"\n! {failed} {noun} failed", style="#ffaf5f")
+        unsaved = getattr(session, "audio_failed_sources", ()) if session is not None else ()
+        if unsaved:
+            card.append(f"\n! {', '.join(unsaved)} audio not saved", style="#ffaf5f")
         if self._rename_busy(session):
             card.append("\n\nrename busy", style="#8b93a1")
         return card
@@ -425,6 +459,9 @@ class RecordScreen(HubScreen):
         self._metered = session
         if session is None:
             return
+        floor = self.app.current_config().feedback.spectrum_floor_dbfs
+        for meter in self.meters.values():
+            meter.model.set_floor(floor)
         self._session_devices[session.path.name] = self.mic_device()
         add_listener = getattr(session, "add_block_listener", None)
         if add_listener is not None:
@@ -455,7 +492,7 @@ class RecordScreen(HubScreen):
             status = "Resuming recording..." if session.paused else "Pausing recording..."
             self._run_live_action(action, status=status, name="toggle-recording")
             return
-        if app.config_editor is not None and app.config_editor.read_only:
+        if app.config_editor.read_only:
             app.notify("Fix the invalid configuration before recording.", severity="error")
             return
         app.activity_status = "Starting recording..."
@@ -510,6 +547,8 @@ class RecordScreen(HubScreen):
         session = self.saved_session
         if session is not None and not self.app.services.recording:
             self.app.show_library(session.path.name)
+            if self._failed_stops():
+                self.app.services.show_next_failed_stop()
 
     def action_choose_device(self) -> None:
         if self.app.services.recording or self.app.activity_status is not None:
@@ -521,12 +560,24 @@ class RecordScreen(HubScreen):
         services = app.services
         devices = await asyncio.to_thread(services.input_devices)
         setting = app.current_config().audio.input_device
-        dialog = DeviceDialog(
-            devices,
-            setting=str(setting) if setting else "Default input",
-            current=services.next_device,
+        choices: tuple[tuple[str | None, str | None], ...] = ((None, None), *devices)
+        current = services.next_device
+        # A chosen device that is gone stays selected, so Enter cannot replace it by accident.
+        unavailable = None
+        if current is not None and all(value != current for value, _ in devices):
+            unavailable = len(choices)
+            label = f"{services.next_device_label or current} · unavailable"
+            choices = (*choices, (current, label))
+        selected = next((index for index, (value, _) in enumerate(choices) if value == current), 0)
+        labels = tuple(
+            label or f"Settings default · {setting or 'Default input'}" for _, label in choices
         )
-        app.push_screen(dialog, self._choose_device)
+        dialog = ChoiceDialog(
+            "Input device", labels, selected, label="Use device", unavailable=unavailable
+        )
+        app.push_screen(
+            dialog, lambda index: self._choose_device(choices[index] if index is not None else None)
+        )
 
     def _choose_device(self, choice: tuple[str | None, str | None] | None) -> None:
         if choice is None:
@@ -570,20 +621,8 @@ class RecordScreen(HubScreen):
         app.activity_status = None
         app.refresh_view()
 
-    def _transcript(self) -> TranscriptScroll:
-        return self.query_one("#transcript", TranscriptScroll)
-
     def action_scroll_line(self, offset: int) -> None:
         self._transcript().scroll_line(offset)
-
-    def action_scroll_page(self, offset: int) -> None:
-        self._transcript().scroll_page(offset)
-
-    def action_scroll_home(self) -> None:
-        self._transcript().scroll_top()
-
-    def action_scroll_end(self) -> None:
-        self._transcript().scroll_bottom()
 
     def action_toggle_view(self) -> None:
         self.split = not self.split
@@ -632,6 +671,25 @@ class RecordScreen(HubScreen):
             return
         self.app.refresh_view()
 
+    def refresh_saved(self) -> None:
+        session = self.saved_session
+        if session is not None and not self._stopping(session):
+            self.app.run_worker(
+                self._read_saved(session.path.name), group="record-saved", exclusive=True
+            )
+
+    async def _read_saved(self, session_id: str) -> None:
+        try:
+            detail = await asyncio.to_thread(self.app.services.session_store.read, session_id)
+        except (OSError, ValueError, RuntimeError) as exc:
+            log_failure(log, logging.ERROR, "hub: session_detail_failed", exc, safe=True)
+            self.app.notify("Could not read the saved session.", severity="error")
+        else:
+            saved = self.saved_session
+            if saved is not None and saved.path.name == session_id:
+                self._saved_lines = (session_id, detail.lines)
+                self.app.refresh_view()
+
     def _rename_saved(self, session_id: str, value: tuple[str, str] | None) -> None:
         if value is None:
             return
@@ -646,12 +704,11 @@ class RecordScreen(HubScreen):
         store = app.services.session_store
         try:
             await asyncio.to_thread(store.rename_speaker, session_id, speaker_id, name)
-            detail = await asyncio.to_thread(store.read, session_id)
         except (OSError, ValueError, RuntimeError) as exc:
             log_failure(log, logging.ERROR, "hub: speaker_rename_failed", exc, safe=True)
             app.notify(f"Could not rename the speaker: {exc}", severity="error")
         else:
-            self._saved_lines = (session_id, detail.lines)
+            self.refresh_saved()
             log.info(fmt_event("hub", "speaker_renamed", session_id=session_id))
         finally:
             app.release_session(session_id, owner)

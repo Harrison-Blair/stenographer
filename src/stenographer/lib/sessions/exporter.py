@@ -16,7 +16,8 @@ SUPPORTED_FORMATS = frozenset({"md", "jsonl", "srt", "txt"})
 _FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
-def _timestamp(seconds: float) -> str:
+def format_timestamp(seconds: float) -> str:
+    """Format seconds as a whole-second timestamp."""
     whole = max(0, int(seconds))
     hours, remainder = divmod(whole, 3600)
     minutes, seconds_part = divmod(remainder, 60)
@@ -33,8 +34,6 @@ def _srt_timestamp(seconds: float) -> str:
 
 def render_transcript(lines: Iterable[TranscriptLine], format: str) -> str:
     """Render transcript lines as Markdown, JSONL, SRT, or plain text."""
-    if format not in SUPPORTED_FORMATS:
-        raise ValueError(f"unsupported transcript format: {format}")
     rows = tuple(lines)
     if format == "jsonl":
         return "".join(json.dumps(asdict(line), ensure_ascii=False) + "\n" for line in rows)
@@ -49,10 +48,12 @@ def render_transcript(lines: Iterable[TranscriptLine], format: str) -> str:
         return "\n\n".join(cues) + ("\n" if cues else "")
     if format == "md":
         output = ["# Transcript", ""]
-        output.extend(f"[{_timestamp(line.start)}] **{line.label}:** {line.text}" for line in rows)
+        output.extend(
+            f"[{format_timestamp(line.start)}] **{line.label}:** {line.text}" for line in rows
+        )
         return "\n".join(output) + "\n"
     return "".join(
-        f"[{_timestamp(line.start)}] {line.label}: {' '.join(line.text.splitlines())}\n"
+        f"[{format_timestamp(line.start)}] {line.label}: {' '.join(line.text.splitlines())}\n"
         for line in rows
     )
 

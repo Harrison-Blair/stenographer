@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """``doctor`` rendering: the human half of the capability gate.
 
-The gate itself — :class:`~stenographer.lib.diagnostics.capability_result.Capabilities`,
-``REQUIRED``, :func:`~stenographer.lib.diagnostics.capabilities.probe` and
-:func:`~stenographer.lib.diagnostics.capabilities.missing_required` — is core
-(``stenographer.lib.diagnostics.capabilities``) because the daemon's startup gate shares it.
+The gate itself — :class:`~stenographer.cli.shared.capabilities.Capabilities`,
+``REQUIRED``, :func:`~stenographer.cli.shared.capabilities.probe` and
+:func:`~stenographer.cli.shared.capabilities.missing_required` — is shared
+(``stenographer.cli.shared.capabilities``) because the daemon's startup gate uses it too.
 What lives here is the report layout: the sentence frames and the pure
 :func:`render`, plus :func:`run` for the subcommand. Every host-specific
 word in it — capability labels, fix hints, the service noun and its installer
@@ -15,24 +15,25 @@ The report also names both log files and replays both log files' recent
 complaints, so a report can be pasted from one command. Reading a log is the
 only I/O this module does on its own: :func:`run` turns each file into a
 :class:`LogStatus` — a missing or unreadable log is a fact to print, never a
-failure — and the classification (:func:`tail_errors`) and the tolerant decode
-(:func:`decode_tail`) stay pure.
+failure — and the classification (:func:`tail_errors`) stays pure.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from stenographer.cli.doctor.log_status import LogStatus
-from stenographer.cli.shared.capabilities import Capabilities
-from stenographer.cli.shared.capability_probe import probe
+from stenographer.cli.shared.capabilities import (
+    REQUIRED,
+    Capabilities,
+    missing_required,
+    probe,
+)
 from stenographer.lib.diagnostics import additional_checks
 from stenographer.lib.diagnostics.additional_checks import DiagnosticCheck
-from stenographer.lib.diagnostics.capabilities import REQUIRED, missing_required
 from stenographer.lib.transcribe.bark_download import MODEL_NAME
 from stenographer.overlay.capabilities.models import OverlayCapability
-from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
 if TYPE_CHECKING:
     import pathlib
@@ -41,6 +42,25 @@ if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.host_guidance import HostGuidance
     from stenographer.overlay.platform.guidance import OverlayGuidance
+
+
+@dataclass(frozen=True, slots=True)
+class LogStatus:
+    """One log file as the report sees it.
+
+    The three states a report must tell apart: ``size is None`` means the file
+    does not exist, ``readable=False`` means it exists but this user may not
+    open it (a daemon once started under another account leaves exactly that),
+    and otherwise ``tail`` holds its recent complaints.
+    """
+
+    name: str
+    path: pathlib.Path
+    size: int | None
+    tail: tuple[str, ...] = ()
+    readable: bool = True
+    inspection_error: str | None = None
+
 
 #: Levels worth replaying in the report; DEBUG and INFO are the healthy path.
 _TAIL_LEVELS = frozenset({"WARNING", "ERROR", "CRITICAL"})
@@ -55,8 +75,8 @@ _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _TAIL_WINDOW_BYTES = 256 * 1024
 
 
-def tail_errors(text: str, n: int = 10) -> list[str]:
-    """The last *n* WARNING-or-worse lines of *text*, in file order. PURE.
+def tail_errors(text: str) -> list[str]:
+    """The last ten WARNING-or-worse lines of *text*, in file order. PURE.
 
     The level is read from its column, not searched for: a line reporting a
     handled error at INFO is not a complaint, and a WARNING whose message
@@ -65,21 +85,13 @@ def tail_errors(text: str, n: int = 10) -> list[str]:
     the fragment left at the head of a tail window — and is dropped.
     """
     lines = [line for line in text.splitlines() if _level_of(line) in _TAIL_LEVELS]
-    return lines[-n:]
-
-
-def decode_tail(data: bytes) -> str:
-    """Decode a tail window that may begin mid-character. PURE.
-
-    The window is cut at a byte offset, so its first bytes can be the tail of a
-    multi-byte character. Replacing them keeps the whole log readable at the
-    cost of one glyph in a line that is dropped as a fragment anyway.
-    """
-    return data.decode("utf-8", errors="replace")
+    return lines[-10:]
 
 
 def _log_state(log: LogStatus) -> str:
     """Pure: one parenthetical for a log file's size and reachability."""
+    if log.inspection_error is not None:
+        return f"inspection failed: {log.inspection_error}"
     if log.size is None:
         return "absent"
     return f"{log.size} bytes, unreadable" if not log.readable else f"{log.size} bytes"
@@ -109,8 +121,7 @@ def format_overlay_status(capability: OverlayCapability, guidance: OverlayGuidan
         return guidance.overlay_backend_labels.get(
             capability.backend.value, capability.backend.value
         )
-    reason = capability.reason or UnavailableReason.BACKENDS_UNAVAILABLE
-    hint = guidance.overlay_fix_hints.get(reason, guidance.overlay_fix_hint_default)
+    hint = guidance.overlay_fix_hints.get(capability.reason, guidance.overlay_fix_hint_default)
     return f"unavailable — {hint}"
 
 
@@ -124,6 +135,28 @@ def format_clipboard_restore_status(caps: Capabilities, cfg: Config, guidance: H
         caps.clipboard_backend, guidance.clipboard_fix_hint_default
     )
     return f"unavailable — {hint}"
+
+
+def format_required_capabilities(caps: Capabilities, guidance: HostGuidance) -> list[str]:
+    """Render required capability labels and fixes."""
+    lines = []
+    for name in REQUIRED:
+        ok = bool(getattr(caps, name))
+        label = guidance.capability_labels[name]
+        if name == "clipboard_ok":
+            label = f"{label} ({caps.clipboard_backend})"
+        line = f"  {label}: {'ok' if ok else 'MISSING'}"
+        if not ok:
+            hint = (
+                guidance.clipboard_fix_hints.get(
+                    caps.clipboard_backend, guidance.clipboard_fix_hint_default
+                )
+                if name == "clipboard_ok"
+                else guidance.capability_fix_hints[name]
+            )
+            line += f" — {hint}"
+        lines.append(line)
+    return lines
 
 
 def render(
@@ -148,22 +181,7 @@ def render(
         f"hotkey cancel binding: {cfg.hotkey.cancel_binding or '<disabled>'}",
         "",
     ]
-    for name in REQUIRED:
-        ok = bool(getattr(caps, name))
-        label = guidance.capability_labels[name]
-        if name == "clipboard_ok":
-            label = f"{label} ({caps.clipboard_backend})"
-        line = f"  {label}: {'ok' if ok else 'MISSING'}"
-        if not ok:
-            hint = (
-                guidance.clipboard_fix_hints.get(
-                    caps.clipboard_backend, guidance.clipboard_fix_hint_default
-                )
-                if name == "clipboard_ok"
-                else guidance.capability_fix_hints[name]
-            )
-            line += f" — {hint}"
-        lines.append(line)
+    lines.extend(format_required_capabilities(caps, guidance))
     player = caps.cue_player or "none (sound cues disabled)"
     lines.append(f"  audio player: {player}")
     service = format_service_status(caps.service_enabled, caps.service_active, guidance)
@@ -178,7 +196,7 @@ def render(
                 "live_models_cached": "live models cached",
                 "ffmpeg": "ffmpeg",
                 "python_venv": "python3 venv",
-            }.get(check.check_id, check.check_id)
+            }[check.check_id]
             status = "ok" if check.status == "ok" else "WARN"
             line = f"  {label}: {status} — {check.detail}"
             if check.fix:
@@ -192,7 +210,7 @@ def render(
             lines.extend(f"    {line}" for line in log.tail)
     lines.append("")
     missing = missing_required(caps)
-    labels = [guidance.capability_labels.get(name, name) for name in missing]
+    labels = [guidance.capability_labels[name] for name in missing]
     if missing:
         lines.append(f"missing required capabilities: {', '.join(labels)}")
     else:
@@ -234,12 +252,16 @@ def _log_status(name: str, path: pathlib.Path) -> LogStatus:
     """
     try:
         size = path.stat().st_size
-    except OSError:
+    except FileNotFoundError:
         return LogStatus(name, path, None)
+    except OSError as exc:
+        return LogStatus(name, path, None, inspection_error=str(exc))
     try:
         with path.open("rb") as handle:
             handle.seek(max(0, size - _TAIL_WINDOW_BYTES))
             window = handle.read()
     except OSError:
         return LogStatus(name, path, size, readable=False)
-    return LogStatus(name, path, size, tuple(tail_errors(decode_tail(window))))
+    # A byte window can start in the middle of a UTF-8 character.
+    text = window.decode("utf-8", errors="replace")
+    return LogStatus(name, path, size, tuple(tail_errors(text)))

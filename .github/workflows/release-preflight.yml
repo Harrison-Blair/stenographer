@@ -55,6 +55,8 @@ jobs:
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
             > "${RUNNER_TEMP}/releases.json"
+      - name: Fetch current tags
+        run: git fetch --tags origin
       - name: Check release versions
         id: guard
         run: |
@@ -75,17 +77,6 @@ jobs:
         env:
           VERSION: ${{ steps.guard.outputs.version }}
         run: .venv/bin/python scripts/release_notes.py check "${VERSION}" CHANGELOG.md
-      - name: Reject a conflicting Git tag
-        env:
-          TAG: ${{ steps.guard.outputs.tag }}
-          VERSION: ${{ steps.guard.outputs.version }}
-        run: |
-          git fetch --tags origin
-          if git show-ref --verify --quiet "refs/tags/${TAG}" || \
-             git show-ref --verify --quiet "refs/tags/${VERSION}"; then
-            echo "error: a Git tag already exists for ${TAG}" >&2
-            exit 1
-          fi
 
   python-distributions:
     name: release distribution check

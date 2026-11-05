@@ -37,7 +37,7 @@ def _assert_private_helper_logs_only_its_own_file(command: tuple[str, ...], tmp_
     )
 
     assert result.returncode == 0, result.stderr
-    response = decode_message(result.stdout)
+    response = decode_message(result.stdout.encode())
     assert isinstance(response, ReadyMessage | UnavailableMessage)
     if isinstance(response, ReadyMessage):
         assert response.backend in (Backend.LAYER_SHELL, Backend.XWAYLAND)

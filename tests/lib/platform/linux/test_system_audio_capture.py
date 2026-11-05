@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import runpy
 import sys
 import threading
 import time
@@ -17,9 +16,37 @@ import pytest
 from stenographer.lib.platform.errors import SystemAudioCaptureError
 from stenographer.lib.platform.linux.system_audio import LinuxSystemAudioCapture
 
-_PW_LINK_FIXTURE = runpy.run_path(str(Path(__file__).parents[3] / "fixtures" / "pw_link_list.py"))[
-    "PW_LINK_LIST"
-]
+_PW_LINK_FIXTURE = """studio:monitor_AUX0
+  |-> stenographer-system-capture:input_FL
+studio:monitor_AUX1
+  |-> stenographer-system-capture:input_FR
+studio:playback_AUX0
+  |<- spotify:output_FL
+  |<- Firefox:output_FL
+studio:playback_AUX1
+  |<- spotify:output_FR
+  |<- Firefox:output_FR
+microphone:capture_FL
+  |-> stenographer-mic:input_FL
+microphone:capture_FR
+  |-> stenographer-mic:input_FR
+stenographer-system-capture:input_FL
+  |<- studio:monitor_AUX0
+stenographer-system-capture:input_FR
+  |<- studio:monitor_AUX1
+spotify:output_FL
+  |-> studio:playback_AUX0
+spotify:output_FR
+  |-> studio:playback_AUX1
+stenographer-mic:input_FL
+  |<- microphone:capture_FL
+stenographer-mic:input_FR
+  |<- microphone:capture_FR
+Firefox:output_FL
+  |-> studio:playback_AUX0
+Firefox:output_FR
+  |-> studio:playback_AUX1
+"""
 
 _CAPTURE_SCRIPT = f"""#!{sys.executable}
 import json
@@ -160,35 +187,23 @@ def test_capture_reports_player_exit_before_link(tmp_path, monkeypatch):
         LinuxSystemAudioCapture().start(lambda block: None)
 
 
-def test_capture_reports_wrong_monitor_link_and_stops_without_emitting_audio(tmp_path, monkeypatch):
-    _install_tools(
-        tmp_path,
-        monkeypatch,
-        link_output=(
+@pytest.mark.parametrize(
+    "link_output",
+    [
+        pytest.param(
             "microphone:capture_FL\n"
             "  |-> stenographer-system-capture:input_FL\n"
             "microphone:capture_FR\n"
-            "  |-> stenographer-system-capture:input_FR\n"
+            "  |-> stenographer-system-capture:input_FR\n",
+            id="wrong_monitor",
         ),
-    )
-    capture = LinuxSystemAudioCapture()
-    blocks: list[np.ndarray | SystemAudioCaptureError] = []
-
-    try:
-        with pytest.raises(SystemAudioCaptureError, match="not linked to the sink monitor"):
-            capture.start(blocks.append)
-    finally:
-        capture.stop()
-
-    assert blocks == []
-    assert capture._process is None
-    process_id = int((tmp_path / "pid.txt").read_text())
-    with pytest.raises(ProcessLookupError):
-        os.kill(process_id, 0)
-
-
-def test_capture_reports_missing_links_after_bounded_wait(tmp_path, monkeypatch):
-    _install_tools(tmp_path, monkeypatch, link_output="")
+        pytest.param("", id="no_links"),
+    ],
+)
+def test_capture_without_a_monitor_link_stops_after_a_bounded_wait_and_emits_no_audio(
+    tmp_path, monkeypatch, link_output
+):
+    _install_tools(tmp_path, monkeypatch, link_output=link_output)
     capture = LinuxSystemAudioCapture()
     blocks: list[np.ndarray | SystemAudioCaptureError] = []
 
@@ -202,6 +217,7 @@ def test_capture_reports_missing_links_after_bounded_wait(tmp_path, monkeypatch)
 
     assert 1.5 <= elapsed < 3
     assert blocks == []
+    assert capture._process is None
     process_id = int((tmp_path / "pid.txt").read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(process_id, 0)

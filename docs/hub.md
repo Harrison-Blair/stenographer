@@ -8,6 +8,10 @@ terminal, the command prints help instead. The hub is a local, keyboard-driven
 interface with three screens. The daemon and existing commands keep their
 current behavior.
 
+While the hub is open, only the hub writes to the terminal. Log lines and the
+output of its child processes stay off the screen, and the log file still
+receives every record.
+
 ## Screens and keys
 
 Press `1`, `2`, or `3`, or click a row of the navigation list, to show a
@@ -19,8 +23,8 @@ screen. Keys `4` to `6` do nothing.
 | `2` | Library | Review saved sessions, and transcribe audio files. |
 | `3` | Settings | Edit settings by tab, and run the system checks. |
 
-Each screen has a sidebar and one row of key hints at the bottom. The hint row
-ends with `? help · q quit`. Press `?` to open a help overlay that lists every
+Each screen has a sidebar and one row of key hints at the bottom. Settings values wrap within their control column. The hint row
+starts with `? help · q quit`. Press `?` to open a help overlay that lists every
 key of the current screen; press `?` or `escape` to close it. Each control on
 screen prints its key, for example `[r] Run again`, and a click on it does the
 same as the key.
@@ -59,13 +63,15 @@ session is active, `space` pauses or resumes it. Recording continues when you
 change screens. The hub runs recording start, stop, and save work in the
 background so the interface can remain responsive.
 
-Press `q` or `ctrl+c` to quit. When a recording is active, the hub asks "Stop
-recording and save before quitting?" Press `y`, `q`, or `ctrl+c` (or click
-`[y] Save and quit`) to stop and save; press `n` or `escape` (or click
-`[n] Keep recording`) to keep recording. When a file job is running, the hub
-asks before it cancels the job and quits. A cancelled file job does not leave
-a partial output file. If a start, stop, or save operation is still in
-progress, wait for its status to finish before you send another quit key.
+Press `q` or `ctrl+c` to quit. When work is active, the hub asks one question
+that lists each action: stop and save the recording, skip the running relabel,
+and cancel the running file job. Press `y`, `q`, or `ctrl+c` (or click the
+confirm button) to run the actions in order and quit; press `n` or `escape` (or
+click the cancel button) to keep working. If a recording cannot save or the
+file job cannot cancel, a notice shows the error and the hub stays open. A
+cancelled file job does not leave a partial output file. If a start, stop, or
+save operation is still in progress, wait for its status to finish before you
+send another quit key.
 
 If Settings has unsaved changes, the hub asks whether to save, discard, or stay
 before it leaves Settings or quits. A tab change inside Settings keeps the
@@ -86,6 +92,7 @@ depend on colour.
 | Recording | `● REC`, the elapsed clock, `started HH:MM`, `[enter] ■ Stop & save`, `[space] Ⅱ Pause` | `enter` stop & save · `space` pause · `m` mic · `s` system · `v` view · `r` rename |
 | Paused | `Ⅱ PAUSED` and `[space] ▶ Resume` | as Recording, with `space` resume |
 | Saved | `■ SAVED`, the final duration, `saved HH:MM`, the session ID, `[space] ● Record again`, `[o] Open in Library` | `space` record again · `o` open in Library · `d` device · `m` mic · `s` system · `v` view · `r` rename |
+| Save failed | `! SAVE FAILED`, the error, the session ID, `[space] ● Record again`, `[o] Open in Library` | as Saved, without `r` rename |
 
 | Key | Action |
 | --- | --- |
@@ -107,12 +114,16 @@ busy: `[r] Rename… busy` shows in the speakers card, and `r` shows the notice
 several stopped sessions can relabel at the same time. When the pass ends, the
 transcript ends with a marker line such as
 `── saved · 31 phrases · mic.flac 88 MB · system.flac 0.2 MB ──` (only the
-audio files that exist). Press `o` to show the session in Library.
+audio files that exist). Press `o` to show the session in Library. If the save
+fails, also for an older session that was still saving, a notice shows the error
+and the REC panel shows `! SAVE FAILED` with that session until the next recording
+starts; `o` still shows what the session folder holds. If several saves fail, the
+panel lists each error and session, and each press of `o` shows the next session.
 
-If you quit while a relabel pass runs, the hub asks "Relabel is still running.
-Quit and keep the live labels?" Press `y` to skip each pass; the hub waits until
-each session has saved its files, then quits. The saved session keeps the
-labels that it had during the recording. Press `n` to keep the hub open.
+If you quit while a relabel pass runs, the quit question lists it. Press `y` to
+skip each pass; the hub waits until each session has saved its files, then
+quits. The saved session keeps the labels that it had during the recording.
+Press `n` to keep the hub open.
 
 Each meter shows 18 frequency bands in 8 rows, the band labels
 `100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS, and a
@@ -125,10 +136,11 @@ of the next recording; a source that is off shows `off · press m to enable` (or
 `s`). System audio captures the current output mix, not separate applications.
 
 Press `d` (or click `[d] change device…`) while no recording runs to choose the
-input device. The dialog lists each input device and `Settings default`. The
-choice shows in the MIC meter and applies to the next recordings until the hub
-quits. It does not change `config.toml`; the Audio tab of Settings edits the
-saved device.
+input device. The dialog lists each input device and `Settings default`. A
+chosen device that is gone shows as `unavailable` and stays selected until you
+choose another row. The choice shows in the MIC meter and applies to the next
+recordings until the hub quits. It does not change `config.toml`; the Audio tab
+of Settings edits the saved device.
 
 The transcript opens in mixed view, with one time-ordered stream and speaker
 labels. Press `v` (or click `[v] ▶ mixed  split`) to switch to split view,
@@ -140,9 +152,11 @@ the bottom. If you scroll up, refreshes do not move the view; press `end` or
 scroll to the bottom to follow new lines again.
 
 The `speakers` card lists each speaker with its talk time, the count of failed
-phrases when there are any, and `[r] Rename…`. Press `r` (or click the card) to
-open the Rename speaker dialog: choose the speaker, type the new name, and press
-`enter` (or click `[enter] Rename`); `escape` cancels. During a recording, the
+phrases when there are any, a `! mic audio not saved` line when a source's audio
+cannot be written, and `[r] Rename…`. After such a failure the source keeps
+transcribing, its audio file ends at the failure, and the recording still saves
+its transcript. Press `r` (or click the card) to open the Rename speaker dialog:
+choose the speaker, type the new name, and press `enter` (or click `[enter] Rename`); `escape` cancels. During a recording, the
 rename changes the live labels. On a saved session, the rename writes a new
 transcript revision of that session.
 
@@ -217,7 +231,7 @@ Each renamed label can go to only one cluster; when a label appears in several
 clusters, it stays with the cluster with the most shared speech time. The pass
 numbers clusters without a user name `Speaker 1`, `Speaker 2`, and so on, in
 order of first appearance in the session. If relabeling fails, the live labels
-remain and the hub shows the reason. Rename several speakers to the same name
+remain and the saved Record screen shows the reason. Rename several speakers to the same name
 to merge their displayed labels; this does not change their speaker IDs. The
 clustering threshold is 0.50; it was tested on only three clips, so labels are
 not reliable identification.
@@ -243,8 +257,8 @@ created only for sources that were active during the session:
 - `session.json` records the current transcript revision. A session recorded
   with microphone diarization has it from the start, with `"diarize_mic": true`.
 
-These files are user data that you request when you record. The hub writes
-transcript text and audio only to this session folder. Logs and analytics do
+These files are user data that you request when you record. The hub recording writes audio and transcripts to the session folder. A requested
+export writes a transcript to the selected folder. Logs and analytics do
 not contain transcript text or audio. See the [privacy
 notes](usage.md#understand-privacy-and-network-access) for other Stenographer
 network behavior.
@@ -257,8 +271,9 @@ not finished, newest first. Its columns are `date`, `dur`, `kind` (`rec` or
 `file`), `spk` (speaker count), and `labels`:
 
 - **Recording:** `labels` is `live` for live speaker labels, `relabeled` after
-  the relabel pass or a re-diarize, or `! interrupted` when the recording
-  stopped without a clean save.
+  the relabel pass or a re-diarize, a revision method such as `rename` or
+  `re-transcribe`, or `! interrupted` when the recording stopped without a
+  clean save.
 - **File session:** `labels` is the name of the source file.
 - **File job:** `dur` shows `queued` or the percent done, and `labels` shows the
   source file name. A failed job shows `× failed`; press `delete` to remove its
@@ -272,9 +287,10 @@ the selected entry. The active recording does not appear until it is saved.
 The context card shows the entry count, the audio size, and the sessions
 folder; the navigation row shows the entry count.
 
-Press `/` to search titles and transcripts; the search ignores case and runs in
-the background. A job row matches by its source file name. Press `escape` to
-clear the search.
+Press `/` to search session IDs, start times, file names, and transcripts; the
+search ignores case and runs in the background. Recording times include the
+local date and time shown in the list and the UTC timestamp. A job row matches
+by its source file name. Press `escape` to clear the search.
 
 The detail shows the date, time, duration, and kind, the label state, each
 speaker's talk time, the microphone and system activity of a recording, and
@@ -286,13 +302,16 @@ the transcript. Each action is a button that prints its key:
 | `up` / `down` | Select the previous or next entry. |
 | `/` | Search titles and transcripts. |
 | `escape` | Clear the search. |
-| `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. |
+| `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. On another session, `p` stops the audio that plays and starts that session. A notice shows when the player exits with an error. |
 | `r` | Rename a speaker of the session. |
 | `d` | Re-diarize the session. A file session cannot: use Re-transcribe. |
 | `t` | Re-transcribe the session. |
 | `x` | Export the transcript. |
 | `delete` | Delete the session after confirmation. On a queued or running job, cancel it after confirmation. |
 | `pageup` / `pagedown`, `home` / `end` | Scroll the transcript. |
+
+For delete and job cancellation confirmations, press `y` to confirm or `n`
+to keep the session or job. `q` and `ctrl+c` do not confirm these prompts.
 
 While a re-diarize, re-transcribe, rename, delete, or file job changes a
 session, that session is busy: its Rename, Re-diarize, Re-transcribe, and
@@ -303,10 +322,12 @@ cancels the job.
 `x` opens the Export dialog. Press `tab` or click a format to choose `md`,
 `jsonl`, `srt`, or `txt`, and type the folder (default `~/Documents`). Press
 `enter` to export or `escape` to cancel. The notice shows the path of the
-exported file.
+exported file. If export fails, the dialog keeps the folder and format so you can retry.
 
 Re-diarization and re-transcription write new transcript revisions and keep
-previous revisions. Re-labeling uses the same speaker similarity limits as the
+previous revisions. If an existing `session.json` is unreadable or invalid,
+the revision fails to preserve its metadata. Older sessions without that file
+can still be revised. Re-labeling uses the same speaker similarity limits as the
 Record screen. Re-diarization relabels microphone lines as `Room N` speakers only
 for a session recorded with microphone diarization (`"diarize_mic": true` in its
 `session.json`). For other sessions, including older ones, it relabels system
@@ -318,8 +339,7 @@ Press `n` or click `[n] + Transcribe a file…` to open the Transcribe a file
 dialog. It has a file browser and the job options:
 
 - The browser starts in your home folder. It lists `..`, the folders, and the
-  supported audio files of the current folder with their duration; names that
-  start with a dot are hidden. Press `up` and `down` (or click a row) to select
+  supported audio files of the current folder, with durations when soundfile can determine them. Hidden folders are listed; search with a leading dot to show hidden audio files. If a folder cannot be read, the browser shows the reason and retains `..` for navigation. Press `up` and `down` (or click a row) to select
   an entry. Press `enter` on a folder to open it. Press `/` to search names in
   the current folder; `escape` clears the search.
 - **Separate speakers** (`s`): identify and label speakers. On by default.
@@ -330,8 +350,9 @@ dialog. It has a file browser and the job options:
   default.
 
 Press `enter` on a file (or click `[enter] Transcribe`) to queue one job with
-these options; press `escape` (or click `[esc] Cancel`) to close the dialog.
-The Library shows the job at once and selects it: a new file row, or the
+these options; `escape` clears an open search first and otherwise closes the dialog.
+Click `[esc] Cancel` to close the dialog.
+If a job fails after producing lines, its failure appears above those lines. The Library shows the job at once and selects it: a new file row, or the
 session row for a revision job. Jobs run one at a time in the background. The
 dialog has no output format or output folder option.
 
@@ -450,7 +471,7 @@ former Doctor and Setup sections. The checks are grouped:
 
 Each row shows a state glyph, the check name, and a short detail that is cut
 to fit: `✓` pass, `!` warning, `×` failure. The detail pane shows the
-selected check with its state word, what the check looks at, the result,
+selected check with its state word, what the check looks at, the result, fix guidance when available,
 `checked HH:MM` and the related path when one applies, and the buttons
 `[f] Fix: …` (for a warning or failure that has a fix), `[t] Test: …` (when
 the area has a test), `[l] Open log`, and `[c] Copy report`.
@@ -466,7 +487,6 @@ no transcript text.
 | Key | Action |
 | --- | --- |
 | `up` / `down` | Select a check. |
-| `enter` | Show or hide how to fix the selected check. |
 | `r` | Run the checks again. |
 | `f` | Fix: open the related Settings tab and row, or the Quick setup or Models dialog. |
 | `t` | Test the area of the selected check. |
@@ -475,6 +495,8 @@ no transcript text.
 | `shift+q` | Open Quick setup. |
 | `m` | Open Models. |
 | `shift+d` | Open Defaults. |
+
+A test result stays with its check, including while it is running. Defaults warns before discarding unsaved settings. Unreadable warning logs are identified in Checks and the copied report.
 
 The microphone test lists the input devices and does not capture audio. The
 sound test plays the preview of the sound pack. The hub does not start or
@@ -490,10 +512,21 @@ The dialogs:
 - **Quick setup** shows input access, microphone, and hotkey with their state
   and current value. Press `t` to test the selected step and `e` to open its
   setting.
-- **Models** shows the speech model and the two voice models as present or
-  missing. Press `enter` on a missing model to download it after a
-  confirmation.
+- **Models** shows the speech model and the two voice models with their size,
+  as present or missing or corrupt. Press `enter` on a missing or corrupt model
+  to download it; a corrupt file is replaced only after the download is
+  verified. One download runs at a time; a notice shows when another one is
+  running.
 - **Defaults** writes the default configuration after a confirmation and
   keeps the current file as a timestamped backup.
 
 The `stenographer setup` and `stenographer doctor` commands do not change.
+
+The Record meters use the saved spectrum floor for each new recording. Returning
+to a saved recording refreshes its transcript; deleting that session clears Record.
+Library shows search progress and read errors, including alongside file jobs.
+Speaker rename waits for the session details to load. File transcription requires
+a valid configuration before the dialog opens; when speaker separation is off,
+the speaker count is disabled and ignored. Switching Settings tabs keeps a valid
+inline edit and stays on the current tab if the value is invalid. Model status
+refreshes when the dialog opens and before or after a download.

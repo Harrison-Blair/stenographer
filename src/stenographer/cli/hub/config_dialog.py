@@ -7,15 +7,14 @@ from typing import ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input
 
+from stenographer.cli.hub.prompt_screen import PromptScreen
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.focus_button import FocusButton
 
 
-class ConfigPrompt(ModalScreen[str | None]):
+class ConfigPrompt(PromptScreen[str | None]):
     """Show a text input or a save/discard prompt and return its choice.
 
     Each choice button prints its key; ``escape`` stays (it returns ``None``).
@@ -28,30 +27,9 @@ class ConfigPrompt(ModalScreen[str | None]):
         Binding("question_mark", "app.help", "Help", show=False),
     ]
     CHOICE_KEYS: ClassVar[dict[str, str]] = {"save": "s", "discard": "d", "stay": "esc"}
-    CSS = """
-    ConfigPrompt {
-        align: center middle;
-        background: transparent;
-    }
-    #config-prompt {
-        width: 72;
-        height: auto;
-        padding: 1 2;
-        border: round $primary;
-        background: transparent;
-    }
-    #config-prompt-message {
-        height: auto;
-        padding-bottom: 1;
-    }
-    #config-prompt-buttons {
-        height: 3;
-        align-horizontal: right;
-    }
-    #config-prompt-buttons Button {
-        margin-left: 1;
-    }
-    """
+    CSS = PromptScreen.PROMPT_CSS + "#config-prompt { width: 72; }"
+    _dialog_id = "config-prompt"
+    _message_id = "config-prompt-message"
 
     def __init__(
         self,
@@ -64,19 +42,18 @@ class ConfigPrompt(ModalScreen[str | None]):
         self._message = message
         self._initial = initial
         self._choices = choices
+        self._buttons_id = "config-prompt-buttons" if choices else None
 
-    def compose(self) -> ComposeResult:
-        with Vertical(id="config-prompt"):
-            yield Static(self._message, id="config-prompt-message", markup=False)
-            if self._initial is not None:
-                yield Input(self._initial, id="config-prompt-input")
-            if self._choices:
-                with Horizontal(id="config-prompt-buttons"):
-                    for label, value in self._choices:
-                        yield FocusButton(
-                            HubButton.label_text(label, self.CHOICE_KEYS.get(value)),
-                            id=f"choice-{value}",
-                        )
+    def prompt_body(self) -> ComposeResult:
+        if self._initial is not None:
+            yield Input(self._initial, id="config-prompt-input")
+
+    def prompt_buttons(self) -> ComposeResult:
+        for label, value in self._choices:
+            yield FocusButton(
+                HubButton.label_text(label, self.CHOICE_KEYS.get(value)),
+                id=f"choice-{value}",
+            )
 
     def on_mount(self) -> None:
         if self._initial is not None:

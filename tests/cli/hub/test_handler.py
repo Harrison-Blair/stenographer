@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import subprocess
 import sys
+import time
 from io import StringIO
 from types import SimpleNamespace
 
@@ -233,3 +237,142 @@ def test_hub_services_start_sessions_with_the_configured_mic_diarization(tmp_pat
     services.stop_recording()
 
     assert choices == [False, True]
+
+
+def _prepare_hub(monkeypatch, tmp_path, run_app):
+    """Run ``cmd_hub`` with defaults, a stub worker, and ``run_app`` as the app."""
+    import stenographer.cli.hub.handler as handler
+    from stenographer.lib.config.defaults import default_toml
+
+    class Transport:
+        def spawn(self, _config, *, on_log):
+            return SimpleNamespace(close=lambda: None)
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(default_toml(), encoding="utf-8")
+    monkeypatch.delenv("STENOGRAPHER_LOG_LEVEL", raising=False)
+    monkeypatch.setattr(handler, "resolve_config_path", lambda: config_path)
+    monkeypatch.setattr(
+        handler, "current_platform", lambda: SimpleNamespace(asr_transport=Transport)
+    )
+    monkeypatch.setattr(handler, "_run_app", run_app)
+    return handler
+
+
+def _wait_for_log_line(path, text):
+    # The listener writes the stderr sink before the file sink, so once the
+    # file holds the line, the stderr sink has already taken its turn.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if path.is_file() and text in path.read_text(encoding="utf-8"):
+            return
+        time.sleep(0.01)
+    pytest.fail(f"log file never received {text!r}")
+
+
+def test_only_the_app_reaches_the_terminal_while_the_hub_runs(monkeypatch, tmp_path, capfd):
+    from stenographer.lib.logging.pipeline import setup_logging, shutdown_logging
+
+    log_file = tmp_path / "stenographer" / "stenographer.log"
+    record_log = logging.getLogger("stenographer.cli.hub.test")
+    child = "import os, sys; print('child-stdout', flush=True); os.write(2, b'child-stderr')"
+
+    def run_app(_services, _editor):
+        record_log.warning("warning-during-app")
+        _wait_for_log_line(log_file, "warning-during-app")
+        subprocess.run([sys.executable, "-c", child], check=True)
+        os.write(1, b"native-fd1")
+        os.write(2, b"native-fd2")
+        # The streams that Textual's driver and its exit report write to.
+        sys.__stderr__.write("app-frame")
+        sys.__stderr__.flush()
+        sys.stderr.write("exit-report")
+        sys.stderr.flush()
+
+    handler = _prepare_hub(monkeypatch, tmp_path, run_app)
+    shutdown_logging()
+    capfd.readouterr()
+    # The real pipeline, bound like the real process: a text stream over fd 2.
+    with open(2, "w", closefd=False) as terminal_stderr:
+        setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=terminal_stderr)
+        try:
+            assert handler.cmd_hub(SimpleNamespace()) == 0
+            during = capfd.readouterr()
+
+            record_log.warning("warning-after-app")
+            _wait_for_log_line(log_file, "warning-after-app")
+            after = capfd.readouterr()
+        finally:
+            shutdown_logging()
+
+    assert during.out == ""
+    assert "warning-during-app" not in during.err
+    assert "child-stderr" not in during.err
+    assert "native-fd2" not in during.err
+    assert "app-frame" in during.err
+    assert "exit-report" in during.err
+    assert "warning-during-app" in log_file.read_text(encoding="utf-8")
+    assert "warning-after-app" in after.err
+
+
+def test_terminal_streams_come_back_when_the_app_crashes(monkeypatch, tmp_path, capfd):
+    def run_app(_services, _editor):
+        raise RuntimeError("app crashed")
+
+    handler = _prepare_hub(monkeypatch, tmp_path, run_app)
+    streams = (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)
+
+    with pytest.raises(RuntimeError, match="app crashed"):
+        handler.cmd_hub(SimpleNamespace())
+
+    assert (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__) == streams
+    capfd.readouterr()
+    os.write(1, b"crash-fd1")
+    os.write(2, b"crash-fd2")
+    captured = capfd.readouterr()
+    assert captured.out == "crash-fd1"
+    assert captured.err == "crash-fd2"
+
+
+class _SlowStderr:
+    """A text stream over fd 2 that makes the logging listener lag behind its queue."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text):
+        time.sleep(0.3)
+        return self._stream.write(text)
+
+    def flush(self):
+        self._stream.flush()
+
+
+def test_records_queued_around_the_app_land_on_their_own_side(monkeypatch, tmp_path, capfd):
+    from stenographer.lib.logging.pipeline import setup_logging, shutdown_logging
+
+    record_log = logging.getLogger("stenographer.cli.hub.test")
+
+    def run_app(_services, _editor):
+        # Outlast the stream delay: a lagging startup record must not land here.
+        time.sleep(0.5)
+        record_log.warning("queued-by-the-app")
+
+    handler = _prepare_hub(monkeypatch, tmp_path, run_app)
+    shutdown_logging()
+    capfd.readouterr()
+    with open(2, "w", closefd=False) as terminal_stderr:
+        setup_logging(
+            env={"XDG_STATE_HOME": str(tmp_path)},
+            home=tmp_path,
+            stderr=_SlowStderr(terminal_stderr),
+        )
+        try:
+            record_log.warning("queued-before-the-app")
+            assert handler.cmd_hub(SimpleNamespace()) == 0
+        finally:
+            shutdown_logging()
+
+    written = capfd.readouterr().err
+    assert "queued-before-the-app" in written
+    assert "queued-by-the-app" not in written

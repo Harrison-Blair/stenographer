@@ -11,6 +11,7 @@ from textual.widgets import Input
 
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.sidebar import Sidebar
+from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -28,7 +29,6 @@ class HubScreen(Screen):
     still act and drops ``? help · q quit`` (README §4.6).
     """
 
-    SCREEN_NAME = ""
     SCREEN_TITLE = ""
     AUTO_FOCUS = ""
     ready = False
@@ -71,6 +71,18 @@ class HubScreen(Screen):
 
     def on_screen_resume(self) -> None:
         self.app.refresh_view()
+
+    def _transcript(self) -> TranscriptScroll:
+        return self.query_one(TranscriptScroll)
+
+    def action_scroll_page(self, offset: int) -> None:
+        self._transcript().scroll_page(offset)
+
+    def action_scroll_home(self) -> None:
+        self._transcript().scroll_top()
+
+    def action_scroll_end(self) -> None:
+        self._transcript().scroll_bottom()
 
     def on_row_selected(self, event: RowSelected) -> None:
         if event.control.id == "sidebar":

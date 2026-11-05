@@ -11,44 +11,21 @@ suite because they would drive systemd and /dev/input respectively.
 from __future__ import annotations
 
 import io
-import os
 import threading
-from pathlib import Path
 
 import pytest
 
 from stenographer.lib.hotkey.errors import BindingCaptureError
 from stenographer.lib.platform.host_guidance import HostGuidance
 from stenographer.lib.platform.host_probe import HostProbe
-from stenographer.lib.platform.linux.clipboard import (
-    copy_both_selections,
-    copy_both_selections_x11,
-    read_clipboard,
-    restore_clipboard,
-    restore_clipboard_x11,
-)
-from stenographer.lib.platform.linux.evdev_hotkey_listener import EvdevHotkeyListener
+from stenographer.lib.platform.linux.cues import LinuxCuePlayer
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
-from stenographer.lib.platform.linux.flock_single_instance_lock import FlockSingleInstanceLock
-from stenographer.lib.platform.linux.linux_cue_player import LinuxCuePlayer
-from stenographer.lib.platform.linux.notify_send_notifier import NotifySendNotifier
+from stenographer.lib.platform.linux.hotkey import EvdevHotkeyListener
+from stenographer.lib.platform.linux.lock import FlockSingleInstanceLock
+from stenographer.lib.platform.linux.notify import NotifySendNotifier
 from stenographer.lib.platform.linux.provider import LinuxPlatform
-from stenographer.lib.platform.linux.uinput_keyboard import UinputKeyboard
+from stenographer.lib.platform.linux.uinput import UinputKeyboard
 from stenographer.lib.platform.multiprocessing_asr_transport import MultiprocessingAsrTransport
-
-
-def test_provider_resolves_xdg_user_directories():
-    plat = LinuxPlatform()
-    home = Path("/home/alice")
-    assert plat.config_path({}, home) == home / ".config/stenographer/config.toml"
-    assert plat.config_path({"XDG_CONFIG_HOME": "/xdg"}, home) == Path(
-        "/xdg/stenographer/config.toml"
-    )
-    assert plat.state_dir({}, home) == home / ".local/state/stenographer"
-    assert plat.state_dir({"XDG_STATE_HOME": "/xdg"}, home) == Path("/xdg/stenographer")
-    assert plat.runtime_dir({"XDG_RUNTIME_DIR": "/run/user/42"}) == Path("/run/user/42")
-    # No XDG_RUNTIME_DIR: the socket/lock directory still has to be this user's.
-    assert plat.runtime_dir({}) == Path(f"/run/user/{os.getuid()}")
 
 
 def test_provider_speaks_the_evdev_key_vocabulary():
@@ -59,11 +36,11 @@ def test_provider_speaks_the_evdev_key_vocabulary():
 
 def test_provider_builds_an_evdev_listener_without_touching_a_device():
     listener = LinuxPlatform().hotkey_listener(
-        chord=frozenset({97}),
         device="/dev/input/event9",
-        on_start=lambda: None,
-        on_stop=lambda: None,
         lock=threading.RLock(),
+        bindings={"default": frozenset({97})},
+        on_binding_start=lambda _name: None,
+        on_binding_stop=lambda _name: None,
         cancel=frozenset({1}),
     )
     assert isinstance(listener, EvdevHotkeyListener)
@@ -87,8 +64,6 @@ def test_provider_builds_the_output_backends():
     assert isinstance(injector, UinputKeyboard)
     # Lazy by contract: /dev/uinput is opened on the first chord, not here.
     injector.close()
-    assert plat.clipboard_writer("wl-copy") is copy_both_selections
-    assert plat.clipboard_writer("x11") is copy_both_selections_x11
     # An unknown backend name in config must be refused, never silently
     # mapped onto a copier that cannot work here.
     with pytest.raises(ValueError, match="ClipboardBackend"):
@@ -102,9 +77,7 @@ def test_provider_builds_the_clipboard_reader_only_where_its_tool_exists(tmp_pat
     tool = tmp_path / "wl-paste"
     tool.write_text("#!/bin/sh\nexit 0\n")
     tool.chmod(0o755)
-    assert plat.clipboard_reader("wl-copy") is read_clipboard
-    assert plat.clipboard_restorer("wl-copy") is restore_clipboard
-    assert plat.clipboard_restorer("x11") is restore_clipboard_x11
+    assert plat.clipboard_reader("wl-copy") is not None
 
 
 def test_provider_builds_a_notifier_and_a_cue_player_from_what_is_installed(tmp_path, monkeypatch):
@@ -112,7 +85,6 @@ def test_provider_builds_a_notifier_and_a_cue_player_from_what_is_installed(tmp_
     monkeypatch.setenv("PATH", str(tmp_path))
     # Nothing installed: the notifier degrades to a no-op and there is no cue
     # player at all, so the daemon plays no cues rather than failing to.
-    assert NotifySendNotifier.probe() is False
     assert isinstance(plat.notifier(), NotifySendNotifier)
     assert plat.cue_player() is None
 

@@ -6,7 +6,6 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-import threading
 import wave
 
 import pytest
@@ -24,11 +23,17 @@ from stenographer.lib.sounds.packs import (
     resolve_sound_pack,
     sound_pack_cue_paths,
 )
-from stenographer.lib.sounds.playback import cue_audible, preview_sound_pack, preview_volume
+from stenographer.lib.sounds.playback import preview_sound_pack, preview_volume
 from stenographer.lib.sounds.sound_pack import SoundPack
-from stenographer.lib.sounds.validation import _wav_header_ok, _wav_payload_ok
+from stenographer.lib.sounds.validation import _wav_header_ok
 
 _BUNDLED = pathlib.Path(__file__).parents[3] / "src" / "stenographer" / "assets" / "sounds"
+
+
+@pytest.fixture(autouse=True)
+def sound_assets(monkeypatch):
+    monkeypatch.setattr("stenographer.lib.sounds.packs.bundled_sound_root", lambda: _BUNDLED)
+    return monkeypatch
 
 
 def _write_wav(
@@ -153,7 +158,7 @@ def test_pack_directory_symlink_cannot_escape_custom_root(tmp_path):
     except OSError as exc:
         pytest.skip(f"symlinks unavailable: {exc}")
 
-    assert discover_sound_packs(tmp_path, bundled_root=_BUNDLED) == BUNDLED_PACKS
+    assert discover_sound_packs(tmp_path) == BUNDLED_PACKS
 
 
 def test_sounds_directory_symlink_cannot_escape_config_directory(tmp_path):
@@ -166,8 +171,8 @@ def test_sounds_directory_symlink_cannot_escape_config_directory(tmp_path):
     except OSError as exc:
         pytest.skip(f"symlinks unavailable: {exc}")
 
-    assert discover_sound_packs(config_dir, bundled_root=_BUNDLED) == BUNDLED_PACKS
-    assert load_sound_pack("custom", config_dir, bundled_root=_BUNDLED) is None
+    assert discover_sound_packs(config_dir) == BUNDLED_PACKS
+    assert load_sound_pack("custom", config_dir) is None
 
 
 def test_discovery_orders_bundled_then_sorted_valid_custom_packs(tmp_path):
@@ -177,7 +182,7 @@ def test_discovery_orders_bundled_then_sorted_valid_custom_packs(tmp_path):
     _write_pack(custom_root / "broken").joinpath("delivered.wav").unlink()
     _write_pack(custom_root / "Not-A-Slug")
 
-    assert discover_sound_packs(tmp_path, bundled_root=_BUNDLED) == (
+    assert discover_sound_packs(tmp_path) == (
         *BUNDLED_PACKS,
         "alpha",
         "zebra",
@@ -187,35 +192,31 @@ def test_discovery_orders_bundled_then_sorted_valid_custom_packs(tmp_path):
 def test_bundled_names_win_custom_collisions(tmp_path):
     custom_legacy = _write_pack(tmp_path / "sounds" / "legacy", sample_rate=8_000)
 
-    selected = load_sound_pack("legacy", tmp_path, bundled_root=_BUNDLED)
+    selected = load_sound_pack("legacy", tmp_path)
 
     assert selected is not None
-    assert selected.bundled
-    assert selected.root == _BUNDLED / "legacy"
     assert all(custom_legacy not in path.parents for path in selected.cue_paths if path is not None)
-    assert discover_sound_packs(tmp_path, bundled_root=_BUNDLED).count("legacy") == 1
+    assert discover_sound_packs(tmp_path).count("legacy") == 1
 
 
 def test_missing_custom_falls_back_once_to_minimal_ui(tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
-        selected = resolve_sound_pack("missing", tmp_path, bundled_root=_BUNDLED)
+        selected = resolve_sound_pack("missing", tmp_path)
 
     assert selected.name == DEFAULT_SOUND_PACK
-    assert selected.bundled
-    assert selected.fallback
     assert selected.complete
     assert len(caplog.records) == 1
 
 
-def test_missing_fallback_assets_disable_only_unavailable_cues(tmp_path, caplog):
+def test_missing_fallback_assets_disable_only_unavailable_cues(tmp_path, caplog, sound_assets):
     bundled = tmp_path / "bundled"
+    sound_assets.setattr("stenographer.lib.sounds.packs.bundled_sound_root", lambda: bundled)
     fallback = _write_pack(bundled / DEFAULT_SOUND_PACK)
     (fallback / "error.wav").unlink()
 
     with caplog.at_level(logging.WARNING):
-        selected = resolve_sound_pack("missing", tmp_path, bundled_root=bundled)
+        selected = resolve_sound_pack("missing", tmp_path)
 
-    assert selected.fallback
     assert selected.path_for("record_start") is not None
     assert selected.path_for("error") is None
     assert len(caplog.records) == 2
@@ -264,15 +265,16 @@ def test_wav_header_predicate_bounds(
     assert _wav_header_ok(channels, sample_width, sample_rate, frame_count, compression) is expected
 
 
-def test_discovery_omits_incomplete_bundled_packs_in_order(tmp_path):
+def test_discovery_omits_incomplete_bundled_packs_in_order(tmp_path, sound_assets):
     bundled = tmp_path / "bundled"
+    sound_assets.setattr("stenographer.lib.sounds.packs.bundled_sound_root", lambda: bundled)
     for name in BUNDLED_PACKS:
         _write_pack(bundled / name)
     (bundled / BUNDLED_PACKS[1] / "record_stop.wav").unlink()
     config_dir = tmp_path / "config"
     config_dir.mkdir()
 
-    assert discover_sound_packs(config_dir, bundled_root=bundled) == (
+    assert discover_sound_packs(config_dir) == (
         BUNDLED_PACKS[0],
         *BUNDLED_PACKS[2:],
     )
@@ -281,65 +283,42 @@ def test_discovery_omits_incomplete_bundled_packs_in_order(tmp_path):
 def test_effective_name_uses_strict_custom_pack(tmp_path):
     _write_pack(tmp_path / "sounds" / "custom")
 
-    assert effective_sound_pack_name("custom", tmp_path, bundled_root=_BUNDLED) == "custom"
+    assert effective_sound_pack_name("custom", tmp_path) == "custom"
 
 
-def test_effective_name_reports_partial_bundled_default(tmp_path):
+def test_effective_name_reports_partial_bundled_default(tmp_path, sound_assets):
     bundled = tmp_path / "bundled"
+    sound_assets.setattr("stenographer.lib.sounds.packs.bundled_sound_root", lambda: bundled)
     (_write_pack(bundled / DEFAULT_SOUND_PACK) / "error.wav").unlink()
 
-    assert effective_sound_pack_name("missing", tmp_path, bundled_root=bundled) == (
-        DEFAULT_SOUND_PACK
-    )
+    assert effective_sound_pack_name("missing", tmp_path) == (DEFAULT_SOUND_PACK)
 
 
-def test_effective_name_is_none_when_nothing_resolves(tmp_path):
+def test_effective_name_is_none_when_nothing_resolves(tmp_path, sound_assets):
     bundled = tmp_path / "bundled"
+    sound_assets.setattr("stenographer.lib.sounds.packs.bundled_sound_root", lambda: bundled)
     bundled.mkdir()
 
-    assert effective_sound_pack_name("missing", tmp_path, bundled_root=bundled) is None
-
-
-@pytest.mark.parametrize(
-    ("mute", "volume", "has_player", "expected"),
-    [
-        (False, 0.6, True, True),
-        (True, 0.6, True, False),
-        (False, 0.0, True, False),
-        (False, -0.1, True, False),
-        (False, 0.6, False, False),
-    ],
-)
-def test_cue_audible_needs_unmuted_positive_volume_and_a_player(mute, volume, has_player, expected):
-    assert cue_audible(mute, volume, has_player=has_player) is expected
-
-
-def test_wav_payload_must_match_the_declared_frame_geometry():
-    assert _wav_payload_ok(4800, 1200, 2, 2) is True
-    assert _wav_payload_ok(4799, 1200, 2, 2) is False
-    assert _wav_payload_ok(0, 0, 1, 2) is True
+    assert effective_sound_pack_name("missing", tmp_path) is None
 
 
 class RecordingCuePlayer:
     """A cue player that records requests instead of opening an audio device."""
 
-    def __init__(self, *, on_preview=None) -> None:
+    def __init__(self) -> None:
         self.played: list[tuple[pathlib.Path, float]] = []
-        self.previewed: list[tuple[pathlib.Path, float, bool]] = []
-        self._on_preview = on_preview
+        self.previewed: list[tuple[pathlib.Path, float]] = []
 
     def play(self, path: pathlib.Path, volume: float) -> None:
         self.played.append((path, volume))
 
-    def preview(self, path: pathlib.Path, volume: float, *, cancellation=None) -> None:
-        self.previewed.append((path, volume, cancellation is not None))
-        if self._on_preview is not None:
-            self._on_preview()
+    def preview(self, path: pathlib.Path, volume: float) -> None:
+        self.previewed.append((path, volume))
 
 
 def _pack(tmp_path: pathlib.Path) -> SoundPack:
     """The strictly resolved ``custom`` pack written by ``_write_pack``."""
-    pack = load_sound_pack("custom", tmp_path, bundled_root=_BUNDLED)
+    pack = load_sound_pack("custom", tmp_path)
     assert pack is not None
     return pack
 
@@ -351,50 +330,22 @@ def test_preview_plays_every_cue_in_lifecycle_order_at_one_volume(tmp_path):
 
     preview_sound_pack(pack, player, 0.4, pause_seconds=0.0)
 
-    assert [path.stem for path, _volume, _cancellable in player.previewed] == list(CUE_ORDER)
-    assert {volume for _path, volume, _cancellable in player.previewed} == {0.4}
+    assert [path.stem for path, _volume in player.previewed] == list(CUE_ORDER)
+    assert {volume for _path, volume in player.previewed} == {0.4}
     assert player.played == []
 
 
-def test_preview_refuses_an_incomplete_pack_without_playing_anything(tmp_path):
+def test_preview_refuses_an_incomplete_pack_without_playing_anything(tmp_path, sound_assets):
     bundled = tmp_path / "bundled"
+    sound_assets.setattr("stenographer.lib.sounds.packs.bundled_sound_root", lambda: bundled)
     (_write_pack(bundled / DEFAULT_SOUND_PACK) / "error.wav").unlink()
-    pack = resolve_sound_pack("missing", tmp_path, bundled_root=bundled)
+    pack = resolve_sound_pack("missing", tmp_path)
     player = RecordingCuePlayer()
 
     with pytest.raises(ValueError, match="incomplete"):
         preview_sound_pack(pack, player, 0.4, pause_seconds=0.0)
 
     assert player.previewed == []
-
-
-def test_preview_cancelled_before_the_first_cue_plays_nothing(tmp_path):
-    _write_pack(tmp_path / "sounds" / "custom")
-    player = RecordingCuePlayer()
-    cancellation = threading.Event()
-    cancellation.set()
-
-    with pytest.raises(RuntimeError, match="cancelled"):
-        preview_sound_pack(
-            _pack(tmp_path), player, 0.4, pause_seconds=0.0, cancellation=cancellation
-        )
-
-    assert player.previewed == []
-
-
-def test_preview_cancelled_during_the_pause_stops_after_the_current_cue(tmp_path):
-    _write_pack(tmp_path / "sounds" / "custom")
-    cancellation = threading.Event()
-    player = RecordingCuePlayer(on_preview=cancellation.set)
-
-    with pytest.raises(RuntimeError, match="cancelled"):
-        preview_sound_pack(
-            _pack(tmp_path), player, 0.4, pause_seconds=0.05, cancellation=cancellation
-        )
-
-    # The cancellation is honoured by the inter-cue wait, not by a later cue.
-    assert [path.stem for path, _volume, _cancellable in player.previewed] == ["record_start"]
-    assert player.previewed[0][2] is True
 
 
 def test_feedback_plays_the_configured_cue_at_the_configured_volume(tmp_path):
@@ -404,7 +355,6 @@ def test_feedback_plays_the_configured_cue_at_the_configured_volume(tmp_path):
         cfg=FeedbackConfig(volume=0.25, mute=False, sound_pack="custom"),
         player=player,
         config_dir=tmp_path,
-        asset_root=_BUNDLED,
     )
 
     feedback.play("record_start")
@@ -423,11 +373,11 @@ def test_feedback_plays_nothing_when_inaudible_or_the_cue_is_unknown(tmp_path):
             cfg=FeedbackConfig(sound_pack="custom", **overrides),
             player=player,
             config_dir=tmp_path,
-            asset_root=_BUNDLED,
         )
 
     feedback_for(volume=0.25, mute=True).play("record_start")
     feedback_for(volume=0.0, mute=False).play("record_start")
+    feedback_for(volume=-0.1, mute=False).play("record_start")
     feedback_for(volume=0.25, mute=False).play("no_such_cue")
 
     assert player.played == []
@@ -439,24 +389,22 @@ def test_feedback_without_a_player_stays_silent_and_still_resolves_its_pack(tmp_
         cfg=FeedbackConfig(volume=0.25, mute=False, sound_pack="custom"),
         player=None,
         config_dir=tmp_path,
-        asset_root=_BUNDLED,
     )
 
     feedback.play("record_start")  # no player: the cue is simply not audible
 
     assert feedback.sound_pack.name == "custom"
-    assert feedback.close() is None
 
 
-def test_feedback_skips_a_cue_the_partial_fallback_could_not_resolve(tmp_path):
+def test_feedback_skips_a_cue_the_partial_fallback_could_not_resolve(tmp_path, sound_assets):
     bundled = tmp_path / "bundled"
+    sound_assets.setattr("stenographer.lib.sounds.packs.bundled_sound_root", lambda: bundled)
     (_write_pack(bundled / DEFAULT_SOUND_PACK) / "error.wav").unlink()
     player = RecordingCuePlayer()
     feedback = Feedback(
         cfg=FeedbackConfig(volume=0.25, mute=False, sound_pack="missing"),
         player=player,
         config_dir=tmp_path,
-        asset_root=bundled,
     )
 
     feedback.play("error")
@@ -475,7 +423,7 @@ def test_path_for_an_unknown_cue_name_is_unavailable_not_an_error(tmp_path):
 def test_invalid_pack_names_never_reach_the_filesystem(tmp_path):
     _write_pack(tmp_path / "sounds" / "Not-A-Slug")
 
-    assert load_sound_pack("Not-A-Slug", tmp_path, bundled_root=_BUNDLED) is None
+    assert load_sound_pack("Not-A-Slug", tmp_path) is None
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX directory permissions only")
@@ -485,21 +433,9 @@ def test_unreadable_custom_sounds_directory_still_lists_bundled_packs(tmp_path):
     custom_root = _write_pack(tmp_path / "sounds" / "custom").parent
     custom_root.chmod(0o000)
     try:
-        assert discover_sound_packs(tmp_path, bundled_root=_BUNDLED) == BUNDLED_PACKS
+        assert discover_sound_packs(tmp_path) == BUNDLED_PACKS
     finally:
         custom_root.chmod(0o700)
-
-
-def test_a_cancellable_preview_that_is_never_cancelled_plays_every_cue(tmp_path):
-    _write_pack(tmp_path / "sounds" / "custom")
-    player = RecordingCuePlayer()
-
-    preview_sound_pack(
-        _pack(tmp_path), player, 0.4, pause_seconds=0.0, cancellation=threading.Event()
-    )
-
-    assert [path.stem for path, _volume, _cancellable in player.previewed] == list(CUE_ORDER)
-    assert all(cancellable for _path, _volume, cancellable in player.previewed)
 
 
 def test_the_bundled_asset_root_is_the_installed_sounds_directory():

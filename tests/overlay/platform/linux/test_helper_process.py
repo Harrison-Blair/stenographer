@@ -14,6 +14,7 @@ children are two-line scripts that echo, ignore SIGTERM, or exit.
 
 from __future__ import annotations
 
+import logging
 import signal
 import subprocess
 import sys
@@ -193,6 +194,27 @@ def test_an_unwritable_stderr_path_still_starts_the_helper(tmp_path, spawn) -> N
     process.write(b"still alive\n")
 
     assert _read_line(process) == b"still alive\n"
+
+
+def test_an_unwritable_stderr_path_warns_with_the_path_and_error(tmp_path, spawn, caplog) -> None:
+    stderr_path = tmp_path / "missing-directory" / "helper.log"
+
+    with caplog.at_level(logging.WARNING):
+        spawn(_ECHO, stderr_path=stderr_path)
+
+    assert any(
+        record.levelno == logging.WARNING
+        and str(stderr_path) in record.getMessage()
+        and "FileNotFoundError" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_a_writable_stderr_path_logs_no_warning(tmp_path, spawn, caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        spawn(_ECHO, stderr_path=tmp_path / "helper.log")
+
+    assert not caplog.records
 
 
 def test_two_concurrent_helpers_never_share_a_stdout_descriptor(spawn) -> None:

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 from stenographer.lib.hotkey.errors import BindingError
 
 
-def parse_binding(spec: str, keys: KeyTable) -> frozenset[int]:
+def parse_binding(spec: str, keys: KeyTable, *, setting: str = "hotkey.binding") -> frozenset[int]:
     """Parse a '+'-joined evdev chord into a frozenset of codes (ALL held = active).
 
     Empty spec / empty piece raises BindingError; an unknown token raises it
@@ -32,17 +32,31 @@ def parse_binding(spec: str, keys: KeyTable) -> frozenset[int]:
     """
     spec = spec.strip()
     if not spec:
-        raise BindingError("hotkey.binding: empty binding")
+        raise BindingError(f"{setting}: empty binding")
     codes: set[int] = set()
     for piece in spec.split("+"):
         name = piece.strip()
         if not name:
-            raise BindingError(f"hotkey.binding: empty key in {spec!r}")
+            raise BindingError(f"{setting}: empty key in {spec!r}")
         try:
             codes.add(keys.code(name))
         except KeyError:
-            raise BindingError(f"hotkey.binding: unknown key {name!r}") from None
+            raise BindingError(f"{setting}: unknown key {name!r}") from None
     return frozenset(codes)
+
+
+def validate_binding(text: str) -> str:
+    """Validate a binding against the current platform and return its trimmed value."""
+    from stenographer.lib.platform import current_platform
+
+    value = text.strip()
+    if not value:
+        raise ValueError("binding must be non-empty")
+    try:
+        parse_binding(value, current_platform().keys())
+    except BindingError as exc:
+        raise ValueError(str(exc)) from exc
+    return value
 
 
 def chord_active(held: set[int], chord: frozenset[int]) -> bool:

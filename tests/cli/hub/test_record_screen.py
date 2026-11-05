@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 import subprocess
@@ -12,9 +11,13 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
+import pytest
+from textual.widget import Widget
 from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.engine_sampler import EngineSampler
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.services import HubServices
@@ -23,8 +26,9 @@ from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
+from tests.cli.hub.support import _card, _screen_text, make_app
+from tests.lib.platform.support import NullProcessCounters
 
 MIC_BYTES = 88 * 1024 * 1024
 SYSTEM_BYTES = 209_716
@@ -46,11 +50,11 @@ class FakeLiveSession:
             "mic": "on" if options.get("mic", True) else "off",
             "system": "on" if options.get("system", True) else "off",
         }
-        self.source_reasons = {"mic": None, "system": None}
         self.speech_detected = {"mic": False, "system": False}
         self.levels_dbfs = {"mic": -31.0, "system": -52.0}
         self.meter_floor_dbfs = -70.0
         self.failed_phrase_count = 0
+        self.audio_failed_sources = ()
         self.queue_depth = 0
         self.idle_unload_deadline = None
         self.process_ids = ()
@@ -156,16 +160,9 @@ def _services(tmp_path: Path, devices=()):
     return services, created
 
 
-def _app(services, **kwargs) -> HubApp:
+def _app(tmp_path, services, **kwargs) -> HubApp:
     sampler = EngineSampler(services, counters=NullProcessCounters(), cpu_count=1)
-    return HubApp(services, engine_sampler=sampler, **kwargs)
-
-
-def _screen_text(app: HubApp) -> str:
-    return "\n".join(
-        "".join(segment.text for segment in strip._segments)
-        for strip in app.screen._compositor.render_strips()
-    )
+    return make_app(tmp_path, services, engine_sampler=sampler, **kwargs)
 
 
 def _hints(app: HubApp) -> str:
@@ -176,10 +173,6 @@ def _engine_state(app: HubApp) -> str:
     return str(app.screen.query_one("#engine-state", Static).render())
 
 
-def _card(app: HubApp) -> str:
-    return str(app.screen.query_one("#sidebar-card", Static).render())
-
-
 async def _until(pilot, condition, message="condition not met") -> None:
     for _ in range(200):
         if condition():
@@ -188,489 +181,504 @@ async def _until(pilot, condition, message="condition not met") -> None:
     raise AssertionError(message)
 
 
-IDLE_HINTS = "space record · d device · m mic · s system · v view · 1 2 3 screens · ? help · q quit"
+IDLE_HINTS = "? help · q quit · space record · d device · m mic · s system · v view · 1 2 3 screens"
 RECORDING_HINTS = (
-    "enter stop & save · space pause · m mic · s system · v view · r rename · 1 2 3 screens"
-    " · ? help · q quit"
+    "? help · q quit · enter stop & save · space pause · m mic · s system"
+    " · v view · r rename · 1 2 3 screens"
 )
 SAVED_HINTS = (
-    "space record again · o open in Library · d device · m mic · s system · v view · r rename"
-    " · 1 2 3 screens · ? help · q quit"
+    "? help · q quit · space record again · o open in Library · d device · m mic · s system"
+    " · v view · r rename · 1 2 3 screens"
 )
 
 
-def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.pause()
-            text = _screen_text(app)
-            assert "[space] ● Record" in text
-            assert "Default input" in text
-            assert "not recording" in text
-            assert _hints(app) == IDLE_HINTS
+async def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        text = _screen_text(app)
+        assert "[space] ● Record" in text
+        assert "Default input" in text
+        assert "not recording" in text
+        assert _hints(app) == IDLE_HINTS
 
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        app.refresh_view()
+        await pilot.pause()
+        session = created[0]
+        text = _screen_text(app)
+        assert "● REC" in text and "started " in text
+        assert "[enter] ■ Stop & save" in text and "[space] Ⅱ Pause" in text
+        assert _hints(app) == RECORDING_HINTS
+        assert _engine_state(app) == "ready"
+
+        await pilot.press("space")
+        await _until(pilot, lambda: session.paused)
+        app.refresh_view()
+        await pilot.pause()
+        assert "Ⅱ PAUSED" in _screen_text(app)
+        assert "[space] ▶ Resume" in _screen_text(app)
+        assert _hints(app) == RECORDING_HINTS.replace("space pause", "space resume")
+        await pilot.press("space")
+        await _until(pilot, lambda: not session.paused)
+
+        await pilot.press("enter")
+        await _until(pilot, session.stop_entered.is_set)
+        await pilot.pause()
+        assert app.is_running
+        assert services.stopping_sessions == (session,)
+        assert not services.recording
+        assert app.is_busy(session.path.name)
+        app.refresh_view()
+        await pilot.pause()
+        text = _screen_text(app)
+        assert "■ SAVED" in text and "saved " in text
+        assert session.path.name in text
+        assert "[space] ● Record again" in text and "[o] Open in Library" in text
+        assert "relabeling…" in text
+        assert _engine_state(app) == "relabeling 1 of 3"
+        assert "busy" in _card(app)
+        assert _hints(app) == SAVED_HINTS
+        # The app answers keys during the slow pass.
+        await pilot.press("v")
+        assert "MIC · what you said" in _screen_text(app)
+        await pilot.press("v")
+        await pilot.press("r")
+        await pilot.pause()
+        assert not isinstance(app.screen, RenameDialog)
+        assert any("session busy" in notice.message for notice in app._notifications)
+
+        session.release.set()
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        await _until(pilot, lambda: not app.is_busy(session.path.name))
+        app.refresh_view()
+        await pilot.pause()
+        text = _screen_text(app)
+        assert "relabeling…" not in text
+        session.relabel_error = "disk full"
+        app.refresh_view()
+        await pilot.pause()
+        assert "Relabeling failed: disk full. Live labels kept." in _screen_text(app)
+        assert "── saved · 2 phrases · mic.flac 88 MB · system.flac 0.2 MB ──" in text
+        assert "busy" not in _card(app)
+        assert not session.skipped
+
+        await pilot.press("o")
+        assert app.current_mode == "library"
+        panel = app.library_screen
+        await _until(pilot, lambda: panel.selected_id == session.path.name)
+
+        await pilot.press("1")
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        assert len(created) == 2 and services.session is created[1]
+
+
+async def test_record_rename_button_is_disabled_while_the_session_is_busy(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        await pilot.press("enter")
+        await _until(pilot, session.stop_entered.is_set)
+        await _until(pilot, lambda: app.is_busy(session.path.name))
+        app.refresh_view()
+        await pilot.pause()
+        button = app.screen.query_one("#card-r", HubButton)
+        assert button.disabled
+        assert "busy" in _card(app)
+
+        await pilot.click("#card-r")
+        await pilot.pause()
+        assert not isinstance(app.screen, RenameDialog)
+
+        session.release.set()
+        await _until(pilot, lambda: not app.is_busy(session.path.name))
+        await _until(pilot, lambda: not app.screen.query_one("#card-r", HubButton).disabled)
+        await pilot.click("#card-r")
+        await pilot.pause()
+        assert isinstance(app.screen, RenameDialog)
+
+
+async def test_record_saved_buttons_by_click_match_their_keys(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        await pilot.click("#rec-primary")
+        await _until(pilot, lambda: services.recording)
+        app.refresh_view()
+        await pilot.pause()
+        await pilot.click("#rec-secondary")
+        await _until(pilot, lambda: created[0].paused)
+        app.refresh_view()
+        await pilot.pause()
+        await pilot.click("#rec-primary")
+        await _until(pilot, lambda: services.stopping_sessions == (created[0],))
+        created[0].release.set()
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        app.refresh_view()
+        await pilot.pause()
+        await pilot.click("#rec-secondary")
+        await pilot.pause()
+        assert app.current_mode == "library"
+
+
+async def test_record_overlapping_stops_keep_the_first_on_the_engine_card(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        for _ in range(2):
             await pilot.press("space")
             await _until(pilot, lambda: services.recording)
-            app.refresh_view()
-            await pilot.pause()
-            session = created[0]
-            text = _screen_text(app)
-            assert "● REC" in text and "started " in text
-            assert "[enter] ■ Stop & save" in text and "[space] Ⅱ Pause" in text
-            assert _hints(app) == RECORDING_HINTS
-            assert _engine_state(app) == "ready"
-
-            await pilot.press("space")
-            await _until(pilot, lambda: session.paused)
-            app.refresh_view()
-            await pilot.pause()
-            assert "Ⅱ PAUSED" in _screen_text(app)
-            assert "[space] ▶ Resume" in _screen_text(app)
-            assert _hints(app) == RECORDING_HINTS.replace("space pause", "space resume")
-            await pilot.press("space")
-            await _until(pilot, lambda: not session.paused)
-
             await pilot.press("enter")
-            await _until(pilot, session.stop_entered.is_set)
-            await pilot.pause()
-            assert app.is_running
-            assert services.stopping_sessions == (session,)
-            assert not services.recording
-            assert app.is_busy(session.path.name)
-            app.refresh_view()
-            await pilot.pause()
-            text = _screen_text(app)
-            assert "■ SAVED" in text and "saved " in text
-            assert session.path.name in text
-            assert "[space] ● Record again" in text and "[o] Open in Library" in text
-            assert "relabeling…" in text
-            assert _engine_state(app) == "relabeling 1 of 3"
-            assert "busy" in _card(app)
-            assert _hints(app) == SAVED_HINTS
-            # The app answers keys during the slow pass.
-            await pilot.press("v")
-            assert "MIC · what you said" in _screen_text(app)
-            await pilot.press("v")
-            await pilot.press("r")
-            await pilot.pause()
-            assert not isinstance(app.screen, RenameDialog)
-            assert any("session busy" in notice.message for notice in app._notifications)
+            await _until(pilot, lambda: not services.recording)
+        first, second = created
+        await _until(pilot, second.stop_entered.is_set)
+        assert services.stopping_sessions == (first, second)
+        assert app.is_busy(first.path.name) and app.is_busy(second.path.name)
 
-            session.release.set()
-            await _until(pilot, lambda: services.stopping_sessions == ())
-            await _until(pilot, lambda: not app.is_busy(session.path.name))
-            app.refresh_view()
-            await pilot.pause()
-            text = _screen_text(app)
-            assert "relabeling…" not in text
-            assert "── saved · 2 phrases · mic.flac 88 MB · system.flac 0.2 MB ──" in text
-            assert "busy" not in _card(app)
-            assert not session.skipped
+        await pilot.press("2")
+        await pilot.press("1")
+        app.refresh_view()
+        await pilot.pause()
+        assert _engine_state(app) == "relabeling 1 of 3"
+        assert second.path.name in _screen_text(app)
 
-            await pilot.press("o")
-            assert app.current_mode == "library"
-            panel = app.library_screen
-            await _until(pilot, lambda: panel.selected_id == session.path.name)
+        first.release.set()
+        await _until(pilot, lambda: services.stopping_sessions == (second,))
+        await _until(pilot, lambda: not app.is_busy(first.path.name))
+        assert app.is_busy(second.path.name)
+        app.refresh_view()
+        await pilot.pause()
+        assert _engine_state(app) == "relabeling 2 of 6"
 
-            await pilot.press("1")
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            assert len(created) == 2 and services.session is created[1]
-
-    asyncio.run(exercise())
-
-
-def test_record_rename_button_is_disabled_while_the_session_is_busy(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.pause()
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            session = created[0]
-            await pilot.press("enter")
-            await _until(pilot, session.stop_entered.is_set)
-            await _until(pilot, lambda: app.is_busy(session.path.name))
-            app.refresh_view()
-            await pilot.pause()
-            button = app.screen.query_one("#card-r", HubButton)
-            assert button.disabled
-            assert "busy" in _card(app)
-
-            await pilot.click("#card-r")
-            await pilot.pause()
-            assert not isinstance(app.screen, RenameDialog)
-
-            session.release.set()
-            await _until(pilot, lambda: not app.is_busy(session.path.name))
-            await _until(pilot, lambda: not app.screen.query_one("#card-r", HubButton).disabled)
-            await pilot.click("#card-r")
-            await pilot.pause()
-            assert isinstance(app.screen, RenameDialog)
-
-    asyncio.run(exercise())
-
-
-def test_record_saved_buttons_by_click_match_their_keys(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.pause()
-            await pilot.click("#rec-primary")
-            await _until(pilot, lambda: services.recording)
-            app.refresh_view()
-            await pilot.pause()
-            await pilot.click("#rec-secondary")
-            await _until(pilot, lambda: created[0].paused)
-            app.refresh_view()
-            await pilot.pause()
-            await pilot.click("#rec-primary")
-            await _until(pilot, lambda: services.stopping_sessions == (created[0],))
-            created[0].release.set()
-            await _until(pilot, lambda: services.stopping_sessions == ())
-            app.refresh_view()
-            await pilot.pause()
-            await pilot.click("#rec-secondary")
-            await pilot.pause()
-            assert app.current_mode == "library"
-
-    asyncio.run(exercise())
-
-
-def test_record_overlapping_stops_keep_the_first_on_the_engine_card(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.pause()
-            for _ in range(2):
-                await pilot.press("space")
-                await _until(pilot, lambda: services.recording)
-                await pilot.press("enter")
-                await _until(pilot, lambda: not services.recording)
-            first, second = created
-            await _until(pilot, second.stop_entered.is_set)
-            assert services.stopping_sessions == (first, second)
-            assert app.is_busy(first.path.name) and app.is_busy(second.path.name)
-
-            await pilot.press("2")
-            await pilot.press("1")
-            app.refresh_view()
-            await pilot.pause()
-            assert _engine_state(app) == "relabeling 1 of 3"
-            assert second.path.name in _screen_text(app)
-
-            first.release.set()
-            await _until(pilot, lambda: services.stopping_sessions == (second,))
-            await _until(pilot, lambda: not app.is_busy(first.path.name))
-            assert app.is_busy(second.path.name)
-            app.refresh_view()
-            await pilot.pause()
-            assert _engine_state(app) == "relabeling 2 of 6"
-
-            second.release.set()
-            await _until(pilot, lambda: not app.is_busy(second.path.name))
-            assert services.stopping_sessions == ()
-
-    asyncio.run(exercise())
-
-
-def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.pause()
-            for _ in range(2):
-                await pilot.press("space")
-                await _until(pilot, lambda: services.recording)
-                await pilot.press("enter")
-                await _until(pilot, lambda: not services.recording)
-            await _until(pilot, created[1].stop_entered.is_set)
-
-            await pilot.press("q")
-            await pilot.pause()
-            prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-            assert prompt == "Relabel is still running. Quit and keep the live labels?"
-            await pilot.press("n")
-            await pilot.pause()
-            assert app.is_running
-            assert not any(session.skipped for session in created)
-
-            await pilot.press("q")
-            await pilot.press("y")
-            await _until(pilot, lambda: not app.is_running, "the hub did not quit")
-        assert all(session.skipped for session in created)
+        second.release.set()
+        await _until(pilot, lambda: not app.is_busy(second.path.name))
         assert services.stopping_sessions == ()
 
-    asyncio.run(exercise())
 
-
-def test_record_quit_while_recording_asks_then_saves(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
+async def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        for _ in range(2):
             await pilot.press("space")
             await _until(pilot, lambda: services.recording)
-            await pilot.press("q")
-            await pilot.pause()
-            prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-            assert prompt == "Stop recording and save before quitting?"
-            await pilot.press("n")
-            assert services.recording
-            created[0].release.set()
-            await pilot.press("q")
+            await pilot.press("enter")
+            await _until(pilot, lambda: not services.recording)
+        await _until(pilot, created[1].stop_entered.is_set)
+
+        await pilot.press("q")
+        await pilot.pause()
+        prompt = str(app.screen.query_one("#quit-prompt", Static).render())
+        assert prompt == (
+            "Quit and do this first?\n"
+            "· Skip the running relabel; those sessions keep their live labels."
+        )
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.is_running
+        assert not any(session.skipped for session in created)
+
+        await pilot.press("q")
+        await pilot.press("y")
+        await _until(pilot, lambda: not app.is_running, "the hub did not quit")
+    assert all(session.skipped for session in created)
+    assert services.stopping_sessions == ()
+
+
+@pytest.mark.parametrize("fails_during", ["prompt", "wait"])
+async def test_record_quit_stays_open_when_a_running_stop_fails(tmp_path, fails_during):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    release = threading.Event()
+
+    def slow_failing_stop():
+        assert release.wait(5)
+        raise OSError("no space left on device")
+
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[0].stop = slow_failing_stop
+        await pilot.press("enter")
+        await _until(pilot, lambda: not services.recording)
+
+        await pilot.press("q")
+        await pilot.pause()
+        if fails_during == "prompt":
+            release.set()
+            await _until(pilot, lambda: services.stopping_sessions == ())
             await pilot.press("y")
-            await _until(pilot, lambda: not app.is_running, "the hub did not quit")
-        assert "stop" in created[0].actions
-
-    asyncio.run(exercise())
-
-
-def test_record_meters_follow_blocks_speech_and_source_choice(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.pause()
-            mic = app.screen.query_one("#mic-meter")
-            system = app.screen.query_one("#system-meter")
-            assert mic.model.state == "idle" and system.model.state == "idle"
-            assert "captures the default output mix" in _screen_text(app)
-
-            await pilot.press("s")
-            await pilot.pause()
-            assert system.model.state == "off"
-            assert "off · press s to enable" in _screen_text(app)
-            await pilot.press("m")
-            await pilot.pause()
-            assert "off · press m to enable" in _screen_text(app)
-            await pilot.press("m")
-            await pilot.pause()
-            assert mic.model.state == "idle"
-
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            session = created[0]
-            assert session.options["mic"] is True and session.options["system"] is False
+        else:
+            await pilot.press("y")
+            await _until(pilot, lambda: app.activity_status is not None)
+            release.set()
+        await _until(pilot, lambda: services.failed_stops != [])
+        for _ in range(30):
             app.refresh_view()
-            await pilot.pause()
-            assert mic.model.state == "on" and system.model.state == "off"
-            assert len(session.listeners) == 1
-            assert mic.model.rows == (" " * 35,) * 8
+            await pilot.pause(0.02)
 
-            tone = 0.5 * np.sin(2 * math.pi * 440 * np.arange(1600) / 16000).astype(np.float32)
-            for _ in range(5):
-                session.listeners[0]("mic", tone)
-            assert any("█" in row for row in mic.model.rows)
-            assert "dBFS  peak" in mic.model.level_text
+        assert app.is_running, "the quit must not hide a save that failed"
+        assert app.activity_status is None
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        assert created[0].path.name in text
+        await pilot.press("o")
+        await pilot.pause()
+        assert app.library_screen.selected_id == created[0].path.name
 
-            assert "○ quiet" in _screen_text(app)
-            session.speech_detected = {"mic": True, "system": False}
-            app.refresh_view()
-            await pilot.pause()
-            assert "● speech" in _screen_text(app)
-
-            await pilot.press("m")
-            await _until(pilot, lambda: ("toggle", "mic") in session.actions)
-            app.refresh_view()
-            await pilot.pause()
-            assert mic.model.state == "off"
-
-            await pilot.press("enter")
-            await _until(pilot, session.stop_entered.is_set)
-            assert session.listeners == []
-            session.release.set()
-
-    asyncio.run(exercise())
+        # The failure is on screen now, so the next quit leaves.
+        await pilot.press("q")
+        await _until(pilot, lambda: not app.is_running, "the hub did not quit")
 
 
-def test_record_device_dialog_sets_the_next_session_device_only(tmp_path):
-    async def exercise():
-        config_path = tmp_path / "config.toml"
-        config_path.write_text(default_toml(), encoding="utf-8")
-        before = config_path.read_bytes()
-        devices = (("2", "2: Alpha USB mic"), ("5", "5: Bravo headset"))
-        services, created = _services(tmp_path, devices)
-        app = _app(services, config_path=config_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("d")
-            await pilot.pause()
-            text = _screen_text(app)
-            assert "Input device" in text
-            assert "2: Alpha USB mic" in text and "5: Bravo headset" in text
-            await pilot.press("down", "down")
-            await pilot.press("enter")
-            await pilot.pause()
-            assert "5: Bravo headset" in _screen_text(app)
-            assert "Default input" not in _screen_text(app)
-
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            assert created[0].options["device"] == "5"
-            await pilot.press("d")
-            await pilot.pause()
-            assert app.screen is app.record_screen
-            created[0].release.set()
-
-            # A click opens the dialog too and picks the clicked choice.
-            await pilot.press("enter")
-            await _until(pilot, lambda: services.stopping_sessions == ())
-            await pilot.click("#device-button")
-            await pilot.pause()
-            assert "Input device" in _screen_text(app)
-            await pilot.click("#dialog-cancel")
-            await pilot.pause()
-            assert app.screen is app.record_screen
-        assert config_path.read_bytes() == before
-
-    asyncio.run(exercise())
+async def test_record_quit_while_recording_asks_then_saves(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        await pilot.press("q")
+        await pilot.pause()
+        prompt = str(app.screen.query_one("#quit-prompt", Static).render())
+        assert prompt == "Quit and do this first?\n· Stop and save the recording."
+        await pilot.press("n")
+        assert services.recording
+        created[0].release.set()
+        await pilot.press("q")
+        await pilot.press("y")
+        await _until(pilot, lambda: not app.is_running, "the hub did not quit")
+    assert "stop" in created[0].actions
 
 
-def test_record_transcript_split_view_and_talk_time(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            app.refresh_view()
-            await pilot.pause()
-            text = _screen_text(app)
-            assert "transcript · 2 speakers" in text
-            mixed = [row for row in text.splitlines() if "alpha bravo" in row]
-            assert len(mixed) == 1 and "00:00:01" in mixed[0] and "You" in mixed[0]
-            card = _card(app)
-            assert "You" in card and "0:02" in card
-            assert "Speaker 1" in card and "0:01" in card
-            assert "[r] Rename…" in text and "[r] Rename…" not in card
+async def test_record_meters_follow_blocks_speech_and_source_choice(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        mic = app.screen.query_one("#mic-meter")
+        system = app.screen.query_one("#system-meter")
+        assert mic.model.state == "idle" and system.model.state == "idle"
+        assert "captures the default output mix" in _screen_text(app)
 
-            await pilot.press("v")
-            split = _screen_text(app)
-            assert "MIC · what you said" in split and "SYSTEM · everyone else" in split
-            rows = [row for row in split.splitlines() if "alpha" in row or "delta" in row]
-            assert len(rows) == 2
-            assert "alpha" in rows[0] and "delta" not in rows[0]
-            assert "delta" in rows[1] and "alpha" not in rows[1]
-            await pilot.click("#view-button")
-            assert "MIC · what you said" not in _screen_text(app)
-            created[0].release.set()
+        await pilot.press("s")
+        await pilot.pause()
+        assert system.model.state == "off"
+        assert "off · press s to enable" in _screen_text(app)
+        await pilot.press("m")
+        await pilot.pause()
+        assert "off · press m to enable" in _screen_text(app)
+        await pilot.press("m")
+        await pilot.pause()
+        assert mic.model.state == "idle"
 
-    asyncio.run(exercise())
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        assert session.options["mic"] is True and session.options["system"] is False
+        app.refresh_view()
+        await pilot.pause()
+        assert mic.model.state == "on" and system.model.state == "off"
+        assert len(session.listeners) == 1
+        assert mic.model.rows == (" " * 35,) * 8
 
+        tone = 0.5 * np.sin(2 * math.pi * 440 * np.arange(1600) / 16000).astype(np.float32)
+        for _ in range(5):
+            session.listeners[0]("mic", tone)
+        assert any("█" in row for row in mic.model.rows)
+        assert "dBFS  peak" in mic.model.level_text
 
-def test_record_transcript_follows_at_bottom_and_holds_when_scrolled_up(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            session = created[0]
-            session.lines = [
-                TranscriptLine(float(i), float(i + 1), "wall", "mic", "you", "You", f"line {i}")
-                for i in range(60)
-            ]
-            app.refresh_view()
-            await pilot.pause()
-            scroll = app.screen.query_one("#transcript")
-            await _until(pilot, lambda: scroll.max_scroll_y > 0)
-            assert scroll.scroll_y == scroll.max_scroll_y
+        assert "○ quiet" in _screen_text(app)
+        session.speech_detected = {"mic": True, "system": False}
+        app.refresh_view()
+        await pilot.pause()
+        assert "● speech" in _screen_text(app)
 
-            await pilot.press("home")
-            await pilot.press("down")
-            assert scroll.scroll_y == 1
-            session.lines.append(TranscriptLine(60.0, 61.0, "wall", "mic", "you", "You", "new"))
-            app.refresh_view()
-            await pilot.pause()
-            assert scroll.scroll_y == 1
+        await pilot.press("m")
+        await _until(pilot, lambda: ("toggle", "mic") in session.actions)
+        app.refresh_view()
+        await pilot.pause()
+        assert mic.model.state == "off"
 
-            await pilot.press("end")
-            session.lines.append(TranscriptLine(61.0, 62.0, "wall", "mic", "you", "You", "last"))
-            app.refresh_view()
-            await pilot.pause()
-            assert scroll.scroll_y == scroll.max_scroll_y
-            session.release.set()
-
-    asyncio.run(exercise())
+        await pilot.press("enter")
+        await _until(pilot, session.stop_entered.is_set)
+        assert session.listeners == []
+        session.release.set()
 
 
-def test_record_rename_on_the_live_session_by_key_and_by_click(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            session = created[0]
+async def test_record_device_dialog_sets_the_next_session_device_only(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(default_toml(), encoding="utf-8")
+    before = config_path.read_bytes()
+    devices = (("2", "2: Alpha USB mic"), ("5", "5: Bravo headset"))
+    services, created = _services(tmp_path, devices)
+    app = _app(tmp_path, services, config_editor=ConfigEditor(config_path))
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("d")
+        await pilot.pause()
+        text = _screen_text(app)
+        assert "Input device" in text
+        assert "2: Alpha USB mic" in text and "5: Bravo headset" in text
+        await pilot.press("down", "down")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "5: Bravo headset" in _screen_text(app)
+        assert "Default input" not in _screen_text(app)
 
-            await pilot.press("r")
-            await pilot.pause()
-            assert isinstance(app.screen, RenameDialog)
-            assert "Rename speaker" in _screen_text(app)
-            assert "[esc] Cancel" in _screen_text(app) and "[enter] Rename" in _screen_text(app)
-            app.screen.query_one("#speaker-select", Select).value = "speaker-1"
-            name = app.screen.query_one("#speaker-name", Input)
-            name.focus()
-            name.value = "Golf"
-            await pilot.press("enter")
-            await pilot.pause()
-            assert ("rename", "speaker-1", "Golf") in session.actions
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        assert created[0].options["device"] == "5"
+        await pilot.press("d")
+        await pilot.pause()
+        assert app.screen is app.record_screen
+        created[0].release.set()
 
-            await pilot.press("r")
-            await pilot.pause()
-            app.screen.query_one("#speaker-select", Select).value = "speaker-1"
-            app.screen.query_one("#speaker-name", Input).value = "Hotel"
-            await pilot.click("#dialog-rename")
-            await pilot.pause()
-            assert ("rename", "speaker-1", "Hotel") in session.actions
-            assert "Hotel" in _screen_text(app)
-
-            await pilot.press("r")
-            await pilot.press("escape")
-            await pilot.press("r")
-            await pilot.click("#dialog-cancel")
-            await pilot.pause()
-            assert len([a for a in session.actions if a[0] == "rename"]) == 2
-            session.release.set()
-
-    asyncio.run(exercise())
+        # A click opens the dialog too and picks the clicked choice.
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        await pilot.click("#device-button")
+        await pilot.pause()
+        assert "Input device" in _screen_text(app)
+        await pilot.click("#dialog-cancel")
+        await pilot.pause()
+        assert app.screen is app.record_screen
+    assert config_path.read_bytes() == before
 
 
-def test_record_rename_on_the_saved_session_writes_a_revision(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            session = created[0]
-            session.release.set()
-            await pilot.press("enter")
-            await _until(pilot, lambda: services.stopping_sessions == ())
-            await _until(pilot, lambda: not app.is_busy(session.path.name))
+async def test_record_transcript_split_view_and_talk_time(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        app.refresh_view()
+        await pilot.pause()
+        text = _screen_text(app)
+        assert "transcript · 2 speakers" in text
+        mixed = [row for row in text.splitlines() if "alpha bravo" in row]
+        assert len(mixed) == 1 and "00:00:01" in mixed[0] and "You" in mixed[0]
+        card = _card(app)
+        assert "You" in card and "0:02" in card
+        assert "Speaker 1" in card and "0:01" in card
+        assert "[r] Rename…" in text and "[r] Rename…" not in card
 
-            await pilot.press("r")
-            await pilot.pause()
-            assert isinstance(app.screen, RenameDialog)
-            app.screen.query_one("#speaker-select", Select).value = "you"
-            app.screen.query_one("#speaker-name", Input).value = "India"
-            await pilot.click("#dialog-rename")
-            store = services.session_store
-            await _until(
-                pilot, lambda: store.read(session.path.name).revision != "transcript.jsonl"
-            )
-            detail = store.read(session.path.name)
-            assert [line.label for line in detail.lines] == ["India", "Speaker 1"]
-            await _until(pilot, lambda: "India" in _screen_text(app))
-            assert not any(action[0] == "rename" for action in session.actions)
+        await pilot.press("v")
+        split = _screen_text(app)
+        assert "MIC · what you said" in split and "SYSTEM · everyone else" in split
+        rows = [row for row in split.splitlines() if "alpha" in row or "delta" in row]
+        assert len(rows) == 2
+        assert "alpha" in rows[0] and "delta" not in rows[0]
+        assert "delta" in rows[1] and "alpha" not in rows[1]
+        await pilot.click("#view-button")
+        assert "MIC · what you said" not in _screen_text(app)
+        created[0].release.set()
 
-    asyncio.run(exercise())
+
+async def test_record_transcript_follows_at_bottom_and_holds_when_scrolled_up(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        session.lines = [
+            TranscriptLine(float(i), float(i + 1), "wall", "mic", "you", "You", f"line {i}")
+            for i in range(60)
+        ]
+        app.refresh_view()
+        await pilot.pause()
+        scroll = app.screen.query_one("#transcript")
+        await _until(pilot, lambda: scroll.max_scroll_y > 0)
+        assert scroll.scroll_y == scroll.max_scroll_y
+
+        await pilot.press("home")
+        await pilot.press("down")
+        assert scroll.scroll_y == 1
+        session.lines.append(TranscriptLine(60.0, 61.0, "wall", "mic", "you", "You", "new"))
+        app.refresh_view()
+        await pilot.pause()
+        assert scroll.scroll_y == 1
+
+        await pilot.press("end")
+        session.lines.append(TranscriptLine(61.0, 62.0, "wall", "mic", "you", "You", "last"))
+        app.refresh_view()
+        await pilot.pause()
+        assert scroll.scroll_y == scroll.max_scroll_y
+        session.release.set()
+
+
+async def test_record_rename_on_the_live_session_by_key_and_by_click(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+
+        await pilot.press("r")
+        await pilot.pause()
+        assert isinstance(app.screen, RenameDialog)
+        assert "Rename speaker" in _screen_text(app)
+        assert "[esc] Cancel" in _screen_text(app) and "[enter] Rename" in _screen_text(app)
+        app.screen.query_one("#speaker-select", Select).value = "speaker-1"
+        name = app.screen.query_one("#speaker-name", Input)
+        name.focus()
+        name.value = "Golf"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert ("rename", "speaker-1", "Golf") in session.actions
+
+        await pilot.press("r")
+        await pilot.pause()
+        app.screen.query_one("#speaker-select", Select).value = "speaker-1"
+        app.screen.query_one("#speaker-name", Input).value = "Hotel"
+        await pilot.click("#dialog-rename")
+        await pilot.pause()
+        assert ("rename", "speaker-1", "Hotel") in session.actions
+        assert "Hotel" in _screen_text(app)
+
+        await pilot.press("r")
+        await pilot.press("escape")
+        await pilot.press("r")
+        await pilot.click("#dialog-cancel")
+        await pilot.pause()
+        assert len([a for a in session.actions if a[0] == "rename"]) == 2
+        session.release.set()
+
+
+async def test_record_rename_on_the_saved_session_writes_a_revision(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        session.release.set()
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        await _until(pilot, lambda: not app.is_busy(session.path.name))
+
+        await pilot.press("r")
+        await pilot.pause()
+        assert isinstance(app.screen, RenameDialog)
+        app.screen.query_one("#speaker-select", Select).value = "you"
+        app.screen.query_one("#speaker-name", Input).value = "India"
+        await pilot.click("#dialog-rename")
+        store = services.session_store
+        await _until(pilot, lambda: store.read(session.path.name).revision != "transcript.jsonl")
+        detail = store.read(session.path.name)
+        assert [line.label for line in detail.lines] == ["India", "Speaker 1"]
+        await _until(pilot, lambda: "India" in _screen_text(app))
+        assert not any(action[0] == "rename" for action in session.actions)
 
 
 def test_record_hub_modules_do_not_import_the_live_command():
@@ -706,6 +714,197 @@ def test_record_services_choose_sources_and_device_for_this_run_only(tmp_path):
     assert services.wait_for_stops(timeout=0.1)
 
 
+async def test_record_device_dialog_keeps_a_disconnected_device_until_an_explicit_choice(tmp_path):
+    services, _created = _services(tmp_path, (("2", "2: Alpha USB mic"),))
+    services.choose_device("5", "5: Bravo headset")
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("d")
+        await pilot.pause()
+        assert "▶ 5: Bravo headset · unavailable" in _screen_text(app)
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ChoiceDialog), "enter must not replace the missing device"
+        assert services.next_device == "5"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert services.next_device == "5"
+
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert services.next_device == "2"
+        assert services.next_device_label == "2: Alpha USB mic"
+
+        services.choose_device("5", "5: Bravo headset")
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("up", "up")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert services.next_device is None
+
+
+def _fail_stop(session):
+    def stop():
+        raise OSError("no space left on device")
+
+    session.stop = stop
+
+
+async def test_record_failed_stop_shows_a_lasting_failure_and_keeps_library_access(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        _fail_stop(created[0])
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        assert "■ SAVED" not in text
+        assert "no space left on device" in text
+        assert created[0].path.name in text
+        assert "── saved" not in text
+        assert app.record_screen.check_action("open_library", ()) is True
+
+        await pilot.press("o")
+        await pilot.pause()
+        assert app.current_mode == "library"
+        await pilot.press("1")
+        await pilot.pause()
+
+        # The next recording that saves leaves the failed state.
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[1].release.set()
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(5):
+            app.refresh_view()
+            await pilot.pause(0.02)
+        text = _screen_text(app)
+        assert "■ SAVED" in text
+        assert "SAVE FAILED" not in text
+
+
+async def test_record_failed_stop_of_an_older_session_still_shows_that_session(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    release_older = threading.Event()
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+
+        def slow_failing_stop():
+            assert release_older.wait(5)
+            raise OSError("no space left on device")
+
+        created[0].stop = slow_failing_stop
+        await pilot.press("enter")
+        await _until(pilot, lambda: not services.recording)
+
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[1].release.set()
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == (created[0],))
+
+        release_older.set()
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        assert created[0].path.name in text
+        assert app.record_screen.saved_session is created[0]
+
+
+async def test_record_two_failed_stops_keep_each_error_and_library_link(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    release_first = threading.Event()
+    release_second = threading.Event()
+
+    def failing_stop(release, error):
+        def stop():
+            assert release.wait(5)
+            raise OSError(error)
+
+        return stop
+
+    created_stops = (
+        failing_stop(release_first, "no space left on device"),
+        failing_stop(release_second, "session folder is gone"),
+    )
+    async with app.run_test(size=(150, 45)) as pilot:
+        for index, stop in enumerate(created_stops):
+            await pilot.press("space")
+            await _until(pilot, lambda: services.recording)
+            created[index].stop = stop
+            await pilot.press("enter")
+            await _until(pilot, lambda: not services.recording)
+        await _until(pilot, lambda: len(services.stopping_sessions) == 2)
+
+        release_first.set()
+        await _until(pilot, lambda: len(services.stopping_sessions) == 1)
+        release_second.set()
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        first, second = created[0].path.name, created[1].path.name
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        for shown in (first, second, "no space left on device", "session folder is gone"):
+            assert shown in text
+
+        opened = []
+        for _ in range(2):
+            await pilot.press("o")
+            await pilot.pause()
+            assert app.current_mode == "library"
+            opened.append(app.library_screen.selected_id)
+            await pilot.press("1")
+            await pilot.pause()
+        assert sorted(opened) == sorted([first, second])
+
+
+def test_record_services_keep_a_failed_stop_until_the_next_recording_starts(tmp_path):
+    services, created = _services(tmp_path)
+    services.start_recording()
+    older = services.begin_stop()
+    services.start_recording()
+    _fail_stop(older)
+
+    # The failure arrives during the next recording, and that recording then stops.
+    with pytest.raises(OSError, match="no space"):
+        services.finish_stop(older)
+    newer = services.begin_stop()
+    created[1].release.set()
+    services.finish_stop(newer)
+
+    assert services.last_saved is newer
+    assert services.failed_stops == [(older, "no space left on device")]
+
+    services.start_recording()
+    assert services.failed_stops == []
+    created[2].release.set()
+    services.stop_recording()
+
+
 def test_record_services_skip_each_pass_and_wait(tmp_path):
     services, created = _services(tmp_path)
     workers = []
@@ -725,73 +924,146 @@ def test_record_services_skip_each_pass_and_wait(tmp_path):
         worker.join(1)
 
 
-def test_record_meter_head_clicks_match_their_keys(tmp_path):
+async def test_record_meter_head_clicks_match_their_keys(tmp_path):
+    services, created = _services(tmp_path, devices=[(3, "USB mic")])
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        mic = app.screen.query_one("#mic-meter")
+        system = app.screen.query_one("#system-meter")
+        assert mic.model.head[0].startswith("[m] MIC")
+        assert system.model.head[0].startswith("[s] SYSTEM")
+
+        # Offset (2, 1) is the first head cell inside the border and padding.
+        await pilot.click("#mic-meter", offset=(2, 1))
+        await pilot.pause()
+        assert mic.model.state == "off" and system.model.state == "idle"
+        await pilot.click("#system-meter", offset=(2, 1))
+        await pilot.pause()
+        assert system.model.state == "off"
+        await pilot.click("#system-meter", offset=(2, 1))
+        await pilot.click("#mic-meter", offset=(2, 1))
+        await pilot.pause()
+        assert mic.model.state == "idle" and system.model.state == "idle"
+
+        # A click on the bars is not a control.
+        await pilot.click("#mic-meter", offset=(2, 4))
+        await pilot.pause()
+        assert mic.model.state == "idle"
+
+        # The right token "[d] device" ends at the last content cell.
+        assert mic.model.head[1] == "[d] device"
+        await pilot.click("#mic-meter", offset=(mic.size.width - 3, 1))
+        await _until(pilot, lambda: "Input device" in _screen_text(app), "no device dialog")
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        await pilot.click("#mic-meter", offset=(2, 1))
+        await _until(pilot, lambda: ("toggle", "mic") in session.actions)
+        await pilot.click("#system-meter", offset=(2, 1))
+        await _until(pilot, lambda: ("toggle", "system") in session.actions)
+        session.release.set()
+
+
+async def test_record_card_reports_a_source_whose_audio_was_not_saved(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        app.refresh_view()
+        await pilot.pause()
+        assert "not saved" not in _card(app)
+        created[-1].audio_failed_sources = ("mic",)
+        app.refresh_view()
+        await pilot.pause()
+        assert "! mic audio not saved" in _card(app)
+
+
+def test_record_meters_use_configured_spectrum_floor(tmp_path):
+    import asyncio
+
+    services, _ = _services(tmp_path)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        default_toml().replace("spectrum_floor_dbfs = -45.0", "spectrum_floor_dbfs = -13.0")
+    )
+    app = _app(tmp_path, services, config_editor=ConfigEditor(config_path))
+
     async def exercise():
-        services, created = _services(tmp_path, devices=[(3, "USB mic")])
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.pause()
-            mic = app.screen.query_one("#mic-meter")
-            system = app.screen.query_one("#system-meter")
-            assert mic.model.head[0].startswith("[m] MIC")
-            assert system.model.head[0].startswith("[s] SYSTEM")
-
-            # Offset (2, 1) is the first head cell inside the border and padding.
-            await pilot.click("#mic-meter", offset=(2, 1))
-            await pilot.pause()
-            assert mic.model.state == "off" and system.model.state == "idle"
-            await pilot.click("#system-meter", offset=(2, 1))
-            await pilot.pause()
-            assert system.model.state == "off"
-            await pilot.click("#system-meter", offset=(2, 1))
-            await pilot.click("#mic-meter", offset=(2, 1))
-            await pilot.pause()
-            assert mic.model.state == "idle" and system.model.state == "idle"
-
-            # A click on the bars is not a control.
-            await pilot.click("#mic-meter", offset=(2, 4))
-            await pilot.pause()
-            assert mic.model.state == "idle"
-
-            # The right token "[d] device" ends at the last content cell.
-            assert mic.model.head[1] == "[d] device"
-            await pilot.click("#mic-meter", offset=(mic.size.width - 3, 1))
-            await _until(pilot, lambda: "Input device" in _screen_text(app), "no device dialog")
-            await pilot.press("escape")
-            await pilot.pause()
-
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            session = created[0]
-            await pilot.click("#mic-meter", offset=(2, 1))
-            await _until(pilot, lambda: ("toggle", "mic") in session.actions)
-            await pilot.click("#system-meter", offset=(2, 1))
-            await _until(pilot, lambda: ("toggle", "system") in session.actions)
-            session.release.set()
+        async with app.run_test(size=(150, 45)):
+            meter = app.record_screen.meters["mic"]
+            meter.set_state("on")
+            samples = (0.01 * np.sin(2 * np.pi * 1000 * np.arange(16000) / 16000)).astype(
+                np.float32
+            )
+            meter.feed(samples)
+            assert all("█" not in row for row in meter.model.rows)
 
     asyncio.run(exercise())
 
 
-def test_record_rename_button_in_the_speakers_card_opens_the_dialog(tmp_path):
-    async def exercise():
-        services, created = _services(tmp_path)
-        app = _app(services)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("space")
-            await _until(pilot, lambda: services.recording)
-            session = created[0]
-            button = app.screen.query_one("#card-r", HubButton)
-            assert str(button.label) == "[r] Rename…"
-            assert "[r] Rename…" not in _card(app)
+async def test_record_refresh_without_a_change_requests_no_redraw(tmp_path, monkeypatch):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        app.refresh_view()
+        await pilot.pause()
 
-            await pilot.click("#card-r")
-            await pilot.pause()
-            assert isinstance(app.screen, RenameDialog)
-            app.screen.query_one("#speaker-select", Select).value = "speaker-1"
-            app.screen.query_one("#speaker-name", Input).value = "Juliet"
-            await pilot.click("#dialog-rename")
-            await pilot.pause()
-            assert ("rename", "speaker-1", "Juliet") in session.actions
-            session.release.set()
+        requests = []
+        refresh = Widget.refresh
 
-    asyncio.run(exercise())
+        def count_refresh(widget, *args, **kwargs):
+            if not any(node.id == "engine-card" for node in widget.ancestors_with_self):
+                requests.append(widget)
+            return refresh(widget, *args, **kwargs)
+
+        monkeypatch.setattr(Widget, "refresh", count_refresh)
+        app.refresh_view()
+        assert requests == []
+
+        session.elapsed_seconds += 1
+        app.refresh_view()
+        assert app.screen.query_one("#rec-clock").value == "00:12:09"
+        assert requests
+        session.release.set()
+
+
+async def test_record_transcript_data_follows_lines_and_speakers(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        session = created[0]
+        app.refresh_view()
+        assert [line.text for line in app.record_screen._lines(session)] == [
+            "alpha bravo charlie",
+            "delta echo",
+        ]
+
+        session.lines.append(
+            TranscriptLine(0.5, 0.75, "wall", "system", "speaker-2", "Speaker 2", "earlier")
+        )
+        app.refresh_view()
+        await pilot.pause()
+        assert "earlier" in _screen_text(app)
+        assert "Speaker 2" in _card(app)
+        assert _screen_text(app).index("earlier") < _screen_text(app).index("alpha bravo")
+
+        session.speakers = (("speaker-1", "Speaker 1"), ("speaker-3", "Speaker 3"))
+        app.refresh_view()
+        await pilot.pause()
+        assert "Speaker 3" in _card(app)
+
+        session.lines[0] = replace(session.lines[0], label="Renamed")
+        app.refresh_view()
+        await pilot.pause()
+        assert "Renamed" in _card(app)
+        session.release.set()

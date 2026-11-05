@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import pathlib
 
+from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
 
 
@@ -28,5 +29,5 @@ def load_or_default() -> Config:
     path = resolve_config_path()
     if path.is_file():
         return Config.load(path)
-    Config.write_default(path)
+    path.write_bytes(default_toml().encode("utf-8"))
     return Config.defaults()

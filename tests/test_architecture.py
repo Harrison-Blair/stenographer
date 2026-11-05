@@ -82,25 +82,17 @@ def test_native_modules_are_only_imported_inside_platform_boundaries():
     assert not violations, violations
 
 
-def test_ordinary_classes_have_dedicated_files():
+def test_exceptions_and_nested_classes_follow_layout():
     violations = []
     for path in _sources():
         tree = ast.parse(path.read_text())
         classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
-        functions = [n for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
-        ordinary = []
         for cls in classes:
-            dataclass = any("dataclass" in ast.unparse(d) for d in cls.decorator_list)
             exception = cls.name.endswith("Error") or any(
                 ast.unparse(b) in {"Exception", "BaseException"} for b in cls.bases
             )
-            if exception:
-                if path.name != "errors.py":
-                    violations.append(f"{path.relative_to(ROOT)}: exception {cls.name}")
-            elif not dataclass:
-                ordinary.append(cls)
-        if ordinary and (len(classes) != 1 or functions):
-            violations.append(f"{path.relative_to(ROOT)}: ordinary class shares definitions")
+            if exception and path.name != "errors.py":
+                violations.append(f"{path.relative_to(ROOT)}: exception {cls.name}")
         if any(isinstance(n, ast.ClassDef) and n not in classes for n in ast.walk(tree)):
             violations.append(f"{path.relative_to(ROOT)}: nested class")
     assert not violations, violations

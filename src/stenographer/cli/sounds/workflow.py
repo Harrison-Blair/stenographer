@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
-from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, TextIO
+from collections.abc import Sequence
+from typing import TextIO
 
 from stenographer.cli.shared.console import Console
 from stenographer.cli.shared.terminal import (
@@ -18,13 +18,43 @@ from stenographer.cli.shared.terminal import (
     require_interactive,
     restart_service,
 )
-from stenographer.cli.sounds.menu_action import MenuAction
-from stenographer.cli.sounds.preview import _preview
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
+from stenographer.lib.sounds import packs as sound_packs
 
-if TYPE_CHECKING:
-    from stenographer.lib.platform.host_guidance import HostGuidance
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class MenuAction:
+    """A validated sound-menu response."""
+
+    kind: str
+    index: int | None = None
+
+
+def _preview(console: Console, config: Config, pack: object) -> bool:
+    from stenographer.lib.platform import current_platform
+    from stenographer.lib.sounds import playback
+    from stenographer.lib.sounds.constants import PREVIEW_VOLUME_WHEN_MUTED
+
+    try:
+        player = current_platform().cue_player()
+    except Exception as exc:
+        console.error(f"could not initialize cue playback: {exc}")
+        return False
+    if player is None:
+        console.error("no supported cue player is available")
+        return False
+    if config.feedback.mute or config.feedback.volume <= 0.0:
+        console.write(
+            f"Cues are muted or at volume zero: this preview plays at volume "
+            f"{PREVIEW_VOLUME_WHEN_MUTED} and changes neither setting."
+        )
+    try:
+        playback.preview_sound_pack(pack, player, playback.preview_volume(config.feedback))
+    except Exception as exc:
+        console.error(f"sound-pack preview failed: {exc}")
+        return False
+    return True
 
 
 def parse_menu_action(text: str, choice_count: int) -> MenuAction:
@@ -38,20 +68,6 @@ def parse_menu_action(text: str, choice_count: int) -> MenuAction:
     if number.isdecimal() and 1 <= int(number) <= choice_count:
         return MenuAction(kind, int(number) - 1)
     raise ValueError(f"enter 1-{choice_count}, P1-P{choice_count}, or Q")
-
-
-def parse_sound_pack_choice(text: str, current: str, choices: Sequence[str]) -> str:
-    """Parse a setup selection by number or case-insensitive pack name."""
-
-    value = text.strip()
-    if not value:
-        return current
-    if value.isdecimal() and 1 <= int(value) <= len(choices):
-        return choices[int(value) - 1]
-    matches = [choice for choice in choices if choice.casefold() == value.casefold()]
-    if matches:
-        return matches[0]
-    raise ValueError(f"choose a number from 1-{len(choices)} or an available sound-pack name")
 
 
 def _pack_description(
@@ -71,122 +87,29 @@ def _pack_description(
     return f"{pack} ({', '.join(labels)})"
 
 
-def _unavailable_line(current: str) -> str:
-    """The trailing note for a configured pack that is not among the available ones."""
-
-    return f"  configured: {current} (unavailable)"
-
-
-def format_sound_pack_list(
+def format_pack_lines(
     packs: Sequence[str],
     bundled: Sequence[str],
     *,
     current: str,
     effective: str | None,
+    numbered: bool,
 ) -> list[str]:
-    """Render available packs, their source, and current/effective markers."""
-
+    """Render pack names and labels for the list or the numbered menu."""
     bundled_names = frozenset(bundled)
-    lines = [
-        f"{'*' if pack == effective else ' '} "
-        f"{_pack_description(pack, bundled_names, current=current, effective=effective)}"
-        for pack in packs
-    ]
+    lines = []
+    for number, pack in enumerate(packs, 1):
+        prefix = f"  {number}. " if numbered else f"{'*' if pack == effective else ' '} "
+        lines.append(
+            prefix + _pack_description(pack, bundled_names, current=current, effective=effective)
+        )
     if current not in packs:
-        lines.append(_unavailable_line(current))
+        lines.append(f"  configured: {current} (unavailable)")
     return lines
-
-
-def format_menu_lines(
-    packs: Sequence[str],
-    bundled: Sequence[str],
-    *,
-    current: str,
-    effective: str | None,
-) -> list[str]:
-    """Render the numbered selection menu: one line per pack, then any unavailable note.
-
-    The menu numbers the choices instead of marking the effective pack, but names
-    and labels stay identical to the listing's.
-    """
-
-    bundled_names = frozenset(bundled)
-    lines = [
-        f"  {number}. "
-        f"{_pack_description(pack, bundled_names, current=current, effective=effective)}"
-        for number, pack in enumerate(packs, 1)
-    ]
-    if current not in packs:
-        lines.append(_unavailable_line(current))
-    return lines
-
-
-def restart_disposition(
-    *,
-    changed: bool,
-    custom_config: bool,
-    interactive: bool,
-    service_active: str | None,
-) -> str:
-    """Return the post-save restart action without performing host I/O."""
-
-    if not changed:
-        return "none"
-    if custom_config:
-        return "custom-guidance"
-    if not interactive:
-        return "restart-guidance"
-    if service_active == "active":
-        return "offer-restart"
-    if service_active is None:
-        return "unknown-guidance"
-    return "inactive-guidance"
-
-
-def post_save_lines(action: str, guidance: HostGuidance) -> tuple[list[str], int] | None:
-    """Render the guidance a non-interactive restart disposition prints, with its exit code.
-
-    ``None`` means the disposition is not one of the print-and-return arms —
-    today only ``offer-restart``, whose prompt I/O stays with the caller.
-    """
-
-    if action == "none":
-        return [], 0
-    if action == "custom-guidance":
-        return ["Custom STENOGRAPHER_CONFIG path: service restart was not offered."], 0
-    if action == "restart-guidance":
-        return [
-            "Restart the daemon to apply the sound pack; for the standard active service, run "
-            f"`{guidance.service_restart_command}`."
-        ], 0
-    if action == "unknown-guidance":
-        return [
-            f"Could not determine {guidance.service_name} status; restart the daemon manually "
-            "to apply the sound pack."
-        ], 0
-    if action == "inactive-guidance":
-        return [
-            "Service is not active; sounds did not start it. "
-            f"Run `{guidance.service_start_command}` when ready; "
-            "the new pack applies when it starts."
-        ], 0
-    return None
-
-
-def selection_may_prompt(*, terminal: bool) -> bool:
-    """Menu and direct selections may prompt after saving only on a terminal."""
-
-    return terminal
-
-
-def _sound_pack_api():
-    from stenographer.lib.sounds import packs as feedback
-
-    return feedback
 
 
 def _effective_name(config: Config, config_dir: pathlib.Path) -> str | None:
-    return _sound_pack_api().effective_sound_pack_name(config.feedback.sound_pack, config_dir)
+    return sound_packs.effective_sound_pack_name(config.feedback.sound_pack, config_dir)
 
 
 def _choose_from_menu(
@@ -194,32 +117,23 @@ def _choose_from_menu(
     config: Config,
     config_dir: pathlib.Path,
     packs: Sequence[str],
-    *,
-    preview: Callable[[Console, Config, object], bool] = _preview,
-    discover: Callable[[], Sequence[str]] | None = None,
-    load: Callable[[str], object] | None = None,
 ) -> str | None:
-    """Loop until a pack is selected or the menu is cancelled.
-
-    A failed preview or a pack that vanished is reported and the menu re-prompts;
-    the injectable callables exist so the loop stays testable without playback.
-    """
-
-    api = _sound_pack_api()
-
-    def discover_packs() -> Sequence[str]:
-        return api.discover_sound_packs(config_dir) if discover is None else discover()
-
-    def load_pack(name: str) -> object:
-        return api.load_sound_pack(name, config_dir) if load is None else load(name)
+    """Loop until a pack is selected or the menu is cancelled."""
 
     while True:
+        if not packs:
+            console.error(
+                "no valid sound packs available; restore bundled assets "
+                "or install a valid custom pack"
+            )
+            return None
         console.write("Sound packs")
-        for line in format_menu_lines(
+        for line in format_pack_lines(
             packs,
-            api.BUNDLED_PACKS,
+            sound_packs.BUNDLED_PACKS,
             current=config.feedback.sound_pack,
             effective=_effective_name(config, config_dir),
+            numbered=True,
         ):
             console.write(line)
         count = len(packs)
@@ -227,18 +141,16 @@ def _choose_from_menu(
             f"Select 1-{count}, preview P1-P{count}, or cancel Q: ",
             lambda text, count=count: parse_menu_action(text, count),
         )
-        assert isinstance(action, MenuAction)
         if action.kind == "cancel":
             return None
-        assert action.index is not None
         selected = packs[action.index]
         if action.kind == "select":
             return selected
-        pack = load_pack(selected)
+        pack = sound_packs.load_sound_pack(selected, config_dir)
         if pack is None:
             console.error(f"invalid or unavailable sound pack: {selected}")
-            packs = discover_packs()
-        elif preview(console, config, pack):
+            packs = sound_packs.discover_sound_packs(config_dir)
+        elif _preview(console, config, pack):
             console.write()
 
 
@@ -252,27 +164,36 @@ def _post_save(
     from stenographer.lib.platform import current_platform
 
     guidance = current_platform().guidance()
-    service_active: str | None = None
-    if changed and interactive and not custom_config:
-        try:
-            service_active = current_platform().probe_host().service_active
-        except Exception as exc:
-            console.error(f"could not determine {guidance.service_name} status: {exc}")
-            console.write("Restart the daemon manually to apply the saved sound pack.")
-            return 1
-
-    action = restart_disposition(
-        changed=changed,
-        custom_config=custom_config,
-        interactive=interactive,
-        service_active=service_active,
-    )
-    reported = post_save_lines(action, guidance)
-    if reported is not None:
-        lines, exit_code = reported
-        for line in lines:
-            console.write(line)
-        return exit_code
+    if not changed:
+        return 0
+    if custom_config:
+        console.write("Custom STENOGRAPHER_CONFIG path: service restart was not offered.")
+        return 0
+    if not interactive:
+        console.write(
+            "Restart the daemon to apply the sound pack; for the standard active service, run "
+            f"`{guidance.service_restart_command}`."
+        )
+        return 0
+    try:
+        service_active = current_platform().probe_host().service_active
+    except Exception as exc:
+        console.error(f"could not determine {guidance.service_name} status: {exc}")
+        console.write("Restart the daemon manually to apply the saved sound pack.")
+        return 1
+    if service_active is None:
+        console.write(
+            f"Could not determine {guidance.service_name} status; restart the daemon manually "
+            "to apply the sound pack."
+        )
+        return 0
+    if service_active != "active":
+        console.write(
+            "Service is not active; sounds did not start it. "
+            f"Run `{guidance.service_start_command}` when ready; "
+            "the new pack applies when it starts."
+        )
+        return 0
     if not ask_yes_no(
         console,
         f"Restart the active {guidance.service_name} to apply the sound pack?",
@@ -318,9 +239,8 @@ def run(
     apply_stderr_level(document.config.feedback.log_level)
 
     config_dir = document.path.parent
-    api = _sound_pack_api()
     try:
-        packs = api.discover_sound_packs(config_dir)
+        packs = sound_packs.discover_sound_packs(config_dir)
     except KeyboardInterrupt:
         console.error("sounds interrupted")
         return 130
@@ -330,17 +250,18 @@ def run(
 
     try:
         if list_only:
-            for line in format_sound_pack_list(
+            for line in format_pack_lines(
                 packs,
-                api.BUNDLED_PACKS,
+                sound_packs.BUNDLED_PACKS,
                 current=document.config.feedback.sound_pack,
                 effective=_effective_name(document.config, config_dir),
+                numbered=False,
             ):
                 console.write(line)
             return 0
 
         if preview_name is not None:
-            pack = api.load_sound_pack(preview_name, config_dir)
+            pack = sound_packs.load_sound_pack(preview_name, config_dir)
             if pack is None:
                 console.error(f"invalid or unavailable sound pack: {preview_name}")
                 return 2
@@ -352,8 +273,7 @@ def run(
             if selected is None:
                 console.write("Sound-pack selection cancelled; configuration was not changed.")
                 return 0
-        assert selected is not None
-        if api.load_sound_pack(selected, config_dir) is None:
+        if sound_packs.load_sound_pack(selected, config_dir) is None:
             console.error(f"invalid or unavailable sound pack: {selected}")
             return 2
 
@@ -376,7 +296,7 @@ def run(
             console,
             changed=result.changed,
             custom_config=custom_config_selected(),
-            interactive=selection_may_prompt(terminal=interactive),
+            interactive=interactive,
         )
     except (KeyboardInterrupt, EOFError):
         console.write()

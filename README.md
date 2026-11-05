@@ -91,8 +91,11 @@ systemctl --user start stenographer.service
 ```
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
-offers the separate ASR model download. Use plain `setup` to review every
-setting.
+offers the separate ASR and voice-activity model download. Use plain `setup` to
+review the hotkey, audio, ASR, feedback, and refine settings. Use hub Settings
+or the configuration file for the remaining settings. If room noise changes
+during spectrum calibration, keep the room quiet and retry. If overlay backend
+imports fail, reinstall using the installation method above.
 
 ## Speech model
 
@@ -121,7 +124,9 @@ clipping. A close wired headset often beats a distant microphone. See the
 [microphone and normalization guidance](docs/usage.md#improve-microphone-capture)
 for troubleshooting steps.
 
-Configuration lives at `~/.config/stenographer/config.toml`. For example:
+Configuration defaults to `~/.config/stenographer/config.toml`. Set
+`STENOGRAPHER_CONFIG` to choose a file, or `XDG_CONFIG_HOME` to change the
+default configuration directory. For example:
 
 ```toml
 [stenographer.hotkey]
@@ -154,13 +159,18 @@ behavior. Both bindings share the configured mode:
 - Press Escape while recording or delivering to discard the audio and
   transcript. Nothing is pasted.
 
-Otherwise the transcript is pasted at your cursor. About half a second later
-your previous clipboard item is back on the clipboard. When Agent rewrites the
-text, the unrefined transcript is copied just before the rewrite, so a
-clipboard history keeps both. See
+Otherwise the transcript is pasted at your cursor. By default, when clipboard
+capture and restoration are available, your previous item is restored about
+half a second later unless you copied something newer. Configure this with
+`restore_clipboard` and `restore_delay_ms`. When Agent changes the text and
+`stenographer.delivery.copy_original` is enabled, the app attempts to copy the
+original immediately before the rewritten text. This copy is best effort; a
+clipboard history can keep both. See
 [Keep your clipboard](docs/usage.md#keep-your-clipboard).
 Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
-Set `binding` (Agent) or `general_binding` to any `KEY_*` chord to rebind it.
+The formatter capitalizes the pronoun `i`, including when surrounded by punctuation.
+
+Set `binding` (Agent) or `general_binding` to any `KEY_*` chord to rebind it. Binding errors identify the setting that contains the invalid chord.
 Agent, General, and cancel chords may not be equal or subsets of one another.
 
 ## Common commands
@@ -171,32 +181,35 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   sidebar on each screen shows navigation badges, an engine card with the
   model state and CPU and memory use, and one context card.
   On Record, press `space` to start and `enter` to stop and save; the hub stays
-  open while the speaker relabel pass runs, and `o` opens the saved session in
+  open while the speaker relabel pass runs; failures show the reason and keep live labels.
+  `o` opens the saved session in
   Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,
   `pageup`/`pagedown`, `home`/`end`, or the mouse wheel; the view follows new
   lines at the bottom. Library lists recordings, file sessions, and file
-  jobs; press `/` to search transcripts, `p` to play, `d` or `t` to
+  jobs; press `/` to search session IDs, times (including displayed recording
+  dates), file names, and transcripts, `p` to play, `d` or `t` to
   re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
-  a job. Press `n` there to transcribe a file: the dialog browses from your
-  home folder, sets Separate speakers, Speaker count, and Refine text, and
-  queues one job that shows in the list at once. Settings has the General, Audio,
+  a job; confirm with `y` or cancel with `n`. Press `n` there to transcribe a file: the dialog browses from your
+  home folder, including hidden folders; search with a leading dot to find hidden audio. Folder read errors show their reason. The dialog sets Separate speakers, Speaker count, and Refine text, and
+  queues one job that shows in the list at once. Speaker count is ignored when
+  separation is off. Help and quit appear first in the footer. Settings values wrap when long. Settings has the General, Audio,
   Recognition, Live, and Checks tabs; `●` marks an unsaved change, `ctrl+s`
   saves it with a backup, and the Vocabulary row edits the refine terms.
-  Checks groups the system checks,
+  Checks shows fix guidance and per-check test results, groups the system checks,
   fixes and tests the selected check, and opens the Quick setup, Models, and
   Defaults dialogs. See the [terminal hub guide](docs/hub.md) for all screens, controls,
   and file formats.
 - `stenographer doctor` — check capabilities and print fixes.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
-- `stenographer stats` — view, export, or delete local numeric statistics.
-- `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
-- `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
+- `stenographer stats` — view, export, or delete local numeric statistics; the summary defaults to hotkey dictations (`--source all` includes file transcriptions).
+- `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file; `--raw` skips refinement even when `--refine` is supplied.
+- `stenographer model download [--asr] [--refine] [--live]` — fetch selected models explicitly; flags combine.
 - `stenographer run` — run the daemon in the foreground.
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
-for sound packs, statistics, and configuration examples.
+for sound packs, statistics, and configuration examples. Stats reset deletes all records; use stats delete for filtered deletion.
 
 ## Troubleshooting
 
@@ -209,12 +222,14 @@ systemctl --user restart stenographer.service
 ## Privacy and more
 
 Model downloads are explicit and dictation runs locally. Audio, transcripts,
-configuration, and device or model names stay on your machine. Logs never
+configuration, and device or model names stay on your machine by default; a
+configured remote refine host receives transcripts. Logs never
 contain transcript text or audio. The hub Record screen saves the requested
 audio and transcript in a private session folder, then saves a new revision
-with batch speaker labels; see the [hub guide](docs/hub.md#record).
-The only automatic network request that leaves your machine is an optional,
-metadata-only release check; disable it in
+with batch speaker labels; see the [hub guide](docs/hub.md#record). Revisions
+require readable, valid session metadata when `session.json` exists.
+By default, the only automatic network request that leaves your machine is an
+optional, metadata-only release check; disable it in
 `[stenographer.feedback]` with `update_check = false`.
 
 The [terminal hub](docs/hub.md) has three screens: Record, Library, and
@@ -234,7 +249,8 @@ transcript. General retains its original length and numeral checks.
 General keeps the original filler and self-correction cleanup behavior
 (`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
 machine. Turn it off or point it elsewhere in `[stenographer.refine]`; a
-non-loopback host sends transcripts there over the network. While a model
+non-loopback host sends transcripts there over the network. Loopback refine
+requests bypass environment proxies. While a model
 loads, the lifecycle pill's border breathes: in the amber Loading colour for
 the speech model and in the Refining colour for the cleanup model, taking
 turns one breath each when both are loading.
@@ -246,9 +262,6 @@ and the [hub guide](docs/hub.md#record) for live capture and saved sessions.
 
 See [docs/building.md](docs/building.md) for standalone builds and contributor
 checks. See [docs/architecture.md](docs/architecture.md) for code boundaries.
-The [transcription-quality study](docs/transcription-experiments.md) records
-earlier public-audio measurements and a microphone experiment catalog. It is
-history; the speech model it measured is no longer used.
 
 ## License
 
@@ -267,3 +280,5 @@ attribution files are in
 | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) | Moondream | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. |
 | [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | NVIDIA | NeMo Toolkit license ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) | Speaker labels in Record and file jobs. |
+
+Voice model downloads replace corrupt files only after verifying the new download.

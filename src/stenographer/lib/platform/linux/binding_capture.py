@@ -12,8 +12,12 @@ from typing import TYPE_CHECKING
 
 import evdev
 
-from stenographer.lib.hotkey.capture import reduce_capture, serialize_capture
-from stenographer.lib.hotkey.capture_records import CaptureState, KeyEvent
+from stenographer.lib.hotkey.capture import (
+    CaptureState,
+    KeyEvent,
+    reduce_capture,
+    serialize_capture,
+)
 from stenographer.lib.hotkey.errors import BindingCaptureError
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
 from stenographer.lib.platform.linux.hotkey import auto_detect_paths
@@ -66,7 +70,7 @@ def capture_binding(stdin: TextIO, device_path: str | None, *, timeout: float) -
 
 def _capture_paths(stdin: TextIO, paths: Sequence[str], *, timeout: float) -> str:
     devices: list[evdev.InputDevice] = []
-    for path in dict.fromkeys(paths):
+    for path in paths:
         try:
             devices.append(evdev.InputDevice(path))
         except OSError as exc:

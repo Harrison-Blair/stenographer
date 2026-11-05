@@ -14,12 +14,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from stenographer.lib.live.phrase import Phrase
+from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
-from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
+from tests.lib.platform.support import NullProcessCounters
 
 
 class FakeClock:
@@ -80,9 +79,6 @@ class FakeRecorder:
         self.running = True
 
     def stop(self):
-        self.running = False
-
-    def close(self):
         self.running = False
 
     def emit(self, value):
@@ -202,29 +198,6 @@ class FakeWorker:
         self.stopped = True
 
 
-class FakeSpeakerTracker:
-    def __init__(self, *_args, **_kwargs):
-        self.names = {}
-        self.speaker_ids = []
-
-    def embed(self, _samples):
-        return np.array([1.0, 0.0], dtype=np.float32)
-
-    def assign_embedding(self, _embedding, *, duration=None):
-        if "speaker-1" not in self.speaker_ids:
-            self.speaker_ids.append("speaker-1")
-        return "speaker-1"
-
-    def assign(self, samples):
-        return self.assign_embedding(self.embed(samples))
-
-    def label(self, speaker_id):
-        return "You" if speaker_id == "you" else self.names.get(speaker_id, "Speaker 1")
-
-    def rename(self, speaker_id, name):
-        self.names[speaker_id] = name.strip()
-
-
 def _make_session(
     monkeypatch,
     tmp_path,
@@ -272,7 +245,7 @@ def _make_session(
     monkeypatch.setattr(live_session, "Worker", WorkerFactory)
     monkeypatch.setattr(live_session, "Recorder", RecorderFactory)
     monkeypatch.setattr(live_session, "PhraseSegmenter", SegmenterFactory)
-    monkeypatch.setattr(live_session, "SpeakerTracker", tracker or FakeSpeakerTracker)
+    monkeypatch.setattr(live_session, "SpeakerTracker", tracker or VoiceSpeakerTracker)
     platform = FakePlatform(system_capture, tmp_path, platform_error)
     cfg = SimpleNamespace(
         asr=SimpleNamespace(),
@@ -289,78 +262,80 @@ def _make_session(
     )
     if start:
         session.start()
-    return (
-        session,
-        writer,
-        worker_holder["worker"],
-        system_capture,
-        recorder_holder["recorder"],
-        segmenters,
+    return SimpleNamespace(
+        session=session,
+        writer=writer,
+        worker=worker_holder["worker"],
+        system=system_capture,
+        recorder=recorder_holder["recorder"],
+        segmenters=segmenters,
     )
 
 
 def test_start_warms_the_worker_before_starting_live_sources(monkeypatch, tmp_path):
-    session, _writer, worker, system, recorder, _segmenters = _make_session(monkeypatch, tmp_path)
+    rig = _make_session(monkeypatch, tmp_path)
 
-    assert worker.events[:2] == ["hold", "warmup"]
-    assert recorder.running
-    assert system.running
-    session.stop()
+    assert rig.worker.events[:2] == ["hold", "warmup"]
+    assert rig.recorder.running
+    assert rig.system.running
+    rig.session.stop()
 
 
 def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
     monkeypatch, tmp_path, caplog
 ):
     delivered = []
-    session, writer, worker, system, recorder, segmenters = _make_session(monkeypatch, tmp_path)
-    session.subscribe(delivered.append)
+    rig = _make_session(monkeypatch, tmp_path)
+    rig.session.subscribe(delivered.append)
 
-    recorder.emit(1)
-    assert session.levels_dbfs["mic"] == 0.0
-    assert session.source_states["mic"] == "on"
-    assert session.model_name == "bark-pro-int8"
-    assert recorder.options["streaming"] is True
-    assert recorder.options["max_seconds"] == 0
-    system.emit(2)
-    system.emit(3)
-    system.emit(4)
-    session.stop()
+    rig.recorder.emit(1)
+    assert rig.session.levels_dbfs["mic"] == 0.0
+    assert rig.session.source_states["mic"] == "on"
+    assert rig.session.model_name == "bark-pro-int8"
+    assert rig.recorder.options["streaming"] is True
+    assert rig.recorder.options["max_seconds"] == 0
+    rig.system.emit(2)
+    rig.system.emit(3)
+    rig.system.emit(4)
+    rig.session.stop()
 
-    assert worker.calls == [1, 2, 3, 4]
-    assert [line.text for line in writer.lines] == ["spoken words", "quiet music words", "a phrase"]
-    assert delivered == writer.lines
-    assert writer.lines[0].source == "mic"
-    assert writer.lines[0].speaker_id == "you"
-    assert writer.lines[0].label == "You"
-    assert writer.lines[1].source == "system"
-    assert writer.lines[1].speaker_id == "speaker-1"
-    assert writer.lines[1].label == "Speaker 1"
-    assert writer.lines[0].start == 0.25
-    assert writer.lines[0].wall == "2026-03-02T04:05:06.250000+00:00"
-    assert writer.closed
-    assert worker.events == ["hold", "warmup", "release", "shutdown"]
-    assert worker.stopped
-    assert len(segmenters) == 2
-    assert all(segmenter.flushed for segmenter in segmenters)
+    assert rig.worker.calls == [1, 2, 3, 4]
+    assert [line.text for line in rig.writer.lines] == [
+        "spoken words",
+        "quiet music words",
+        "a phrase",
+    ]
+    assert delivered == rig.writer.lines
+    assert rig.writer.lines[0].source == "mic"
+    assert rig.writer.lines[0].speaker_id == "you"
+    assert rig.writer.lines[0].label == "You"
+    assert rig.writer.lines[1].source == "system"
+    assert rig.writer.lines[1].speaker_id == "speaker-1"
+    assert rig.writer.lines[1].label == "Speaker 1"
+    assert rig.writer.lines[0].start == 0.25
+    assert rig.writer.lines[0].wall == "2026-03-02T04:05:06.250000+00:00"
+    assert rig.writer.closed
+    assert rig.worker.events == ["hold", "warmup", "release", "shutdown"]
+    assert rig.worker.stopped
+    assert len(rig.segmenters) == 2
+    assert all(segmenter.flushed for segmenter in rig.segmenters)
     assert "spoken words" not in caplog.text
     assert "quiet music words" not in caplog.text
 
 
 def test_stop_relabels_the_saved_session_revision_and_preserves_a_rename(monkeypatch, tmp_path):
-    session, writer, _worker, system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, mic=False
-    )
+    rig = _make_session(monkeypatch, tmp_path, mic=False)
     processed = Event()
-    session.subscribe(lambda _line: processed.set())
+    rig.session.subscribe(lambda _line: processed.set())
 
-    system.emit(4)
+    rig.system.emit(4)
     assert processed.wait(timeout=1)
-    session.rename("speaker-1", "Alice")
-    session.stop()
+    rig.session.rename("speaker-1", "Alice")
+    rig.session.stop()
 
-    detail = SessionStore(writer.path.parent).read(writer.path.name)
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
 
-    assert writer.closed
+    assert rig.writer.closed
     assert detail.revision == "transcript.r2.jsonl"
     assert [line.label for line in detail.lines] == ["Alice"]
 
@@ -380,33 +355,31 @@ def test_second_stop_request_skips_relabel_and_keeps_the_live_revision(monkeypat
         return original_relabel(lines, embeddings, **kwargs)
 
     monkeypatch.setattr(live_session, "relabel_system_lines", wait_for_skip)
-    session, writer, _worker, system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, mic=False
-    )
+    rig = _make_session(monkeypatch, tmp_path, mic=False)
     processed = Event()
-    session.subscribe(lambda _line: processed.set())
-    system.emit(4)
+    rig.session.subscribe(lambda _line: processed.set())
+    rig.system.emit(4)
     assert processed.wait(timeout=1)
     failures = []
 
     def stop_session():
         try:
-            session.stop()
+            rig.session.stop()
         except Exception as exc:
             failures.append(exc)
 
     stop_thread = Thread(target=stop_session)
     stop_thread.start()
     assert started.wait(timeout=1)
-    assert session.relabel_status == "Relabeling speakers 0/1 · q to skip"
-    session.skip_relabel()
+    assert rig.session.relabel_status == "Relabeling speakers 0/1 · q to skip"
+    rig.session.skip_relabel()
     release.set()
     stop_thread.join(timeout=1)
-    detail = SessionStore(writer.path.parent).read(writer.path.name)
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
 
     assert not stop_thread.is_alive()
     assert failures == []
-    assert session.relabel_status == "Relabeling skipped"
+    assert rig.session.relabel_status == "Relabeling skipped"
     assert detail.revision == "transcript.jsonl"
     assert [line.label for line in detail.lines] == ["Speaker 1"]
 
@@ -418,19 +391,17 @@ def test_relabel_failure_keeps_live_labels_and_exposes_the_reason(monkeypatch, t
         raise RuntimeError("batch clustering unavailable")
 
     monkeypatch.setattr(live_session, "relabel_system_lines", fail_relabel)
-    session, writer, _worker, system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, mic=False
-    )
+    rig = _make_session(monkeypatch, tmp_path, mic=False)
     processed = Event()
-    session.subscribe(lambda _line: processed.set())
+    rig.session.subscribe(lambda _line: processed.set())
 
-    system.emit(4)
+    rig.system.emit(4)
     assert processed.wait(timeout=1)
-    session.stop()
-    detail = SessionStore(writer.path.parent).read(writer.path.name)
+    rig.session.stop()
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
 
-    assert session.relabel_error == "batch clustering unavailable"
-    assert session.relabel_status == "Relabeling failed: batch clustering unavailable"
+    assert rig.session.relabel_error == "batch clustering unavailable"
+    assert rig.session.relabel_status == "Relabeling failed: batch clustering unavailable"
     assert detail.revision == "transcript.jsonl"
     assert [line.label for line in detail.lines] == ["Speaker 1"]
 
@@ -447,98 +418,98 @@ def test_relabel_stale_revision_keeps_a_rename_saved_during_the_pass(monkeypatch
         return original_relabel(lines, embeddings, **kwargs)
 
     monkeypatch.setattr(live_session, "relabel_system_lines", rename_during_pass)
-    session, writer, _worker, system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, mic=False
-    )
+    rig = _make_session(monkeypatch, tmp_path, mic=False)
+    writer = rig.writer
     holder["writer"] = writer
     processed = Event()
-    session.subscribe(lambda _line: processed.set())
+    rig.session.subscribe(lambda _line: processed.set())
 
-    system.emit(4)
+    rig.system.emit(4)
     assert processed.wait(timeout=1)
-    session.stop()
+    rig.session.stop()
     detail = SessionStore(writer.path.parent).read(writer.path.name)
 
     assert detail.revision == "transcript.r2.jsonl"
     assert [(line.speaker_id, line.label, line.text) for line in detail.lines] == [
         ("speaker-1", "Alice", "a phrase")
     ]
-    assert "changed since it was read" in session.relabel_error
-    assert [(line.speaker_id, line.label) for line in session.lines] == [("speaker-1", "Speaker 1")]
+    assert "changed since it was read" in rig.session.relabel_error
+    assert [(line.speaker_id, line.label) for line in rig.session.lines] == [
+        ("speaker-1", "Speaker 1")
+    ]
 
 
 def test_pause_freezes_clock_and_silence_writes_and_rename_updates_old_lines(monkeypatch, tmp_path):
     clock = FakeClock()
-    session, writer, _worker, system, _recorder, segmenters = _make_session(
-        monkeypatch, tmp_path, clock=clock
-    )
+    rig = _make_session(monkeypatch, tmp_path, clock=clock)
     processed = Event()
-    session.subscribe(lambda _line: processed.set())
-    system.emit(4)
+    rig.session.subscribe(lambda _line: processed.set())
+    rig.system.emit(4)
     assert processed.wait(timeout=1)
-    assert session.lines[0].speaker_id == "speaker-1"
+    assert rig.session.lines[0].speaker_id == "speaker-1"
 
-    session.rename("speaker-1", "Alice")
-    assert session.lines[0].label == "Alice"
-    assert writer.renames == [{"speaker-1": "Alice"}]
+    rig.session.rename("speaker-1", "Alice")
+    assert rig.session.lines[0].label == "Alice"
+    assert rig.writer.renames == [{"speaker-1": "Alice"}]
     processed.clear()
-    system.emit(4)
+    rig.system.emit(4)
     assert processed.wait(timeout=1)
-    assert session.lines[-1].label == "Alice"
-    assert writer.lines[-1].label == "Alice"
+    assert rig.session.lines[-1].label == "Alice"
+    assert rig.writer.lines[-1].label == "Alice"
 
     clock.now = 2.0
-    session.pause()
-    elapsed = session.elapsed_seconds
-    writes = list(writer.silence)
+    rig.session.pause()
+    elapsed = rig.session.elapsed_seconds
+    writes = list(rig.writer.silence)
     clock.now = 20.0
-    assert session.elapsed_seconds == elapsed
-    assert writer.silence == writes
+    assert rig.session.elapsed_seconds == elapsed
+    assert rig.writer.silence == writes
 
-    session.resume()
+    rig.session.resume()
     clock.now = 21.0
-    session.stop()
-    assert all(segmenter.flushed for segmenter in segmenters)
-    assert session.elapsed_seconds == 3.0
-    assert writer.closed
-    assert not system.running
+    rig.session.stop()
+    assert all(segmenter.flushed for segmenter in rig.segmenters)
+    assert rig.session.elapsed_seconds == 3.0
+    assert rig.writer.closed
+    assert not rig.system.running
 
 
 def test_stop_before_start_closes_resources_without_waiting_for_a_consumer(monkeypatch, tmp_path):
-    session, writer, worker, _system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, start=False
-    )
+    rig = _make_session(monkeypatch, tmp_path, start=False)
 
-    session.stop()
+    rig.session.stop()
 
-    assert writer.closed
-    assert worker.stopped
+    assert rig.writer.closed
+    assert rig.worker.stopped
 
 
-def test_unsupported_system_platform_disables_system_without_blocking_mic(monkeypatch, tmp_path):
+def test_unsupported_system_platform_disables_system_without_blocking_mic(
+    monkeypatch, tmp_path, caplog
+):
     from stenographer.lib.platform.errors import UnsupportedPlatformError
 
     reason = "system audio capture is unavailable"
-    session, writer, worker, _system, _recorder, _segmenters = _make_session(
+    rig = _make_session(
         monkeypatch,
         tmp_path,
         platform_error=UnsupportedPlatformError(reason),
     )
 
-    assert session.source_states["mic"] == "on"
-    assert session.source_states["system"] == "off"
-    assert session.source_reasons["system"] == reason
+    assert rig.session.source_states["mic"] == "on"
+    assert rig.session.source_states["system"] == "off"
+    assert f'live: system_source_unavailable error=UnsupportedPlatformError detail="{reason}"' in (
+        caplog.text
+    )
 
-    session.toggle("system")
-    assert session.source_states["system"] == "off"
-    assert session.source_reasons["system"] == reason
-    session.stop()
-    assert writer.closed
-    assert worker.stopped
+    rig.session.toggle("system")
+    assert rig.session.source_states["system"] == "off"
+    rig.session.stop()
+    assert rig.writer.closed
+    assert rig.worker.stopped
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux PipeWire capture routing")
-def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tmp_path):
+def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tmp_path, caplog):
     from stenographer.lib.platform.linux.system_audio import LinuxSystemAudioCapture
 
     bin_dir = tmp_path / "bin"
@@ -569,20 +540,16 @@ def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tm
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.setenv("PW_LIVE_PID", str(tmp_path / "pid.txt"))
 
-    session, writer, _worker, _fake_system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, mic=False, start=False
-    )
-    session._system_capture = LinuxSystemAudioCapture()
+    rig = _make_session(monkeypatch, tmp_path, mic=False, start=False)
+    rig.session._system_capture = LinuxSystemAudioCapture()
     try:
-        session.start()
+        rig.session.start()
 
-        assert session.source_states["system"] == "off"
-        assert (
-            session.source_reasons["system"] == "system capture is not linked to the sink monitor"
-        )
-        assert not any(source == "system" for source, _samples in writer.audio)
+        assert rig.session.source_states["system"] == "off"
+        assert "system capture is not linked to the sink monitor" in caplog.text
+        assert not any(source == "system" for source, _samples in rig.writer.audio)
     finally:
-        session.stop()
+        rig.session.stop()
 
     process_id = int((tmp_path / "pid.txt").read_text())
     try:
@@ -593,90 +560,107 @@ def test_live_session_disables_misrouted_pipewire_system_capture(monkeypatch, tm
         raise AssertionError("pw-record stayed alive after the link check failed")
 
 
-def test_unavailable_system_source_stays_off_and_exposes_the_reason(monkeypatch, tmp_path):
+def test_unavailable_system_source_stays_off_and_logs_the_reason(monkeypatch, tmp_path, caplog):
     reason = "pw-record is not installed"
-    session, writer, worker, system, _recorder, _segmenters = _make_session(
+    rig = _make_session(
         monkeypatch,
         tmp_path,
         mic=False,
         availability=(False, reason),
     )
 
-    assert session.source_states["system"] == "off"
-    assert session.source_reasons["system"] == reason
-    assert not system.running
+    logged = f'live: system_source_unavailable reason="{reason}"'
+    assert rig.session.source_states["system"] == "off"
+    assert caplog.text.count(logged) == 1
+    assert not rig.system.running
 
-    session.toggle("system")
-    assert session.source_states["system"] == "off"
-    assert session.source_reasons["system"] == reason
-    assert not system.running
+    rig.session.toggle("system")
+    assert rig.session.source_states["system"] == "off"
+    assert caplog.text.count(logged) == 2
+    assert not rig.system.running
 
-    session.stop()
-    assert writer.closed
-    assert worker.stopped
+    rig.session.stop()
+    assert rig.writer.closed
+    assert rig.worker.stopped
 
 
 def test_toggle_off_catches_up_with_silence_and_stop_shuts_sources(monkeypatch, tmp_path):
     clock = FakeClock()
-    session, writer, worker, system, recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, clock=clock
-    )
+    rig = _make_session(monkeypatch, tmp_path, clock=clock)
     clock.now = 1.0
-    session.toggle("mic")
-    assert session.source_states["mic"] == "off"
-    assert writer.silence == [("mic", 1.0)]
+    rig.session.toggle("mic")
+    assert rig.session.source_states["mic"] == "off"
+    assert rig.writer.silence == [("mic", 1.0)]
 
     clock.now = 2.0
-    session.toggle("mic")
-    assert session.source_states["mic"] == "on"
-    assert writer.silence[-1] == ("mic", 1.0)
+    rig.session.toggle("mic")
+    assert rig.session.source_states["mic"] == "on"
+    assert rig.writer.silence[-1] == ("mic", 1.0)
 
-    session.stop()
-    assert not recorder.running
-    assert not system.running
-    assert worker.stopped
-    assert writer.closed
+    rig.session.stop()
+    assert not rig.recorder.running
+    assert not rig.system.running
+    assert rig.worker.stopped
+    assert rig.writer.closed
 
 
 def test_meter_floor_uses_the_low_frequency_profile_value(monkeypatch, tmp_path):
-    session, writer, _worker, _system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, start=False, feedback_floor=(-81.0, -65.0, -72.0)
-    )
+    rig = _make_session(monkeypatch, tmp_path, start=False, feedback_floor=(-81.0, -65.0, -72.0))
 
-    assert session.meter_floor_dbfs == -81.0
-    session.stop()
-    assert writer.closed
-
-
-def test_missing_meter_floor_uses_minus_seventy_dbfs(monkeypatch, tmp_path):
-    session, _writer, _worker, _system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, start=False, feedback_floor=None
-    )
-
-    assert session.meter_floor_dbfs == -70.0
-    session.stop()
+    assert rig.session.meter_floor_dbfs == -81.0
+    rig.session.stop()
+    assert rig.writer.closed
 
 
 def test_failed_phrase_increments_the_failure_count(monkeypatch, tmp_path, caplog):
-    session, _writer, _worker, system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, mic=False
-    )
+    rig = _make_session(monkeypatch, tmp_path, mic=False)
 
-    system.emit(5)
-    session._queue.join()
+    rig.system.emit(5)
+    rig.session._queue.join()
 
-    assert session.failed_phrase_count == 1
-    assert session.lines == ()
+    assert rig.session.failed_phrase_count == 1
+    assert rig.session.lines == ()
     assert "private fake phrase detail" not in caplog.text
-    session.stop()
+    rig.session.stop()
 
 
-def test_transcript_line_values_use_the_source_session_clock():
-    line = TranscriptLine(1.0, 2.0, "wall", "system", "speaker-1", "Speaker 1", "words")
+def test_audio_write_failure_keeps_transcribing_and_reports_the_source(
+    monkeypatch, tmp_path, caplog
+):
+    rig = _make_session(monkeypatch, tmp_path, system=False)
+    # The real writer refuses to replace an existing audio file.
+    (rig.session.path / "mic.flac").touch()
 
-    assert line.start == 1.0
-    assert line.source == "system"
-    assert line.text == "words"
+    rig.recorder.emit(1)
+    rig.recorder.emit(1)
+    rig.session._queue.join()
+
+    assert [line.text for line in rig.session.lines] == ["spoken words", "spoken words"]
+    assert rig.session.audio_failed_sources == ("mic",)
+    assert len(rig.writer.audio) == 1
+    assert caplog.text.count("live: audio_save_failed") == 1
+    rig.session.stop()
+    assert rig.session.audio_failed_sources == ("mic",)
+    assert (rig.session.path / "transcript.md").exists()
+
+
+def test_stop_finishes_when_padding_fails(monkeypatch, tmp_path):
+    clock = FakeClock()
+    rig = _make_session(monkeypatch, tmp_path, clock=clock)
+    rig.system.emit(1)
+    clock.now = 1.0
+    (rig.session.path / "mic.flac").touch()
+
+    rig.session.stop()
+
+    assert rig.session.audio_failed_sources == ("mic",)
+    assert not rig.recorder.running
+    assert not rig.system.running
+    assert [line.text for line in rig.session.lines] == ["spoken words"]
+    assert rig.writer.closed
+    assert rig.worker.stopped
+    assert (rig.session.path / "transcript.md").exists()
+    assert rig.session.relabel_status == ""
 
 
 class VoiceSpeakerTracker:
@@ -724,48 +708,44 @@ def _wait_for_lines(session, count):
 
 
 def test_mic_phrases_stay_you_when_mic_diarization_is_off(monkeypatch, tmp_path):
-    session, writer, _worker, _system, recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, system=False, tracker=VoiceSpeakerTracker
-    )
-    processed = _wait_for_lines(session, 2)
+    rig = _make_session(monkeypatch, tmp_path, system=False)
+    processed = _wait_for_lines(rig.session, 2)
 
-    recorder.emit(1)
-    recorder.emit(4)
+    rig.recorder.emit(1)
+    rig.recorder.emit(4)
     assert processed.wait(timeout=1)
-    session.stop()
+    rig.session.stop()
 
-    assert [(line.speaker_id, line.label) for line in writer.lines] == [
+    assert [(line.speaker_id, line.label) for line in rig.writer.lines] == [
         ("you", "You"),
         ("you", "You"),
     ]
-    assert session.speakers == ()
-    assert "diarize_mic" not in json.loads((writer.path / "session.json").read_text())
-    assert SessionStore(writer.path.parent).read(writer.path.name).diarize_mic is False
+    assert rig.session.speakers == ()
+    assert "diarize_mic" not in json.loads((rig.writer.path / "session.json").read_text())
+    assert SessionStore(rig.writer.path.parent).read(rig.writer.path.name).diarize_mic is False
 
 
 def test_mic_diarization_labels_room_speakers_apart_from_system_speakers(monkeypatch, tmp_path):
-    session, writer, _worker, system, recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
-    )
-    processed = _wait_for_lines(session, 3)
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
+    processed = _wait_for_lines(rig.session, 3)
 
-    recorder.emit(1)
-    recorder.emit(4)
-    system.emit(1)
+    rig.recorder.emit(1)
+    rig.recorder.emit(4)
+    rig.system.emit(1)
     assert processed.wait(timeout=1)
 
-    assert [(line.source, line.speaker_id, line.label) for line in writer.lines] == [
+    assert [(line.source, line.speaker_id, line.label) for line in rig.writer.lines] == [
         ("mic", "room-1", "Room 1"),
         ("mic", "room-2", "Room 2"),
         ("system", "speaker-1", "Speaker 1"),
     ]
-    assert set(session.speakers) == {
+    assert set(rig.session.speakers) == {
         ("room-1", "Room 1"),
         ("room-2", "Room 2"),
         ("speaker-1", "Speaker 1"),
     }
-    session.stop()
-    assert SessionStore(writer.path.parent).read(writer.path.name).diarize_mic is True
+    rig.session.stop()
+    assert SessionStore(rig.writer.path.parent).read(rig.writer.path.name).diarize_mic is True
 
 
 def test_stop_relabels_mic_lines_separately_with_the_room_prefix(monkeypatch, tmp_path):
@@ -780,17 +760,15 @@ def test_stop_relabels_mic_lines_separately_with_the_room_prefix(monkeypatch, tm
         return original_relabel(lines, embeddings, **kwargs)
 
     monkeypatch.setattr(live_session, "relabel_system_lines", record_pass)
-    session, writer, _worker, system, recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
-    )
-    processed = _wait_for_lines(session, 3)
-    recorder.emit(1)
-    recorder.emit(4)
-    system.emit(4)
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
+    processed = _wait_for_lines(rig.session, 3)
+    rig.recorder.emit(1)
+    rig.recorder.emit(4)
+    rig.system.emit(4)
     assert processed.wait(timeout=1)
-    session.stop()
+    rig.session.stop()
 
-    detail = SessionStore(writer.path.parent).read(writer.path.name)
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
 
     assert sorted(passes, key=lambda item: item[1]) == [({"mic"}, "Room"), ({"system"}, "Speaker")]
     assert detail.revision == "transcript.r2.jsonl"
@@ -804,23 +782,21 @@ def test_stop_relabels_mic_lines_separately_with_the_room_prefix(monkeypatch, tm
 
 
 def test_stop_relabel_progress_counts_once_across_system_and_mic(monkeypatch, tmp_path):
-    session, _writer, _worker, system, recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
-    )
-    processed = _wait_for_lines(session, 3)
-    recorder.emit(1)
-    recorder.emit(4)
-    system.emit(1)
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
+    processed = _wait_for_lines(rig.session, 3)
+    rig.recorder.emit(1)
+    rig.recorder.emit(4)
+    rig.system.emit(1)
     assert processed.wait(timeout=1)
     statuses = []
-    record_status = session._set_relabel_progress
+    record_status = rig.session._set_relabel_progress
 
     def observe(done, total):
         record_status(done, total)
-        statuses.append(session.relabel_status)
+        statuses.append(rig.session.relabel_status)
 
-    session._set_relabel_progress = observe
-    session.stop()
+    rig.session._set_relabel_progress = observe
+    rig.session.stop()
 
     counts = [tuple(int(part) for part in status.split()[2].split("/")) for status in statuses]
     assert counts
@@ -830,20 +806,18 @@ def test_stop_relabel_progress_counts_once_across_system_and_mic(monkeypatch, tm
 
 
 def test_rename_updates_a_room_speaker_and_its_existing_lines(monkeypatch, tmp_path):
-    session, writer, _worker, _system, recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, system=False, tracker=VoiceSpeakerTracker, diarize_mic=True
-    )
-    processed = _wait_for_lines(session, 2)
-    recorder.emit(1)
-    recorder.emit(4)
+    rig = _make_session(monkeypatch, tmp_path, system=False, diarize_mic=True)
+    processed = _wait_for_lines(rig.session, 2)
+    rig.recorder.emit(1)
+    rig.recorder.emit(4)
     assert processed.wait(timeout=1)
 
-    session.rename("room-2", "Dana")
+    rig.session.rename("room-2", "Dana")
 
-    assert [line.label for line in session.lines] == ["Room 1", "Dana"]
-    assert writer.renames == [{"room-2": "Dana"}]
-    assert ("room-2", "Dana") in session.speakers
-    session.stop()
+    assert [line.label for line in rig.session.lines] == ["Room 1", "Dana"]
+    assert rig.writer.renames == [{"room-2": "Dana"}]
+    assert ("room-2", "Dana") in rig.session.speakers
+    rig.session.stop()
 
 
 def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
@@ -858,25 +832,23 @@ def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
         return None if kwargs["should_cancel"]() else tuple(lines)
 
     monkeypatch.setattr(live_session, "relabel_system_lines", wait_for_skip)
-    session, writer, _worker, system, recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True
-    )
-    processed = _wait_for_lines(session, 3)
-    recorder.emit(1)
-    recorder.emit(4)
-    system.emit(1)
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
+    processed = _wait_for_lines(rig.session, 3)
+    rig.recorder.emit(1)
+    rig.recorder.emit(4)
+    rig.system.emit(1)
     assert processed.wait(timeout=1)
-    stop_thread = Thread(target=session.stop)
+    stop_thread = Thread(target=rig.session.stop)
     stop_thread.start()
     assert started.wait(timeout=1)
-    assert session.relabel_status == "Relabeling speakers 0/3 · q to skip"
-    session.skip_relabel()
+    assert rig.session.relabel_status == "Relabeling speakers 0/3 · q to skip"
+    rig.session.skip_relabel()
     release.set()
     stop_thread.join(timeout=1)
-    detail = SessionStore(writer.path.parent).read(writer.path.name)
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
 
     assert not stop_thread.is_alive()
-    assert session.relabel_status == "Relabeling skipped"
+    assert rig.session.relabel_status == "Relabeling skipped"
     assert detail.revision == "transcript.jsonl"
     assert [line.label for line in detail.lines] == ["Room 1", "Room 2", "Speaker 1"]
 
@@ -914,21 +886,19 @@ def test_relabel_progress_counts_phrases_from_the_real_work_units_of_both_passes
         return original_relabel(lines, embeddings, **{**kwargs, "progress": progress})
 
     monkeypatch.setattr(live_session, "relabel_system_lines", observe_pass)
-    session, _writer, _worker, system, recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True, start=False
-    )
-    session_holder["session"] = session
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True, start=False)
+    session_holder["session"] = rig.session
     monkeypatch.setattr(live_session, "PhraseSegmenter", LongPhraseSegmenter)
-    session.start()
-    processed = _wait_for_lines(session, 7)
+    rig.session.start()
+    processed = _wait_for_lines(rig.session, 7)
     for value in (1, 4, 1, 4):
-        recorder.emit(value)
+        rig.recorder.emit(value)
     for value in (1, 4, 4):
-        system.emit(value)
+        rig.system.emit(value)
     assert processed.wait(timeout=1)
-    assert session.relabel_progress is None
+    assert rig.session.relabel_progress is None
 
-    session.stop()
+    rig.session.stop()
 
     assert observed
     assert {total for _done, total in observed} == {7}
@@ -936,15 +906,126 @@ def test_relabel_progress_counts_phrases_from_the_real_work_units_of_both_passes
     assert done == sorted(done)
     assert all(0 <= value <= 7 for value in done)
     assert observed[-1] == (7, 7)
-    assert session.relabel_progress is None
+    assert rig.session.relabel_progress is None
 
 
 def test_live_session_exposes_its_worker_pids_and_idle_unload_deadline(monkeypatch, tmp_path):
-    session, _writer, worker, _system, _recorder, _segmenters = _make_session(
-        monkeypatch, tmp_path, start=False
-    )
-    worker.process_ids = (4321,)
-    worker.idle_unload_deadline = 12.5
+    rig = _make_session(monkeypatch, tmp_path, start=False)
+    rig.worker.process_ids = (4321,)
+    rig.worker.idle_unload_deadline = 12.5
 
-    assert session.process_ids == (4321,)
-    assert session.idle_unload_deadline == 12.5
+    assert rig.session.process_ids == (4321,)
+    assert rig.session.idle_unload_deadline == 12.5
+
+
+def test_a_mic_block_is_accepted_while_a_speaker_embedding_runs(monkeypatch, tmp_path):
+    accepted_during_embed = []
+
+    class BlockingProbeTracker(VoiceSpeakerTracker):
+        def embed(self, samples):
+            if not accepted_during_embed:
+                block = Thread(target=rig.recorder.emit, args=(4,), daemon=True)
+                block.start()
+                block.join(timeout=0.5)
+                accepted_during_embed.append(not block.is_alive())
+            return super().embed(samples)
+
+    rig = _make_session(
+        monkeypatch, tmp_path, tracker=BlockingProbeTracker, diarize_mic=True, system=False
+    )
+    processed = _wait_for_lines(rig.session, 2)
+
+    rig.recorder.emit(1)
+
+    assert processed.wait(timeout=2)
+    assert accepted_during_embed == [True]
+    rig.session.stop()
+
+
+def _counting_tracker(created, *, fail=False):
+    class CountingTracker(VoiceSpeakerTracker):
+        def __init__(self, *args, label_prefix="Speaker", **kwargs):
+            if fail:
+                raise RuntimeError("fake model failure")
+            created.append(label_prefix)
+            super().__init__(*args, label_prefix=label_prefix, **kwargs)
+
+    return CountingTracker
+
+
+def test_a_mic_only_session_loads_no_speaker_model(monkeypatch, tmp_path):
+    created = []
+
+    rig = _make_session(monkeypatch, tmp_path, system=False, tracker=_counting_tracker(created))
+
+    assert created == []
+    rig.session.stop()
+    assert created == []
+
+
+def test_a_session_with_system_audio_loads_its_speaker_model_at_construction(monkeypatch, tmp_path):
+    created = []
+
+    rig = _make_session(monkeypatch, tmp_path, start=False, tracker=_counting_tracker(created))
+
+    assert created == ["Speaker"]
+    rig.session.start()
+    rig.session.stop()
+    assert created == ["Speaker"]
+
+
+def test_system_toggled_on_later_gets_labels_and_a_relabel_pass(monkeypatch, tmp_path):
+    created = []
+    rig = _make_session(monkeypatch, tmp_path, system=False, tracker=_counting_tracker(created))
+    processed = _wait_for_lines(rig.session, 2)
+
+    rig.recorder.emit(1)
+    rig.session.toggle("system")
+    rig.system.emit(1)
+    assert processed.wait(timeout=1)
+
+    assert created == ["Speaker"]
+    assert rig.session.source_states["system"] == "on"
+    assert rig.session.speakers == (("speaker-1", "Speaker 1"),)
+    rig.session.rename("speaker-1", "Alice")
+    rig.session.toggle("system")
+    rig.session.toggle("system")
+    assert created == ["Speaker"]
+
+    rig.session.stop()
+
+    detail = SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+    assert detail.revision == "transcript.r2.jsonl"
+    assert {(line.source, line.speaker_id) for line in detail.lines} == {
+        ("mic", "you"),
+        ("system", "speaker-1"),
+    }
+
+
+def test_system_toggled_on_later_keeps_system_speakers_listed_first(monkeypatch, tmp_path):
+    rig = _make_session(monkeypatch, tmp_path, system=False, diarize_mic=True)
+    processed = _wait_for_lines(rig.session, 2)
+
+    rig.recorder.emit(1)
+    rig.session.toggle("system")
+    rig.system.emit(1)
+    assert processed.wait(timeout=1)
+
+    assert rig.session.speakers == (("speaker-1", "Speaker 1"), ("room-1", "Room 1"))
+    rig.session.stop()
+
+
+def test_a_speaker_model_that_fails_on_toggle_leaves_system_off_and_mic_running(
+    monkeypatch, tmp_path
+):
+    rig = _make_session(
+        monkeypatch, tmp_path, system=False, tracker=_counting_tracker([], fail=True)
+    )
+    processed = _wait_for_lines(rig.session, 1)
+
+    rig.session.toggle("system")
+
+    assert rig.session.source_states["system"] == "off"
+    rig.recorder.emit(1)
+    assert processed.wait(timeout=1)
+    rig.session.stop()

@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.widgets import Input, Label
+from textual.widgets import Input, Label, Static
 
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.dialog import Dialog
@@ -17,7 +18,7 @@ from stenographer.cli.hub.widgets.dialog import Dialog
 FORMATS = ("md", "jsonl", "srt", "txt")
 
 
-class ExportDialog(Dialog[tuple[str, Path] | None]):
+class ExportDialog(Dialog[None]):
     """Choose ``md``, ``jsonl``, ``srt`` or ``txt`` and a folder; ``enter`` exports."""
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
@@ -50,9 +51,11 @@ class ExportDialog(Dialog[tuple[str, Path] | None]):
     }
     """
 
-    def __init__(self, session_id: str) -> None:
+    def __init__(self, session_id: str, export: Callable[[str, Path], Awaitable[Path]]) -> None:
         super().__init__(f"Export {session_id}")
         self.export_format = FORMATS[0]
+        self._export = export
+        self._exporting = False
 
     def compose_body(self) -> ComposeResult:
         with Horizontal(classes="export-row", id="export-format-row"):
@@ -67,6 +70,8 @@ class ExportDialog(Dialog[tuple[str, Path] | None]):
         with Horizontal(classes="export-row", id="export-folder-row"):
             yield Label("Folder")
             yield Input("~/Documents", placeholder="Output folder", id="export-folder")
+
+        yield Static("", id="export-error", markup=False)
 
     def buttons(self) -> tuple[tuple[str, str, str], ...]:
         return (("esc", "Cancel", "cancel"), ("enter", "Export", "export"))
@@ -97,4 +102,18 @@ class ExportDialog(Dialog[tuple[str, Path] | None]):
         if not folder:
             self.notify("Enter an output folder.")
             return
-        self.dismiss((self.export_format, Path(folder).expanduser()))
+        if self._exporting:
+            return
+        self._exporting = True
+        self.query_one("#export-error", Static).update("")
+        self.run_worker(self._run_export(self.export_format, Path(folder).expanduser()))
+
+    async def _run_export(self, format_name: str, folder: Path) -> None:
+        try:
+            path = await self._export(format_name, folder)
+        except Exception as exc:
+            self.query_one("#export-error", Static).update(f"Could not export this session: {exc}")
+            self._exporting = False
+        else:
+            self.dismiss(None)
+            self.app.notify(f"Exported to {path}")

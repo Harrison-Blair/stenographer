@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 
 from stenographer.lib.contracts.overlay_state import OverlayState
+from stenographer.lib.contracts.publication import TRANSIENT_STATES
 from stenographer.overlay.protocol.codec import decode_message
 from stenographer.overlay.protocol.constants import (
     CANCELLED_DISPLAY_SECONDS,
@@ -14,6 +15,7 @@ from stenographer.overlay.protocol.errors import ProtocolError
 from stenographer.overlay.protocol.line_reader import LineReader
 from stenographer.overlay.protocol.messages import (
     CommandMessage,
+    DisplayRecord,
     LoadingActivityMessage,
     SpectrumMessage,
     StateMessage,
@@ -47,13 +49,10 @@ def selected_unavailable_reason(
 
 
 def coalesce_spectrum_messages(
-    messages: Iterable[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage],
-) -> tuple[
-    StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage,
-    ...,
-]:
+    messages: Iterable[DisplayRecord],
+) -> tuple[DisplayRecord, ...]:
     """Replace adjacent spectrum frames while retaining every ordering barrier."""
-    pending: list[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage] = []
+    pending: list[DisplayRecord] = []
     for message in messages:
         if (
             isinstance(message, SpectrumMessage)
@@ -70,13 +69,13 @@ def drain_display_stream(
     chunk: bytes,
     reader: LineReader,
     gate: DisplayMessageGate,
-) -> tuple[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage, ...]:
+) -> tuple[DisplayRecord, ...]:
     """Frame, decode, gate, and coalesce one chunk of the parent display stream.
 
     Only display and command records are valid from the parent; any other
     protocol message raises ``ProtocolError`` without reflecting its content.
     """
-    accepted: list[StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage] = []
+    accepted: list[DisplayRecord] = []
     for record in reader.feed(chunk):
         message = decode_message(record)
         if isinstance(message, StateMessage | SpectrumMessage | LoadingActivityMessage):
@@ -92,19 +91,6 @@ def transient_display_seconds(state: OverlayState) -> float | None:
     """Return the self-expiry window for a transient state, if it has one. PURE."""
     if state is OverlayState.ERROR:
         return ERROR_DISPLAY_SECONDS
-    if state in {
-        OverlayState.CANCELLED,
-        OverlayState.APPLIED,
-        OverlayState.SKIPPED,
-        OverlayState.FALLBACK,
-    }:
+    if state in TRANSIENT_STATES:
         return CANCELLED_DISPLAY_SECONDS
     return None
-
-
-def transient_timeout_applies(expected_generation: int, current: StateMessage) -> bool:
-    """Guard a delayed hide so it cannot erase a newer visible state. PURE."""
-    return (
-        current.generation == expected_generation
-        and transient_display_seconds(current.state) is not None
-    )

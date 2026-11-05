@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Typed model, worker, and protocol failures."""
+"""Typed model and worker failures."""
 
 from __future__ import annotations
 
@@ -19,10 +19,6 @@ class WorkerPathologicalError(WorkerError):
     detail string, since the original instance cannot cross the boundary."""
 
 
-class WorkerProtocolError(WorkerError):
-    """The child sent a malformed or out-of-order protocol response."""
-
-
 class WorkerCrashedError(WorkerError):
     """The registered inference process exited before completing its response."""
 
@@ -33,10 +29,6 @@ class WorkerModelError(WorkerError):
 
 class WorkerTimeoutError(WorkerError):
     """A fixed inference or model-loading deadline expired."""
-
-
-class _WorkerTimeoutError(WorkerTimeoutError):
-    """An internal phase deadline expired while the child remained alive."""
 
 
 class BarkDownloadError(RuntimeError):

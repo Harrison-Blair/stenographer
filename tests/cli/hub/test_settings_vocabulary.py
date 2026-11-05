@@ -8,12 +8,13 @@ import asyncio
 from textual.widgets import Input
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.vocabulary_dialog import VocabularyDialog
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
+from tests.cli.hub.support import _config_path
 from tests.cli.hub.test_settings_tabs import (
     IdleServices,
-    _config_path,
     _field,
     _plain,
     _screen_text,
@@ -40,7 +41,7 @@ def test_settings_vocabulary_row_counts_terms_and_done_makes_an_unsaved_change(t
 
     async def exercise():
         path = _config_path(tmp_path, _WITH_TERMS)
-        app = HubApp(IdleServices(), config_path=path)
+        app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_vocabulary(pilot)
             text = _screen_text(app)
@@ -72,57 +73,49 @@ def test_settings_vocabulary_row_counts_terms_and_done_makes_an_unsaved_change(t
     asyncio.run(exercise())
 
 
-def test_settings_vocabulary_rejects_bad_terms_with_the_config_rules(tmp_path):
-    async def exercise():
-        app = HubApp(IdleServices(), config_path=_config_path(tmp_path, _WITH_TERMS))
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open_vocabulary(pilot)
-            dialog = app.screen
-            await pilot.press("a", *"  BRAVO ", "enter")
-            await pilot.pause()
-            assert dialog.terms == ["alpha", "bravo"]
-            assert f"{FAIL} term not kept: term 3 repeats an earlier term" in _screen_text(app)
-            assert isinstance(app.screen.focused, Input), "the input stays open to fix the term"
-            await pilot.press("ctrl+a", "ctrl+k", *("x" * 65), "enter")
-            await pilot.pause()
-            assert dialog.terms == ["alpha", "bravo"]
-            assert f"{FAIL} term not kept: term 3 must have at most 64 characters" in _screen_text(
-                app
-            )
-            await pilot.press("ctrl+a", "ctrl+k", "space", "enter")
-            await pilot.pause()
-            assert f"{FAIL} term not kept: term 3 must be non-empty" in _screen_text(app)
-            await pilot.press("escape")
-            await pilot.pause()
-            await pilot.press("a", *"  delta ", "enter")
-            await pilot.pause()
-            assert dialog.terms == ["alpha", "bravo", "delta"]
+async def test_settings_vocabulary_rejects_bad_terms_with_the_config_rules(tmp_path):
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(_config_path(tmp_path, _WITH_TERMS)))
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_vocabulary(pilot)
+        dialog = app.screen
+        await pilot.press("a", *"  BRAVO ", "enter")
+        await pilot.pause()
+        assert dialog.terms == ["alpha", "bravo"]
+        assert f"{FAIL} term not kept: term 3 repeats an earlier term" in _screen_text(app)
+        assert isinstance(app.screen.focused, Input), "the input stays open to fix the term"
+        await pilot.press("ctrl+a", "ctrl+k", *("x" * 65), "enter")
+        await pilot.pause()
+        assert dialog.terms == ["alpha", "bravo"]
+        assert f"{FAIL} term not kept: term 3 must have at most 64 characters" in _screen_text(app)
+        await pilot.press("ctrl+a", "ctrl+k", "space", "enter")
+        await pilot.pause()
+        assert f"{FAIL} term not kept: term 3 must be non-empty" in _screen_text(app)
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("a", *"  delta ", "enter")
+        await pilot.pause()
+        assert dialog.terms == ["alpha", "bravo", "delta"]
 
-            await pilot.press("escape")
-            await pilot.pause()
-            assert app.config_editor.config.refine.vocabulary == ("alpha", "bravo")
-            assert not app.config_editor.dirty
-
-    asyncio.run(exercise())
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.config_editor.config.refine.vocabulary == ("alpha", "bravo")
+        assert not app.config_editor.dirty
 
 
-def test_settings_vocabulary_shows_the_rejection_inside_the_open_editor(tmp_path):
-    async def exercise():
-        app = HubApp(IdleServices(), config_path=_config_path(tmp_path))
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _open_vocabulary(pilot)
-            await pilot.press("a", "space", "enter")
-            await pilot.pause()
-            assert isinstance(app.screen.focused, Input)
-            assert f"{FAIL} term not kept: term 1 must be non-empty" in _screen_text(app)
-            await pilot.press("escape")
-            await pilot.pause()
-            assert FAIL not in _screen_text(app)
-            await pilot.press("a", "space", "enter")
-            await pilot.pause()
-            await pilot.press(*"delta", "enter")
-            await pilot.pause()
-            assert app.screen.terms == ["delta"]
-            assert FAIL not in _screen_text(app)
-
-    asyncio.run(exercise())
+async def test_settings_vocabulary_shows_the_rejection_inside_the_open_editor(tmp_path):
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_vocabulary(pilot)
+        await pilot.press("a", "space", "enter")
+        await pilot.pause()
+        assert isinstance(app.screen.focused, Input)
+        assert f"{FAIL} term not kept: term 1 must be non-empty" in _screen_text(app)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert FAIL not in _screen_text(app)
+        await pilot.press("a", "space", "enter")
+        await pilot.pause()
+        await pilot.press(*"delta", "enter")
+        await pilot.pause()
+        assert app.screen.terms == ["delta"]
+        assert FAIL not in _screen_text(app)

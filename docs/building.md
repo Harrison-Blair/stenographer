@@ -27,15 +27,17 @@ prose, no sub-bullets, and no blank lines between bullets. Wrap bullets at 79
 columns with a two-space continuation indent.
 
 A changed default or renamed option belongs under `### Added`, phrased as the
-new behavior ("Uses Underdog Bark 3.0 Pro for dictation, Live, and
-Files").
+new behavior ("Uses Underdog Bark 3.0 Pro for dictation, Record, and
+file jobs").
 Internal-only work — refactoring, test coverage, packaging with no observable
 effect — is folded into the synopsis or left out, never listed as a fix. An
 `[Unreleased]` section may be empty while nothing is pending, and otherwise
 follows the same structure.
 
-`scripts/release_notes.py check` enforces this for every entry in the file. It
-runs in a manually dispatched release rehearsal and again in the draft-release
+`.venv/bin/python scripts/release_notes.py check X.Y.Z CHANGELOG.md` validates
+the structure for the requested release and `[Unreleased]`; it does not enforce
+the 79-column wrapping convention. It runs in a manually dispatched release
+rehearsal and again in the draft-release
 workflow, so a missing or malformed entry fails before the draft is written.
 
 ## Quick start
@@ -54,9 +56,7 @@ the application and tests, development scripts, packaging files, workflows,
 and explicitly listed metadata, documentation, and bundled assets. Local
 recordings, downloaded models, caches, build output, and agent/editor settings
 stay ignored. Shared guidance remains in `AGENTS.md` and `CLAUDE.md`.
-The curated [code-smell reference](docs/reference/guru/code-smells.md) and
-[refactoring techniques](docs/reference/guru/refactoring-techniques.md) remain
-tracked together under `docs/reference/guru/`. PyInstaller collects only the
+PyInstaller collects only the
 application entry point, modules, and assets.
 
 For a new file type, documentation file, or asset, update both `.gitignore`
@@ -148,15 +148,16 @@ libffi development headers (for example `build-essential`, `python3-dev`,
 `libwayland-dev`, and `libffi-dev` on Debian-family systems). These are build
 requirements only; the onedir bundle contains the completed CFFI extension.
 
-`scripts/build.sh` and `scripts/install.sh` show elapsed time and the current
-phase in animated progress bars, with the last three log lines beneath them.
-The build also shows measured hook and hidden-import counts. Both deliberately
+`scripts/build.sh` and `scripts/install.sh` show elapsed time in animated
+progress bars, with the last three log lines beneath them. The installer also
+shows the current phase. Both deliberately
 omit an overall percentage and ETA because their underlying tools expose no
 reliable total work estimate. Full tool output goes to `dist/build.log` /
 `dist/install.log` (dumped on failure); pass `--verbose` to stream the raw
 output instead.
 
-To force a fresh build and immediately install it, run:
+If overlay backend imports fail in a source installation, force a fresh build
+and immediately install it by running:
 
 ```sh
 scripts/reinstall.sh
@@ -203,7 +204,8 @@ The target system must provide:
 - **libportaudio** (e.g. the `libportaudio2` package) — excluded from the
   bundle by `packaging/hook-sounddevice.py` so the system audio stack is
   used; found at runtime via `packaging/rthooks/py_rth_portaudio.py`.
-- **`wl-copy`** (wl-clipboard) — clipboard delivery.
+- **`wl-copy`** (wl-clipboard) — clipboard delivery with Wayland data control;
+  **`xclip`** provides the X11/XWayland fallback.
 - **`canberra-gtk-play`, `pw-play`, or `paplay`** — audio cues, in preference
   order (degrades to silent if absent).
 - **`/dev/uinput` write access** and membership in the **`input` group** —

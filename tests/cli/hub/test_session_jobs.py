@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import queue
+import shutil
 import threading
 import time
+import tracemalloc
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -13,16 +16,15 @@ import pytest
 import soundfile as sf
 
 from stenographer.cli.hub.services import HubServices
-from stenographer.cli.hub.session_jobs import SessionJobs
 from stenographer.lib.config.models import Config
-from stenographer.lib.files.media import DecodedAudio
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError, StaleRevisionError
+from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
+from tests.lib.platform.support import NullProcessCounters
 
 
 class FakePlatform:
@@ -64,10 +66,11 @@ class FakePlayer:
     def __init__(self):
         self.pid = 43210
         self.terminated = False
+        self.returncode = 0
         self.finished = threading.Event()
 
     def poll(self):
-        return 0 if self.finished.is_set() else None
+        return self.returncode if self.finished.is_set() else None
 
     def terminate(self):
         self.terminated = True
@@ -75,7 +78,7 @@ class FakePlayer:
 
     def wait(self):
         self.finished.wait()
-        return 0
+        return self.returncode
 
 
 def _write_session(root: Path) -> Path:
@@ -243,7 +246,6 @@ def test_playback_mixes_saved_sources_and_second_press_stops_own_player(tmp_path
 
     services.toggle_session_playback(session.name)
     mixed_path = Path(commands[0][1])
-    assert services._player_pid == player.pid
     samples, sample_rate = sf.read(mixed_path, dtype="float32")
     services.toggle_session_playback(session.name)
 
@@ -259,13 +261,126 @@ def test_playback_mixes_saved_sources_and_second_press_stops_own_player(tmp_path
     assert not mixed_path.exists()
 
 
+def _two_session_services(tmp_path):
+    """Return services with a first and a second saved session, and each started player."""
+    sessions_root = tmp_path / "sessions"
+    first = _write_session(sessions_root)
+    second = sessions_root / "20261020T011219Z"
+    shutil.copytree(first, second)
+    players = []
+
+    def start_player(command):
+        players.append(FakePlayer())
+        return players[-1]
+
+    services = HubServices(
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        session_store=SessionStore(sessions_root),
+        player_factory=start_player,
+    )
+    return services, first.name, second.name, players
+
+
+def test_playback_of_another_session_stops_the_first_and_starts_in_one_press(tmp_path):
+    services, first, second, players = _two_session_services(tmp_path)
+
+    services.toggle_session_playback(first)
+    services.toggle_session_playback(second)
+
+    assert len(players) == 2
+    assert players[0].terminated
+    assert not players[1].terminated
+
+    # The same session still toggles: its second press stops it and starts nothing.
+    services.toggle_session_playback(second)
+    assert players[1].terminated
+    assert len(players) == 2
+
+
+def test_playback_reports_a_player_that_exits_with_an_error(tmp_path):
+    session = _write_session(tmp_path / "sessions")
+    player = FakePlayer()
+    player.returncode = 3
+    failures = queue.Queue()
+    services = HubServices(
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        session_store=SessionStore(tmp_path / "sessions"),
+        player_factory=lambda _command: player,
+    )
+
+    services.toggle_session_playback(session.name, on_failure=failures.put)
+    player.finished.set()
+
+    assert failures.get(timeout=1) == 3
+
+
+def test_playback_reports_a_crash_that_the_next_play_press_overtakes(tmp_path):
+    class CrashedPlayer(FakePlayer):
+        """The process has exited; its watcher has not returned from ``wait`` yet."""
+
+        def poll(self):
+            return 3
+
+        def wait(self):
+            self.finished.wait()
+            return 3
+
+    sessions_root = tmp_path / "sessions"
+    first = _write_session(sessions_root)
+    second = sessions_root / "20261020T011219Z"
+    shutil.copytree(first, second)
+    players = [CrashedPlayer(), FakePlayer()]
+    remaining = iter(players)
+    failures = queue.Queue()
+    services = HubServices(
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        session_store=SessionStore(sessions_root),
+        player_factory=lambda _command: next(remaining),
+    )
+
+    services.toggle_session_playback(first.name, on_failure=failures.put)
+    services.toggle_session_playback(second.name, on_failure=failures.put)
+    assert not players[0].terminated
+    players[0].finished.set()
+
+    assert failures.get(timeout=1) == 3
+    services.stop_session_playback()
+
+
+def test_playback_does_not_report_a_stop_or_a_clean_end(tmp_path):
+    services, first, second, players = _two_session_services(tmp_path)
+    failures = []
+
+    # A stopped player exits with the signal status: the stop is not a failure.
+    services.toggle_session_playback(first, on_failure=failures.append)
+    players[0].returncode = -15
+    services.stop_session_playback()
+    assert players[0].finished.wait(timeout=1)
+
+    # A player replaced by another session is a stop too.
+    services.toggle_session_playback(first, on_failure=failures.append)
+    players[1].returncode = -15
+    services.toggle_session_playback(second, on_failure=failures.append)
+
+    # A player that ends by itself with status zero is a clean end.
+    players[2].finished.set()
+
+    for thread in threading.enumerate():
+        if thread.name == "stenographer-session-player":
+            thread.join(timeout=1)
+    assert failures == []
+
+
 class RecordingDecoder:
     def __init__(self):
         self.paths = []
 
     def __call__(self, path):
         self.paths.append(path)
-        return DecodedAudio(np.full(48_000, 0.1, dtype=np.float32), 16_000, 3.0)
+        yield np.full(48_000, 0.1, dtype=np.float32)
 
 
 def _file_session(sessions_root: Path, tmp_path: Path) -> str:
@@ -312,6 +427,157 @@ def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_p
     ]
     assert detail.summary.kind == "file"
     assert workers[0].closed
+
+
+class RampDecoder:
+    """Decode a ramp whose sample values equal their positions, in small chunks."""
+
+    def __init__(self, total=48_000, chunk_frames=3_000, error=None):
+        self.total = total
+        self.chunk_frames = chunk_frames
+        self.error = error
+        self.closed = False
+
+    def __call__(self, _path):
+        try:
+            for start in range(0, self.total, self.chunk_frames):
+                yield np.arange(start, min(self.total, start + self.chunk_frames), dtype=np.float32)
+            if self.error is not None:
+                raise self.error
+        finally:
+            self.closed = True
+
+
+class RangeWorker:
+    """Report the first and last sample value of each phrase."""
+
+    def __init__(self, on_transcribe=None):
+        self.on_transcribe = on_transcribe
+        self.closed = False
+
+    def transcribe(self, samples):
+        if self.on_transcribe is not None:
+            self.on_transcribe()
+        return TranscriptionResult(f"{int(samples[0])}..{int(samples[-1])}", 1.0)
+
+    def shutdown(self):
+        self.closed = True
+
+
+def _timed_file_session(sessions_root, tmp_path, intervals):
+    source = tmp_path / "Interview.wav"
+    sf.write(source, np.zeros(16, dtype=np.float32), 16_000)
+    return SessionStore(sessions_root).create_file_session(
+        source,
+        started_at=datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC),
+        duration_seconds=3.0,
+        lines=[
+            TranscriptLine(start, end, "", "file", "speaker-1", "Speaker 1", "old")
+            for start, end in intervals
+        ],
+    )
+
+
+def _ramp_jobs(tmp_path, store, decoder, worker):
+    return SessionJobs(
+        store,
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        worker_factory=lambda *_args, **_kwargs: worker,
+        media_decoder=decoder,
+    )
+
+
+def test_retranscribe_file_session_reads_each_interval_across_chunks(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session_id = _timed_file_session(
+        sessions_root,
+        tmp_path,
+        # Overlapping, without duration, and cut by the end of the audio.
+        [(0.5, 1.5), (1.0, 2.0), (2.5, 2.5), (2.75, 99.0)],
+    )
+    store = SessionStore(sessions_root)
+    decoder = RampDecoder()
+
+    _ramp_jobs(tmp_path, store, decoder, RangeWorker()).retranscribe(session_id)
+
+    assert [line.text for line in store.read(session_id).lines] == [
+        "8000..23999",
+        "16000..31999",
+        "old",
+        "44000..47999",
+    ]
+    assert decoder.closed
+
+
+def test_retranscribe_file_session_holds_only_about_one_phrase_of_audio(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session_id = _timed_file_session(
+        sessions_root, tmp_path, [(index * 0.25, index * 0.25 + 0.25) for index in range(120)]
+    )
+    jobs = _ramp_jobs(
+        tmp_path,
+        SessionStore(sessions_root),
+        RampDecoder(total=480_000),
+        RangeWorker(on_transcribe=lambda: held.append(tracemalloc.get_traced_memory()[0])),
+    )
+    held = []
+
+    tracemalloc.start()
+    try:
+        jobs.retranscribe(session_id)
+    finally:
+        tracemalloc.stop()
+
+    # All 480 000 samples take 1.9 MB. One 4 000 sample phrase and one chunk take 28 kB.
+    assert len(held) == 120
+    assert max(held) - held[0] < 200_000
+
+
+def test_retranscribe_file_session_fails_for_a_phrase_past_the_decoded_audio(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session_id = _timed_file_session(sessions_root, tmp_path, [(0.0, 1.0), (3.5, 4.0)])
+    store = SessionStore(sessions_root)
+    worker = RangeWorker()
+    decoder = RampDecoder()
+
+    with pytest.raises(ValueError, match="has no audio"):
+        _ramp_jobs(tmp_path, store, decoder, worker).retranscribe(session_id)
+
+    assert store.read(session_id).revision == "transcript.jsonl"
+    assert worker.closed
+    assert decoder.closed
+
+
+def test_retranscribe_file_session_fails_for_a_decode_error_after_the_last_line(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session_id = _timed_file_session(sessions_root, tmp_path, [(0.0, 0.5)])
+    store = SessionStore(sessions_root)
+    decoder = RampDecoder(error=RuntimeError("ffmpeg exited with status 1"))
+
+    with pytest.raises(RuntimeError, match="status 1"):
+        _ramp_jobs(tmp_path, store, decoder, RangeWorker()).retranscribe(session_id)
+
+    assert store.read(session_id).revision == "transcript.jsonl"
+
+
+def test_retranscribe_file_session_stops_the_decoder_when_the_worker_fails(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session_id = _timed_file_session(sessions_root, tmp_path, [(0.0, 0.5)])
+    decoder = RampDecoder()
+
+    def fail():
+        raise RuntimeError("worker failed")
+
+    jobs = _ramp_jobs(
+        tmp_path, SessionStore(sessions_root), decoder, RangeWorker(on_transcribe=fail)
+    )
+    # The kept exception holds the job frames, so only an explicit close stops the decoder.
+    with pytest.raises(RuntimeError) as caught:
+        jobs.retranscribe(session_id)
+
+    assert str(caught.value) == "worker failed"
+    assert decoder.closed
 
 
 def test_retranscribe_file_session_refuses_an_invalid_source(tmp_path):

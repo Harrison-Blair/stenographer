@@ -4,10 +4,13 @@
 
 This guide covers the settings and commands you may want after the first run.
 For the shortest path from install to dictation, see the [README](../README.md).
+If overlay backend imports fail, reinstall using the README installation method.
+If spectrum calibration reports "room noise changed during calibration; keep the
+room quiet and retry", repeat it in a quiet room.
 
 ## Configure a different workflow
 
-Run the setup wizard to review every setting:
+Run the setup wizard to review the hotkey, audio, ASR, feedback, and refine settings:
 
 ```sh
 stenographer setup
@@ -15,11 +18,14 @@ stenographer setup
 
 For common settings only, use `stenographer setup --quick`. The wizard can
 check the microphone, clipboard, model, and input permissions, and offers the
-separate model download. Nothing is downloaded until you choose it.
+separate ASR and voice-activity model download. Nothing is downloaded until you
+choose it. Use hub Settings or the configuration file for the remaining settings.
+Spectrum calibration records only the quiet room, and both wizards skip it and
+keep the current floor when the overlay is off.
 
 ## Build the speech model
 
-Dictation, Live, and Files use Underdog Bark 3.0 Pro by Conway Research. It
+Dictation, Record, and file jobs use Underdog Bark 3.0 Pro by Conway Research. It
 runs as int8 ONNX through sherpa-onnx, on the CPU only. Stenographer does not
 host the model; you build it once on your machine:
 
@@ -45,13 +51,17 @@ your config file. Stenographer ignores them and saves keep them unchanged; you
 can delete them by hand. The speech model keeps fillers such as "um" in every
 mode; [refine](refine.md) removes them from dictations of 10 or more words (the
 default `min_words`). For live capture,
-see [Record live audio](#record-live-audio).
+see [Record live audio](hub.md#record).
 
-The configuration file is:
+The default configuration file is:
 
 ```text
 ~/.config/stenographer/config.toml
 ```
+
+Set `STENOGRAPHER_CONFIG` to use a different file. Otherwise, when
+`XDG_CONFIG_HOME` is set, the file is
+`$XDG_CONFIG_HOME/stenographer/config.toml`.
 
 For example, use toggle mode, keep Escape as the cancel key, and hide the
 lifecycle pill:
@@ -89,20 +99,30 @@ Press Escape while recording or while the result is being delivered. The audio
 and transcript are discarded, and nothing is pasted. The focused application
 still receives the Escape keypress. If cancellation happens during ASR decode,
 the run finishes at the next decode boundary, but the result is still discarded.
+If Agent's unrefined transcript is being copied when you cancel, the rewrite is
+not copied, and your previous clipboard item comes back.
+
+The formatter capitalizes the pronoun `i`, including when surrounded by punctuation.
+
+Invalid binding errors identify the affected `hotkey` setting.
 
 Set `cancel_binding = ""` to disable this behavior, or choose another evdev
 `KEY_*` name for the binding.
 
 ## Keep your clipboard
 
-The daemon puts your previous clipboard item back after each paste. It saves
+By default, when clipboard capture and restoration are available, the daemon
+puts your previous clipboard item back after each paste. It saves
 the clipboard before it copies the transcript, pastes, plays the delivered
-sound, waits `restore_delay_ms`, and then writes the saved item back. The
-primary selection keeps the transcript. The saved item is held in memory only
+sound, waits `restore_delay_ms`, and then writes the saved item back. If you
+copied something else during the wait, your newer item stays and the saved item
+is dropped. If delivery stops before the paste, the saved item comes back
+without the wait. The primary selection keeps the transcript. The saved item is held in memory only
 until it is restored, and it is never logged.
 
-When Agent rewrites the text, the unrefined transcript is copied just before
-the rewrite. A clipboard history manager therefore lists the original, then the
+When Agent changes the text and `copy_original` is enabled, the app attempts
+to copy the original immediately before the rewritten text. This copy is best
+effort. A clipboard history manager can therefore list the original, then the
 rewrite, and then your previous item again. General never copies the original.
 
 ```toml
@@ -122,6 +142,8 @@ Limits:
 - The daemon stays busy for `restore_delay_ms` after each paste. A hotkey press
   in that window is ignored. Escape no longer cancels, because the text is
   already pasted.
+- A later copy of exactly the transcript text looks like the transcript, so the
+  saved item replaces it.
 - If an application reads the paste late and gets your previous item, increase
   `restore_delay_ms`.
 - Saving waits at most one second and keeps at most 64 MiB. A slower or larger
@@ -139,6 +161,9 @@ stenographer sounds --list
 stenographer sounds --preview warm-desk
 ```
 
+When cues are muted or volume is zero, a preview says so and plays at volume 0.6
+without changing either setting.
+
 Select a pack for the daemon:
 
 ```sh
@@ -147,7 +172,8 @@ stenographer sounds soft-electronic
 
 The bundled packs are `legacy`, `warm-desk`, `soft-electronic`, and
 `minimal-ui`. A custom pack lives under
-`~/.config/stenographer/sounds/<pack>/` and must contain these four files:
+`sounds/<pack>/` in the active configuration directory (by default,
+`~/.config/stenographer/sounds/<pack>/`) and must contain these four files:
 
 ```text
 record_start.wav
@@ -162,22 +188,29 @@ or invalid pack is ignored as a unit.
 
 ## View or remove statistics
 
-Statistics are local numeric records. View totals or export them:
+Statistics are local numeric records. Summary, export, and date-range deletion
+default to hotkey records; use `--source all` to include file records. Collection
+health covers all runs, regardless of filters, and reports when no runs have been
+recorded. View
+totals or export them:
 
 ```sh
-stenographer stats
-stenographer stats export --format json
-stenographer stats export --format csv --output stats.csv
+stenographer stats --source all
+stenographer stats export --source all --format json
+stenographer stats export --source all --format csv --output stats.csv
 ```
 
 Preview a date-range deletion, then confirm it with `--yes`:
 
 ```sh
-stenographer stats delete --since 2026-09-01 --until 2026-09-07
-stenographer stats delete --since 2026-09-01 --until 2026-09-07 --yes
+stenographer stats delete --source all --since 2026-09-01 --until 2026-09-07
+stenographer stats delete --source all --since 2026-09-01 --until 2026-09-07 --yes
 ```
 
-Preview removal of all sources with `stenographer stats reset`; add `--yes` to
+Preview removal of all sources with `stenographer stats reset`; filters are
+rejected, so use `stats delete` for filtered deletion. Export-only options
+`--format` and `--output` are rejected for other actions; file exports confirm
+their destination. Add `--yes` to
 confirm. No audio, transcript, or prompt text is retained in these
 records. Disable collection with:
 
@@ -193,7 +226,8 @@ can lose measurements that have not been committed yet.
 ## Understand privacy and network access
 
 The model runs locally. Audio, transcripts, configuration, and device or model
-names do not leave the machine. Logs contain timings and counts, never audio or
+names stay on the machine by default; a configured remote refine host receives
+transcripts. Logs contain timings and counts, never audio or
 transcript text. The lifecycle pill does not receive raw audio or transcript
 text. The hub Record screen saves the audio and transcript that you record only
 in a private session folder; see [saved session files and
@@ -221,47 +255,14 @@ local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
 
 ## Open the terminal hub
 
-Run `stenographer` with no arguments in a terminal to open the hub. It starts
-on Live; press `space` when you want to start recording. If stdin or stdout is
-not a terminal, the command prints help. Existing subcommands keep their
-current behavior.
+Run `stenographer` with no arguments in a terminal to open the hub. If stdin
+or stdout is not a terminal, the command prints help. See the [hub guide](hub.md)
+for recording, transcribing files, and separating speakers.
 
-In the hub, press `2` for Library, then `n` to open the Transcribe a file
-dialog. The browser starts in your home folder. Use `up` and `down` to select
-an entry, `enter` to open a folder, and `/` to filter names in the current
-folder. Press `s` for Separate speakers (on by default), `r` for Refine text
-(off by default), and `c` to type the speaker count: `auto` or a whole number
-above 0. Press `enter` on a file to queue it; the Library shows and selects
-the job at once. Jobs run one at a time and continue when you change screens.
-
-Each job saves its result as a session folder in the sessions folder next to
-your recordings: a private copy of the source file, `transcript.jsonl`,
-`transcript.md`, and `session.json`. A job on `mic.flac` or `system.flac` of a
-recording saves a new transcript revision of that recording instead. Select
-the row in Library to see the progress and the finished lines, and use `x` to
-export the transcript. See [the hub guide](hub.md#transcribe-a-file) for the
-paths and details.
-
-## Record live audio
-
-The Record screen of the hub transcribes the microphone and full system mix.
-Download its voice and speaker models with
-`stenographer model download --live`; build the ASR model separately with
-`stenographer model download --asr`. See the [Record section of the hub
-guide](hub.md#record) for source controls, saved files, privacy, and limits.
-
-To separate several speakers who share one microphone, turn on microphone
-diarization in the config:
-
-```toml
-[stenographer.live]
-diarize_mic = true   # default false: every microphone line is "You"
-```
-
-Microphone speakers then get labels such as `Room 1` and `Room 2`, separate
-from the system `Speaker N` labels. The Live tab of hub Settings edits the
-setting; it applies when a recording starts. See
-[separate the speakers in a room](hub.md#separate-the-speakers-in-a-room).
+Download the voice and speaker models with `stenographer model download --live`;
+build the ASR model separately with `stenographer model download --asr`. Download flags
+can be combined; live models report progress and each completed model. A corrupt voice
+model is replaced only after the new download passes its hash check.
 
 ## Troubleshoot a running service
 
@@ -326,3 +327,7 @@ the microphone never captured. It can also amplify background noise and expose
 clipping or distortion. In the project's public-audio evaluation it improved
 development clips but regressed the held-out clips, so it is not enabled by
 default. Fix microphone placement and capture level first.
+
+When startup cannot meet required capabilities, it shows their labels and fixes.
+Doctor distinguishes absent logs from logs it cannot inspect. If the sound-pack
+menu finds no valid packs, restore bundled assets or install a valid custom pack.

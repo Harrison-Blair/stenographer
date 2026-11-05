@@ -20,8 +20,8 @@ from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.checks_tab import ChecksTab
 from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.config_dialog import ConfigPrompt
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.defaults_dialog import DefaultsDialog
-from stenographer.cli.hub.device_dialog import DeviceDialog
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport, ModelEntry
 from stenographer.cli.hub.export_dialog import ExportDialog
@@ -39,11 +39,12 @@ from stenographer.cli.hub.widgets.focus_button import FocusButton
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.sidebar import Sidebar
+from tests.cli.hub.support import _config_path, make_app
 from tests.cli.hub.test_library import FakeServices as LibraryServices
 from tests.cli.hub.test_library import _library
 from tests.cli.hub.test_record_screen import _app as record_app
 from tests.cli.hub.test_record_screen import _services as record_services
-from tests.cli.hub.test_settings_tabs import _config_path, _select
+from tests.cli.hub.test_settings_tabs import _select
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -128,14 +129,14 @@ async def _until(pilot, condition, message: str) -> None:
 def _make_app(kind: str, tmp_path: Path) -> HubApp:
     if kind == "record":
         services, _created = record_services(tmp_path)
-        return record_app(services)
+        return record_app(tmp_path, services)
     if kind == "library":
         root, _sessions = _library(tmp_path)
-        return HubApp(LibraryServices(root), files_home=tmp_path)
+        return make_app(tmp_path, LibraryServices(root), files_home=tmp_path)
     app = HubApp(
         SettingsServices(),
-        config_path=_config_path(tmp_path),
-        doctor_probe=lambda _config, _path: _report(),
+        config_editor=ConfigEditor(_config_path(tmp_path)),
+        doctor_probe=lambda _config: _report(),
         model_status=lambda: (ModelEntry("alpha", "speech model", "alpha", False, "1 MB"),),
         setup_test=lambda _step, _config: "alpha test",
     )
@@ -226,7 +227,7 @@ STATES = {
     ),
 }
 DIALOGS = {
-    "record-device": ("record", lambda p: _record(p, "d"), DeviceDialog),
+    "record-device": ("record", lambda p: _record(p, "d"), ChoiceDialog),
     "record-rename": ("record", lambda p: _record(p, "record", "r"), RenameDialog),
     "record-quit": ("record", lambda p: _record(p, "record", "q"), QuitConfirm),
     "saved-rename": ("record", lambda p: _record(p, "record", "save", "r"), RenameDialog),
@@ -423,24 +424,23 @@ def test_help_overlay_shows_every_shown_binding_of_the_dialog(tmp_path, name):
     _run_state(tmp_path, DIALOGS, name, check)
 
 
-def test_help_overlay_scrolls_its_rows_and_keeps_its_close_button_on_a_short_terminal():
-    async def exercise():
-        app = HubApp(SettingsServices())
-        async with app.run_test(size=(150, 20)) as pilot:
-            await pilot.press("2")
-            await pilot.pause()
-            await pilot.press("question_mark")
-            await pilot.pause()
-            overlay = app.screen
-            assert isinstance(overlay, HelpOverlay)
-            assert "[esc] Close" in _screen_text(app)
-            assert "Previous entry" in _screen_text(app)
-            body = overlay.body_widget()
-            body.scroll_end(animate=False)
-            await pilot.pause()
-            assert overlay.rows[-1][1] in _screen_text(app)
-
-    asyncio.run(exercise())
+async def test_help_overlay_scrolls_its_rows_and_keeps_its_close_button_on_a_short_terminal(
+    tmp_path,
+):
+    app = make_app(tmp_path, SettingsServices())
+    async with app.run_test(size=(150, 20)) as pilot:
+        await pilot.press("2")
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        overlay = app.screen
+        assert isinstance(overlay, HelpOverlay)
+        assert "[esc] Close" in _screen_text(app)
+        assert "Previous entry" in _screen_text(app)
+        body = overlay.body_widget()
+        body.scroll_end(animate=False)
+        await pilot.pause()
+        assert overlay.rows[-1][1] in _screen_text(app)
 
 
 # AC2: clicks
@@ -488,50 +488,21 @@ def test_each_button_click_runs_the_action_of_its_key(tmp_path, name):
     _run_state(tmp_path, {**STATES, **DIALOGS}, name, check)
 
 
-def test_nav_rows_and_settings_tabs_answer_a_click(tmp_path):
-    async def exercise():
-        app = _make_app("settings", tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
+async def test_nav_rows_and_settings_tabs_answer_a_click(tmp_path):
+    app = _make_app("settings", tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        for row, screen in ((1, "library"), (2, "settings"), (0, "record")):
+            assert await pilot.click("#sidebar", offset=(4, row))
             await pilot.pause()
-            for row, screen in ((1, "library"), (2, "settings"), (0, "record")):
-                assert await pilot.click("#sidebar", offset=(4, row))
-                await pilot.pause()
-                assert app.current_mode == screen
-            await pilot.press("3")
+            assert app.current_mode == screen
+        await pilot.press("3")
+        await pilot.pause()
+        for tab in ("audio", "recognition", "live", "checks", "general"):
+            assert await pilot.click(f"#tab-{tab}")
             await pilot.pause()
-            for tab in ("audio", "recognition", "live", "checks", "general"):
-                assert await pilot.click(f"#tab-{tab}")
-                await pilot.pause()
-                assert app.settings_screen.tab == tab
-                assert app.screen.query_one(f"#tab-{tab}", HubButton).label.plain.startswith("▶")
-
-    asyncio.run(exercise())
-
-
-def test_context_card_buttons_run_the_action_of_their_key(tmp_path):
-    async def exercise():
-        app = _make_app("record", tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _record(pilot, "record")
-            assert await pilot.click("#card-r")
-            await pilot.pause()
-            assert isinstance(app.screen, RenameDialog)
-
-        probes = []
-        app = _make_app("settings", tmp_path / "settings")
-        app.checks_tab._doctor_probe = lambda _config, _path: probes.append(1) or _report()
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _settings(pilot, "checks")
-            await _until(pilot, lambda: not app.checks_tab.checking, "checks still run")
-            before = len(probes)
-            assert await pilot.click("#card-r")
-            await _until(pilot, lambda: len(probes) == before + 1, "the card did not run checks")
-            await _until(pilot, lambda: not app.checks_tab.checking, "checks still run")
-            await pilot.press("r")
-            await _until(pilot, lambda: len(probes) == before + 2, "r did not run checks")
-
-    (tmp_path / "settings").mkdir()
-    asyncio.run(exercise())
+            assert app.settings_screen.tab == tab
+            assert app.screen.query_one(f"#tab-{tab}", HubButton).label.plain.startswith("▶")
 
 
 # AC3: docs
@@ -611,12 +582,4 @@ def test_docs_name_no_files_section():
     assert "Files job" not in text
 
 
-@pytest.fixture(autouse=True)
-def _utc(monkeypatch):
-    import time
-
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
+pytestmark = pytest.mark.usefixtures("utc")

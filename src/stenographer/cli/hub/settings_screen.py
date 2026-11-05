@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 from typing import TYPE_CHECKING, ClassVar
 
@@ -112,7 +113,6 @@ class SettingsScreen(HubScreen):
     ``enter``, ``tab`` and ``ctrl+s`` act.
     """
 
-    SCREEN_NAME = "settings"
     SCREEN_TITLE = "Settings"
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("left", "move_tab(-1)", "Previous tab"),
@@ -176,7 +176,6 @@ class SettingsScreen(HubScreen):
         super().__init__(**kwargs)
         self.checks_tab = checks_tab
         self.tab = "general"
-        self.check_badge: tuple[int, str] | None = None
         self.editing: str | None = None
         self.row_error: tuple[str, str] | None = None
         self._rows: dict[str, Field] = {}
@@ -212,7 +211,7 @@ class SettingsScreen(HubScreen):
 
     def on_mount(self) -> None:
         editor = self.app.config_editor
-        if self.tab != "checks" and editor is not None and editor.shown_keys is None:
+        if self.tab != "checks" and editor.shown_keys is None:
             editor.show_keys(self.tab_keys(self.tab))
         self._sync_tab_widgets()
 
@@ -230,8 +229,7 @@ class SettingsScreen(HubScreen):
         return tuple(key for key in self._tab_layout(tab) if key != DIVIDER)
 
     def _tab_layout(self, tab: str) -> tuple[str, ...]:
-        editor = self.app.config_editor
-        keys = editor.all_keys if editor is not None else ()
+        keys = self.app.config_editor.all_keys
         patterns = next(patterns for name, _label, patterns in SETTINGS_TABS if name == tab)
         layout: list[str] = []
         for pattern in patterns:
@@ -245,11 +243,11 @@ class SettingsScreen(HubScreen):
 
     def select_tab(self, tab: str) -> None:
         """Show one tab; unsaved changes stay."""
-        self._close_input()
+        if not self._commit_input():
+            return
         self.tab = tab
-        editor = self.app.config_editor
-        if tab != "checks" and editor is not None:
-            editor.show_keys(self.tab_keys(tab))
+        if tab != "checks":
+            self.app.config_editor.show_keys(self.tab_keys(tab))
         if self.ready:
             self._sync_tab_widgets()
         checks = self.checks_tab
@@ -276,8 +274,10 @@ class SettingsScreen(HubScreen):
         """
         label = Text("▶ " if tab == self.tab else "  ")
         label.append(next(text for name, text, _keys in SETTINGS_TABS if name == tab))
-        if tab == "checks" and self.check_badge is not None:
-            count, tone = self.check_badge
+        report = self.checks_tab.report
+        if tab == "checks" and report is not None and (report.warn_count or report.fail_count):
+            count = report.warn_count + report.fail_count
+            tone = "danger" if report.fail_count else "warn"
             label.append(" ")
             label.append(f"●{count}", style=StatusToken.TONES[tone])
         return label
@@ -308,14 +308,14 @@ class SettingsScreen(HubScreen):
             )
             return
         editor = app.config_editor
-        if editor is not None and editor.shown_keys is None and not editor.read_only:
+        if editor.shown_keys is None and not editor.read_only:
             editor.show_keys(self.tab_keys(self.tab))
         self._sync_rows(editor)
         actions = self.query_one("#config-actions")
-        actions.display = editor is not None and not editor.read_only
+        actions.display = not editor.read_only
         search = self.query_one("#config-search", Static)
-        search.display = editor is not None and bool(editor.search_term)
-        if editor is None or editor.read_only:
+        search.display = bool(editor.search_term)
+        if editor.read_only:
             return
         search.update(f"search: {editor.search_term} · esc clears")
         self._update_rows(editor)
@@ -323,12 +323,10 @@ class SettingsScreen(HubScreen):
         self.query_one("#config-save", HubButton).set_label(self._save_label(count))
         app.set_context_card("settings", self._config_card(editor), title="config")
 
-    def _sync_rows(self, editor: ConfigEditor | None) -> None:
+    def _sync_rows(self, editor: ConfigEditor) -> None:
         """Mount one Field per visible key when the visible keys change."""
-        if editor is None:
-            signature: tuple[object, ...] = (None, "Configuration settings will appear here.")
-        elif editor.read_only:
-            signature = (id(editor), editor.error_text())
+        if editor.read_only:
+            signature: tuple[object, ...] = (id(editor), editor.error_text())
         else:
             signature = (id(editor), editor.visible_keys, editor.search_term)
         if signature == self._row_signature:
@@ -339,8 +337,8 @@ class SettingsScreen(HubScreen):
         container.remove_children()
         self._rows = {}
         self._shown_selection = None
-        if editor is None or editor.read_only:
-            container.mount(Static(str(signature[1]), id="config-message", markup=False))
+        if editor.read_only:
+            container.mount(Static(editor.error_text(), id="config-message", markup=False))
             return
         layout = editor.visible_keys if editor.search_term else self._tab_layout(self.tab)
         widgets = []
@@ -350,7 +348,6 @@ class SettingsScreen(HubScreen):
                     widgets.append(Rule())
                 continue
             field = Field(editor.label(key), "")
-            field.CONTROL_WIDTH = _CONTROL_WIDTH
             self._rows[key] = field
             widgets.append(field)
         container.mount_all(widgets)
@@ -406,8 +403,6 @@ class SettingsScreen(HubScreen):
             if value is None:
                 return _DEFAULT_DEVICE[key]
             return self._device_labels.get(key, {}).get(str(value), str(value))
-        if editor.kind(key) == "list":
-            return f"{len(value)} terms"
         if value is None:
             return "(none)"
         return editor.format_value(value)
@@ -460,9 +455,7 @@ class SettingsScreen(HubScreen):
     def list_devices(self, dotted_key: str) -> list[tuple[str, str]]:
         """Return ``(value, label)`` of each device the sound or input server lists."""
         if dotted_key == "audio.input_device":
-            from stenographer.lib.audio.probe import input_device_choices, query_devices
-
-            return input_device_choices(query_devices().devices)
+            return self.app.services.input_devices()
         from stenographer.lib.platform import current_platform
 
         return current_platform().hotkey_devices()
@@ -471,9 +464,7 @@ class SettingsScreen(HubScreen):
 
     def _editor(self) -> ConfigEditor | None:
         editor = self.app.config_editor
-        if editor is None or editor.read_only:
-            return None
-        return editor
+        return None if editor.read_only else editor
 
     def action_move_tab(self, offset: int) -> None:
         names = [name for name, _label, _keys in SETTINGS_TABS]
@@ -506,7 +497,9 @@ class SettingsScreen(HubScreen):
         elif kind == "choice":
             self._open_choice(editor, key)
         elif kind == "device":
-            self._open_devices(editor, key)
+            self.app.run_worker(
+                self._open_devices(editor, key), group="settings-devices", exclusive=True
+            )
         elif kind == "list":
             self.app.push_screen(
                 VocabularyDialog(editor.value(key), editor.check_vocabulary),
@@ -529,8 +522,11 @@ class SettingsScreen(HubScreen):
             lambda index: index is not None and self._apply(key, values[index]),
         )
 
-    def _open_devices(self, editor: ConfigEditor, key: str) -> None:
-        devices = list(self.list_devices(key))
+    async def _open_devices(self, editor: ConfigEditor, key: str) -> None:
+        devices = list(await asyncio.to_thread(self.list_devices, key))
+        # The user may have moved on during the enumeration; a late dialog would edit a hidden row.
+        if self.app.screen is not self or editor.selected_key != key:
+            return
         self._device_labels[key] = dict(devices)
         options: list[tuple[str | None, str]] = [(None, _DEFAULT_DEVICE[key]), *devices]
         current = editor.value(key)

@@ -23,7 +23,6 @@ SCALE = "100  200  400  800 1k6 3k2 6k4"
 _RATE = 16000
 _PEAK_SECONDS = 3.0
 _KEYS = {"mic": "m", "system": "s"}
-_STATES = {"on", "idle", "off"}
 
 
 class SpectrumMeterModel:
@@ -37,8 +36,6 @@ class SpectrumMeterModel:
         floor_dbfs: object = DEFAULT_SPECTRUM_FLOOR_DBFS,
         clock: Callable[[], float] | None = None,
     ) -> None:
-        if source not in _KEYS:
-            raise ValueError(f"unknown meter source: {source}")
         self.source = source
         self.device = device
         self.speech = False
@@ -52,14 +49,17 @@ class SpectrumMeterModel:
         self._level = -math.inf
         self._levels: deque[tuple[float, float]] = deque()
 
+    def set_floor(self, floor_dbfs: object) -> None:
+        """Apply the configured floor to the next recording."""
+        with self._lock:
+            self._analyzer = SpectrumAnalyzer(floor_dbfs)
+
     @property
     def state(self) -> str:
         return self._state
 
     def set_state(self, state: str, *, idle_text: str = "") -> None:
         """Show *state*; *idle_text* is the level row of the idle state."""
-        if state not in _STATES:
-            raise ValueError(f"unknown meter state: {state}")
         with self._lock:
             if state == "on" and self._state != "on":
                 self._epoch += 1

@@ -15,14 +15,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from stenographer.lib.refine.endpoints import (
-    chat_url,
-    generate_url,
-    ps_url,
-    pull_url,
-    qualify_tag,
-    tags_url,
-)
+from stenographer.lib.refine.endpoints import api_url, is_loopback, qualify_tag
 from stenographer.lib.refine.errors import RefineError, RefineTimeoutError, RefineTransportError
 from stenographer.lib.refine.request import USER_AGENT, build_unload_body, build_warm_body, encode
 
@@ -54,25 +47,30 @@ def _translate(exc: Exception) -> RefineError:
     import http.client
     import urllib.error
 
+    if isinstance(exc, RefineError):
+        return exc
     if isinstance(exc, urllib.error.HTTPError):
         return RefineTransportError(f"ollama returned HTTP {exc.code}")
     if isinstance(exc, TimeoutError):
         return RefineTimeoutError("ollama did not answer in time")
-    if isinstance(exc, urllib.error.URLError):
-        # ``URLError`` wraps the socket failure, so a timeout arrives here
-        # rather than above whenever the connect phase is what expired.
-        if isinstance(exc.reason, TimeoutError):
-            return RefineTimeoutError("ollama did not answer in time")
-        return RefineTransportError("ollama could not be reached")
+    # A connect timeout arrives wrapped in URLError.
+    if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, TimeoutError):
+        return RefineTimeoutError("ollama did not answer in time")
     if isinstance(exc, http.client.HTTPException | OSError):
         return RefineTransportError("ollama could not be reached")
     raise exc
 
 
-def _translated(exc: Exception) -> RefineError:
-    """``_translate``, but a ``RefineError`` passes straight through."""
+def _open(request, timeout):
+    """Connect directly to loopback; retain proxy settings for remote hosts."""
 
-    return exc if isinstance(exc, RefineError) else _translate(exc)
+    import urllib.request
+
+    if is_loopback(request.full_url):
+        return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+            request, timeout=timeout
+        )
+    return urllib.request.urlopen(request, timeout=timeout)
 
 
 def _post(url: str, body: dict[str, object], timeout: float):
@@ -86,10 +84,7 @@ def _post(url: str, body: dict[str, object], timeout: float):
         method="POST",
         headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
     )
-    try:
-        return urllib.request.urlopen(request, timeout=timeout)
-    except Exception as exc:
-        raise _translate(exc) from exc
+    return _open(request, timeout)
 
 
 def post_chat(host: str, body: dict[str, object], *, timeout: float) -> bytes:
@@ -101,14 +96,18 @@ def post_chat(host: str, body: dict[str, object], *, timeout: float) -> bytes:
     failure rather than as a traceback.
     """
 
+    return _post_read(api_url(host, "chat"), body, timeout)
+
+
+def _post_read(url: str, body: dict[str, object], timeout: float) -> bytes:
     try:
-        with _post(chat_url(host), body, timeout) as response:
+        with _post(url, body, timeout) as response:
             return response.read()
     except Exception as exc:
-        raise _translated(exc) from exc
+        raise _translate(exc) from exc
 
 
-def _model_listing(url: str, *, timeout: float) -> list[dict]:
+def _model_listing(url: str) -> list[dict]:
     """GET one of Ollama's ``{"models": [...]}`` listings, or ``[]``.
 
     Returning a list rather than raising is deliberate: every caller is asking
@@ -120,7 +119,7 @@ def _model_listing(url: str, *, timeout: float) -> list[dict]:
 
     try:
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _open(request, PROBE_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read())
     except Exception:
         return []
@@ -130,37 +129,22 @@ def _model_listing(url: str, *, timeout: float) -> list[dict]:
     return [entry for entry in models if isinstance(entry, dict)]
 
 
-def _listed_names(entries: list[dict]) -> list[str]:
-    """The tags a listing names, under either key Ollama uses, sorted. PURE."""
-
-    names = {str(entry[key]) for entry in entries for key in ("name", "model") if key in entry}
-    return sorted(names)
-
-
-def installed_models(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> list[dict]:
+def installed_models(host: str) -> list[dict]:
     """Every model ``/api/tags`` reports, or ``[]`` when nothing answers."""
 
-    return _model_listing(tags_url(host), timeout=timeout)
+    return _model_listing(api_url(host, "tags"))
 
 
-def installed_model_names(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> list[str]:
+def installed_model_names(host: str) -> list[str]:
     """The model tags installed on *host*, sorted, or ``[]``."""
 
     names = {
-        entry["name"]
-        for entry in installed_models(host, timeout=timeout)
-        if isinstance(entry.get("name"), str)
+        entry["name"] for entry in installed_models(host) if isinstance(entry.get("name"), str)
     }
     return sorted(names)
 
 
-def running_model_names(host: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> list[str]:
-    """The model tags ``/api/ps`` reports as resident right now, or ``[]``."""
-
-    return _listed_names(_model_listing(ps_url(host), timeout=timeout))
-
-
-def is_model_loaded(host: str, model: str, *, timeout: float = PROBE_TIMEOUT_SECONDS) -> bool:
+def is_model_loaded(host: str, model: str) -> bool:
     """Whether *model* is resident on *host* at this moment.
 
     A server that cannot answer reads as "not loaded". That is the safe error:
@@ -169,12 +153,16 @@ def is_model_loaded(host: str, model: str, *, timeout: float = PROBE_TIMEOUT_SEC
     resident model answers immediately.
     """
 
-    return qualify_tag(model) in running_model_names(host, timeout=timeout)
+    names = {
+        str(entry[key])
+        for entry in _model_listing(api_url(host, "ps"))
+        for key in ("name", "model")
+        if key in entry
+    }
+    return qualify_tag(model) in names
 
 
-def installed_model_bytes(
-    host: str, model: str, *, timeout: float = PROBE_TIMEOUT_SECONDS
-) -> int | None:
+def installed_model_bytes(host: str, model: str) -> int | None:
     """The on-disk size Ollama reports for *model*, or ``None`` if absent.
 
     Both sides are qualified before comparing: a bare config value must
@@ -184,7 +172,7 @@ def installed_model_bytes(
     """
 
     target = qualify_tag(model)
-    for entry in installed_models(host, timeout=timeout):
+    for entry in installed_models(host):
         name, listed = entry.get("name"), entry.get("model")
         matches = (isinstance(name, str) and qualify_tag(name) == target) or (
             isinstance(listed, str) and qualify_tag(listed) == target
@@ -201,7 +189,6 @@ def pull_model(
     model: str,
     *,
     on_progress: Callable[[str], None] | None = None,
-    timeout: float = PULL_READ_TIMEOUT_SECONDS,
 ) -> None:
     """Stream ``/api/pull`` to completion, reporting each status line.
 
@@ -218,7 +205,7 @@ def pull_model(
     body = {"model": model, "stream": True}
     succeeded = False
     try:
-        with _post(pull_url(host), body, timeout) as response:
+        with _post(api_url(host, "pull"), body, PULL_READ_TIMEOUT_SECONDS) as response:
             # Reading the stream is where a multi-gigabyte download actually
             # breaks, so it is inside the translation too, not just the open.
             for line in response:
@@ -240,7 +227,7 @@ def pull_model(
         if not succeeded:
             raise RefineTransportError("ollama ended the pull without confirming success")
     except Exception as exc:
-        raise _translated(exc) from exc
+        raise _translate(exc) from exc
 
 
 def pull_progress_line(record: dict) -> str:
@@ -264,22 +251,12 @@ def warm_model(
     is waiting on. An utterance waiting for a cold model passes a shorter one.
     """
 
-    try:
-        with _post(
-            generate_url(host), build_warm_body(model=model, keep_alive=keep_alive), timeout
-        ) as response:
-            response.read()
-    except Exception as exc:
-        raise _translated(exc) from exc
+    _post_read(
+        api_url(host, "generate"), build_warm_body(model=model, keep_alive=keep_alive), timeout
+    )
 
 
 def unload_model(host: str, model: str) -> None:
     """Ask Ollama to release *model* now. Raises only RefineError."""
 
-    try:
-        with _post(
-            generate_url(host), build_unload_body(model=model), UNLOAD_TIMEOUT_SECONDS
-        ) as response:
-            response.read()
-    except Exception as exc:
-        raise _translated(exc) from exc
+    _post_read(api_url(host, "generate"), build_unload_body(model=model), UNLOAD_TIMEOUT_SECONDS)

@@ -2,22 +2,19 @@
 from __future__ import annotations
 
 import math
-import threading
 import time
 from collections.abc import Callable
 
 import numpy as np
 
 from stenographer.lib.audio.recorder import Recorder
-from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.overlay.spectrum.analysis import (
     MAX_SPECTRUM_FLOOR_DBFS,
     MIN_SPECTRUM_FLOOR_DBFS,
     WINDOW_SECONDS,
     _band_dbfs,
-    display_levels,
 )
-from stenographer.overlay.spectrum.errors import CalibrationCancelledError, CalibrationError
+from stenographer.overlay.spectrum.errors import CalibrationError
 
 COUNTDOWN_SECONDS = 3
 
@@ -37,32 +34,10 @@ CALIBRATION_HEADROOM_DB = 3.0
 NONSTATIONARY_SPREAD_DB = 12.0
 
 
-VOICE_CAPTURE_SECONDS = 3
+_SAMPLE_RATE = 16000
 
 
-MIN_VOICE_CAPTURE_SECONDS = 2.5
-
-
-MIN_VOICE_CONTRAST_DB = 6.0
-
-
-MIN_VISIBLE_LEVEL = 0.25
-
-
-def wait_for_capture(seconds: float, cancellation: threading.Event | None = None) -> None:
-    """Interrupt a calibration delay immediately when the caller cancels."""
-    if cancellation is None:
-        time.sleep(seconds)
-    elif cancellation.wait(seconds):
-        raise CalibrationCancelledError("Calibration cancelled")
-
-
-def _validate_sample_rate(sample_rate: int) -> None:
-    if isinstance(sample_rate, bool) or not isinstance(sample_rate, int) or sample_rate <= 0:
-        raise ValueError("calibration sample rate must be a positive integer")
-
-
-def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float, ...]:
+def estimate_spectrum_profile(samples: object) -> tuple[float, ...]:
     """Estimate 18 fixed display floors from a nominal five-second quiet capture.
 
     The first half-second is discarded. Remaining complete, non-overlapping
@@ -70,22 +45,19 @@ def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float,
     band's 95th percentile receives 3 dB of headroom and is rounded
     upward to a whole dB. No live recording can modify the returned profile.
     """
-    _validate_sample_rate(sample_rate)
     try:
         audio = np.asarray(samples, dtype=np.float64).reshape(-1)
     except (TypeError, ValueError) as exc:
         raise CalibrationError("calibration samples are invalid") from exc
-    if audio.size < math.ceil(sample_rate * MIN_CAPTURE_SECONDS):
+    if audio.size < math.ceil(_SAMPLE_RATE * MIN_CAPTURE_SECONDS):
         raise CalibrationError("calibration capture is too short")
     if not np.all(np.isfinite(audio)):
         raise CalibrationError("calibration capture contains non-finite samples")
 
-    discard = round(sample_rate * DISCARD_SECONDS)
-    window_size = max(2, round(sample_rate * WINDOW_SECONDS))
+    discard = round(_SAMPLE_RATE * DISCARD_SECONDS)
+    window_size = max(2, round(_SAMPLE_RATE * WINDOW_SECONDS))
     usable = audio[discard:]
     window_count = usable.size // window_size
-    if window_count < 1:
-        raise CalibrationError("calibration capture is too short")
     windows = usable[: window_count * window_size].reshape(window_count, window_size)
 
     peak = float(np.max(np.abs(windows)))
@@ -102,9 +74,11 @@ def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float,
     rms_dbfs = 20.0 * np.log10(np.maximum(rms, np.finfo(np.float64).tiny))
     spread = float(np.percentile(rms_dbfs, 90) - np.percentile(rms_dbfs, 10))
     if spread > NONSTATIONARY_SPREAD_DB:
-        raise CalibrationError("calibration capture is strongly nonstationary")
+        raise CalibrationError(
+            "room noise changed during calibration; keep the room quiet and retry"
+        )
 
-    band_windows = np.stack([_band_dbfs(window, sample_rate) for window in windows])
+    band_windows = np.stack([_band_dbfs(window, _SAMPLE_RATE) for window in windows])
     band_percentiles = np.percentile(band_windows, 95, axis=0)
     loudest = float(np.max(band_percentiles))
     if not math.isfinite(loudest):
@@ -121,61 +95,20 @@ def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float,
     )
 
 
-def estimate_spectrum_floor(samples: object, sample_rate: int) -> float:
-    """Return the legacy scalar floor represented by a calibrated profile."""
-    return max(estimate_spectrum_profile(samples, sample_rate))
-
-
-def validate_voice_visibility(
-    samples: object,
-    sample_rate: int,
-    profile: object,
-) -> None:
-    """Reject a voice sample that the fixed profile would not visibly render."""
-    _validate_sample_rate(sample_rate)
-    try:
-        audio = np.asarray(samples, dtype=np.float64).reshape(-1)
-        floors = np.asarray(profile, dtype=np.float64).reshape(-1)
-    except (TypeError, ValueError) as exc:
-        raise CalibrationError("voice validation samples are invalid") from exc
-    if audio.size < math.ceil(sample_rate * MIN_VOICE_CAPTURE_SECONDS):
-        raise CalibrationError("voice validation capture is too short")
-    if not np.all(np.isfinite(audio)):
-        raise CalibrationError("voice validation capture contains non-finite samples")
-    if floors.size != SPECTRUM_BANDS:
-        raise CalibrationError("voice validation profile must contain 18 bands")
-
-    window_size = max(2, round(sample_rate * WINDOW_SECONDS))
-    window_count = audio.size // window_size
-    windows = audio[: window_count * window_size].reshape(window_count, window_size)
-    band_windows = np.stack([_band_dbfs(window, sample_rate) for window in windows])
-    mapped = np.stack([display_levels(frame, floors) for frame in band_windows])
-    visible = float(np.percentile(np.max(mapped, axis=1), 90))
-    contrast = float(np.max(np.percentile(band_windows, 90, axis=0) - floors))
-    if visible < MIN_VISIBLE_LEVEL or contrast < MIN_VOICE_CONTRAST_DB:
-        raise CalibrationError("voice sample is not clearly above room noise")
-
-
-def _record_room_noise(
-    recorder: Recorder,
-    on_countdown: Callable[[int], None],
-    cancellation: threading.Event | None = None,
-) -> np.ndarray:
+def _record_room_noise(recorder: Recorder, on_countdown: Callable[[int], None]) -> np.ndarray:
     """Prepare *recorder*, count the room down to silence, and return the quiet capture.
 
     ``on_countdown`` receives 3, 2, 1 during the silent countdown and then 0
     immediately before capture starts. Clearing the returned buffer is the
     caller's job, because only the caller knows when it is done with it.
     """
-    wait_for_capture(0, cancellation)
     recorder.prepare()
     for remaining in range(COUNTDOWN_SECONDS, 0, -1):
         on_countdown(remaining)
-        wait_for_capture(1.0, cancellation)
+        time.sleep(1.0)
     on_countdown(0)
-    wait_for_capture(0, cancellation)
     recorder.start()
-    wait_for_capture(float(CAPTURE_SECONDS), cancellation)
+    time.sleep(float(CAPTURE_SECONDS))
     return recorder.stop()
 
 
@@ -183,11 +116,9 @@ def calibrate_spectrum_profile(
     device: str | int | None,
     *,
     on_countdown: Callable[[int], None],
-    on_voice_prompt: Callable[[], None],
-    cancellation: threading.Event | None = None,
     recorder_factory: Callable[..., Recorder] | None = None,
 ) -> tuple[float, ...]:
-    """Capture known silence plus normal voice and return one fixed profile.
+    """Capture known silence and return one fixed profile.
 
     *recorder_factory* defaults to :class:`Recorder` and is called with the same
     ``device``/``max_seconds`` keywords, so tests can supply a substitute capture
@@ -196,21 +127,9 @@ def calibrate_spectrum_profile(
     factory = recorder_factory if recorder_factory is not None else Recorder
     recorder = factory(device=device, max_seconds=CAPTURE_SECONDS)
     quiet = np.empty(0, dtype=np.float32)
-    voice = np.empty(0, dtype=np.float32)
     try:
-        quiet = _record_room_noise(recorder, on_countdown, cancellation)
-        profile = estimate_spectrum_profile(quiet, 16000)
-
-        wait_for_capture(0, cancellation)
-        on_voice_prompt()
-        wait_for_capture(0, cancellation)
-        recorder.start()
-        wait_for_capture(float(VOICE_CAPTURE_SECONDS), cancellation)
-        voice = recorder.stop()
-        validate_voice_visibility(voice, 16000, profile)
-        wait_for_capture(0, cancellation)
-        return profile
+        quiet = _record_room_noise(recorder, on_countdown)
+        return estimate_spectrum_profile(quiet)
     finally:
         recorder.close()
         quiet.fill(0.0)
-        voice.fill(0.0)

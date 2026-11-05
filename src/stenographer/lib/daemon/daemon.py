@@ -16,14 +16,12 @@ from stenographer.lib.contracts.null_status_sink import NullStatusSink
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.contracts.publication import should_publish_state
 from stenographer.lib.contracts.status_sink import StatusSink
-from stenographer.lib.daemon.feedback import _play_cue, _publish_loading_activity, _publish_status
 from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.pipeline import UtterancePipeline
 from stenographer.lib.daemon.policy import (
     can_start,
     cancel_action,
     cancel_state,
-    edge_handlers,
     hybrid_release_action,
     ignored_edge_reason,
     max_duration_applies,
@@ -32,6 +30,7 @@ from stenographer.lib.daemon.policy import (
 )
 from stenographer.lib.daemon.telemetry import UtteranceTelemetry
 from stenographer.lib.delivery.deliverer import Deliverer
+from stenographer.lib.live.models import VAD_MODEL, live_model_dir
 from stenographer.lib.logging.pipeline import fmt_event, log_failure, set_utterance
 from stenographer.lib.platform import current_platform
 from stenographer.lib.refine.factory import build_refiner
@@ -45,7 +44,6 @@ from stenographer.lib.transcribe.worker import Worker
 if TYPE_CHECKING:
     import numpy as np
 
-    from stenographer.lib.audio.records import CaptureStats
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.notifier import Notifier
     from stenographer.lib.platform.platform import Platform
@@ -163,16 +161,11 @@ class Daemon:
             if daemon_ref is not None:
                 daemon_ref._on_model_loading_finished()
 
-        def on_transcribing() -> None:
-            if daemon_ref is not None:
-                daemon_ref._publish_state(OverlayState.TRANSCRIBING)
-
         worker = Worker(
             cfg.asr,
             transport=plat.asr_transport(),
             on_model_loading=on_model_loading,
             on_model_loading_finished=on_model_loading_finished,
-            on_transcribing=on_transcribing,
         )
         recorder = Recorder(
             device=cfg.audio.input_device,
@@ -188,10 +181,9 @@ class Daemon:
             status=status,
         )
         daemon_ref = daemon
-        on_start, on_stop = edge_handlers(daemon, cfg.hotkey.mode)
         keys = plat.keys()
         cancel = (
-            parse_binding(cfg.hotkey.cancel_binding, keys)
+            parse_binding(cfg.hotkey.cancel_binding, keys, setting="hotkey.cancel_binding")
             if cfg.hotkey.cancel_binding is not None
             else frozenset()
         )
@@ -211,14 +203,13 @@ class Daemon:
                 daemon.on_key_up()
 
         listener = plat.hotkey_listener(
-            chord=parse_binding(cfg.hotkey.binding, keys),
             device=cfg.hotkey.device,
-            on_start=on_start,
-            on_stop=on_stop,
             lock=threading.RLock(),
             bindings={
                 RefineProfile.AGENT.value: parse_binding(cfg.hotkey.binding, keys),
-                RefineProfile.GENERAL.value: parse_binding(cfg.hotkey.general_binding, keys),
+                RefineProfile.GENERAL.value: parse_binding(
+                    cfg.hotkey.general_binding, keys, setting="hotkey.general_binding"
+                ),
             },
             on_binding_start=on_profile_start,
             on_binding_stop=on_profile_stop,
@@ -248,24 +239,60 @@ class Daemon:
         daemon._platform = plat
         daemon._listener = listener
         daemon._deliverer = deliverer
-        daemon._pipeline = UtterancePipeline(
-            min_speech_rms=cfg.audio.min_speech_rms,
-            worker=worker,
-            deliverer=deliverer,
-            refiner=daemon._refiner,
-            telemetry=daemon._telemetry,
-            publish_state=daemon._publish_state,
-            fail=daemon._fail,
-            play_cue=lambda name: _play_cue(feedback, name),
-            cancelled=daemon._cancel_pending,
-            cancel_state=lambda: cancel_state(shutting_down=daemon._stop_event.is_set()),
-            copy_original=cfg.delivery.copy_original,
-            speech_filter=lambda samples: dictation_speech(
+        daemon._pipeline = daemon._build_pipeline(
+            deliverer,
+            lambda samples: dictation_speech(
                 samples,
-                plat.data_dir(os.environ, Path.home()) / "models" / "live" / "silero_vad.onnx",
+                live_model_dir(plat.data_dir(os.environ, Path.home())) / VAD_MODEL.filename,
             ),
         )
         return daemon
+
+    def _build_pipeline(self, deliverer, speech_filter):
+        return UtterancePipeline(
+            min_speech_rms=self._cfg.audio.min_speech_rms,
+            worker=self._worker,
+            deliverer=deliverer,
+            refiner=self._refiner,
+            telemetry=self._telemetry,
+            publish_state=self._publish_state,
+            fail=self._fail,
+            play_cue=self._cue,
+            cancelled=self._cancel_pending,
+            cancel_state=lambda: cancel_state(shutting_down=self._stop_event.is_set()),
+            copy_original=self._cfg.delivery.copy_original,
+            speech_filter=speech_filter,
+        )
+
+    def _cue(self, name: str) -> None:
+        """Launch a cue without allowing player failure to break daemon state."""
+        try:
+            self._feedback.play(name)
+        except Exception as exc:
+            log_failure(log, logging.WARNING, "feedback: cue_failed", exc, safe=True, cue=name)
+
+    def _publish_status(self, state: OverlayState) -> None:
+        """Enqueue fixed lifecycle metadata without allowing overlay failure through."""
+        try:
+            self._status.publish(state, self._record_profile)
+        except Exception as exc:
+            log_failure(
+                log, logging.WARNING, "overlay: publish_failed", exc, safe=True, state=state.value
+            )
+
+    def _publish_loading_activity(self, model: LoadingModel, active: bool) -> None:
+        try:
+            self._status.loading_activity(model, active)
+        except Exception as exc:
+            log_failure(
+                log,
+                logging.WARNING,
+                "overlay: loading_activity_failed",
+                exc,
+                safe=True,
+                model=model.value,
+                active=int(active),
+            )
 
     def _publish_state(self, state: OverlayState) -> None:
         """Serialize display state and suppress duplicate helper updates."""
@@ -273,7 +300,7 @@ class Daemon:
             if not should_publish_state(self._overlay_state, state):
                 return
             self._overlay_state = state
-            _publish_status(self._status, state, self._record_profile)
+            self._publish_status(state)
 
     def _fail(self, notify_msg: str) -> None:
         """Announce a failed phase on every user-facing channel at once.
@@ -283,13 +310,13 @@ class Daemon:
         the recorded event differ per phase.
         """
         self._publish_state(OverlayState.ERROR)
-        _play_cue(self._feedback, "error")
+        self._cue("error")
         self._notifier.error(notify_msg)
 
     def _publish_cancelled(self) -> None:
         """Show an immediate cancellation result without treating it as a failure."""
         self._publish_state(cancel_state(shutting_down=self._stop_event.is_set()))
-        _play_cue(self._feedback, "error")
+        self._cue("error")
 
     def _cancel_pending(self) -> bool:
         """Return whether the current utterance has been cancelled or shutdown began."""
@@ -302,7 +329,7 @@ class Daemon:
                 return
             self._model_load_started_at = time.perf_counter()
             self._model_load_utterance = self._utterance_id
-            _publish_loading_activity(self._status, LoadingModel.ASR, True)
+            self._publish_loading_activity(LoadingModel.ASR, True)
 
     def _on_model_loading_finished(self) -> None:
         """Remove display activity after either model-ready or load failure."""
@@ -315,7 +342,7 @@ class Daemon:
                 self._record.load_ms = (time.perf_counter() - self._model_load_started_at) * 1000
             self._model_load_started_at = None
             self._model_load_utterance = None
-            _publish_loading_activity(self._status, LoadingModel.ASR, False)
+            self._publish_loading_activity(LoadingModel.ASR, False)
 
     def _on_refine_loading(self) -> None:
         """Publish refine activity only on the open→active edge.
@@ -327,7 +354,7 @@ class Daemon:
         with self._refine_load_lock:
             self._refine_loads += 1
             if self._refine_loads == 1 and not self._stop_event.is_set():
-                _publish_loading_activity(self._status, LoadingModel.REFINE, True)
+                self._publish_loading_activity(LoadingModel.REFINE, True)
 
     def _on_refine_loading_finished(self) -> None:
         """Lower refine activity once every open load has finished.
@@ -338,7 +365,7 @@ class Daemon:
         with self._refine_load_lock:
             self._refine_loads = max(0, self._refine_loads - 1)
             if self._refine_loads == 0:
-                _publish_loading_activity(self._status, LoadingModel.REFINE, False)
+                self._publish_loading_activity(LoadingModel.REFINE, False)
 
     def _warm_model(self, utterance: int) -> None:
         try:
@@ -357,16 +384,27 @@ class Daemon:
         missing Ollama must not delay the first press, and the refiner logs its
         own failure and then simply falls open on every utterance.
         """
-        warm = getattr(self._refiner, "warm", None)
-        if warm is None:
+        if self._refiner is None:
             return
-        thread = threading.Thread(target=warm, name="stenographer-refine-warmup", daemon=True)
+        thread = self._start_daemon_thread(
+            self._refiner.warm,
+            (),
+            "stenographer-refine-warmup",
+            lambda exc: log_failure(
+                log, logging.WARNING, "refine: warm_start_failed", exc, safe=True
+            ),
+        )
+        if thread is not None:
+            self._refine_warmup_thread = thread
+
+    def _start_daemon_thread(self, target, args, name, on_failure):
+        thread = threading.Thread(target=target, args=args, name=name, daemon=True)
         try:
             thread.start()
         except RuntimeError as exc:
-            log_failure(log, logging.WARNING, "refine: warm_start_failed", exc, safe=True)
-            return
-        self._refine_warmup_thread = thread
+            on_failure(exc)
+            return None
+        return thread
 
     def _release_refine_model(self, deadline: float) -> None:
         """Hand the refine model's VRAM back before the process goes away.
@@ -408,29 +446,26 @@ class Daemon:
         warmup = self._refine_warmup_thread
         if warmup is not None:
             warmup.join(timeout=min(_REFINE_WARMUP_JOIN_SECONDS, remaining_seconds(deadline)))
-        unload = getattr(self._refiner, "unload", None)
-        if unload is None:
+        if self._refiner is None:
             return
         try:
-            unload()
+            self._refiner.unload()
         except Exception as exc:
             log_failure(log, logging.DEBUG, "refine: unload_failed", exc, safe=True)
 
     def _start_model_warmup(self, utterance: int) -> None:
-        thread = threading.Thread(
-            target=self._warm_model,
-            args=(utterance,),
-            name="stenographer-model-warmup",
-            daemon=True,
+        thread = self._start_daemon_thread(
+            self._warm_model,
+            (utterance,),
+            "stenographer-model-warmup",
+            lambda exc: log_failure(
+                log, logging.WARNING, "worker: warmup_start_failed", exc, safe=True
+            ),
         )
-        try:
-            thread.start()
-        except RuntimeError as exc:
-            log_failure(log, logging.WARNING, "worker: warmup_start_failed", exc, safe=True)
-            return
-        self._warmup_thread = thread
+        if thread is not None:
+            self._warmup_thread = thread
 
-    def on_toggle_press(self, *, profile: RefineProfile | None = None) -> None:
+    def on_toggle_press(self, *, profile: RefineProfile = RefineProfile.AGENT) -> None:
         """Toggle and hybrid modes: one press starts a recording, the next press stops it."""
         with self._lock:
             action = toggle_action(
@@ -512,7 +547,7 @@ class Daemon:
             timer.cancel()
             self._max_timer = None
 
-    def on_key_down(self, *, profile: RefineProfile | None = None) -> None:
+    def on_key_down(self, *, profile: RefineProfile = RefineProfile.AGENT) -> None:
         with self._lock:
             if not can_start(self._recording, self._busy, self._stop_event.is_set()):
                 if self._busy and self._record is not None:
@@ -553,7 +588,7 @@ class Daemon:
             if self._cfg.hotkey.mode == "toggle":
                 self._arm_max_timer(started_at)
             self._publish_state(OverlayState.RECORDING)
-            _play_cue(self._feedback, "record_start")
+            self._cue("record_start")
             self._start_model_warmup(self._utterance_id)
 
     def on_cancel(self) -> None:
@@ -564,7 +599,7 @@ class Daemon:
                 log.debug(fmt_event("hotkey", "cancel_ignored"))
                 return
             # The paste has landed; only the clipboard restore is left.
-            if action == "pipeline" and self._pipeline is not None and self._pipeline.delivered:
+            if action == "pipeline" and self._pipeline.delivered:
                 log.debug(fmt_event("hotkey", "cancel_ignored", reason="delivered"))
                 return
             generation = self._utterance_id
@@ -580,18 +615,14 @@ class Daemon:
             with self._lock:
                 if generation != self._utterance_id or not self._recording:
                     return
-                self._recording = False
+                self._mark_stopped()
                 self._busy = False
-                if self._record is not None:
-                    self._record.stopped_at = time.perf_counter()
-                self._cancel_max_timer()
             try:
                 self._recorder.stop()
             except Exception as exc:
                 log_failure(log, logging.DEBUG, "recorder: cancel_finalize_failed", exc, safe=True)
             with self._lock:
-                self._apply_capture(self._recorder.last_capture)
-                self._telemetry.checkpoint(self._record, "secured_capture")
+                self._secure_capture()
                 self._worker.release_model()
                 self._publish_cancelled()
                 self._emit_summary(self._take_record("CANCELLED"))
@@ -603,11 +634,9 @@ class Daemon:
             if not self._recording:
                 log.debug(fmt_event("hotkey", "key_up_ignored", reason="not_recording"))
                 return
-            self._recording = False
+            self._mark_stopped()
             self._busy = True
-            if self._record is not None:
-                self._record.stopped_at = time.perf_counter()
-            self._cancel_max_timer()
+            self._pipeline.delivered = False
             # The pill stays up across the release: it is the only sign that
             # the tool is still working until the paste lands, so the release
             # moves it to TRANSCRIBING rather than hiding it. Every exit from
@@ -630,8 +659,7 @@ class Daemon:
                     self._emit_summary(self._take_record(Outcome.ERROR.name))
                 return
             with self._lock:
-                self._apply_capture(self._recorder.last_capture)
-                self._telemetry.checkpoint(self._record, "secured_capture")
+                self._secure_capture()
                 if self._cancel_pending():
                     self._busy = False
                     self._worker.release_model()
@@ -640,7 +668,7 @@ class Daemon:
                         self._publish_cancelled()
                     self._emit_summary(self._take_record("CANCELLED"))
                     return
-                _play_cue(self._feedback, "record_stop")
+                self._cue("record_stop")
                 thread = threading.Thread(
                     target=self._run_pipeline,
                     args=(samples,),
@@ -650,9 +678,15 @@ class Daemon:
                 self._pipeline_thread = thread
                 thread.start()
 
-    def _apply_capture(self, stats: CaptureStats | None) -> None:
-        """Fold the recorder's own numbers into the utterance record."""
-        apply_capture(self._record, stats)
+    def _mark_stopped(self) -> None:
+        self._recording = False
+        if self._record is not None:
+            self._record.stopped_at = time.perf_counter()
+        self._cancel_max_timer()
+
+    def _secure_capture(self) -> None:
+        apply_capture(self._record, self._recorder.last_capture)
+        self._telemetry.checkpoint(self._record, "secured_capture")
 
     def _take_record(self, outcome: str) -> UtteranceRecord | None:
         """Detach the in-flight record and stamp its outcome."""
@@ -681,7 +715,7 @@ class Daemon:
         record = self._record
         outcome_name = Outcome.ERROR.name
         try:
-            assert self._pipeline is not None
+            assert self._record_profile is not None
             outcome_name = self._pipeline.run(
                 samples,
                 utterance=self._utterance_id,
@@ -696,10 +730,16 @@ class Daemon:
                 self._emit_summary(self._take_record(outcome or outcome_name))
                 self._record_profile = None
 
+    @property
+    def notifier(self) -> Notifier:
+        return self._notifier
+
+    def prepare_recorder(self) -> None:
+        """Open the audio path ahead of the first press."""
+        self._recorder.prepare()
+
     def run(self) -> None:
         """Start the listener and block until stopped."""
-        if self._listener is None:
-            raise RuntimeError("daemon.run() before build()")
         self._telemetry.open(self._cfg, self._platform, pids=lambda: self._worker.process_ids)
         self._start_refine_warmup()
         self._listener.start()
@@ -713,16 +753,16 @@ class Daemon:
     def stop(self) -> None:
         """Idempotent teardown. Safe before ``run`` and safe to call twice."""
         self._stop_event.set()
-        if self._listener is not None:
-            with contextlib.suppress(Exception):
-                self._listener.stop()
+        with contextlib.suppress(Exception):
+            self._listener.stop()
         with self._capture_lock:
             with self._lock:
                 was_recording = self._recording
-                self._recording = False
-                self._cancel_max_timer()
-                if was_recording and self._record is not None:
-                    self._record.stopped_at = time.perf_counter()
+                if was_recording:
+                    self._mark_stopped()
+                else:
+                    self._recording = False
+                    self._cancel_max_timer()
             if was_recording:
                 try:
                     self._recorder.stop()
@@ -732,11 +772,9 @@ class Daemon:
                     )
                 else:
                     with self._lock:
-                        self._apply_capture(self._recorder.last_capture)
-                        self._telemetry.checkpoint(self._record, "secured_capture")
+                        self._secure_capture()
             self._recorder.close()
-        with contextlib.suppress(Exception):
-            self._worker.shutdown()
+        self._worker.shutdown()
         # One shared deadline for every bounded wait below: SIGINT is
         # permanently rebound to request_stop() while the process is up (see
         # install_stop_handlers), so a second or third Ctrl-C here does
@@ -764,11 +802,8 @@ class Daemon:
         # running. Keeping the order shortens that exposure window and skips
         # a redundant unload call.
         self._release_refine_model(deadline)
-        if self._deliverer is not None:
-            with contextlib.suppress(Exception):
-                self._deliverer.close()
         with contextlib.suppress(Exception):
-            self._feedback.close()
+            self._deliverer.close()
         with self._lock:
             # A recording torn down mid-flight still owes the log its one line;
             # without this a press-then-stop leaves an utterance unaccounted for.

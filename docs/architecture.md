@@ -17,6 +17,9 @@ their existing paths in `assets/`.
   utterance records.
 - `live/`: live phrase segmentation, speaker labels, session coordination, and
   private audio and transcript storage.
+- `files/` and `sessions/`: the serial file transcription queue and media
+  decoding, and saved sessions with their revisions, search, reprocessing,
+  export, and playback audio.
 - `refine/`: the local-model cleanup stage between formatting and
   delivery — pure request building, response parsing and the output guard, the
   Ollama client, and the refiner behind a protocol whose null implementation is
@@ -30,19 +33,18 @@ their existing paths in `assets/`.
   core capability checks and collection, private logging, and update notices.
 - `platform/`: host service contracts and the lazy Linux provider.
 
-Each ordinary class has a dedicated file without standalone helpers. Related
-records may share a file; related exceptions live in their domain's `errors.py`.
-Functions are grouped by responsibility. Initializers remain small and import-safe.
+Small types and helpers may sit beside their single owner, and related records
+may share a file. Exceptions live in their domain's `errors.py`, and classes do
+not nest. Functions are grouped by responsibility. Initializers remain small and
+import-safe.
 
 ## CLI workflows
 
 `cli:main` remains the console entry point. `cli/entry.py` performs frozen-process
 bootstrap before argument parsing and recognizes the private `_overlay` entry.
-`cli/commands/registry.py` is the ordered table of public subcommands; each
-`CommandSpec` names its handler and either an inline help string (argument-less
-commands) or a `parser.py` owned by the command package. `cli/parser.py` and
-`cli/entry.py` both iterate that table, so adding a command is one table entry.
-Handlers are resolved by import path only when their command runs.
+`cli/parser.py` defines the public command arguments in help order.
+`cli/entry.py` maps commands to handler import paths, which are resolved only
+when their command runs.
 
 Commands own their prompts, terminal output, consent, and follow-up actions.
 `cli/run/` owns startup and its banner. `cli/hub/` owns the terminal hub,
@@ -56,7 +58,8 @@ handling, and shared TUI styles.
 
 `overlay/protocol/` owns protocol-v5 messages, codecs, stream framing, and display
 ordering. `overlay/supervision/` owns mailbox, restart, and timeout policy;
-`overlay/helper/` owns helper execution and backend selection.
+`overlay/helper/` owns helper execution and backend selection;
+`overlay/capabilities/` owns the optional-backend probe.
 `overlay/rendering/` owns geometry, frames, animation, and display reduction.
 `overlay/spectrum/` owns visual analysis and calibration, while the speech gate
 remains in `lib/audio/`. Helper logging is isolated in `overlay/logging/`.
@@ -69,7 +72,8 @@ or display-specific guidance.
 ## Verification and packaging
 
 Tests mirror the owning domains. `tests/test_architecture.py` checks the dependency
-direction, native boundaries, and class-file rules; generated protocol code is
+direction, native boundaries, production roots, exception files, and nested
+classes; generated protocol code is
 excluded from handwritten-code rules. Platform isolation tests import portable
 modules with native dependencies blocked. Regression assertions retain cancellation,
 clipboard confirmation, cue/capture ordering, logging privacy, and completion rules.

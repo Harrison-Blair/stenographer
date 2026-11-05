@@ -7,9 +7,10 @@ import asyncio
 import itertools
 import logging
 import pathlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.console import Group
 from rich.text import Text
@@ -21,19 +22,21 @@ from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.export_dialog import ExportDialog
 from stenographer.cli.hub.hub_screen import HubScreen
-from stenographer.cli.hub.library_entry import ACTIVE_JOB_STATES, LibraryEntry
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.transcribe_dialog import TranscribeDialog
 from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.sparkline import Sparkline
 from stenographer.cli.hub.widgets.status_token import StatusToken
-from stenographer.cli.hub.widgets.transcript_line import TranscriptLine
+from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
+from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
+from stenographer.lib.sessions.models import SessionSummary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -61,13 +64,39 @@ _ACTIONS = (
 )
 
 
+ACTIVE_JOB_STATES = frozenset({"queued", "running"})
+
+
+@dataclass(frozen=True)
+class LibraryEntry:
+    """A session row (``summary``), a job row (``summary`` is None), or a session row with
+    the revision job that writes into it (``job``)."""
+
+    entry_id: str
+    summary: SessionSummary | None
+    job: Any = None
+    job_name: str = ""
+    listed_at: datetime | None = None
+
+    @property
+    def session_id(self) -> str | None:
+        return None if self.summary is None else self.summary.session_id
+
+    @property
+    def kind(self) -> str:
+        return "file" if self.summary is None else self.summary.kind
+
+    @property
+    def job_active(self) -> bool:
+        return self.job is not None and self.job.state in ACTIVE_JOB_STATES
+
+
 class LibraryScreen(HubScreen):
     """List recordings, file sessions and unfinished file jobs; act on the selected entry.
 
     ``n`` opens the Transcribe a file dialog; its job shows in the list at once.
     """
 
-    SCREEN_NAME = "library"
     SCREEN_TITLE = "Library"
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("up", "session_move(-1)", "Previous entry"),
@@ -145,8 +174,10 @@ class LibraryScreen(HubScreen):
         self._list_running = False
         self._list_again = False
         self._watch_key: object = None
+        self._poll_key: object = None
         self._rows_key: object = None
         self._transcript_key: object = None
+        self._rows = TranscriptRows()
 
     def compose_body(self) -> ComposeResult:
         with Horizontal(id="library-body"):
@@ -258,10 +289,15 @@ class LibraryScreen(HubScreen):
             (i for i, entry in enumerate(self.entries) if entry.entry_id == self._selected_id),
             None,
         )
-        if not rows:
-            message = self._list_error or (
-                "No matches." if self.search_query.strip() else "No saved sessions."
-            )
+        query = self.search_query.strip()
+        searching = bool(query) and (
+            self._search_matches is None or self._search_matches[0] != query
+        )
+        message = self._list_error or ("Searching…" if searching else "")
+        if message:
+            rows += ((Text(message, style=_DIM), ""),)
+        elif not rows:
+            message = "No matches." if query else "No saved sessions."
             rows = ((Text(message, style=_DIM), ""),)
             index = None
         key = (tuple(row[0].plain for row in rows), index)
@@ -274,7 +310,7 @@ class LibraryScreen(HubScreen):
         job = entry.job
         if summary is not None:
             when = summary.started_at.astimezone()
-            dur = self._duration(summary.duration_seconds)
+            dur = Clock.duration(max(0, summary.duration_seconds))
             spk = str(summary.speaker_count)
         else:
             when = (self._job_listed_at.get(job.id) or datetime.now(UTC)).astimezone()
@@ -304,12 +340,12 @@ class LibraryScreen(HubScreen):
     def _draw_detail(self) -> None:
         entry = self.selected_entry
         title, state = self._detail_head(entry)
-        self.query_one("#library-detail-title", Static).update(title)
-        self.query_one("#library-detail-state", Static).update(state)
+        update_changed(self.query_one("#library-detail-title", Static), title)
+        update_changed(self.query_one("#library-detail-state", Static), state)
         detail = self.detail if entry is not None and entry.summary is not None else None
         recording = detail is not None and detail.summary.kind == "rec"
         speakers = self.query_one("#library-speakers", Static)
-        speakers.update(self._speakers_text(detail) if detail is not None else "")
+        update_changed(speakers, self._speakers_text(detail) if detail is not None else "")
         speakers.display = detail is not None
         for spark_id, source in (("#library-mic", "mic"), ("#library-sys", "system")):
             spark = self.query_one(spark_id, Sparkline)
@@ -329,7 +365,7 @@ class LibraryScreen(HubScreen):
             title = f"{when:%d %b %Y · %H:%M} · file · {entry.job_name}"
             return title, self._job_state(job)
         when = summary.started_at.astimezone()
-        title = f"{when:%d %b %Y · %H:%M} · {self._duration(summary.duration_seconds)} · "
+        title = f"{when:%d %b %Y · %H:%M} · {Clock.duration(max(0, summary.duration_seconds))} · "
         title += "file" if summary.kind == "file" else "recording"
         if entry.job_active:
             state = self._job_state(job)
@@ -358,12 +394,12 @@ class LibraryScreen(HubScreen):
         for label, seconds in detail.talk_time.items():
             if text:
                 text.append("   ")
-            speaker_id = ids.get(label, label)
+            speaker_id = ids[label]
             color = speaker_color(
                 speaker_id, tuple(ids.values()), source=self._source_of(detail, label)
             )
             text.append(label, style=f"bold {color}")
-            text.append(f" {self._duration(seconds)}")
+            text.append(f" {Clock.duration(max(0, seconds))}")
         return text or Text("no speakers", style=_DIM)
 
     @staticmethod
@@ -384,6 +420,8 @@ class LibraryScreen(HubScreen):
         for button_id, _key, label, _action, _tone in _ACTIONS:
             labels[button_id] = (label, session_id is None)
         if session_id is not None:
+            if self._detail_id != session_id or self.detail is None:
+                labels["library-rename"] = ("Rename…", True)
             for button_id in ("library-rename", "library-rediarize", "library-retranscribe"):
                 if busy:
                     labels[button_id] = (f"{labels[button_id][0]} · busy", True)
@@ -398,8 +436,8 @@ class LibraryScreen(HubScreen):
                 ("Cancel job…", False) if entry.job_active else ("Remove", False)
             )
         help_line = self.query_one("#library-action-help", Static)
-        help_line.update(
-            "d re-diarize: use Re-transcribe" if entry and entry.kind == "file" else ""
+        update_changed(
+            help_line, "d re-diarize: use Re-transcribe" if entry and entry.kind == "file" else ""
         )
         help_line.display = entry is not None and entry.kind == "file"
         for button_id, (label, disabled) in labels.items():
@@ -428,18 +466,12 @@ class LibraryScreen(HubScreen):
             return
         self._transcript_key = key
         ids = tuple(dict.fromkeys(line.speaker_id for line in lines))
-        rows: list = [
-            TranscriptLine(
-                line.start,
-                line.label,
-                line.text,
-                color=speaker_color(line.speaker_id, ids, source=line.source),
-                source=line.source,
-            ).row()
-            for line in lines
-        ]
-        if not rows and message:
-            rows.append(Text(message, style=_DIM))
+        rows: list = self._rows.rows(lines, ids)
+        failed = (
+            entry is not None and entry.summary is None and entry.job.state in _FAILED_JOB_STATES
+        )
+        if message and (not rows or failed):
+            rows.insert(0, Text(message, style=_DIM))
         self.query_one("#library-transcript", TranscriptScroll).update_content(Group(*rows))
 
     # Loading
@@ -621,6 +653,17 @@ class LibraryScreen(HubScreen):
         if reload:
             self.load_sessions()
         elif self.loaded and self.app.current_mode == "library":
+            # Other changes draw through refresh_view; only a job or a busy mark changes alone.
+            entry = self.selected_entry
+            key = (
+                tuple((job.id, job.state, job.progress) for job in self._jobs()),
+                entry is not None
+                and entry.session_id is not None
+                and self.app.is_busy(entry.session_id),
+            )
+            if key == self._poll_key:
+                return
+            self._poll_key = key
             self._rebuild()
             self._load_detail()
             self._draw_list()
@@ -680,13 +723,9 @@ class LibraryScreen(HubScreen):
                 self.app.refresh_view()
         return True
 
-    def select_session(self, session_id: str) -> bool:
-        """Select a listed session by its ID (Record ``o``); false when it is not listed."""
-        return self.select_entry(session_id)
-
     def show_session(self, session_id: str) -> None:
         """Select a session; reload the list first when it is not in it."""
-        if not self.select_session(session_id):
+        if not self.select_entry(session_id):
             self.load_sessions(select=session_id)
         self.app.refresh_view()
 
@@ -733,6 +772,8 @@ class LibraryScreen(HubScreen):
             return
         event.stop()
         self.search_query = event.value
+        self._rebuild()
+        self.app.refresh_view()
         self.load_sessions()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -756,9 +797,14 @@ class LibraryScreen(HubScreen):
             return
         self.app.run_worker(partial(self._play, toggle, entry.entry_id), group="library-play")
 
-    async def _play(self, toggle: Callable[[str], None], session_id: str) -> None:
+    async def _play(self, toggle: Callable[..., None], session_id: str) -> None:
+        app = self.app
+
+        def report_failure(status: int) -> None:
+            app.notify(f"Playback failed: player exit status {status}.", severity="error")
+
         try:
-            await asyncio.to_thread(toggle, session_id)
+            await asyncio.to_thread(toggle, session_id, on_failure=report_failure)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: session_playback_failed", exc, safe=True)
             self.app.notify(f"Could not play this session: {exc}", severity="error")
@@ -773,27 +819,14 @@ class LibraryScreen(HubScreen):
                 severity="warning",
             )
             return
-        self._start_session_job("Re-diarize", "rediarize_session", entry.entry_id)
+        self._start_job("Re-diarize", entry.entry_id, self.app.services.session_jobs.rediarize)
 
     def action_session_retranscribe(self) -> None:
         entry = self._selected_session()
         if entry is not None:
-            self._start_session_job("Re-transcribe", "retranscribe_session", entry.entry_id)
-
-    def _start_session_job(self, label: str, method: str, session_id: str) -> None:
-        app = self.app
-        operation = getattr(app.services, method, None)
-        if operation is None:
-            return
-        owner = f"{method}-{next(self._owner_ids)}"
-        if not app.try_acquire_session(session_id, owner):
-            app.notify("session busy", severity="warning")
-            return
-        app.run_worker(
-            partial(self._run_session_job, label, operation, session_id, owner),
-            group="library-session-job",
-        )
-        app.refresh_view()
+            self._start_job(
+                "Re-transcribe", entry.entry_id, self.app.services.session_jobs.retranscribe
+            )
 
     async def _run_session_job(
         self, label: str, operation: Callable[..., object], session_id: str, owner: str
@@ -806,6 +839,10 @@ class LibraryScreen(HubScreen):
             app.notify(f"{label} failed: {exc}", severity="error")
             result = None
         else:
+            if label == "Delete":
+                saved = getattr(app.services, "last_saved", None)
+                if saved is not None and saved.path.name == session_id:
+                    app.services.last_saved = None
             app.notify(f"{label} complete.")
         finally:
             app.release_session(session_id, owner)
@@ -824,7 +861,10 @@ class LibraryScreen(HubScreen):
             app.notify("session busy", severity="warning")
             return
         detail = self.detail if self._detail_id == entry.entry_id else None
-        speakers = tuple(self._speaker_ids(detail).items()) if detail is not None else ()
+        if detail is None:
+            app.notify(self._detail_error or "Loading session…", severity="warning")
+            return
+        speakers = tuple(self._speaker_ids(detail).items())
         if not speakers:
             app.notify("This session has no speaker to rename.", severity="warning")
             return
@@ -836,9 +876,9 @@ class LibraryScreen(HubScreen):
     def _rename(self, session_id: str, value: tuple[str, str] | None) -> None:
         if value is None or self.store is None:
             return
-        self._start_store_job("Rename", session_id, self.store.rename_speaker, *value)
+        self._start_job("Rename", session_id, self.store.rename_speaker, *value)
 
-    def _start_store_job(
+    def _start_job(
         self, label: str, session_id: str, operation: Callable[..., object], *args
     ) -> None:
         app = self.app
@@ -858,22 +898,19 @@ class LibraryScreen(HubScreen):
         entry = self._selected_session()
         if entry is None or self.store is None:
             return
-        self.app.push_screen(ExportDialog(entry.entry_id), partial(self._export, entry.entry_id))
 
-    def _export(self, session_id: str, value: tuple[str, pathlib.Path] | None) -> None:
-        if value is not None:
-            self.app.run_worker(partial(self._write_export, session_id, *value))
-
-    async def _write_export(self, session_id: str, format_name: str, folder: pathlib.Path) -> None:
-        app = self.app
-        try:
-            path = await asyncio.to_thread(self.store.export, session_id, folder, format_name)
-        except Exception as exc:
-            log_failure(log, logging.ERROR, "hub: session_export_failed", exc, safe=True)
-            app.notify(f"Could not export this session: {exc}", severity="error")
-        else:
+        async def export(format_name: str, folder: pathlib.Path) -> pathlib.Path:
+            try:
+                path = await asyncio.to_thread(
+                    self.store.export, entry.entry_id, folder, format_name
+                )
+            except Exception as exc:
+                log_failure(log, logging.ERROR, "hub: session_export_failed", exc, safe=True)
+                raise
             log.info(fmt_event("hub", "session_exported", format=format_name))
-            app.notify(f"Exported to {path}")
+            return path
+
+        self.app.push_screen(ExportDialog(entry.entry_id, export))
 
     def action_session_delete(self) -> None:
         app = self.app
@@ -923,25 +960,16 @@ class LibraryScreen(HubScreen):
 
     def _delete(self, session_id: str, confirmed: bool | None) -> None:
         if confirmed and self.store is not None:
-            self._start_store_job("Delete", session_id, self.store.delete)
+            self._start_job("Delete", session_id, self.store.delete)
 
     # Transcript scroll
 
-    def _transcript(self) -> TranscriptScroll:
-        return self.query_one("#library-transcript", TranscriptScroll)
-
-    def action_scroll_page(self, offset: int) -> None:
-        self._transcript().scroll_page(offset)
-
-    def action_scroll_home(self) -> None:
-        self._transcript().scroll_top()
-
-    def action_scroll_end(self) -> None:
-        self._transcript().scroll_bottom()
-
-    # Transcribe a file
-
     def action_transcribe_file(self) -> None:
+        if self.app.config_editor.read_only:
+            self.app.notify(
+                "Fix the invalid configuration before transcribing files.", severity="error"
+            )
+            return
         log.info(fmt_event("hub", "library_transcribe_opened"))
         self.app.push_screen(TranscribeDialog(self.files_home), self._queue_file)
 
@@ -949,7 +977,7 @@ class LibraryScreen(HubScreen):
         if result is None:
             return
         app = self.app
-        if app.config_editor is not None and app.config_editor.read_only:
+        if app.config_editor.read_only:
             app.notify("Fix the invalid configuration before transcribing files.", severity="error")
             return
         path, options = result
@@ -966,7 +994,7 @@ class LibraryScreen(HubScreen):
             app.notify("Could not queue this file.", severity="error")
             job = None
         finally:
-            self.files_submitting = max(0, self.files_submitting - 1)
+            self.files_submitting -= 1
         if job is None or not app.is_running:
             return
         # The job was queued when it was submitted, so the poll sees its end even when it ends
@@ -986,22 +1014,12 @@ class LibraryScreen(HubScreen):
     # Formats
 
     @staticmethod
-    def _duration(seconds: float) -> str:
-        total = max(0, int(seconds))
-        hours, remainder = divmod(total, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        if hours:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes}:{seconds:02d}"
-
-    @staticmethod
     def _format_size(size: int) -> str:
         amount = float(size)
         for unit in ("B", "KB", "MB", "GB"):
             if amount < 1024 or unit == "GB":
                 return f"{amount:.1f} {unit}"
             amount /= 1024
-        return f"{amount:.1f} GB"
 
     @staticmethod
     def _resample(activity: tuple[float, ...]) -> tuple[float, ...]:

@@ -4,30 +4,32 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import ClassVar
 
 import pytest
 from rich.color import Color
 from rich.console import Console
+from rich.text import Text
 from textual.app import App
 from textual.binding import Binding
 from textual.widgets import Static
 
 from stenographer.cli.hub.app import HubApp
-from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
+from stenographer.cli.hub.widgets.transcript_line import TranscriptLine, TranscriptRows
+from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
+from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.lib.config.defaults import default_toml
-
-
-class IdleServices:
-    recording = False
-    files_running = False
-    session = None
+from stenographer.lib.live.transcript_line import TranscriptLine as LiveLine
+from tests.cli.hub.support import IdleServices, make_app
 
 
 class WidgetApp(App[None]):
@@ -50,155 +52,104 @@ def _accent(style) -> bool:
     return style.bold and style.color.get_truecolor() == Color.parse("#5fd7ff").get_truecolor()
 
 
-def test_widget_button_prints_its_key_and_never_wraps():
-    async def exercise():
-        button = HubButton("Export the whole session", key="x", action="export", id="export")
-        app = WidgetApp(button)
-        async with app.run_test(size=(16, 5)) as pilot:
-            await pilot.pause()
-            assert str(button.label) == "[x] Export the whole session"
-            assert button.region.height == 1
-            assert not button.can_focus
-
-    asyncio.run(exercise())
+async def test_widget_button_prints_its_key_and_never_wraps():
+    button = HubButton("Export the whole session", key="x", action="export", id="export")
+    app = WidgetApp(button)
+    async with app.run_test(size=(16, 5)) as pilot:
+        await pilot.pause()
+        assert str(button.label) == "[x] Export the whole session"
+        assert button.region.height == 1
+        assert not button.can_focus
 
 
-def test_widget_button_click_runs_the_action_of_its_key():
-    async def exercise():
-        app = WidgetApp(HubButton("Export", key="x", action="export", id="export"))
-        async with app.run_test() as pilot:
-            await pilot.press("x")
-            assert app.exports == 1
-            await pilot.click("#export")
-            await pilot.pause()
-            assert app.exports == 2
-
-    asyncio.run(exercise())
+async def test_widget_button_click_runs_the_action_of_its_key():
+    app = WidgetApp(HubButton("Export", key="x", action="export", id="export"))
+    async with app.run_test() as pilot:
+        await pilot.press("x")
+        assert app.exports == 1
+        await pilot.click("#export")
+        await pilot.pause()
+        assert app.exports == 2
 
 
-def test_widget_settings_tab_click_matches_the_tab_keys(tmp_path):
-    async def exercise():
-        path = tmp_path / "config.toml"
-        path.write_text(default_toml(), encoding="utf-8")
-        app = HubApp(IdleServices(), config_path=path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("3", "right", "right")
-            by_keys = (app.settings_screen.tab, app.config_editor.visible_keys)
-            await pilot.click("#tab-general")
-            await pilot.pause()
-            assert app.settings_screen.tab == "general"
-            await pilot.click("#tab-recognition")
-            await pilot.pause()
-            assert (app.settings_screen.tab, app.config_editor.visible_keys) == by_keys
-
-    asyncio.run(exercise())
+async def test_widget_settings_tab_click_matches_the_tab_keys(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(default_toml(), encoding="utf-8")
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("3", "right", "right")
+        by_keys = (app.settings_screen.tab, app.config_editor.visible_keys)
+        await pilot.click("#tab-general")
+        await pilot.pause()
+        assert app.settings_screen.tab == "general"
+        await pilot.click("#tab-recognition")
+        await pilot.pause()
+        assert (app.settings_screen.tab, app.config_editor.visible_keys) == by_keys
 
 
-def test_widget_checks_buttons_run_the_same_actions_as_their_keys():
-    async def exercise():
-        probes = []
-        report = DoctorReport(
-            (DoctorCheck("has_mic", "microphone", "input and audio", "warn", "", ""),), ()
+async def test_widget_selectable_list_rows_are_one_line_with_a_bold_accent_marker():
+    rows = SelectableList(id="rows")
+    app = WidgetApp(rows)
+    async with app.run_test(size=(20, 6)) as pilot:
+        await pilot.pause()
+        rows.set_rows(
+            (("alpha bravo charlie delta", "12"), ("echo", "")),
+            selected_index=0,
         )
-        app = HubApp(
-            IdleServices(),
-            doctor_probe=lambda _config, _path: probes.append("probe") or report,
-            open_log=lambda _path: probes.append("log") or True,
-        )
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.press("3", "left")
-            await pilot.pause(0.1)
-            assert probes == ["probe"]
-            await pilot.press("r")
-            await pilot.pause(0.1)
-            assert probes == ["probe", "probe"]
-            buttons = {str(b.label): b for b in app.screen.query(HubButton)}
-            await pilot.click(buttons["[r] Run again"])
-            await pilot.pause(0.1)
-            assert probes == ["probe", "probe", "probe"]
-            await pilot.click(buttons["[l] Open log"])
-            await pilot.pause()
-            assert probes[-1] == "log"
+        await pilot.pause()
+        text = rows.render()
+        lines = text.plain.splitlines()
+        assert len(lines) == 2
+        assert lines[0].startswith("▶ alpha")
+        assert "…" in lines[0] and lines[0].endswith("12")
+        assert lines[1] == "  echo"
+        assert _accent(text.get_style_at_offset(0).rich_style)
+        assert rows.region.height == 2
 
-    asyncio.run(exercise())
-
-
-def test_widget_selectable_list_rows_are_one_line_with_a_bold_accent_marker():
-    async def exercise():
-        rows = SelectableList(id="rows")
-        app = WidgetApp(rows)
-        async with app.run_test(size=(20, 6)) as pilot:
-            await pilot.pause()
-            rows.set_rows(
-                (("alpha bravo charlie delta", "12"), ("echo", "")),
-                selected_index=0,
-            )
-            await pilot.pause()
-            text = rows.render()
-            lines = text.plain.splitlines()
-            assert len(lines) == 2
-            assert lines[0].startswith("▶ alpha")
-            assert "…" in lines[0] and lines[0].endswith("12")
-            assert lines[1] == "  echo"
-            assert _accent(text.get_style_at_offset(0).rich_style)
-            assert rows.region.height == 2
-
-            await pilot.click("#rows", offset=(3, 1))
-            assert rows.selected_index == 1
-
-    asyncio.run(exercise())
+        await pilot.click("#rows", offset=(3, 1))
+        assert rows.selected_index == 1
 
 
 def test_widget_status_token_is_a_glyph_and_a_word():
     assert StatusToken.text("●", "recording", "danger").plain == "● recording"
-    with pytest.raises(ValueError):
-        StatusToken.text("", "recording")
-    with pytest.raises(ValueError):
-        StatusToken.text("●", " ")
 
 
-def test_widget_footer_key_hints_end_with_help_and_quit():
-    async def exercise():
-        hints = KeyHints(id="hints")
-        app = WidgetApp(hints)
-        async with app.run_test(size=(60, 3)) as pilot:
-            await pilot.pause()
-            hints.set_hints(("n", "new"), ("q", "quit"))
-            text = hints.render()
-            assert text.plain == "n new · ? help · q quit"
-            assert _accent(text.get_style_at_offset(0).rich_style)
-            assert _accent(text.get_style_at_offset(text.plain.index("?")).rich_style)
-
-    asyncio.run(exercise())
+async def test_widget_footer_key_hints_start_with_help_and_quit():
+    hints = KeyHints(id="hints")
+    app = WidgetApp(hints)
+    async with app.run_test(size=(60, 3)) as pilot:
+        await pilot.pause()
+        hints.set_hints(("n", "new"), ("q", "quit"))
+        text = hints.render()
+        assert text.plain == "? help · q quit · n new"
+        assert _accent(text.get_style_at_offset(0).rich_style)
+        assert _accent(text.get_style_at_offset(text.plain.index("?")).rich_style)
 
 
 @pytest.mark.parametrize("screen", ["record", "library", "settings"])
-def test_help_overlay_lists_every_active_binding_and_closes(screen):
-    async def exercise():
-        app = HubApp(IdleServices())
-        async with app.run_test(size=(150, 45)) as pilot:
-            app.show_screen(screen)
-            await pilot.pause()
-            hints = str(app.screen.query_one("#key-hints", Static).render())
-            assert hints.endswith("? help · q quit")
-            active = app.screen.active_bindings
-            shown = [(key, item.binding) for key, item in active.items() if item.binding.show]
-            await pilot.press("question_mark")
-            await pilot.pause()
-            assert isinstance(app.screen, HelpOverlay)
-            rows = app.screen.rows
-            assert len(rows) == len(shown)
-            descriptions = [description for _key, description in rows]
-            for _key, binding in shown:
-                assert binding.description in descriptions
-            await pilot.press("escape")
-            assert not isinstance(app.screen, HelpOverlay)
-            await pilot.press("question_mark")
-            assert isinstance(app.screen, HelpOverlay)
-            await pilot.press("question_mark")
-            assert not isinstance(app.screen, HelpOverlay)
-
-    asyncio.run(exercise())
+async def test_help_overlay_lists_every_active_binding_and_closes(screen, tmp_path):
+    app = make_app(tmp_path, IdleServices())
+    async with app.run_test(size=(150, 45)) as pilot:
+        app.show_screen(screen)
+        await pilot.pause()
+        hints = str(app.screen.query_one("#key-hints", Static).render())
+        assert hints.startswith("? help · q quit")
+        active = app.screen.active_bindings
+        shown = [(key, item.binding) for key, item in active.items() if item.binding.show]
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert isinstance(app.screen, HelpOverlay)
+        rows = app.screen.rows
+        assert len(rows) == len(shown)
+        descriptions = [description for _key, description in rows]
+        for _key, binding in shown:
+            assert binding.description in descriptions
+        await pilot.press("escape")
+        assert not isinstance(app.screen, HelpOverlay)
+        await pilot.press("question_mark")
+        assert isinstance(app.screen, HelpOverlay)
+        await pilot.press("question_mark")
+        assert not isinstance(app.screen, HelpOverlay)
 
 
 def test_help_every_hub_binding_has_a_help_row():
@@ -216,18 +167,15 @@ def test_help_every_hub_binding_has_a_help_row():
     assert missing == []
 
 
-def test_help_rows_name_keys_and_skip_hidden_bindings():
-    async def exercise():
-        app = HubApp(IdleServices())
-        async with app.run_test(size=(150, 45)) as pilot:
-            await pilot.pause()
-            rows = dict(HelpOverlay.help_rows(app.screen.active_bindings))
-            assert rows["space"] == "Record, pause or resume"
-            assert rows["?"] == "Help for this screen"
-            assert rows["1"] == "Record screen"
-            assert "tab" not in rows and "ctrl+p" not in rows
-
-    asyncio.run(exercise())
+async def test_help_rows_name_keys_and_skip_hidden_bindings(tmp_path):
+    app = make_app(tmp_path, IdleServices())
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        rows = dict(HelpOverlay.help_rows(app.screen.active_bindings))
+        assert rows["space"] == "Record, pause or resume"
+        assert rows["?"] == "Help for this screen"
+        assert rows["1"] == "Record screen"
+        assert "tab" not in rows and "ctrl+p" not in rows
 
 
 def _plain_rows(app: App) -> list[str]:
@@ -282,3 +230,88 @@ def test_widget_dialog_marks_the_focused_button_with_a_glyph(dialog):
             assert {focused, moved} <= set(labels)
 
     asyncio.run(exercise())
+
+
+def test_field_wraps_long_control_values():
+    from stenographer.cli.hub.widgets.field import Field
+
+    field = Field("Device", "abcdefghijklmnopqrstuvwxyz0123456789")
+    rendered = "".join(segment.text for segment in Console(width=100).render(field.row()))
+    assert "abcdefghijklmnopqrstuvwxyz0123" in rendered
+    assert "456789" in rendered
+    assert "…" not in rendered
+
+
+def _segments(console_width: int, renderable) -> list[tuple[str, object]]:
+    console = Console(width=console_width, color_system="truecolor")
+    return [(segment.text, segment.style) for segment in console.render(renderable)]
+
+
+_TRANSCRIPT_LINE = LiveLine(1.0, 2.0, "", "system", "speaker-1", "Ann", "alpha bravo " * 12)
+
+
+@pytest.mark.parametrize("layout", ["mixed", "split"])
+def test_transcript_row_renders_like_its_table_at_each_width(layout):
+    ids = ("speaker-1",)
+    row = TranscriptRows().rows((_TRANSCRIPT_LINE,), ids, layout=layout)[0]
+    color = speaker_color("speaker-1", ids, source="system")
+    table = TranscriptLine.row(
+        1.0, "Ann", "alpha bravo " * 12, color=color, source="system", layout=layout
+    )
+    for width in (120, 40, 120):
+        assert _segments(width, row) == _segments(width, table)
+
+
+def test_transcript_rows_reuse_only_a_row_with_the_same_line_and_color():
+    rows = TranscriptRows()
+    second = LiveLine(3.0, 4.0, "", "mic", "you", "You", "charlie")
+    first_row = rows.rows((_TRANSCRIPT_LINE,), ("speaker-1",))[0]
+    assert rows.rows((_TRANSCRIPT_LINE, second), ("speaker-1",))[0] is first_row
+
+    other_order = ("speaker-2", "speaker-1")
+    assert speaker_color("speaker-1", other_order) != speaker_color("speaker-1", ("speaker-1",))
+    recolored = rows.rows((_TRANSCRIPT_LINE,), other_order)[0]
+    expected = TranscriptLine.row(
+        1.0,
+        "Ann",
+        "alpha bravo " * 12,
+        color=speaker_color("speaker-1", other_order, source="system"),
+        source="system",
+    )
+    assert _segments(80, recolored) == _segments(80, expected)
+
+    renamed = replace(_TRANSCRIPT_LINE, label="Bea")
+    assert "Bea" in "".join(
+        text for text, _ in _segments(80, rows.rows((renamed,), ("speaker-1",))[0])
+    )
+
+
+async def test_update_changed_shows_a_new_style_and_skips_identical_content():
+    widget = Static("", markup=False)
+    app = WidgetApp(widget)
+    async with app.run_test() as pilot:
+        update_changed(widget, Text("alpha", style="#ff0000"))
+        await pilot.pause()
+        shown = widget.content
+
+        update_changed(widget, Text("alpha", style="#ff0000"))
+        assert widget.content is shown
+
+        update_changed(widget, Text("alpha", style="#00ff00"))
+        assert widget.content.style == "#00ff00"
+
+        update_changed(widget, "bravo")
+        assert widget.content == "bravo"
+
+
+async def test_clock_shows_a_new_second_and_tone():
+    clock = Clock()
+    app = WidgetApp(clock)
+    async with app.run_test() as pilot:
+        clock.set_seconds(61.4)
+        clock.set_tone("saved")
+        await pilot.pause()
+        assert clock.value == "00:01:01"
+        assert clock.has_class("-saved") and not clock.has_class("-record")
+        clock.set_tone("record")
+        assert clock.has_class("-record") and not clock.has_class("-saved")

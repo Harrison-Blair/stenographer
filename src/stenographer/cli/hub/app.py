@@ -42,8 +42,6 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 
 if TYPE_CHECKING:
-    import datetime
-
     from rich.console import RenderableType
 
 log = logging.getLogger(__name__)
@@ -84,12 +82,11 @@ class HubApp(App[None]):
         self,
         services,
         *,
-        config_editor: ConfigEditor | None = None,
-        config_path: pathlib.Path | None = None,
+        config_editor: ConfigEditor,
         setup_test: Callable[[str, Config], str] | None = None,
         model_download: Callable[[str], None] | None = None,
         model_status: Callable[[], tuple[ModelEntry, ...]] | None = None,
-        doctor_probe: Callable[[Config, pathlib.Path | None], DoctorReport] | None = None,
+        doctor_probe: Callable[[Config], DoctorReport] | None = None,
         open_log: Callable[[pathlib.Path], bool] | None = None,
         copy_report: Callable[[str], None] | None = None,
         files_home: pathlib.Path | None = None,
@@ -97,12 +94,9 @@ class HubApp(App[None]):
     ) -> None:
         super().__init__(ansi_color=True)
         self.services = services
-        self.config_editor = config_editor or (
-            ConfigEditor(config_path) if config_path is not None else None
-        )
+        self.config_editor = config_editor
         self.activity_status: str | None = None
         self.engine_sampler = engine_sampler or EngineSampler(services)
-        self.check_summary: tuple[int, int, int, datetime.datetime] | None = None
         self._context_cards: dict[str, tuple[str, RenderableType, CardButtons, frozenset[str]]] = {}
         self._busy: dict[str, str] = {}
         self._busy_lock = threading.Lock()
@@ -139,7 +133,7 @@ class HubApp(App[None]):
         self.engine_sampler.sample()
         self.set_interval(0.1, self._refresh_live)
         self.set_interval(1.0, self._sample_engine)
-        if self.config_editor is not None and self.config_editor.read_only:
+        if self.config_editor.read_only:
             self.notify(
                 "Invalid configuration. Open Settings to view the error and fix "
                 f"{self.config_editor.path}.",
@@ -168,8 +162,6 @@ class HubApp(App[None]):
 
     def show_screen(self, name: str) -> None:
         """Show ``record``, ``library`` or ``settings``; guard unsaved settings."""
-        if name not in self.hub_screens:
-            raise ValueError(f"unknown hub screen: {name}")
         if name == "settings":
             self._switch(name)
         else:
@@ -187,11 +179,6 @@ class HubApp(App[None]):
 
     def open_setting(self, key: str) -> None:
         """Show Settings with the tab and row of a dotted key; unsaved changes stay."""
-        try:
-            SettingsScreen.tab_of(key)
-        except KeyError:
-            self.notify(f"Unknown setting {key}.", severity="warning")
-            return
         self._switch("settings")
         self.settings_screen.open_setting(key)
 
@@ -200,7 +187,7 @@ class HubApp(App[None]):
         screen: str,
         content: RenderableType,
         *,
-        title: str | None = None,
+        title: str,
         buttons: CardButtons = (),
         disabled: frozenset[str] = frozenset(),
     ) -> None:
@@ -210,23 +197,7 @@ class HubApp(App[None]):
         button under the text; a click calls ``run``. A button whose key is in
         ``disabled`` shows as disabled.
         """
-        if title is None:
-            title = self._context_cards.get(screen, ("",))[0]
         self._context_cards[screen] = (title, content, buttons, disabled)
-        hub_screen = self.hub_screens[screen]
-        if screen == self.current_mode and hub_screen.ready:
-            hub_screen.query_one(Sidebar).show_context(content, title, buttons, disabled)
-
-    def set_check_summary(
-        self, passed: int, warned: int, failed: int, ran_at: datetime.datetime
-    ) -> None:
-        """Set the Settings badge, the Checks tab label and the checks card."""
-        self.check_summary = (passed, warned, failed, ran_at)
-        issues = warned + failed
-        self.settings_screen.check_badge = (
-            (issues, "danger" if failed else "warn") if issues else None
-        )
-        self.refresh_view()
 
     def try_acquire_session(self, session_id: str, owner: str) -> bool:
         """Mark a session busy for ``owner``; false when another owner holds it."""
@@ -260,12 +231,16 @@ class HubApp(App[None]):
         log.info(fmt_event("hub", "screen_changed", screen=name))
         if name == "library":
             self.library_screen.load_sessions()
+        elif name == "record":
+            self.record_screen.refresh_saved()
 
     def _guard_settings(self, proceed: Callable[[], None]) -> None:
-        editor = self.config_editor
-        if self.current_mode != "settings" or editor is None or not editor.dirty:
+        if self.current_mode != "settings" or not self.config_editor.dirty:
             proceed()
             return
+        self._prompt_unsaved(proceed)
+
+    def _prompt_unsaved(self, proceed: Callable[[], None]) -> None:
         self.push_screen(
             ConfigPrompt(
                 "Save or discard unsaved configuration changes?",
@@ -279,7 +254,7 @@ class HubApp(App[None]):
             return
         if choice == "save" and not self.save_config():
             return
-        if choice == "discard" and self.config_editor is not None:
+        if choice == "discard":
             self.config_editor.discard()
         proceed()
 
@@ -324,8 +299,9 @@ class HubApp(App[None]):
         count = self.library_screen.entry_count
         if count is not None:
             badges["library"] = str(count)
-        if self.check_summary is not None:
-            _passed, warned, failed, _ran_at = self.check_summary
+        report = self.checks_tab.report
+        if report is not None:
+            warned, failed = report.warn_count, report.fail_count
             if failed:
                 badges["settings"] = Text(f"{failed} F", style=StatusToken.TONES["danger"])
             elif warned:
@@ -343,14 +319,12 @@ class HubApp(App[None]):
     # Shared state
 
     def current_config(self) -> Config:
-        editor = self.config_editor
-        if editor is not None and editor.config is not None:
-            return editor.config
-        return Config.defaults()
+        config = self.config_editor.config
+        return config if config is not None else Config.defaults()
 
     def save_config(self) -> bool:
         editor = self.config_editor
-        if editor is None or editor.read_only:
+        if editor.read_only:
             return False
         try:
             result = editor.save()
@@ -372,123 +346,89 @@ class HubApp(App[None]):
         return True
 
     def _default_setup_test(self, step_id: str, config: Config) -> str:
-        from stenographer.lib.config.paths import resolve_config_path
-
-        config_dir = (
-            self.config_editor.path.parent
-            if self.config_editor is not None
-            else resolve_config_path().parent
-        )
-        return test_setup_step(step_id, config, config_dir)
+        return test_setup_step(step_id, config, self.config_editor.path.parent)
 
     # Quit rules (README §4.1)
 
     def action_request_quit(self) -> None:
         if self.activity_status is not None:
             return
-        editor = self.config_editor
-        if editor is not None and editor.dirty:
-            self.push_screen(
-                ConfigPrompt(
-                    "Save or discard unsaved configuration changes?",
-                    choices=(("Save", "save"), ("Discard", "discard"), ("Stay", "stay")),
-                ),
-                lambda choice: self._resolve_guard(choice, self.action_request_quit),
-            )
+        if self.config_editor.dirty:
+            self._prompt_unsaved(self.action_request_quit)
             return
-        if self.services.recording:
-            log.info(fmt_event("hub", "quit_prompted", work="recording"))
-            self.push_screen(
-                QuitConfirm(
-                    "Stop recording and save before quitting?",
-                    confirm="Save and quit",
-                    cancel="Keep recording",
-                ),
-                self._confirm_recording_quit,
-            )
-        elif getattr(self.services, "stopping_sessions", ()):
-            self._prompt_relabel_quit()
-        elif self.library_screen.files_running:
-            self._prompt_files_quit()
-        else:
-            self.exit()
+        self._continue_quit()
 
-    def _confirm_recording_quit(self, confirmed: bool | None) -> None:
-        log.info(fmt_event("hub", "quit_confirmed", work="recording", confirmed=bool(confirmed)))
-        if not confirmed:
-            return
-        self.activity_status = "Saving recording..."
-        self.refresh_view()
-        self.run_worker(self._stop_recording_and_quit(), name="save-recording", group="hub-work")
-
-    async def _stop_recording_and_quit(self) -> None:
-
-        try:
-            await asyncio.to_thread(self.services.stop_recording)
-        except Exception as exc:
-            log_failure(log, logging.ERROR, "hub: recording_stop_failed", exc, safe=True)
-            self.notify(f"Could not save the recording: {exc}", severity="error")
-            self.activity_status = None
-            self.refresh_view()
-            return
-        self.activity_status = None
-        self.refresh_view()
+    def _continue_quit(self) -> None:
+        recording = self.services.recording
+        work = []
+        if recording:
+            work.append(("recording", "Stop and save the recording."))
         if getattr(self.services, "stopping_sessions", ()):
-            self._prompt_relabel_quit()
-        elif self.library_screen.files_running:
-            self._prompt_files_quit()
-        else:
-            self.exit()
-
-    def _prompt_relabel_quit(self) -> None:
-        log.info(fmt_event("hub", "quit_prompted", work="relabel"))
-        self.push_screen(
-            QuitConfirm("Relabel is still running. Quit and keep the live labels?"),
-            self._confirm_relabel_quit,
-        )
-
-    def _confirm_relabel_quit(self, confirmed: bool | None) -> None:
-        log.info(fmt_event("hub", "quit_confirmed", work="relabel", confirmed=bool(confirmed)))
-        if not confirmed:
-            return
-        self.activity_status = "Saving recordings..."
-        self.refresh_view()
-        self.run_worker(self._skip_relabels_and_quit(), name="skip-relabels", group="hub-work")
-
-    async def _skip_relabels_and_quit(self) -> None:
-        # Each stop still finishes writing its files; only the relabel passes end early.
-        await asyncio.to_thread(self.services.skip_relabels)
-        await asyncio.to_thread(self.services.wait_for_stops)
-        self.activity_status = None
+            work.append(
+                ("relabel", "Skip the running relabel; those sessions keep their live labels.")
+            )
         if self.library_screen.files_running:
-            self._prompt_files_quit()
-        else:
+            work.append(("files", "Cancel the running file job."))
+        if not work:
             self.exit()
-
-    def _prompt_files_quit(self) -> None:
-        log.info(fmt_event("hub", "quit_prompted", work="files"))
+            return
+        names = ",".join(name for name, _line in work)
+        failed_before = len(getattr(self.services, "failed_stops", ()))
+        log.info(fmt_event("hub", "quit_prompted", work=names))
+        lines = "\n".join(f"· {line}" for _name, line in work)
         self.push_screen(
-            QuitConfirm("Cancel the running file job before quitting?"),
-            self._confirm_files_quit,
+            QuitConfirm(
+                f"Quit and do this first?\n{lines}",
+                confirm="Save and quit" if recording else "Quit",
+                cancel="Keep recording" if recording else "Cancel",
+                quit_keys=True,
+            ),
+            lambda confirmed: self._confirm_quit(names, failed_before, confirmed),
         )
 
-    def _confirm_files_quit(self, confirmed: bool | None) -> None:
-        log.info(fmt_event("hub", "quit_confirmed", work="files", confirmed=bool(confirmed)))
-        if not confirmed:
-            return
-        self.activity_status = "Canceling the file job..."
+    def _confirm_quit(self, work: str, failed_before: int, confirmed: bool | None) -> None:
+        log.info(fmt_event("hub", "quit_confirmed", work=work, confirmed=bool(confirmed)))
+        if confirmed:
+            self._switch("record")
+            self.run_worker(
+                self._finish_work_and_quit(failed_before), name="quit-work", group="hub-work"
+            )
+
+    def _show_quit_status(self, status: str) -> None:
+        self.activity_status = status
         self.refresh_view()
-        self.run_worker(self._cancel_files_and_quit(), name="cancel-files", group="hub-work")
 
-    async def _cancel_files_and_quit(self) -> None:
-
-        try:
-            await asyncio.to_thread(self.services.cancel_files)
-        except Exception as exc:
-            log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
-            self.notify(f"Could not cancel the file job: {exc}", severity="error")
-            self.activity_status = None
-            self.refresh_view()
+    async def _finish_work_and_quit(self, failed_before: int) -> None:
+        services = self.services
+        if services.recording:
+            self._show_quit_status("Saving recording...")
+            try:
+                await asyncio.to_thread(services.stop_recording)
+            except Exception as exc:
+                log_failure(log, logging.ERROR, "hub: recording_stop_failed", exc, safe=True)
+                self._quit_step_failed(f"Could not save the recording: {exc}")
+                return
+        if getattr(services, "stopping_sessions", ()):
+            # Each stop still finishes writing its files; only the relabel passes end early.
+            self._show_quit_status("Saving recordings...")
+            await asyncio.to_thread(services.skip_relabels)
+            await asyncio.to_thread(services.wait_for_stops)
+        # A stop that failed after the question opened: Record must show it before the hub leaves.
+        if len(getattr(services, "failed_stops", ())) > failed_before:
+            self._quit_step_failed("A recording could not save, so the hub stays open.")
             return
+        if self.library_screen.files_running:
+            self._show_quit_status("Canceling the file job...")
+            try:
+                await asyncio.to_thread(services.cancel_files)
+            except Exception as exc:
+                log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
+                self._quit_step_failed(f"Could not cancel the file job: {exc}")
+                return
         self.activity_status = None
         self.exit()
+
+    def _quit_step_failed(self, message: str) -> None:
+        self.notify(message, severity="error")
+        self.activity_status = None
+        self.refresh_view()

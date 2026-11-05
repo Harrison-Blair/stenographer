@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import pathlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,7 +26,6 @@ from stenographer.cli.setup import workflow as setup
 from stenographer.cli.setup.default import write_default
 from stenographer.cli.setup.workflow import (
     field_display,
-    followup_exit_code,
     parse_bool,
     parse_choice,
     parse_number,
@@ -33,32 +33,17 @@ from stenographer.cli.setup.workflow import (
     parse_review_action,
     quick_review_lines,
     quick_tryout_lines,
-    restart_eligible,
     review_lines,
 )
-from stenographer.cli.shared.capabilities import Capabilities
-from stenographer.cli.shared.console import Console
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
-from stenographer.lib.platform.host_guidance import HostGuidance
+from stenographer.lib.refine import client as refine_client
+from stenographer.overlay.spectrum.errors import CalibrationError
+from tests.cli.support import GUIDANCE as _GUIDANCE
+from tests.cli.support import capabilities, document
+from tests.cli.support import console as _console
 
 _CONFIG_PATH = pathlib.PurePosixPath("/tmp/custom.toml")
-
-_GUIDANCE = HostGuidance(
-    capability_labels={},
-    capability_fix_hints={},
-    clipboard_fix_hints={},
-    clipboard_fix_hint_default="enable a pasteboard",
-    service_noun="host agent",
-    service_name="steno-agent",
-    service_installer="steno-agent install",
-    service_unknown_detail="cannot query the agent manager",
-    service_start_command="steno-agent start",
-    service_restart_command="steno-agent restart",
-    service_log_command="steno-agent logs -f",
-    hotkey_device_comment="device id; empty auto-detects",
-    run_with_config=lambda path: f"STENO_CONFIG={path} stenographer run",
-)
 
 
 def _tryout(**overrides) -> list[str]:
@@ -136,115 +121,80 @@ def test_quick_review_rejects_reedit_actions():
 
 
 @pytest.mark.parametrize(
-    ("changed", "custom", "missing", "active", "expected"),
-    [
-        (True, False, False, "active", True),
-        (False, False, False, "active", False),
-        (True, True, False, "active", False),
-        (True, False, True, "active", False),
-        (True, False, False, "inactive", False),
-        (True, False, False, None, False),
-    ],
-)
-def test_restart_eligibility(changed, custom, missing, active, expected):
-    assert (
-        restart_eligible(
-            config_changed=changed,
-            custom_config=custom,
-            missing_required=missing,
-            service_active=active,
-        )
-        is expected
-    )
-
-
-@pytest.mark.parametrize(
     ("operational", "missing", "expected"),
     [(False, False, 0), (False, True, 78), (True, False, 1), (True, True, 1)],
 )
-def test_followup_exit_precedence(operational, missing, expected):
-    assert followup_exit_code(operational_failure=operational, missing_required=missing) == expected
-
-
-def test_tryout_sends_a_custom_config_path_to_a_foreground_run():
-    lines = _tryout(custom_config=True)
-
-    assert lines[0] == "\nTry a real dictation"
-    assert lines[1] == (
-        "Run `STENO_CONFIG=/tmp/custom.toml stenographer run` in a terminal; "
-        "the standard service was not changed."
+def test_followup_exit_precedence(guided, operational, missing, expected):
+    code, _, _, _ = guided(
+        changed=False,
+        answers="n\n",
+        cache_error=OSError("cache failed") if operational else None,
+        missing=("has_mic",) if missing else (),
     )
-    assert lines[-1] == (
-        "Watch that foreground command for logs; the standard service log is `steno-agent logs -f`."
-    )
+    assert code == expected
 
 
-def test_tryout_asks_for_a_restart_before_anything_else_when_one_is_pending():
-    lines = _tryout(restart_pending=True)
-
-    assert lines[1] == "Apply the saved configuration first with `steno-agent restart`."
-
-
-def test_tryout_reports_an_active_service_as_ready():
-    assert _tryout()[1] == "steno-agent is active and ready for a tryout."
-
-
-def test_tryout_offers_the_installer_when_the_service_is_not_installed():
-    lines = _tryout(service_enabled=None, service_active="inactive")
-
-    assert lines[1] == (
-        "The service is not installed. Run `stenographer run` in a terminal, "
-        "or install it with `steno-agent install`."
-    )
-
-
-def test_tryout_points_an_installed_but_stopped_service_at_the_start_command():
-    lines = _tryout(service_enabled="disabled", service_active="inactive")
-
-    assert lines[1] == (
-        "The service is inactive. Start it with `steno-agent start`; setup did not start it."
-    )
-
-
-def test_tryout_falls_back_to_a_foreground_run_when_the_state_is_unknown():
-    lines = _tryout(service_enabled=None, service_active=None)
-
-    assert lines[1] == (
-        "The user-service state could not be determined. Run `stenographer run` "
-        "in a terminal to try the configuration."
-    )
-
-
-def test_tryout_describes_a_hold_binding_as_held_and_logs_the_service():
-    defaults = Config.defaults()
-    config = dataclasses.replace(defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hold"))
-    lines = _tryout(config=config)
-
-    assert lines[-2] == "Focus a text field, hold KEY_RIGHTCTRL, speak, then release it."
-    assert lines[-1] == "Follow service logs with `steno-agent logs -f`."
-
-
-def test_tryout_describes_a_toggle_binding_as_pressed_twice():
-    defaults = Config.defaults()
-    config = dataclasses.replace(
-        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="toggle", binding="KEY_F9")
-    )
-
-    assert _tryout(config=config)[-2] == (
-        "Focus a text field, press KEY_F9, speak, then press it again."
-    )
-
-
-def test_tryout_describes_a_hybrid_binding_as_tapped_or_held():
-    defaults = Config.defaults()
-    config = dataclasses.replace(
-        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hybrid", binding="KEY_F9")
-    )
-
-    assert _tryout(config=config)[-2] == (
-        "Focus a text field, tap KEY_F9 to latch (tap again to stop), "
-        "or hold it, speak, and release."
-    )
+@pytest.mark.parametrize(
+    ("overrides", "line_index", "expected"),
+    [
+        ({"custom_config": True}, 0, "\nTry a real dictation"),
+        (
+            {"custom_config": True},
+            1,
+            "Run `STENO_CONFIG=/tmp/custom.toml stenographer run` in a terminal; "
+            "the standard service was not changed.",
+        ),
+        (
+            {"custom_config": True},
+            -1,
+            "Watch that foreground command for logs; the standard service log is "
+            "`steno-agent logs -f`.",
+        ),
+        (
+            {"restart_pending": True},
+            1,
+            "Apply the saved configuration first with `steno-agent restart`.",
+        ),
+        ({}, 1, "steno-agent is active and ready for a tryout."),
+        (
+            {"service_enabled": None, "service_active": "inactive"},
+            1,
+            "The service is not installed. Run `stenographer run` in a terminal, "
+            "or install it with `steno-agent install`.",
+        ),
+        (
+            {"service_enabled": "disabled", "service_active": "inactive"},
+            1,
+            "The service is inactive. Start it with `steno-agent start`; setup did not start it.",
+        ),
+        (
+            {"service_enabled": None, "service_active": None},
+            1,
+            "The user-service state could not be determined. Run `stenographer run` "
+            "in a terminal to try the configuration.",
+        ),
+        ({"mode": "hold"}, -2, "Focus a text field, hold KEY_RIGHTCTRL, speak, then release it."),
+        ({"mode": "hold"}, -1, "Follow service logs with `steno-agent logs -f`."),
+        (
+            {"mode": "toggle", "binding": "KEY_F9"},
+            -2,
+            "Focus a text field, press KEY_F9, speak, then press it again.",
+        ),
+        (
+            {"mode": "hybrid", "binding": "KEY_F9"},
+            -2,
+            "Focus a text field, tap KEY_F9 to latch (tap again to stop), "
+            "or hold it, speak, and release.",
+        ),
+    ],
+)
+def test_tryout_lines(overrides, line_index, expected):
+    overrides = overrides.copy()
+    if "mode" in overrides:
+        defaults = Config.defaults()
+        hotkey = dataclasses.replace(defaults.hotkey, **overrides)
+        overrides = {"config": dataclasses.replace(defaults, hotkey=hotkey)}
+    assert _tryout(**overrides)[line_index] == expected
 
 
 def test_field_display_names_unset_values_and_calibrated_profiles():
@@ -338,94 +288,59 @@ def test_setup_requires_an_interactive_terminal():
     assert "requires an interactive terminal" in stderr.getvalue()
 
 
-def test_setup_applies_loaded_then_reviewed_log_levels_before_followup_work(monkeypatch, tmp_path):
-    from stenographer.lib.config.save_result import SaveResult
-    from stenographer.lib.logging import pipeline as logging_setup
+def test_setup_applies_loaded_then_reviewed_log_levels_before_followup_work(setup_run, tmp_path):
+    from stenographer.lib.config.document import SaveResult
 
-    events: list[str] = []
     defaults = Config.defaults()
     loaded = dataclasses.replace(
-        defaults,
-        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
+        defaults, feedback=dataclasses.replace(defaults.feedback, log_level="warning")
     )
     reviewed = dataclasses.replace(
-        loaded,
-        feedback=dataclasses.replace(loaded.feedback, log_level="debug"),
+        loaded, feedback=dataclasses.replace(loaded.feedback, log_level="debug")
     )
+    events = setup_run.levels
 
-    class Document:
-        path = tmp_path / "config.toml"
-        config = loaded
+    def save(config):
+        assert config is reviewed
+        events.append("save")
+        return SaveResult(False, tmp_path / "config.toml")
 
-        def save(self, config):
-            assert config is reviewed
-            events.append("save")
-            return SaveResult(False, self.path)
-
-    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
-    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: Document())
-    monkeypatch.setattr(
-        setup,
-        "_wizard",
-        lambda *args, **kwargs: events.append("wizard") or reviewed,
+    code, _, _ = setup_run(
+        document=_document_double(tmp_path, config=loaded, save=save),
+        wizard=lambda *args, **kwargs: events.append("wizard") or reviewed,
+        guided=lambda *args, **kwargs: events.append("guided") or 0,
     )
-    monkeypatch.setattr(
-        setup,
-        "_guided_setup",
-        lambda *args, **kwargs: events.append("guided") or 0,
-    )
-    monkeypatch.setattr(
-        logging_setup,
-        "apply_stderr_level",
-        lambda level: events.append(f"level:{level}"),
-    )
-
-    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 0
-    assert events == ["level:warning", "wizard", "save", "level:debug", "guided"]
+    assert code == 0
+    assert events == ["warning", "wizard", "save", "debug", "guided"]
 
 
-def test_setup_does_not_apply_a_level_when_loading_fails(monkeypatch):
-    from stenographer.lib.logging import pipeline as logging_setup
-
-    levels: list[str] = []
-    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
-    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: 78)
-    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
-
-    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 78
-    assert levels == []
+def test_setup_does_not_apply_a_level_when_loading_fails(setup_run):
+    code, _, _ = setup_run(document=78)
+    assert code == 78
+    assert setup_run.levels == []
 
 
-def test_setup_save_failure_keeps_the_loaded_level(monkeypatch, tmp_path):
+def test_setup_save_failure_keeps_the_loaded_level(setup_run, tmp_path):
     from stenographer.lib.config.errors import ConfigPersistenceError
-    from stenographer.lib.logging import pipeline as logging_setup
 
-    levels: list[str] = []
     defaults = Config.defaults()
     loaded = dataclasses.replace(
-        defaults,
-        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
+        defaults, feedback=dataclasses.replace(defaults.feedback, log_level="warning")
     )
     reviewed = dataclasses.replace(
-        loaded,
-        feedback=dataclasses.replace(loaded.feedback, log_level="debug"),
+        loaded, feedback=dataclasses.replace(loaded.feedback, log_level="debug")
     )
 
-    class Document:
-        path = tmp_path / "config.toml"
-        config = loaded
+    def save(config):
+        assert config is reviewed
+        raise ConfigPersistenceError("save failed")
 
-        def save(self, config):
-            assert config is reviewed
-            raise ConfigPersistenceError("save failed")
-
-    monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
-    monkeypatch.setattr(setup, "load_document", lambda *args, **kwargs: Document())
-    monkeypatch.setattr(setup, "_wizard", lambda *args, **kwargs: reviewed)
-    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
-
-    assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=io.StringIO()) == 1
-    assert levels == ["warning"]
+    code, _, _ = setup_run(
+        document=_document_double(tmp_path, config=loaded, save=save),
+        wizard=lambda *args, **kwargs: reviewed,
+    )
+    assert code == 1
+    assert setup_run.levels == ["warning"]
 
 
 def test_write_default_creates_the_annotated_template(tmp_path, monkeypatch):
@@ -439,6 +354,7 @@ def test_write_default_creates_the_annotated_template(tmp_path, monkeypatch):
 
     assert path.read_text(encoding="utf-8") == default_toml()
     assert f"Wrote the default configuration to {path.resolve()}" in out.getvalue()
+    assert "Backup:" not in out.getvalue()
     assert err.getvalue() == ""
 
 
@@ -509,10 +425,6 @@ class _Keys:
         from stenographer.lib.hotkey.keycodes import CODE_NAMES
 
         return CODE_NAMES.get(code)
-
-
-def _console(answers: str = "") -> Console:
-    return Console(io.StringIO(answers), io.StringIO(), io.StringIO())
 
 
 @pytest.fixture
@@ -598,10 +510,10 @@ def test_prompt_device_still_offers_manual_entry_when_nothing_was_found():
 
 def test_binding_parsing_rejects_an_empty_and_an_unknown_key(key_vocabulary):
     with pytest.raises(ValueError, match="binding must be non-empty"):
-        setup._parse_binding("   ")
+        setup.validate_binding("   ")
     with pytest.raises(ValueError, match="unknown key"):
-        setup._parse_binding("KEY_NOT_A_KEY")
-    assert setup._parse_binding(" KEY_LEFTCTRL+KEY_F9 ") == "KEY_LEFTCTRL+KEY_F9"
+        setup.validate_binding("KEY_NOT_A_KEY")
+    assert setup.validate_binding(" KEY_LEFTCTRL+KEY_F9 ") == "KEY_LEFTCTRL+KEY_F9"
 
 
 def test_typed_binding_retries_until_the_chord_parses(key_vocabulary):
@@ -696,7 +608,7 @@ def test_manual_floor_offers_a_scalar_default_when_a_profile_is_current():
     assert f"Spectrum floor dBFS [{DEFAULT_SPECTRUM_FLOOR_DBFS};" in console.stdout.getvalue()
 
 
-def test_quick_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_path):
+def test_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_path):
     console = _console("0.9\n\nno\n\n\n")
 
     config = setup._edit_feedback_section(
@@ -704,7 +616,6 @@ def test_quick_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_pa
         Config.defaults(),
         tmp_path,
         notice=("IMPORTANT: bars only.",),
-        skip_floor_without_overlay=True,
         ask_log_level=False,
     )
 
@@ -718,6 +629,26 @@ def test_quick_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_pa
     assert "Spectrum response" not in stdout
 
 
+def test_full_wizard_skips_calibration_and_keeps_the_floor_when_the_overlay_is_off(tmp_path):
+    defaults = Config.defaults()
+    floor = (-52.0,) * 18
+    initial = dataclasses.replace(
+        defaults,
+        feedback=dataclasses.replace(defaults.feedback, spectrum_floor_dbfs=floor),
+    )
+    # The trailing "keep" answers the question if it is asked, so no capture can start.
+    console = _console("\n\nno\n\n\n\nkeep\n")
+
+    config = setup._edit_feedback(console, initial, config_dir=tmp_path)
+
+    assert config.feedback.overlay is False
+    assert config.feedback.spectrum_floor_dbfs == floor
+    stdout = console.stdout.getvalue()
+    assert "Log level" in stdout
+    assert "Spectrum response" not in stdout
+    assert "Overlay is disabled, so display-spectrum calibration was skipped." in stdout
+
+
 def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_path):
     console = _console("\n\n\n\n\ndebug\nkeep\n")
 
@@ -726,7 +657,6 @@ def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_
         Config.defaults(),
         tmp_path,
         notice=("IMPORTANT: bars only.",),
-        skip_floor_without_overlay=False,
         ask_log_level=True,
     )
 
@@ -820,7 +750,7 @@ def test_capture_is_the_default_offer_for_a_brand_new_configuration(key_vocabula
 
 def test_audio_device_menu_comes_from_the_shared_portaudio_enumeration(monkeypatch):
     from stenographer.lib.audio import probe
-    from stenographer.lib.audio.device_query import DeviceQuery
+    from stenographer.lib.audio.probe import DeviceQuery
 
     monkeypatch.setattr(
         probe,
@@ -857,10 +787,9 @@ def calibrator(monkeypatch):
     def install(*results):
         pending = list(results)
 
-        def calibrate(device, *, on_countdown, on_voice_prompt, **kwargs):
+        def calibrate(device, *, on_countdown, **kwargs):
             on_countdown(3)
             on_countdown(0)
-            on_voice_prompt()
             outcome = pending.pop(0)
             if isinstance(outcome, Exception):
                 raise outcome
@@ -883,60 +812,51 @@ def test_automatic_calibration_accepted_returns_the_learned_profile(calibrator):
     assert "Keep the room quiet." in stdout
     assert "Stay silent — recording starts in 3..." in stdout
     assert "Recording room noise now." in stdout
-    assert "Speak normally now for three seconds so visibility can be verified." in stdout
-    assert "Background profile learned and normal voice visibility verified." in stdout
+    assert "Speak normally" not in stdout
+    assert "Background profile learned." in stdout
 
 
-def test_automatic_calibration_retries_before_accepting(calibrator):
-    second = (-58.0,) * 18
-    calibrator((-70.0,) * 18, second)
-    console = _console("retry\naccept\n")
+@pytest.mark.parametrize(
+    ("results", "answers", "expected_floor", "expected_stderr"),
+    [
+        pytest.param(
+            [(-70.0,) * 18, (-58.0,) * 18],
+            "retry\naccept\n",
+            (-58.0,) * 18,
+            "",
+            id="retry-then-accept",
+        ),
+        pytest.param([(-70.0,) * 18], "manual\n-61.5\n", -61.5, "", id="manual-after-result"),
+        pytest.param([(-70.0,) * 18], "keep\n", -45.0, "", id="keep-after-result"),
+        pytest.param(
+            [CalibrationError("the room was not quiet")],
+            "keep\n",
+            -45.0,
+            "stenographer: automatic calibration rejected: the room was not quiet\n",
+            id="rejected-then-keep",
+        ),
+        pytest.param(
+            [OSError("no such device")],
+            "manual\n-70\n",
+            -70.0,
+            "stenographer: automatic calibration failed: no such device\n",
+            id="failed-then-manual",
+        ),
+        pytest.param(
+            [OSError("device busy"), (-59.0,) * 18],
+            "retry\naccept\n",
+            (-59.0,) * 18,
+            "stenographer: automatic calibration failed: device busy\n",
+            id="failed-then-retry",
+        ),
+    ],
+)
+def test_automatic_calibration_arms(calibrator, results, answers, expected_floor, expected_stderr):
+    calibrator(*results)
+    console = _console(answers)
 
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == second
-
-
-def test_automatic_calibration_can_hand_over_to_the_manual_value(calibrator):
-    calibrator((-70.0,) * 18)
-    console = _console("manual\n-61.5\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == -61.5
-
-
-def test_automatic_calibration_keep_retains_the_current_response(calibrator):
-    calibrator((-70.0,) * 18)
-    console = _console("keep\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == -45.0
-
-
-def test_a_rejected_capture_is_reported_as_rejected_and_may_be_kept(calibrator):
-    from stenographer.overlay.spectrum.errors import CalibrationError
-
-    calibrator(CalibrationError("the room was not quiet"))
-    console = _console("keep\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == -45.0
-    assert console.stderr.getvalue() == (
-        "stenographer: automatic calibration rejected: the room was not quiet\n"
-    )
-
-
-def test_a_broken_capture_is_reported_as_failed_and_may_fall_back_to_manual(calibrator):
-    calibrator(OSError("no such device"))
-    console = _console("manual\n-70\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == -70.0
-    assert console.stderr.getvalue() == (
-        "stenographer: automatic calibration failed: no such device\n"
-    )
-
-
-def test_a_failed_capture_may_be_retried(calibrator):
-    profile = (-59.0,) * 18
-    calibrator(OSError("device busy"), profile)
-    console = _console("retry\naccept\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == profile
+    assert setup._automatic_floor(console, Config.defaults(), -45.0) == expected_floor
+    assert console.stderr.getvalue() == expected_stderr
 
 
 def test_choose_floor_automatic_arm_runs_the_calibration(calibrator):
@@ -949,22 +869,35 @@ def test_choose_floor_automatic_arm_runs_the_calibration(calibrator):
 
 @pytest.fixture
 def binding_capture(monkeypatch):
-    """Supply captured chords at the platform delegator, never opening a device."""
+    """Supply captured chords at the platform seam, never opening a device."""
 
-    from stenographer.cli.setup import binding_capture as capture_module
+    from stenographer.lib import platform as platform_module
 
     def install(*results):
         pending = list(results)
+        calls: list[tuple] = []
 
         def capture(stdin, device, *, timeout):
+            calls.append((stdin, device, timeout))
             outcome = pending.pop(0)
             if isinstance(outcome, Exception):
                 raise outcome
             return outcome
 
-        monkeypatch.setattr(capture_module, "capture_binding", capture)
+        host = SimpleNamespace(capture_binding=capture, keys=_Keys)
+        monkeypatch.setattr(platform_module, "current_platform", lambda: host)
+        return calls
 
     return install
+
+
+def test_setup_captures_from_its_stdin_and_device_with_the_15_second_timeout(binding_capture):
+    calls = binding_capture("KEY_F9")
+    console = _console("capture\ny\n")
+
+    setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", "/dev/input/event3", new_config=True)
+
+    assert calls == [(console.stdin, "/dev/input/event3", 15.0)]
 
 
 def test_a_captured_binding_is_offered_for_confirmation(binding_capture):
@@ -1016,36 +949,25 @@ def test_a_failed_capture_may_keep_the_current_binding(binding_capture):
     assert result == "KEY_RIGHTCTRL"
 
 
-def _caps(**overrides) -> Capabilities:
-    state = {
-        "key_injector_ok": True,
-        "hotkey_access_ok": True,
-        "has_mic": True,
-        "model_cached": True,
-        "clipboard_ok": True,
-        "clipboard_backend": "wl-copy",
-        "clipboard_read_ok": True,
-        "cue_player": "paplay",
-        "service_enabled": "enabled",
-        "service_active": "active",
-    }
-    state.update(overrides)
-    return Capabilities(**state)
+def _caps(**overrides):
+    return capabilities(**({"cue_player": "paplay"} | overrides))
 
 
 @pytest.fixture
-def guided(monkeypatch):
+def guided(monkeypatch, tmp_path):
     """Run ``_guided_setup`` with the cache, probe, report, and host all supplied."""
 
     from stenographer.cli.doctor import report as doctor
-    from stenographer.cli.shared import capability_probe
+    from stenographer.cli.shared import capabilities as shared_capabilities
     from stenographer.lib import platform as platform_module
-    from stenographer.lib.diagnostics import capabilities as diagnostics
+    from stenographer.lib.live import download as live_download
+    from stenographer.lib.live.models import VAD_MODEL, live_model_dir
     from stenographer.lib.refine import client as refine_client
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay import platform as overlay_platform_module
 
     events: list[str] = []
+    data_root = tmp_path / "data"
 
     def install(
         *,
@@ -1053,6 +975,8 @@ def guided(monkeypatch):
         cached=True,
         cache_error=None,
         download_error=None,
+        vad_present=True,
+        vad_error=None,
         caps=None,
         probe_error=None,
         missing=(),
@@ -1066,17 +990,28 @@ def guided(monkeypatch):
     ):
         probed = _caps() if caps is None else caps
         used_config = Config.defaults() if config is None else config
+        vad_dir = live_model_dir(data_root)
+        vad_dir.mkdir(parents=True)
+        if vad_present:
+            (vad_dir / VAD_MODEL.filename).touch()
 
         def is_model_cached(data_dir):
-            events.append(f"cache:{data_dir}")
+            events.append(f"cache:{data_dir.name}")
             if cache_error is not None:
                 raise cache_error
             return cached
 
         def download_bark_pro(data_dir, *, on_step):
-            events.append(f"download:{data_dir}")
+            events.append(f"download:{data_dir.name}")
             if download_error is not None:
                 raise download_error
+            return not cached
+
+        def download_live_models(data_dir, *, models):
+            events.append(f"vad:{data_dir.name}:{models[0].filename}")
+            if vad_error is not None:
+                raise vad_error
+            return (models[0].filename,)
 
         def probe(cfg):
             events.append("probe")
@@ -1084,7 +1019,7 @@ def guided(monkeypatch):
                 raise probe_error
             return probed
 
-        def installed_model_names(host, *, timeout=refine_client.PROBE_TIMEOUT_SECONDS):
+        def installed_model_names(host):
             # Never let a default (refine-enabled) config reach a real Ollama
             # from a unit test: `refine_installed` fakes the listing instead.
             events.append(f"refine-probe:{host}")
@@ -1103,7 +1038,7 @@ def guided(monkeypatch):
                 return _GUIDANCE
 
             def data_dir(self, env, home):
-                return pathlib.Path("/data")
+                return data_root
 
             def restart_service(self):
                 events.append("restart")
@@ -1115,8 +1050,9 @@ def guided(monkeypatch):
 
         monkeypatch.setattr(bark_download, "is_model_cached", is_model_cached)
         monkeypatch.setattr(bark_download, "download_bark_pro", download_bark_pro)
-        monkeypatch.setattr(capability_probe, "probe", probe)
-        monkeypatch.setattr(diagnostics, "missing_required", lambda caps: list(missing))
+        monkeypatch.setattr(live_download, "download_live_models", download_live_models)
+        monkeypatch.setattr(shared_capabilities, "probe", probe)
+        monkeypatch.setattr(shared_capabilities, "missing_required", lambda caps: list(missing))
         monkeypatch.setattr(
             doctor,
             "render",
@@ -1147,7 +1083,7 @@ def test_guided_setup_prints_the_doctor_report_and_succeeds(guided):
     assert code == 0
     assert "== doctor report ==" in stdout
     assert events == [
-        "cache:/data",
+        "cache:data",
         "refine-probe:http://127.0.0.1:11434",
         "probe",
     ]
@@ -1163,7 +1099,7 @@ def test_guided_setup_offers_the_download_of_an_uncached_model_and_takes_no_for_
         in stdout
     )
     assert "Download and convert it now? [y/N]: " in stdout
-    assert "download:/data" not in events
+    assert "download:data" not in events
 
 
 def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
@@ -1171,8 +1107,56 @@ def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
 
     assert code == 0
     assert "Download and convert it now? [Y/n]: " in stdout
-    assert "download:/data" in events
+    assert "download:data" in events
     assert "Model download complete." in stdout
+
+
+def test_guided_download_also_fetches_the_dictation_vad_model(guided):
+    code, stdout, stderr, events = guided(
+        cached=False, vad_present=False, answers="\n", changed=False, quick=True
+    )
+
+    assert code == 0
+    assert stderr == ""
+    assert events.index("download:data") < events.index("vad:data:silero_vad.onnx")
+    assert "Silero voice-activity model" in stdout
+    assert "VAD model silero_vad.onnx downloaded" in stdout
+    assert "Model download complete." in stdout
+
+
+def test_guided_setup_offers_a_vad_model_missing_beside_an_installed_asr_model(guided):
+    code, stdout, stderr, events = guided(vad_present=False, answers="y\n", changed=False)
+
+    assert code == 0
+    assert stderr == ""
+    assert "is not installed. stenographer builds it" not in stdout
+    assert "voice-activity model that dictation needs is not installed" in stdout
+    assert "Download it now? [y/N]: " in stdout
+    assert "vad:data:silero_vad.onnx" in events
+    assert "ASR model already present" in stdout
+
+
+def test_guided_setup_takes_no_for_an_answer_on_a_missing_vad_model(guided):
+    code, stdout, _, events = guided(vad_present=False, answers="\n", changed=False)
+
+    assert code == 0
+    assert "Download it now? [y/N]: " in stdout
+    assert not [event for event in events if event.startswith(("download:", "vad:"))]
+
+
+def test_guided_setup_reports_a_failed_vad_download_as_an_operational_failure(guided):
+    from stenographer.lib.live.errors import LiveDownloadError
+
+    code, stdout, stderr, _ = guided(
+        vad_present=False,
+        answers="y\n",
+        vad_error=LiveDownloadError("checksum mismatch"),
+        changed=False,
+    )
+
+    assert code == 1
+    assert stderr == "stenographer: model download failed: checksum mismatch\n"
+    assert "Model download complete." not in stdout
 
 
 def test_guided_setup_reports_a_failed_download_as_an_operational_failure(guided):
@@ -1287,7 +1271,7 @@ def test_guided_setup_reports_a_failed_refine_pull_as_an_operational_failure(gui
     assert code == 1
     assert stderr == "stenographer: refine model pull failed: boom\n"
     assert events == [
-        "cache:/data",
+        "cache:data",
         "refine-probe:http://127.0.0.1:11434",
         "refine-pull:gemma4:e2b",
         "probe",
@@ -1448,22 +1432,16 @@ def test_offer_refine_pull_reports_an_unreachable_ollama_without_prompting(monke
     assert "No Ollama server answered" not in stdout
 
 
-def _document_double(tmp_path, *, save=None):
-    from stenographer.lib.config.save_result import SaveResult
+def _document_double(tmp_path, *, save=None, config=None):
+    from stenographer.lib.config.document import SaveResult
 
-    path = tmp_path / "config.toml"
+    def save_document(config, path):
+        return save(config) if save is not None else SaveResult(True, path)
 
-    class Document:
-        def __init__(self):
-            self.path = path
-            self.config = Config.defaults()
-
-        def save(self, config):
-            if save is not None:
-                return save(config)
-            return SaveResult(True, path)
-
-    return Document()
+    result = document(tmp_path, save=save_document)
+    if config is not None:
+        result.config = config
+    return result
 
 
 @pytest.fixture
@@ -1473,7 +1451,8 @@ def setup_run(monkeypatch, tmp_path):
     from stenographer.lib.logging import pipeline as logging_setup
 
     monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
-    monkeypatch.setattr(logging_setup, "apply_stderr_level", lambda level: None)
+    levels = []
+    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
 
     def invoke(*, document=None, wizard=None, guided=None, quick=False):
         monkeypatch.setattr(
@@ -1494,6 +1473,7 @@ def setup_run(monkeypatch, tmp_path):
         code = setup.run(quick=quick, stdin=io.StringIO(), stdout=stdout, stderr=stderr)
         return code, stdout.getvalue(), stderr.getvalue()
 
+    invoke.levels = levels
     return invoke
 
 
@@ -1601,7 +1581,7 @@ def test_refine_intro_says_where_the_transcript_would_go():
 def test_a_host_changed_to_non_loopback_is_warned_about_before_the_probe(monkeypatch):
     """Seen to FAIL before the fix: the loopback reassurance printed once at
     the top of the section, for the OLD (loopback) host; a newly typed remote
-    host reached ``_refine_models`` with no warning ever shown for it."""
+    host reached ``installed_model_names`` with no warning ever shown for it."""
     console = _console("yes\nhttps://ollama.example.com:8443\n\n\n\n")
     seen_before_probe: dict[str, str] = {}
 
@@ -1609,7 +1589,7 @@ def test_a_host_changed_to_non_loopback_is_warned_about_before_the_probe(monkeyp
         seen_before_probe["stdout"] = console.stdout.getvalue()
         return []
 
-    monkeypatch.setattr(setup, "_refine_models", fake_refine_models)
+    monkeypatch.setattr(refine_client, "installed_model_names", fake_refine_models)
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
 
@@ -1621,16 +1601,17 @@ def test_a_host_changed_to_non_loopback_is_warned_about_before_the_probe(monkeyp
     )
 
 
-def test_keeping_the_same_non_loopback_host_does_not_double_the_warning(monkeypatch):
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+@pytest.mark.parametrize("ask_details", [True, False])
+def test_keeping_the_same_non_loopback_host_does_not_double_the_warning(monkeypatch, ask_details):
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     defaults = Config.defaults()
     remote_config = dataclasses.replace(
         defaults,
         refine=dataclasses.replace(defaults.refine, host="https://ollama.example.com:8443"),
     )
-    console = _console("yes\n\n\n\n\n")  # Enter on the host prompt keeps it unchanged
+    console = _console("yes\n\n\n\n\n" if ask_details else "yes\n\n")
 
-    config = setup._edit_refine_section(console, remote_config, ask_details=True)
+    config = setup._edit_refine_section(console, remote_config, ask_details=ask_details)
 
     assert config.refine.host == "https://ollama.example.com:8443"
     stdout = console.stdout.getvalue()
@@ -1650,7 +1631,7 @@ def test_moving_from_a_remote_host_to_loopback_gets_the_reassurance_too(monkeypa
         seen_before_probe["stdout"] = console.stdout.getvalue()
         return []
 
-    monkeypatch.setattr(setup, "_refine_models", fake_refine_models)
+    monkeypatch.setattr(refine_client, "installed_model_names", fake_refine_models)
     defaults = Config.defaults()
     remote_config = dataclasses.replace(
         defaults,
@@ -1673,24 +1654,6 @@ def test_moving_from_a_remote_host_to_loopback_gets_the_reassurance_too(monkeypa
     assert stdout.index(reassurance) > stdout.index(stale_warning)
 
 
-def test_the_quick_wizard_never_re_warns_about_a_host_it_never_asked_for(monkeypatch):
-    """``ask_details=False`` skips the host prompt entirely, so the change
-    that re-warns after it must be a complete no-op on this path."""
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
-    defaults = Config.defaults()
-    remote_config = dataclasses.replace(
-        defaults,
-        refine=dataclasses.replace(defaults.refine, host="https://ollama.example.com:8443"),
-    )
-    console = _console("yes\n\n")  # enabled, model (kept)
-
-    config = setup._edit_refine_section(console, remote_config, ask_details=False)
-
-    assert config.refine.host == "https://ollama.example.com:8443"
-    stdout = console.stdout.getvalue()
-    assert stdout.count("WARNING: https://ollama.example.com:8443 is not loopback") == 1
-
-
 @pytest.mark.parametrize(
     ("answer", "expected"),
     [("", "kept:tag"), ("2", "second:tag"), ("someone/custom:tag", "someone/custom:tag")],
@@ -1707,7 +1670,7 @@ def test_turning_refine_off_never_probes_ollama(monkeypatch):
     def forbidden(host):
         raise AssertionError("a disabled stage must not reach the network")
 
-    monkeypatch.setattr(setup, "_refine_models", forbidden)
+    monkeypatch.setattr(refine_client, "installed_model_names", forbidden)
     console = _console("no\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
@@ -1718,7 +1681,9 @@ def test_turning_refine_off_never_probes_ollama(monkeypatch):
 
 
 def test_enabling_refine_lists_installed_models_and_takes_a_numbered_choice(monkeypatch):
-    monkeypatch.setattr(setup, "_refine_models", lambda host: ["first:tag", "second:tag"])
+    monkeypatch.setattr(
+        refine_client, "installed_model_names", lambda host: ["first:tag", "second:tag"]
+    )
     console = _console("yes\n\n2\n20\nyes\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
@@ -1732,30 +1697,16 @@ def test_enabling_refine_lists_installed_models_and_takes_a_numbered_choice(monk
 
 
 def test_an_absent_ollama_still_lets_the_model_be_named_for_a_later_pull(monkeypatch):
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     console = _console("yes\nsome/other:tag\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=False)
 
     assert config.refine.model == "some/other:tag"
-    assert "No refine model is available" in console.stdout.getvalue()
-    assert "model download --refine" in console.stdout.getvalue()
-
-
-def test_the_empty_listing_message_does_not_claim_the_server_never_answered(monkeypatch):
-    """``_refine_models`` returns ``[]`` both when nothing is listening at the
-    host and when a live Ollama simply has no models installed — the wizard
-    cannot tell those apart, and the message must not pretend it can. Seen to
-    FAIL before the fix: the old wording asserted unreachability outright,
-    which is false in the second case."""
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
-    console = _console("yes\nsome/other:tag\n")
-
-    setup._edit_refine_section(console, Config.defaults(), ask_details=False)
-
     stdout = console.stdout.getvalue()
-    assert "No Ollama server answered" not in stdout
     assert "No refine model is available" in stdout
+    assert "model download --refine" in stdout
+    assert "No Ollama server answered" not in stdout
     assert "either nothing answered there, or none is installed" in stdout
 
 
@@ -1776,57 +1727,43 @@ def test_refine_host_parser_normalizes_before_review(text, expected):
     assert setup.parse_refine_host(text, "kept") == expected
 
 
-def test_refine_host_parser_rejects_credentials_and_a_hostless_url():
-    with pytest.raises(ValueError, match="must not embed credentials"):
-        setup.parse_refine_host("http://user:pass@host:11434", "kept")
-    with pytest.raises(ValueError, match="must name a host"):
-        setup.parse_refine_host("http://", "kept")
-    with pytest.raises(ValueError, match="http:// or https://"):
-        setup.parse_refine_host("ftp://host", "kept")
-
-
-def test_refine_host_prompt_in_the_wizard_normalizes_before_the_review_screen(monkeypatch):
-    """Drives the real wizard prompt (not just the pure parser) to guard the
-    seam that used to store the raw text verbatim via ``_prompt_string``."""
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
-    console = _console("yes\nlocalhost:11434\n\n\n\n")
-
-    config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
-
-    assert config.refine.host == "http://localhost:11434"
-
-
 def test_refine_host_prompt_rejects_credentials_and_a_hostless_url_then_retries(monkeypatch):
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
-    console = _console("yes\nhttp://user:pass@evil:11434\nhttp://\nHTTP://127.0.0.1:11434\n\n\n\n")
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
+    console = _console(
+        "yes\nhttp://user:pass@evil:11434\nhttp://\nftp://host\nHTTP://127.0.0.1:11434\n\n\n\n"
+    )
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
 
     assert config.refine.host == "http://127.0.0.1:11434"
     assert "must not embed credentials" in console.stderr.getvalue()
     assert "must name a host" in console.stderr.getvalue()
+    assert "http:// or https://" in console.stderr.getvalue()
 
 
-def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypatch):
+def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypatch, tmp_path):
     """Ties the coverage to the actual failure mode (``ConfigDocument.render``'s
     round-trip check) rather than to a hand-written expected string. A change
     to ``normalize_host`` that still satisfied the string-equality tests above
     but broke the real save would be caught here and nowhere else."""
     from stenographer.lib.config.document import ConfigDocument
 
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     console = _console("yes\nlocalhost:11434\n\n\n\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
 
-    document = ConfigDocument.loads(default_toml())
+    path = tmp_path / "render-config.toml"
+    path.write_text(default_toml(), encoding="utf-8")
+    document = ConfigDocument.load(path)
+    assert config.refine.host == "http://localhost:11434"
     document.render(config)  # must not raise ConfigPersistenceError
 
 
 def test_pressing_enter_on_the_refine_prompt_leaves_it_enabled_by_default(monkeypatch):
     """Refine now defaults to on, so a blank answer must walk into the
     host/model sub-flow rather than the old off-by-default behaviour."""
-    monkeypatch.setattr(setup, "_refine_models", lambda host: [])
+    monkeypatch.setattr(refine_client, "installed_model_names", lambda host: [])
     console = _console("\n\n\n\n\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)

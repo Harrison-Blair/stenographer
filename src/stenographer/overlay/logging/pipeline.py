@@ -14,20 +14,15 @@ from stenographer.lib.logging.pipeline import (
     _FORMAT,
     _FORMAT_DEFAULTS,
     _LOGGER_NAME,
+    UtteranceFilter,
     _emit_file_warning,
     _mark_owned,
     fmt_event,
+    log_paths,
     resolve_log_level,
 )
-from stenographer.lib.logging.utterance_filter import UtteranceFilter
-from stenographer.lib.platform import current_platform
 
 _HELPER_MAX_BYTES = 1024 * 1024
-
-
-def helper_log_path(env: Mapping[str, str], home: Path) -> Path:
-    """State-dir path of the overlay helper's own log file."""
-    return current_platform().state_dir(env, home) / "overlay-helper.log"
 
 
 def cap_helper_log(path: Path) -> None:
@@ -101,7 +96,7 @@ def setup_helper_logging(
 
     log_path: Path | None = None
     try:
-        log_path = helper_log_path(resolved_env, resolved_home)
+        log_path = log_paths(resolved_env, resolved_home)[1]
         log_path.parent.mkdir(parents=True, exist_ok=True)
         if not _stderr_targets(log_path, resolved_stderr):
             cap_helper_log(log_path)

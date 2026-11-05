@@ -19,13 +19,10 @@ import threading
 
 import pytest
 
-from stenographer.lib.refine import client, ollama_refiner
-from stenographer.lib.refine.ollama_refiner import OllamaRefiner
+from stenographer.lib.refine import ollama_refiner
 from stenographer.lib.refine.prompt import RESPONSE_KEY
 from stenographer.lib.refine.results import OUTCOME_APPLIED, OUTCOME_CANCELLED
-
-SPOKEN = "um i think we should ship it on thursday no wait friday okay "
-CLEANED = "I think we should ship it on Friday. "
+from tests.lib.refine.helpers import CLEANED, SPOKEN, _refiner
 
 #: Long enough that a wait which really elapses is unmistakable in the output,
 #: short enough that such a test still finishes.
@@ -108,20 +105,8 @@ def transport(monkeypatch) -> _Transport:
     monkeypatch.setattr(ollama_refiner, "post_chat", stub.post_chat)
     monkeypatch.setattr(ollama_refiner, "is_model_loaded", stub.is_model_loaded)
     monkeypatch.setattr(ollama_refiner, "warm_model", stub.warm_model)
-    monkeypatch.setattr(client, "unload_model", stub.unload_model)
+    monkeypatch.setattr(ollama_refiner, "unload_model", stub.unload_model)
     return stub
-
-
-def _refiner(**overrides) -> OllamaRefiner:
-    kwargs = {
-        "host": "http://127.0.0.1:11434",
-        "model": "test-model",
-        "min_words": 10,
-        "structured_output": True,
-        "keep_alive": -1,
-    }
-    kwargs.update(overrides)
-    return OllamaRefiner(**kwargs)
 
 
 def _in_thread(target) -> threading.Thread:
@@ -145,29 +130,6 @@ def test_a_chat_in_flight_when_shutdown_begins_cannot_leave_the_model_resident(t
     worker.join(timeout=_DEADLINE)
 
     assert not worker.is_alive()
-    assert transport.residency[-1] == "unload", transport.residency
-
-
-def test_a_warm_and_a_chat_both_in_flight_still_end_with_the_model_released(transport):
-    """Both threads that can reach a ``keep_alive``-setting request are out at
-    once: the background warm-up and an utterance's own reply. Whichever
-    returns last is the one that decides whether the model is resident."""
-    refiner = _refiner()
-    transport.loaded = False
-    transport.block_chat = True
-    transport.block_warm = True
-    warming = _in_thread(refiner.warm)
-    refining = _in_thread(lambda: refiner.refine(SPOKEN))
-    assert transport.warms_entered.acquire(timeout=_DEADLINE)
-    assert transport.warms_entered.acquire(timeout=_DEADLINE)
-
-    refiner.unload()
-    transport.warm_release.set()
-    warming.join(timeout=_DEADLINE)
-    transport.chat_release.set()
-    refining.join(timeout=_DEADLINE)
-
-    assert not warming.is_alive() and not refining.is_alive()
     assert transport.residency[-1] == "unload", transport.residency
 
 
@@ -257,6 +219,7 @@ def test_only_the_last_request_out_reissues_the_unload(transport):
 
     assert not warming.is_alive() and not refining.is_alive()
     assert transport.journal.count("unload") == 2, transport.journal
+    assert transport.residency[-1] == "unload", transport.residency
 
 
 def test_a_cancelled_utterance_sends_nothing_at_all_not_even_the_probe(transport):

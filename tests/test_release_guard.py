@@ -130,6 +130,11 @@ def test_release_plan_bumps_the_highest_stable_tag(bump: str, candidate: str) ->
     assert plan.tag == f"v{candidate}"
 
 
+def test_release_plan_rejects_a_bare_candidate_tag() -> None:
+    with pytest.raises(ReleaseGuardError, match="Git tag already exists"):
+        plan_release(["v1.4.5", "1.4.6"], [[]], "patch", _TARGET)
+
+
 def test_release_plan_uses_tags_even_when_the_latest_has_no_release() -> None:
     plan = plan_release(["v1.4.5"], [[]], "patch", _TARGET)
 
@@ -222,30 +227,20 @@ def _release_repo(tmp_path: Path, *, annotated: bool) -> tuple[Path, str, str]:
     return repo, tagged, git("rev-parse", "HEAD")
 
 
+def _pages(tmp_path: Path, *releases: dict) -> Path:
+    pages = tmp_path / "releases.json"
+    pages.write_text(json.dumps([list(releases)]), encoding="utf-8")
+    return pages
+
+
 @pytest.mark.parametrize("annotated", [False, True], ids=["lightweight", "annotated"])
 def test_main_resolves_the_previous_tag_to_its_commit(tmp_path: Path, annotated: bool) -> None:
     """The previous tag resolves to a commit, not a tag object or a failure."""
     repo, tagged, head = _release_repo(tmp_path, annotated=annotated)
-    pages = tmp_path / "releases.json"
-    pages.write_text(json.dumps([[_release("v0.13.0", target=tagged)]]), encoding="utf-8")
+    pages = _pages(tmp_path, _release("v0.13.0", target=tagged))
     github_output = tmp_path / "github_output.txt"
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(_SCRIPT),
-            str(pages),
-            "patch",
-            "--target-commit",
-            head,
-            "--repository",
-            str(repo),
-            "--github-output",
-            str(github_output),
-        ],
-        capture_output=True,
-        text=True,
-    )
+    result = _run_guard(pages, repo, "--target-commit", head, "--github-output", str(github_output))
 
     assert result.returncode == 0, result.stderr
     assert "release guard passed: v0.13.1" in result.stdout
@@ -263,12 +258,8 @@ def _run_guard(pages: Path, repo: Path, *options: str) -> subprocess.CompletedPr
 
 def test_target_opt_out_allows_a_draft_on_the_previous_tagged_commit(tmp_path: Path) -> None:
     repo, tagged, head = _release_repo(tmp_path, annotated=False)
-    pages = tmp_path / "releases.json"
-    pages.write_text(
-        json.dumps(
-            [[_release("v0.13.0", target=tagged), _release("v0.13.1", draft=True, target=tagged)]]
-        ),
-        encoding="utf-8",
+    pages = _pages(
+        tmp_path, _release("v0.13.0", target=tagged), _release("v0.13.1", draft=True, target=tagged)
     )
 
     rehearsal = _run_guard(pages, repo, "--skip-target-check")
@@ -282,8 +273,7 @@ def test_target_opt_out_allows_a_draft_on_the_previous_tagged_commit(tmp_path: P
 
 def test_main_requires_a_target_commit_or_an_explicit_opt_out(tmp_path: Path) -> None:
     repo, tagged, _head = _release_repo(tmp_path, annotated=False)
-    pages = tmp_path / "releases.json"
-    pages.write_text(json.dumps([[_release("v0.13.0", target=tagged)]]), encoding="utf-8")
+    pages = _pages(tmp_path, _release("v0.13.0", target=tagged))
 
     result = _run_guard(pages, repo)
 
@@ -303,8 +293,7 @@ def test_main_rejects_contradictory_target_options(
     tmp_path: Path, options: tuple[str, ...]
 ) -> None:
     repo, tagged, _head = _release_repo(tmp_path, annotated=False)
-    pages = tmp_path / "releases.json"
-    pages.write_text(json.dumps([[_release("v0.13.0", target=tagged)]]), encoding="utf-8")
+    pages = _pages(tmp_path, _release("v0.13.0", target=tagged))
 
     result = _run_guard(pages, repo, *options)
 
@@ -314,12 +303,8 @@ def test_main_rejects_contradictory_target_options(
 
 def test_packaging_only_run_ignores_an_unrelated_draft(tmp_path: Path) -> None:
     repo, tagged, _head = _release_repo(tmp_path, annotated=False)
-    pages = tmp_path / "releases.json"
-    pages.write_text(
-        json.dumps(
-            [[_release("v0.13.0", target=tagged), _release("v0.14.0", draft=True, target=tagged)]]
-        ),
-        encoding="utf-8",
+    pages = _pages(
+        tmp_path, _release("v0.13.0", target=tagged), _release("v0.14.0", draft=True, target=tagged)
     )
 
     packaging = _run_guard(pages, repo, "--skip-draft-checks")

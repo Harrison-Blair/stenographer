@@ -13,15 +13,15 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
+from enum import Enum, auto
 from typing import Any
 
 import numpy as np
 
+from stenographer.lib.audio.callback_clock import CallbackClock
 from stenographer.lib.audio.constants import SAMPLE_RATE
-from stenographer.lib.audio.metrics import elapsed_ms, reduce_clock
 from stenographer.lib.audio.records import CaptureStats
 from stenographer.lib.audio.resample import _resample_poly
-from stenographer.lib.audio.state import RecorderState
 from stenographer.lib.audio.streaming_resampler import StreamingResampler
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 
@@ -38,6 +38,14 @@ _ERR_BAD_CHANNELS = -9998
 
 
 _ERR_BAD_SAMPLE_RATE = -9997
+
+
+class RecorderState(Enum):
+    """Retained audio-stream lifecycle states."""
+
+    UNPREPARED = auto()
+    PREPARED = auto()
+    CAPTURING = auto()
 
 
 class Recorder:
@@ -126,7 +134,7 @@ class Recorder:
             self._select_default_device(module)
             self._negotiate(module)
         except Exception:
-            self._invalidate(reselect_default=True)
+            self._invalidate()
             raise
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         logger.info(
@@ -200,10 +208,6 @@ class Recorder:
         retained = self._state is RecorderState.PREPARED
         if not retained:
             self.prepare()
-        self._blocks = []
-        self._frames = 0
-        self._capped = False
-        self._overflow = False
         try:
             self._activate(recovery="none")
         except Exception as exc:
@@ -215,7 +219,7 @@ class Recorder:
                 safe=True,
                 retained=int(retained),
             )
-            self._invalidate(reselect_default=True)
+            self._invalidate()
             if not retained:
                 raise
             try:
@@ -230,12 +234,10 @@ class Recorder:
                     safe=True,
                     phase="activate",
                 )
-                self._invalidate(reselect_default=True)
+                self._invalidate()
                 raise
 
     def _activate(self, *, recovery: str) -> None:
-        if self._stream is None or self._state is not RecorderState.PREPARED:
-            raise RuntimeError("recorder has no prepared stream")
         started_at = time.perf_counter()
         # Reset before start: callbacks may arrive before stream.start returns.
         # Recovery gets its own clock and samples, never a partial first attempt.
@@ -285,7 +287,7 @@ class Recorder:
         self._clock_metadata.append(
             (callback_at, getattr(time_info, "inputBufferAdcTime", 0.0), frames)
         )
-        block = indata[:, 0].copy() if indata.ndim == 2 else indata.copy()
+        block = indata[:, 0].copy()
         if self._streaming:
             self._frames += block.shape[0]
             assert self._streaming_resampler is not None
@@ -337,10 +339,9 @@ class Recorder:
             input_frames = self._frames
             overflow = self._overflow
             capped = self._capped
-            callback_clock = reduce_clock(
+            callback_clock = CallbackClock.reduce_clock(
                 self._clock_metadata,
                 rate=self._device_rate,
-                first_callback_at=self._first_callback_at,
             )
             self._state = RecorderState.PREPARED
             if self._streaming:
@@ -356,9 +357,6 @@ class Recorder:
                 audio = audio.astype(np.float32, copy=False)
             output_frames = self._output_frames if self._streaming else int(audio.size)
         except Exception as exc:
-            failed_frames = self._frames
-            failed_overflow = self._overflow
-            failed_capped = self._capped
             log_failure(
                 logger,
                 logging.WARNING,
@@ -366,11 +364,11 @@ class Recorder:
                 exc,
                 safe=True,
                 phase=phase,
-                input_frames=failed_frames,
-                overflow=int(failed_overflow),
-                capped=int(failed_capped),
+                input_frames=self._frames,
+                overflow=int(self._overflow),
+                capped=int(self._capped),
             )
-            self._invalidate(reselect_default=True)
+            self._invalidate()
             raise
         self._discard_samples()
         elapsed = 0.0 if capture_started_at is None else time.perf_counter() - capture_started_at
@@ -381,9 +379,11 @@ class Recorder:
             output_frames=output_frames,
             overflow=overflow,
             capped=capped,
-            first_callback_at=callback_clock.first_callback_at,
-            activation_to_callback_ms=elapsed_ms(
-                self._activation_started_at, callback_clock.first_callback_at
+            first_callback_at=self._first_callback_at,
+            activation_to_callback_ms=(
+                None
+                if self._first_callback_at is None
+                else (self._first_callback_at - self._activation_started_at) * 1000
             ),
             max_adc_gap_ms=callback_clock.max_adc_gap_ms,
             adc_discontinuities=callback_clock.adc_discontinuities,
@@ -430,15 +430,15 @@ class Recorder:
 
         Safe to call repeatedly. A later ``prepare`` may create a fresh stream.
         """
-        self._invalidate(reselect_default=True)
+        self._invalidate()
 
-    def _invalidate(self, *, reselect_default: bool) -> None:
+    def _invalidate(self) -> None:
         stream, self._stream = self._stream, None
         self._state = RecorderState.UNPREPARED
         # Clear immediately for privacy, then clear again after PortAudio has
         # terminated callbacks in case an already-running callback appended.
         self._discard_samples()
-        if reselect_default and self._configured_device is None:
+        if self._configured_device is None:
             self._selected_device = None
         try:
             if stream is not None:
@@ -466,15 +466,3 @@ class Recorder:
         the capture's cost without the daemon re-deriving it.
         """
         return self._last_capture
-
-    @property
-    def is_active(self) -> bool:
-        return self._state is RecorderState.CAPTURING
-
-    @property
-    def is_prepared(self) -> bool:
-        return self._state is RecorderState.PREPARED
-
-    @property
-    def state(self) -> RecorderState:
-        return self._state

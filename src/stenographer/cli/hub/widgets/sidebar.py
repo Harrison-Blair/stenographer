@@ -15,6 +15,7 @@ from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.engine_card import EngineCard
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
+from stenographer.cli.hub.widgets.update_changed import update_changed
 
 if TYPE_CHECKING:
     from rich.console import RenderableType
@@ -87,8 +88,10 @@ class Sidebar(Vertical):
 
         Each button whose key is in ``disabled`` shows as disabled.
         """
-        self.query_one("#sidebar-context", Frame).border_title = title
-        self.query_one("#sidebar-card", Static).update(content)
+        frame = self.query_one("#sidebar-context", Frame)
+        if frame.border_title != title:
+            frame.border_title = title
+        update_changed(self.query_one("#sidebar-card", Static), content)
         if buttons == self._card_buttons:
             if disabled != self._disabled_keys:
                 self._disabled_keys = disabled

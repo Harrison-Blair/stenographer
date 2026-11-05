@@ -4,9 +4,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from stenographer.lib.logging.pipeline import fmt_event
+from stenographer.lib.logging.pipeline import fmt_event, log_paths
 from stenographer.overlay.entry import OVERLAY_ENTRY_ARG
-from stenographer.overlay.logging.pipeline import cap_helper_log, helper_log_path
+from stenographer.overlay.logging.pipeline import cap_helper_log
 from stenographer.overlay.supervision.constants import (
     _POLL_SECONDS,
     _READY_TIMEOUT_SECONDS,
@@ -41,12 +41,10 @@ def schedule_spectrum(
     return next_spectrum_at, False
 
 
-def serve_timeout(
-    now: float, next_spectrum_at: float | None, poll_seconds: float = _POLL_SECONDS
-) -> float:
+def serve_timeout(now: float, next_spectrum_at: float | None) -> float:
     if next_spectrum_at is None:
-        return poll_seconds
-    return min(poll_seconds, max(0.0, next_spectrum_at - now))
+        return _POLL_SECONDS
+    return min(_POLL_SECONDS, max(0.0, next_spectrum_at - now))
 
 
 def _helper_stderr_path() -> Path | None:
@@ -57,7 +55,7 @@ def _helper_stderr_path() -> Path | None:
     file, two append-mode descriptors, and no rotation while either is open.
     """
     try:
-        path = helper_log_path(os.environ, Path.home())
+        path = log_paths(os.environ, Path.home())[1]
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         log.debug(fmt_event("overlay", "helper_log_unavailable", error=type(exc).__name__))

@@ -13,9 +13,24 @@ import logging
 import numpy as np
 import pytest
 
+from stenographer.lib.audio.records import CaptureStats, GateStats
+from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.logging.pipeline import fmt_event
-from stenographer.lib.transcribe.pipeline import downmix, summary_fields, transcript_text
-from stenographer.lib.transcribe.results import TranscriptionResult
+from stenographer.lib.transcribe.pipeline import (
+    analytics_metrics,
+    apply_capture,
+    apply_delivery,
+    apply_formatting,
+    apply_gate,
+    apply_recognition,
+    apply_worker_timings,
+    downmix,
+    log_gate,
+    log_summary,
+    summary_fields,
+    transcript_text,
+)
+from stenographer.lib.transcribe.results import TranscriptionResult, WorkerTimings
 from stenographer.lib.transcribe.utterance_record import UtteranceRecord
 
 
@@ -127,16 +142,6 @@ def test_the_shared_formatter_owns_the_dictation_trailing_space():
 
 @pytest.mark.parametrize("text", ["hello world", ""])
 def test_measurement_phases_preserve_recognition_and_readiness(text):
-    from stenographer.lib.delivery.timings import DeliveryTimings
-    from stenographer.lib.transcribe.pipeline import (
-        analytics_metrics,
-        apply_delivery,
-        apply_formatting,
-        apply_recognition,
-        apply_worker_timings,
-    )
-    from stenographer.lib.transcribe.worker_timings import WorkerTimings
-
     records = [
         UtteranceRecord(utt=0, source=source, capture_s=2, stopped_at=10)
         for source in ("file", "hotkey")
@@ -161,9 +166,6 @@ def test_measurement_phases_preserve_recognition_and_readiness(text):
 
 
 def test_capture_measurements_are_projected_relative_to_the_press():
-    from stenographer.lib.audio.records import CaptureStats
-    from stenographer.lib.transcribe.pipeline import apply_capture
-
     record = UtteranceRecord(utt=3, started_at=100.0)
     stats = CaptureStats(
         activate_ms=4.5,
@@ -207,9 +209,6 @@ def test_capture_measurements_are_projected_relative_to_the_press():
 
 
 def test_capture_without_a_callback_leaves_press_latency_unknown():
-    from stenographer.lib.audio.records import CaptureStats
-    from stenographer.lib.transcribe.pipeline import apply_capture
-
     record = UtteranceRecord(utt=3, started_at=100.0)
 
     apply_capture(
@@ -229,9 +228,6 @@ def test_capture_without_a_callback_leaves_press_latency_unknown():
 
 
 def test_gate_verdict_and_clipping_come_from_the_same_samples():
-    from stenographer.lib.audio.records import GateStats
-    from stenographer.lib.transcribe.pipeline import apply_gate
-
     record = UtteranceRecord(utt=1)
     stats = GateStats(
         peak_rms=0.02,
@@ -253,9 +249,6 @@ def test_gate_verdict_and_clipping_come_from_the_same_samples():
 
 
 def test_gate_failure_and_empty_audio_report_no_clipping():
-    from stenographer.lib.audio.records import GateStats
-    from stenographer.lib.transcribe.pipeline import apply_gate
-
     record = UtteranceRecord(utt=1)
 
     apply_gate(
@@ -275,10 +268,23 @@ def test_gate_failure_and_empty_audio_report_no_clipping():
     assert record.clipping_fraction == 0.0
 
 
-def test_a_warm_model_load_measurement_survives_a_later_warm_transcription():
-    from stenographer.lib.transcribe.pipeline import apply_worker_timings
-    from stenographer.lib.transcribe.worker_timings import WorkerTimings
+def test_clipping_counts_threshold_values_across_blocks():
+    record = UtteranceRecord(utt=1)
+    stats = GateStats(
+        peak_rms=0.0, mean_rms=0.0, frames_total=0, frames_above=0, threshold=0.0, passed=True
+    )
+    samples = np.zeros(65_538, dtype=np.float32)
+    samples[0] = 0.999
+    samples[65_535] = -0.999
+    samples[65_536] = 0.998
+    samples[65_537] = 1.0
 
+    apply_gate(record, stats, samples)
+
+    assert record.clipping_fraction == pytest.approx(3 / 65_538)
+
+
+def test_a_warm_model_load_measurement_survives_a_later_warm_transcription():
     record = UtteranceRecord(utt=1)
 
     apply_worker_timings(record, WorkerTimings(1.0, 900.0, 20.0, round_trip_ms=25.0))
@@ -293,18 +299,6 @@ def test_a_warm_model_load_measurement_survives_a_later_warm_transcription():
 
 
 def test_every_phase_is_a_no_op_without_a_record():
-    from stenographer.lib.audio.records import CaptureStats, GateStats
-    from stenographer.lib.delivery.timings import DeliveryTimings
-    from stenographer.lib.transcribe.pipeline import (
-        apply_capture,
-        apply_delivery,
-        apply_formatting,
-        apply_gate,
-        apply_recognition,
-        apply_worker_timings,
-    )
-    from stenographer.lib.transcribe.worker_timings import WorkerTimings
-
     stats = CaptureStats(
         activate_ms=1.0,
         capture_seconds=1.0,
@@ -337,8 +331,6 @@ def test_every_phase_is_a_no_op_without_a_record():
 
 
 def test_one_utterance_logs_exactly_one_summary_line(caplog):
-    from stenographer.lib.transcribe.pipeline import log_summary
-
     record = UtteranceRecord(utt=9, mode="hold", outcome="DELIVERED", total_ms=1234.5)
     with caplog.at_level(logging.INFO, logger="stenographer.lib.transcribe.pipeline"):
         log_summary(record)
@@ -349,9 +341,6 @@ def test_one_utterance_logs_exactly_one_summary_line(caplog):
 
 
 def test_the_gate_line_reports_the_numbers_behind_its_verdict(caplog):
-    from stenographer.lib.audio.records import GateStats
-    from stenographer.lib.transcribe.pipeline import log_gate
-
     with caplog.at_level(logging.INFO, logger="stenographer.lib.transcribe.pipeline"):
         log_gate(
             GateStats(
@@ -371,9 +360,6 @@ def test_the_gate_line_reports_the_numbers_behind_its_verdict(caplog):
 
 
 def test_delivery_counts_only_the_words_that_actually_got_that_far():
-    from stenographer.lib.delivery.timings import DeliveryTimings
-    from stenographer.lib.transcribe.pipeline import apply_delivery, apply_formatting
-
     copied_only = UtteranceRecord(utt=1, stopped_at=10.0)
     apply_formatting(copied_only, "hello there ", started_at=10.0, ready_at=10.5)
     apply_delivery(
@@ -395,9 +381,6 @@ def test_delivery_counts_only_the_words_that_actually_got_that_far():
 
 
 def test_a_file_run_has_no_stop_boundary_to_measure_against():
-    from stenographer.lib.delivery.timings import DeliveryTimings
-    from stenographer.lib.transcribe.pipeline import apply_delivery, apply_formatting
-
     record = UtteranceRecord(utt=1, source="file")
     apply_formatting(record, "hello ", started_at=10.0, ready_at=10.5)
     apply_delivery(

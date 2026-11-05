@@ -135,7 +135,7 @@ def _wraps(value: str, opening: str, closing: str) -> bool:
     single-quote reading, which is what makes ``'tis ... the dog's bowl'`` safe.
     """
 
-    if len(value) < 2 or not value.startswith(opening) or not value.endswith(closing):
+    if not value.startswith(opening) or not value.endswith(closing):
         return False
     if opening == closing:
         return value.count(opening) == 2
@@ -208,12 +208,9 @@ def basic_format(original: str, candidate: str) -> str:
     stripped, _ = _strip_one_wrapper(candidate)
     _, still_wrapped = _strip_one_wrapper(stripped)
     if still_wrapped:
-        raise RefineRejectedError("output was wrapped")
-    if not stripped.strip():
+        raise RefineRejectedError("output remained wrapped after one wrapper was removed")
+    if not stripped:
         raise RefineRejectedError("output was empty")
-    reference = original.strip()
-    if not reference:
-        raise RefineRejectedError("input was empty")
     return stripped
 
 
@@ -238,8 +235,10 @@ def guard(original: str, candidate: str) -> str:
     stripped = basic_format(original, candidate)
     reference = original.strip()
     ratio = len(stripped) / len(reference)
-    if not MIN_LENGTH_RATIO <= ratio <= MAX_LENGTH_RATIO:
-        raise RefineRejectedError("output length was out of range")
+    if ratio < MIN_LENGTH_RATIO:
+        raise RefineRejectedError("output length was below the minimum ratio")
+    if ratio > MAX_LENGTH_RATIO:
+        raise RefineRejectedError("output length was above the maximum ratio")
     source = _numerals(reference)
     produced = _numerals(stripped)
     if produced - source:

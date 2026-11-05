@@ -20,8 +20,7 @@ import time
 import pytest
 
 from stenographer.lib.config.models import FeedbackConfig
-from stenographer.lib.platform.linux.cues import detect_player
-from stenographer.lib.platform.linux.linux_cue_player import LinuxCuePlayer
+from stenographer.lib.platform.linux.cues import LinuxCuePlayer, detect_player
 from stenographer.lib.sounds.constants import BUNDLED_PACKS, CUE_ORDER
 from stenographer.lib.sounds.feedback import Feedback
 from stenographer.lib.sounds.packs import bundled_sound_root, load_sound_pack
@@ -46,7 +45,6 @@ def test_play_each_cue_audibly(tmp_path: pathlib.Path):
     for name in CUE_ORDER:
         fb.play(name)  # must not raise
         time.sleep(1.0)
-    fb.close()
 
 
 def test_play_every_bundled_and_custom_pack_audibly(tmp_path: pathlib.Path):
@@ -57,6 +55,6 @@ def test_play_every_bundled_and_custom_pack_audibly(tmp_path: pathlib.Path):
     player = LinuxCuePlayer(PLAYER)
 
     for name in names:
-        pack = load_sound_pack(name, tmp_path, bundled_root=assets)
+        pack = load_sound_pack(name, tmp_path)
         assert pack is not None
         preview_sound_pack(pack, player, 0.6, pause_seconds=0.5)  # must not raise

@@ -13,7 +13,6 @@ from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.policy import classify_pipeline
 from stenographer.lib.logging.pipeline import log_failure
-from stenographer.lib.refine.null_refiner import NullRefiner
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED
 from stenographer.lib.transcribe.errors import WorkerError, WorkerPathologicalError
@@ -38,7 +37,7 @@ if TYPE_CHECKING:
 
     from stenographer.lib.daemon.telemetry import UtteranceTelemetry
     from stenographer.lib.delivery.deliverer import Deliverer
-    from stenographer.lib.refine.text_refiner import TextRefiner
+    from stenographer.lib.refine.ollama_refiner import OllamaRefiner
     from stenographer.lib.transcribe.utterance_record import UtteranceRecord
     from stenographer.lib.transcribe.worker import Worker
 
@@ -53,7 +52,8 @@ class UtterancePipeline:
     it never retains samples, transcript text, or a record between runs.
 
     ``delivered`` is True from the moment a run chooses DELIVERED until the
-    next run starts, so the daemon can ignore a cancel during the restore.
+    daemon clears it for the next utterance, before that utterance can take a
+    cancel as busy, so the daemon ignores a cancel only during this restore.
     """
 
     def __init__(
@@ -62,7 +62,7 @@ class UtterancePipeline:
         min_speech_rms: float,
         worker: Worker,
         deliverer: Deliverer,
-        refiner: TextRefiner | None = None,
+        refiner: OllamaRefiner | None = None,
         telemetry: UtteranceTelemetry,
         publish_state: Callable[[OverlayState], None],
         fail: Callable[[str], None],
@@ -77,7 +77,7 @@ class UtterancePipeline:
         self._speech_filter = speech_filter
         self._worker = worker
         self._deliverer = deliverer
-        self._refiner = refiner if refiner is not None else NullRefiner()
+        self._refiner = refiner
         self._telemetry = telemetry
         self._publish_state = publish_state
         self._fail = fail
@@ -94,19 +94,28 @@ class UtterancePipeline:
         *,
         utterance: int,
         record: UtteranceRecord | None,
-        profile: RefineProfile | None = None,
+        profile: RefineProfile,
     ) -> str:
         """Run the ordered stages and report the existing terminal outcome name."""
         outcome_name = Outcome.ERROR.name
         self._refine_display_state = None
-        self.delivered = False
         delivery_attempted = False
+
+        def cancelled_outcome() -> str:
+            nonlocal outcome_name
+            outcome_name = "CANCELLED"
+            self._publish_state(self._cancel_state())
+            return outcome_name
+
         try:
             if self._cancelled():
-                outcome_name = "CANCELLED"
-                self._publish_state(self._cancel_state())
-                return outcome_name
-            if not self._gate(samples, record):
+                return cancelled_outcome()
+            gate_passed = self._gate(samples, record)
+            if self._cancelled():
+                if record is not None:
+                    record.failure = None
+                return cancelled_outcome()
+            if not gate_passed:
                 outcome_name = Outcome.SILENT.name
                 self._publish_state(OverlayState.HIDDEN)
                 return outcome_name
@@ -120,11 +129,9 @@ class UtterancePipeline:
                 try:
                     result = self._worker.transcribe(speech, utterance)
                 except WorkerError as exc:
-                    self._apply_worker_timings(record)
+                    apply_worker_timings(record, self._worker.last_timings)
                     if self._cancelled():
-                        outcome_name = "CANCELLED"
-                        self._publish_state(self._cancel_state())
-                        return outcome_name
+                        return cancelled_outcome()
                     # Pathological rejections contain audited counts only. Other
                     # worker errors may carry decoder output and must stay private.
                     log_failure(
@@ -138,13 +145,11 @@ class UtterancePipeline:
                         record.failure = classify_worker_failure(exc)
                     self._fail("transcription failed")
                     return outcome_name
-                self._apply_worker_timings(record)
+                apply_worker_timings(record, self._worker.last_timings)
             apply_recognition(record, result)
             self._telemetry.checkpoint(record, "accepted_recognition")
             if self._cancelled():
-                outcome_name = "CANCELLED"
-                self._publish_state(self._cancel_state())
-                return outcome_name
+                return cancelled_outcome()
             text, transcript_nonempty = self._format(result, record)
             original = None
             if transcript_nonempty:
@@ -155,9 +160,7 @@ class UtterancePipeline:
                 if self._copy_original and profile is RefineProfile.AGENT and text != formatted:
                     original = formatted
                 if self._cancelled():
-                    outcome_name = "CANCELLED"
-                    self._publish_state(self._cancel_state())
-                    return outcome_name
+                    return cancelled_outcome()
                 self._publish_state(OverlayState.DELIVERING)
             delivery_attempted = transcript_nonempty
             try:
@@ -174,9 +177,7 @@ class UtterancePipeline:
             except Exception as exc:
                 self._apply_delivery(record, attempted=transcript_nonempty)
                 if self._cancelled():
-                    outcome_name = "CANCELLED"
-                    self._publish_state(self._cancel_state())
-                    return outcome_name
+                    return cancelled_outcome()
                 log_failure(log, logging.WARNING, "pipeline: delivery_failed", exc, safe=False)
                 if record is not None:
                     record.failure = (
@@ -186,17 +187,14 @@ class UtterancePipeline:
                 return outcome_name
             self._apply_delivery(record, attempted=transcript_nonempty)
             outcome, message = classify_pipeline(
-                gate_passed=True,
                 transcript_nonempty=transcript_nonempty,
                 deliver_result=deliver_result,
             )
             outcome_name = outcome.name
             if self._cancelled() and not deliver_result:
-                outcome_name = "CANCELLED"
                 if record is not None:
                     record.failure = None
-                self._publish_state(self._cancel_state())
-                return outcome_name
+                return cancelled_outcome()
             elif outcome is Outcome.ERROR and record is not None:
                 record.failure = "copy_failed"
             if outcome is Outcome.DELIVERED:
@@ -204,7 +202,7 @@ class UtterancePipeline:
                 self._publish_state(self._refine_display_state or OverlayState.HIDDEN)
                 self._play_cue("delivered")
             elif outcome is Outcome.ERROR:
-                self._fail(message or "delivery failed")
+                self._fail(message)
         except Exception as exc:
             if record is not None:
                 record.failure = "error"
@@ -250,7 +248,7 @@ class UtterancePipeline:
         text: str,
         record: UtteranceRecord | None,
         *,
-        profile: RefineProfile | None = None,
+        profile: RefineProfile,
     ) -> str:
         """Run the optional cleanup stage. Never raises; never loses the text.
 
@@ -275,15 +273,11 @@ class UtterancePipeline:
         """
         accepted = text
         try:
-            if not self._refiner.will_refine(text):
-                if profile is not None:
-                    self._refine_display_state = OverlayState.SKIPPED
+            if self._refiner is None or not self._refiner.will_refine(text):
+                self._refine_display_state = OverlayState.SKIPPED
                 return text
             self._publish_state(OverlayState.REFINING)
-            if profile is None:
-                refined = self._refiner.refine(text, cancelled=self._cancelled)
-            else:
-                refined = self._refiner.refine(text, profile=profile, cancelled=self._cancelled)
+            refined = self._refiner.refine(text, profile=profile, cancelled=self._cancelled)
             # A refiner that broke its contract and returned nothing must not
             # cost the utterance; the formatted transcript stays deliverable.
             accepted = refined if refined.strip() else text
@@ -293,29 +287,21 @@ class UtterancePipeline:
                 delivered=accepted if accepted != text else None,
             )
             self._telemetry.checkpoint(record, "accepted_refinement")
-            if profile is not None:
-                result = self._refiner.last_result
-                self._refine_display_state = (
-                    OverlayState.APPLIED
-                    if result is not None and result.outcome == OUTCOME_APPLIED
-                    else OverlayState.FALLBACK
-                )
+            result = self._refiner.last_result
+            self._refine_display_state = (
+                OverlayState.APPLIED
+                if result is not None and result.outcome == OUTCOME_APPLIED
+                else OverlayState.FALLBACK
+            )
         except Exception as exc:
             log_failure(log, logging.WARNING, "pipeline: refine_failed", exc, safe=False)
-            if profile is not None:
-                self._refine_display_state = OverlayState.FALLBACK
+            self._refine_display_state = OverlayState.FALLBACK
         return accepted
 
     def _restore_clipboard(self, record: UtteranceRecord | None) -> None:
-        """Ask the deliverer for the restore. Never raises into the run."""
-        try:
-            self._deliverer.restore_clipboard()
-            apply_restore(record, self._deliverer.last_timings)
-        except Exception as exc:
-            log_failure(log, logging.WARNING, "pipeline: restore_failed", exc, safe=False)
-
-    def _apply_worker_timings(self, record: UtteranceRecord | None) -> None:
-        apply_worker_timings(record, self._worker.last_timings)
+        """Ask the deliverer for the restore and record what it measured."""
+        self._deliverer.restore_clipboard()
+        apply_restore(record, self._deliverer.last_timings)
 
     def _clipboard_checkpoint(self, record: UtteranceRecord | None) -> None:
         self._apply_delivery(record, attempted=True)

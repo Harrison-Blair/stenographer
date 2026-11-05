@@ -53,26 +53,35 @@ def list_session_ids(root: Path) -> list[str]:
         entries = tuple(root.iterdir())
     except FileNotFoundError:
         return []
-    except OSError:
-        return []
-    ids = [
-        entry.name
-        for entry in entries
-        if session_started_at(entry.name) is not None and session_directory(root, entry.name)
-    ]
+    ids = [entry.name for entry in entries if session_directory(root, entry.name)]
     return sorted(ids, key=lambda value: (session_started_at(value), value), reverse=True)
+
+
+def _is_regular(path: Path) -> bool:
+    try:
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _load_metadata(directory: Path) -> tuple[dict | None, bool]:
+    path = directory / "session.json"
+    try:
+        mode = path.lstat().st_mode
+        if not stat.S_ISREG(mode):
+            return {}, True
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, False
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}, True
+    return (metadata, False) if isinstance(metadata, dict) else ({}, True)
 
 
 def session_metadata(directory: Path) -> dict:
     """Return the session.json object, or an empty one when it is absent or unreadable."""
-    metadata_path = directory / "session.json"
-    try:
-        if not stat.S_ISREG(metadata_path.lstat().st_mode):
-            return {}
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return {}
-    return metadata if isinstance(metadata, dict) else {}
+    metadata, _ = _load_metadata(directory)
+    return metadata or {}
 
 
 def source_file_path(directory: Path, metadata: dict) -> Path | None:
@@ -81,10 +90,7 @@ def source_file_path(directory: Path, metadata: dict) -> Path | None:
     if not isinstance(name, str) or _SOURCE_FILE.fullmatch(name) is None:
         return None
     candidate = directory / name
-    try:
-        if not stat.S_ISREG(candidate.lstat().st_mode):
-            return None
-    except OSError:
+    if not _is_regular(candidate):
         return None
     return candidate
 
@@ -99,20 +105,20 @@ def _label_state(revision: str, metadata: dict) -> str:
 
 
 def current_revision(directory: Path) -> tuple[str, Path, bool]:
-    metadata_path = directory / "session.json"
-    try:
-        if not stat.S_ISREG(metadata_path.lstat().st_mode):
-            return "transcript.jsonl", directory / "transcript.jsonl", True
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return "transcript.jsonl", directory / "transcript.jsonl", False
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return "transcript.jsonl", directory / "transcript.jsonl", True
-    revision = metadata.get("current_revision") if isinstance(metadata, dict) else None
+    metadata, damaged = _load_metadata(directory)
+    return _revision_from_metadata(directory, metadata, damaged)
+
+
+def _revision_from_metadata(
+    directory: Path, metadata: dict | None, damaged: bool
+) -> tuple[str, Path, bool]:
+    if metadata is None:
+        return "transcript.jsonl", directory / "transcript.jsonl", damaged
+    revision = metadata.get("current_revision")
     if revision == "transcript.jsonl":
-        return revision, directory / revision, False
+        return revision, directory / revision, damaged
     if isinstance(revision, str) and _REVISION.fullmatch(revision):
-        return revision, directory / revision, False
+        return revision, directory / revision, damaged
     return "transcript.jsonl", directory / "transcript.jsonl", True
 
 
@@ -121,11 +127,9 @@ def read_transcript(path: Path) -> tuple[tuple[TranscriptLine, ...], bool]:
     renames: dict[str, str] = {}
     interrupted = False
     try:
-        if not stat.S_ISREG(path.lstat().st_mode):
+        if not _is_regular(path):
             return (), True
         stream = path.open(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        return (), True
     except OSError:
         return (), True
 
@@ -188,7 +192,7 @@ def read_transcript(path: Path) -> tuple[tuple[TranscriptLine, ...], bool]:
 
 def _audio_info(path: Path) -> tuple[int, int] | None:
     try:
-        if not stat.S_ISREG(path.lstat().st_mode):
+        if not _is_regular(path):
             return None
         info = sf.info(path)
     except (OSError, RuntimeError, ValueError):
@@ -225,41 +229,27 @@ def _activity(path: Path) -> tuple[float, ...]:
 
 def read_session(directory: Path, session_id: str, *, with_activity: bool) -> SessionDetail:
     started_at = session_started_at(session_id)
-    if started_at is None:
-        raise ValueError("invalid session ID")
-    revision, transcript_path, interrupted = current_revision(directory)
+    metadata, damaged = _load_metadata(directory)
+    revision, transcript_path, interrupted = _revision_from_metadata(directory, metadata, damaged)
+    metadata = metadata or {}
     lines, transcript_partial = read_transcript(transcript_path)
     interrupted |= transcript_partial
 
     current_markdown = transcript_path.with_suffix(".md")
-    try:
-        if not stat.S_ISREG(current_markdown.lstat().st_mode):
-            interrupted = True
-    except OSError:
+    if not _is_regular(current_markdown):
         interrupted = True
 
     original = directory / "transcript.jsonl"
-    labels_revised = False
-    if revision != "transcript.jsonl":
-        original_lines, _ = read_transcript(original)
-        original_labels = {line.speaker_id: line.label for line in original_lines}
-        current_labels = {line.speaker_id: line.label for line in lines}
-        labels_revised = current_labels != original_labels
-    try:
-        if not stat.S_ISREG(original.lstat().st_mode):
-            interrupted = True
-    except OSError:
+    if not _is_regular(original):
         interrupted = True
 
     for candidate in directory.iterdir():
-        if candidate.name.startswith("transcript.r") and candidate.suffix in {".jsonl", ".md"}:
-            match = re.fullmatch(r"transcript\.r(\d+)\.(jsonl|md)", candidate.name)
-            if match is not None:
-                pair = directory / f"transcript.r{match.group(1)}"
-                if not (pair.with_suffix(".jsonl").is_file() and pair.with_suffix(".md").is_file()):
-                    interrupted = True
+        match = re.fullmatch(r"transcript\.r(\d+)\.(jsonl|md)", candidate.name)
+        if match is not None:
+            pair = directory / f"transcript.r{match.group(1)}"
+            if not (Path(f"{pair}.jsonl").is_file() and Path(f"{pair}.md").is_file()):
+                interrupted = True
 
-    metadata = session_metadata(directory)
     kind = "file" if metadata.get("kind") == "file" else "rec"
     source_ids = {line.source for line in lines}
     audio_sizes = 0
@@ -335,6 +325,5 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
         talk_time,
         activity,
         revision,
-        labels_revised,
         diarize_mic=metadata.get("diarize_mic") is True,
     )

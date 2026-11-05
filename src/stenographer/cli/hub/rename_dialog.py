@@ -45,7 +45,7 @@ class RenameDialog(Dialog[tuple[str, str] | None]):
             yield SpeakerSelect(
                 self._speakers,
                 prompt="Choose a speaker",
-                value=self._speakers[0][0] if self._speakers else SpeakerSelect.BLANK,
+                value=self._speakers[0][0],
                 id="speaker-select",
             )
         with Horizontal(classes="rename-row"):

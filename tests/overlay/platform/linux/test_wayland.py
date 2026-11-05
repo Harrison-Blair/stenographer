@@ -67,11 +67,6 @@ def test_fractional_scale_plan_uses_viewporter_in_logical_pixels():
     )
 
 
-def test_invalid_scale_hints_fall_back_safely():
-    assert choose_scale_plan(integer_scale=0).render_scale == 1.0
-    assert choose_scale_plan(integer_scale=3, preferred_scale_120=0).render_scale == 3.0
-
-
 def test_callback_epoch_policy_uses_identity_and_rejects_destroyed_epoch():
     current = object()
     stale = object()

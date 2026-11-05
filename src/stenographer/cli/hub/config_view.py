@@ -4,16 +4,15 @@
 from __future__ import annotations
 
 import pathlib
-from dataclasses import asdict, replace
+from dataclasses import fields, replace
 
-from stenographer.lib.config.document import ConfigDocument
+from stenographer.lib.config.document import ConfigDocument, SaveResult
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
-from stenographer.lib.config.save_result import SaveResult
 
 _HELP = {
     "hotkey.binding": "Agent binding for cleanup of agent-directed dictation.",
-    "hotkey.device": "Input device for the hotkey; blank uses the system default.",
+    "hotkey.device": "Hotkey input; blank automatically listens on detected keyboards.",
     "hotkey.cancel_binding": "Global cancel key; blank disables it.",
     "hotkey.mode": "Choose hold, toggle, or hybrid hotkey behavior.",
     "hotkey.hybrid_threshold_seconds": "Press duration that separates a tap from a hold.",
@@ -104,6 +103,7 @@ class ConfigEditor:
         self.error: ConfigError | None = None
         self.config: Config | None = None
         self._saved: Config | None = None
+        self._defaults = Config.defaults()
         self._undo: list[Config] = []
         self.shown_keys: tuple[str, ...] | None = None
         self.key_index = 0
@@ -134,7 +134,9 @@ class ConfigEditor:
         if self.config is None:
             return ()
         return tuple(
-            f"{group}.{key}" for group, section in asdict(self.config).items() for key in section
+            f"{group.name}.{key.name}"
+            for group in fields(self.config)
+            for key in fields(getattr(self.config, group.name))
         )
 
     @property
@@ -198,19 +200,14 @@ class ConfigEditor:
             raise RuntimeError("configuration is read-only")
         return self._get(self.config, dotted_key)
 
-    def saved_value(self, dotted_key: str) -> object:
-        if self._saved is None:
-            raise RuntimeError("configuration is read-only")
-        return self._get(self._saved, dotted_key)
-
     def default(self, dotted_key: str) -> object:
-        return self._get(Config.defaults(), dotted_key)
+        return self._get(self._defaults, dotted_key)
 
     def is_changed(self, dotted_key: str) -> bool:
         """Return whether the draft value differs from the saved file."""
         if self.config is None or self._saved is None:
             return False
-        return self.value(dotted_key) != self.saved_value(dotted_key)
+        return self.value(dotted_key) != self._get(self._saved, dotted_key)
 
     def help(self, dotted_key: str) -> str:
         return _HELP[dotted_key]
@@ -276,10 +273,6 @@ class ConfigEditor:
         self.config = self._undo.pop()
         return True
 
-    def reset(self, dotted_key: str) -> None:
-        if self.config is not None:
-            self.set_value(dotted_key, self.default(dotted_key))
-
     def discard(self) -> None:
         if self._saved is not None:
             self.config = self._saved
@@ -318,24 +311,16 @@ class ConfigEditor:
             if "," in value:
                 return tuple(float(part.strip()) for part in value.split(","))
             return float(value)
-        if isinstance(current, bool):
-            if value.casefold() not in {"true", "false"}:
-                raise ValueError("Enter true or false.")
-            return value.casefold() == "true"
         if isinstance(current, int):
             return int(value)
         if isinstance(current, float):
             return float(value)
-        if isinstance(current, tuple):
-            return tuple(float(part.strip()) for part in value.split(","))
         if current is None:
             return value or None
         return raw_value
 
     @staticmethod
     def format_value(value: object) -> str:
-        if value is None:
-            return "(unset)"
         if isinstance(value, bool):
             return "on" if value else "off"
         if isinstance(value, tuple):

@@ -16,6 +16,11 @@ machine-supplied clip; nothing is mocked. The whole module is collected only
 with STENOGRAPHER_INTEGRATION=1, and skipped further unless the model is cached
 locally and the fixture WAV is present — so the default unit run never touches
 the network or the ASR stack.
+
+Supply a short mono, 16 kHz speech recording at tests/fixtures/speech_16k.wav.
+For example, record it on the development machine with:
+    arecord -f S16_LE -r 16000 -c 1 -d 3 tests/fixtures/speech_16k.wav
+
 """
 
 from __future__ import annotations
@@ -24,6 +29,8 @@ import pathlib
 
 import numpy as np
 import pytest
+
+from stenographer.lib.config.defaults import default_toml
 
 pytestmark = pytest.mark.integration
 
@@ -53,7 +60,7 @@ def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
 
     samples = _read(_CLIP)
     config_path = tmp_path / "config.toml"
-    config.Config.write_default(config_path)
+    config_path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
     cfg = config.Config.load(config_path)
 
@@ -70,11 +77,10 @@ def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_transcribe_48k_stereo_matches_16k_mono(tmp_path, monkeypatch, capsys):
-    from stenographer import config
     from stenographer.cli import main
 
     config_path = tmp_path / "config.toml"
-    config.Config.write_default(config_path)
+    config_path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
 
     assert main(["transcribe", str(_CLIP)]) == 0
@@ -96,11 +102,10 @@ def test_cli_transcribe_48k_stereo_matches_16k_mono(tmp_path, monkeypatch, capsy
 
 @pytest.mark.parametrize("input_kind", ["corrupt", "directory"])
 def test_cli_transcribe_read_failure_is_concise(input_kind, tmp_path, monkeypatch, capsys):
-    from stenographer import config
     from stenographer.cli import main
 
     config_path = tmp_path / "config.toml"
-    config.Config.write_default(config_path)
+    config_path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
 
     input_path = tmp_path / input_kind

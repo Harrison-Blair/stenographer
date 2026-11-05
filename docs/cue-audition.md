@@ -39,8 +39,9 @@ done
 ```
 
 It uses the configured volume. When cues are muted or volume is zero, explicit
-preview uses 0.6 without changing either setting. The development tool can also
-compare the original legacy pack with scratch renders at a chosen volume:
+preview says so and uses 0.6 without changing either setting. The development
+tool can also compare the original legacy pack with scratch renders at a chosen
+volume:
 
 ```sh
 .venv/bin/python scripts/cue_audition.py \

@@ -18,10 +18,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from stenographer.lib.analytics.metrics import count_words
 from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.logging.pipeline import fmt_event
 from stenographer.lib.transcribe.format import format_transcript
+from stenographer.lib.transcribe.text import count_words
 
 if TYPE_CHECKING:
     import numpy as np
@@ -29,8 +29,7 @@ if TYPE_CHECKING:
     from stenographer.lib.audio.records import CaptureStats, GateStats
     from stenographer.lib.delivery.timings import DeliveryTimings
     from stenographer.lib.refine.results import RefineResult
-    from stenographer.lib.transcribe.results import TranscriptionResult
-    from stenographer.lib.transcribe.worker_timings import WorkerTimings
+    from stenographer.lib.transcribe.results import TranscriptionResult, WorkerTimings
 
 from stenographer.lib.transcribe.utterance_record import UtteranceRecord
 
@@ -73,7 +72,13 @@ def apply_gate(record: UtteranceRecord | None, stats: GateStats, samples: np.nda
     record.peak_rms = stats.peak_rms
     record.frames_above = stats.frames_above
     record.mean_rms = stats.mean_rms
-    record.clipping_fraction = float(np.mean(np.abs(samples) >= 0.999)) if samples.size else 0.0
+    clipped = sum(
+        np.count_nonzero(np.abs(block) >= 0.999)
+        for block in np.nditer(
+            samples, flags=["external_loop", "buffered", "zerosize_ok"], buffersize=65_536
+        )
+    )
+    record.clipping_fraction = float(clipped / samples.size) if samples.size else 0.0
 
 
 def apply_recognition(record: UtteranceRecord | None, result: TranscriptionResult) -> None:

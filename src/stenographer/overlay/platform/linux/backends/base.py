@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from stenographer.overlay.platform.linux.backends.closable_backend import _ClosableBackend
-from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
+from stenographer.overlay.platform.overlay_backend import OverlayBackend
+from stenographer.overlay.protocol.errors import BackendUnavailableError
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
 INPUT_KEY = "input"
@@ -22,7 +22,7 @@ def next_timeout(*timeouts: float | None) -> float | None:
     return min(pending) if pending else None
 
 
-def probe_backend(construct: Callable[[], _ClosableBackend]) -> UnavailableReason | None:
+def probe_backend(construct: Callable[[], OverlayBackend]) -> UnavailableReason | None:
     """Read-only probe: construct, translate a fixed reason, always close."""
     try:
         backend = construct()

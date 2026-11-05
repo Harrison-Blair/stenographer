@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import math
 import os
@@ -18,9 +17,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stenographer.lib.audio.recorder import Recorder
-from stenographer.lib.live.models import LIVE_MODELS
-from stenographer.lib.live.phrase import Phrase
-from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
+from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
+from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
 from stenographer.lib.live.relabel import relabel_system_lines, relabel_work_units
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
@@ -71,13 +69,16 @@ class LiveSession:
         self._writer = SessionWriter.open(data_dir, self._started_at)
         if diarize_mic:
             self._writer.mark_mic_diarized()
-        model_dir = data_dir / "models" / "live"
-        vad_model = model_dir / LIVE_MODELS[0].filename
-        speaker_model = model_dir / LIVE_MODELS[1].filename
+        model_dir = live_model_dir(data_dir)
+        vad_model = model_dir / VAD_MODEL.filename
+        self._speaker_model = model_dir / SPEAKER_MODEL.filename
         self._worker = Worker(cfg.asr, transport=self._platform.asr_transport())
-        self._trackers = {"system": SpeakerTracker(speaker_model)}
+        # A mic-only session loads the system tracker when system audio first starts.
+        self._trackers: dict[str, SpeakerTracker] = {}
+        if system:
+            self._trackers["system"] = SpeakerTracker(self._speaker_model)
         if diarize_mic:
-            self._trackers["mic"] = SpeakerTracker(speaker_model, label_prefix="Room")
+            self._trackers["mic"] = SpeakerTracker(self._speaker_model, label_prefix="Room")
         self._speaker_embeddings: dict[str, list[np.ndarray]] = {
             source: [] for source in self._trackers
         }
@@ -91,10 +92,9 @@ class LiveSession:
         self._relabel_skipped = False
         try:
             self._system_capture = self._platform.system_audio_capture()
-            self._system_platform_reason = None
         except UnsupportedPlatformError as exc:
             self._system_capture = None
-            self._system_platform_reason = str(exc)
+            log_failure(log, logging.WARNING, "live: system_source_unavailable", exc, safe=True)
         self._recorder = Recorder(
             device=cfg.audio.input_device if device is None else device,
             max_seconds=0,
@@ -108,10 +108,6 @@ class LiveSession:
         self._control_lock = threading.RLock()
         self._enabled = {"mic": mic, "system": system and self._system_capture is not None}
         self._active = {"mic": False, "system": False}
-        self._reasons: dict[str, str | None] = {
-            "mic": None,
-            "system": self._system_platform_reason,
-        }
         self._levels = {"mic": float("-inf"), "system": float("-inf")}
         self._speech = {"mic": False, "system": False}
         self._block_listeners: list[Callable[[str, np.ndarray], None]] = []
@@ -126,6 +122,7 @@ class LiveSession:
         self._source_seen = {"mic": False, "system": False}
         self._lines: list[TranscriptLine] = []
         self._failed_phrase_count = 0
+        self._audio_failed: list[str] = []
         self._subscribers: list[Callable[[TranscriptLine], None]] = []
         self._paused = False
         self._stopped = False
@@ -152,7 +149,7 @@ class LiveSession:
             self._transcriber.start()
             self._started = True
             for source in ("mic", "system"):
-                if self._enabled[source] and self._reasons[source] is None:
+                if self._enabled[source]:
                     self._start_source(source)
 
     def subscribe(self, callback: Callable[[TranscriptLine], None]) -> None:
@@ -161,7 +158,7 @@ class LiveSession:
             self._subscribers.append(callback)
 
     def add_block_listener(self, listener: Callable[[str, np.ndarray], None]) -> Callable[[], None]:
-        """Send ``(source, samples)`` of each written block to *listener* on a delivery thread.
+        """Send ``(source, samples)`` of each accepted block to *listener* on a delivery thread.
 
         Return a function that removes the listener.
         """
@@ -230,16 +227,21 @@ class LiveSession:
 
     @property
     def meter_floor_dbfs(self) -> float:
-        feedback = getattr(self._cfg, "feedback", None)
-        floor = getattr(feedback, "spectrum_floor_dbfs", None)
-        if isinstance(floor, (tuple, list)):
-            floor = floor[0] if floor else None
-        return -70.0 if floor is None else float(floor)
+        floor = self._cfg.feedback.spectrum_floor_dbfs
+        if isinstance(floor, tuple):
+            floor = floor[0]
+        return float(floor)
 
     @property
     def failed_phrase_count(self) -> int:
         with self._lock:
             return self._failed_phrase_count
+
+    @property
+    def audio_failed_sources(self) -> tuple[str, ...]:
+        """Return the sources whose audio stopped saving; their phrases still transcribe."""
+        with self._lock:
+            return tuple(self._audio_failed)
 
     @property
     def paused(self) -> bool:
@@ -267,11 +269,6 @@ class LiveSession:
                 )
                 for source in ("mic", "system")
             }
-
-    @property
-    def source_reasons(self) -> dict[str, str | None]:
-        with self._lock:
-            return dict(self._reasons)
 
     @property
     def levels_dbfs(self) -> dict[str, float]:
@@ -322,8 +319,7 @@ class LiveSession:
             )
 
     def toggle(self, source: str) -> None:
-        """Toggle one source. An unavailable source keeps its reason until retried."""
-        self._validate_source(source)
+        """Toggle one source. An unavailable source stays off."""
         with self._control_lock:
             if self._stopped:
                 return
@@ -332,7 +328,6 @@ class LiveSession:
                 self._stop_source(source)
             else:
                 self._enabled[source] = True
-                self._reasons[source] = None
                 if not self._paused:
                     self._start_source(source)
             log.info(
@@ -359,7 +354,7 @@ class LiveSession:
             self._paused = False
             self._run_started_at = self._monotonic()
             for source in ("mic", "system"):
-                if self._enabled[source] and self._reasons[source] is None:
+                if self._enabled[source]:
                     self._start_source(source)
             log.info(fmt_event("live", "resumed", duration_seconds=round(self.elapsed_seconds, 3)))
 
@@ -382,8 +377,6 @@ class LiveSession:
         with self._control_lock:
             if self._stop_started:
                 self._skip_relabel.set()
-                return
-            if self._stopped:
                 return
             self._stop_started = True
             self._close_block_delivery()
@@ -482,16 +475,13 @@ class LiveSession:
             available, reason = False, str(exc)
         if not available:
             self._enabled["system"] = False
-            self._reasons["system"] = reason or "system audio capture is unavailable"
+            log.warning(fmt_event("live", "system_source_unavailable", reason=reason))
 
     def _start_source(self, source: str) -> None:
         if self._active[source] or self._paused or self._stopped:
             return
         if source == "system" and self._system_capture is None:
             self._enabled[source] = False
-            self._reasons[source] = (
-                self._system_platform_reason or "system audio capture is unavailable"
-            )
             return
         if source == "system":
             try:
@@ -501,16 +491,17 @@ class LiveSession:
                 available, reason = False, str(exc)
             if not available:
                 self._enabled[source] = False
-                self._reasons[source] = reason or "system audio capture is unavailable"
+                log.warning(fmt_event("live", "system_source_unavailable", reason=reason))
                 return
         try:
+            if source == "system" and source not in self._trackers:
+                self._add_system_tracker()
             self._pad_source(source, self.elapsed_seconds)
             segmenter = PhraseSegmenter(source, self._vad_model)
             with self._lock:
                 self._segmenters[source] = segmenter
                 self._segment_offsets[source] = self.elapsed_seconds
                 self._active[source] = True
-                self._reasons[source] = None
             if source == "mic":
                 self._recorder.start()
             else:
@@ -523,10 +514,17 @@ class LiveSession:
                 self._active[source] = False
                 self._enabled[source] = False
                 self._segmenters[source] = None
-                self._reasons[source] = str(exc)
             log_failure(
                 log, logging.WARNING, "live: source_start_failed", exc, safe=True, source=source
             )
+
+    def _add_system_tracker(self) -> None:
+        tracker = SpeakerTracker(self._speaker_model)
+        with self._lock:
+            self._speaker_embeddings["system"] = []
+            self._speaker_line_indices["system"] = []
+            # System speakers stay listed before room speakers.
+            self._trackers = {"system": tracker, **self._trackers}
 
     def _stop_source(self, source: str) -> None:
         with self._lock:
@@ -560,7 +558,6 @@ class LiveSession:
             with self._lock:
                 self._active["system"] = False
                 self._enabled["system"] = False
-                self._reasons["system"] = str(block)
                 self._speech["system"] = False
                 segmenter = self._segmenters["system"]
                 self._segmenters["system"] = None
@@ -577,11 +574,8 @@ class LiveSession:
                 if not self._active[source] or self._paused or self._stopped:
                     return
                 segmenter = self._segmenters[source]
-                if segmenter is None:
-                    return
                 self._source_seen[source] = True
-                self._writer.write_audio(source, samples)
-                self._source_samples[source] += samples.size
+                self._write_audio(source, samples)
                 rms = float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
                 self._levels[source] = 20 * math.log10(rms) if rms > 0 else float("-inf")
                 phrases = segmenter.accept(samples)
@@ -615,8 +609,7 @@ class LiveSession:
                 self._blocks.get_nowait()
             except Empty:
                 break
-        with contextlib.suppress(Full):
-            self._blocks.put_nowait(_STOP)
+        self._blocks.put_nowait(_STOP)
         if thread is not None:
             thread.join(_BLOCK_STOP_WAIT_SECONDS)
 
@@ -683,13 +676,13 @@ class LiveSession:
             speaker_id = "you"
             label = "You"
         else:
+            # The capture callback needs this lock, so the embedding runs outside it.
+            embedding = tracker.embed(phrase.samples)
             with self._lock:
-                embedding = tracker.embed(phrase.samples)
                 speaker_id = tracker.assign_embedding(
                     embedding,
                     duration=phrase.end - phrase.start,
                 )
-                label = tracker.label(speaker_id)
         with self._lock:
             if tracker is not None:
                 label = tracker.label(speaker_id)
@@ -715,21 +708,38 @@ class LiveSession:
             except Exception as exc:
                 log_failure(log, logging.WARNING, "live: subscriber_failed", exc, safe=False)
 
+    def _write_audio(self, source: str, samples: np.ndarray) -> None:
+        if source in self._audio_failed:
+            return
+        try:
+            self._writer.write_audio(source, samples)
+        except Exception as exc:
+            self._mark_audio_failed(source, exc)
+        else:
+            self._source_samples[source] += samples.size
+
     def _pad_source(self, source: str, duration: float) -> None:
+        if source in self._audio_failed:
+            return
         target_samples = max(0, round(duration * _SAMPLE_RATE))
         missing = target_samples - self._source_samples[source]
         if missing <= 0:
             return
-        self._writer.write_silence(source, missing / _SAMPLE_RATE)
-        self._source_samples[source] += missing
+        try:
+            self._writer.write_silence(source, missing / _SAMPLE_RATE)
+        except Exception as exc:
+            self._mark_audio_failed(source, exc)
+        else:
+            self._source_samples[source] += missing
+
+    def _mark_audio_failed(self, source: str, exc: Exception) -> None:
+        """Stop saving this source: a later write would put its audio out of step."""
+        with self._lock:
+            self._audio_failed.append(source)
+        log_failure(log, logging.WARNING, "live: audio_save_failed", exc, safe=True, source=source)
 
     def _freeze_clock(self) -> None:
         if self._run_started_at is None:
             return
         self._elapsed_before_run += max(0.0, self._monotonic() - self._run_started_at)
         self._run_started_at = None
-
-    @staticmethod
-    def _validate_source(source: str) -> None:
-        if source not in {"mic", "system"}:
-            raise ValueError(f"unknown live source: {source}")

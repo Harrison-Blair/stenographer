@@ -16,12 +16,22 @@ trap 'rm -rf -- "${completion_tmp}"' EXIT
 mkdir -p "${completion_tmp}/files"
 touch "${completion_tmp}/files/sample.wav"
 checked_shells=()
+cat > "${completion_tmp}/cases" <<'CASES'
+run|stenographer 
+download|stenographer model 
+--raw|stenographer transcribe --
+sounds|stenographer s
+minimal-ui|stenographer sounds m
+--preview|stenographer sounds --p
+fish|stenographer completion f
+sample.wav|stenographer transcribe sam
+CASES
 
 if command -v bash >/dev/null; then
     "${CLI}" completion bash > "${completion_tmp}/stenographer.bash"
     bash -n "${completion_tmp}/stenographer.bash"
 
-    bash -s -- "${completion_tmp}/stenographer.bash" "${completion_tmp}/files" <<'BASH'
+    bash -s -- "${completion_tmp}/stenographer.bash" "${completion_tmp}/files" "${completion_tmp}/cases" <<'BASH'
 set -euo pipefail
 source "$1"
 complete -p stenographer >/dev/null
@@ -41,15 +51,12 @@ assert_completion() {
     exit 1
 }
 
-assert_completion run stenographer ""
-assert_completion download stenographer model ""
-assert_completion --raw stenographer transcribe --
-assert_completion sounds stenographer s
-assert_completion minimal-ui stenographer sounds m
-assert_completion --preview stenographer sounds --p
-assert_completion fish stenographer completion f
 cd "$2"
-assert_completion sample.wav stenographer transcribe sam
+while IFS='|' read -r expected input; do
+    read -r -a words <<< "${input}"
+    [[ "${input}" == *' ' ]] && words+=("")
+    assert_completion "${expected}" "${words[@]}"
+done < "$3"
 BASH
     checked_shells+=(bash)
 else
@@ -60,7 +67,7 @@ if command -v zsh >/dev/null; then
     "${CLI}" completion zsh > "${completion_tmp}/_stenographer"
     zsh -n "${completion_tmp}/_stenographer"
 
-    zsh -s -- "${completion_tmp}/_stenographer" "${completion_tmp}/files" <<'ZSH'
+    zsh -s -- "${completion_tmp}/_stenographer" "${completion_tmp}/files" "${completion_tmp}/cases" <<'ZSH'
 set -euo pipefail
 typeset registration=''
 typeset -a candidates
@@ -88,23 +95,13 @@ assert_candidate() {
     exit 1
 }
 
-capture stenographer ''
-assert_candidate run
-capture stenographer model ''
-assert_candidate download
-capture stenographer transcribe --
-assert_candidate --raw
-capture stenographer s
-assert_candidate sounds
-capture stenographer sounds m
-assert_candidate minimal-ui
-capture stenographer sounds --p
-assert_candidate --preview
-capture stenographer completion f
-assert_candidate fish
 cd "$2"
-capture stenographer transcribe sam
-assert_candidate sample.wav
+while IFS='|' read -r expected input; do
+    input_words=(${=input})
+    [[ "${input}" == *' ' ]] && input_words+=('')
+    capture "${input_words[@]}"
+    assert_candidate "${expected}"
+done < "$3"
 ZSH
 
     zsh -s -- "${completion_tmp}" <<'ZSH'
@@ -147,14 +144,9 @@ if command -v fish >/dev/null; then
         exit 1
     }
 
-    assert_fish_completion run 'stenographer '
-    assert_fish_completion download 'stenographer model '
-    assert_fish_completion --raw 'stenographer transcribe --'
-    assert_fish_completion sounds 'stenographer s'
-    assert_fish_completion minimal-ui 'stenographer sounds m'
-    assert_fish_completion --preview 'stenographer sounds --p'
-    assert_fish_completion fish 'stenographer completion f'
-    assert_fish_completion sample.wav 'stenographer transcribe sam'
+    while IFS='|' read -r expected input; do
+        assert_fish_completion "${expected}" "${input}"
+    done < "${completion_tmp}/cases"
     checked_shells+=(fish)
 else
     echo "completion check skipped: fish is not available" >&2

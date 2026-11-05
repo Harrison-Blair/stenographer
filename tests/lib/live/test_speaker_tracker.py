@@ -12,8 +12,7 @@ import pytest
 import soundfile
 
 from stenographer.lib.live.models import LIVE_MODELS
-from stenographer.lib.live.speaker import SpeakerClustering
-from stenographer.lib.live.speaker_tracker import SpeakerTracker
+from stenographer.lib.live.speaker_tracker import SpeakerClustering, SpeakerTracker
 from stenographer.lib.platform import current_platform
 
 
@@ -134,15 +133,19 @@ def _tracker(monkeypatch, embeddings, **options):
             SpeakerEmbeddingExtractor=FakeExtractor,
         ),
     )
-    tracker = SpeakerTracker("speaker.onnx", threshold=0.5, num_threads=2, **options)
+    tracker = SpeakerTracker("speaker.onnx", **options)
     return tracker, config_values, streams
+
+
+def _assign(tracker, samples):
+    return tracker.assign_embedding(tracker.embed(samples))
 
 
 def test_tracker_extracts_samples_and_uses_the_default_label(monkeypatch):
     samples = np.array([0.15, -0.25, 0.4], dtype=np.float32)
     tracker, config, streams = _tracker(monkeypatch, [np.array([1.0, 0.0], dtype=np.float32)])
 
-    assert tracker.assign(samples) == "speaker-1"
+    assert _assign(tracker, samples) == "speaker-1"
     assert tracker.label("speaker-1") == "Speaker 1"
     assert config == {
         "model": "speaker.onnx",
@@ -162,8 +165,8 @@ def test_renaming_two_speakers_to_the_same_name_shares_the_label(monkeypatch):
             np.array([0.0, 1.0], dtype=np.float32),
         ],
     )
-    first = tracker.assign(np.array([0.1], dtype=np.float32))
-    second = tracker.assign(np.array([0.2], dtype=np.float32))
+    first = _assign(tracker, np.array([0.1], dtype=np.float32))
+    second = _assign(tracker, np.array([0.2], dtype=np.float32))
 
     tracker.rename(first, "Alice")
     tracker.rename(second, " Alice ")
@@ -174,12 +177,10 @@ def test_renaming_two_speakers_to_the_same_name_shares_the_label(monkeypatch):
     assert tracker.label(second) == "Alice"
 
 
-def test_rename_refuses_the_mic_and_empty_names(monkeypatch):
+def test_rename_refuses_empty_names(monkeypatch):
     tracker, _, _ = _tracker(monkeypatch, [np.array([1.0, 0.0], dtype=np.float32)])
-    speaker_id = tracker.assign(np.array([0.1], dtype=np.float32))
+    speaker_id = _assign(tracker, np.array([0.1], dtype=np.float32))
 
-    with pytest.raises(ValueError):
-        tracker.rename("you", "Alice")
     with pytest.raises(ValueError):
         tracker.rename(speaker_id, "  \t ")
 
@@ -210,10 +211,10 @@ def test_public_speaker_clips_cluster_with_the_real_model():
         assert sample_rate == 16000
         recordings.append(samples)
 
-    tracker = SpeakerTracker(model_path, threshold=0.50, num_threads=2)
-    first = tracker.assign(recordings[0])
-    second = tracker.assign(recordings[1])
-    third = tracker.assign(recordings[2])
+    tracker = SpeakerTracker(model_path)
+    first = _assign(tracker, recordings[0])
+    second = _assign(tracker, recordings[1])
+    third = _assign(tracker, recordings[2])
 
     assert first == second
     assert third != first
@@ -235,8 +236,8 @@ def test_room_tracker_labels_and_renames_room_speakers(monkeypatch):
         ],
         label_prefix="Room",
     )
-    first = tracker.assign(np.array([0.1], dtype=np.float32))
-    second = tracker.assign(np.array([0.2], dtype=np.float32))
+    first = _assign(tracker, np.array([0.1], dtype=np.float32))
+    second = _assign(tracker, np.array([0.2], dtype=np.float32))
 
     tracker.rename(second, "Dana")
 

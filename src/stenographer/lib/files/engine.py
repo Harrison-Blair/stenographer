@@ -6,7 +6,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -16,26 +15,25 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.job import FileJob
 from stenographer.lib.files.media import MediaInfo, inspect_media, iter_media_audio
 from stenographer.lib.files.models import FileJobOptions
-from stenographer.lib.live.models import LIVE_MODELS
+from stenographer.lib.live.errors import InvalidVadModelError
+from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
 from stenographer.lib.live.relabel import relabel_system_lines
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
-from stenographer.lib.platform import current_platform
 from stenographer.lib.sessions.errors import SessionWriteCancelledError, StaleRevisionError
 from stenographer.lib.sessions.store import SessionStore
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
-    from stenographer.lib.platform.asr_transport import AsrTransport
-    from stenographer.lib.platform.ffmpeg_decoder import FfmpegDecoder
     from stenographer.lib.platform.platform import Platform
-    from stenographer.lib.refine.text_refiner import TextRefiner
+    from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 
 log = logging.getLogger(__name__)
 _STOP = object()
@@ -50,32 +48,20 @@ class FilesEngine:
         self,
         config: Config,
         *,
-        data_dir: str | Path | None = None,
-        decoder: FfmpegDecoder | None = None,
-        transport: AsrTransport | None = None,
-        platform: Platform | None = None,
+        platform: Platform,
         segmenter_factory: Callable[[], object] | None = None,
         speaker_tracker_factory: Callable[[], object] | None = None,
-        refiner_factory: Callable[[Config], TextRefiner] | None = None,
+        refiner_factory: Callable[[Config], OllamaRefiner | None] | None = None,
         session_store: SessionStore | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        if platform is None and (data_dir is None or decoder is None or transport is None):
-            platform = current_platform()
         self._config = config
-        self._data_dir = (
-            Path(data_dir).expanduser()
-            if data_dir is not None
-            else platform.data_dir(os.environ, Path.home())
-        )
-        self._decoder = decoder if decoder is not None else platform.ffmpeg_decoder()
-        self._worker = Worker(
-            config.asr,
-            transport=transport if transport is not None else platform.asr_transport(),
-        )
-        live_model_dir = self._data_dir / "models" / "live"
-        vad_path = live_model_dir / LIVE_MODELS[0].filename
-        speaker_path = live_model_dir / LIVE_MODELS[1].filename
+        self._data_dir = platform.data_dir(os.environ, Path.home())
+        self._decoder = platform.ffmpeg_decoder()
+        self._worker = Worker(config.asr, transport=platform.asr_transport())
+        model_dir = live_model_dir(self._data_dir)
+        vad_path = model_dir / VAD_MODEL.filename
+        speaker_path = model_dir / SPEAKER_MODEL.filename
         self._segmenter_factory = segmenter_factory or (lambda: PhraseSegmenter("system", vad_path))
         self._speaker_tracker_factory = speaker_tracker_factory or (
             lambda: SpeakerTracker(speaker_path)
@@ -206,7 +192,7 @@ class FilesEngine:
                 if job.cancel_requested:
                     job._cancelled(tuple(lines))
                     return
-            job._update("save", 95, None, tuple(lines))
+            job._update("save", 95, tuple(lines))
             if target is None:
                 session_id = self._store.create_file_session(
                     job.options.path,
@@ -222,6 +208,10 @@ class FilesEngine:
             job._complete(session_id, tuple(lines))
         except SessionWriteCancelledError:
             job._cancelled(job.progress.completed_lines)
+        except InvalidVadModelError:
+            job._fail(
+                "Invalid or missing voice activity model; run `stenographer model download --live`."
+            )
         except StaleRevisionError:
             job._fail("session changed during this job; nothing was saved")
         except Exception as exc:
@@ -239,8 +229,15 @@ class FilesEngine:
         refiner = self._make_refiner() if job.options.refine else None
         lines: list[TranscriptLine] = []
         embeddings: list[np.ndarray] = []
-        started = time.monotonic()
         duration = media.duration_seconds or 0.0
+        furthest = 0.0
+
+        def report_position(seconds: float) -> None:
+            # A phrase can end behind the audio already read, so progress keeps its maximum.
+            nonlocal furthest
+            furthest = max(furthest, seconds)
+            percent = round(80 * min(duration, furthest) / duration) if duration > 0 else 0
+            job._update("transcribe", percent, tuple(lines))
 
         def transcribe_phrases(phrases) -> bool:
             for phrase in phrases:
@@ -272,15 +269,12 @@ class FilesEngine:
                             text=text,
                         )
                     )
-                processed = min(duration, max(0.0, phrase.end)) if duration > 0 else 0.0
-                percent = round(80 * processed / duration) if duration > 0 else 0
-                elapsed = time.monotonic() - started
-                eta = elapsed * (duration - processed) / processed if processed > 0 else None
-                job._update("transcribe", percent, eta, tuple(lines))
+                report_position(phrase.end)
             return True
 
         blocks = iter_media_audio(job.options.path, media, self._decoder)
         pending = np.empty(0, dtype=np.float32)
+        accepted_frames = 0
         try:
             for block in blocks:
                 if job.cancel_requested:
@@ -291,13 +285,15 @@ class FilesEngine:
                 pending = block[aligned_size:].copy()
                 if aligned_size and not transcribe_phrases(segmenter.accept(block[:aligned_size])):
                     break
+                accepted_frames += aligned_size
+                report_position(accepted_frames / SAMPLE_RATE)
             if not job.cancel_requested and pending.size:
                 transcribe_phrases(segmenter.accept(pending))
             if not job.cancel_requested:
                 transcribe_phrases(segmenter.flush())
         finally:
             blocks.close()
-        job._update("transcribe", 80, None, tuple(lines))
+        job._update("transcribe", 80, tuple(lines))
         return lines, embeddings
 
     def _diarize(
@@ -306,13 +302,10 @@ class FilesEngine:
         lines: list[TranscriptLine],
         embeddings: list[np.ndarray],
     ) -> list[TranscriptLine]:
-        started = time.monotonic()
 
         def report(done: int, total: int) -> None:
-            fraction = done / total if total else 1.0
-            elapsed = time.monotonic() - started
-            eta = elapsed * (total - done) / done if done > 0 else None
-            job._update("diarize", 80 + round(15 * fraction), eta, tuple(lines))
+            fraction = done / total
+            job._update("diarize", 80 + round(15 * fraction), tuple(lines))
 
         relabeled = relabel_system_lines(
             lines,
@@ -324,10 +317,10 @@ class FilesEngine:
         if relabeled is None:
             return lines
         result = list(relabeled)
-        job._update("diarize", 95, 0.0, tuple(result))
+        job._update("diarize", 95, tuple(result))
         return result
 
-    def _make_refiner(self) -> TextRefiner:
+    def _make_refiner(self) -> OllamaRefiner | None:
         if self._refiner_factory is not None:
             return self._refiner_factory(self._config)
         from stenographer.lib.refine.factory import build_refiner

@@ -14,53 +14,49 @@ import logging
 import os
 import shutil
 
+import pytest
+
 from stenographer.lib.platform.linux.clipboard import (
+    ClipboardBackend,
     _wayland_global_interfaces,
-    copy_both_selections,
-    copy_both_selections_x11,
-    copy_for_backend,
     detect_clipboard_backend,
     pick_backend,
     probe_clipboard,
 )
-from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
 
 _CLIPBOARD_LOGGER = "stenographer.lib.platform.linux.clipboard"
 
 
-def test_pick_backend_prefers_wl_copy_with_ext_data_control():
-    globals_seen = {"wl_compositor", "ext_data_control_manager_v1"}
-    assert pick_backend(globals_seen, have_display=True) is ClipboardBackend.WL_COPY
-
-
-def test_pick_backend_prefers_wl_copy_with_zwlr_data_control():
-    globals_seen = {"wl_compositor", "zwlr_data_control_manager_v1"}
-    assert pick_backend(globals_seen, have_display=False) is ClipboardBackend.WL_COPY
-
-
-def test_pick_backend_x11_when_no_data_control_and_display_present():
-    # GNOME <= 46: no data-control global; XWayland available.
-    globals_seen = {"wl_compositor", "wl_shm", "xdg_wm_base"}
-    assert pick_backend(globals_seen, have_display=True) is ClipboardBackend.X11
-
-
-def test_pick_backend_x11_when_wayland_probe_fails_and_display_present():
-    assert pick_backend(None, have_display=True) is ClipboardBackend.X11
-
-
-def test_pick_backend_keeps_wl_copy_when_wayland_probe_fails_without_alternative():
-    assert pick_backend(None, have_display=False) is ClipboardBackend.WL_COPY
-
-
-def test_pick_backend_keeps_wl_copy_without_any_alternative():
-    # No data-control AND no X display: stay on wl-copy (status quo; its
-    # failure is already the safe no-chord path).
-    assert pick_backend(set(), have_display=False) is ClipboardBackend.WL_COPY
-
-
-def test_copy_for_backend_maps_each_backend_to_its_copier():
-    assert copy_for_backend(ClipboardBackend.WL_COPY) is copy_both_selections
-    assert copy_for_backend(ClipboardBackend.X11) is copy_both_selections_x11
+@pytest.mark.parametrize(
+    ("globals_seen", "have_display", "expected"),
+    [
+        pytest.param(
+            {"wl_compositor", "ext_data_control_manager_v1"},
+            True,
+            ClipboardBackend.WL_COPY,
+            id="ext_data_control",
+        ),
+        pytest.param(
+            {"wl_compositor", "zwlr_data_control_manager_v1"},
+            False,
+            ClipboardBackend.WL_COPY,
+            id="zwlr_data_control",
+        ),
+        pytest.param(
+            {"wl_compositor", "wl_shm", "xdg_wm_base"},
+            True,
+            ClipboardBackend.X11,
+            id="gnome_46_no_data_control_with_xwayland",
+        ),
+        pytest.param(None, True, ClipboardBackend.X11, id="probe_failed_with_display"),
+        pytest.param(None, False, ClipboardBackend.WL_COPY, id="probe_failed_without_display"),
+        # No data-control AND no X display: stay on wl-copy (status quo; its
+        # failure is already the safe no-chord path).
+        pytest.param(set(), False, ClipboardBackend.WL_COPY, id="no_alternative"),
+    ],
+)
+def test_pick_backend(globals_seen, have_display, expected):
+    assert pick_backend(globals_seen, have_display=have_display) is expected
 
 
 def test_backend_detection_runs_the_real_compositor_probe(caplog):
@@ -90,8 +86,9 @@ def test_clipboard_probe_reports_unavailable_when_no_copy_binary_is_installed(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("PATH", str(tmp_path))
-    available, backend_name = probe_clipboard()
+    available, read_available, backend_name = probe_clipboard()
     assert available is False
+    assert read_available is False
     # Even with nothing installed, doctor is told which backend would be used.
     assert backend_name in {backend.value for backend in ClipboardBackend}
 
@@ -102,7 +99,7 @@ def test_clipboard_probe_finds_the_binary_the_detected_backend_needs(tmp_path, m
         stub.write_text("#!/bin/sh\nexit 0\n")
         stub.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
-    available, backend_name = probe_clipboard()
+    available, _read_available, backend_name = probe_clipboard()
     assert available is True
     backend = ClipboardBackend(backend_name)
     assert shutil.which("xclip" if backend is ClipboardBackend.X11 else "wl-copy") is not None

@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from stenographer.lib.live.models import LIVE_MODELS
+from stenographer.lib.live.models import LIVE_MODELS, live_model_dir
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ def live_models_check(model_dir: pathlib.Path | None = None) -> DiagnosticCheck:
     if model_dir is None:
         from stenographer.lib.platform import current_platform
 
-        model_dir = current_platform().data_dir(os.environ, pathlib.Path.home()) / "models" / "live"
+        model_dir = live_model_dir(current_platform().data_dir(os.environ, pathlib.Path.home()))
     missing = [
         model.filename for model in LIVE_MODELS if not (model_dir / model.filename).is_file()
     ]
@@ -122,13 +122,11 @@ def python_venv_check(python: str | None = None) -> DiagnosticCheck:
     return DiagnosticCheck("python_venv", "ok", f"`{python} -m venv` works", "")
 
 
-def collect_additional_checks(
-    *, live_model_dir: pathlib.Path | None = None
-) -> tuple[DiagnosticCheck, ...]:
+def collect_additional_checks() -> tuple[DiagnosticCheck, ...]:
     """Collect optional checks that never change the required capability gate."""
     return (
         system_capture_check(),
-        live_models_check(live_model_dir),
+        live_models_check(),
         ffmpeg_check(),
         python_venv_check(),
     )

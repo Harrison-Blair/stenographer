@@ -23,15 +23,21 @@ class DefaultsDialog(Dialog[bool]):
         ("y", "confirm", "Write the default configuration"),
     ]
 
-    def __init__(self, path: pathlib.Path) -> None:
+    def __init__(self, path: pathlib.Path, unsaved_count: int = 0) -> None:
         super().__init__("Write the default configuration?")
         self.path = path
+        self.unsaved_count = unsaved_count
 
     def compose_body(self) -> ComposeResult:
         yield Static(
             f"Write the default configuration to {self.path}.\n"
             "The current file is kept as a timestamped backup "
-            f"({self.path.name}.bak-<time>).",
+            f"({self.path.name}.bak-<time>)."
+            + (
+                f"\n{self.unsaved_count} unsaved change(s) will be discarded."
+                if self.unsaved_count
+                else ""
+            ),
             id="defaults-message",
             markup=False,
         )

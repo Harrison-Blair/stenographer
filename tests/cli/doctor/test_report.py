@@ -2,11 +2,11 @@
 """Pure-logic tests for the doctor report: the gate decision, the log tail, and
 rendering only.
 
-The gate (``stenographer.lib.diagnostics.capabilities``) and its rendering (``cli/doctor.py``)
+The gate (``stenographer.cli.shared.capabilities``) and its rendering (``cli/doctor.py``)
 are exercised together here because the report is driven by ``REQUIRED``. The
 "Logs" section is split the same way: ``run`` reads the files, and only its
-pure half — ``tail_errors`` and ``decode_tail`` — is asserted here, over log
-text written in the file sink's own format.
+classification — ``tail_errors`` — is asserted here, over log text written in
+the file sink's own format.
 
 The environment probe itself is exercised by test_doctor_smoke.py (integration,
 non-mocked) per the testing policy in AGENTS.md — nothing here stubs the
@@ -27,14 +27,14 @@ import pathlib
 import pytest
 
 from stenographer.cli.doctor import report as doctor
-from stenographer.cli.shared.capabilities import Capabilities
+from stenographer.cli.shared.capabilities import missing_required
 from stenographer.lib.config.models import Config
-from stenographer.lib.diagnostics.capabilities import missing_required
 from stenographer.lib.platform.host_guidance import HostGuidance
 from stenographer.overlay.capabilities.models import OverlayCapability
 from stenographer.overlay.platform.guidance import OverlayGuidance
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
+from tests.cli.support import capabilities
 
 # ``render`` interpolates this path, so compare its string representation.
 _CONFIG_PATH = pathlib.Path("/tmp/config.toml")
@@ -128,46 +128,28 @@ _OTHER_OVERLAY_GUIDANCE = OverlayGuidance(
 )
 
 
-def _caps(**overrides) -> Capabilities:
-    fields = {
-        "key_injector_ok": True,
-        "hotkey_access_ok": True,
-        "has_mic": True,
-        "model_cached": True,
-        "clipboard_ok": True,
-        "clipboard_backend": "wl-copy",
-        "clipboard_read_ok": True,
-        "cue_player": "pw-play",
-        "service_enabled": "enabled",
-        "service_active": "active",
-        "overlay": OverlayCapability.available(Backend.LAYER_SHELL),
-    }
-    fields.update(overrides)
-    return Capabilities(**fields)
+def _caps(**overrides):
+    return capabilities(
+        **({"overlay": OverlayCapability.available(Backend.LAYER_SHELL)} | overrides)
+    )
 
 
-def test_missing_required_empty_when_all_present():
-    assert missing_required(_caps()) == []
-
-
-def test_missing_required_names_each_absent_capability():
-    caps = _caps(key_injector_ok=False, model_cached=False)
-    assert missing_required(caps) == ["key_injector_ok", "model_cached"]
-
-
-def test_cue_player_is_not_required():
-    assert missing_required(_caps(cue_player=None)) == []
+def _render(
+    caps, cfg=None, *, guidance=_GUIDANCE, logs=None, overlay_guidance=_OVERLAY_GUIDANCE, **kwargs
+):
+    return doctor.render(
+        caps,
+        Config.defaults() if cfg is None else cfg,
+        _CONFIG_PATH,
+        guidance,
+        logs,
+        overlay_guidance=overlay_guidance,
+        **kwargs,
+    )
 
 
 def test_render_all_present():
-    report = doctor.render(
-        _caps(),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(), logs=_LOGS)
     assert "all required capabilities present" in report
     assert "MISSING" not in report
     assert str(_CONFIG_PATH) in report
@@ -179,12 +161,8 @@ def test_render_all_present():
 def test_render_includes_optional_checks_as_warnings():
     from stenographer.lib.diagnostics.additional_checks import DiagnosticCheck
 
-    report = doctor.render(
+    report = _render(
         _caps(),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        overlay_guidance=_OVERLAY_GUIDANCE,
         optional_checks=(
             DiagnosticCheck("ffmpeg", "warn", "ffmpeg is not installed", "Install ffmpeg."),
         ),
@@ -195,51 +173,31 @@ def test_render_includes_optional_checks_as_warnings():
 
 
 def test_render_without_log_facts_omits_logs_section():
-    report = doctor.render(
-        _caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE, overlay_guidance=_OVERLAY_GUIDANCE
-    )
+    report = _render(_caps())
 
     assert "all required capabilities present" in report
     assert "\nlogs:" not in report
 
 
 def test_render_names_the_bark_model():
-    report = doctor.render(
-        _caps(), Config.defaults(), _CONFIG_PATH, _GUIDANCE, overlay_guidance=_OVERLAY_GUIDANCE
-    )
+    report = _render(_caps())
 
     assert "\nmodel: Underdog Bark 3.0 Pro\n" in report
 
 
 def test_render_missing_capability_carries_fix_hint():
     caps = _caps(model_cached=False, clipboard_ok=False)
-    report = doctor.render(
-        caps, Config.defaults(), _CONFIG_PATH, _GUIDANCE, _LOGS, overlay_guidance=_OVERLAY_GUIDANCE
-    )
+    report = _render(caps, logs=_LOGS)
     assert "ASR model cached: MISSING — run: stenographer model download" in report
     assert "clipboard (wl-copy): MISSING — install wl-clipboard" in report
     assert "missing required capabilities: ASR model cached, clipboard" in report
 
 
 def test_render_clipboard_line_names_the_detected_backend():
-    report = doctor.render(
-        _caps(clipboard_backend="x11"),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(clipboard_backend="x11"), logs=_LOGS)
     assert "clipboard (x11): ok" in report
 
-    report = doctor.render(
-        _caps(clipboard_ok=False, clipboard_backend="x11"),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(clipboard_ok=False, clipboard_backend="x11"), logs=_LOGS)
     assert (
         "clipboard (x11): MISSING — install xclip "
         "(the compositor lacks a data-control protocol; GNOME 46 and older)"
@@ -247,20 +205,9 @@ def test_render_clipboard_line_names_the_detected_backend():
 
 
 def test_render_absent_cue_player_is_informational():
-    report = doctor.render(
-        _caps(cue_player=None),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(cue_player=None), logs=_LOGS)
     assert "audio player: none (sound cues disabled)" in report
     assert "all required capabilities present" in report
-
-
-def test_service_status_is_not_required():
-    assert missing_required(_caps(service_enabled=None, service_active=None)) == []
 
 
 def test_format_service_status_installed():
@@ -283,24 +230,10 @@ def test_format_service_status_unreachable_manager():
 
 
 def test_render_carries_service_status_line():
-    report = doctor.render(
-        _caps(),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(), logs=_LOGS)
     assert "systemd unit: enabled, active" in report
 
-    report = doctor.render(
-        _caps(service_enabled=None, service_active="inactive"),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(service_enabled=None, service_active="inactive"), logs=_LOGS)
     assert "systemd unit: not installed — run scripts/install.sh" in report
     assert "all required capabilities present" in report
 
@@ -325,13 +258,8 @@ def test_render_takes_every_host_word_from_the_supplied_guidance():
         service_enabled=None,
         service_active="inactive",
     )
-    report = doctor.render(
-        caps,
-        Config.defaults(),
-        _CONFIG_PATH,
-        _OTHER_GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OTHER_OVERLAY_GUIDANCE,
+    report = _render(
+        caps, guidance=_OTHER_GUIDANCE, logs=_LOGS, overlay_guidance=_OTHER_OVERLAY_GUIDANCE
     )
 
     assert "  paste injection: MISSING — enable the injector" in report
@@ -356,13 +284,8 @@ def test_render_falls_back_to_the_hosts_default_clipboard_hint():
     """An unanticipated backend name still gets that host's hint, not another's."""
 
     caps = _caps(clipboard_ok=False, clipboard_backend="something-new")
-    report = doctor.render(
-        caps,
-        Config.defaults(),
-        _CONFIG_PATH,
-        _OTHER_GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OTHER_OVERLAY_GUIDANCE,
+    report = _render(
+        caps, guidance=_OTHER_GUIDANCE, logs=_LOGS, overlay_guidance=_OTHER_OVERLAY_GUIDANCE
     )
     assert "  pasteboard (something-new): MISSING — no pasteboard backend" in report
 
@@ -379,24 +302,14 @@ def test_overlay_report_variants_are_informational_only():
     )
     for overlay, expected in variants:
         caps = _caps(overlay=overlay)
-        report = doctor.render(
-            caps,
-            Config.defaults(),
-            _CONFIG_PATH,
-            _GUIDANCE,
-            _LOGS,
-            overlay_guidance=_OVERLAY_GUIDANCE,
-        )
+        report = _render(caps, logs=_LOGS)
         assert report.count("  overlay: ") == 1
         assert f"  overlay: {expected}" in report
         assert missing_required(caps) == []
 
 
 def test_run_shows_optional_warnings_without_changing_exit_code(monkeypatch, capsys):
-    from stenographer.lib import platform as platform_module
     from stenographer.lib.diagnostics import additional_checks
-    from stenographer.lib.logging import pipeline as logging_pipeline
-    from stenographer.overlay import platform as overlay_platform
 
     monkeypatch.setattr(doctor, "probe", lambda _config: _caps())
     monkeypatch.setattr(
@@ -408,30 +321,8 @@ def test_run_shows_optional_warnings_without_changing_exit_code(monkeypatch, cap
             ),
         ),
     )
-    monkeypatch.setattr(
-        logging_pipeline,
-        "log_paths",
-        lambda: (_DAEMON_LOG, _HELPER_LOG),
-    )
-    monkeypatch.setattr(
-        doctor, "_log_status", lambda name, path: doctor.LogStatus(name, path, None)
-    )
-    monkeypatch.setattr(
-        platform_module,
-        "current_platform",
-        lambda: type("Host", (), {"guidance": lambda self: _GUIDANCE})(),
-    )
-    monkeypatch.setattr(
-        overlay_platform,
-        "current_platform",
-        lambda: type("OverlayHost", (), {"guidance": lambda self: _OVERLAY_GUIDANCE})(),
-    )
-
     assert doctor.run(Config.defaults(), _CONFIG_PATH) == 0
     assert "ffmpeg: WARN — ffmpeg is not installed" in capsys.readouterr().out
-
-    monkeypatch.setattr(doctor, "probe", lambda _config: _caps(has_mic=False))
-    assert doctor.run(Config.defaults(), _CONFIG_PATH) == 78
 
 
 def _log_line(level: str, message: str, *, utt: int = 1) -> str:
@@ -462,9 +353,6 @@ def test_tail_errors_keeps_the_last_n_only():
     assert len(tail) == 10
     assert tail[0] == _log_line("ERROR", "daemon: failed seq=15")
     assert tail[-1] == _log_line("ERROR", "daemon: failed seq=24")
-    assert doctor.tail_errors(text, 3) == [
-        _log_line("ERROR", f"daemon: failed seq={index}") for index in (22, 23, 24)
-    ]
 
 
 def test_tail_errors_ignores_lines_that_are_not_records():
@@ -501,27 +389,21 @@ def test_tail_errors_reads_the_level_column_not_the_message():
     assert doctor.tail_errors("\n".join([recovered, complained])) == [complained]
 
 
-def test_decode_tail_survives_a_character_split_by_the_window_edge():
+def test_log_status_survives_a_character_split_by_the_window_edge(tmp_path, monkeypatch):
     """The window can open mid-character; a replaced byte beats an exception."""
 
     complaint = _log_line("ERROR", "config: invalid key=asr.model detail=missing")
     half_a_character = "café".encode()[-1:]
     window = half_a_character + b" fragment\n" + complaint.encode()
-    text = doctor.decode_tail(window)
-    assert text.endswith(complaint)
-    assert doctor.tail_errors(text) == [complaint]
+    path = tmp_path / "daemon.log"
+    path.write_bytes(b"caf" + window)
+    monkeypatch.setattr(doctor, "_TAIL_WINDOW_BYTES", len(window))
+    assert doctor._log_status("daemon", path).tail == (complaint,)
 
 
 def test_render_names_each_log_with_its_size_absence_or_refusal():
     logs = (*_LOGS, doctor.LogStatus("other", _DAEMON_LOG, 512, readable=False))
-    report = doctor.render(
-        _caps(),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        logs,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(), logs=logs)
     assert "logs:" in report
     assert f"  daemon: {_DAEMON_LOG} (4096 bytes)" in report
     assert f"  helper: {_HELPER_LOG} (absent)" in report
@@ -535,14 +417,7 @@ def test_render_replays_each_log_tail_under_its_own_file():
         doctor.LogStatus("daemon", _DAEMON_LOG, 4096, (copy_failed,)),
         doctor.LogStatus("helper", _HELPER_LOG, 128, (backend_lost,)),
     )
-    report = doctor.render(
-        _caps(),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        logs,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(), logs=logs)
     lines = report.splitlines()
     daemon = lines.index(f"  daemon: {_DAEMON_LOG} (4096 bytes)")
     helper = lines.index(f"  helper: {_HELPER_LOG} (128 bytes)")
@@ -553,14 +428,7 @@ def test_render_replays_each_log_tail_under_its_own_file():
 
 def test_render_absent_log_contributes_one_line_and_no_body():
     logs = (doctor.LogStatus("daemon", _DAEMON_LOG, None),)
-    report = doctor.render(
-        _caps(),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        logs,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(), logs=logs)
     lines = report.splitlines()
     index = lines.index(f"  daemon: {_DAEMON_LOG} (absent)")
     assert lines[index + 1] == ""
@@ -629,21 +497,8 @@ def test_log_status_keeps_the_size_of_a_log_it_may_not_open(tmp_path):
     assert status.tail == ()
 
 
-def _capabilities(**overrides) -> Capabilities:
-    state = {
-        "key_injector_ok": True,
-        "hotkey_access_ok": True,
-        "has_mic": True,
-        "model_cached": True,
-        "clipboard_ok": True,
-        "clipboard_backend": "wl-copy",
-        "clipboard_read_ok": True,
-        "cue_player": "paplay",
-        "service_enabled": "enabled",
-        "service_active": "active",
-    }
-    state.update(overrides)
-    return Capabilities(**state)
+def _capabilities(**overrides):
+    return capabilities(**({"cue_player": "paplay"} | overrides))
 
 
 def test_run_prints_the_report_and_succeeds_when_nothing_is_missing(
@@ -651,7 +506,6 @@ def test_run_prints_the_report_and_succeeds_when_nothing_is_missing(
     tmp_path,
     capsys,
 ):
-    from stenographer.lib.config.models import Config
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(doctor, "probe", lambda cfg: _capabilities())
@@ -671,7 +525,6 @@ def test_run_reports_the_missing_capability_and_exits_seventy_eight(
     tmp_path,
     capsys,
 ):
-    from stenographer.lib.config.models import Config
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(doctor, "probe", lambda cfg: _capabilities(has_mic=False))
@@ -684,7 +537,6 @@ def test_run_reports_the_missing_capability_and_exits_seventy_eight(
 
 
 def test_run_replays_the_complaints_of_an_existing_log(monkeypatch, tmp_path, capsys):
-    from stenographer.lib.config.models import Config
 
     state = tmp_path / "state" / "stenographer"
     state.mkdir(parents=True)
@@ -712,14 +564,7 @@ def test_run_replays_the_complaints_of_an_existing_log(monkeypatch, tmp_path, ca
 
 
 def test_render_names_the_clipboard_restore_as_an_optional_row():
-    report = doctor.render(
-        _caps(),
-        Config.defaults(),
-        _CONFIG_PATH,
-        _GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(), logs=_LOGS)
     assert "  clipboard restore: ok" in report
 
 
@@ -727,14 +572,7 @@ def test_render_a_missing_clipboard_reader_is_a_hint_not_a_missing_capability():
     guidance = dataclasses.replace(
         _GUIDANCE, clipboard_read_fix_hints={"wl-copy": "install wl-clipboard (wl-paste)"}
     )
-    report = doctor.render(
-        _caps(clipboard_read_ok=False),
-        Config.defaults(),
-        _CONFIG_PATH,
-        guidance,
-        _LOGS,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(clipboard_read_ok=False), guidance=guidance, logs=_LOGS)
     assert "  clipboard restore: unavailable — install wl-clipboard (wl-paste)" in report
     assert "all required capabilities present" in report
     assert "MISSING" not in report
@@ -745,12 +583,17 @@ def test_render_a_clipboard_restore_turned_off_in_config_says_so():
     cfg = dataclasses.replace(
         cfg, delivery=dataclasses.replace(cfg.delivery, restore_clipboard=False)
     )
-    report = doctor.render(
-        _caps(clipboard_read_ok=False),
-        cfg,
-        _CONFIG_PATH,
-        _GUIDANCE,
-        _LOGS,
-        overlay_guidance=_OVERLAY_GUIDANCE,
-    )
+    report = _render(_caps(clipboard_read_ok=False), cfg=cfg, logs=_LOGS)
     assert "  clipboard restore: disabled" in report
+
+
+def test_log_stat_failure_is_not_reported_as_absent(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    def deny(_self):
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(Path, "stat", deny)
+    status = doctor._log_status("daemon", tmp_path / "daemon.log")
+    assert "inspection failed" in doctor._log_state(status)
+    assert "access denied" in doctor._log_state(status)

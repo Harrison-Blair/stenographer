@@ -6,12 +6,14 @@ from __future__ import annotations
 from rich.text import Text
 from textual.widgets import Static
 
+from stenographer.cli.hub.widgets.update_changed import update_changed
+
 _ACCENT = "bold #5fd7ff"
 _DIM = "#8b93a1"
 
 
 class KeyHints(Static):
-    """Show ``key description`` items; a footer always ends with help and quit."""
+    """Show ``key description`` items; a footer starts with help and quit."""
 
     DEFAULT_CSS = """
     KeyHints {
@@ -36,13 +38,13 @@ class KeyHints(Static):
             self.add_class("-panel")
 
     def set_hints(self, *items: tuple[str, str], end: bool = True) -> None:
-        """Show the items; a footer row appends ``? help · q quit`` unless ``end`` is false."""
+        """Show the items; a footer row starts with ``? help · q quit`` unless ``end`` is false."""
         if self.footer:
             items = tuple(item for item in items if item not in self.FOOTER_END)
             if end:
-                items += self.FOOTER_END
+                items = self.FOOTER_END + items
         self.items = items
-        self.update(self.hint_text(items, footer=self.footer))
+        update_changed(self, self.hint_text(items, footer=self.footer))
 
     @staticmethod
     def hint_text(items: tuple[tuple[str, str], ...], *, footer: bool) -> Text:

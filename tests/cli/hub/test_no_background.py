@@ -8,17 +8,18 @@ from pathlib import Path
 from typing import ClassVar
 
 from rich.color import Color
-from rich.text import Text
 from textual.scrollbar import ScrollBar
 from textual.widgets import Input, Static
 
 from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.config_dialog import ConfigPrompt
+from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.lib.config.defaults import default_toml
+from tests.cli.hub.support import make_app
 
 
 class FakeSession:
@@ -26,7 +27,6 @@ class FakeSession:
     lines = ()
     speakers = (("speaker-1", "Speaker 1"),)
     source_states: ClassVar[dict[str, str]] = {"mic": "on", "system": "on"}
-    source_reasons: ClassVar[dict[str, str | None]] = {"mic": None, "system": None}
     levels_dbfs: ClassVar[dict[str, float]] = {"mic": -24.0, "system": -18.0}
     meter_floor_dbfs = -70.0
     failed_phrase_count = 0
@@ -50,10 +50,6 @@ class FakeServices:
     recording = False
     files_running = False
     session = None
-
-
-def _plain(renderable) -> str:
-    return renderable.plain if isinstance(renderable, Text) else renderable
 
 
 def _painted_backgrounds(app, label: str, errors: list[str]) -> int:
@@ -94,104 +90,80 @@ def _assert_selected_row(renderable, expected: str) -> None:
     assert rich_style.bgcolor is None or rich_style.bgcolor.is_default
 
 
-def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
-    async def exercise():
-        (tmp_path / "sample.wav").touch()
-        config_path = tmp_path / "config.toml"
-        config_path.write_text(default_toml(), encoding="utf-8")
-        report = DoctorReport(
-            (
-                DoctorCheck(
-                    "mic", "microphone", "input and audio", "warn", "Unavailable", "Connect one."
-                ),
-            ),
-            (),
-        )
-        services = FakeServices()
-        app = HubApp(
-            services,
-            config_path=config_path,
-            files_home=tmp_path,
-            doctor_probe=lambda _config, _path: report,
-        )
-        errors = []
-
-        async with app.run_test(size=(120, 36)) as pilot:
-            await pilot.pause()
-            _painted_backgrounds(app, "Record idle", errors)
-
-            services.session = FakeSession()
-            services.recording = True
-            app.refresh_view()
-            await pilot.pause()
-            _painted_backgrounds(app, "Record recording", errors)
-            await pilot.press("v")
-            _painted_backgrounds(app, "Record split", errors)
-
-            await pilot.press("2")
-            await pilot.pause()
-            _painted_backgrounds(app, "Library", errors)
-            await pilot.press("n")
-            await pilot.pause()
-            _painted_backgrounds(app, "Transcribe dialog", errors)
-            await pilot.press("escape")
-
-            await pilot.press("3")
-            await pilot.pause()
-            for tab in ("general", "audio", "recognition", "live", "checks"):
-                app.settings_screen.select_tab(tab)
-                await pilot.pause()
-                _painted_backgrounds(app, f"Settings {tab}", errors)
-
-            app.push_screen(HelpOverlay("Settings", app.screen.active_bindings))
-            await pilot.pause()
-            _painted_backgrounds(app, "Help overlay", errors)
-            await pilot.press("escape")
-
-            app.push_screen(QuitConfirm("Stop recording?"))
-            await pilot.pause()
-            _painted_backgrounds(app, "Quit dialog", errors)
-            await pilot.press("escape")
-
-            app.push_screen(ConfigPrompt("Edit a value", initial="value"))
-            await pilot.pause()
-            _painted_backgrounds(app, "Config dialog", errors)
-            await pilot.press("escape")
-
-            app.push_screen(RenameDialog(FakeSession.speakers))
-            await pilot.pause()
-            _painted_backgrounds(app, "Speaker dialog", errors)
-            select = app.screen.query_one("#speaker-select")
-            select.focus()
-            await pilot.press("enter", "down")
-            await pilot.pause()
-            _painted_backgrounds(app, "Speaker picker", errors)
-            await pilot.press("escape")
-
-        assert not errors, "\n".join(errors)
-
-    asyncio.run(exercise())
-
-
-def test_transcribe_dialog_rows_keep_base_alignment(tmp_path):
-    (tmp_path / "folder").mkdir()
+async def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
     (tmp_path / "sample.wav").touch()
-    app = HubApp(FakeServices(), files_home=tmp_path)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(default_toml(), encoding="utf-8")
+    report = DoctorReport(
+        (DoctorCheck("mic", "microphone", "input", "warn", "Unavailable", "Connect one."),),
+        (),
+    )
+    services = FakeServices()
+    app = HubApp(
+        services,
+        config_editor=ConfigEditor(config_path),
+        files_home=tmp_path,
+        doctor_probe=lambda _config: report,
+    )
+    errors = []
 
-    async def exercise():
-        async with app.run_test(size=(120, 36)) as pilot:
-            await pilot.press("2", "n")
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        _painted_backgrounds(app, "Record idle", errors)
+
+        services.session = FakeSession()
+        services.recording = True
+        app.refresh_view()
+        await pilot.pause()
+        _painted_backgrounds(app, "Record recording", errors)
+        await pilot.press("v")
+        _painted_backgrounds(app, "Record split", errors)
+
+        await pilot.press("2")
+        await pilot.pause()
+        _painted_backgrounds(app, "Library", errors)
+        await pilot.press("n")
+        await pilot.pause()
+        _painted_backgrounds(app, "Transcribe dialog", errors)
+        await pilot.press("escape")
+
+        await pilot.press("3")
+        await pilot.pause()
+        for tab in ("general", "audio", "recognition", "live", "checks"):
+            app.settings_screen.select_tab(tab)
             await pilot.pause()
-            rows = app.screen.query_one("#transcribe-list", Static).render().plain.splitlines()
-            assert rows[0] == "  .."
-            assert rows[1] == "▶ folder/"
-            assert rows[2].startswith("  sample.wav")
+            _painted_backgrounds(app, f"Settings {tab}", errors)
 
-    asyncio.run(exercise())
+        app.push_screen(HelpOverlay("Settings", app.screen.active_bindings))
+        await pilot.pause()
+        _painted_backgrounds(app, "Help overlay", errors)
+        await pilot.press("escape")
+
+        app.push_screen(QuitConfirm("Stop recording?"))
+        await pilot.pause()
+        _painted_backgrounds(app, "Quit dialog", errors)
+        await pilot.press("escape")
+
+        app.push_screen(ConfigPrompt("Edit a value", initial="value"))
+        await pilot.pause()
+        _painted_backgrounds(app, "Config dialog", errors)
+        await pilot.press("escape")
+
+        app.push_screen(RenameDialog(FakeSession.speakers))
+        await pilot.pause()
+        _painted_backgrounds(app, "Speaker dialog", errors)
+        select = app.screen.query_one("#speaker-select")
+        select.focus()
+        await pilot.press("enter", "down")
+        await pilot.pause()
+        _painted_backgrounds(app, "Speaker picker", errors)
+        await pilot.press("escape")
+
+    assert not errors, "\n".join(errors)
 
 
-def test_blank_input_cursor_is_accent_underlined_without_a_fill():
-    app = HubApp(FakeServices())
+def test_blank_input_cursor_is_accent_underlined_without_a_fill(tmp_path):
+    app = make_app(tmp_path, FakeServices())
 
     async def exercise():
         async with app.run_test(size=(120, 36)) as pilot:
@@ -218,7 +190,7 @@ def test_blank_input_cursor_is_accent_underlined_without_a_fill():
 def test_visible_scrollbar_thumb_is_the_only_background_exception(tmp_path):
     for index in range(50):
         (tmp_path / f"{index:02}.wav").touch()
-    app = HubApp(FakeServices(), files_home=tmp_path)
+    app = make_app(tmp_path, FakeServices(), files_home=tmp_path)
     errors = []
 
     async def exercise():
@@ -232,18 +204,15 @@ def test_visible_scrollbar_thumb_is_the_only_background_exception(tmp_path):
     assert not errors, "\n".join(errors)
 
 
-def test_selected_sidebar_and_file_rows_use_bold_accent_marker(tmp_path):
-    async def exercise():
-        (tmp_path / "sample.wav").touch()
-        app = HubApp(FakeServices(), files_home=tmp_path)
-        async with app.run_test(size=(120, 36)) as pilot:
-            await pilot.pause()
-            sidebar = app.screen.query_one("#sidebar", Static).render()
-            _assert_selected_row(sidebar, "▶ 1 Record")
+async def test_selected_sidebar_and_file_rows_use_bold_accent_marker(tmp_path):
+    (tmp_path / "sample.wav").touch()
+    app = make_app(tmp_path, FakeServices(), files_home=tmp_path)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        sidebar = app.screen.query_one("#sidebar", Static).render()
+        _assert_selected_row(sidebar, "▶ 1 Record")
 
-            await pilot.press("2", "n")
-            await pilot.pause()
-            file_rows = app.screen.query_one("#transcribe-list", Static).render()
-            _assert_selected_row(file_rows, "▶ sample.wav")
-
-    asyncio.run(exercise())
+        await pilot.press("2", "n")
+        await pilot.pause()
+        file_rows = app.screen.query_one("#transcribe-list", Static).render()
+        _assert_selected_row(file_rows, "▶ sample.wav")

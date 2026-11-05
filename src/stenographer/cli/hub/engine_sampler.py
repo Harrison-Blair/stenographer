@@ -93,11 +93,6 @@ class EngineSampler:
             if total > 0:
                 self._cpu_all = max(0.0, min(100.0, 100.0 * (1 - idle / total)))
 
-    @property
-    def cpu_all_percent(self) -> float | None:
-        """Return the system CPU gauge alone, without reading the services."""
-        return self._cpu_all
-
     def snapshot(self) -> EngineStatus:
         """Return the card data; the state line reads the services now."""
         return EngineStatus(

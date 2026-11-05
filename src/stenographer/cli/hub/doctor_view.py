@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
-import dataclasses
 import pathlib
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
+
+from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
 
 if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
@@ -17,6 +18,7 @@ _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _EVENT = re.compile(r"([a-z][a-z0-9_-]*):\s+([a-z][a-z0-9_-]*)\b")
 _WARNING = re.compile(r"(\d{2}:\d{2}):\d{2} (WARN|ERROR) (\S+: \S+)\Z")
 _TAIL_WINDOW_BYTES = 256 * 1024
+UNREADABLE_LOG = "A warning log could not be read."
 CHECK_GROUPS = ("input", "engine", "other")
 DOCTOR_STATE_GLYPHS = {"ok": "✓", "warn": "!", "fail": "\N{MULTIPLICATION SIGN}"}
 DOCTOR_STATE_WORDS = {"ok": "pass", "warn": "warning", "fail": "failure"}
@@ -34,10 +36,12 @@ WARNING_DESCRIPTIONS = {
     "hub: session_job_failed": "A session job did not finish.",
     "hub: setup_test_failed": "A Checks test did not finish.",
     "live: model_load_failed": "A live model did not load.",
+    "live: audio_save_failed": "Session audio could not be saved.",
     "live: phrase_failed": "One live phrase was not transcribed.",
     "live: relabel_failed": "The speaker relabel pass did not finish.",
     "live: source_start_failed": "A live audio source did not start.",
     "live: system_source_failed": "System audio stopped; the mic went on recording.",
+    "live: system_source_unavailable": "System audio could not be used for this recording.",
     "overlay: helper_restarting": "The overlay helper stopped and was restarted.",
     "overlay: helper_start_failed": "The overlay helper did not start.",
     "overlay: unavailable": "The overlay is not available on this display.",
@@ -81,10 +85,6 @@ class DoctorCheck:
     explanation: str = ""
     path: str = ""
 
-    @property
-    def display_group(self) -> str:
-        return self.group if self.group in CHECK_GROUPS else "other"
-
 
 @dataclass(frozen=True)
 class DoctorReport:
@@ -111,11 +111,6 @@ class DoctorReport:
             0,
         )
 
-    def in_group_order(self) -> DoctorReport:
-        """Return this report with its checks in the shown group order."""
-        checks = sorted(self.checks, key=lambda check: CHECK_GROUPS.index(check.display_group))
-        return dataclasses.replace(self, checks=tuple(checks))
-
     def warning_entries(self) -> tuple[tuple[str, str, str, str], ...]:
         """Return ``(HH:MM, level, token, description)`` for each recent warning."""
         entries = []
@@ -133,6 +128,8 @@ class DoctorReport:
             lines.append(f"{time}  {level:<5}  {token}")
             if description:
                 lines.append(f"{'':7}{description}")
+        if UNREADABLE_LOG in self.warnings:
+            lines.append(UNREADABLE_LOG)
         return tuple(lines)
 
     def report_text(self) -> str:
@@ -140,7 +137,7 @@ class DoctorReport:
             f"Checks report: {self.ok_count} pass, {self.warn_count} warn, {self.fail_count} fail"
         ]
         for group in CHECK_GROUPS:
-            checks = [check for check in self.checks if check.display_group == group]
+            checks = [check for check in self.checks if check.group == group]
             if not checks:
                 continue
             lines.append(f"\n{group}")
@@ -186,20 +183,27 @@ def safe_warning_lines(text: str, limit: int = 10) -> tuple[str, ...]:
 def recent_warnings(paths: tuple[pathlib.Path, ...], limit: int = 10) -> tuple[str, ...]:
     """Read a bounded tail from each log and return safe recent warning summaries."""
     records: list[tuple[str, str]] = []
+    unreadable = False
     for path in paths:
         try:
             size = path.stat().st_size
             with path.open("rb") as handle:
                 handle.seek(max(0, size - _TAIL_WINDOW_BYTES))
                 text = handle.read().decode("utf-8", errors="replace")
+        except FileNotFoundError:
+            continue
         except OSError:
+            unreadable = True
             continue
         for raw_line in text.splitlines():
             safe = safe_warning_lines(raw_line, limit=1)
             if safe:
                 columns = raw_line.split(maxsplit=1)
                 records.append((f"{columns[0]} {columns[1]}", safe[0]))
-    return tuple(line for _, line in sorted(records)[-limit:])
+    return (
+        *tuple(line for _, line in sorted(records)[-limit:]),
+        *((UNREADABLE_LOG,) if unreadable else ()),
+    )
 
 
 def _refine_check(config: Config) -> DoctorCheck:
@@ -227,18 +231,17 @@ def _refine_check(config: Config) -> DoctorCheck:
     return DoctorCheck("refine_service", "refine service", "engine", "ok", detail, "", explanation)
 
 
-def build_report(config: Config, config_path: pathlib.Path | None = None) -> DoctorReport:
+def build_report(config: Config) -> DoctorReport:
     """Probe the host and build the doctor checks in the groups of the Checks tab."""
     import os
 
     from stenographer.cli.doctor import report as cli_doctor
-    from stenographer.cli.shared.capability_probe import probe
+    from stenographer.cli.shared.capabilities import probe
     from stenographer.lib.diagnostics import additional_checks
     from stenographer.lib.logging.pipeline import log_paths
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay.platform import current_platform as overlay_platform
-    from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
     caps = probe(config)
     host = current_platform().guidance()
@@ -329,7 +332,7 @@ def build_report(config: Config, config_path: pathlib.Path | None = None) -> Doc
         live.detail,
         live.fix,
         failed="warn",
-        path=str(data_dir / "models" / "live"),
+        path=str(live_model_dir(data_dir)),
     )
     checks.append(_refine_check(config))
     capture = extra.pop("system_capture")
@@ -370,14 +373,13 @@ def build_report(config: Config, config_path: pathlib.Path | None = None) -> Doc
         "available" if caps.clipboard_ok else f"{caps.clipboard_backend} is unavailable",
         host.clipboard_fix_hints.get(caps.clipboard_backend, host.clipboard_fix_hint_default),
     )
-    overlay_reason = caps.overlay.reason or UnavailableReason.BACKENDS_UNAVAILABLE
     add(
         "overlay",
         "overlay",
         "other",
         not caps.overlay.enabled or caps.overlay.backend is not None,
         cli_doctor.format_overlay_status(caps.overlay, overlay),
-        overlay.overlay_fix_hints.get(overlay_reason, overlay.overlay_fix_hint_default),
+        overlay.overlay_fix_hints.get(caps.overlay.reason, overlay.overlay_fix_hint_default),
         failed="warn",
     )
     add(
@@ -407,13 +409,14 @@ def default_model_status() -> tuple[ModelEntry, ...]:
     """Return the speech model and each live model, present or missing on disk."""
     import os
 
-    from stenographer.cli.model.download.handler import ASR_SIZE_TEXT
+    from stenographer.lib.live.download import _sha256
     from stenographer.lib.live.models import LIVE_MODELS
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
+    from stenographer.lib.transcribe.bark_download import ASR_SIZE_TEXT
 
-    live_dir = current_platform().data_dir(os.environ, pathlib.Path.home()) / "models" / "live"
-    names = {"silero_vad.onnx": "vad", "nemo_en_titanet_small.onnx": "speaker"}
+    live_dir = live_model_dir(current_platform().data_dir(os.environ, pathlib.Path.home()))
+    names = {VAD_MODEL.filename: "vad", SPEAKER_MODEL.filename: "speaker"}
     labels = {"vad": "voice activity", "speaker": "speaker model"}
     sizes = {"vad": "about 0.6 MB", "speaker": "about 40 MB"}
     entries = [
@@ -432,7 +435,8 @@ def default_model_status() -> tuple[ModelEntry, ...]:
                 model_id,
                 labels[model_id],
                 model.filename,
-                (live_dir / model.filename).is_file(),
+                (live_dir / model.filename).is_file()
+                and _sha256(live_dir / model.filename) == model.sha256,
                 sizes[model_id],
             )
         )
@@ -452,5 +456,5 @@ def default_model_download(model_id: str) -> None:
     if model_id == "asr":
         download_bark_pro(data_dir)
         return
-    filename = {"vad": "silero_vad.onnx", "speaker": "nemo_en_titanet_small.onnx"}[model_id]
+    filename = {"vad": VAD_MODEL.filename, "speaker": SPEAKER_MODEL.filename}[model_id]
     download_live_models(data_dir, models=tuple(m for m in LIVE_MODELS if m.filename == filename))

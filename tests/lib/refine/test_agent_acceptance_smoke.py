@@ -9,7 +9,9 @@ inspect the output for all associations and details during machine acceptance.
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -17,20 +19,34 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED
-from tests.lib.refine.agent_acceptance_corpus import SEMANTIC_REGRESSIONS
-from tests.lib.refine.test_refine_smoke import refiner as production_refiner
+from tests.lib.refine.helpers import installed_refiner as installed_refiner
 
-installed_refiner = production_refiner
+_PRESERVE = (
+    "Preserve every fact, request, uncertainty, condition, and authorization limit "
+    "in the spoken input: "
+)
+_rows = [
+    json.loads(line)
+    for line in Path(__file__)
+    .with_name("agent_acceptance_corpus.jsonl")
+    .read_text(encoding="utf-8")
+    .splitlines()
+]
+SEMANTIC_REGRESSIONS = [
+    (case_id, spoken, wrong, checklist if checklist is not None else _PRESERVE + spoken)
+    for case_id, spoken, wrong, checklist in _rows
+]
 
 
 @pytest.fixture
 def refiner(installed_refiner):
     """Reuse the installed-model warm check; admit short synthetic inputs."""
 
+    config = Config.defaults()
     return OllamaRefiner(
-        host=installed_refiner.host,
-        model=installed_refiner.model,
-        keep_alive=installed_refiner.keep_alive,
+        host=config.refine.host,
+        model=config.refine.model,
+        keep_alive=(-1 if config.asr.idle_unload_seconds <= 0 else config.asr.idle_unload_seconds),
         structured_output=Config.defaults().refine.structured_output,
         min_words=1,
     )

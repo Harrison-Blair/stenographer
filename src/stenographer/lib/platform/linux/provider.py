@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import signal
+from functools import partial
 from typing import TYPE_CHECKING
 
 from stenographer.lib.platform.diagnostics_host_mixin import DiagnosticsHostMixin
@@ -27,7 +28,20 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.system_audio import SystemAudioCapture
     from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer
 
-from stenographer.lib.platform.linux.support import signal_reason
+
+def signal_reason(signum: int) -> str:
+    """Name a stop signal for the core's log line. PURE.
+
+    Runs inside a signal handler, so it stays allocation-light (the enum
+    lookup returns an interned name) and never raises: an unrecognized number
+    — a signal this build's ``signal.Signals`` does not know — degrades to a
+    numeric label so ``request_stop`` still fires behind it.
+    """
+
+    try:
+        return signal.Signals(signum).name
+    except Exception:
+        return f"signal {signum}"
 
 
 class LinuxPlatform(DiagnosticsHostMixin):
@@ -49,11 +63,6 @@ class LinuxPlatform(DiagnosticsHostMixin):
 
         return data_dir(env, home)
 
-    def runtime_dir(self, env: Mapping[str, str]) -> Path:
-        from stenographer.lib.platform.linux.dirs import runtime_dir
-
-        return runtime_dir(env)
-
     # --- hotkey / input ---
     def keys(self) -> KeyTable:
         from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
@@ -63,24 +72,18 @@ class LinuxPlatform(DiagnosticsHostMixin):
     def hotkey_listener(
         self,
         *,
-        chord: frozenset[int],
         device: str | None,
-        on_start: Callable[[], None],
-        on_stop: Callable[[], None],
         lock: threading.RLock,
-        bindings: dict[str, frozenset[int]] | None = None,
-        on_binding_start: Callable[[str], None] | None = None,
-        on_binding_stop: Callable[[str], None] | None = None,
+        bindings: dict[str, frozenset[int]],
+        on_binding_start: Callable[[str], None],
+        on_binding_stop: Callable[[str], None],
         cancel: frozenset[int] = frozenset(),
         on_cancel: Callable[[], None] | None = None,
     ) -> HotkeyListener:
-        from stenographer.lib.platform.linux.evdev_hotkey_listener import EvdevHotkeyListener
+        from stenographer.lib.platform.linux.hotkey import EvdevHotkeyListener
 
         return EvdevHotkeyListener(
-            chord=chord,
             device_path=device,
-            on_start=on_start,
-            on_stop=on_stop,
             lock=lock,
             bindings=bindings,
             on_binding_start=on_binding_start,
@@ -101,36 +104,40 @@ class LinuxPlatform(DiagnosticsHostMixin):
 
     # --- output ---
     def key_injector(self) -> KeyInjector:
-        from stenographer.lib.platform.linux.uinput_keyboard import UinputKeyboard
+        from stenographer.lib.platform.linux.uinput import UinputKeyboard
 
         return UinputKeyboard()
 
     def clipboard_writer(self, backend: str) -> Callable[[str], bool]:
-        from stenographer.lib.platform.linux.clipboard import copy_for_backend
-        from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+        from stenographer.lib.platform.linux.clipboard import (
+            ClipboardBackend,
+            copy_both_selections,
+        )
 
-        return copy_for_backend(ClipboardBackend(backend))
+        return partial(copy_both_selections, ClipboardBackend(backend).tools)
 
     def clipboard_reader(self, backend: str) -> ClipboardReader | None:
-        from stenographer.lib.platform.linux.clipboard import reader_for_backend
-        from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+        from stenographer.lib.platform.linux.clipboard import (
+            ClipboardBackend,
+            clipboard_read_available,
+            read_clipboard,
+        )
 
-        return reader_for_backend(ClipboardBackend(backend))
+        tools = ClipboardBackend(backend).tools
+        return partial(read_clipboard, tools) if clipboard_read_available(tools) else None
 
     def clipboard_restorer(self, backend: str) -> ClipboardRestorer:
-        from stenographer.lib.platform.linux.clipboard import restorer_for_backend
-        from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+        from stenographer.lib.platform.linux.clipboard import ClipboardBackend, restore_clipboard
 
-        return restorer_for_backend(ClipboardBackend(backend))
+        return partial(restore_clipboard, ClipboardBackend(backend).tools)
 
     def notifier(self) -> Notifier:
-        from stenographer.lib.platform.linux.notify_send_notifier import NotifySendNotifier
+        from stenographer.lib.platform.linux.notify import NotifySendNotifier
 
         return NotifySendNotifier()
 
     def cue_player(self) -> CuePlayer | None:
-        from stenographer.lib.platform.linux.cues import detect_player
-        from stenographer.lib.platform.linux.linux_cue_player import LinuxCuePlayer
+        from stenographer.lib.platform.linux.cues import LinuxCuePlayer, detect_player
 
         player = detect_player()
         return LinuxCuePlayer(player) if player is not None else None
@@ -161,7 +168,7 @@ class LinuxPlatform(DiagnosticsHostMixin):
         return MultiprocessingAsrTransport()
 
     def single_instance_lock(self) -> SingleInstanceLock:
-        from stenographer.lib.platform.linux.flock_single_instance_lock import (
+        from stenographer.lib.platform.linux.lock import (
             FlockSingleInstanceLock,
         )
 
@@ -181,7 +188,7 @@ class LinuxPlatform(DiagnosticsHostMixin):
         return physical_core_count()
 
     def process_counters(self) -> ProcessCounters:
-        from stenographer.lib.platform.linux.proc_counters import LinuxProcessCounters
+        from stenographer.lib.platform.linux.cpu import LinuxProcessCounters
 
         return LinuxProcessCounters()
 

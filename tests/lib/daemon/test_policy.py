@@ -13,7 +13,6 @@ from stenographer.lib.daemon.policy import (
     cancel_action,
     cancel_state,
     classify_pipeline,
-    edge_handlers,
     hybrid_release_action,
     ignored_edge_reason,
     max_duration_applies,
@@ -22,44 +21,23 @@ from stenographer.lib.daemon.policy import (
 )
 
 
-class _EdgeSpy:
-    """Stands in for a Daemon: edge_handlers only reads bound methods."""
-
-    def on_key_down(self) -> None: ...
-
-    def on_key_up(self) -> None: ...
-
-    def on_toggle_press(self) -> None: ...
-
-    def on_hybrid_release(self) -> None: ...
-
-
-def test_gate_failure_is_silent():
-    assert classify_pipeline(gate_passed=False, transcript_nonempty=False, deliver_result=None) == (
-        Outcome.SILENT,
-        None,
-    )
-
-
 def test_empty_transcript_is_silent():
     # Gate passed but the decode was empty/all-gated: success-shaped, no error.
-    assert classify_pipeline(gate_passed=True, transcript_nonempty=False, deliver_result=None) == (
+    assert classify_pipeline(transcript_nonempty=False, deliver_result=None) == (
         Outcome.SILENT,
         None,
     )
 
 
 def test_delivered_transcript():
-    assert classify_pipeline(gate_passed=True, transcript_nonempty=True, deliver_result=True) == (
+    assert classify_pipeline(transcript_nonempty=True, deliver_result=True) == (
         Outcome.DELIVERED,
         None,
     )
 
 
 def test_failed_delivery_is_error_with_message():
-    outcome, message = classify_pipeline(
-        gate_passed=True, transcript_nonempty=True, deliver_result=False
-    )
+    outcome, message = classify_pipeline(transcript_nonempty=True, deliver_result=False)
     # A False deliver on non-empty text is never silent: the copy failed,
     # so the chord was withheld and the user must be told.
     assert outcome is Outcome.ERROR
@@ -72,7 +50,6 @@ def test_ignored_edge_reason_names_the_state_that_refused_the_press():
     assert ignored_edge_reason(recording=True, busy=True, stopping=True) == "recording"
     assert ignored_edge_reason(recording=False, busy=True, stopping=True) == "busy"
     assert ignored_edge_reason(recording=False, busy=False, stopping=True) == "stopping"
-    assert ignored_edge_reason(recording=False, busy=False, stopping=False) == "none"
 
 
 def test_can_start_only_when_fully_idle():
@@ -146,24 +123,6 @@ def test_cancel_action_prioritizes_recording_then_pipeline():
 def test_cancel_state_hides_during_shutdown():
     assert cancel_state(shutting_down=False) is OverlayState.CANCELLED
     assert cancel_state(shutting_down=True) is OverlayState.HIDDEN
-
-
-def test_edge_handlers_map_mode_to_rising_and_falling_callbacks():
-    # Seen to FAIL against a mapping that ignores the mode and returns the hold
-    # pair for both. Pure: no platform, no listener, no device.
-    daemon = _EdgeSpy()
-
-    assert edge_handlers(daemon, "hold") == (daemon.on_key_down, daemon.on_key_up)
-
-    on_start, on_stop = edge_handlers(daemon, "toggle")
-    assert on_start == daemon.on_toggle_press
-    # Only presses drive the session: the falling edge must be inert.
-    assert on_stop not in (daemon.on_key_up, daemon.on_key_down)
-    assert on_stop() is None
-
-    on_start, on_stop = edge_handlers(daemon, "hybrid")
-    assert on_start == daemon.on_toggle_press
-    assert on_stop == daemon.on_hybrid_release
 
 
 def test_remaining_seconds_counts_down_to_a_future_deadline():

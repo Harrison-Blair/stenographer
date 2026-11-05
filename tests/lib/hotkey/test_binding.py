@@ -24,6 +24,8 @@ from stenographer.lib.hotkey.binding import chord_active, edge, parse_binding
 from stenographer.lib.hotkey.chord_tracker import ChordTracker
 from stenographer.lib.hotkey.errors import BindingError
 
+from .support import make_tracker
+
 _TABLE = {
     "KEY_A": 30,
     "KEY_ESC": 1,
@@ -49,34 +51,30 @@ class _Keys:
 KEYS = _Keys()
 
 
-def test_parse_single_key():
-    assert parse_binding("KEY_RIGHTALT", KEYS) == frozenset({100})
+@pytest.mark.parametrize(
+    ("binding", "expected"),
+    [
+        ("KEY_RIGHTALT", frozenset({100})),
+        ("KEY_LEFTCTRL+KEY_A", frozenset({29, 30})),
+        ("KEY_A+KEY_LEFTCTRL", frozenset({29, 30})),
+        ("  KEY_A + KEY_LEFTCTRL ", frozenset({29, 30})),
+    ],
+)
+def test_parse_accepted_binding(binding, expected):
+    assert parse_binding(binding, KEYS) == expected
 
 
-def test_parse_chord_is_order_independent():
-    forward = parse_binding("KEY_LEFTCTRL+KEY_A", KEYS)
-    reversed_ = parse_binding("KEY_A+KEY_LEFTCTRL", KEYS)
-    assert forward == reversed_
-    assert forward == frozenset({29, 30})
-
-
-def test_parse_tolerates_whitespace():
-    assert parse_binding("  KEY_A + KEY_LEFTCTRL ", KEYS) == frozenset({30, 29})
-
-
-def test_parse_empty_raises():
-    with pytest.raises(BindingError):
-        parse_binding("   ", KEYS)
-
-
-def test_parse_trailing_plus_raises():
-    with pytest.raises(BindingError):
-        parse_binding("KEY_A+", KEYS)
-
-
-def test_parse_unknown_token_names_it():
-    with pytest.raises(BindingError, match="KEY_NOPE"):
-        parse_binding("KEY_NOPE", KEYS)
+@pytest.mark.parametrize(
+    ("binding", "message"),
+    [
+        ("   ", None),
+        ("KEY_A+", None),
+        ("KEY_NOPE", "KEY_NOPE"),
+    ],
+)
+def test_parse_rejected_binding(binding, message):
+    with pytest.raises(BindingError, match=message):
+        parse_binding(binding, KEYS)
 
 
 def test_chord_active_requires_full_subset():
@@ -98,13 +96,12 @@ def test_edge_maps_all_four_combinations():
 
 def _tracker(chord: frozenset[int], *devices: int) -> tuple[ChordTracker, list[str]]:
     events: list[str] = []
-    tracker = ChordTracker(
-        chord=chord,
-        on_start=lambda: events.append("start"),
-        on_stop=lambda: events.append("stop"),
-        lock=threading.RLock(),
+    tracker = make_tracker(
+        {"default": chord},
+        on_start=lambda _name: events.append("start"),
+        on_stop=lambda _name: events.append("stop"),
+        devices=devices,
     )
-    tracker._held_by_device = {device: set() for device in devices}
     return tracker, events
 
 
@@ -149,15 +146,11 @@ def test_tracker_rejects_unregistered_device():
 
 def test_tracker_reports_cancel_only_on_the_rising_edge():
     cancels: list[str] = []
-    tracker = ChordTracker(
-        chord=frozenset({100}),
-        on_start=lambda: None,
-        on_stop=lambda: None,
-        lock=threading.RLock(),
+    tracker = make_tracker(
+        {"default": frozenset({100})},
         cancel=frozenset({1}),
         on_cancel=lambda: cancels.append("cancel"),
     )
-    tracker._held_by_device = {1: set()}
 
     tracker._key_event(1, 1, 1)
     tracker._key_event(1, 1, 2)
@@ -170,15 +163,13 @@ def test_tracker_reports_cancel_only_on_the_rising_edge():
 
 def test_tracker_keeps_cancel_and_main_chords_independent_while_held():
     events: list[str] = []
-    tracker = ChordTracker(
-        chord=frozenset({29, 30}),
-        on_start=lambda: events.append("start"),
-        on_stop=lambda: events.append("stop"),
-        lock=threading.RLock(),
+    tracker = make_tracker(
+        {"default": frozenset({29, 30})},
+        on_start=lambda _name: events.append("start"),
+        on_stop=lambda _name: events.append("stop"),
         cancel=frozenset({1}),
         on_cancel=lambda: events.append("cancel"),
     )
-    tracker._held_by_device = {1: set()}
 
     tracker._key_event(1, 1, 1)
     tracker._key_event(1, 29, 1)
@@ -281,11 +272,11 @@ def test_an_edge_that_arrives_during_shutdown_is_not_dispatched():
     tracker, events = _tracker(frozenset({100}), 1)
     tracker._stop_event.set()
 
-    tracker._update(True)
+    tracker._update_bindings({"default": True})
     tracker._update_cancel(True)
 
     assert events == []
-    assert tracker._active is False
+    assert tracker._selected_binding is None
     assert tracker._cancel_active is False
 
 
@@ -295,31 +286,38 @@ def test_two_readers_seeing_the_same_press_dispatch_only_one_edge():
     The losing reader is held at the lock until the winner's edge has landed,
     so it re-reads the settled state and finds no transition left to report.
     Seen to FAIL against a tracker that decided the edge before taking the
-    lock (both readers fire on_start).
+    lock (both readers fire the start callback).
     """
     events: list[str] = []
     lock = _HandoffLock()
     tracker = ChordTracker(
-        chord=frozenset({100}),
-        on_start=lambda: events.append("start"),
-        on_stop=lambda: events.append("stop"),
+        bindings={"default": frozenset({100})},
+        on_binding_start=lambda _name: events.append("start"),
+        on_binding_stop=lambda _name: events.append("stop"),
         lock=lock,
         cancel=frozenset({1}),
         on_cancel=lambda: events.append("cancel"),
     )
 
+    def bindings_won():
+        tracker._selected_binding = "default"
+        tracker._binding_active["default"] = True
+
+    def cancel_won():
+        tracker._cancel_active = True
+
     dispatchers = (
-        (tracker._update, "_active"),
-        (tracker._update_cancel, "_cancel_active"),
+        (tracker._update_bindings, {"default": True}, bindings_won),
+        (tracker._update_cancel, True, cancel_won),
     )
-    for dispatch, settled in dispatchers:
+    for dispatch, is_active, other_reader_wins in dispatchers:
         lock.reached.clear()
         lock.proceed.clear()
-        loser = threading.Thread(target=dispatch, args=(True,), daemon=True)
+        loser = threading.Thread(target=dispatch, args=(is_active,), daemon=True)
         loser.start()
         assert lock.reached.wait(10)
         # The other reader's edge won the race while this one waited.
-        setattr(tracker, settled, True)
+        other_reader_wins()
         lock.proceed.set()
         loser.join(timeout=10)
         assert loser.is_alive() is False

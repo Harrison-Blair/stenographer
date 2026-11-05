@@ -232,15 +232,34 @@ def test_venv_probe_fails_for_a_python_that_does_not_exist(tmp_path):
 # --- check order ---
 
 
-def test_venv_check_fails_first_with_the_apt_fix_and_no_network(tmp_path):
+def test_venv_check_fails_first_with_a_package_manager_hint_and_no_network(tmp_path):
     host = Host(probe_code=1)
 
-    with pytest.raises(
-        BarkDownloadError, match=r"Venv check failed.*sudo apt install python3-venv"
-    ):
+    with pytest.raises(BarkDownloadError, match=r"Venv check failed") as caught:
         _download(tmp_path, host, min_free_bytes=10**30)
 
+    message = str(caught.value)
+    assert "system package manager" in message
+    assert "ensurepip" in message
+    assert "sudo apt" not in message
     assert host.calls == ["probe"]
+    assert _asr_entries(tmp_path) == []
+
+
+def test_venv_creation_failure_names_a_lasting_target_and_a_way_to_see_the_output(tmp_path):
+    host = Host(venv_code=1)
+
+    with pytest.raises(BarkDownloadError, match=r"Venv creation failed") as caught:
+        _download(tmp_path, host)
+
+    message = str(caught.value)
+    # The hub discards subprocess output, so nothing may rely on it being "above".
+    assert "above" not in message
+    assert "`stenographer model download --asr`" in message
+    # The build directory is temporary; the fix must name what outlasts it.
+    assert f"Check {tmp_path / 'models' / 'asr'} " in message
+    assert "package manager" not in message
+    assert "apt" not in message
     assert _asr_entries(tmp_path) == []
 
 
@@ -374,32 +393,25 @@ def test_each_converter_exit_code_has_its_message_and_installs_nothing(tmp_path,
     assert _asr_entries(tmp_path) == []
 
 
-def test_an_output_sha256_mismatch_fails_closed_and_names_the_file(tmp_path):
-    host = Host(outputs={**CONVERTED_BYTES, "joiner.int8.onnx": b"different"})
-
-    with pytest.raises(BarkDownloadError, match=r"Output file joiner\.int8\.onnx does not match"):
-        _download(tmp_path, host)
-
-    assert _asr_entries(tmp_path) == []
-
-
-def test_unpinned_outputs_fail_closed(tmp_path):
-    host = Host()
-
-    with pytest.raises(BarkDownloadError, match=r"Output file encoder\.int8\.onnx"):
-        _download(tmp_path, host, pins=_pins(outputs={}))
-
-    assert _asr_entries(tmp_path) == []
-
-
-def test_a_missing_output_fails_closed(tmp_path):
-    outputs = dict(CONVERTED_BYTES)
-    del outputs["tokens.txt"]
+@pytest.mark.parametrize(
+    ("outputs", "pins", "expected_file"),
+    [
+        (
+            {**CONVERTED_BYTES, "joiner.int8.onnx": b"different"},
+            None,
+            r"joiner\.int8\.onnx does not match",
+        ),
+        (CONVERTED_BYTES, _pins(outputs={}), r"encoder\.int8\.onnx"),
+        ({k: v for k, v in CONVERTED_BYTES.items() if k != "tokens.txt"}, None, r"tokens\.txt"),
+    ],
+)
+def test_invalid_outputs_fail_closed(tmp_path, outputs, pins, expected_file):
     host = Host(outputs=outputs)
-
-    with pytest.raises(BarkDownloadError, match=r"Output file tokens\.txt"):
-        _download(tmp_path, host)
-
+    with pytest.raises(BarkDownloadError, match=f"Output file {expected_file}"):
+        if pins is None:
+            _download(tmp_path, host)
+        else:
+            _download(tmp_path, host, pins=pins)
     assert _asr_entries(tmp_path) == []
 
 

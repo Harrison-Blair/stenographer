@@ -18,22 +18,22 @@ import time
 
 import pytest
 
-from stenographer.lib.platform.clipboard_snapshot import ClipboardSnapshot
 from stenographer.lib.platform.linux import clipboard
 from stenographer.lib.platform.linux.clipboard import (
+    ClipboardBackend,
     clipboard_read_available,
+    copy_both_selections,
     pick_snapshot_type,
     read_clipboard,
-    read_clipboard_x11,
-    reader_for_backend,
     restore_clipboard,
-    restore_clipboard_x11,
-    restorer_for_backend,
 )
-from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+from stenographer.lib.platform.linux.provider import LinuxPlatform
+from stenographer.lib.platform.types import ClipboardSnapshot
 
 _LOGGER = "stenographer.lib.platform.linux.clipboard"
 SENTINEL = b"supercalifragilisticexpialidocious"
+_WL = ClipboardBackend.WL_COPY.tools
+_X11 = ClipboardBackend.X11.tools
 
 #: One stand-in for every tool: it records its argv (and its stdin, for a
 #: write) and answers from ``tool.json`` beside it.
@@ -42,7 +42,8 @@ import json, os, sys, time
 here = os.path.dirname(os.path.abspath(__file__))
 cfg = json.load(open(os.path.join(here, "tool.json")))
 argv = [os.path.basename(sys.argv[0]), *sys.argv[1:]]
-stdin = b"" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.buffer.read()
+reads_only = "-o" in argv  # the read-back inherits the test's own stdin
+stdin = b"" if reads_only or sys.stdin is None or sys.stdin.isatty() else sys.stdin.buffer.read()
 with open(os.path.join(here, "calls.jsonl"), "a") as log:
     log.write(json.dumps({"argv": argv, "stdin": stdin.decode("latin-1")}) + "\\n")
 listing = "-l" in argv or "TARGETS" in argv
@@ -97,32 +98,33 @@ def tools(tmp_path, monkeypatch) -> Tools:
 # --- type choice (pure) -----------------------------------------------------
 
 
-def test_utf8_plain_text_is_preferred_over_everything_else():
-    offered = ["text/html", "text/plain", "text/plain;charset=utf-8", "UTF8_STRING"]
-    assert pick_snapshot_type(offered) == "text/plain;charset=utf-8"
-
-
-def test_plain_text_is_preferred_over_the_first_offered_type():
-    assert pick_snapshot_type(["image/png", "text/plain"]) == "text/plain"
-
-
-def test_otherwise_the_first_offered_type_is_kept():
-    assert pick_snapshot_type(["image/png", "text/html"]) == "image/png"
-
-
-def test_x_selection_atoms_are_never_chosen():
-    offered = ["TARGETS", "TIMESTAMP", "MULTIPLE", "SAVE_TARGETS", "image/png"]
-    assert pick_snapshot_type(offered) == "image/png"
-
-
-def test_x_text_atoms_are_only_a_fallback():
-    assert pick_snapshot_type(["TARGETS", "UTF8_STRING", "text/html"]) == "text/html"
-    assert pick_snapshot_type(["TARGETS", "STRING", "UTF8_STRING"]) == "UTF8_STRING"
-
-
-def test_nothing_offered_is_no_type():
-    assert pick_snapshot_type([]) is None
-    assert pick_snapshot_type(["TARGETS", "TIMESTAMP", ""]) is None
+@pytest.mark.parametrize(
+    ("offered", "expected"),
+    [
+        pytest.param(
+            ["text/html", "text/plain", "text/plain;charset=utf-8", "UTF8_STRING"],
+            "text/plain;charset=utf-8",
+            id="utf8_plain_text_beats_everything",
+        ),
+        pytest.param(["image/png", "text/plain"], "text/plain", id="plain_text_beats_first"),
+        pytest.param(["image/png", "text/html"], "image/png", id="otherwise_first_offered"),
+        pytest.param(
+            ["TARGETS", "TIMESTAMP", "MULTIPLE", "SAVE_TARGETS", "image/png"],
+            "image/png",
+            id="selection_atoms_never_chosen",
+        ),
+        pytest.param(
+            ["TARGETS", "UTF8_STRING", "text/html"], "text/html", id="text_atom_loses_to_real_type"
+        ),
+        pytest.param(
+            ["TARGETS", "STRING", "UTF8_STRING"], "UTF8_STRING", id="text_atom_as_fallback"
+        ),
+        pytest.param([], None, id="nothing_offered"),
+        pytest.param(["TARGETS", "TIMESTAMP", ""], None, id="only_atoms_and_blank_offered"),
+    ],
+)
+def test_pick_snapshot_type(offered, expected):
+    assert pick_snapshot_type(offered) == expected
 
 
 # --- exact argv (R7a) ------------------------------------------------------
@@ -131,7 +133,7 @@ def test_nothing_offered_is_no_type():
 def test_the_wayland_reader_lists_then_reads_the_chosen_type(tools):
     tools.configure(types=["text/html", "text/plain;charset=utf-8"], payload=b"seed")
 
-    snapshot = read_clipboard()
+    snapshot = read_clipboard(_WL)
 
     assert snapshot == ClipboardSnapshot("text/plain;charset=utf-8", b"seed")
     assert tools.argvs == [
@@ -143,7 +145,7 @@ def test_the_wayland_reader_lists_then_reads_the_chosen_type(tools):
 def test_the_x11_reader_lists_targets_then_reads_the_chosen_type(tools):
     tools.configure(types=["TARGETS", "TIMESTAMP", "UTF8_STRING", "text/plain"], payload=b"x")
 
-    snapshot = read_clipboard_x11()
+    snapshot = read_clipboard(_X11)
 
     assert snapshot == ClipboardSnapshot("text/plain", b"x")
     assert tools.argvs == [
@@ -153,29 +155,67 @@ def test_the_x11_reader_lists_targets_then_reads_the_chosen_type(tools):
 
 
 def test_the_wayland_restorer_writes_the_clipboard_only_with_its_type(tools):
-    assert restore_clipboard(ClipboardSnapshot("image/png", b"\x89PNG")) is True
+    assert restore_clipboard(_WL, ClipboardSnapshot("image/png", b"\x89PNG")) is True
 
     assert tools.argvs == [["wl-copy", "-t", "image/png"]]
     assert tools.calls[0]["stdin"].encode("latin-1") == b"\x89PNG"
 
 
 def test_the_x11_restorer_writes_the_clipboard_only_with_its_type(tools):
-    assert restore_clipboard_x11(ClipboardSnapshot("text/plain", b"seed")) is True
+    assert restore_clipboard(_X11, ClipboardSnapshot("text/plain", b"seed")) is True
 
     assert tools.argvs == [["xclip", "-selection", "clipboard", "-t", "text/plain"]]
     assert tools.calls[0]["stdin"] == "seed"
 
 
 def test_the_writers_still_write_both_selections(tools):
-    assert clipboard.copy_both_selections("hello") is True
+    assert copy_both_selections(_WL, "hello") is True
     assert tools.argvs == [["wl-copy"], ["wl-copy", "--primary"]]
+    assert [call["stdin"] for call in tools.calls] == ["hello", "hello"]
+
+
+def test_the_x11_writer_reads_each_selection_back(tools):
+    tools.configure(types=[], payload=b"hello")
+
+    assert copy_both_selections(_X11, "hello") is True
+
+    assert tools.argvs == [
+        ["xclip", "-selection", "clipboard"],
+        ["xclip", "-selection", "clipboard", "-o"],
+        ["xclip", "-selection", "primary"],
+        ["xclip", "-selection", "primary", "-o"],
+    ]
+
+
+def test_an_x11_read_back_that_differs_stops_the_copy_without_logging_it(tools, caplog):
+    tools.configure(types=[], payload=SENTINEL)
+
+    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
+        assert copy_both_selections(_X11, "hello") is False
+
+    assert len(tools.argvs) == 2
+    assert "deliver: xclip_readback_mismatch selection=clipboard" in caplog.text
+    assert SENTINEL.decode() not in caplog.text
+
+
+def test_a_failed_write_names_the_write_phase_only_where_copies_are_verified(tools, caplog):
+    tools.configure(types=[], status=1)
+
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        assert copy_both_selections(_WL, "hello") is False
+        assert copy_both_selections(_X11, "hello") is False
+
+    wayland, x11 = [record.getMessage() for record in caplog.records]
+    assert "deliver: copy_failed argv=wl-copy error=" in wayland
+    assert "Command '['wl-copy']'" in wayland
+    assert 'deliver: copy_failed argv="xclip -selection clipboard" phase=write error=' in x11
 
 
 def test_a_failing_restore_returns_false(tools, caplog):
     tools.configure(types=[], status=1)
 
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
-        assert restore_clipboard(ClipboardSnapshot("text/plain", SENTINEL)) is False
+        assert restore_clipboard(_WL, ClipboardSnapshot("text/plain", SENTINEL)) is False
 
     assert "deliver: restore_failed" in caplog.text
     assert SENTINEL.decode() not in caplog.text
@@ -183,8 +223,8 @@ def test_a_failing_restore_returns_false(tools, caplog):
 
 def test_a_missing_restore_tool_returns_false(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert restore_clipboard(ClipboardSnapshot("text/plain", b"seed")) is False
-    assert restore_clipboard_x11(ClipboardSnapshot("text/plain", b"seed")) is False
+    assert restore_clipboard(_WL, ClipboardSnapshot("text/plain", b"seed")) is False
+    assert restore_clipboard(_X11, ClipboardSnapshot("text/plain", b"seed")) is False
 
 
 # --- bounds and failures -----------------------------------------------------
@@ -194,8 +234,8 @@ def test_a_password_manager_hint_skips_the_snapshot(tools, caplog):
     tools.configure(types=["text/plain", "x-kde-passwordManagerHint"], payload=SENTINEL)
 
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
-        assert read_clipboard() is None
-        assert read_clipboard_x11() is None
+        assert read_clipboard(_WL) is None
+        assert read_clipboard(_X11) is None
 
     assert len(tools.argvs) == 2  # the two listings, never a read
     assert caplog.text.count("deliver: snapshot_skipped reason=sensitive") == 2
@@ -203,25 +243,25 @@ def test_a_password_manager_hint_skips_the_snapshot(tools, caplog):
 
 def test_an_empty_type_list_is_no_snapshot(tools):
     tools.configure(types=[])
-    assert read_clipboard() is None
+    assert read_clipboard(_WL) is None
     assert tools.argvs == [["wl-paste", "-l"]]
 
 
 def test_an_empty_payload_is_no_snapshot(tools):
     tools.configure(types=["text/plain"], payload=b"")
-    assert read_clipboard() is None
+    assert read_clipboard(_WL) is None
 
 
 def test_a_listing_that_fails_is_no_snapshot(tools):
     tools.configure(types=["text/plain"], status=1)
-    assert read_clipboard() is None
+    assert read_clipboard(_WL) is None
     assert tools.argvs == [["wl-paste", "-l"]]
 
 
 def test_a_missing_reader_is_no_snapshot(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert read_clipboard() is None
-    assert read_clipboard_x11() is None
+    assert read_clipboard(_WL) is None
+    assert read_clipboard(_X11) is None
 
 
 def test_a_payload_over_the_cap_is_no_snapshot_and_never_logged(tools, monkeypatch, caplog):
@@ -229,7 +269,7 @@ def test_a_payload_over_the_cap_is_no_snapshot_and_never_logged(tools, monkeypat
     tools.configure(types=["text/plain"], payload=SENTINEL)
 
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
-        assert read_clipboard() is None
+        assert read_clipboard(_WL) is None
 
     assert "reason=too_large" in caplog.text
     assert SENTINEL.decode() not in caplog.text
@@ -260,7 +300,7 @@ def test_a_payload_at_the_cap_is_kept(tools, monkeypatch):
     monkeypatch.setattr(clipboard, "_SNAPSHOT_MAX_BYTES", len(SENTINEL))
     tools.configure(types=["text/plain"], payload=SENTINEL)
 
-    assert read_clipboard() == ClipboardSnapshot("text/plain", SENTINEL)
+    assert read_clipboard(_WL) == ClipboardSnapshot("text/plain", SENTINEL)
 
 
 def test_an_owner_that_never_finishes_is_cut_off_within_the_budget(tools, monkeypatch, caplog):
@@ -271,7 +311,7 @@ def test_an_owner_that_never_finishes_is_cut_off_within_the_budget(tools, monkey
 
     started = time.monotonic()
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
-        assert read_clipboard() is None
+        assert read_clipboard(_WL) is None
     elapsed = time.monotonic() - started
 
     assert elapsed < 2.0
@@ -287,7 +327,7 @@ def test_the_budget_covers_the_listing_and_the_read_together(tools, monkeypatch,
 
     started = time.monotonic()
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
-        assert read_clipboard_x11() is None
+        assert read_clipboard(_X11) is None
 
     assert time.monotonic() - started < 2.0
     assert "reason=timeout" in caplog.text
@@ -298,7 +338,7 @@ def test_a_failed_read_with_output_never_logs_the_output(tools, caplog):
     tools.configure(types=["text/plain"], payload=SENTINEL, status=3)
 
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
-        assert read_clipboard() is None
+        assert read_clipboard(_WL) is None
 
     assert SENTINEL.decode() not in caplog.text
 
@@ -312,21 +352,32 @@ def test_a_snapshot_repr_never_shows_its_bytes():
 # --- wiring ------------------------------------------------------------------
 
 
-def test_each_backend_maps_to_its_reader_and_restorer(tools):
-    assert reader_for_backend(ClipboardBackend.WL_COPY) is read_clipboard
-    assert reader_for_backend(ClipboardBackend.X11) is read_clipboard_x11
-    assert restorer_for_backend(ClipboardBackend.WL_COPY) is restore_clipboard
-    assert restorer_for_backend(ClipboardBackend.X11) is restore_clipboard_x11
+def test_the_platform_wires_each_backend_name_to_its_tools(tools):
+    plat = LinuxPlatform()
+    snapshot = ClipboardSnapshot("text/plain", b"seed")
+    tools.configure(types=["text/plain"], payload=b"seed")
+
+    assert plat.clipboard_writer("wl-copy")("seed") is True
+    assert plat.clipboard_reader("wl-copy")() == snapshot
+    assert plat.clipboard_restorer("wl-copy")(snapshot) is True
+    assert {argv[0] for argv in tools.argvs} == {"wl-copy", "wl-paste"}
+
+    calls_so_far = len(tools.argvs)
+    assert plat.clipboard_writer("x11")("seed") is True
+    assert plat.clipboard_reader("x11")() == snapshot
+    assert plat.clipboard_restorer("x11")(snapshot) is True
+    assert {argv[0] for argv in tools.argvs[calls_so_far:]} == {"xclip"}
 
 
 def test_no_reader_without_its_tool(tmp_path, monkeypatch):
+    plat = LinuxPlatform()
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert clipboard_read_available(ClipboardBackend.WL_COPY) is False
-    assert reader_for_backend(ClipboardBackend.WL_COPY) is None
-    assert reader_for_backend(ClipboardBackend.X11) is None
+    assert clipboard_read_available(_WL) is False
+    assert plat.clipboard_reader("wl-copy") is None
+    assert plat.clipboard_reader("x11") is None
 
     tool = tmp_path / "wl-paste"
     tool.write_text("#!/bin/sh\nexit 0\n")
     tool.chmod(0o755)
-    assert clipboard_read_available(ClipboardBackend.WL_COPY) is True
-    assert clipboard_read_available(ClipboardBackend.X11) is False
+    assert clipboard_read_available(_WL) is True
+    assert clipboard_read_available(_X11) is False

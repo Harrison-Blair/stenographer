@@ -35,11 +35,9 @@ def physical_core_count() -> int | None:
 def count_physical_cores(affinity: set[int], topology_root: Path) -> int | None:
     """Count unique ``(physical_package_id, core_id)`` pairs under *topology_root*.
 
-    ``None`` when the affinity set is empty or any topology file is missing or
+    ``None`` when any topology file is missing or
     unreadable — a partial count would silently under-report the machine.
     """
-    if not affinity:
-        return None
     physical: set[tuple[str, str]] = set()
     try:
         for cpu in affinity:
@@ -86,3 +84,27 @@ def read_process_resident_bytes(
     except (OSError, ValueError, IndexError):
         return None
     return pages * (page_size if page_size is not None else os.sysconf("SC_PAGE_SIZE"))
+
+
+class LinuxProcessCounters:
+    """``ProcessCounters`` from ``/proc``; the root is injectable for tests."""
+
+    def __init__(
+        self,
+        proc_root: Path = PROC_ROOT,
+        *,
+        clock_ticks: int | None = None,
+        page_size: int | None = None,
+    ) -> None:
+        self._proc_root = proc_root
+        self.clock_ticks = os.sysconf("SC_CLK_TCK") if clock_ticks is None else clock_ticks
+        self._page_size = os.sysconf("SC_PAGE_SIZE") if page_size is None else page_size
+
+    def system_cpu_times(self) -> tuple[int, int] | None:
+        return read_system_cpu_times(self._proc_root)
+
+    def process_cpu_ticks(self, pid: int) -> int | None:
+        return read_process_cpu_ticks(pid, self._proc_root)
+
+    def process_resident_bytes(self, pid: int) -> int | None:
+        return read_process_resident_bytes(pid, self._proc_root, page_size=self._page_size)

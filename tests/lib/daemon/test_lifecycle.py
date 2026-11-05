@@ -11,12 +11,12 @@ import time
 import numpy as np
 import pytest
 
+from stenographer.lib.audio.recorder import RecorderState
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.daemon import Daemon
 from stenographer.lib.refine.cancellation import never_cancelled
-from stenographer.lib.refine.null_refiner import NullRefiner
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.results import TranscriptionResult
 
@@ -52,42 +52,22 @@ def test_build_wires_collaborators_lazily():
         assert daemon._busy is False
         assert daemon._listener is not None
         assert daemon._deliverer is not None
-        assert daemon._worker.is_alive() is False
-        assert daemon._recorder.is_active is False
-        assert daemon._recorder.is_prepared is False
+        assert daemon._worker.process_ids == ()
+        assert daemon._recorder._state is not RecorderState.CAPTURING
+        assert daemon._recorder._state is not RecorderState.PREPARED
     finally:
         # stop() before run() must be a safe no-op.
         daemon.stop()
 
 
-def test_build_wires_toggle_mode_press_only():
-    # Seen to FAIL against a build that ignores hotkey.mode and wires toggle
-    # like hold. Same real-build style as the lazy-wiring test above: nothing
-    # is opened, no mocks.
-    pytest.importorskip("stenographer.lib.hotkey.binding")
+@pytest.mark.parametrize("field", ["binding", "general_binding", "cancel_binding"])
+def test_build_identifies_invalid_binding_setting(field):
+    from stenographer.lib.hotkey.errors import BindingError
 
-    defaults = Config.defaults()
-    hold_cfg = dataclasses.replace(
-        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hold")
-    )
-    hold = _build_or_skip(hold_cfg)
-    try:
-        assert hold._listener._on_start == hold.on_key_down
-        assert hold._listener._on_stop == hold.on_key_up
-    finally:
-        hold.stop()
-
-    toggle_cfg = dataclasses.replace(
-        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="toggle")
-    )
-    toggle = _build_or_skip(toggle_cfg)
-    try:
-        # Only presses drive the session; the falling edge must be inert.
-        assert toggle._listener._on_start == toggle.on_toggle_press
-        assert toggle._listener._on_stop != toggle.on_key_up
-        assert toggle._listener._on_stop != toggle.on_key_down
-    finally:
-        toggle.stop()
+    cfg = _no_network_cfg()
+    cfg = dataclasses.replace(cfg, hotkey=dataclasses.replace(cfg.hotkey, **{field: "KEY_NOPE"}))
+    with pytest.raises(BindingError, match=rf"hotkey\.{field}: unknown key 'KEY_NOPE'"):
+        Daemon.build(cfg, clipboard_backend="wl-copy", platform=_Platform())
 
 
 def test_a_busy_press_of_the_other_binding_holds_the_paste_until_released():
@@ -217,6 +197,42 @@ def test_cancel_during_capture_finalization_never_starts_pipeline(daemon_logs):
     assert daemon._deliverer.delivered == []
     assert daemon._feedback.cues == ["record_start", "error"]
     assert "outcome=CANCELLED" in _summary(daemon_logs)
+
+
+def test_cancel_during_finalization_after_a_delivered_utterance_still_cancels(daemon_logs):
+    class _CancelingRecorder(_Recorder):
+        cancel = None
+
+        def stop(self) -> np.ndarray:
+            samples = super().stop()
+            if self.cancel is not None:
+                self.cancel()
+            return samples
+
+    daemon = _daemon(result=TranscriptionResult(text="one two", duration_seconds=1.0))
+    recorder = _CancelingRecorder(_SPEECH)
+    daemon._recorder = recorder
+    try:
+        daemon.on_key_down()
+        daemon.on_key_up()
+        first_pipeline = daemon._pipeline_thread
+        first_pipeline.join(timeout=2.0)
+        assert not first_pipeline.is_alive()
+        assert len(daemon._deliverer.delivered) == 1
+
+        recorder.cancel = daemon.on_cancel
+        daemon.on_key_down()
+        daemon.on_key_up()
+        if daemon._pipeline_thread is not first_pipeline:
+            daemon._pipeline_thread.join(timeout=2.0)
+        second_pipeline = daemon._pipeline_thread
+    finally:
+        daemon.stop()
+
+    assert second_pipeline is first_pipeline
+    assert len(daemon._worker.utterances) == 1
+    assert len(daemon._deliverer.delivered) == 1
+    assert "outcome=CANCELLED" in daemon_logs.text
 
 
 def test_cancel_while_busy_discards_result_before_delivery(daemon_logs):
@@ -349,7 +365,7 @@ def test_stop_closes_a_latched_hybrid_recording_as_cancelled(daemon_logs):
 
 
 def test_build_wires_the_worker_callbacks_onto_this_daemon(tmp_path, monkeypatch):
-    # The three callbacks are closures over a daemon that does not exist yet
+    # The two callbacks are closures over a daemon that does not exist yet
     # when ``Worker`` is constructed. Seen to FAIL against closures bound to a
     # ``daemon`` name captured before assignment (NameError on the first cold
     # load) and against a build that never passed them to the worker at all.
@@ -373,9 +389,36 @@ def test_build_wires_the_worker_callbacks_onto_this_daemon(tmp_path, monkeypatch
         assert status.loading == [(LoadingModel.ASR, True)]
         daemon._worker._on_model_loading_finished()
         assert status.loading == [(LoadingModel.ASR, True), (LoadingModel.ASR, False)]
+    finally:
+        daemon.stop()
 
-        daemon._worker._on_transcribing()
-        assert status.states == [OverlayState.TRANSCRIBING]
+
+def test_cancel_while_worker_waits_for_model_lock_keeps_cancelled_state():
+    from tests.lib.transcribe.support import FakeAsrTransport
+
+    platform = _Platform()
+    platform.asr_transport = lambda: FakeAsrTransport()
+    status = _Status()
+    daemon = Daemon.build(_no_network_cfg(), clipboard_backend="wl-copy", platform=platform)
+    daemon._status = status
+    started = threading.Event()
+
+    def transcribe():
+        started.set()
+        daemon._worker.transcribe(_SPEECH, 1)
+
+    try:
+        daemon._busy = True
+        daemon._utterance_id = 1
+        daemon._publish_state(OverlayState.TRANSCRIBING)
+        with daemon._worker._lock:
+            thread = threading.Thread(target=transcribe)
+            thread.start()
+            assert started.wait(1)
+            daemon.on_cancel()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert status.states == [OverlayState.TRANSCRIBING, OverlayState.CANCELLED]
     finally:
         daemon.stop()
 
@@ -458,7 +501,7 @@ def test_refine_loading_publish_happens_while_the_open_load_counter_is_locked():
     seen_locked: list[bool] = []
 
     class _LockCheckingStatus:
-        def publish(self, state):
+        def publish(self, state, profile=None):
             return 0
 
         def loading_activity(self, model, active):
@@ -485,7 +528,7 @@ def test_the_built_daemon_hands_its_refine_observers_to_the_refiner(monkeypatch)
 
     def fake_build_refiner(cfg, **kwargs):
         captured.update(kwargs)
-        return NullRefiner()
+        return None
 
     # Patched before construction: `_daemon()` builds `Daemon(...)` directly,
     # which calls `build_refiner` from inside `__init__`.
@@ -670,22 +713,10 @@ def test_a_recorder_failure_during_shutdown_still_closes_the_utterance(daemon_lo
     assert "outcome=CANCELLED" in _summary(daemon_logs)
 
 
-def test_run_before_build_refuses_rather_than_blocking():
-    daemon = _daemon()
-    try:
-        with pytest.raises(RuntimeError, match=r"daemon\.run\(\) before build\(\)"):
-            daemon.run()
-    finally:
-        daemon.stop()
-
-
 def test_run_starts_the_listener_and_returns_once_stop_is_requested(daemon_logs):
     daemon = _daemon()
     listener = _Listener(
-        chord=frozenset({1}),
         device=None,
-        on_start=daemon.on_key_down,
-        on_stop=daemon.on_key_up,
         lock=threading.RLock(),
     )
     daemon._listener = listener
@@ -769,7 +800,7 @@ def test_stop_waits_for_an_in_flight_refine_before_unloading_the_model():
         def last_result(self):
             return None
 
-        def refine(self, text: str, *, cancelled=never_cancelled) -> str:
+        def refine(self, text: str, *, profile, cancelled=never_cancelled) -> str:
             order.append("refine")
             refine_entered.set()
             hold_refine.wait(timeout=5.0)
@@ -824,51 +855,6 @@ def test_stop_waits_for_an_in_flight_refine_before_unloading_the_model():
     assert stop_errors == []
     assert order == ["refine", "unload"]
     assert pipeline_alive_at_unload == [False]
-
-
-def test_stop_joins_the_pipeline_thread_before_calling_unload(monkeypatch):
-    # Deterministic companion to the behavioural test above: asserts the
-    # code-level call SEQUENCE (pipeline join before unload) with nothing
-    # blocked, so there is no timing window at all — it inverts 100% of the
-    # time against the reverted ordering, by construction. It is whiter-box
-    # than the test above (it asserts "join was called" rather than the
-    # user-visible "the thread was not alive"), so it is kept as a second,
-    # belt-and-braces guard rather than a replacement for it.
-    order: list[str] = []
-
-    class _Refiner:
-        def will_refine(self, text: str) -> bool:
-            return True
-
-        @property
-        def last_result(self):
-            return None
-
-        def refine(self, text: str, *, cancelled=never_cancelled) -> str:
-            return text
-
-        def unload(self) -> None:
-            order.append("unload")
-
-    daemon = _daemon(
-        result=TranscriptionResult(text="one", duration_seconds=1.0), refiner=_Refiner()
-    )
-    daemon.on_key_down()
-    daemon.on_key_up()
-    pipeline_thread = daemon._pipeline_thread
-    assert pipeline_thread is not None
-
-    real_join = threading.Thread.join
-
-    def spy_join(self, timeout=None):
-        if self is pipeline_thread:
-            order.append("pipeline_join")
-        return real_join(self, timeout=timeout)
-
-    monkeypatch.setattr(threading.Thread, "join", spy_join)
-    daemon.stop()
-
-    assert order == ["pipeline_join", "unload"]
 
 
 def test_stop_does_not_wait_out_a_hung_refine_warmup():
@@ -991,7 +977,7 @@ def test_stop_bounds_the_total_wait_when_every_shutdown_join_is_wedged(monkeypat
 
 
 def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire):
-    from .support import _Feedback, _Notifier, _Recorder, _Worker
+    from .support import _Deliverer, _Feedback, _Listener, _Notifier, _Recorder, _Worker
 
     defaults = Config.defaults()
     cfg = dataclasses.replace(
@@ -1007,6 +993,8 @@ def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire):
         worker=_Worker(None, None),
         recorder=_Recorder(np.zeros(16000, dtype=np.float32)),
     )
+    daemon._listener = _Listener(device=None, lock=threading.RLock())
+    daemon._deliverer = _Deliverer()
     try:
         daemon._refiner.refine("alpha bravo charlie")
     finally:

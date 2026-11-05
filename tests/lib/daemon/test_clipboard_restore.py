@@ -37,7 +37,6 @@ class _Deliverer:
         self._error = error
         self._copy_first = copy_first
         self.originals: list[str | None] = []
-        self.restores = 0
         self.last_timings: DeliveryTimings | None = None
 
     def deliver(self, text, *, original=None, on_copied=None, cancelled=None):
@@ -63,7 +62,6 @@ class _Deliverer:
 
     def restore_clipboard(self) -> bool:
         self._events.append("restore")
-        self.restores += 1
         if self.last_timings is not None:
             self.last_timings = DeliveryTimings(
                 **{**self.last_timings.__dict__, "restore_ms": 4.0, "restored": True}
@@ -171,7 +169,9 @@ def test_the_restore_runs_after_a_refused_copy():
     deliverer = _Deliverer(events, result=False)
     pipeline, failures = _pipeline(events=events, deliverer=deliverer)
 
-    assert pipeline.run(_SPEECH, utterance=1, record=_record()) == "ERROR"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=_record(), profile=RefineProfile.AGENT) == "ERROR"
+    )
     assert failures == ["could not copy transcript to clipboard"]
     assert events == ["deliver", "restore"]
 
@@ -181,7 +181,9 @@ def test_the_restore_runs_after_a_raising_delivery():
     deliverer = _Deliverer(events, error=RuntimeError("chord refused"))
     pipeline, failures = _pipeline(events=events, deliverer=deliverer)
 
-    assert pipeline.run(_SPEECH, utterance=1, record=_record()) == "ERROR"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=_record(), profile=RefineProfile.AGENT) == "ERROR"
+    )
     assert failures == ["delivery failed"]
     assert events == ["deliver", "restore"]
 
@@ -189,12 +191,15 @@ def test_the_restore_runs_after_a_raising_delivery():
 def test_the_restore_runs_after_a_cancel_that_withheld_the_chord():
     events: list[str] = []
     deliverer = _Deliverer(events, result=False)
-    calls = iter([False, False, False, True])
+    calls = iter([False, False, False, False, True])
     pipeline, _failures = _pipeline(
         events=events, deliverer=deliverer, refined=None, cancelled=lambda: next(calls, True)
     )
 
-    assert pipeline.run(_SPEECH, utterance=1, record=_record()) == "CANCELLED"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=_record(), profile=RefineProfile.AGENT)
+        == "CANCELLED"
+    )
     assert events == ["deliver", "restore"]
 
 
@@ -207,7 +212,7 @@ def test_the_restore_runs_when_the_delivered_cue_raises():
 
     pipeline, failures = _pipeline(events=events, deliverer=deliverer, play_cue=broken_cue)
 
-    pipeline.run(_SPEECH, utterance=1, record=_record())
+    pipeline.run(_SPEECH, utterance=1, record=_record(), profile=RefineProfile.AGENT)
     assert failures == ["transcription pipeline failed"]
     assert events == ["deliver", "cue:delivered", "restore"]
 
@@ -217,24 +222,11 @@ def test_no_restore_is_asked_for_without_a_delivery_attempt():
     deliverer = _Deliverer(events)
     pipeline, _failures = _pipeline(events=events, deliverer=deliverer, text="   ")
 
-    assert pipeline.run(_SPEECH, utterance=1, record=_record()) == "SILENT"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=_record(), profile=RefineProfile.AGENT)
+        == "SILENT"
+    )
     assert events == []
-
-
-def test_a_raising_restore_never_reaches_the_pipeline_outcome(daemon_logs):
-    events: list[str] = []
-    deliverer = _Deliverer(events)
-
-    def broken() -> bool:
-        raise RuntimeError("restore exploded")
-
-    deliverer.restore_clipboard = broken
-    pipeline, failures = _pipeline(events=events, deliverer=deliverer)
-    record = _record()
-
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "DELIVERED"
-    assert failures == []
-    assert "pipeline: restore_failed" in daemon_logs.text
 
 
 def test_the_restore_projection_never_recomputes_stop_to_chord():

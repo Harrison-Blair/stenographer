@@ -21,7 +21,7 @@ from stenographer.overlay.rendering.render import render_overlay, spectrum_bar_b
 
 def test_profile_round_trips_with_a_state_message():
     message = StateMessage(4, OverlayState.REFINING, RefineProfile.AGENT)
-    assert decode_message(encode_message(message)) == message
+    assert decode_message(encode_message(message).encode()) == message
 
 
 def test_reducer_keeps_profile_for_rendering():
@@ -45,6 +45,7 @@ def test_profiled_recording_keeps_the_spectrum_inside_the_pill(profile: RefinePr
     bars = spectrum_bar_bounds(
         levels,
         pill_bounds=frame.pill_bounds,
+        scale=frame.scale,
         left_offset=_PROFILE_LABEL_EXTRA,
     )
     dot_left_edge = right - _DOT_RIGHT_INSET - _DOT_DIAMETER // 2

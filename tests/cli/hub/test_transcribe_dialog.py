@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,20 +22,13 @@ from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
 from stenographer.lib.sessions import SessionStore
-from tests.cli.hub.test_library import FakeServices, _library, _rows, _screen_text, _until
+from tests.cli.hub.support import _screen_text, make_app
+from tests.cli.hub.test_library import FakeServices, _library, _rows, _until
 from tests.cli.hub.test_session_jobs import FakePlatform
-from tests.lib.files.test_engine import FakeAsrProcess, FakeAsrTransport, FakeSegmenter
+from tests.lib.files.test_engine import FakeSegmenter, _file_asr_process
+from tests.lib.transcribe.support import FakeAsrTransport
 
 FAIL = "\N{MULTIPLICATION SIGN}"
-
-
-@pytest.fixture(autouse=True)
-def _utc(monkeypatch):
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
 
 
 class RecordingServices(FakeServices):
@@ -64,17 +56,11 @@ def _home(tmp_path: Path) -> Path:
     _write_audio(home / "bravo.flac", 75)
     _write_audio(home / "meetings" / "charlie.wav", 1)
     (home / "notes.txt").write_text("not audio", encoding="utf-8")
-    (home / ".cache").mkdir()
     return home
 
 
 def _list_rows(app: HubApp) -> list[str]:
     return app.screen.query_one("#transcribe-list").render().plain.splitlines()
-
-
-def _dialog(app: HubApp) -> TranscribeDialog:
-    assert isinstance(app.screen, TranscribeDialog)
-    return app.screen
 
 
 async def _open_dialog(pilot, app: HubApp) -> TranscribeDialog:
@@ -93,7 +79,7 @@ async def _search(pilot, text: str) -> None:
 
 def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
     home = _home(tmp_path)
-    app = HubApp(RecordingServices(tmp_path / "sessions"), files_home=home)
+    app = make_app(tmp_path, RecordingServices(tmp_path / "sessions"), files_home=home)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -115,11 +101,11 @@ def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
                 assert label in text, label
             assert "Language" not in text
             rows = _list_rows(app)
-            assert rows[0].strip() == ".."
+            assert rows[0] == "  .."
             assert rows[1] == "▶ meetings/"
             assert rows[2].startswith("  alpha.wav") and rows[2].endswith("0:02")
             assert rows[3].startswith("  bravo.flac") and rows[3].endswith("1:15")
-            assert len(rows) == 4  # no text file, no hidden folder
+            assert len(rows) == 4  # no text file
 
             # enter opens the selected folder; ``..`` goes back up.
             await pilot.press("enter")
@@ -147,20 +133,19 @@ def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
 def test_transcribe_options_and_an_invalid_speaker_count(tmp_path, by):
     home = _home(tmp_path)
     services = RecordingServices(tmp_path / "sessions")
-    app = HubApp(services, files_home=home)
+    app = make_app(tmp_path, services, files_home=home)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_dialog(pilot, app)
             await pilot.press("down")
             if by == "key":
-                await pilot.press("s", "r", "c")
+                await pilot.press("r", "c")
             else:
-                await pilot.click("#transcribe-speakers")
                 await pilot.click("#transcribe-refine")
                 await pilot.click("#transcribe-count-button")
             text = _screen_text(app)
-            assert "[s] ( ) off" in text and "[r] (●) on" in text
+            assert "[s] (●) on" in text and "[r] (●) on" in text
             count = app.screen.query_one("#transcribe-count", Input)
             assert app.screen.focused is count
 
@@ -175,15 +160,14 @@ def test_transcribe_options_and_an_invalid_speaker_count(tmp_path, by):
                 )
             assert services.jobs == []
 
-            count.value = "3"
-            await pilot.pause()
-            assert FAIL not in _screen_text(app)
+            await pilot.click("#transcribe-speakers")
+            assert count.disabled
             await pilot.press("enter")
             await _until(pilot, lambda: len(services.jobs) == 1, "no job was queued")
             job = services.jobs[0]
             assert job.options.path == home / "alpha.wav"
             assert services.submitted_options == [
-                {"diarize": False, "speaker_count": 3, "refine": True}
+                {"diarize": False, "speaker_count": None, "refine": True}
             ]
 
     asyncio.run(exercise())
@@ -193,7 +177,7 @@ def test_transcribe_queues_one_job_and_the_library_selects_its_row(tmp_path):
     root, _sessions = _library(tmp_path)
     home = _home(tmp_path)
     services = RecordingServices(root)
-    app = HubApp(services, files_home=home)
+    app = make_app(tmp_path, services, files_home=home)
     screen = app.library_screen
 
     async def exercise():
@@ -218,11 +202,19 @@ def _engine_app(tmp_path: Path, home: Path, *, decoder=None) -> tuple[HubApp, Pa
     sessions = data / "sessions"
 
     def make_engine(config, *, platform):
+        class FilesPlatform:
+            def data_dir(self, _env, _home):
+                return data
+
+            def ffmpeg_decoder(self):
+                return decoder or SubprocessFfmpegDecoder()
+
+            def asr_transport(self):
+                return FakeAsrTransport(_file_asr_process())
+
         return FilesEngine(
             config,
-            data_dir=data,
-            decoder=decoder or SubprocessFfmpegDecoder(),
-            transport=FakeAsrTransport(FakeAsrProcess()),
+            platform=FilesPlatform(),
             segmenter_factory=FakeSegmenter,
             clock=lambda: datetime(2026, 10, 27, 9, 0, tzinfo=UTC),
         )
@@ -233,7 +225,7 @@ def _engine_app(tmp_path: Path, home: Path, *, decoder=None) -> tuple[HubApp, Pa
         session_store=SessionStore(sessions),
         files_engine_factory=make_engine,
     )
-    return HubApp(services, files_home=home), sessions
+    return make_app(tmp_path, services, files_home=home), sessions
 
 
 def _recording(tmp_path: Path) -> Path:
@@ -311,5 +303,50 @@ def test_transcribe_an_m4a_without_ffmpeg_shows_the_needs_ffmpeg_message(tmp_pat
             app.refresh_view()
             await pilot.pause()
             assert "\u00d7 needs ffmpeg" in _screen_text(app)
+
+    asyncio.run(exercise())
+
+
+pytestmark = pytest.mark.usefixtures("utc")
+
+
+def test_hidden_folders_and_audio_search(tmp_path):
+    home = _home(tmp_path)
+    hidden = home / ".local"
+    hidden.mkdir()
+    _write_audio(hidden / ".recording.wav")
+    app = make_app(tmp_path, RecordingServices(tmp_path / "sessions"), files_home=home)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            dialog = await _open_dialog(pilot, app)
+            assert any(".local/" in row for row in _list_rows(app))
+            await _search(pilot, ".local")
+            await pilot.press("enter")
+            assert dialog.directory == hidden
+            assert not any(".recording.wav" in row for row in _list_rows(app))
+            await _search(pilot, ".recording")
+            assert any(".recording.wav" in row for row in _list_rows(app))
+
+    asyncio.run(exercise())
+
+
+def test_unreadable_folder_shows_error_and_parent(tmp_path):
+    home = _home(tmp_path)
+    vanished = home / "vanished"
+    vanished.mkdir()
+    app = make_app(tmp_path, RecordingServices(tmp_path / "sessions"), files_home=home)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            dialog = await _open_dialog(pilot, app)
+            vanished.rmdir()
+            dialog._open(vanished)
+            await pilot.pause()
+            rows = _list_rows(app)
+            assert rows[0].strip("▶ ") == ".."
+            assert any("Cannot read folder:" in row and "No such file" in row for row in rows)
+            await pilot.press("enter")
+            assert dialog.directory == home
 
     asyncio.run(exercise())

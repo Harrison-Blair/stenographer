@@ -16,7 +16,8 @@ def guidance() -> OverlayGuidance:
                 "XWayland requires the Shape and RandR extensions"
             ),
             UnavailableReason.BACKEND_DEPENDENCY_MISSING: (
-                "overlay backend imports failed; reinstall stenographer with its overlay extras"
+                "overlay backend imports failed; reinstall Stenographer "
+                "using the documented installation method"
             ),
         },
         overlay_fix_hint_default=(

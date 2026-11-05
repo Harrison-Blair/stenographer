@@ -7,19 +7,16 @@ sample-based input duration attached to accepted ASR results (including empty
 results), never wall time or VAD speech estimates. Missing values stay unknown.
 New stop_to_ready_ms measurements end at successful formatting, before delivery;
 older persisted values retain their historical semantics without rewriting.
-total_ms includes the clipboard restore's settle delay when a restore ran.
+total_ms includes the clipboard restore's settle delay when a restore followed a paste chord.
 """
 
 from __future__ import annotations
 
 import math
-import re
-from collections import Counter
 from collections.abc import Mapping, Sequence
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
-_WORD = re.compile(r"[^\W_]+(?:['\u2019][^\W_]+)*", re.UNICODE)
 METRICS = frozenset(
     [
         "round_trip_ms",
@@ -158,10 +155,6 @@ OUTCOMES = frozenset(
 )
 
 
-def count_words(text: str) -> int:
-    return len(_WORD.findall(text))
-
-
 def clean_metrics(values: Mapping[str, object]) -> dict[str, int | float | bool]:
     """Reject unrecognized fields and nonfinite/negative measurements before persistence."""
     result: dict[str, int | float | bool] = {}
@@ -209,35 +202,17 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
-def local_date_bound(value: str, *, end: bool = False) -> str:
-    """Local calendar day to UTC; end bounds are exclusive next-day midnight."""
-    day = date.fromisoformat(value)
-    if end:
-        day += timedelta(days=1)
-    return datetime.combine(day, time.min).astimezone(UTC).isoformat(timespec="microseconds")
-
-
 def summarize(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     totals = {
         name: sum(record["metrics"].get(name, 0) for record in records)
         for name in (
             "recognized_words",
-            "final_words",
             "copied_words",
             "chord_words",
             "asr_audio_s",
-            "capture_s",
-            "vad_s",
-            "ignored_busy_presses",
         )
     }
-    days: dict[str, dict[str, int | float]] = {}
-    for record in records:
-        day = datetime.fromisoformat(record["started_at"]).astimezone().date().isoformat()
-        point = days.setdefault(day, {"utterances": 0, "recognized_words": 0, "asr_audio_s": 0})
-        point["utterances"] += 1
-        for key in ("recognized_words", "asr_audio_s"):
-            point[key] += record["metrics"].get(key, 0)
+    days = {datetime.fromisoformat(record["started_at"]).astimezone().date() for record in records}
     totals.update(
         utterances=len(records),
         active_days=len(days),
@@ -249,6 +224,4 @@ def summarize(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             key: distribution([record["metrics"].get(key) for record in records])
             for key in sorted(METRICS)
         },
-        "daily": [{"date": day, **days[day]} for day in sorted(days)],
-        "outcomes": dict(Counter(record["outcome"] or "incomplete" for record in records)),
     }

@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
 import logging
 import pathlib
+import threading
 from typing import TYPE_CHECKING, ClassVar
 
 from rich.text import Text
@@ -16,11 +16,12 @@ from textual.widgets import Static
 
 from stenographer.cli.hub.config_view import ConfigEditor
 from stenographer.cli.hub.defaults_dialog import DefaultsDialog
-from stenographer.cli.hub.doctor_panel import DoctorPanel
 from stenographer.cli.hub.doctor_view import (
+    CHECK_GROUPS,
     DOCTOR_STATE_GLYPHS,
     DOCTOR_STATE_TONES,
     DOCTOR_STATE_WORDS,
+    UNREADABLE_LOG,
     DoctorCheck,
     DoctorReport,
 )
@@ -28,6 +29,7 @@ from stenographer.cli.hub.models_dialog import ModelsDialog
 from stenographer.cli.hub.quick_setup_dialog import QuickSetupDialog
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.frame import Frame
+from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
@@ -78,7 +80,6 @@ class ChecksTab(Vertical):
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("up", "move_check(-1)", "Previous check"),
         ("down", "move_check(1)", "Next check"),
-        ("enter", "toggle_details", "Show or hide how to fix the check"),
         ("r", "run_checks", "Run the checks again"),
         ("f", "fix", "Fix the selected check"),
         ("t", "test", "Test the area of the selected check"),
@@ -105,6 +106,9 @@ class ChecksTab(Vertical):
         height: 1fr;
         margin-right: 2;
     }
+    ChecksTab #doctor-panel { height: 1fr; }
+    ChecksTab .-section { height: 1; color: #8b93a1; text-style: bold; }
+    ChecksTab .-section.-later { margin-top: 1; }
     ChecksTab #checks-list-hint {
         height: 1;
         color: #8b93a1;
@@ -143,7 +147,7 @@ class ChecksTab(Vertical):
     def __init__(
         self,
         *,
-        doctor_probe: Callable[[Config, pathlib.Path | None], DoctorReport],
+        doctor_probe: Callable[[Config], DoctorReport],
         setup_test: Callable[[str, Config], str],
         model_download: Callable[[str], None],
         model_status: Callable[[], tuple[ModelEntry, ...]],
@@ -155,22 +159,34 @@ class ChecksTab(Vertical):
         self._doctor_probe = doctor_probe
         self._setup_test = setup_test
         self._model_download = model_download
+        self._model_download_lock = threading.Lock()
         self._model_status = model_status
         self._open_log = open_log
         self._copy_report = copy_report
-        self.doctor_panel = DoctorPanel(id="doctor-panel")
+        self._indexes: dict[str, tuple[int, ...]] = {}
         self.report: DoctorReport | None = None
         self.checking = False
         self.index = 0
-        self.details = False
-        self.ran_at: datetime.datetime | None = None
-        self.test_status = ""
+        self._test_statuses: dict[str, str] = {}
+        self._view_key = None
+
+    @property
+    def test_status(self) -> str:
+        check = self.selected
+        return self._test_statuses.get(check.check_id, "") if check else ""
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="checks-body"):
             with Vertical(id="checks-list-column"):
-                yield self.doctor_panel
-                yield Static("↑↓ check · enter details · t test", id="checks-list-hint")
+                with Vertical(id="doctor-panel"):
+                    for position, group in enumerate(CHECK_GROUPS):
+                        section = Static(group, id=f"checks-section-{group}", markup=False)
+                        section.add_class("-section")
+                        if position:
+                            section.add_class("-later")
+                        yield section
+                        yield SelectableList(id=f"checks-{group}")
+                yield Static("↑↓ check · t test", id="checks-list-hint")
             with Frame(id="checks-detail", variant="fill"):
                 yield Static("", id="checks-detail-head", markup=False)
                 yield Static("", id="checks-detail-body", markup=False)
@@ -205,7 +221,6 @@ class ChecksTab(Vertical):
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
         return (
             ("↑↓", "check"),
-            ("enter", "details"),
             ("t", "test"),
             ("f", "fix"),
             ("r", "run again"),
@@ -217,7 +232,7 @@ class ChecksTab(Vertical):
         report = self.report
         if report is None:
             return Text("Checking…" if self.checking else "No check run yet.")
-        ran_at = self.ran_at.strftime("%H:%M") if self.ran_at is not None else "—"
+        ran_at = report.checked_at.strftime("%H:%M")
         card = Text()
         counts = (
             (report.ok_count, "pass", "ok"),
@@ -234,9 +249,10 @@ class ChecksTab(Vertical):
     def refresh_view(self) -> None:
         if not self.is_mounted:
             return
-        self.doctor_panel.refresh_view(
-            self.report, selected_index=self.index, loading=self.checking
-        )
+        key = (self.report, self.index, self.checking, self.test_status)
+        if key == self._view_key:
+            return
+        self._refresh_checks()
         check = self.selected
         head = self.query_one("#checks-detail-head", Static)
         body = self.query_one("#checks-detail-body", Static)
@@ -257,7 +273,7 @@ class ChecksTab(Vertical):
             title.append(f" {check.label} · {DOCTOR_STATE_WORDS[check.status]}")
             head.update(title)
             lines = [line for line in (check.explanation, check.detail) if line]
-            if self.details and check.fix:
+            if check.fix:
                 lines.append(f"how to fix: {check.fix}")
             body.update("\n".join(lines))
             checked = f"checked {self.report.checked_at:%H:%M}"
@@ -273,10 +289,12 @@ class ChecksTab(Vertical):
         status = self.query_one("#checks-test-status", Static)
         status.update(f"test: {self.test_status}" if self.test_status else "")
         self.query_one("#checks-warnings", Static).update(self._warnings_text())
+        self._view_key = key
 
     def _warnings_text(self) -> Text:
         entries = self.report.warning_entries() if self.report is not None else ()
-        if not entries:
+        unreadable = self.report is not None and UNREADABLE_LOG in self.report.warnings
+        if not entries and not unreadable:
             return Text("No recent warnings.", style=StatusToken.TONES["dim"])
         text = Text()
         for time, level, token, description in entries:
@@ -289,6 +307,39 @@ class ChecksTab(Vertical):
             text.append(f"  {token}")
             if description:
                 text.append(f"\n{'':7}{description}", style=StatusToken.TONES["dim"])
+        if unreadable:
+            if text:
+                text.append("\n")
+            text.append(UNREADABLE_LOG, style=StatusToken.TONES["dim"])
+        return text
+
+    def _refresh_checks(self):
+        report, selected_index, loading = self.report, self.index, self.checking
+        for group in CHECK_GROUPS:
+            rows: list[tuple[Text, str]] = []
+            indexes: list[int] = []
+            if report is not None:
+                for index, check in enumerate(report.checks):
+                    if check.group == group:
+                        rows.append((self.row_text(check), ""))
+                        indexes.append(index)
+            elif group == "input":
+                rows.append(
+                    (Text("Checking system capabilities…" if loading else "No checks."), "")
+                )
+            self._indexes[group] = tuple(indexes)
+            selected = indexes.index(selected_index) if selected_index in indexes else None
+            self.query_one(f"#checks-{group}", SelectableList).set_rows(tuple(rows), selected)
+            shown = bool(rows)
+            self.query_one(f"#checks-section-{group}").display = shown
+            self.query_one(f"#checks-{group}").display = shown
+
+    @staticmethod
+    def row_text(check: DoctorCheck) -> Text:
+        tone = StatusToken.TONES[DOCTOR_STATE_TONES[check.status]]
+        text = Text()
+        text.append(DOCTOR_STATE_GLYPHS[check.status], style=tone)
+        text.append(f" {check.label:<{14}} {check.detail}")
         return text
 
     def run_checks(self) -> None:
@@ -303,7 +354,6 @@ class ChecksTab(Vertical):
             report = await asyncio.to_thread(
                 self._doctor_probe,
                 app.current_config(),
-                app.config_editor.path if app.config_editor is not None else None,
             )
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: doctor_probe_failed", exc, safe=False)
@@ -320,43 +370,30 @@ class ChecksTab(Vertical):
                 ),
                 (),
             )
-        report = report.in_group_order()
         self.report = report
-        self.ran_at = datetime.datetime.now()
         log.info(
             fmt_event(
                 "hub", "doctor_checked", warn_count=report.warn_count, fail_count=report.fail_count
             )
         )
         self.index = report.first_issue_index
-        self.details = False
-        self.test_status = ""
         self.checking = False
-        app.set_check_summary(report.ok_count, report.warn_count, report.fail_count, self.ran_at)
-
-    def select_check(self, check_id: str) -> None:
-        """Select the check with ``check_id``."""
-        report = self.report
-        if report is None:
-            return
-        for index, check in enumerate(report.checks):
-            if check.check_id == check_id:
-                self._select(index)
-                return
+        app.refresh_view()
 
     def _select(self, index: int) -> None:
         self.index = index
-        self.details = False
-        self.test_status = ""
         log.info(
             fmt_event("hub", "doctor_check_selected", check=self.report.checks[index].check_id)
         )
         self.app.refresh_view()
 
     def on_row_selected(self, event: RowSelected) -> None:
-        if event.control is self.doctor_panel:
+        if event.control.id in {f"checks-{group}" for group in CHECK_GROUPS}:
             event.stop()
-            self._select(event.index)
+            group = event.control.id.removeprefix("checks-")
+            indexes = self._indexes[group]
+            if 0 <= event.index < len(indexes):
+                self._select(indexes[event.index])
 
     def action_run_checks(self) -> None:
         log.info(fmt_event("hub", "doctor_recheck_requested"))
@@ -367,11 +404,6 @@ class ChecksTab(Vertical):
         if report is None or not report.checks:
             return
         self._select((self.index + offset) % len(report.checks))
-
-    def action_toggle_details(self) -> None:
-        self.details = not self.details
-        log.info(fmt_event("hub", "doctor_details_toggled", expanded=self.details))
-        self.app.refresh_view()
 
     def action_fix(self) -> None:
         check = self.selected
@@ -398,29 +430,34 @@ class ChecksTab(Vertical):
         if entry is None:
             self.app.notify("This check has no test.")
             return
-        self.test_status = "running…"
+        if self._test_statuses.get(check.check_id) == "running…":
+            return
+        self._test_statuses[check.check_id] = "running…"
         self.app.refresh_view()
-        self.app.run_worker(self._run_test(entry[1]), group="setup-test", exclusive=True)
+        self.app.run_worker(self._run_test(check.check_id, entry[1]), group="setup-test")
 
-    async def _run_test(self, area: str) -> None:
+    async def _run_test(self, check_id: str, area: str) -> None:
         log.info(fmt_event("hub", "setup_test_started", step=area))
         try:
             result = await asyncio.to_thread(self._setup_test, area, self.app.current_config())
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: setup_test_failed", exc, safe=False, step=area)
-            self.test_status = f"failed: {type(exc).__name__}"
+            self._test_statuses[check_id] = f"failed: {type(exc).__name__}"
             self.app.notify("The setup test failed; see the log.", severity="error")
         else:
-            self.test_status = result
+            self._test_statuses[check_id] = result
             log.info(fmt_event("hub", "setup_test_completed", step=area))
         self.app.refresh_view()
 
     def action_open_log(self) -> None:
+        log.info(fmt_event("hub", "doctor_log_open_requested"))
+        self.app.run_worker(self._open_application_log(), group="open-log")
+
+    async def _open_application_log(self) -> None:
         from stenographer.lib.logging.pipeline import log_paths
 
-        log.info(fmt_event("hub", "doctor_log_open_requested"))
         try:
-            opened = self._open_log(log_paths()[0])
+            opened = await asyncio.to_thread(self._open_log, log_paths()[0])
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: doctor_log_open_failed", exc, safe=False)
             opened = False
@@ -456,16 +493,17 @@ class ChecksTab(Vertical):
 
     def action_models(self) -> None:
         log.info(fmt_event("hub", "models_opened"))
-        self.app.push_screen(ModelsDialog(self._model_status, self._model_download))
+        self.app.push_screen(
+            ModelsDialog(self._model_status, self._model_download, self._model_download_lock)
+        )
 
     def action_defaults(self) -> None:
-        from stenographer.lib.config.paths import resolve_config_path
-
         app = self.app
-        path = app.config_editor.path if app.config_editor is not None else resolve_config_path()
+        path = app.config_editor.path
         log.info(fmt_event("hub", "setup_defaults_requested"))
         app.push_screen(
-            DefaultsDialog(path), lambda confirmed: self._defaults_closed(path, confirmed)
+            DefaultsDialog(path, app.config_editor.unsaved_change_count),
+            lambda confirmed: self._defaults_closed(path, confirmed),
         )
 
     def _defaults_closed(self, path: pathlib.Path, confirmed: bool | None) -> None:
@@ -474,7 +512,7 @@ class ChecksTab(Vertical):
             self.app.run_worker(self._write_defaults(path), group="setup", exclusive=True)
 
     async def _write_defaults(self, path: pathlib.Path) -> None:
-        from stenographer.cli.setup.workflow import save_defaults
+        from stenographer.lib.config.document import save_defaults
 
         app = self.app
         try:

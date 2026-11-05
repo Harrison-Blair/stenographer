@@ -30,17 +30,16 @@ from stenographer.cli.shared.terminal import (
 )
 from stenographer.lib.config.constants import (
     ALLOWED_LOG_LEVELS,
-    ALLOWED_REFINE_SCHEMES,
     MAX_REFINE_WORDS,
     MIN_REFINE_WORDS,
 )
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
+from stenographer.lib.hotkey.binding import validate_binding
 
 if TYPE_CHECKING:
     from stenographer.lib.platform.host_guidance import HostGuidance
 
-_CLEAR = "clear"
 _SECTIONS = ("hotkey", "audio", "asr", "feedback", "refine")
 #: The keys the quick wizard edits, in the order its review screen lists them.
 _QUICK_REVIEW_FIELDS = (
@@ -57,13 +56,6 @@ _QUICK_REVIEW_FIELDS = (
     ("refine", "enabled"),
     ("refine", "model"),
 )
-
-
-def save_defaults(path: pathlib.Path):
-    """Write the annotated default config through the shared preservation layer."""
-    from stenographer.lib.config.document import ConfigDocument
-
-    return ConfigDocument.defaults(path).save(Config.defaults())
 
 
 def parse_choice(text: str, current: str, choices: Iterable[str]) -> str:
@@ -142,30 +134,6 @@ def parse_quick_review_action(text: str) -> str:
     if value in {"c", "cancel"}:
         return "cancel"
     raise ValueError("choose Save or Cancel")
-
-
-def restart_eligible(
-    *,
-    config_changed: bool,
-    custom_config: bool,
-    missing_required: bool,
-    service_active: str | None,
-) -> bool:
-    """Whether setup may offer a service restart."""
-
-    return (
-        config_changed and not custom_config and not missing_required and service_active == "active"
-    )
-
-
-def followup_exit_code(*, operational_failure: bool, missing_required: bool) -> int:
-    """Operational failures take precedence over a doctor capability failure."""
-
-    if operational_failure:
-        return 1
-    if missing_required:
-        return 78
-    return 0
 
 
 def _display_optional(value: object) -> str:
@@ -259,20 +227,36 @@ def parse_refine_host(text: str, current: str) -> str:
     the whole session at save time. The rejections mirror ``_build_refine``.
     """
 
-    from stenographer.lib.refine.endpoints import host_name, normalize_host, userinfo
+    from stenographer.lib.refine.endpoints import validated_host
+
+    value = text.strip()
+    return validated_host(value) if value else current
+
+
+def _numbered_choice[Choice](value: str, choices: Sequence[Choice]) -> Choice | None:
+    if value.isdecimal() and 1 <= int(value) <= len(choices):
+        return choices[int(value) - 1]
+    return None
+
+
+def _list_choices(console: Console, choices: Iterable[str]) -> None:
+    for number, name in enumerate(choices, 1):
+        console.write(f"  {number}. {name}")
+
+
+def parse_sound_pack_choice(text: str, current: str, choices: Sequence[str]) -> str:
+    """Parse a setup selection by number or case-insensitive pack name."""
 
     value = text.strip()
     if not value:
         return current
-    host = normalize_host(value)
-    scheme = host.partition("://")[0]
-    if scheme not in ALLOWED_REFINE_SCHEMES:
-        raise ValueError("must be an http:// or https:// URL")
-    if not host_name(host):
-        raise ValueError("must name a host")
-    if userinfo(host):
-        raise ValueError("must not embed credentials")
-    return host
+    choice = _numbered_choice(value, choices)
+    if choice is not None:
+        return choice
+    matches = [choice for choice in choices if choice.casefold() == value.casefold()]
+    if matches:
+        return matches[0]
+    raise ValueError(f"choose a number from 1-{len(choices)} or an available sound-pack name")
 
 
 def parse_model_choice(text: str, current: str, choices: Sequence[str]) -> str:
@@ -281,9 +265,8 @@ def parse_model_choice(text: str, current: str, choices: Sequence[str]) -> str:
     value = text.strip()
     if not value:
         return current
-    if value.isdecimal() and 1 <= int(value) <= len(choices):
-        return choices[int(value) - 1]
-    return value
+    choice = _numbered_choice(value, choices)
+    return choice if choice is not None else value
 
 
 def quick_tryout_lines(
@@ -382,13 +365,11 @@ def _prompt_number(
 def _prompt_sound_pack(console: Console, current: str, config_dir: pathlib.Path) -> str:
     """Offer bundled and valid custom packs without playing any cue."""
 
-    from stenographer.cli.sounds.workflow import parse_sound_pack_choice
     from stenographer.lib.sounds.packs import discover_sound_packs
 
     choices = discover_sound_packs(config_dir)
     console.write("Sound packs:")
-    for number, name in enumerate(choices, 1):
-        console.write(f"  {number}. {name}")
+    _list_choices(console, choices)
     prompt = f"Sound pack [{current}; Enter keeps, number/name selects]: "
     return str(
         console.validated(
@@ -396,14 +377,6 @@ def _prompt_sound_pack(console: Console, current: str, config_dir: pathlib.Path)
             lambda text: parse_sound_pack_choice(text, current, choices),
         )
     )
-
-
-def _refine_models(host: str) -> list[str]:
-    """Model tags the configured Ollama reports; ``[]`` when nothing answers."""
-
-    from stenographer.lib.refine.client import installed_model_names
-
-    return installed_model_names(host)
 
 
 def _edit_refine_section(console: Console, config: Config, *, ask_details: bool) -> Config:
@@ -415,6 +388,7 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
     the configured host and is skipped entirely while the stage stays off.
     """
 
+    from stenographer.lib.refine.client import installed_model_names
     from stenographer.lib.refine.endpoints import is_loopback
 
     refine = config.refine
@@ -445,12 +419,11 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
         # warning as the only sentence on screen for the whole section.
         if refine.host != previous_host:
             console.write(refine_host_line(refine.host, loopback=is_loopback(refine.host)))
-    installed = _refine_models(refine.host)
+    installed = installed_model_names(refine.host)
     console.write(refine_model_hint())
     if installed:
         console.write("Installed Ollama models:")
-        for number, name in enumerate(installed, 1):
-            console.write(f"  {number}. {name}")
+        _list_choices(console, installed)
     else:
         console.write(
             f"No refine model is available at {refine.host} yet (either nothing "
@@ -486,10 +459,6 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
     return dataclasses.replace(config, refine=refine)
 
 
-def _edit_refine(console: Console, config: Config) -> Config:
-    return _edit_refine_section(console, config, ask_details=True)
-
-
 def _audio_devices() -> list[tuple[str, str]]:
     """Return selectable input devices. An unusable PortAudio means no suggestions."""
 
@@ -514,10 +483,11 @@ def parse_device_choice(
     value = text.strip()
     if not value:
         return current
-    if value.casefold() in {_CLEAR, "auto", "automatic"}:
+    if value.casefold() in {"clear", "auto", "automatic"}:
         return None
-    if value.isdecimal() and 1 <= int(value) <= len(devices):
-        return devices[int(value) - 1][0]
+    choice = _numbered_choice(value, devices)
+    if choice is not None:
+        return choice[0]
     return value
 
 
@@ -529,8 +499,7 @@ def _prompt_device(
 ) -> str | None:
     console.write(f"{label} devices (automatic selection is always available):")
     if devices:
-        for number, (_, description) in enumerate(devices, 1):
-            console.write(f"  {number}. {description}")
+        _list_choices(console, (description for _, description in devices))
     else:
         console.write("  (no selectable devices found; manual entry is still available)")
 
@@ -541,26 +510,11 @@ def _prompt_device(
     return console.validated(prompt, lambda text: parse_device_choice(text, current, devices))
 
 
-def _parse_binding(text: str) -> str:
-    value = text.strip()
-    if not value:
-        raise ValueError("binding must be non-empty")
-    from stenographer.lib.hotkey.binding import parse_binding
-    from stenographer.lib.hotkey.errors import BindingError
-    from stenographer.lib.platform import current_platform
-
-    try:
-        parse_binding(value, current_platform().keys())
-    except BindingError as exc:
-        raise ValueError(str(exc)) from exc
-    return value
-
-
 def _prompt_typed_binding(console: Console, current: str, label: str = "Binding") -> str:
     return str(
         console.validated(
             f"{label} [{current}]: ",
-            lambda text: _parse_binding(text.strip() or current),
+            lambda text: validate_binding(text.strip() or current),
         )
     )
 
@@ -668,9 +622,6 @@ def _automatic_floor(
                     if remaining == 0
                     else f"Stay silent — recording starts in {remaining}..."
                 ),
-                on_voice_prompt=lambda: console.write(
-                    "Speak normally now for three seconds so visibility can be verified."
-                ),
             )
         except Exception as exc:
             # A CalibrationError is the estimator refusing the capture; anything
@@ -684,7 +635,7 @@ def _automatic_floor(
                 return _manual_floor(console, current)
             return current
 
-        console.write("Background profile learned and normal voice visibility verified.")
+        console.write("Background profile learned.")
         action = _prompt_choice(console, "Result", "accept", ("accept", "retry", "manual", "keep"))
         if action == "accept":
             return estimate
@@ -722,14 +673,13 @@ def _edit_feedback_section(
     config_dir: pathlib.Path,
     *,
     notice: Sequence[str],
-    skip_floor_without_overlay: bool,
     ask_log_level: bool,
 ) -> Config:
     """Prompt the feedback keys both wizards share, then the spectrum response.
 
-    The wizards differ only in *notice* (their calibration disclaimer), in
-    whether a disabled overlay skips the spectrum question entirely, and in
-    whether the log threshold is asked at all — it is not an essential.
+    The wizards differ only in *notice* (their calibration disclaimer) and in
+    whether the log threshold is asked at all — it is not an essential. A
+    disabled overlay skips the spectrum question and keeps the current floor.
     """
 
     console.write("\nFeedback")
@@ -757,7 +707,7 @@ def _edit_feedback_section(
     for line in notice:
         console.write(line)
     floor = feedback.spectrum_floor_dbfs
-    if skip_floor_without_overlay and not feedback.overlay:
+    if not feedback.overlay:
         console.write("Overlay is disabled, so display-spectrum calibration was skipped.")
     else:
         # Calibration only reads the (already chosen) input device from here.
@@ -777,7 +727,6 @@ def _edit_feedback(console: Console, config: Config, *, config_dir: pathlib.Path
             "IMPORTANT: spectrum calibration affects only the 18 visual bars.",
             "It never changes capture, min_speech_rms, speech gating, or transcription.",
         ),
-        skip_floor_without_overlay=False,
         ask_log_level=True,
     )
 
@@ -790,13 +739,8 @@ def _editors(config_dir: pathlib.Path) -> Mapping[str, Callable[[Console, Config
         "audio": _edit_audio,
         "asr": _edit_asr,
         "feedback": functools.partial(_edit_feedback, config_dir=config_dir),
-        "refine": _edit_refine,
+        "refine": functools.partial(_edit_refine_section, ask_details=True),
     }
-
-
-def _review(console: Console, config: Config) -> None:
-    for line in review_lines(config):
-        console.write(line)
 
 
 def _wizard(console: Console, initial: Config, config_dir: pathlib.Path) -> Config:
@@ -805,7 +749,8 @@ def _wizard(console: Console, initial: Config, config_dir: pathlib.Path) -> Conf
     for section in _SECTIONS:
         config = editors[section](console, config)
     while True:
-        _review(console, config)
+        for line in review_lines(config):
+            console.write(line)
         action = console.validated(
             "Save [Enter/S], Cancel [C], or re-edit "
             "1 Hotkey / 2 Audio / 3 ASR / 4 Feedback / 5 Refine: ",
@@ -832,15 +777,15 @@ def _capture_or_choose_binding(
     if action == "type":
         return _prompt_typed_binding(console, current)
 
-    from stenographer.cli.setup.binding_capture import capture_binding
     from stenographer.lib.hotkey.errors import BindingCaptureError
+    from stenographer.lib.platform import current_platform
 
     while True:
         console.write(
             "Press and release one key or a held chord now (15-second timeout; Ctrl-C cancels)."
         )
         try:
-            captured = capture_binding(console.stdin, device, timeout=15.0)
+            captured = current_platform().capture_binding(console.stdin, device, timeout=15.0)
         except BindingCaptureError as exc:
             console.error(f"binding capture failed: {exc}")
         else:
@@ -866,8 +811,8 @@ def _guided_setup(
     quick: bool = False,
 ) -> int:
     from stenographer.cli.doctor import report as doctor
-    from stenographer.cli.shared.capability_probe import probe
-    from stenographer.lib.diagnostics.capabilities import missing_required
+    from stenographer.cli.shared.capabilities import missing_required, probe
+    from stenographer.lib.live.models import VAD_MODEL, live_model_dir
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay.platform import current_platform as overlay_platform
@@ -881,19 +826,28 @@ def _guided_setup(
         console.error(f"could not inspect the model cache: {exc}")
         cached = False
         operational_failure = True
+    offer = None
     if not cached:
         console.write(
             "\nThe ASR model Underdog Bark 3.0 Pro is not installed. stenographer builds it on "
-            "this machine (download is approximately 1.6 GB; needs 10 GiB free disk)."
+            "this machine (download is approximately 1.6 GB; needs 10 GiB free disk). "
+            "It also downloads the Silero voice-activity model."
         )
-        if ask_yes_no(console, "Download and convert it now?", default=quick):
-            try:
-                bark_download.download_bark_pro(data_dir, on_step=console.write)
-            except Exception as exc:
-                console.error(f"model download failed: {exc}")
-                operational_failure = True
-            else:
-                console.write(f"Model download complete. {bark_download.ATTRIBUTION}.")
+        offer = "Download and convert it now?"
+    elif not (live_model_dir(data_dir) / VAD_MODEL.filename).is_file():
+        console.write(
+            "\nThe Silero voice-activity model that dictation needs is not installed "
+            "(download is about 0.6 MB)."
+        )
+        offer = "Download it now?"
+    if offer is not None and ask_yes_no(console, offer, default=quick):
+        try:
+            bark_download.install_dictation_models(data_dir, on_step=console.write)
+        except Exception as exc:
+            console.error(f"model download failed: {exc}")
+            operational_failure = True
+        else:
+            console.write("Model download complete.")
 
     if config.refine.enabled:
         operational_failure |= _offer_refine_pull(console, config, quick=quick)
@@ -910,15 +864,10 @@ def _guided_setup(
     missing = bool(missing_required(caps))
     if missing:
         console.write("Service restart skipped until required capabilities are available.")
-        return followup_exit_code(operational_failure=operational_failure, missing_required=True)
+        return 1 if operational_failure else 78
 
     restart_pending = False
-    if restart_eligible(
-        config_changed=changed,
-        custom_config=custom_config,
-        missing_required=False,
-        service_active=caps.service_active,
-    ):
+    if changed and not custom_config and caps.service_active == "active":
         if ask_yes_no(
             console,
             f"Restart the active {guidance.service_name} to apply changes?",
@@ -938,13 +887,9 @@ def _guided_setup(
                 "Service is not active; setup did not start it. "
                 f"Run `{guidance.service_start_command}` when ready."
             )
-    exit_code = followup_exit_code(
-        operational_failure=operational_failure,
-        missing_required=False,
-    )
+    exit_code = 1 if operational_failure else 0
     if quick and exit_code == 0:
-        _print_quick_tryout(
-            console,
+        for line in quick_tryout_lines(
             config,
             path,
             guidance,
@@ -952,7 +897,8 @@ def _guided_setup(
             service_enabled=caps.service_enabled,
             service_active=caps.service_active,
             restart_pending=restart_pending,
-        )
+        ):
+            console.write(line)
     return exit_code
 
 
@@ -998,29 +944,6 @@ def _offer_refine_pull(console: Console, config: Config, *, quick: bool) -> bool
         return True
     console.write("Refine model pull complete.")
     return False
-
-
-def _print_quick_tryout(
-    console: Console,
-    config: Config,
-    path: pathlib.Path,
-    guidance: HostGuidance,
-    *,
-    custom_config: bool,
-    service_enabled: str | None,
-    service_active: str | None,
-    restart_pending: bool,
-) -> None:
-    for line in quick_tryout_lines(
-        config,
-        path,
-        guidance,
-        custom_config=custom_config,
-        service_enabled=service_enabled,
-        service_active=service_active,
-        restart_pending=restart_pending,
-    ):
-        console.write(line)
 
 
 def run(
@@ -1072,10 +995,7 @@ def run(
 
     try:
         result = document.save(reviewed)
-    except ConfigPersistenceError as exc:
-        console.error(str(exc))
-        return 1
-    except ConfigError as exc:
+    except (ConfigPersistenceError, ConfigError) as exc:
         console.error(str(exc))
         return 1
     except KeyboardInterrupt:

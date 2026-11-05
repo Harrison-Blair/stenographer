@@ -17,10 +17,9 @@ from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.prompt import RESPONSE_KEY
 from stenographer.lib.refine.response import refined_text
 from stenographer.lib.refine.results import OUTCOME_APPLIED, OUTCOME_FAILED, OUTCOME_REJECTED
-from tests.lib.refine.test_refiner import _answer, _refiner
-from tests.lib.refine.test_refiner import transport as production_transport
+from tests.lib.refine.helpers import _answer, _refiner
+from tests.lib.refine.helpers import transport as transport
 
-transport = production_transport
 SPOKEN = "The request was rejected by the server because the credentials had expired. "
 EDITED = "The server rejected the request because the credentials expired."
 
@@ -29,6 +28,7 @@ EDITED = "The server rejected the request because the credentials expired."
 @pytest.mark.parametrize(
     ("spoken", "candidate"),
     [
+        (SPOKEN, EDITED),
         ("Maybe the cache failed. ", "Possibly the cache failed."),
         ("Maybe the cache failed. ", "A cache failure is possible."),
         ("Ask Codex to review 30 requests. ", "Ask Gemini to review 40 requests."),
@@ -38,6 +38,7 @@ EDITED = "The server rejected the request because the credentials expired."
         ("Review the logs and report findings. " * 100, "Done."),
     ],
     ids=[
+        "substantial-reply",
         "cache-failure-possible",
         "cache-failure-possible-rephrased",
         "codex-gemini-counts",
@@ -53,14 +54,6 @@ def test_agent_trusts_model_meaning_and_length_in_production(
     transport["reply"] = _answer(candidate, structured=structured)
     refiner = _refiner(min_words=1, structured_output=structured)
     assert refiner.refine(spoken, profile=RefineProfile.AGENT) == candidate.rstrip() + " "
-    assert refiner.last_result.outcome == OUTCOME_APPLIED
-
-
-@pytest.mark.parametrize("structured", [True, False])
-def test_substantial_agent_reply_uses_production_delivery_and_restores_space(transport, structured):
-    transport["reply"] = _answer(EDITED, structured=structured)
-    refiner = _refiner(structured_output=structured)
-    assert refiner.refine(SPOKEN, profile=RefineProfile.AGENT) == EDITED + " "
     assert refiner.last_result.outcome == OUTCOME_APPLIED
 
 

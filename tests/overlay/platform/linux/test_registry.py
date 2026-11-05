@@ -13,9 +13,9 @@ import sys
 
 import pytest
 
-from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
 from stenographer.overlay.platform.linux.registry import overlay_backends
 from stenographer.overlay.protocol.backend import Backend
+from stenographer.overlay.protocol.errors import BackendUnavailableError
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
 _BACKEND_MODULES = {

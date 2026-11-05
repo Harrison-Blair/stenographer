@@ -16,10 +16,10 @@ from Xlib.ext import shape
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
-from stenographer.overlay.platform.linux.backends.errors import BackendUnavailableError
 from stenographer.overlay.platform.linux.backends.x11_overlay_backend import X11OverlayBackend
 from stenographer.overlay.protocol.codec import encode_message
 from stenographer.overlay.protocol.command import Command
+from stenographer.overlay.protocol.errors import BackendUnavailableError
 from stenographer.overlay.protocol.messages import (
     CommandMessage,
     LoadingActivityMessage,

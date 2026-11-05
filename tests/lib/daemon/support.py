@@ -20,20 +20,16 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.daemon import Daemon
-from stenographer.lib.daemon.feedback import _play_cue
-from stenographer.lib.daemon.pipeline import UtterancePipeline
-from stenographer.lib.daemon.policy import cancel_state
 from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.hotkey.chord_tracker import ChordTracker
-from stenographer.lib.logging.utterance_filter import UtteranceFilter
+from stenographer.lib.logging.pipeline import UtteranceFilter
 from stenographer.lib.platform.errors import UnsupportedPlatformError
-from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.refine.cancellation import never_cancelled
-from stenographer.lib.refine.policy import should_refine
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED, RefineResult
-from stenographer.lib.transcribe.results import TranscriptionResult
-from stenographer.lib.transcribe.worker_timings import WorkerTimings
+from stenographer.lib.transcribe.results import TranscriptionResult, WorkerTimings
+from stenographer.lib.transcribe.text import count_words
+from tests.lib.platform.support import NullProcessCounters
 
 # Never a substring of any field name, level, subsystem, or path in the log.
 CANARY = "supercalifragilisticexpialidocious"
@@ -87,8 +83,6 @@ class _Feedback:
 
     def play(self, name: str) -> None:
         self.cues.append(name)
-
-    def close(self) -> None: ...
 
 
 class _Notifier:
@@ -194,7 +188,7 @@ class _Refiner:
         return self._last_result
 
     def will_refine(self, text: str) -> bool:
-        return should_refine(text, self._min_words)
+        return count_words(text) >= self._min_words
 
     def refine(
         self,
@@ -255,22 +249,11 @@ def _daemon(
         worker=_Worker(result, error),
         recorder=_Recorder(samples),
     )
+    daemon._listener = _Listener(device=None, lock=threading.RLock())
     daemon._deliverer = _Deliverer()
     if refiner is not None:
         daemon._refiner = refiner
-    daemon._pipeline = UtterancePipeline(
-        min_speech_rms=cfg.audio.min_speech_rms,
-        worker=daemon._worker,
-        deliverer=daemon._deliverer,
-        refiner=daemon._refiner,
-        telemetry=daemon._telemetry,
-        publish_state=daemon._publish_state,
-        fail=daemon._fail,
-        play_cue=lambda name: _play_cue(daemon._feedback, name),
-        cancelled=daemon._cancel_pending,
-        cancel_state=lambda: cancel_state(shutting_down=daemon._stop_event.is_set()),
-        speech_filter=speech_filter,
-    )
+    daemon._pipeline = daemon._build_pipeline(daemon._deliverer, speech_filter)
     return daemon
 
 
@@ -281,6 +264,13 @@ def _run_utterance(daemon: Daemon) -> None:
     if thread is not None:
         thread.join(timeout=10.0)
         assert not thread.is_alive()
+
+
+def _run_and_stop(daemon: Daemon) -> None:
+    try:
+        _run_utterance(daemon)
+    finally:
+        daemon.stop()
 
 
 def _summary(caplog) -> str:
@@ -303,10 +293,12 @@ class _Status:
 
     def __init__(self) -> None:
         self.states: list[OverlayState] = []
+        self.profiles: list[RefineProfile | None] = []
         self.loading: list[tuple[LoadingModel, bool]] = []
 
-    def publish(self, state: OverlayState) -> int:
+    def publish(self, state: OverlayState, profile: RefineProfile | None = None) -> int:
         self.states.append(state)
+        self.profiles.append(profile)
         return len(self.states)
 
     def loading_activity(self, model: LoadingModel, active: bool) -> None:
@@ -343,10 +335,7 @@ class _Listener:
     def __init__(
         self,
         *,
-        chord,
         device,
-        on_start,
-        on_stop,
         lock,
         bindings=None,
         on_binding_start=None,
@@ -354,15 +343,12 @@ class _Listener:
         cancel=frozenset(),
         on_cancel=None,
     ) -> None:
-        self.chord = chord
         self.device = device
         self.cancel = cancel
         self.lock = lock
         self.bindings = bindings
         self.on_binding_start = on_binding_start
         self.on_binding_stop = on_binding_stop
-        self._on_start = on_start
-        self._on_stop = on_stop
         self.on_cancel = on_cancel
         self.started = threading.Event()
         self.stopped = threading.Event()

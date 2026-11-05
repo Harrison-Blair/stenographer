@@ -20,14 +20,12 @@ import evdev
 import pytest
 
 from stenographer.cli.setup import workflow as setup
-from stenographer.cli.setup.binding_capture import capture_binding
-from stenographer.cli.shared.capability_probe import probe
+from stenographer.cli.shared.capabilities import missing_required, probe
 from stenographer.cli.shared.console import Console
 from stenographer.cli.shared.terminal import restart_service
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
-from stenographer.lib.diagnostics.capabilities import missing_required
-from stenographer.lib.platform.linux.probe import service_status
+from stenographer.lib.platform import current_platform
 from stenographer.lib.transcribe import bark_download
 from stenographer.overlay.spectrum.calibration import calibrate_spectrum_profile
 
@@ -64,7 +62,7 @@ def test_live_binding_capture_uses_real_uinput_and_restores_pty():
 
     def run_capture() -> None:
         try:
-            result.append(capture_binding(stdin, node, timeout=3.0))
+            result.append(current_platform().capture_binding(stdin, node, timeout=3.0))
         except BaseException as exc:
             errors.append(exc)
 
@@ -108,7 +106,6 @@ def test_real_microphone_display_floor_calibration():
     profile = calibrate_spectrum_profile(
         Config.defaults().audio.input_device,
         on_countdown=lambda _: None,
-        on_voice_prompt=lambda: print("Speak normally for three seconds."),
     )
 
     assert len(profile) == SPECTRUM_BANDS
@@ -170,17 +167,6 @@ def test_real_quick_setup_persists_and_runs_guided_checks(tmp_path, monkeypatch)
     assert "systemd unit:" in output
     if exit_code == 0:
         assert "Try a real dictation" in output
-
-
-def test_restart_policy_uses_real_user_service_status():
-    _, active = service_status()
-
-    assert setup.restart_eligible(
-        config_changed=True,
-        custom_config=False,
-        missing_required=False,
-        service_active=active,
-    ) is (active == "active")
 
 
 def test_real_active_service_restart():

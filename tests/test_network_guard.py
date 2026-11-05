@@ -114,3 +114,29 @@ def test_a_socket_pair_still_connects():
     with first, second:
         first.sendall(b"ok")
         assert second.recv(2) == b"ok"
+
+
+@pytest.mark.parametrize("operation", ["chat", "probe"])
+def test_loopback_refine_requests_bypass_environment_proxy(monkeypatch, operation):
+    from stenographer.lib.refine.client import is_model_loaded, post_chat
+
+    monkeypatch.setenv("http_proxy", "http://proxy.invalid:3128")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setattr(urllib.request, "_opener", None)
+    with pytest.raises(pytest.fail.Exception) as refusal:
+        if operation == "chat":
+            post_chat("http://127.0.0.1:11434", {"messages": ["private"]}, timeout=1)
+        else:
+            is_model_loaded("http://127.0.0.1:11434", "test")
+    assert "127.0.0.1:11434" in str(refusal.value)
+
+
+def test_remote_refine_request_retains_environment_proxy(monkeypatch):
+    from stenographer.lib.refine.client import post_chat
+
+    monkeypatch.setenv("http_proxy", "http://proxy.invalid:3128")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setattr(urllib.request, "_opener", None)
+    with pytest.raises(pytest.fail.Exception) as refusal:
+        post_chat("http://remote.invalid:11434", {"messages": ["private"]}, timeout=1)
+    assert "proxy.invalid:3128" in str(refusal.value)

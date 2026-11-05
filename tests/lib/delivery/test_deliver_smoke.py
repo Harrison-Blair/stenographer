@@ -29,14 +29,18 @@ from __future__ import annotations
 import shutil
 import subprocess
 import uuid
+from functools import partial
 
 import pytest
 
 from stenographer.lib.delivery.deliverer import Deliverer
-from stenographer.lib.platform.linux.clipboard import copy_for_backend, detect_clipboard_backend
-from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+from stenographer.lib.platform.linux.clipboard import (
+    ClipboardBackend,
+    copy_both_selections,
+    detect_clipboard_backend,
+)
 from stenographer.lib.platform.linux.process import child_env
-from stenographer.lib.platform.linux.uinput_keyboard import UinputKeyboard
+from stenographer.lib.platform.linux.uinput import UinputKeyboard
 
 pytestmark = pytest.mark.integration
 
@@ -48,7 +52,7 @@ if BACKEND is ClipboardBackend.X11:
 elif shutil.which("wl-copy") is None or shutil.which("wl-paste") is None:
     pytest.skip("wl-copy/wl-paste not on PATH", allow_module_level=True)
 
-_COPY = copy_for_backend(BACKEND)
+_COPY = partial(copy_both_selections, BACKEND.tools)
 
 
 def _open_keyboard() -> UinputKeyboard:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -13,8 +14,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Input, Label, Static
 
 from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
-from stenographer.cli.hub.files_entry import BrowserEntry
 from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.dialog import Dialog
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
@@ -42,6 +43,15 @@ AUDIO_SUFFIXES = frozenset(
 )
 _COUNT_ERROR = f"{DOCTOR_STATE_GLYPHS['fail']} Speaker count must be auto or a whole number above 0"
 _DIM = StatusToken.TONES["dim"]
+
+
+@dataclass(frozen=True)
+class BrowserEntry:
+    """One visible directory or audio file."""
+
+    path: Path
+    is_dir: bool
+    duration_seconds: float | None
 
 
 class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
@@ -87,6 +97,7 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         self.search_term = ""
         self.entries: tuple[BrowserEntry, ...] = ()
         self.selected_index = 0
+        self.browser_error = ""
         self.diarize = True
         self.refine = False
 
@@ -141,18 +152,22 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
 
     def _refresh_entries(self) -> None:
         directory = self.directory
+        self.browser_error = ""
         try:
             children = tuple(directory.iterdir())
-        except OSError:
+        except OSError as exc:
             children = ()
+            self.browser_error = f"Cannot read folder: {exc.strerror or str(exc)}"
         needle = self.search_term.casefold()
         found = []
         for path in children:
-            if path.name.startswith(".") or needle not in path.name.casefold():
+            if needle not in path.name.casefold():
                 continue
             try:
                 is_dir = path.is_dir()
             except OSError:
+                continue
+            if not is_dir and path.name.startswith(".") and not needle.startswith("."):
                 continue
             if not is_dir and path.suffix.lower() not in AUDIO_SUFFIXES:
                 continue
@@ -191,8 +206,10 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
                 rows.append((f"{entry.path.name}/", ""))
             else:
                 duration = entry.duration_seconds
-                rows.append((entry.path.name, "" if duration is None else self.clock(duration)))
-        if not rows or (len(rows) == 1 and self.entries[0].path == self.directory.parent):
+                rows.append((entry.path.name, "" if duration is None else Clock.duration(duration)))
+        if self.browser_error:
+            rows.append((Text(self.browser_error, style=_DIM), ""))
+        elif not rows or (len(rows) == 1 and self.entries[0].path == self.directory.parent):
             rows.append((Text("no audio files or folders match", style=_DIM), ""))
         self.query_one("#transcribe-list", SelectableList).set_rows(
             tuple(rows), self.selected_index if self.entries else None
@@ -252,6 +269,8 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
     # Options
 
     def _draw_options(self) -> None:
+        self.query_one("#transcribe-count", Input).disabled = not self.diarize
+        self.query_one("#transcribe-count-button", HubButton).disabled = not self.diarize
         for button_id, value in (
             ("#transcribe-speakers", self.diarize),
             ("#transcribe-refine", self.refine),
@@ -267,6 +286,8 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         self._draw_options()
 
     def action_edit_count(self) -> None:
+        if not self.diarize:
+            return
         self.query_one("#transcribe-count", Input).focus()
 
     def _show_error(self, message: str) -> None:
@@ -292,7 +313,7 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
             self.set_focus(None)
             self._open(entry.path)
             return
-        valid, count = self._speaker_count()
+        valid, count = self._speaker_count() if self.diarize else (True, None)
         if not valid:
             self._show_error(_COUNT_ERROR)
             self.query_one("#transcribe-count", Input).focus()
@@ -300,11 +321,3 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         self.dismiss(
             (entry.path, {"diarize": self.diarize, "speaker_count": count, "refine": self.refine})
         )
-
-    @staticmethod
-    def clock(seconds: float) -> str:
-        """Return ``m:ss`` or ``h:mm:ss``."""
-        total = max(0, int(seconds))
-        hours, remainder = divmod(total, 3600)
-        minutes, second = divmod(remainder, 60)
-        return f"{hours}:{minutes:02d}:{second:02d}" if hours else f"{minutes}:{second:02d}"

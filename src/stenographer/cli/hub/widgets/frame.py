@@ -17,11 +17,7 @@ class Frame(Vertical):
         border-title-color: #8b93a1;
         overflow: hidden hidden;
     }
-    Frame.-mic { border: round #5fd7ff; }
-    Frame.-system { border: round #ffaf5f; }
     Frame.-record { border: round #ff875f; }
-    Frame.-success { border: round #6ee69a; }
-    Frame.-focus { border: round #5fd7ff; }
     Frame.-fill { height: 1fr; }
     """
 

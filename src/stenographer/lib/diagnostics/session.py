@@ -4,9 +4,8 @@
 from __future__ import annotations
 
 import contextlib
-import os
+import re
 from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,12 +15,25 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.platform import Platform
 
 from stenographer.lib.diagnostics.collection import Collection
-from stenographer.lib.diagnostics.context import technical_context
+from stenographer.lib.transcribe.bark_download import MODEL_DIRNAME
+
+
+def technical_context(cfg: Config) -> dict[str, str | int]:
+    """Retain configured identifiers, substituting fixed labels for path-valued settings."""
+    device = cfg.audio.input_device or "default"
+    if device.startswith(("/", "\\", ".")) or re.match(r"^[A-Za-z]:[\\/]", device):
+        device = "configured_device"
+    return {
+        "model": MODEL_DIRNAME,
+        "device": device[:256],
+        "mode": cfg.hotkey.mode,
+    }
 
 
 def _create_session(cfg: Config, platform: Platform, *, pids: Callable[[], Sequence[int]] = tuple):
     from stenographer._version import __version__
     from stenographer.lib.analytics.session import AnalyticsSession
+    from stenographer.lib.analytics.store import database_path
     from stenographer.lib.transcribe.decode import resolve_cpu_threads
 
     context = {
@@ -32,18 +44,13 @@ def _create_session(cfg: Config, platform: Platform, *, pids: Callable[[], Seque
     }
     with contextlib.suppress(PackageNotFoundError):
         context["runtime_version"] = version("sherpa-onnx")
-    probe = (
-        platform.resource_probe()
-        if cfg.analytics.resource_profiling and cfg.analytics.enabled
-        else None
-    )
+    probe = platform.resource_probe() if cfg.analytics.resource_profiling else None
     identity = None
     with contextlib.suppress(Exception):
         identity = platform.process_identity()
     return AnalyticsSession(
-        platform.state_dir(os.environ, Path.home()) / "analytics.sqlite3",
+        database_path(platform),
         context=context,
-        enabled=cfg.analytics.enabled,
         resource_probe=(lambda: probe(pids())) if probe is not None else None,
         process_identity=identity,
         process_alive=platform.process_alive,
@@ -52,8 +59,8 @@ def _create_session(cfg: Config, platform: Platform, *, pids: Callable[[], Seque
 
 def create_session(cfg: Config, platform: Platform, *, pids: Callable[[], Sequence[int]] = tuple):
     if not cfg.analytics.enabled:
-        return Collection(enabled=False)
+        return Collection()
     try:
-        return Collection(enabled=True, session=_create_session(cfg, platform, pids=pids))
+        return Collection(session=_create_session(cfg, platform, pids=pids))
     except Exception:
-        return Collection(enabled=True, failures=1)
+        return Collection()

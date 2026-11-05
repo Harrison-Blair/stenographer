@@ -34,6 +34,20 @@ def normalize_host(host: str) -> str:
     return f"{scheme}://{rest.rstrip('/')}"
 
 
+def validated_host(text: str) -> str:
+    """Normalize and validate a configured Ollama host."""
+    from stenographer.lib.config.constants import ALLOWED_REFINE_SCHEMES
+
+    host = normalize_host(text)
+    if host.partition("://")[0] not in ALLOWED_REFINE_SCHEMES:
+        raise ValueError("must be an http:// or https:// URL")
+    if not host_name(host):
+        raise ValueError("must name a host")
+    if userinfo(host):
+        raise ValueError("must not embed credentials")
+    return host
+
+
 def userinfo(host: str) -> str:
     """Credentials embedded in *host*, or ``""``. PURE."""
 
@@ -95,32 +109,7 @@ def qualify_tag(model: str) -> str:
     return model if ":" in last else f"{model}:latest"
 
 
-def chat_url(host: str) -> str:
-    """The native chat endpoint, which the refine request posts to."""
+def api_url(host: str, name: str) -> str:
+    """Build an Ollama API endpoint from a normalized host."""
 
-    return f"{normalize_host(host)}/api/chat"
-
-
-def tags_url(host: str) -> str:
-    """The installed-model listing, used to detect Ollama and size a pull."""
-
-    return f"{normalize_host(host)}/api/tags"
-
-
-def pull_url(host: str) -> str:
-    """The streaming model pull, reached only from an explicit download."""
-
-    return f"{normalize_host(host)}/api/pull"
-
-
-def generate_url(host: str) -> str:
-    """The generate endpoint, used only to warm and to unload a model."""
-
-    return f"{normalize_host(host)}/api/generate"
-
-
-def ps_url(host: str) -> str:
-    """The running-model listing, asked before each utterance to tell a cold
-    model from a warm one so a load is never charged against the reply budget."""
-
-    return f"{normalize_host(host)}/api/ps"
+    return f"{normalize_host(host)}/api/{name}"

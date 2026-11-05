@@ -31,7 +31,7 @@
     <section class="hero">
       <div class="hero-copy">
         <h1>Dictation that stays on your machine.</h1>
-        <p class="lead">Press a hotkey, speak, and your words land at your cursor. Local transcription runs on your own hardware, with no account. Your audio and transcripts never leave your machine.</p>
+        <p class="lead">Press a hotkey, speak, and your words land at your cursor. Local transcription runs on your own hardware, with no account. Your audio stays on your machine. Transcripts stay local by default; a configured remote refine host receives them.</p>
         <div class="cmd" id="quick-install">
           <pre><code>curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start</code></pre>
           <button type="button" id="copy" class="copy" aria-label="Copy the quick-install command">Copy</button>
@@ -74,16 +74,18 @@
         <li><b>Your hotkeys</b><span>Right Ctrl selects Agent; Right Alt selects General. Both can latch or be held, and Escape cancels without pasting.</span></li>
         <li><b>Your microphone</b><span>Captured through PortAudio, with a quiet-audio gate so an accidental press does not paste noise into your work.</span></li>
         <li><b>Local transcription</b><span>Underdog Bark 3.0 Pro by Conway Research runs on your CPU through sherpa-onnx. You build the model once on your machine, and only when you ask for it.</span></li>
-        <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Agent can rephrase, reorder, group ideas, and remove repetitions. Its prompt requires every distinct detail and authorization limit to survive. Agent trusts the model: it has no semantic or length-ratio checks, so names, numbers, negations, uncertainty, or authorization may change. It retains format, empty-output, truncation, and wrapper checks. General keeps its original cleanup, length, and numeral checks. Detected failures fall back to the formatted transcript.</span></li>
-        <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key. When Agent rewrites the text, the original is copied just before it, so your clipboard history keeps both.</span></li>
-        <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. About half a second later, your previous clipboard item is back.</span></li>
+        <li><b>Formatting</b><span>The pronoun i is capitalized, even when surrounded by punctuation.</span></li>
+        <li><b>Hotkeys</b><span>Invalid binding errors identify the affected setting.</span></li>
+        <li><b>Local refinement</b><span>One local Ollama model serves two fixed profiles. Loopback refine requests bypass environment proxies. Agent can rephrase, reorder, group ideas, and remove repetitions. Its prompt requires every distinct detail and authorization limit to survive. Agent trusts the model: it has no semantic or length-ratio checks, so names, numbers, negations, uncertainty, or authorization may change. It retains format, empty-output, truncation, and wrapper checks. General keeps its original cleanup, length, and numeral checks. Detected failures fall back to the formatted transcript.</span></li>
+        <li><b>Your clipboard</b><span>Your transcript is copied first. The paste fires only after the copy is confirmed and you have let go of the key. When Agent changes the text and <code>stenographer.delivery.copy_original</code> is enabled, the app attempts to copy the original immediately before the rewritten text. The copy is best effort, so your clipboard history can keep both.</span></li>
+        <li><b>Your cursor</b><span>A Shift+Insert chord through <code>uinput</code> types the text where you are working. By default, when clipboard capture and restoration are available, your previous item returns about half a second later unless you copied something newer. The <code>restore_clipboard</code> and <code>restore_delay_ms</code> settings control this.</span></li>
       </ol>
 
       <div class="two">
         <div>
-          <h3>What never leaves your machine</h3>
+          <h3>What stays on your machine</h3>
           <ul class="never">
-            <li>Your audio, your transcripts, your configuration, and your device and model names.</li>
+            <li>Your audio, configuration, and device and model names. Transcripts stay local by default; a configured remote refine host receives them.</li>
             <li>Logs carry timings and counts, never what you said.</li>
             <li>The optional pill never sees your transcript or your raw audio.</li>
             <li>Your dictation statistics are local and numeric, yours to export or delete.</li>
@@ -101,10 +103,11 @@ update_check = false</code></pre>
 
     <section id="install" class="block">
       <h2>Install</h2>
+      <p>If overlay backend imports fail, reinstall using the method below. If room noise changes during spectrum calibration, keep the room quiet and retry.</p>
       <ol class="steps">
         <li>
           <b>Check your essentials.</b>
-          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. <code>wl-paste</code>, from the same package, lets it restore your previous clipboard item. Run <code>stenographer doctor</code> and it tells you what you are missing and how to fix it.</p>
+          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. <code>wl-paste</code>, from the same package, lets it restore your previous clipboard item.</p>
         </li>
         <li>
           <b>Run the quick install</b> above, or build it yourself using the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">build guide</a>.
@@ -115,7 +118,7 @@ python3 -m venv .venv
 scripts/install.sh --no-start</code></pre>
         </li>
         <li>
-          <b>Configure it</b> and build the speech model when the wizard offers.
+          <b>Configure it</b> and build the speech model when the wizard offers. Run <code>stenographer doctor</code> to see what you are missing and how to fix it.
           <pre><code>~/.local/bin/stenographer setup --quick</code></pre>
           <p>The build needs <code>python3-venv</code> once. Run <code>sudo apt install python3-venv</code> yourself, then build the model with <code>stenographer model download --asr</code>. It downloads about 1.6 GB, converts the model to int8 ONNX on your machine, and needs 10 GiB of free disk and about 10.2 GiB of RAM while it runs. On the test machine it took about 2 minutes. Speech-model settings from earlier releases stay in your config and are ignored.</p>
           <p>For clearer recognition, choose the intended input with <code>stenographer devices</code>, keep a close microphone about 10–20 cm away, and raise its level only until speech is clear without clipping. A close wired headset often beats a distant microphone.</p>
@@ -126,7 +129,7 @@ scripts/install.sh --no-start</code></pre>
           <p>Use Right Ctrl for Agent or Right Alt for General. Hold either, speak, and release—or tap to latch and tap again when you are done.</p>
         </li>
       </ol>
-      <p class="fine">Your configuration lives at <code>~/.config/stenographer/config.toml</code>. When you save through the CLI, your comments and any settings it does not know about are kept. Restart the service to apply your changes.</p>
+      <p class="fine">Your configuration defaults to <code>~/.config/stenographer/config.toml</code>. Set <code>STENOGRAPHER_CONFIG</code> to choose a file, or <code>XDG_CONFIG_HOME</code> to change the default configuration directory. When you save through the CLI, your comments and any settings it does not know about are kept. Restart the service to apply your changes.</p>
     </section>
 
     <section id="cli" class="block">
@@ -134,20 +137,20 @@ scripts/install.sh --no-start</code></pre>
       <div class="tablewrap">
         <table>
           <tbody>
-            <tr><td><code>stenographer</code></td><td>Open the three-screen terminal hub when stdin and stdout are terminals; otherwise show help. Press <code>1</code> for Record, <code>2</code> for Library, <code>3</code> for Settings, and <code>?</code> for the keys of each screen. A sidebar shows navigation badges, an engine card with the model state and CPU and memory use, and a context card. Record has a REC panel, MIC and SYSTEM spectrum meters with a speech light, and mixed or split transcript views. Press <code>space</code> to start, <code>enter</code> to stop and save without leaving the hub, <code>o</code> to open the saved session in Library, <code>m</code> and <code>s</code> to toggle sources, <code>d</code> to choose the input device for this run, and <code>v</code> to switch views. Scroll with <code>up</code>/<code>down</code>, <code>pageup</code>/<code>pagedown</code>, <code>home</code>/<code>end</code>, or the mouse wheel; it follows new lines at the bottom. Library lists recordings, file sessions, and file jobs; press <code>/</code> to search transcripts, <code>p</code> to play, <code>d</code> or <code>t</code> to re-diarize or re-transcribe, <code>x</code> to export, and <code>delete</code> to delete or cancel a job. Press <code>n</code> to transcribe a file: the dialog browses from your home folder, sets Separate speakers, Speaker count, and Refine text, and queues one job that shows in the Library list at once and saves a session folder. Settings has the General, Audio, Recognition, Live, and Checks tabs; <code>●</code> marks an unsaved change, <code>ctrl+s</code> saves it with a backup, and the Vocabulary row edits the refine terms. Checks groups the system checks, fixes and tests the selected check, and opens the Quick setup, Models, and Defaults dialogs. M4A and AAC input needs the system <code>ffmpeg</code> executable. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/hub.md">hub guide</a>.</td></tr>
+            <tr><td><code>stenographer</code></td><td>Open the three-screen terminal hub when stdin and stdout are terminals; otherwise show help. Press <code>1</code> for Record, <code>2</code> for Library, <code>3</code> for Settings, and <code>?</code> for the keys of each screen. A sidebar shows navigation badges, an engine card with the model state and CPU and memory use, and a context card. Record has a REC panel, MIC and SYSTEM spectrum meters with a speech light, and mixed or split transcript views. Press <code>space</code> to start, <code>enter</code> to stop and save without leaving the hub; relabel failures show their reason and keep live labels. Press <code>o</code> to open the saved session in Library, <code>m</code> and <code>s</code> to toggle sources, <code>d</code> to choose the input device for this run, and <code>v</code> to switch views. Scroll with <code>up</code>/<code>down</code>, <code>pageup</code>/<code>pagedown</code>, <code>home</code>/<code>end</code>, or the mouse wheel; it follows new lines at the bottom. Library lists recordings, file sessions, and file jobs; press <code>/</code> to search session IDs, times (including displayed recording dates), file names, and transcripts, <code>p</code> to play, <code>d</code> or <code>t</code> to re-diarize or re-transcribe, <code>x</code> to export, and <code>delete</code> to delete or cancel a job, then <code>y</code> to confirm or <code>n</code> to cancel. Press <code>n</code> to transcribe a file: the dialog browses from your home folder, including hidden folders; search with a leading dot to find hidden audio. Folder read errors show their reason. The dialog sets Separate speakers, Speaker count, and Refine text, and queues one job that shows in the Library list at once and saves a session folder. Speaker count is ignored when separation is off. Help and quit appear first in the footer, and long Settings values wrap. Settings has the General, Audio, Recognition, Live, and Checks tabs; <code>●</code> marks an unsaved change, <code>ctrl+s</code> saves it with a backup, and the Vocabulary row edits the refine terms. Checks shows fix guidance and per-check test results, groups the system checks, fixes and tests the selected check, and opens the Quick setup, Models, and Defaults dialogs. Models detects corrupt voice models and offers a verified replacement. M4A and AAC input needs the system <code>ffmpeg</code> executable. Revisions require readable, valid session metadata when <code>session.json</code> exists. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/hub.md">hub guide</a>.</td></tr>
             <tr><td><code>stenographer run</code></td><td>Run the daemon in your terminal, in the foreground.</td></tr>
-            <tr><td><code>stenographer transcribe FILE [--raw] [--refine]</code></td><td>Transcribe one of your audio files; add <code>--raw</code> to skip formatting, or <code>--refine</code> to clean it up.</td></tr>
-            <tr><td><code>stenographer model download</code></td><td>Download models explicitly. Use <code>--asr</code>, <code>--refine</code>, or <code>--live</code> to select them.</td></tr>
+            <tr><td><code>stenographer transcribe FILE [--raw] [--refine]</code></td><td>Transcribe one of your audio files; add <code>--raw</code> to skip formatting, or <code>--refine</code> to clean it up. If both are supplied, <code>--raw</code> skips refinement.</td></tr>
+            <tr><td><code>stenographer model download</code></td><td>Download models explicitly. Use <code>--asr</code>, <code>--refine</code>, or <code>--live</code> to select them; flags can be combined.</td></tr>
             <tr><td><code>stenographer doctor</code></td><td>Check what your system needs and print the fixes.</td></tr>
             <tr><td><code>stenographer devices</code></td><td>List your audio input devices.</td></tr>
             <tr><td><code>stenographer setup [--quick | --default]</code></td><td>Configure everything, only the common settings, or write the annotated defaults.</td></tr>
             <tr><td><code>stenographer sounds [PACK]</code></td><td>List, preview, or pick a whole sound pack.</td></tr>
-            <tr><td><code>stenographer stats</code></td><td>See your lifetime dictation totals; export them as JSON or CSV.</td></tr>
+            <tr><td><code>stenographer stats</code></td><td>See hotkey dictation totals, or use <code>--source all</code> to include files; export as JSON or CSV. Collection health covers all runs.</td></tr>
             <tr><td><code>stenographer completion {bash,zsh,fish}</code></td><td>Print a completion definition for your shell.</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="fine">Add <code>--help</code> to any command for its full usage. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">user guide</a> for configuration, sound packs, statistics, privacy, and troubleshooting.</p>
+      <p class="fine">Stats reset deletes all records; use stats delete for filtered deletion. File exports confirm their destination. Add <code>--help</code> to any command for its full usage. See the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">user guide</a> for configuration, sound packs, statistics, privacy, and troubleshooting.</p>
     </section>
   </main>
 
@@ -158,7 +161,6 @@ scripts/install.sh --no-start</code></pre>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">User guide</a>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/hub.md">Hub guide</a>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">Build guide</a>
-      · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/transcription-experiments.md">Transcription study</a>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/LICENSE">GPL-3.0-or-later</a>
     </div>
     <div class="fine">Linux and Wayland only for now, and English only. The wordmark and pill label are set in Caveat, used under the <a href="assets/Caveat-OFL.txt">SIL Open Font License</a>. The speech model is Underdog Bark 3.0 Pro by Conway Research (CC BY 4.0), built from NVIDIA and Moondream Parakeet models; see the <a href="https://github.com/Harrison-Blair/stenographer#third-party-models">third-party models</a>. Your browser loads nothing from third parties on this page.</div>

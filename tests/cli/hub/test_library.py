@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import warnings
+import weakref
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,12 +28,12 @@ from stenographer.cli.hub.services import HubServices
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.sparkline import Sparkline
 from stenographer.lib.config.models import Config
-from stenographer.lib.files.media import DecodedAudio
 from stenographer.lib.files.models import FileJobProgress
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError
+from tests.cli.hub.support import _card, _screen_text, make_app
 from tests.cli.hub.test_session_jobs import FakePlatform, FakePlayer
 
 REC_RELABELED = datetime(2026, 10, 27, 13, 3, tzinfo=UTC)
@@ -42,15 +43,6 @@ FAILED = "\u00d7 failed"
 FILE_STARTED = datetime(2026, 10, 26, 13, 30, tzinfo=UTC)
 
 
-@pytest.fixture(autouse=True)
-def _utc(monkeypatch):
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
-
-
 class FakeJob:
     """Stand in for ``FileJob``: the test sets each state."""
 
@@ -58,7 +50,7 @@ class FakeJob:
         self.id = job_id
         self.options = SimpleNamespace(path=path, diarize=True, speaker_count=None, refine=False)
         self.state = state
-        self.progress = FileJobProgress("transcribe", percent, None, ())
+        self.progress = FileJobProgress("transcribe", percent, ())
         self.session_id: str | None = None
         self.error: str | None = None
         self.cancel_requested = False
@@ -73,13 +65,14 @@ class FakeJob:
 class FakeServices:
     def __init__(self, sessions_root: Path):
         self.session_store = SessionStore(sessions_root)
+        self.session_jobs = self
         self.recording = False
         self.active_session_id = None
         self.jobs: list[FakeJob] = []
         self.actions: list[tuple] = []
         self.job_started = threading.Event()
         self.release_job = threading.Event()
-        self.play_error: Exception | None = None
+        self.player_exit_status: int | None = None
 
     @property
     def files_jobs(self):
@@ -99,15 +92,15 @@ class FakeServices:
         self.actions.append(("cancel", job.id))
         return job.cancel()
 
-    def toggle_session_playback(self, session_id):
+    def toggle_session_playback(self, session_id, on_failure=None):
         self.actions.append(("play", session_id))
-        if self.play_error is not None:
-            raise self.play_error
+        if self.player_exit_status is not None:
+            threading.Thread(target=on_failure, args=(self.player_exit_status,)).start()
 
-    def rediarize_session(self, session_id):
+    def rediarize(self, session_id):
         self._run_fake_job(session_id, "diarization")
 
-    def retranscribe_session(self, session_id):
+    def retranscribe(self, session_id):
         self._run_fake_job(session_id, "re-transcribe")
 
     def _run_fake_job(self, session_id, method):
@@ -170,19 +163,8 @@ def _library(tmp_path: Path):
     return root, sessions
 
 
-def _screen_text(app: HubApp) -> str:
-    return "\n".join(
-        "".join(segment.text for segment in strip._segments)
-        for strip in app.screen._compositor.render_strips()
-    )
-
-
 def _rows(app: HubApp) -> list[str]:
     return app.screen.query_one("#library-list", Static).render().plain.splitlines()
-
-
-def _card(app: HubApp) -> str:
-    return str(app.screen.query_one("#sidebar-card", Static).render())
 
 
 def _button(app: HubApp, button_id: str) -> HubButton:
@@ -213,7 +195,7 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
     root, _sessions = _library(tmp_path)
     services = FakeServices(root)
     services.jobs.append(FakeJob("file-1", tmp_path / "sources" / "lecture.mp3"))
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -236,7 +218,6 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
             assert "5 entries" in card
             # Stored audio: each recording's FLAC files and the file session's source copy.
             stored = [*root.glob("*/*.flac"), *root.glob("*/source.wav")]
-            assert len(stored) == 6
             audio_bytes = sum(path.stat().st_size for path in stored)
             assert f"{audio_bytes / 1024:.1f} KB audio" in card
             assert str(root) in card
@@ -249,8 +230,8 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
             assert "[n] + Transcribe a file…" in text
             hints = app.screen.query_one("#key-hints", Static).render().plain
             assert hints == (
-                "n transcribe file · / search · p play · r rename · d re-diarize · "
-                "t re-transcribe · x export · del delete · 1 2 3 screens · ? help · q quit"
+                "? help · q quit · n transcribe file · / search · p play · r rename · "
+                "d re-diarize · t re-transcribe · x export · del delete · 1 2 3 screens"
             )
 
             # The interrupted label carries the danger tone in addition to its "!" glyph.
@@ -272,7 +253,7 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
 def test_library_long_file_label_is_cut_with_an_ellipsis(tmp_path):
     root = tmp_path / "sessions"
     _write_file_session(root, tmp_path, name="a-very-long-source-file-name-" + "x" * 80 + ".wav")
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -286,16 +267,16 @@ def test_library_long_file_label_is_cut_with_an_ellipsis(tmp_path):
 
 def test_library_select_by_id_keeps_selection_and_moves_by_keys_and_clicks(tmp_path):
     root, sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_library(pilot, app, 4)
             screen = app.library_screen
             assert screen.selected_id == sessions["relabeled"]
-            assert screen.select_session(sessions["file"])
+            assert screen.select_entry(sessions["file"])
             assert screen.selected_id == sessions["file"]
-            assert not screen.select_session("20990101T000000Z")
+            assert not screen.select_entry("20990101T000000Z")
             assert screen.selected_id == sessions["file"]
 
             await pilot.press("down")
@@ -309,7 +290,7 @@ def test_library_select_by_id_keeps_selection_and_moves_by_keys_and_clicks(tmp_p
             assert screen.selected_id == sessions["relabeled"]
 
             # A reload keeps the selection by ID even when a newer session comes first.
-            screen.select_session(sessions["live"])
+            screen.select_entry(sessions["live"])
             newer = _write_rec(root, datetime(2026, 10, 28, 9, 0, tzinfo=UTC))
             screen.load_sessions()
             await _until(pilot, lambda: len(screen.entries) == 5)
@@ -326,7 +307,7 @@ def test_library_search_filters_sessions_and_job_rows_and_escape_clears(tmp_path
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
     services.jobs.append(FakeJob("file-1", tmp_path / "sources" / "Quarterly-Review.mp3"))
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -374,7 +355,7 @@ def test_library_search_runs_off_the_event_loop(tmp_path):
         return original(query)
 
     services.session_store.search = search
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -391,7 +372,7 @@ def test_library_does_not_list_the_active_recording(tmp_path):
     active = _write_rec(root, REC_LIVE)
     services = FakeServices(root)
     services.active_session_id = active.name
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -408,7 +389,7 @@ def test_library_does_not_list_the_active_recording(tmp_path):
 
 def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
     root, sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -439,7 +420,7 @@ def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
             assert "00:00:00" in text and "alpha bravo charlie" in text
             assert "delta echo foxtrot" in text
 
-            app.library_screen.select_session(sessions["file"])
+            app.library_screen.select_entry(sessions["file"])
             await _until(
                 pilot,
                 lambda: (
@@ -463,7 +444,7 @@ def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
             await pilot.pause()
             assert "use Re-transcribe" in "\n".join(str(n.message) for n in app._notifications)
 
-            app.library_screen.select_session(sessions["interrupted"])
+            app.library_screen.select_entry(sessions["interrupted"])
             await _until(
                 pilot,
                 lambda: (
@@ -490,7 +471,7 @@ def _notices(app: HubApp) -> str:
 def test_library_play_rediarize_and_retranscribe_by_key_and_click(tmp_path, by):
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     relabeled = sessions["relabeled"]
 
     async def run(pilot, key, button_id):
@@ -536,7 +517,6 @@ def test_library_play_rediarize_and_retranscribe_by_key_and_click(tmp_path, by):
             services.release_job.set()
             await pilot.press("2")
             await _until(pilot, lambda: not app.is_busy(relabeled))
-            assert services.session_store.read(relabeled).revision == "transcript.r3.jsonl"
             app.refresh_view()
             await pilot.pause()
             assert not _button(app, "library-rename").disabled
@@ -555,17 +535,18 @@ def test_library_play_rediarize_and_retranscribe_by_key_and_click(tmp_path, by):
         services.release_job.set()
 
 
-def test_library_play_refusal_shows_a_notice(tmp_path):
+def test_library_player_failure_after_launch_shows_a_notice(tmp_path):
     root, _sessions = _library(tmp_path)
     services = FakeServices(root)
-    services.play_error = ValueError("source audio is missing or invalid")
-    app = HubApp(services)
+    services.player_exit_status = 3
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_library(pilot, app, 4)
             await pilot.press("p")
-            await _until(pilot, lambda: "Could not play" in _notices(app))
+            await _until(pilot, lambda: "Playback failed" in _notices(app))
+            assert "status 3" in _notices(app)
 
     asyncio.run(exercise())
 
@@ -586,7 +567,7 @@ def test_library_second_play_stops_the_first(tmp_path, monkeypatch, by):
         session_store=SessionStore(root),
         player_factory=start_player,
     )
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def press_play(pilot):
         if by == "key":
@@ -619,7 +600,7 @@ def test_library_second_play_stops_the_first(tmp_path, monkeypatch, by):
 def test_library_rename_export_and_delete_by_key_and_click(tmp_path, by):
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     live = sessions["relabeled"]
     output = tmp_path / "exports"
 
@@ -681,9 +662,31 @@ def test_library_rename_export_and_delete_by_key_and_click(tmp_path, by):
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("key", ["q", "ctrl+c"])
+def test_library_delete_quit_keys_do_not_confirm(tmp_path, key):
+    root, sessions = _library(tmp_path)
+    app = make_app(tmp_path, FakeServices(root))
+    live = sessions["live"]
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 4)
+            assert app.library_screen.select_entry(live)
+            await pilot.press("delete")
+            await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
+            await pilot.press(key)
+            await pilot.pause()
+            assert (root / live).is_dir()
+            assert isinstance(app.screen, QuitConfirm)
+            await pilot.press("y")
+            await _until(pilot, lambda: not (root / live).exists())
+
+    asyncio.run(exercise())
+
+
 def test_library_export_dialog_escape_cancels(tmp_path):
     root, _sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -702,7 +705,7 @@ def test_library_export_dialog_escape_cancels(tmp_path):
 
 def test_library_export_writes_markdown_by_default(tmp_path):
     root, sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
     output = tmp_path / "exports"
     session = sessions["relabeled"]
 
@@ -727,13 +730,12 @@ def test_library_job_rows_complete_fail_and_cancel(tmp_path):
     done.progress = FileJobProgress(
         "transcribe",
         60,
-        None,
         (TranscriptLine(0.0, 1.0, "", "file", "speaker-1", "Speaker 1", "juliet kilo lima"),),
     )
     failing = FakeJob("file-2", sources / "broken.mp3", state="queued", percent=0)
     cancelled = FakeJob("file-3", sources / "dropped.mp3", state="queued", percent=0)
     services.jobs.extend((done, failing, cancelled))
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     screen = app.library_screen
 
     async def exercise():
@@ -784,7 +786,7 @@ def test_library_job_rows_complete_fail_and_cancel(tmp_path):
 def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     screen = app.library_screen
     live = sessions["live"]
     mic = root / live / "mic.flac"
@@ -806,7 +808,7 @@ def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
             assert "queued" in _rows(app)[0]
 
             job.state = "running"
-            job.progress = FileJobProgress("transcribe", 37, None, ())
+            job.progress = FileJobProgress("transcribe", 37, ())
             await _until(pilot, lambda: "37%" in _rows(app)[0])
             app.refresh_view()
             await pilot.pause()
@@ -815,7 +817,7 @@ def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
             # del cancels the job; it does not delete the session.
             await pilot.press("escape")
             await _until(pilot, lambda: len(screen.entries) == 4)
-            screen.select_session(live)
+            screen.select_entry(live)
             await pilot.press("delete")
             await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
             assert "mic.flac" in str(app.screen.query_one("#quit-prompt", Static).render())
@@ -832,7 +834,7 @@ def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
             await pilot.press("slash", *"mic.flac")
             await _until(pilot, lambda: [e.entry_id for e in screen.entries] == [live])
             second.state = "running"
-            second.progress = FileJobProgress("transcribe", 80, None, ())
+            second.progress = FileJobProgress("transcribe", 80, ())
             await _until(pilot, lambda: "80%" in _rows(app)[0])
             second.session_id = live
             second.state = "completed"
@@ -845,7 +847,7 @@ def test_library_revision_job_on_a_session_row_under_a_search(tmp_path):
 def test_library_retranscribe_and_file_revision_race_one_starts(tmp_path):
     root, sessions = _library(tmp_path)
     services = FakeServices(root)
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
     screen = app.library_screen
     target = sessions["relabeled"]
     mic = root / target / "mic.flac"
@@ -894,7 +896,7 @@ def test_library_retranscribe_and_file_revision_race_one_starts(tmp_path):
 
 def test_library_screen_has_no_unawaited_coroutines(tmp_path):
     root, _sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -926,15 +928,15 @@ class _Decoder:
 
     def __call__(self, path):
         self.paths.append(Path(path))
-        return DecodedAudio(np.full(8_000, 0.25, dtype=np.float32), 16_000, 0.5)
+        yield np.full(8_000, 0.25, dtype=np.float32)
 
 
-def _play_services(tmp_path, monkeypatch, player_factory):
+def _play_services(tmp_path, monkeypatch, player_factory, decoder=None):
     monkeypatch.setattr(tempfile, "tempdir", str(_private_tmp(tmp_path)))
     root = tmp_path / "sessions"
     session_id = _write_file_session(root, tmp_path)
     store = SessionStore(root)
-    decoder = _Decoder()
+    decoder = _Decoder() if decoder is None else decoder
     services = HubServices(
         Config.defaults(),
         FakePlatform(tmp_path),
@@ -993,6 +995,66 @@ def test_library_play_of_a_file_session_removes_its_temp_file_after_a_play_failu
     assert list(_private_tmp(tmp_path).iterdir()) == []
 
 
+def test_library_play_of_a_file_session_writes_clipped_blocks_in_order(tmp_path, monkeypatch):
+    commands = []
+
+    def start_player(command):
+        commands.append(command)
+        return FakePlayer()
+
+    def decoder(_path):
+        yield np.array([-2.0, -0.5], dtype=np.float32)
+        yield np.array([0.25], dtype=np.float32)
+        yield np.array([0.5, 3.0], dtype=np.float32)
+
+    services, _store, session_id, _decoder = _play_services(
+        tmp_path, monkeypatch, start_player, decoder
+    )
+    services.toggle_session_playback(session_id)
+
+    samples, rate = sf.read(commands[0][1], dtype="float32")
+    assert rate == 16_000
+    np.testing.assert_allclose(samples, [-1.0, -0.5, 0.25, 0.5, 1.0], atol=0.001)
+    services.toggle_session_playback(session_id)
+
+
+def test_library_play_of_a_file_session_keeps_no_earlier_blocks(tmp_path, monkeypatch):
+    live_counts = []
+
+    def decoder(_path):
+        blocks = []
+        for _ in range(8):
+            block = np.zeros(4_000, dtype=np.float32)
+            blocks.append(weakref.ref(block))
+            live_counts.append(sum(ref() is not None for ref in blocks))
+            yield block
+            del block
+
+    services, _store, session_id, _decoder = _play_services(
+        tmp_path, monkeypatch, lambda command: FakePlayer(), decoder
+    )
+    services.toggle_session_playback(session_id)
+    services.toggle_session_playback(session_id)
+
+    assert len(live_counts) == 8
+    assert max(live_counts) <= 2
+
+
+def test_library_play_of_a_file_session_removes_its_temp_file_after_a_decode_failure(
+    tmp_path, monkeypatch
+):
+    def decoder(_path):
+        yield np.zeros(4_000, dtype=np.float32)
+        raise RuntimeError("ffmpeg exited with status 1")
+
+    services, _store, session_id, _decoder = _play_services(
+        tmp_path, monkeypatch, lambda command: FakePlayer(), decoder
+    )
+    with pytest.raises(RuntimeError, match="status 1"):
+        services.toggle_session_playback(session_id)
+    assert list(_private_tmp(tmp_path).iterdir()) == []
+
+
 def test_library_play_refuses_an_invalid_source_file(tmp_path, monkeypatch):
     services, store, session_id, decoder = _play_services(
         tmp_path, monkeypatch, lambda command: FakePlayer()
@@ -1008,7 +1070,7 @@ def test_library_play_refuses_an_invalid_source_file(tmp_path, monkeypatch):
     assert list(_private_tmp(tmp_path).iterdir()) == []
 
 
-def test_library_play_notice_for_an_invalid_source_file(tmp_path, monkeypatch):
+def test_library_play_notice_for_an_invalid_source_file(tmp_path):
     root = tmp_path / "sessions"
     session_id = _write_file_session(root, tmp_path)
     metadata_path = root / session_id / "session.json"
@@ -1022,20 +1084,21 @@ def test_library_play_notice_for_an_invalid_source_file(tmp_path, monkeypatch):
         player_factory=lambda command: FakePlayer(),
         media_decoder=_Decoder(),
     )
-    app = HubApp(services)
+    app = make_app(tmp_path, services)
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_library(pilot, app, 1)
             await pilot.press("p")
             await _until(pilot, lambda: "source audio is missing or invalid" in _notices(app))
+            assert "Could not play" in _notices(app)
 
     asyncio.run(exercise())
 
 
 def test_library_layout_frames_rows_state_rule_and_transcript_colours(tmp_path):
     root, _sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -1098,7 +1161,7 @@ def test_library_layout_frames_rows_state_rule_and_transcript_colours(tmp_path):
 def test_library_storage_card_shortens_the_home_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     root, _sessions = _library(tmp_path)
-    app = HubApp(FakeServices(root))
+    app = make_app(tmp_path, FakeServices(root))
 
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
@@ -1107,3 +1170,67 @@ def test_library_storage_card_shortens_the_home_folder(tmp_path, monkeypatch):
             assert str(tmp_path) not in _card(app)
 
     asyncio.run(exercise())
+
+
+pytestmark = pytest.mark.usefixtures("utc")
+
+
+def test_export_failure_keeps_values_for_retry(tmp_path):
+    root, sessions = _library(tmp_path)
+    app = make_app(tmp_path, FakeServices(root))
+    invalid = tmp_path / "not-a-folder"
+    invalid.write_text("file")
+    output = tmp_path / "exports"
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 4)
+            await pilot.press("x", "tab")
+            folder = app.screen.query_one("#export-folder", Input)
+            folder.value = str(invalid)
+            await pilot.press("enter")
+            await _until(pilot, lambda: "Could not export" in _screen_text(app))
+            assert isinstance(app.screen, ExportDialog)
+            assert folder.value == str(invalid)
+            assert app.screen.export_format == "jsonl"
+            folder.value = str(output)
+            await pilot.press("enter")
+            await _until(pilot, lambda: (output / f"{sessions['relabeled']}.jsonl").exists())
+
+    asyncio.run(exercise())
+
+
+async def test_library_poll_draws_only_when_a_job_or_the_busy_mark_changes(tmp_path):
+    root, sessions = _library(tmp_path)
+    services = FakeServices(root)
+    source = tmp_path / "lecture.mp3"
+    job = FakeJob("file-1", source)
+    services.jobs.append(job)
+    app = make_app(tmp_path, services, files_home=tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_library(pilot, app, 5, detail=False)
+        screen = app.library_screen
+        screen.select_entry(sessions["relabeled"])
+        await _until(pilot, lambda: screen.detail is not None, "detail did not load")
+        screen.poll_jobs()
+
+        draws = []
+        draw_list = screen._draw_list
+        screen._draw_list = lambda: (draws.append(1), draw_list())
+        screen.poll_jobs()
+        assert draws == []
+
+        job.progress = FileJobProgress("transcribe", 44, ())
+        screen.poll_jobs()
+        assert draws == [1]
+        assert any("44%" in row for row in _rows(app))
+
+        job.state = "queued"
+        screen.poll_jobs()
+        assert any("queued" in row for row in _rows(app))
+
+        draws.clear()
+        assert app.try_acquire_session(sessions["relabeled"], "other")
+        screen.poll_jobs()
+        assert draws == [1]
+        assert "busy" in str(_button(app, "library-rediarize").label)

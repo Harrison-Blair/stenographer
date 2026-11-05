@@ -28,7 +28,6 @@ import time
 from typing import TYPE_CHECKING
 
 from stenographer.cli.shared.config import with_config
-from stenographer.cli.shared.errors import _fatal
 from stenographer.lib.audio.constants import SAMPLE_RATE
 
 if TYPE_CHECKING:
@@ -47,14 +46,14 @@ def _refine(
     from stenographer.lib.refine.factory import build_refiner
     from stenographer.lib.transcribe.pipeline import apply_refinement
 
-    if args.raw or not getattr(args, "refine", False) or not text.strip():
+    if args.raw or not args.refine:
         return text
     refiner = build_refiner(
         cfg.refine,
         idle_unload_seconds=cfg.asr.idle_unload_seconds,
         enabled=True,
     )
-    if not refiner.will_refine(text):
+    if refiner is None or not refiner.will_refine(text):
         return text
     refined = refiner.refine(text)
     accepted = refined if refined.strip() else text
@@ -68,6 +67,8 @@ def _refine(
 
 @with_config
 def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
+    import soundfile
+
     from stenographer.lib.audio.gate import speech_gate_stats
     from stenographer.lib.transcribe.pipeline import (
         apply_formatting,
@@ -80,23 +81,24 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     )
     from stenographer.lib.transcribe.utterance_record import UtteranceRecord
 
+    if args.raw and args.refine:
+        print("stenographer: --raw skips refinement requested by --refine", file=sys.stderr)
+
     path = pathlib.Path(args.file)
-    if not path.exists():
-        print(f"stenographer: file not found: {path}", file=sys.stderr)
-        return 2
-
-    from stenographer.lib.transcribe import bark_download, model
-
-    if not bark_download.is_model_cached():
-        return _fatal("ASR model not found; run `stenographer model download --asr`")
-
-    import soundfile
-
     try:
         samples, sample_rate = soundfile.read(str(path), dtype="float32", always_2d=True)
     except Exception as exc:
         print(f"stenographer: cannot read {path}: {exc}", file=sys.stderr)
         return 2
+
+    from stenographer.lib.transcribe import bark_download, model
+
+    if not bark_download.is_model_cached():
+        print(
+            "stenographer: ASR model not found; run `stenographer model download --asr`",
+            file=sys.stderr,
+        )
+        return 78
 
     from stenographer.lib.audio.resample import _resample_poly
     from stenographer.lib.diagnostics.session import create_session
@@ -111,7 +113,6 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     record.in_frames = int(samples.shape[0])
     record.capture_s = record.in_frames / sample_rate
     m = None
-    text = ""
     terminal = "error"
     try:
         finalize_started_at = time.perf_counter()

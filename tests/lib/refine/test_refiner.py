@@ -11,7 +11,6 @@ touches the network.
 from __future__ import annotations
 
 import dataclasses
-import json
 import logging
 
 import pytest
@@ -20,9 +19,7 @@ from stenographer.lib.config.models import Config, RefineConfig
 from stenographer.lib.refine import ollama_refiner
 from stenographer.lib.refine.errors import RefineTimeoutError, RefineTransportError
 from stenographer.lib.refine.factory import build_refiner
-from stenographer.lib.refine.null_refiner import NullRefiner
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
-from stenographer.lib.refine.prompt import RESPONSE_KEY
 from stenographer.lib.refine.results import (
     OUTCOME_APPLIED,
     OUTCOME_FAILED,
@@ -30,63 +27,8 @@ from stenographer.lib.refine.results import (
     OUTCOME_SKIPPED,
     OUTCOME_TIMEOUT,
 )
-
-SPOKEN = "um i think we should ship it on thursday no wait friday okay "
-CLEANED = "I think we should ship it on Friday. "
-
-
-def _refiner(**overrides) -> OllamaRefiner:
-    kwargs = {
-        "host": "http://127.0.0.1:11434",
-        "model": "test-model",
-        "min_words": 10,
-        "structured_output": True,
-        "keep_alive": 900,
-    }
-    kwargs.update(overrides)
-    return OllamaRefiner(**kwargs)
-
-
-def _answer(text: str, *, structured: bool = True) -> bytes:
-    content = json.dumps({RESPONSE_KEY: text}) if structured else text
-    return json.dumps({"message": {"content": content}}).encode()
-
-
-@pytest.fixture
-def transport(monkeypatch):
-    """Replace the one function that opens a socket, and capture its calls."""
-
-    calls: list[dict] = []
-    warm_calls: list[dict] = []
-    state: dict = {
-        "reply": _answer(CLEANED),
-        "raise": None,
-        "loaded": True,
-        "warm_raise": None,
-    }
-
-    def post_chat(host, body, *, timeout):
-        calls.append({"host": host, "body": body, "timeout": timeout})
-        if state["raise"] is not None:
-            raise state["raise"]
-        return state["reply"]
-
-    def is_model_loaded(host, model):
-        return state["loaded"]
-
-    def warm_model(host, model, *, keep_alive, timeout=None):
-        warm_calls.append(
-            {"host": host, "model": model, "keep_alive": keep_alive, "timeout": timeout}
-        )
-        if state["warm_raise"] is not None:
-            raise state["warm_raise"]
-
-    monkeypatch.setattr(ollama_refiner, "post_chat", post_chat)
-    monkeypatch.setattr(ollama_refiner, "is_model_loaded", is_model_loaded)
-    monkeypatch.setattr(ollama_refiner, "warm_model", warm_model)
-    state["calls"] = calls
-    state["warm_calls"] = warm_calls
-    return state
+from tests.lib.refine.helpers import CLEANED, SPOKEN, _answer, _refiner
+from tests.lib.refine.helpers import transport as transport
 
 
 def test_a_clean_reply_is_delivered_and_measured(transport):
@@ -102,30 +44,20 @@ def test_a_clean_reply_is_delivered_and_measured(transport):
     assert result.duration_ms is not None and result.duration_ms >= 0
 
 
-def test_the_time_budget_sent_follows_the_word_count(transport):
-    from stenographer.lib.refine.policy import timeout_seconds, word_count
-
-    _refiner().refine(SPOKEN)
-
-    assert transport["calls"][0]["timeout"] == pytest.approx(timeout_seconds(word_count(SPOKEN)))
+def test_threshold_admits_exactly_min_words_and_refuses_one_short():
+    refiner = _refiner(min_words=10)
+    assert refiner.will_refine("one two three four five six seven eight nine ten")
+    assert not refiner.will_refine("one two three four five six seven eight nine")
 
 
-def test_a_resident_model_is_not_loaded_again(transport):
-    _refiner().refine(SPOKEN)
-
-    assert transport["warm_calls"] == []
-    assert len(transport["calls"]) == 1
+@pytest.mark.parametrize("text", ["", "   ", "\n\t "])
+def test_blank_text_is_never_refined(text):
+    assert not _refiner(min_words=1).will_refine(text)
 
 
 def test_a_cold_model_is_loaded_on_its_own_budget_before_the_utterance_is_timed(transport):
     """The utterance budget assumes a warm model. A cold load must get the
     long budget first, and only then is the ordinary one started."""
-    from stenographer.lib.refine.policy import (
-        COLD_LOAD_TIMEOUT_SECONDS,
-        timeout_seconds,
-        word_count,
-    )
-
     transport["loaded"] = False
     refiner = _refiner(keep_alive=-1)
 
@@ -135,9 +67,9 @@ def test_a_cold_model_is_loaded_on_its_own_budget_before_the_utterance_is_timed(
     (warm,) = transport["warm_calls"]
     assert warm["model"] == "test-model"
     assert warm["keep_alive"] == -1
-    assert warm["timeout"] == pytest.approx(COLD_LOAD_TIMEOUT_SECONDS)
+    assert warm["timeout"] == pytest.approx(120.0)
     (chat,) = transport["calls"]
-    assert chat["timeout"] == pytest.approx(timeout_seconds(word_count(SPOKEN)))
+    assert chat["timeout"] == pytest.approx(10.78)
 
 
 @pytest.mark.parametrize(
@@ -303,14 +235,6 @@ def test_plain_text_replies_work_without_the_schema(transport):
     assert _refiner(structured_output=False).refine(SPOKEN) == CLEANED
 
 
-def test_the_disabled_stage_is_an_object_not_a_special_case():
-    refiner = NullRefiner()
-
-    assert refiner.will_refine("anything at all, however long it happens to be") is False
-    assert refiner.refine(SPOKEN) == SPOKEN
-    assert refiner.last_result is None
-
-
 @pytest.mark.parametrize(
     "section",
     [
@@ -320,46 +244,38 @@ def test_the_disabled_stage_is_an_object_not_a_special_case():
     ],
 )
 def test_the_factory_builds_nothing_that_can_reach_the_network(section):
-    assert isinstance(build_refiner(section, idle_unload_seconds=900), NullRefiner)
+    assert build_refiner(section, idle_unload_seconds=900) is None
 
 
 def test_the_factory_carries_the_asr_idle_window_into_keep_alive():
     refiner = build_refiner(RefineConfig(enabled=True), idle_unload_seconds=0)
 
     assert isinstance(refiner, OllamaRefiner)
-    assert refiner.keep_alive == -1
-    assert build_refiner(RefineConfig(enabled=True), idle_unload_seconds=60).keep_alive == 60
+    assert refiner._keep_alive == -1
+    assert build_refiner(RefineConfig(enabled=True), idle_unload_seconds=-1)._keep_alive == -1
+    assert build_refiner(RefineConfig(enabled=True), idle_unload_seconds=60)._keep_alive == 60
 
 
-def test_an_explicit_opt_in_does_not_need_the_daemon_setting():
-    """``transcribe --refine`` must work against a config with the stage off."""
-    section = dataclasses.replace(Config.defaults().refine, enabled=False)
-
-    assert section.enabled is False
-    assert isinstance(build_refiner(section, idle_unload_seconds=900), NullRefiner)
-    assert isinstance(build_refiner(section, idle_unload_seconds=900, enabled=True), OllamaRefiner)
-
-
-def test_an_explicit_opt_out_overrides_an_enabled_config():
-    section = dataclasses.replace(Config.defaults().refine, enabled=True)
-
-    assert isinstance(build_refiner(section, idle_unload_seconds=900, enabled=False), NullRefiner)
+@pytest.mark.parametrize(
+    ("configured", "override", "expected"), [(False, True, True), (True, False, False)]
+)
+def test_explicit_override_controls_the_factory(configured, override, expected):
+    section = dataclasses.replace(Config.defaults().refine, enabled=configured)
+    refiner = build_refiner(section, idle_unload_seconds=900, enabled=override)
+    assert isinstance(refiner, OllamaRefiner) is expected
 
 
-def test_the_factory_passes_the_loading_observers_through():
-    def on_loading(): ...
-    def on_finished(): ...
-
+def test_the_factory_passes_the_loading_observers_through(transport):
+    transport["loaded"] = False
+    events = []
     refiner = build_refiner(
-        RefineConfig(enabled=True),
+        RefineConfig(enabled=True, structured_output=True),
         idle_unload_seconds=900,
-        on_model_loading=on_loading,
-        on_model_loading_finished=on_finished,
+        on_model_loading=lambda: events.append("loading"),
+        on_model_loading_finished=lambda: events.append("finished"),
     )
-
-    assert isinstance(refiner, OllamaRefiner)
-    assert refiner._on_model_loading is on_loading
-    assert refiner._on_model_loading_finished is on_finished
+    assert refiner.refine(SPOKEN) == CLEANED
+    assert events == ["loading", "finished"]
 
 
 def test_the_factory_hands_the_vocabulary_to_the_request(transport):

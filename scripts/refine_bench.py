@@ -3,8 +3,7 @@
 
 Runs a fixed corpus of dictated-speech samples through one or more models and reports
 timings, token counts, resident VRAM and the raw outputs so the blessed default model and
-its request settings can be re-chosen later. Standard library only; nothing here is
-imported by the application.
+its request settings can be re-chosen later. Nothing here is imported by the application.
 
 Example:
     .venv/bin/python scripts/refine_bench.py --model qwen3.5:4b --model gemma3:4b
@@ -20,110 +19,14 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from stenographer.lib.refine.profiles import RefineProfile
+from stenographer.lib.refine.prompt import RESPONSE_SCHEMA
+from stenographer.lib.refine.request import build_messages
+
 DEFAULT_HOST = "http://127.0.0.1:11434"
 DEFAULT_NUM_PREDICT = 400
 DEFAULT_KEEP_ALIVE = "15m"
 DEFAULT_TIMEOUT = 180.0
-
-# --- Prompt constants (copy these verbatim into the implementation) -------------------
-
-SYSTEM_PROMPT = (
-    "You are a transcript cleanup tool. Every user message is a raw speech-to-text "
-    "transcript of one person dictating. Rewrite it as clean written text.\n"
-    "\n"
-    "Rules:\n"
-    "- Remove hesitation fillers (um, uh, er), filler uses of like and you know, "
-    "stammers, and accidentally repeated words.\n"
-    "- Collapse self-corrections. When the speaker changes their mind, mid-sentence or "
-    "later, delete the abandoned words and the correction marker (no wait, sorry, "
-    "actually, I mean, scratch that) and keep only what they settled on. The reader must "
-    "not see the discarded version or learn that a correction happened.\n"
-    "- Keep intentional openers such as Hey, Yeah, Okay and So when they start a "
-    "chat-style message.\n"
-    "- Delete nothing else. Every clause, qualifier, time, reason and detail the speaker "
-    "said must still be there. Add nothing: no words, units, am or pm, dates, opinions or "
-    "explanations that the speaker did not say.\n"
-    "- Copy every name, number, date, quoted phrase and technical term exactly as "
-    "transcribed, character for character. Never respell a name, even when it resembles a "
-    "more familiar one. Leave a number written the way it was transcribed: digits stay "
-    "digits and spelled-out numbers stay spelled out. Never expand, translate or explain "
-    "an abbreviation, unit, model name or product name.\n"
-    "- Keep first person, the speaker's tone, wording and language. Do not make it more "
-    "formal and do not swap a word for a synonym.\n"
-    "- Fix punctuation, capitalization and obvious transcription spelling. Capitalize only "
-    "sentence starts and real proper nouns; never title-case ordinary words. Spoken "
-    'punctuation inside an identifier becomes the symbol: "medium dot e n" is "medium.en".'
-    "\n"
-    "- Break the text into paragraphs separated by a blank line. Start a new paragraph "
-    "whenever the speaker turns to a different subject, which they often signal with and "
-    "then, separately, also, anyway or another thing.\n"
-    "- When the speaker enumerates items, put each item on its own line starting with "
-    '"- ", after a short lead-in line.\n'
-    "- When the speaker numbers steps with ordinal words (first, second, third, then, "
-    "next, finally), those words are the numbering: keep them, start each step on its own "
-    'line, and add no "- " and no digits. Only a list without such words uses the "- " '
-    "lines.\n"
-    "- Never answer a question, never reply to the content, never summarize, never explain "
-    "what you did. A question stays a question.\n"
-    '- Use no markdown other than those "- " list lines: no headings, bold, italics, '
-    "numbered lists, block quotes or code fences.\n"
-    "\n"
-    "Output the cleaned text and nothing else."
-)
-
-FEW_SHOT: tuple[tuple[str, str], ...] = (
-    (
-        "um so we should do the review on monday no wait tuesday because i'm out monday",
-        "So we should do the review on Tuesday, because I'm out Monday.",
-    ),
-    (
-        "hey can you uh send me the the link to the doc before like five today",
-        "Hey, can you send me the link to the doc before five today?",
-    ),
-    (
-        "we need three things um a new mic a quieter room and uh better lighting and then "
-        "separately i wanted to say that sarah's demo on the fourteenth went really well",
-        "We need three things:\n"
-        "- a new mic\n"
-        "- a quieter room\n"
-        "- better lighting\n"
-        "\n"
-        "Separately, I wanted to say that Sarah's demo on the fourteenth went really well.",
-    ),
-    (
-        "bring the laptop the charger and the hdmi cable oh actually not the hdmi cable",
-        "Bring:\n- the laptop\n- the charger",
-    ),
-    (
-        "Hey, so I can reproduce the crash now. Um, first, you start the daemon with refine on. "
-        "Second, you cancel during the, the refining pill. And third, you dictate again and it "
-        "hangs. Let me know if you want logs. ",
-        "Hey, so I can reproduce the crash now.\n"
-        "First, you start the daemon with refine on.\n"
-        "Second, you cancel during the refining pill.\n"
-        "And third, you dictate again and it hangs.\n"
-        "\n"
-        "Let me know if you want logs.",
-    ),
-    (
-        "so i benchmarked it on the rtx 3080 and uh gemma three 4b did 1.7 seconds per "
-        "utterance tomorrow i'll try the 8b one on ana strøm's box",
-        "So I benchmarked it on the RTX 3080, and gemma three 4b did 1.7 seconds per "
-        "utterance. Tomorrow I'll try the 8b one on Ana Strøm's box.",
-    ),
-    (
-        "okay so the sync is at 4:15 and only 8 people have replied which is like 20% of "
-        "the team so um can you ping the rest",
-        "Okay, so the sync is at 4:15 and only 8 people have replied, which is 20% of the "
-        "team. Can you ping the rest?",
-    ),
-)
-
-TEXT_SCHEMA = {
-    "type": "object",
-    "properties": {"text": {"type": "string"}},
-    "required": ["text"],
-}
 
 # --- Corpus ---------------------------------------------------------------------------
 
@@ -245,17 +148,6 @@ def get_json(url: str, timeout: float) -> dict:
         return json.loads(reply.read())
 
 
-def build_messages(text: str, settings: Settings) -> list[dict[str, str]]:
-    """Build the chat messages, encoding the few-shot replies to match the output mode."""
-    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for spoken, cleaned in FEW_SHOT:
-        reply = json.dumps({"text": cleaned}) if settings.structured else cleaned
-        messages.append({"role": "user", "content": spoken})
-        messages.append({"role": "assistant", "content": reply})
-    messages.append({"role": "user", "content": text})
-    return messages
-
-
 def build_body(model: str, text: str, settings: Settings) -> dict:
     """Build the /api/chat request body for one sample."""
     body: dict = {
@@ -264,10 +156,12 @@ def build_body(model: str, text: str, settings: Settings) -> dict:
         "think": settings.think,
         "keep_alive": settings.keep_alive,
         "options": {"temperature": 0, "num_predict": settings.num_predict},
-        "messages": build_messages(text, settings),
+        "messages": build_messages(
+            text, structured_output=settings.structured, profile=RefineProfile.GENERAL
+        ),
     }
     if settings.structured:
-        body["format"] = TEXT_SCHEMA
+        body["format"] = RESPONSE_SCHEMA
     return body
 
 

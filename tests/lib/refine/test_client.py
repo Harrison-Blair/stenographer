@@ -14,7 +14,6 @@ from stenographer.lib.refine.client import (
     installed_model_names,
     is_model_loaded,
     pull_progress_line,
-    running_model_names,
 )
 from stenographer.lib.refine.errors import RefineError
 
@@ -23,7 +22,10 @@ from stenographer.lib.refine.errors import RefineError
     ("record", "expected"),
     [
         ({"status": "pulling manifest"}, "pulling manifest"),
-        ({"status": "downloading", "completed": 50, "total": 200}, "downloading 25%"),
+        (
+            {"status": "downloading", "digest": "sha256:deadbeef", "completed": 50, "total": 200},
+            "downloading 25%",
+        ),
         ({"status": "downloading", "completed": 200, "total": 200}, "downloading 100%"),
         # A zero or missing total must not divide by zero or report a fake 0%.
         ({"status": "downloading", "completed": 5, "total": 0}, "downloading"),
@@ -35,16 +37,6 @@ from stenographer.lib.refine.errors import RefineError
 )
 def test_a_streamed_pull_record_renders_as_one_short_status_line(record, expected):
     assert pull_progress_line(record) == expected
-
-
-def test_progress_lines_never_echo_anything_but_status_and_counters():
-    """A pull record carries digests and file names; the console line is a
-    status word and a percentage, so nothing else can reach the terminal."""
-    line = pull_progress_line(
-        {"status": "downloading", "digest": "sha256:deadbeef", "completed": 1, "total": 4}
-    )
-
-    assert line == "downloading 25%"
 
 
 class _ResetStream:
@@ -90,24 +82,9 @@ def test_a_pull_whose_stream_dies_raises_a_refine_error_not_a_traceback(
 
     monkeypatch.setattr(module, "_post", lambda url, body, timeout: _ResetStream(failure))
 
+    seen = []
     with pytest.raises(RefineError, match=expected):
-        module.pull_model("http://127.0.0.1:11434", "some:tag", on_progress=lambda line: None)
-
-
-def test_a_pull_stream_reports_progress_until_it_fails(monkeypatch):
-    """As above: the message is asserted so this stays pinned to the
-    stream-read failure rather than to fix 1's separate missing-success
-    check, which would also raise a ``RefineError`` once the stream ends."""
-    from stenographer.lib.refine import client as module
-
-    seen: list[str] = []
-    monkeypatch.setattr(
-        module, "_post", lambda url, body, timeout: _ResetStream(ConnectionResetError())
-    )
-
-    with pytest.raises(RefineError, match="could not be reached"):
         module.pull_model("http://127.0.0.1:11434", "some:tag", on_progress=seen.append)
-
     assert seen == ["pulling manifest"]
 
 
@@ -122,7 +99,7 @@ class _Reply(io.BytesIO):
 
 
 def _serve_ps(monkeypatch, payload):
-    import urllib.request
+    from stenographer.lib.refine import client
 
     seen: list[str] = []
 
@@ -132,7 +109,7 @@ def _serve_ps(monkeypatch, payload):
             raise payload
         return _Reply(json.dumps(payload).encode())
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(client, "_open", urlopen)
     return seen
 
 
@@ -142,9 +119,8 @@ def test_the_residency_probe_reads_api_ps_and_reports_running_tags(monkeypatch):
         {"models": [{"name": "gemma4:e2b", "model": "gemma4:e2b"}, {"model": "qwen3.5:4b"}, 7]},
     )
 
-    assert running_model_names("http://127.0.0.1:11434/") == ["gemma4:e2b", "qwen3.5:4b"]
-    assert seen == ["http://127.0.0.1:11434/api/ps"]
     assert is_model_loaded("http://127.0.0.1:11434", "gemma4:e2b") is True
+    assert seen == ["http://127.0.0.1:11434/api/ps"]
     assert is_model_loaded("http://127.0.0.1:11434", "qwen3.5:4b") is True
     assert is_model_loaded("http://127.0.0.1:11434", "gemma3:4b") is False
 
@@ -158,7 +134,6 @@ def test_a_probe_that_cannot_answer_counts_as_nothing_loaded(monkeypatch, payloa
     warms, and the warm is what reports the real failure."""
     _serve_ps(monkeypatch, payload)
 
-    assert running_model_names("http://127.0.0.1:11434") == []
     assert is_model_loaded("http://127.0.0.1:11434", "gemma4:e2b") is False
 
 
@@ -226,42 +201,22 @@ def test_is_model_loaded_matches_an_untagged_config_name_against_ollamas_qualifi
     assert is_model_loaded("http://127.0.0.1:11434", "gemma4") is True
 
 
-def test_installed_model_names_reports_exactly_what_ollama_sent_no_more(monkeypatch):
-    """installed_model_names(...) is rendered verbatim as a numbered picker in
-    ``stenographer setup`` (cli/setup/workflow.py); synthesizing a bare alias
-    here would show the same installed model twice under two different
-    numbers. The list must be exactly what ``/api/tags`` reported, sorted,
-    with no invented duplicates."""
-    _serve_ps(monkeypatch, {"models": [{"name": "gemma4:latest"}, {"name": "qwen3.5:4b"}]})
-
-    assert installed_model_names("http://127.0.0.1:11434") == ["gemma4:latest", "qwen3.5:4b"]
-
-
-def test_installed_model_names_drops_a_non_string_name_instead_of_stringifying_it(monkeypatch):
-    """A malformed listing from a broken or foreign server -- ``{"name": 7}``
-    -- must not render as the picker row ``'7'``; it is dropped like any
-    other entry this module cannot make sense of."""
-    _serve_ps(monkeypatch, {"models": [{"name": "gemma4:latest"}, {"name": 7}]})
-
-    assert installed_model_names("http://127.0.0.1:11434") == ["gemma4:latest"]
+@pytest.mark.parametrize(
+    ("models", "expected"),
+    [
+        ([{"name": "gemma4:latest"}, {"name": "qwen3.5:4b"}], ["gemma4:latest", "qwen3.5:4b"]),
+        ([{"name": "gemma4:latest"}, {"name": 7}], ["gemma4:latest"]),
+    ],
+)
+def test_installed_model_names_reports_valid_names(monkeypatch, models, expected):
+    _serve_ps(monkeypatch, {"models": models})
+    assert installed_model_names("http://127.0.0.1:11434") == expected
 
 
-def test_installed_model_bytes_matches_a_bare_config_value_against_a_qualified_listing(
-    monkeypatch,
-):
-    """installed_model_bytes qualifies both sides, rather than narrowing back
-    to an exact string match: a bare config value must still find the size
-    of a fully-tagged entry."""
-    _serve_ps(monkeypatch, {"models": [{"name": "gemma4:latest", "size": 3_000_000_000}]})
-
-    assert installed_model_bytes("http://127.0.0.1:11434", "gemma4") == 3_000_000_000
-
-
-def test_installed_model_bytes_matches_a_qualified_config_value_against_a_bare_listing(
-    monkeypatch,
-):
-    """The reverse direction, defensive the same way: should a listing ever
-    report a bare name, a fully-tagged config value must still find it."""
-    _serve_ps(monkeypatch, {"models": [{"name": "gemma4", "size": 3_000_000_000}]})
-
-    assert installed_model_bytes("http://127.0.0.1:11434", "gemma4:latest") == 3_000_000_000
+@pytest.mark.parametrize(
+    ("listing", "configured"),
+    [("gemma4:latest", "gemma4"), ("gemma4", "gemma4:latest")],
+)
+def test_installed_model_bytes_matches_bare_and_qualified_names(monkeypatch, listing, configured):
+    _serve_ps(monkeypatch, {"models": [{"name": listing, "size": 3_000_000_000}]})
+    assert installed_model_bytes("http://127.0.0.1:11434", configured) == 3_000_000_000

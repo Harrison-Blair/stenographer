@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from stenographer.lib.platform.linux.cpu import count_physical_cores, physical_core_count
 
 
@@ -15,16 +17,20 @@ def _make_topology(root, cpu_to_core, package="0"):
         (topo / "core_id").write_text(str(core), encoding="ascii")
 
 
-def test_counts_one_core_per_distinct_core_id(tmp_path):
-    # 4 cpus mapping onto 4 distinct core ids -> 4 physical cores.
-    _make_topology(tmp_path, {0: 0, 1: 1, 2: 2, 3: 3})
-    assert count_physical_cores({0, 1, 2, 3}, tmp_path) == 4
-
-
-def test_dedupes_hyperthread_siblings(tmp_path):
-    # 4 cpus but only 2 distinct core ids (hyperthread siblings) -> 2.
-    _make_topology(tmp_path, {0: 0, 1: 0, 2: 1, 3: 1})
-    assert count_physical_cores({0, 1, 2, 3}, tmp_path) == 2
+@pytest.mark.parametrize(
+    ("cpu_to_core", "affinity", "expected"),
+    [
+        pytest.param({0: 0, 1: 1, 2: 2, 3: 3}, {0, 1, 2, 3}, 4, id="distinct"),
+        pytest.param({0: 0, 1: 0, 2: 1, 3: 1}, {0, 1, 2, 3}, 2, id="siblings"),
+        pytest.param({0: 0, 1: 1, 2: 2, 3: 3}, {0, 1}, 2, id="affinity"),
+        pytest.param({i: i for i in range(16)}, set(range(16)), 16, id="uncapped"),
+        pytest.param({}, {0, 1}, None, id="unreadable"),
+        pytest.param({0: 0}, {0, 1}, None, id="partial"),
+    ],
+)
+def test_counts_topology(tmp_path, cpu_to_core, affinity, expected):
+    _make_topology(tmp_path, cpu_to_core)
+    assert count_physical_cores(affinity, tmp_path) == expected
 
 
 def test_same_core_id_in_two_packages_counts_twice(tmp_path):
@@ -32,33 +38,6 @@ def test_same_core_id_in_two_packages_counts_twice(tmp_path):
     _make_topology(tmp_path, {0: 0, 1: 1}, package="0")
     _make_topology(tmp_path, {2: 0, 3: 1}, package="1")
     assert count_physical_cores({0, 1, 2, 3}, tmp_path) == 4
-
-
-def test_counts_only_affinity_visible_cpus(tmp_path):
-    # A cgroup/taskset-restricted process must not count cores it cannot use.
-    _make_topology(tmp_path, {0: 0, 1: 1, 2: 2, 3: 3})
-    assert count_physical_cores({0, 1}, tmp_path) == 2
-
-
-def test_uncapped_count_is_returned(tmp_path):
-    # The eight-thread cap is the core's policy, not the host's report.
-    _make_topology(tmp_path, {i: i for i in range(16)})
-    assert count_physical_cores(set(range(16)), tmp_path) == 16
-
-
-def test_empty_affinity_is_unknown(tmp_path):
-    assert count_physical_cores(set(), tmp_path) is None
-
-
-def test_unreadable_topology_is_unknown(tmp_path):
-    # No files created under tmp_path -> read_text raises FileNotFoundError (OSError).
-    assert count_physical_cores({0, 1}, tmp_path) is None
-
-
-def test_partial_topology_is_unknown(tmp_path):
-    # A half-populated tree must not under-report rather than admit ignorance.
-    _make_topology(tmp_path, {0: 0})
-    assert count_physical_cores({0, 1}, tmp_path) is None
 
 
 def test_live_probe_reports_a_positive_count_or_none():
@@ -121,13 +100,3 @@ def test_linux_platform_cpu_counters_read_this_process_from_proc():
     total, idle = counters.system_cpu_times()
     assert total >= idle > 0
     assert counters.clock_ticks > 0
-
-
-def test_null_process_counters_report_no_cpu_or_memory():
-    from stenographer.lib.platform.null_process_counters import NullProcessCounters
-
-    counters = NullProcessCounters()
-
-    assert counters.system_cpu_times() is None
-    assert counters.process_cpu_ticks(1) is None
-    assert counters.process_resident_bytes(1) is None

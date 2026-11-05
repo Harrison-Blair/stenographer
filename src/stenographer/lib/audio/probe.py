@@ -18,9 +18,17 @@ reporting or is simply "no suggestions"."""
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 
-from stenographer.lib.audio.device_query import DeviceQuery
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DeviceQuery:
+    """Raw PortAudio data: every device, the default input/output pair, or why not."""
+
+    devices: tuple[dict, ...] = ()
+    default_device: tuple[int, ...] | None = None
+    error: str | None = None
 
 
 def query_devices() -> DeviceQuery:

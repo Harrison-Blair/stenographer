@@ -61,6 +61,3 @@ class HelpOverlay(Dialog[None]):
         for key, description in self.rows:
             table.add_row(key, Text(description))
         yield Static(table, id="help-rows")
-
-    def buttons(self) -> tuple[tuple[str, str, str], ...]:
-        return (("esc", "Close", "cancel"),)

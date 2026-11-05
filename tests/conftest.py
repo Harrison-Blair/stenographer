@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The integration smoke suite is opt-in and never collected without the flag.
+"""The integration suite is opt-in: nothing marked runs without the flag.
 
 `*_smoke.py` modules import at module scope what they exercise for real (evdev,
-uinput, pty/termios, the ASR model, Xlib). Skipping has to happen at collection
-time so those imports never run in the unit suite; a marker-based skip would
-already have imported the module.
+uinput, pty/termios, the ASR model, Xlib). Skipping those has to happen at
+collection time so the imports never run in the unit suite; a marker-based skip
+would already have imported the module. Integration tests in any other file are
+collected and then skipped by :func:`pytest_runtest_setup`.
 
 The unit suite is also fenced off from the user's own directories and from the
 network: see :func:`_isolate_host_directories` and
@@ -62,7 +63,6 @@ _NETWORK_FAMILIES = frozenset({socket.AF_INET, socket.AF_INET6})
 #: The real callables, captured before any test can replace them.
 _REAL_CONNECT = socket.socket.connect
 _REAL_CONNECT_EX = socket.socket.connect_ex
-_REAL_CREATE_CONNECTION = socket.create_connection
 
 
 def _describe(address: object) -> str:
@@ -81,21 +81,22 @@ def _refuse(address: object) -> None:
         "`integration` is the other answer, but it costs more than it looks: "
         "an integration test also gives up the host-directory isolation in "
         "`tests/conftest.py`, "
-        "CI never runs it (`-m 'not integration'`), and a bare local `pytest` "
-        "does run it with both fences down."
+        "CI never runs it (`-m 'not integration'`), and with "
+        "`STENOGRAPHER_INTEGRATION=1` it runs with both fences down."
     )
 
 
-def _connect(self, address, *args, **kwargs):
-    if self.family in _NETWORK_FAMILIES:
-        _refuse(address)
-    return _REAL_CONNECT(self, address, *args, **kwargs)
+def _guard(real):
+    def connect(self, address, *args, **kwargs):
+        if self.family in _NETWORK_FAMILIES:
+            _refuse(address)
+        return real(self, address, *args, **kwargs)
+
+    return connect
 
 
-def _connect_ex(self, address, *args, **kwargs):
-    if self.family in _NETWORK_FAMILIES:
-        _refuse(address)
-    return _REAL_CONNECT_EX(self, address, *args, **kwargs)
+_connect = _guard(_REAL_CONNECT)
+_connect_ex = _guard(_REAL_CONNECT_EX)
 
 
 def _create_connection(address, *args, **kwargs):
@@ -103,7 +104,6 @@ def _create_connection(address, *args, **kwargs):
     # ``connect`` so the failure names the address the caller asked for rather
     # than whichever resolved address was dialled first.
     _refuse(address)
-    return _REAL_CREATE_CONNECTION(address, *args, **kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -138,7 +138,7 @@ def drain_analytics():
     def drain(session):
         # Verify persistence independently of the daemon's two-second shutdown
         # budget, allowing for slow CI disks while retaining a bounded failure.
-        assert session.close(timeout=15), session.health
+        assert session.close(timeout=15)
 
     return drain
 
@@ -157,7 +157,7 @@ def analytics_session(request, drain_analytics):
 
 @pytest.fixture
 def ollama_wire(monkeypatch):
-    """A fake Ollama behind ``urlopen``: every chat body it is sent, decoded.
+    """A fake Ollama behind the refine transport: every chat body it is sent, decoded.
 
     It lists no resident model, so a refiner warms the model first, and it
     answers every POST with an empty reply, which the refiner rejects and
@@ -167,7 +167,8 @@ def ollama_wire(monkeypatch):
 
     import io
     import json
-    import urllib.request
+
+    from stenographer.lib.refine import client
 
     chats: list[dict] = []
 
@@ -180,7 +181,7 @@ def ollama_wire(monkeypatch):
             chats.append(body)
         return io.BytesIO(json.dumps({"message": {"content": ""}}).encode())
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(client, "_open", urlopen)
     return chats
 
 
@@ -188,3 +189,11 @@ def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
     if collection_path.name.endswith("_smoke.py"):
         return os.environ.get("STENOGRAPHER_INTEGRATION") != "1"
     return None
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    if (
+        item.get_closest_marker("integration") is not None
+        and os.environ.get("STENOGRAPHER_INTEGRATION") != "1"
+    ):
+        pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1")

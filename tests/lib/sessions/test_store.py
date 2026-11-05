@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+import os
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
+import pytest
 
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -60,7 +62,6 @@ def test_list_and_read_sessions_returns_metrics_renames_and_activity(tmp_path):
 
     assert [line.label for line in detail.lines] == ["Alice", "You", "Alice"]
     assert detail.talk_time == {"Alice": 1.5, "You": 0.5}
-    assert not detail.labels_revised
     assert set(detail.activity) == {"mic", "system"}
     assert detail.activity["mic"]
     assert max(detail.activity["mic"]) > 0
@@ -92,7 +93,6 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
     }
     assert "revised placeholder" in (session / "transcript.r2.md").read_text(encoding="utf-8")
     assert store.read(session.name).revision == revision
-    assert not store.read(session.name).labels_revised
 
     renamed_revision = store.rename_speaker(session.name, "speaker-1", "Bob")
     detail = store.read(session.name)
@@ -100,7 +100,6 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
     assert renamed_revision == "transcript.r3.jsonl"
     assert [line.label for line in detail.lines] == ["Bob", "You", "Bob"]
     assert detail.revision == renamed_revision
-    assert detail.labels_revised
     assert (session / "transcript.jsonl").read_bytes() == original_jsonl
     assert (session / "transcript.r2.jsonl").read_text(encoding="utf-8").count("Alice") == 2
 
@@ -113,6 +112,24 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
         )
     assert revision == "transcript.r10.jsonl"
     assert store.read(session.name).revision == revision
+
+
+def test_export_and_rename_do_not_decode_recorded_audio(tmp_path, monkeypatch):
+    from stenographer.lib.sessions import reader
+
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(session.parent)
+
+    def no_decode(_path):
+        raise AssertionError("audio was decoded")
+
+    monkeypatch.setattr(reader, "_activity", no_decode)
+
+    exported = store.export(session.name, tmp_path / "exports", "md")
+    revision = store.rename_speaker(session.name, "speaker-1", "Bob")
+
+    assert "**Alice:**" in exported.read_text(encoding="utf-8")
+    assert revision == "transcript.r2.jsonl"
 
 
 def test_session_and_shared_exporters_write_all_formats_privately(tmp_path):
@@ -253,3 +270,92 @@ def test_mic_diarization_flag_survives_revisions_and_old_sessions_read_false(tmp
     assert renamed.revision == "transcript.r2.jsonl"
     assert renamed.diarize_mic is True
     assert store.read(old.name).diarize_mic is False
+
+
+@pytest.mark.parametrize("content", [b"{truncated", b"[]", b"\xff"])
+def test_revision_refuses_to_replace_invalid_metadata(tmp_path, content):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    metadata = session / "session.json"
+    metadata.write_bytes(content)
+    store = SessionStore(tmp_path / "sessions")
+
+    with pytest.raises((ValueError, UnicodeError)):
+        store.rename_speaker(session.name, "speaker-1", "Bob")
+
+    assert metadata.read_bytes() == content
+    assert not (session / "transcript.r2.jsonl").exists()
+    assert not (session / "transcript.r2.md").exists()
+
+
+def test_revision_allows_absent_legacy_metadata(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    (session / "session.json").unlink()
+    store = SessionStore(tmp_path / "sessions")
+
+    assert store.rename_speaker(session.name, "speaker-1", "Bob") == "transcript.r2.jsonl"
+    assert store.read(session.name).lines[0].label == "Bob"
+
+
+def test_list_sessions_reuses_a_summary_until_a_process_changes_the_session(tmp_path):
+    started = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
+    path = _write_session(tmp_path, started)
+    store = SessionStore(tmp_path / "sessions")
+    other_process = SessionStore(tmp_path / "sessions")
+
+    (first,) = store.list_sessions()
+    assert store.list_sessions()[0] is first
+    assert first.speaker_count == 2 and first.duration_seconds == 2.0
+
+    with (path / "transcript.jsonl").open("a", encoding="utf-8") as transcript:
+        record = asdict(_line(2.0, 9.0, "speaker-2", "Speaker 2", "added"))
+        transcript.write(json.dumps(record) + "\n")
+    (appended,) = store.list_sessions()
+    assert appended.speaker_count == 3 and appended.duration_seconds == 9.0
+
+    detail = other_process.read(path.name)
+    other_process.write_revision(
+        path.name, detail.lines, method="diarization", expected_revision=detail.revision
+    )
+    (revised,) = store.list_sessions()
+    assert revised.label_state == "relabeled"
+
+    (path / "system.flac").unlink()
+    (damaged,) = store.list_sessions()
+    assert damaged.audio_size_bytes == (path / "mic.flac").stat().st_size
+
+    newer = _write_session(tmp_path, started + timedelta(minutes=1))
+    assert [s.session_id for s in store.list_sessions()] == [newer.name, path.name]
+    other_process.delete(newer.name)
+    assert [s.session_id for s in store.list_sessions()] == [path.name]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_list_sessions_sees_a_permission_change_on_a_session_file(tmp_path):
+    path = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(tmp_path / "sessions")
+    assert not store.list_sessions()[0].interrupted
+
+    transcript = path / "transcript.jsonl"
+    transcript.chmod(0o000)
+    try:
+        assert store.list_sessions()[0].interrupted
+    finally:
+        transcript.chmod(0o644)
+    assert not store.list_sessions()[0].interrupted
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_list_sessions_keeps_other_sessions_when_a_folder_cannot_be_searched(tmp_path):
+    started = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
+    blocked = _write_session(tmp_path, started)
+    other = _write_session(tmp_path, started + timedelta(minutes=1))
+    store = SessionStore(tmp_path / "sessions")
+    store.list_sessions()
+
+    blocked.chmod(0o600)
+    try:
+        summaries = {summary.session_id: summary for summary in store.list_sessions()}
+    finally:
+        blocked.chmod(0o755)
+    assert summaries[blocked.name].interrupted
+    assert not summaries[other.name].interrupted

@@ -11,9 +11,8 @@ import pytest
 
 from stenographer.cli.hub import engine_sampler
 from stenographer.cli.hub.engine_sampler import EngineSampler
-from stenographer.cli.hub.engine_status import EngineStatus
-from stenographer.lib.platform.linux.proc_counters import LinuxProcessCounters
-from stenographer.lib.platform.null_process_counters import NullProcessCounters
+from stenographer.lib.platform.linux.cpu import LinuxProcessCounters
+from tests.lib.platform.support import NullProcessCounters
 
 HUB_PID = 100
 LIVE_PID = 200
@@ -269,7 +268,6 @@ def test_engine_samples_app_cpu_over_hub_and_worker_pids_system_cpu_and_app_ram(
     assert second.cpu_all_percent == pytest.approx(75.0)
     assert second.ram_app_bytes == 610 * 4096
     assert second.cpu_history == pytest.approx((50.0,))
-    assert isinstance(second, EngineStatus)
 
 
 def test_engine_app_cpu_counts_a_new_worker_and_drops_a_gone_one(tmp_path):
@@ -351,9 +349,9 @@ def test_engine_gauges_stay_none_on_a_host_without_counters(tmp_path):
 
 
 def test_engine_sampler_and_its_linux_counters_import_no_subprocess():
-    from stenographer.lib.platform.linux import cpu, proc_counters
+    from stenographer.lib.platform.linux import cpu
 
-    for module in (engine_sampler, proc_counters, cpu):
+    for module in (engine_sampler, cpu):
         tree = ast.parse(inspect.getsource(module))
         imported = {
             alias.name.split(".")[0]
@@ -394,7 +392,7 @@ def test_engine_sampler_feeds_the_sidebar_engine_card(tmp_path):
 
     from textual.widgets import Static
 
-    from stenographer.cli.hub.app import HubApp
+    from tests.cli.hub.support import make_app
 
     clock = FakeClock()
     proc = FakeProc(tmp_path)
@@ -402,10 +400,11 @@ def test_engine_sampler_feeds_the_sidebar_engine_card(tmp_path):
     proc.process(HUB_PID, 0, 1)
     services = SimpleNamespace(recording=False, files_running=False)
     sampler = _sampler(services, tmp_path, clock)
-    app = HubApp(
+    app = make_app(
+        tmp_path,
         services,
         engine_sampler=sampler,
-        doctor_probe=lambda _config, _path: None,
+        doctor_probe=lambda _config: None,
     )
 
     async def exercise():

@@ -14,6 +14,12 @@ from stenographer.lib.config.models import Config, RefineConfig
 from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUTPUT
 
 
+def _load_document(tmp_path, content):
+    path = tmp_path / "config.toml"
+    path.write_text(content, encoding="utf-8")
+    return ConfigDocument.load(path)
+
+
 def test_the_stage_ships_on_and_loopback():
     section = Config.defaults().refine
 
@@ -52,6 +58,14 @@ def test_a_host_without_a_scheme_is_normalized_rather_than_rejected():
         ('[stenographer.refine]\nenabled = "yes"\n', "refine.enabled"),
         ('[stenographer.refine]\nhost = "ftp://host:11434"\n', "refine.host"),
         ('[stenographer.refine]\nhost = ""\n', "refine.host"),
+        ('[stenographer.refine]\nhost = "http://"\n', "refine.host"),
+        ('[stenographer.refine]\nhost = "https://"\n', "refine.host"),
+        ('[stenographer.refine]\nhost = "http:///api"\n', "refine.host"),
+        (
+            '[stenographer.refine]\nhost = "http://user:secret@ollama.example.com:11434"\n',
+            "refine.host",
+        ),
+        ('[stenographer.refine]\nhost = "http://token@127.0.0.1:11434"\n', "refine.host"),
         ("[stenographer.refine]\nhost = 11434\n", "refine.host"),
         ('[stenographer.refine]\nmodel = "  "\n', "refine.model"),
         ("[stenographer.refine]\nmin_words = 0\n", "refine.min_words"),
@@ -82,8 +96,8 @@ def test_the_annotated_template_ships_the_section_on():
     assert "leave the network" in rendered or "over the network" in rendered
 
 
-def test_render_materializes_every_refine_key_in_declaration_order():
-    rendered = ConfigDocument.loads("").render(Config.defaults())
+def test_render_materializes_every_refine_key_in_declaration_order(tmp_path):
+    rendered = _load_document(tmp_path, "").render(Config.defaults())
     section = tomlkit.parse(rendered)["stenographer"]["refine"]
 
     assert list(section) == [
@@ -96,54 +110,10 @@ def test_render_materializes_every_refine_key_in_declaration_order():
     ]
 
 
-def test_save_round_trips_a_configured_refine_section_through_preservation():
-    """Seen to FAIL before ``refine`` joined ``Config.loads``'s section tuple:
-    the rendered document reloaded with the defaults and ``render`` raised."""
-    source = ConfigDocument.loads(
-        "# hand-written preface\n[stenographer.refine]\nenabled = true # mine\n"
-    )
-    reviewed = replace(
-        source.config,
-        refine=replace(
-            source.config.refine,
-            enabled=True,
-            host="http://192.168.1.5:11434",
-            model="some/other:tag",
-            min_words=25,
-            structured_output=False,
-        ),
-    )
-
-    rendered = source.render(reviewed)
-
-    assert Config.loads(rendered) == reviewed
-    assert "# hand-written preface" in rendered
-    assert "enabled = true # mine" in rendered
-
-
 def test_an_upper_case_scheme_is_accepted_and_stored_folded():
     cfg = Config.loads('[stenographer.refine]\nhost = "HTTP://127.0.0.1:11434"\n')
 
     assert cfg.refine.host == "http://127.0.0.1:11434"
-
-
-@pytest.mark.parametrize("host", ["http://", "https://", "http:///api"])
-def test_a_host_that_names_no_server_is_refused(host):
-    with pytest.raises(ConfigError) as failure:
-        Config.loads(f'[stenographer.refine]\nhost = "{host}"\n')
-    assert failure.value.key == "refine.host"
-
-
-@pytest.mark.parametrize(
-    "host",
-    ["http://user:secret@ollama.example.com:11434", "http://token@127.0.0.1:11434"],
-)
-def test_credentials_in_the_host_are_refused_rather_than_carried(host):
-    """Userinfo in the URL would be a secret living in a config file that the
-    daemon then echoes at start. Ollama has no authentication to use it for."""
-    with pytest.raises(ConfigError) as failure:
-        Config.loads(f'[stenographer.refine]\nhost = "{host}"\n')
-    assert failure.value.key == "refine.host"
 
 
 def test_the_vocabulary_ships_empty_and_an_old_config_loads_without_it():
@@ -211,7 +181,14 @@ def test_save_round_trips_the_vocabulary_and_keeps_comments_and_unknown_keys(tmp
     source = ConfigDocument.load(path)
     reviewed = replace(
         source.config,
-        refine=replace(source.config.refine, vocabulary=("Kubernetes", "PipeWire")),
+        refine=replace(
+            source.config.refine,
+            host="http://192.168.1.5:11434",
+            model="some/other:tag",
+            min_words=25,
+            structured_output=False,
+            vocabulary=("Kubernetes", "PipeWire"),
+        ),
     )
 
     source.save(reviewed)

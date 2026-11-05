@@ -11,10 +11,10 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError
+from tests.lib.sessions.helpers import make_recording
 
 _STARTED = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
 
@@ -24,11 +24,9 @@ def _line(start, end, source, speaker_id, label, text="alpha bravo"):
 
 
 def _recording(data_root, started_at=_STARTED):
-    writer = SessionWriter.open(data_root, started_at)
-    writer.write_audio("system", np.zeros(16000, dtype=np.float32))
-    writer.append_line(_line(0.0, 0.5, "system", "speaker-1", "Speaker 1"))
-    writer.close()
-    return writer.path
+    return make_recording(
+        data_root, [_line(0.0, 0.5, "system", "speaker-1", "Speaker 1")], started_at
+    )
 
 
 def _file_session(sessions_root, *, metadata=None, transcript=True, source=b"RIFFdata"):
@@ -92,15 +90,6 @@ def test_old_session_folder_without_kind_or_session_json_reads_as_live_recording
     assert not summary.interrupted
     assert summary.duration_seconds == 1.0
     assert not (directory / "session.json").exists()
-
-
-def test_new_recording_writes_rec_kind(tmp_path):
-    session = _recording(tmp_path)
-
-    metadata = json.loads((session / "session.json").read_text(encoding="utf-8"))
-
-    assert metadata["kind"] == "rec"
-    assert SessionStore(tmp_path / "sessions").read(session.name).summary.kind == "rec"
 
 
 def test_label_state_follows_the_current_revision_method(tmp_path):
@@ -219,3 +208,28 @@ def test_reader_orders_equal_start_times_mic_first_then_by_end(tmp_path):
     lines = store.read(session.name).lines
 
     assert [line.speaker_id for line in lines] == ["mic-1", "mic-2", "system-1", "system-2"]
+
+
+def test_incomplete_revision_pair_marks_session_interrupted(tmp_path):
+    session = _file_session(tmp_path / "sessions")
+    (session / "transcript.r2.jsonl").write_text("", encoding="utf-8")
+    assert SessionStore(tmp_path / "sessions").read(session.name).summary.interrupted
+
+
+def test_file_session_search_includes_id_and_start_time(tmp_path):
+    session = _file_session(tmp_path / "sessions")
+    store = SessionStore(tmp_path / "sessions")
+    assert store.search("20260302T040506Z") == (session.name,)
+    assert store.search("2026-03-02 04:05") == (session.name,)
+    assert store.search("standup notes") == (session.name,)
+
+
+def test_session_listing_propagates_access_errors(tmp_path, monkeypatch):
+    from stenographer.lib.sessions.reader import list_session_ids
+
+    def denied(path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(type(tmp_path), "iterdir", denied)
+    with pytest.raises(PermissionError, match="denied"):
+        list_session_ids(tmp_path)

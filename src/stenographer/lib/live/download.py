@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from urllib.request import urlopen
 
 from stenographer.lib.live.errors import LiveDownloadError
-from stenographer.lib.live.models import LIVE_MODELS, LiveModel
+from stenographer.lib.live.models import LIVE_MODELS, LiveModel, live_model_dir
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -38,18 +38,13 @@ def download_live_models(
     models: Sequence[LiveModel] = LIVE_MODELS,
 ) -> tuple[str, ...]:
     """Download missing models into ``data_dir/models/live`` and verify each hash."""
-    model_dir = data_dir / "models" / "live"
+    model_dir = live_model_dir(data_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
     downloaded: list[str] = []
 
     for model in models:
         destination = model_dir / model.filename
-        if destination.exists():
-            if _sha256(destination) != model.sha256:
-                raise LiveDownloadError(
-                    f"Live model {model.filename} is present with an incorrect SHA-256 hash. "
-                    "Remove it and retry."
-                )
+        if destination.is_file() and _sha256(destination) == model.sha256:
             continue
 
         temp_path: Path | None = None

@@ -10,7 +10,6 @@ import sys
 import pytest
 
 import stenographer
-from stenographer.cli.devices.handler import _format_input_devices
 from stenographer.cli.entry import dispatch
 from stenographer.cli.parser import build_parser
 
@@ -45,31 +44,6 @@ def test_no_command_prints_help(capsys):
         assert command in out
 
 
-def test_transcribe_parses_file_and_raw():
-    parser = build_parser()
-
-    args = parser.parse_args(["transcribe", "clip.wav"])
-    assert args.command == "transcribe"
-    assert args.file == "clip.wav"
-    assert args.raw is False
-
-    args = parser.parse_args(["transcribe", "clip.wav", "--raw"])
-    assert args.raw is True
-
-
-def test_model_download_subcommand():
-    args = build_parser().parse_args(["model", "download"])
-    assert args.command == "model"
-    assert args.model_command == "download"
-
-
-def test_setup_quick_flag_defaults_false_and_parses_true():
-    parser = build_parser()
-
-    assert parser.parse_args(["setup"]).quick is False
-    assert parser.parse_args(["setup", "--quick"]).quick is True
-
-
 def test_setup_default_flag_parses_and_excludes_quick():
     """Seen to FAIL against the parser without the flag (`--default` exited 2)."""
     parser = build_parser()
@@ -96,37 +70,47 @@ def test_sounds_command_forms_parse_and_conflicts_exit_two():
     assert exc.value.code == 2
 
 
-@pytest.mark.parametrize("command", ["run", "doctor", "devices", "setup"])
-def test_plain_subcommands_parse(command):
-    args = build_parser().parse_args([command])
-    assert args.command == command
-
-
-@pytest.mark.parametrize("command", ["doctor", "devices"])
-def test_doctor_and_devices_dispatch_to_handlers(command, monkeypatch):
-    module = importlib.import_module(f"stenographer.cli.{command}.handler")
-    hits = []
-    monkeypatch.setattr(module, f"cmd_{command}", lambda args: hits.append(command) or 0)
-    assert dispatch([command]) == 0
-    assert hits == [command]
-
-
-def test_setup_dispatches_to_handler(monkeypatch):
-    from stenographer.cli.setup import handler as setup_command
-
-    hits = []
-    monkeypatch.setattr(setup_command, "cmd_setup", lambda args: hits.append(args.command) or 0)
-    assert dispatch(["setup"]) == 0
-    assert hits == ["setup"]
-
-
-def test_quick_setup_dispatches_flag_to_handler(monkeypatch):
-    from stenographer.cli.setup import handler as setup_command
-
+@pytest.mark.parametrize(
+    ("argv", "module", "handler", "expected"),
+    [
+        (["run"], "run.handler", "cmd_run", {"command": "run"}),
+        (["doctor"], "doctor.handler", "cmd_doctor", {"command": "doctor"}),
+        (["devices"], "devices.handler", "cmd_devices", {"command": "devices"}),
+        (["setup"], "setup.handler", "cmd_setup", {"command": "setup", "quick": False}),
+        (["setup", "--quick"], "setup.handler", "cmd_setup", {"quick": True}),
+        (
+            ["sounds", "warm-desk"],
+            "sounds.handler",
+            "cmd_sounds",
+            {"pack": "warm-desk", "list_packs": False, "preview": None},
+        ),
+        (
+            ["transcribe", "clip.wav"],
+            "transcribe.handler",
+            "cmd_transcribe",
+            {"command": "transcribe", "file": "clip.wav", "raw": False},
+        ),
+        (
+            ["transcribe", "clip.wav", "--raw"],
+            "transcribe.handler",
+            "cmd_transcribe",
+            {"file": "clip.wav", "raw": True},
+        ),
+        (
+            ["model", "download"],
+            "model.download.handler",
+            "cmd_model_download",
+            {"command": "model", "model_command": "download"},
+        ),
+    ],
+)
+def test_commands_dispatch_parsed_arguments(argv, module, handler, expected, monkeypatch):
+    target = importlib.import_module(f"stenographer.cli.{module}")
     seen = []
-    monkeypatch.setattr(setup_command, "cmd_setup", lambda args: seen.append(args.quick) or 0)
-    assert dispatch(["setup", "--quick"]) == 0
-    assert seen == [True]
+    monkeypatch.setattr(target, handler, lambda args: seen.append(vars(args)) or 0)
+    assert dispatch(argv) == 0
+    assert len(seen) == 1
+    assert {key: seen[0][key] for key in expected} == expected
 
 
 def test_setup_default_dispatches_to_the_noninteractive_writer(monkeypatch):
@@ -140,36 +124,6 @@ def test_setup_default_dispatches_to_the_noninteractive_writer(monkeypatch):
 
     assert dispatch(["setup", "--default"]) == 0
     assert hits == ["default"]
-
-
-def test_sounds_dispatches_to_handler(monkeypatch):
-    from stenographer.cli.sounds import handler as sounds_command
-
-    seen = []
-    monkeypatch.setattr(
-        sounds_command,
-        "cmd_sounds",
-        lambda args: seen.append((args.pack, args.list_packs, args.preview)) or 0,
-    )
-
-    assert dispatch(["sounds", "warm-desk"]) == 0
-    assert seen == [("warm-desk", False, None)]
-
-
-def test_format_input_devices_marks_default_and_skips_outputs():
-    devices = [
-        {"name": "hdmi-out", "max_input_channels": 0},
-        {"name": "usb mic", "max_input_channels": 1},
-        {"name": "webcam mic", "max_input_channels": 2},
-    ]
-    lines = _format_input_devices(devices, default_index=1)
-    assert lines == ["* 1: usb mic (1 ch)", "  2: webcam mic (2 ch)"]
-
-
-def test_format_input_devices_empty():
-    assert _format_input_devices([{"name": "out", "max_input_channels": 0}], -1) == [
-        "  (no input devices found)"
-    ]
 
 
 def test_main_doctor_dispatches_without_creating_the_daemon_log(monkeypatch, tmp_path):
@@ -309,38 +263,6 @@ def test_run_dispatches_config_to_daemon(monkeypatch):
     assert seen["cfg"] is sentinel
 
 
-def test_transcribe_dispatches_to_handler(monkeypatch):
-    # transcribe is no longer a stub: dispatch routes it to the real handler,
-    # passing the parsed args through. (No config/ASR import is exercised
-    # because the handler itself is replaced.)
-    seen = {}
-
-    def fake(args):
-        seen["file"] = args.file
-        seen["raw"] = args.raw
-        return 0
-
-    from stenographer.cli.transcribe import handler as transcribe_command
-
-    monkeypatch.setattr(transcribe_command, "cmd_transcribe", fake)
-    assert dispatch(["transcribe", "clip.wav", "--raw"]) == 0
-    assert seen == {"file": "clip.wav", "raw": True}
-
-
-def test_model_download_dispatches_to_handler(monkeypatch):
-    hits = []
-
-    def fake(args):
-        hits.append(args.model_command)
-        return 0
-
-    from stenographer.cli.model.download import handler as model_command
-
-    monkeypatch.setattr(model_command, "cmd_model_download", fake)
-    assert dispatch(["model", "download"]) == 0
-    assert hits == ["download"]
-
-
 def test_unknown_subcommand_errors():
     with pytest.raises(SystemExit) as exc:
         build_parser().parse_args(["bogus"])
@@ -390,3 +312,101 @@ def test_cli_module_has_no_heavy_imports():
         check=True,
     )
     assert result.stdout.strip() == ""
+
+
+def test_command_surface():
+    parser = build_parser()
+    help_text = parser.format_help()
+    assert "{run,transcribe,model,doctor,devices,setup,sounds,completion,stats}" in help_text
+    examples = [
+        (["run"], {"command": "run"}),
+        (
+            ["transcribe", "clip.wav", "--raw", "--refine"],
+            {"file": "clip.wav", "raw": True, "refine": True},
+        ),
+        (
+            ["model", "download", "--asr", "--refine", "--live"],
+            {"model_command": "download", "asr": True, "refine": True, "live": True},
+        ),
+        (["doctor"], {"command": "doctor"}),
+        (["devices"], {"command": "devices"}),
+        (["setup", "--quick"], {"quick": True}),
+        (["setup", "--default"], {"default": True}),
+        (["sounds", "--list"], {"list_packs": True}),
+        (["sounds", "--preview", "pack"], {"preview": "pack"}),
+        (["completion", "fish"], {"shell": "fish"}),
+        (
+            [
+                "stats",
+                "export",
+                "--source",
+                "file",
+                "--since",
+                "2020-01-01",
+                "--until",
+                "2020-01-02",
+                "--model",
+                "m",
+                "--app-version",
+                "v",
+                "--device",
+                "d",
+                "--outcome",
+                "o",
+                "--format",
+                "csv",
+                "--output",
+                "out",
+                "--yes",
+            ],
+            {
+                "stats_command": "export",
+                "source": "file",
+                "since": "2020-01-01",
+                "until": "2020-01-02",
+                "model": "m",
+                "app_version": "v",
+                "device": "d",
+                "outcome": "o",
+                "format": "csv",
+                "output": "out",
+                "yes": True,
+            },
+        ),
+    ]
+    for argv, expected in examples:
+        parsed = vars(parser.parse_args(argv))
+        assert all(parsed[key] == value for key, value in expected.items())
+    with pytest.raises(SystemExit):
+        parser.parse_args(["model"])
+
+
+def test_information_commands_do_not_initialize_logging(monkeypatch, capsys):
+    import pytest
+
+    from stenographer.cli.entry import main
+    from stenographer.lib.logging import pipeline
+
+    def unexpected():
+        raise AssertionError("logging started")
+
+    monkeypatch.setattr(pipeline, "setup_logging", unexpected)
+    for option in ("--help", "-h", "--version"):
+        with pytest.raises(SystemExit) as exit_info:
+            main([option])
+        assert exit_info.value.code == 0
+        assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "description"),
+    [
+        ("run", "Run the dictation daemon."),
+        ("doctor", "Probe required capabilities."),
+        ("devices", "List audio input devices."),
+    ],
+)
+def test_leaf_help_includes_description(command, description, capsys):
+    with pytest.raises(SystemExit):
+        dispatch([command, "--help"])
+    assert description in capsys.readouterr().out

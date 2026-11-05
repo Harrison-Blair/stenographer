@@ -13,11 +13,13 @@ from stenographer.lib.daemon.telemetry import UtteranceTelemetry
 from stenographer.lib.transcribe.pipeline import transcript_text
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.utterance_record import UtteranceRecord
+from tests.lib.diagnostics.support import AnalyticsHost
 
 from .support import (
     CANARY,
     _current_stamp,
     _daemon,
+    _run_and_stop,
     _run_utterance,
     _summary,
 )
@@ -34,10 +36,7 @@ def test_delivered_utterance_logs_metrics_and_never_the_transcript(daemon_logs):
         vad_seconds=0.9,
     )
     daemon = _daemon(result=result)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     expected = transcript_text(result)
     assert daemon._deliverer.delivered == [expected]
@@ -176,33 +175,6 @@ class _Collection:
         self.closed += 1
 
 
-class _AnalyticsHost:
-    """Host double for ``create_session``: a real state directory under tmp."""
-
-    name = "test"
-
-    def __init__(self, state_dir) -> None:
-        self._state_dir = state_dir
-
-    def state_dir(self, env, home):
-        return self._state_dir
-
-    def runtime_context(self):
-        return {"os": "test", "architecture": "test64"}
-
-    def physical_core_count(self):
-        return 2
-
-    def resource_probe(self):
-        return lambda pids: {"cpu_seconds": 0.5, "resident_bytes": 1024}
-
-    def process_identity(self):
-        return (4242, 1000.0)
-
-    def process_alive(self, pid, started_epoch):
-        return None
-
-
 def _record(utt: int = 1) -> UtteranceRecord:
     return UtteranceRecord(
         utt=utt,
@@ -213,19 +185,6 @@ def _record(utt: int = 1) -> UtteranceRecord:
         channels=1,
         capture_s=1.5,
     )
-
-
-def test_telemetry_without_a_platform_collects_nothing():
-    telemetry = UtteranceTelemetry()
-    record = _record()
-
-    telemetry.open(Config.defaults(), None, pids=tuple)
-    telemetry.start(record)
-    telemetry.checkpoint(record, "secured_capture")
-    telemetry.finish(record)
-    telemetry.close()
-
-    assert record.analytics_id is None
 
 
 def test_a_fresh_telemetry_collects_nothing_until_it_is_opened(tmp_path):
@@ -243,7 +202,11 @@ def test_a_fresh_telemetry_collects_nothing_until_it_is_opened(tmp_path):
 
     after = _record(utt=2)
     try:
-        telemetry.open(Config.defaults(), _AnalyticsHost(tmp_path), pids=tuple)
+        telemetry.open(
+            Config.defaults(),
+            AnalyticsHost(tmp_path, cpu_seconds=0.5, resident_bytes=1024),
+            pids=tuple,
+        )
         telemetry.start(after)
         after.outcome = "DELIVERED"
         telemetry.finish(after)
@@ -263,7 +226,9 @@ def test_disabled_analytics_leaves_the_record_unidentified(tmp_path):
     telemetry = UtteranceTelemetry()
     record = _record()
     try:
-        telemetry.open(cfg, _AnalyticsHost(tmp_path), pids=tuple)
+        telemetry.open(
+            cfg, AnalyticsHost(tmp_path, cpu_seconds=0.5, resident_bytes=1024), pids=tuple
+        )
         telemetry.start(record)
 
         record.outcome = "DELIVERED"
@@ -282,7 +247,11 @@ def test_a_whole_utterance_reaches_the_real_analytics_database(tmp_path):
     record = _record()
     record.device_name = "USB microphone"
     try:
-        telemetry.open(Config.defaults(), _AnalyticsHost(tmp_path), pids=tuple)
+        telemetry.open(
+            Config.defaults(),
+            AnalyticsHost(tmp_path, cpu_seconds=0.5, resident_bytes=1024),
+            pids=tuple,
+        )
         telemetry.start(record)
         assert record.analytics_id is not None
 
@@ -314,7 +283,11 @@ def test_a_control_character_device_name_never_reaches_the_database(tmp_path):
     record = _record()
     record.device_name = "USB\x07microphone"
     try:
-        telemetry.open(Config.defaults(), _AnalyticsHost(tmp_path), pids=tuple)
+        telemetry.open(
+            Config.defaults(),
+            AnalyticsHost(tmp_path, cpu_seconds=0.5, resident_bytes=1024),
+            pids=tuple,
+        )
         telemetry.start(record)
         telemetry.checkpoint(record, "secured_capture")
         record.outcome = "CANCELLED"
@@ -331,7 +304,8 @@ def test_a_control_character_device_name_never_reaches_the_database(tmp_path):
 
 def test_a_failing_collection_never_interrupts_the_utterance(daemon_logs):
     collection = _Collection(error=RuntimeError(f"collection exploded on {CANARY}"))
-    telemetry = UtteranceTelemetry(collection=collection)
+    telemetry = UtteranceTelemetry()
+    telemetry._collection = collection
     record = _record()
 
     telemetry.start(record)
@@ -360,7 +334,8 @@ def test_a_failing_collection_never_interrupts_the_utterance(daemon_logs):
 
 def test_a_healthy_collection_receives_the_daemon_supplied_phases():
     collection = _Collection()
-    telemetry = UtteranceTelemetry(collection=collection)
+    telemetry = UtteranceTelemetry()
+    telemetry._collection = collection
     record = _record(utt=7)
     record.device_name = "USB microphone"
 

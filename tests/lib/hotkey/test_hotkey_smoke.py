@@ -21,8 +21,8 @@ import evdev
 import pytest
 
 from stenographer.lib.hotkey.binding import parse_binding
-from stenographer.lib.platform.linux.evdev_hotkey_listener import EvdevHotkeyListener
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
+from stenographer.lib.platform.linux.hotkey import EvdevHotkeyListener
 
 pytestmark = pytest.mark.integration
 
@@ -50,11 +50,11 @@ def test_uinput_loopback_drives_start_then_stop():
     starts: list[int] = []
     stops: list[int] = []
     listener = EvdevHotkeyListener(
-        chord=parse_binding("KEY_RIGHTALT", EvdevKeyTable()),
         device_path=node,
-        on_start=lambda: starts.append(1),
-        on_stop=lambda: stops.append(1),
         lock=threading.RLock(),
+        bindings={"default": parse_binding("KEY_RIGHTALT", EvdevKeyTable())},
+        on_binding_start=lambda _name: starts.append(1),
+        on_binding_stop=lambda _name: stops.append(1),
     )
     listener.start()
     try:
@@ -93,20 +93,20 @@ def test_destroying_held_uinput_drives_one_stop_and_releases_guard():
     started = threading.Event()
     stopped = threading.Event()
 
-    def on_start() -> None:
+    def on_start(_name: str) -> None:
         starts.append(1)
         started.set()
 
-    def on_stop() -> None:
+    def on_stop(_name: str) -> None:
         stops.append(1)
         stopped.set()
 
     listener = EvdevHotkeyListener(
-        chord=parse_binding("KEY_RIGHTALT", EvdevKeyTable()),
         device_path=node,
-        on_start=on_start,
-        on_stop=on_stop,
         lock=threading.RLock(),
+        bindings={"default": parse_binding("KEY_RIGHTALT", EvdevKeyTable())},
+        on_binding_start=on_start,
+        on_binding_stop=on_stop,
     )
     listener.start()
     try:

@@ -23,6 +23,8 @@ from urllib.request import urlopen
 from stenographer.lib.transcribe.bark_pins import BARK_PRO_PINS, BarkPins
 from stenographer.lib.transcribe.errors import BarkDownloadError
 
+ASR_SIZE_TEXT = "about 1.6 GB download, 10 GiB free disk while it converts"
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -38,7 +40,10 @@ CONVERTED_FILES = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx",
 NOTICE_MODIFICATION = (
     "Converted to ONNX and quantized to int8 (weight-only) on the user's machine by stenographer."
 )
-VENV_FIX = "Run `sudo apt install python3-venv`, then retry."
+VENV_FIX = (
+    "Install the Python venv and ensurepip modules with your system package manager "
+    "(python3-venv on Ubuntu), then retry."
+)
 ATTRIBUTION = (
     "Underdog Bark 3.0 Pro by Conway Research (CC BY 4.0), converted to int8 ONNX on this machine"
 )
@@ -240,6 +245,24 @@ def _install(out_dir: Path, target: Path, build_dir: Path) -> None:
     os.replace(out_dir, target)
 
 
+def install_dictation_models(data_dir: Path, *, on_step: Callable[[str], None]) -> None:
+    """Install what dictation needs: the Bark model, then the Silero VAD model.
+
+    Raises ``BarkDownloadError`` or ``LiveDownloadError``; a model that is already
+    present is reported through *on_step* and not fetched again.
+    """
+    from stenographer.lib.live.download import download_live_models
+    from stenographer.lib.live.models import VAD_MODEL
+
+    built = download_bark_pro(data_dir, on_step=on_step)
+    status = "installed" if built else "already present"
+    on_step(f"ASR model {status} at {model_dir(data_dir)}")
+    on_step(ATTRIBUTION)
+    downloaded = download_live_models(data_dir, models=(VAD_MODEL,))
+    status = "downloaded" if downloaded else "already present"
+    on_step(f"VAD model {VAD_MODEL.filename} {status}")
+
+
 def download_bark_pro(
     data_dir: Path,
     *,
@@ -280,7 +303,9 @@ def download_bark_pro(
         on_step("creating a temporary venv with the system Python 3")
         if runner.run([python, "-m", "venv", str(venv_dir)]) != 0:
             raise BarkDownloadError(
-                f"Venv creation failed: `{python} -m venv` could not create {venv_dir}. {VENV_FIX}"
+                f"Venv creation failed: `{python} -m venv` could not create {venv_dir}. "
+                f"Check {root} for write access and free space, then retry. "
+                "`stenographer model download --asr` in a terminal shows the command output."
             )
         venv_python = str(venv_dir / "bin" / "python")
         on_step("installing the pinned converter packages (not cached)")

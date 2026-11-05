@@ -6,8 +6,12 @@ from __future__ import annotations
 
 import pytest
 
-from stenographer.lib.hotkey.capture import reduce_capture, serialize_capture
-from stenographer.lib.hotkey.capture_records import CaptureState, KeyEvent
+from stenographer.lib.hotkey.capture import (
+    CaptureState,
+    KeyEvent,
+    reduce_capture,
+    serialize_capture,
+)
 from stenographer.lib.hotkey.errors import BindingCaptureError
 from stenographer.lib.hotkey.static_key_table import StaticKeyTable
 
@@ -93,6 +97,38 @@ def test_binding_capture_waits_for_same_code_held_on_another_device():
 
     state = reduce_capture(state, KeyEvent("right", 97, 0))
     assert state.complete is True
+
+
+def test_binding_capture_completes_when_a_release_arrives_on_another_interface():
+    state = _capture(KeyEvent("kbd-if0", 97, 1), KeyEvent("kbd-if1", 97, 0))
+    assert state.codes == (97,)
+    assert state.held == frozenset()
+    assert state.complete is True
+
+
+def test_binding_capture_keeps_other_keys_held_when_a_release_changes_interface():
+    state = _capture(
+        KeyEvent("kbd-if0", 29, 1),
+        KeyEvent("kbd-if0", 30, 1),
+        KeyEvent("kbd-if1", 30, 0),
+    )
+    assert state.held == frozenset({("kbd-if0", 29)})
+    assert state.complete is False
+
+
+def test_binding_capture_clears_the_code_on_every_device_for_an_unmatched_release():
+    state = _capture(
+        KeyEvent("left", 97, 1),
+        KeyEvent("right", 97, 1),
+        KeyEvent("third", 97, 0),
+    )
+    assert state.held == frozenset()
+    assert state.complete is True
+
+
+def test_binding_capture_ignores_an_unmatched_release_of_a_key_nobody_holds():
+    pressed = _capture(KeyEvent("kbd", 29, 1))
+    assert reduce_capture(pressed, KeyEvent("mouse", 30, 0)) == pressed
 
 
 def test_binding_capture_timeout_is_terminal():

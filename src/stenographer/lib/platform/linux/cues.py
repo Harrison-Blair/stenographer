@@ -4,14 +4,12 @@ from __future__ import annotations
 import math
 import shutil
 import subprocess
-import time
 from typing import TYPE_CHECKING
 
-from stenographer.lib.platform.linux.process import child_env
+from stenographer.lib.platform.linux.process import child_env, spawn_detached
 
 if TYPE_CHECKING:
     import pathlib
-    import threading
 
 PREVIEW_TIMEOUT_SECONDS = 10.0
 
@@ -42,29 +40,27 @@ def detect_player() -> str | None:
     return None
 
 
-def _cancellable_preview(command: list[str], cancellation: threading.Event) -> None:
-    """Stop and reap an actual player process as soon as its lease is cancelled."""
-    if cancellation.is_set():
-        raise RuntimeError("Sound preview cancelled")
-    with subprocess.Popen(
-        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=child_env()
-    ) as process:
-        deadline = time.monotonic() + PREVIEW_TIMEOUT_SECONDS
-        try:
-            while process.poll() is None:
-                if cancellation.wait(0.02):
-                    raise RuntimeError("Sound preview cancelled")
-                if time.monotonic() >= deadline:
-                    raise subprocess.TimeoutExpired(command, PREVIEW_TIMEOUT_SECONDS)
-            if cancellation.is_set():
-                raise RuntimeError("Sound preview cancelled")
-            if process.returncode:
-                raise subprocess.CalledProcessError(process.returncode, command)
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=0.1)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=1)
+class LinuxCuePlayer:
+    """Runs the detected player asynchronously for cues and synchronously for previews."""
+
+    def __init__(self, player: str) -> None:
+        self._player = player
+
+    def play(self, path: pathlib.Path, volume: float) -> None:
+        spawn_detached(build_play_command(self._player, path, volume))
+
+    def preview(self, path: pathlib.Path, volume: float) -> None:
+        """Play one preview cue completely so command failure is observable.
+
+        Waits at most ``PREVIEW_TIMEOUT_SECONDS``; ``subprocess.TimeoutExpired``
+        propagates so callers can report a stalled player.
+        """
+
+        subprocess.run(
+            build_play_command(self._player, path, volume),
+            check=True,
+            timeout=PREVIEW_TIMEOUT_SECONDS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=child_env(),
+        )
