@@ -97,7 +97,7 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
 
     monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
     monkeypatch.setattr(model, "Model", ModelDouble)
-    args = argparse.Namespace(file=str(path), raw=False)
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
 
     with caplog.at_level(logging.INFO, logger="stenographer.lib.transcribe.pipeline"):
         if failure_phase:
@@ -158,7 +158,7 @@ def test_a_missing_file_is_refused_before_the_model_cache_is_consulted(
     monkeypatch.setattr(bark_download, "is_model_cached", lambda: consulted.append("probe") or True)
     path = tmp_path / "absent.wav"
 
-    args = argparse.Namespace(file=str(path), raw=False)
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
 
     assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 2
 
@@ -181,7 +181,7 @@ def test_an_uncached_model_is_refused_with_the_download_instruction(
     path = tmp_path / "clip.wav"
     soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
 
-    args = argparse.Namespace(file=str(path), raw=False)
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
 
     assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 78
 
@@ -200,7 +200,7 @@ def test_audio_that_cannot_be_decoded_is_refused_with_its_path(monkeypatch, tmp_
     path.write_bytes(b"RIFF not really a wave file at all")
     monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
 
-    args = argparse.Namespace(file=str(path), raw=False)
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
 
     assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 2
 
@@ -236,7 +236,7 @@ def test_a_close_failure_surfaces_when_the_run_itself_succeeded(monkeypatch, tmp
 
     monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
     monkeypatch.setattr(model, "Model", ModelDouble)
-    args = argparse.Namespace(file=str(path), raw=False)
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
 
     with (
         caplog.at_level(logging.INFO, logger="stenographer.lib.transcribe.pipeline"),
@@ -267,7 +267,7 @@ def test_a_model_that_never_loads_is_summarized_without_a_close(monkeypatch, tmp
 
     monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
     monkeypatch.setattr(model, "Model", refuse)
-    args = argparse.Namespace(file=str(path), raw=False)
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
 
     with (
         caplog.at_level(logging.INFO, logger="stenographer.lib.transcribe.pipeline"),

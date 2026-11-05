@@ -204,10 +204,8 @@ def _choose_from_menu(
             f"Select 1-{count}, preview P1-P{count}, or cancel Q: ",
             lambda text, count=count: parse_menu_action(text, count),
         )
-        assert isinstance(action, MenuAction)
         if action.kind == "cancel":
             return None
-        assert action.index is not None
         selected = packs[action.index]
         if action.kind == "select":
             return selected
@@ -329,7 +327,6 @@ def run(
             if selected is None:
                 console.write("Sound-pack selection cancelled; configuration was not changed.")
                 return 0
-        assert selected is not None
         if sound_packs.load_sound_pack(selected, config_dir) is None:
             console.error(f"invalid or unavailable sound pack: {selected}")
             return 2
