@@ -681,6 +681,28 @@ def test_library_rename_export_and_delete_by_key_and_click(tmp_path, by):
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("key", ["q", "ctrl+c"])
+def test_library_delete_quit_keys_do_not_confirm(tmp_path, key):
+    root, sessions = _library(tmp_path)
+    app = HubApp(FakeServices(root))
+    live = sessions["live"]
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 4)
+            assert app.library_screen.select_entry(live)
+            await pilot.press("delete")
+            await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
+            await pilot.press(key)
+            await pilot.pause()
+            assert (root / live).is_dir()
+            assert isinstance(app.screen, QuitConfirm)
+            await pilot.press("y")
+            await _until(pilot, lambda: not (root / live).exists())
+
+    asyncio.run(exercise())
+
+
 def test_library_export_dialog_escape_cancels(tmp_path):
     root, _sessions = _library(tmp_path)
     app = HubApp(FakeServices(root))

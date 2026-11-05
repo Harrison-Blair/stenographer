@@ -403,6 +403,7 @@ class HubApp(App[None]):
                     "Stop recording and save before quitting?",
                     confirm="Save and quit",
                     cancel="Keep recording",
+                    quit_keys=True,
                 ),
                 self._confirm_recording_quit,
             )
@@ -443,7 +444,7 @@ class HubApp(App[None]):
     def _prompt_relabel_quit(self) -> None:
         log.info(fmt_event("hub", "quit_prompted", work="relabel"))
         self.push_screen(
-            QuitConfirm("Relabel is still running. Quit and keep the live labels?"),
+            QuitConfirm("Relabel is still running. Quit and keep the live labels?", quit_keys=True),
             self._confirm_relabel_quit,
         )
 
@@ -468,7 +469,7 @@ class HubApp(App[None]):
     def _prompt_files_quit(self) -> None:
         log.info(fmt_event("hub", "quit_prompted", work="files"))
         self.push_screen(
-            QuitConfirm("Cancel the running file job before quitting?"),
+            QuitConfirm("Cancel the running file job before quitting?", quit_keys=True),
             self._confirm_files_quit,
         )
 
