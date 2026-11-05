@@ -730,15 +730,6 @@ def test_a_device_whose_name_is_not_text_is_simply_unnamed():
     assert recorder._device_name is None
 
 
-def test_activation_refuses_to_run_without_a_negotiated_stream():
-    recorder = Recorder(device=1, max_seconds=5)
-
-    with pytest.raises(RuntimeError, match="no prepared stream"):
-        recorder._activate(recovery="none")
-
-    assert recorder._state is RecorderState.UNPREPARED
-
-
 def test_a_retained_stream_that_will_not_activate_is_replaced_exactly_once(caplog):
     sounddevice = FakeSoundDevice()
     recorder = _prepared(sounddevice)

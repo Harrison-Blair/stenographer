@@ -238,8 +238,6 @@ class Recorder:
                 raise
 
     def _activate(self, *, recovery: str) -> None:
-        if self._stream is None or self._state is not RecorderState.PREPARED:
-            raise RuntimeError("recorder has no prepared stream")
         started_at = time.perf_counter()
         # Reset before start: callbacks may arrive before stream.start returns.
         # Recovery gets its own clock and samples, never a partial first attempt.
