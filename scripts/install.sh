@@ -128,29 +128,68 @@ if [[ "${VERBOSE}" -ne 1 ]]; then
     progress_tail "${LOG}"
 fi
 
-# ────────────────────────────────────────────────────────────────
-# Step 2 — Stop a running service before replacing its files
-# ────────────────────────────────────────────────────────────────
-# Overwriting an active onedir bundle does not restart the mapped process,
-# and the frozen worker child re-execs the launcher path — so the daemon
-# must be stopped before the copy.
+# Stage on the destination filesystem before stopping the service.
+step "copying bundle"
+mkdir -p "${INSTALL_DIR}"
+STAGING_DIR=$(mktemp -d "${INSTALL_DIR}/.install.XXXXXXXX")
+BACKUP_DIR="${STAGING_DIR}/backup"
+mkdir "${STAGING_DIR}/bundle" "${BACKUP_DIR}"
 WAS_ACTIVE=0
+REPLACING=0
+OLD_FILES=()
+NEW_FILES=()
+cleanup_install() {
+    local status=$? name
+    trap - EXIT
+    if [[ "${REPLACING}" -eq 1 ]]; then
+        for name in "${NEW_FILES[@]}"; do
+            rm -rf "${INSTALL_DIR:?}/${name}"
+        done
+        for name in "${OLD_FILES[@]}"; do
+            mv "${BACKUP_DIR}/${name}" "${INSTALL_DIR}/${name}"
+        done
+        if [[ "${WAS_ACTIVE}" -eq 1 ]]; then
+            systemctl --user start stenographer.service || true
+        fi
+    fi
+    rm -rf "${STAGING_DIR:?}"
+    exit "${status}"
+}
+trap cleanup_install EXIT
+run_logged cp -a dist/stenographer/. "${STAGING_DIR}/bundle/"
+
+# The frozen worker re-execs the launcher, so stop it before replacement.
 if systemctl --user is-active --quiet stenographer.service 2>/dev/null; then
     step "stopping service"
     run_logged systemctl --user stop stenographer.service
     WAS_ACTIVE=1
 fi
 
-# ────────────────────────────────────────────────────────────────
-# Step 3 — Install the bundle
-# ────────────────────────────────────────────────────────────────
-step "copying bundle"
-mkdir -p "${INSTALL_DIR}"
-# Replace bundle-owned files only. Configuration, history, models, and old
-# logs (including desktop.log) are user data and must survive the GUI withdrawal.
-rm -rf "${INSTALL_DIR:?}/_internal"
-rm -f "${INSTALL_DIR}/stenographer" "${INSTALL_DIR}/stenographer-ui"
-run_logged cp -a dist/stenographer/. "${INSTALL_DIR}/"
+# Back up each replaced entry and the obsolete GUI launcher. User data is left
+# in place, and a failed replacement restores the previous bundle.
+REPLACING=1
+shopt -s dotglob nullglob
+entries=("${STAGING_DIR}/bundle/"*)
+for name in _internal stenographer stenographer-ui; do
+    if [[ ! -e "${STAGING_DIR}/bundle/${name}" && ! -L "${STAGING_DIR}/bundle/${name}" ]]; then
+        entries+=("${STAGING_DIR}/bundle/${name}")
+    fi
+done
+for entry in "${entries[@]}"; do
+    name=${entry##*/}
+    if [[ -e "${INSTALL_DIR}/${name}" || -L "${INSTALL_DIR}/${name}" ]]; then
+        mv "${INSTALL_DIR}/${name}" "${BACKUP_DIR}/${name}"
+        OLD_FILES+=("${name}")
+    fi
+    if [[ -e "${entry}" || -L "${entry}" ]]; then
+        mv "${entry}" "${INSTALL_DIR}/${name}"
+        NEW_FILES+=("${name}")
+    fi
+done
+shopt -u dotglob nullglob
+REPLACING=0
+rm -rf "${STAGING_DIR:?}"
+trap - EXIT
 
 step "linking launcher"
 mkdir -p "${BIN_DIR}"
@@ -213,11 +252,26 @@ mkdir -p "$(dirname "${SERVICE_DST}")"
 if [[ -f "${SERVICE_DST}" ]] && [[ "$(cat "${SERVICE_DST}")" == "${unit_content}" ]]; then
     : # unchanged
 else
+    unit_temporary=$(mktemp "${SERVICE_DST}.tmp.XXXXXXXX")
+    if ! printf '%s\n' "${unit_content}" > "${unit_temporary}"; then
+        rm -f "${unit_temporary}"
+        exit 1
+    fi
+    if ! chmod 0644 "${unit_temporary}"; then
+        rm -f "${unit_temporary}"
+        exit 1
+    fi
     if [[ -f "${SERVICE_DST}" ]]; then
-        mv "${SERVICE_DST}" "${SERVICE_DST}.bak"
+        if ! cp -p "${SERVICE_DST}" "${SERVICE_DST}.bak"; then
+            rm -f "${unit_temporary}"
+            exit 1
+        fi
         NOTES+=("Backed up existing unit to ${SERVICE_DST}.bak")
     fi
-    printf '%s\n' "${unit_content}" > "${SERVICE_DST}"
+    if ! mv "${unit_temporary}" "${SERVICE_DST}"; then
+        rm -f "${unit_temporary}"
+        exit 1
+    fi
 fi
 
 # ────────────────────────────────────────────────────────────────
