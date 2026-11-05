@@ -40,6 +40,8 @@ def test_summary_totals_thousands_durations_and_headline_counts(seed, capsys):
     assert run(None, store, Filters()) == 0
 
     lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "Source: hotkey (use --source all for all sources)"
+    lines = lines[1:]
     assert lines[0] == "Recognized words: 1,500"
     assert lines[1] == "Completed ASR audio: 01:01:02"
     assert lines[2] == "Utterances: 2 · Active days: 1"
@@ -75,11 +77,13 @@ def test_summary_honours_its_filters_and_closes_with_the_collection_health(seed,
         checkpoint("file-1", source="file", recognized_words=50),
     )
 
+    store.register_run("run", {})
     assert run(None, store, Filters(source="file")) == 0
 
     out = capsys.readouterr().out
+    assert "Source: file" in out
     assert "Recognized words: 50" in out
-    assert out.splitlines()[-1] == "Collection: available; dropped checkpoints: 0"
+    assert out.splitlines()[-1] == "Collection (all runs): available; dropped checkpoints: 0"
 
 
 def test_summary_reports_a_degraded_collection_and_its_dropped_count(seed, capsys):
@@ -89,5 +93,16 @@ def test_summary_reports_a_degraded_collection_and_its_dropped_count(seed, capsy
 
     assert run(None, store, Filters()) == 0
     assert (
-        capsys.readouterr().out.splitlines()[-1] == "Collection: degraded; dropped checkpoints: 7"
+        capsys.readouterr().out.splitlines()[-1]
+        == "Collection (all runs): degraded; dropped checkpoints: 7"
     )
+
+
+def test_summary_without_runs_reports_unknown_health(seed, capsys):
+    store = seed()
+
+    assert run(None, store, Filters(source=None)) == 0
+
+    out = capsys.readouterr().out
+    assert "Source: all\n" in out
+    assert "Collection (all runs): no runs recorded; dropped checkpoints: 0" in out

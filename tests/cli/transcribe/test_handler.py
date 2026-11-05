@@ -405,7 +405,9 @@ def test_raw_output_is_never_refined(refine_capture, monkeypatch, tmp_path, caps
 
     assert refine_capture.built == []
     assert refine_capture.refiner.calls == []
-    assert capsys.readouterr().out == f"{SPOKEN}\n"
+    captured = capsys.readouterr()
+    assert captured.out == f"{SPOKEN}\n"
+    assert "--raw skips refinement requested by --refine" in captured.err
 
 
 def test_a_short_transcript_is_below_the_threshold_and_is_printed_unrefined(
