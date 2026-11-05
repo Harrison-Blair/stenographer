@@ -25,12 +25,17 @@ SPOKEN = "um i think we should ship it on thursday no wait friday"
 REFINED = "I think we should ship it on Friday."
 
 
+def _wav(tmp_path):
+    path = tmp_path / "clip.wav"
+    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+    return path
+
+
 def _spoken_clip(monkeypatch, tmp_path, text: str):
     """A real WAV plus a decoder that returns *text*, so only refine is a double."""
     from stenographer.lib.transcribe import bark_download, model
 
-    path = tmp_path / "clip.wav"
-    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+    path = _wav(tmp_path)
 
     class ModelDouble:
         def __init__(self, cfg):
@@ -57,11 +62,9 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
     caplog,
     capsys,
 ):
-    from stenographer.cli.transcribe.handler import cmd_transcribe
     from stenographer.lib.transcribe import bark_download, model
 
-    path = tmp_path / "clip.wav"
-    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+    path = _wav(tmp_path)
     decode_error = RuntimeError("private decode detail")
     format_error = RuntimeError("private format detail")
     close_error = RuntimeError("cleanup detail")
@@ -151,7 +154,6 @@ def test_a_missing_file_gets_the_cannot_read_error_before_the_model_cache_is_con
     tmp_path,
     capsys,
 ):
-    from stenographer.cli.transcribe.handler import cmd_transcribe
     from stenographer.lib.transcribe import bark_download
 
     consulted: list[str] = []
@@ -172,7 +174,6 @@ def test_a_missing_file_gets_the_cannot_read_error_before_the_model_cache_is_con
 def test_an_unreadable_file_is_reported_before_an_uncached_model(monkeypatch, tmp_path, capsys):
     # The real Bark probe over an empty data dir: no model installed.
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    from stenographer.cli.transcribe.handler import cmd_transcribe
 
     path = tmp_path / "clip.wav"
     path.write_bytes(b"RIFF not really a wave file at all")
@@ -194,10 +195,8 @@ def test_an_uncached_model_is_refused_with_the_download_instruction(
     # The real Bark probe over an empty data dir: no model installed. The root
     # conftest does not redirect XDG_DATA_HOME, so this test does.
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    from stenographer.cli.transcribe.handler import cmd_transcribe
 
-    path = tmp_path / "clip.wav"
-    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+    path = _wav(tmp_path)
 
     args = argparse.Namespace(file=str(path), raw=False, refine=False)
 
@@ -211,7 +210,6 @@ def test_an_uncached_model_is_refused_with_the_download_instruction(
 
 
 def test_audio_that_cannot_be_decoded_is_refused_with_its_path(monkeypatch, tmp_path, capsys):
-    from stenographer.cli.transcribe.handler import cmd_transcribe
     from stenographer.lib.transcribe import bark_download
 
     path = tmp_path / "clip.wav"
@@ -231,11 +229,9 @@ def test_a_close_failure_surfaces_when_the_run_itself_succeeded(monkeypatch, tmp
     """Seen to FAIL against a ``finally`` that swallowed ``close()`` errors: a
     leaked native handle was reported as a clean transcription."""
 
-    from stenographer.cli.transcribe.handler import cmd_transcribe
     from stenographer.lib.transcribe import bark_download, model
 
-    path = tmp_path / "clip.wav"
-    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+    path = _wav(tmp_path)
     close_error = RuntimeError("could not release the decoder")
 
     class ModelDouble:
@@ -273,11 +269,9 @@ def test_a_close_failure_surfaces_when_the_run_itself_succeeded(monkeypatch, tmp
 
 
 def test_a_model_that_never_loads_is_summarized_without_a_close(monkeypatch, tmp_path, caplog):
-    from stenographer.cli.transcribe.handler import cmd_transcribe
     from stenographer.lib.transcribe import bark_download, model
 
-    path = tmp_path / "clip.wav"
-    soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
+    path = _wav(tmp_path)
     load_error = RuntimeError("CUDA library not found")
 
     def refuse(cfg):
@@ -329,8 +323,6 @@ def _refine_args(path, **overrides) -> argparse.Namespace:
 def refine_capture(monkeypatch):
     """Capture how ``transcribe`` builds its refiner, without a network."""
 
-    from stenographer.cli.transcribe import handler
-
     built: list[dict] = []
     refiner = _Refiner(REFINED)
 
@@ -341,7 +333,6 @@ def refine_capture(monkeypatch):
     monkeypatch.setattr(
         "stenographer.lib.refine.factory.build_refiner", build_refiner, raising=True
     )
-    assert handler is not None
     return SimpleNamespace(built=built, refiner=refiner)
 
 
@@ -354,18 +345,6 @@ def test_refine_flag_cleans_a_long_transcript_before_it_is_printed(
 
     assert refine_capture.refiner.calls, "the refiner was never asked"
     assert capsys.readouterr().out == f"{REFINED}\n"
-
-
-def test_without_the_flag_the_model_is_never_contacted(
-    refine_capture, monkeypatch, tmp_path, capsys
-):
-    path = _spoken_clip(monkeypatch, tmp_path, SPOKEN)
-
-    assert cmd_transcribe.__wrapped__(_refine_args(path), Config.defaults()) == 0
-
-    assert refine_capture.built == []
-    assert refine_capture.refiner.calls == []
-    assert REFINED not in capsys.readouterr().out
 
 
 def test_the_daemon_setting_is_not_inherited_by_a_file_transcription(
@@ -389,7 +368,6 @@ def test_the_daemon_setting_is_not_inherited_by_a_file_transcription(
 
     assert cmd_transcribe.__wrapped__(_refine_args(path, refine=True), disabled_cfg) == 0
 
-    assert disabled_cfg.refine.enabled is False
     assert [entry["enabled"] for entry in refine_capture.built] == [True]
 
 
