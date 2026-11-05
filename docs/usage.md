@@ -45,7 +45,7 @@ your config file. Stenographer ignores them and saves keep them unchanged; you
 can delete them by hand. The speech model keeps fillers such as "um" in every
 mode; [refine](refine.md) removes them from dictations of 10 or more words (the
 default `min_words`). For live capture,
-see [Record live audio](#record-live-audio).
+see [Record live audio](hub.md#record).
 
 The configuration file is:
 
