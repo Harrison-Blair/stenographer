@@ -18,10 +18,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from stenographer.lib.analytics.metrics import count_words
 from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.logging.pipeline import fmt_event
 from stenographer.lib.transcribe.format import format_transcript
+from stenographer.lib.transcribe.text import count_words
 
 if TYPE_CHECKING:
     import numpy as np

@@ -8,7 +8,7 @@ request, and so the time budget can be asserted in a unit test without a model.
 
 from __future__ import annotations
 
-from stenographer.lib.analytics.metrics import count_words
+from stenographer.lib.transcribe.text import count_words
 
 #: Fixed part of the per-utterance budget: model scheduling plus first token.
 TIMEOUT_BASE_SECONDS = 10.0

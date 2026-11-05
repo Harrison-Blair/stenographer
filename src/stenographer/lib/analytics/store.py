@@ -11,12 +11,16 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import sqlite3
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from stenographer.lib.platform.platform import Platform
 
 from stenographer.lib.analytics.filters import Filters
 from stenographer.lib.analytics.metrics import (
@@ -34,15 +38,18 @@ SCHEMA_VERSION = 1
 DEFAULT_FILTERS = Filters()
 
 
+def database_path(platform: Platform) -> Path:
+    return platform.state_dir(os.environ, Path.home()) / "analytics.sqlite3"
+
+
 class Store:
-    def __init__(self, path: Path, *, busy_timeout_ms: int = 100) -> None:
+    def __init__(self, path: Path) -> None:
         self.path = Path(path)
-        self.busy_timeout_ms = busy_timeout_ms
 
     @contextmanager
     def _connection(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.path, timeout=self.busy_timeout_ms / 1000)
+        connection = sqlite3.connect(self.path, timeout=0.1)
         connection.row_factory = sqlite3.Row
         try:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
@@ -200,7 +207,7 @@ class Store:
 
     def report(self, filters: Filters = DEFAULT_FILTERS) -> dict[str, Any]:
         result = summarize(self.records(filters))
-        result.update(schema_version=SCHEMA_VERSION, filters=asdict(filters), health=self.health())
+        result.update(health=self.health())
         return result
 
     def health(self) -> dict[str, Any]:
@@ -259,13 +266,8 @@ class Store:
             )
             return len(ids)
 
-    def reset(self) -> int:
-        return self.delete(Filters(source=None))
-
-    def mark_interrupted(self, run_id: str, *, process_confirmed_dead: bool) -> int:
+    def mark_interrupted(self, run_id: str) -> int:
         """Only explicit process-liveness evidence may classify unfinished work."""
-        if not process_confirmed_dead or not self.path.exists():
-            return 0
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             timestamp = utc_now()
@@ -305,5 +307,5 @@ class Store:
             except Exception:
                 continue
             if alive is False:
-                count += self.mark_interrupted(run["run_id"], process_confirmed_dead=True)
+                count += self.mark_interrupted(run["run_id"])
         return count

@@ -20,8 +20,11 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from stenographer.lib.analytics.checkpoint_records import Checkpoint, QueuedCheckpoint
-from stenographer.lib.analytics.checkpoints import advance_checkpoint
+from stenographer.lib.analytics.checkpoint_records import (
+    Checkpoint,
+    QueuedCheckpoint,
+    advance_checkpoint,
+)
 from stenographer.lib.analytics.metrics import (
     OUTCOMES,
     PHASES,
@@ -39,7 +42,6 @@ class AnalyticsSession:
         path: Path,
         *,
         context: Mapping[str, object] | None = None,
-        enabled: bool = True,
         resource_probe: Callable[[], Mapping[str, object]] | None = None,
         queue_size: int = 128,
         retries: int = 3,
@@ -47,7 +49,6 @@ class AnalyticsSession:
         process_alive: Callable[[int, float], bool | None] | None = None,
     ) -> None:
         self.run_id = str(uuid.uuid4())
-        self.enabled = enabled
         self.context = clean_context(context or {})
         self._store = Store(path)
         self._probe = resource_probe
@@ -60,15 +61,13 @@ class AnalyticsSession:
         self._terminal_queued: set[str] = set()
         self._health = {"degraded": False, "dropped_checkpoints": 0, "write_failures": 0}
         self._closing = threading.Event()
-        self._thread: threading.Thread | None = None
-        if enabled:
-            self._thread = threading.Thread(target=self._run, name="analytics-writer", daemon=True)
-            self._thread.start()
+        self._thread = threading.Thread(target=self._run, name="analytics-writer", daemon=True)
+        self._thread.start()
 
     @property
     def health(self) -> dict[str, Any]:
         with self._lock:
-            return {"enabled": self.enabled, **self._health, "pending": self._queue.qsize()}
+            return {**self._health, "pending": self._queue.qsize()}
 
     def start(
         self,
@@ -78,8 +77,6 @@ class AnalyticsSession:
         context: Mapping[str, object] | None = None,
     ) -> str:
         identity = f"{self.run_id}:{utterance_id}"
-        if not self.enabled:
-            return identity
         if source not in ("hotkey", "file"):
             raise ValueError("Only personal hotkey and file transcription are collected")
         timestamp = utc_now()
@@ -114,8 +111,6 @@ class AnalyticsSession:
         outcome: str | None = None,
         context: Mapping[str, object] | None = None,
     ) -> None:
-        if not self.enabled:
-            return
         if phase not in PHASES:
             raise ValueError("Unknown analytics checkpoint phase")
         if outcome is not None and outcome not in OUTCOMES:
@@ -253,7 +248,5 @@ class AnalyticsSession:
                 if record.resource is not None:
                     record.resource.ended_at = now
             self._closing.set()
-        if self._thread is None:
-            return True
         self._thread.join(max(0, timeout))
         return not self._thread.is_alive()
