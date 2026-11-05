@@ -51,39 +51,28 @@ def test_helper_readiness_deadline_is_bounded_and_guarded_by_ready_state():
     assert helper_ready_timed_out(started_at=10.0, now=99.0, ready=True) is False
 
 
-def test_schedule_spectrum_stays_disarmed_while_not_recording():
-    assert schedule_spectrum(False, None, 100.0) == (None, False)
+@pytest.mark.parametrize(
+    ("recording", "deadline", "expected"),
+    [
+        (False, None, (None, False)),
+        (False, 100.02, (None, True)),
+        (False, 99.0, (None, True)),
+        (True, None, (100.0 + _SPECTRUM_INTERVAL, True)),
+        (True, 100.0, (100.0 + _SPECTRUM_INTERVAL, True)),
+        (True, 99.5, (100.0 + _SPECTRUM_INTERVAL, True)),
+        (True, 100.02, (100.02, False)),
+    ],
+)
+def test_schedule_spectrum(recording, deadline, expected):
+    assert schedule_spectrum(recording, deadline, 100.0) == expected
 
 
-def test_schedule_spectrum_runs_one_cleanup_produce_on_leaving_recording():
-    assert schedule_spectrum(False, 100.02, 100.0) == (None, True)
-    assert schedule_spectrum(False, 99.0, 100.0) == (None, True)
-
-
-def test_schedule_spectrum_produces_immediately_on_entering_recording():
-    assert schedule_spectrum(True, None, 100.0) == (100.0 + _SPECTRUM_INTERVAL, True)
-
-
-def test_schedule_spectrum_produces_and_rearms_when_deadline_is_due():
-    assert schedule_spectrum(True, 100.0, 100.0) == (100.0 + _SPECTRUM_INTERVAL, True)
-    assert schedule_spectrum(True, 99.5, 100.0) == (100.0 + _SPECTRUM_INTERVAL, True)
-
-
-def test_schedule_spectrum_keeps_a_pending_deadline_untouched():
-    assert schedule_spectrum(True, 100.02, 100.0) == (100.02, False)
-
-
-def test_serve_timeout_idles_at_poll_cadence_without_a_deadline():
-    assert serve_timeout(100.0, None) == _POLL_SECONDS
-
-
-def test_serve_timeout_clamps_imminent_and_past_deadlines_to_zero_or_more():
-    assert serve_timeout(100.0, 100.01) == pytest.approx(0.01)
-    assert serve_timeout(100.0, 99.0) == 0.0
-
-
-def test_serve_timeout_caps_far_deadlines_at_poll_cadence():
-    assert serve_timeout(100.0, 200.0) == _POLL_SECONDS
+@pytest.mark.parametrize(
+    ("deadline", "expected"),
+    [(None, _POLL_SECONDS), (100.01, 0.01), (99.0, 0.0), (200.0, _POLL_SECONDS)],
+)
+def test_serve_timeout(deadline, expected):
+    assert serve_timeout(100.0, deadline) == pytest.approx(expected)
 
 
 def test_mailbox_assigns_generations_and_coalesces_pending_states():
@@ -312,22 +301,15 @@ def test_disabling_discards_every_optional_record_and_stops_accepting_more() -> 
     assert mailbox.take_audio_nowait() is None
 
 
-@pytest.mark.parametrize("sample_rate", [0, -1, True, 16000.0])
-def test_audio_blocks_with_an_unusable_sample_rate_are_dropped(sample_rate: object) -> None:
+@pytest.mark.parametrize(
+    ("sample_rate", "stream_epoch"),
+    [(0, 0), (-1, 0), (True, 0), (16000.0, 0), (16000, -1), (16000, True), (16000, 0.0)],
+)
+def test_audio_blocks_with_unusable_metadata_are_dropped(sample_rate, stream_epoch) -> None:
     mailbox = OutboundMailbox()
     mailbox.publish(OverlayState.RECORDING)
 
-    mailbox.audio_block(object(), sample_rate, 0)
-
-    assert mailbox.take_audio_nowait() is None
-
-
-@pytest.mark.parametrize("stream_epoch", [-1, True, 0.0])
-def test_audio_blocks_with_an_unusable_stream_epoch_are_dropped(stream_epoch: object) -> None:
-    mailbox = OutboundMailbox()
-    mailbox.publish(OverlayState.RECORDING)
-
-    mailbox.audio_block(object(), 16000, stream_epoch)
+    mailbox.audio_block(object(), sample_rate, stream_epoch)
 
     assert mailbox.take_audio_nowait() is None
 

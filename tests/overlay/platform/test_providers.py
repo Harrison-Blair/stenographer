@@ -46,26 +46,10 @@ def test_linux_platform_aliases_resolve_to_the_overlay_provider(
     assert isinstance(current_platform(), provider)
 
 
-def test_darwin_is_refused_as_an_unsupported_host(monkeypatch, uncached_platform) -> None:
-    monkeypatch.setattr(sys, "platform", "darwin")
-
-    with pytest.raises(UnsupportedPlatformError, match="darwin"):
-        current_platform()
-
-
-def test_win32_is_refused_by_name(monkeypatch, uncached_platform) -> None:
-    monkeypatch.setattr(sys, "platform", "win32")
-
-    with pytest.raises(UnsupportedPlatformError, match="win32"):
-        current_platform()
-
-
-def test_an_unknown_host_is_refused_by_name_rather_than_guessed(
-    monkeypatch, uncached_platform
-) -> None:
-    monkeypatch.setattr(sys, "platform", "freebsd14")
-
-    with pytest.raises(UnsupportedPlatformError, match="freebsd14"):
+@pytest.mark.parametrize("host", ["darwin", "win32", "freebsd14"])
+def test_unsupported_host_is_refused_by_name(monkeypatch, uncached_platform, host) -> None:
+    monkeypatch.setattr(sys, "platform", host)
+    with pytest.raises(UnsupportedPlatformError, match=host):
         current_platform()
 
 
