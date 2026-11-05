@@ -637,14 +637,31 @@ def test_stopping_a_merely_prepared_recorder_returns_no_audio():
     assert sounddevice.streams[0].stops == 0
 
 
-def test_a_stream_that_died_during_capture_discards_the_whole_capture(caplog):
+@pytest.mark.parametrize(
+    ("break_stream", "expected_exception"),
+    [
+        pytest.param(
+            lambda stream: setattr(stream, "active", False),
+            RuntimeError,
+            id="died_during_capture",
+        ),
+        pytest.param(
+            lambda stream: setattr(stream, "stop_error", FakePortAudioError("stream stop failed")),
+            FakePortAudioError,
+            id="stop_raises",
+        ),
+    ],
+)
+def test_a_stream_failure_at_stop_discards_the_whole_capture(
+    caplog, break_stream, expected_exception
+):
     sounddevice = FakeSoundDevice(reject=_only(channels=1))
     recorder = _prepared(sounddevice)
     recorder.start()
     _feed(recorder, np.full(800, 0.25, dtype=np.float32))
-    sounddevice.streams[0].active = False
+    break_stream(sounddevice.streams[0])
 
-    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(RuntimeError):
+    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(expected_exception):
         recorder.stop()
 
     # An uncertain capture is never half-delivered: the stream is invalidated
@@ -657,21 +674,6 @@ def test_a_stream_that_died_during_capture_discards_the_whole_capture(caplog):
     assert "recorder: capture_failed" in message
     assert "phase=stop" in message
     assert "input_frames=800" in message
-
-
-def test_a_failing_stream_stop_also_discards_the_capture(caplog):
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
-    _feed(recorder, np.zeros(800, dtype=np.float32))
-    sounddevice.streams[0].stop_error = FakePortAudioError("stream stop failed")
-
-    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(FakePortAudioError):
-        recorder.stop()
-
-    assert recorder._state is RecorderState.UNPREPARED
-    assert recorder.last_capture is None
-    assert "phase=stop" in _warnings(caplog)[0]
 
 
 def test_close_releases_the_stream_and_lets_the_next_press_reselect_a_default():
