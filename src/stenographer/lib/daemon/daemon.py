@@ -599,7 +599,7 @@ class Daemon:
                 log.debug(fmt_event("hotkey", "cancel_ignored"))
                 return
             # The paste has landed; only the clipboard restore is left.
-            if action == "pipeline" and self._pipeline is not None and self._pipeline.delivered:
+            if action == "pipeline" and self._pipeline.delivered:
                 log.debug(fmt_event("hotkey", "cancel_ignored", reason="delivered"))
                 return
             generation = self._utterance_id
@@ -714,7 +714,6 @@ class Daemon:
         record = self._record
         outcome_name = Outcome.ERROR.name
         try:
-            assert self._pipeline is not None
             outcome_name = self._pipeline.run(
                 samples,
                 utterance=self._utterance_id,
@@ -739,8 +738,6 @@ class Daemon:
 
     def run(self) -> None:
         """Start the listener and block until stopped."""
-        if self._listener is None:
-            raise RuntimeError("daemon.run() before build()")
         self._telemetry.open(self._cfg, self._platform, pids=lambda: self._worker.process_ids)
         self._start_refine_warmup()
         self._listener.start()
@@ -754,9 +751,8 @@ class Daemon:
     def stop(self) -> None:
         """Idempotent teardown. Safe before ``run`` and safe to call twice."""
         self._stop_event.set()
-        if self._listener is not None:
-            with contextlib.suppress(Exception):
-                self._listener.stop()
+        with contextlib.suppress(Exception):
+            self._listener.stop()
         with self._capture_lock:
             with self._lock:
                 was_recording = self._recording
@@ -805,9 +801,8 @@ class Daemon:
         # running. Keeping the order shortens that exposure window and skips
         # a redundant unload call.
         self._release_refine_model(deadline)
-        if self._deliverer is not None:
-            with contextlib.suppress(Exception):
-                self._deliverer.close()
+        with contextlib.suppress(Exception):
+            self._deliverer.close()
         with self._lock:
             # A recording torn down mid-flight still owes the log its one line;
             # without this a press-then-stop leaves an utterance unaccounted for.

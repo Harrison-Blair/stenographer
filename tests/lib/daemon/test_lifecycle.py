@@ -640,15 +640,6 @@ def test_a_recorder_failure_during_shutdown_still_closes_the_utterance(daemon_lo
     assert "outcome=CANCELLED" in _summary(daemon_logs)
 
 
-def test_run_before_build_refuses_rather_than_blocking():
-    daemon = _daemon()
-    try:
-        with pytest.raises(RuntimeError, match=r"daemon\.run\(\) before build\(\)"):
-            daemon.run()
-    finally:
-        daemon.stop()
-
-
 def test_run_starts_the_listener_and_returns_once_stop_is_requested(daemon_logs):
     daemon = _daemon()
     listener = _Listener(
@@ -958,7 +949,7 @@ def test_stop_bounds_the_total_wait_when_every_shutdown_join_is_wedged(monkeypat
 
 
 def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire):
-    from .support import _Feedback, _Notifier, _Recorder, _Worker
+    from .support import _Deliverer, _Feedback, _Listener, _Notifier, _Recorder, _Worker
 
     defaults = Config.defaults()
     cfg = dataclasses.replace(
@@ -974,6 +965,8 @@ def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire):
         worker=_Worker(None, None),
         recorder=_Recorder(np.zeros(16000, dtype=np.float32)),
     )
+    daemon._listener = _Listener(device=None, lock=threading.RLock())
+    daemon._deliverer = _Deliverer()
     try:
         daemon._refiner.refine("alpha bravo charlie")
     finally:
