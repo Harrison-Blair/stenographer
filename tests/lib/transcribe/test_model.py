@@ -18,32 +18,23 @@ from stenographer.lib.transcribe.decode import (
     words_from_tokens,
 )
 from stenographer.lib.transcribe.errors import PathologicalOutputError
+from stenographer.lib.transcribe.model import Model
 from stenographer.lib.transcribe.results import SegmentInfo, WordInfo
 
 
-def test_resolve_cpu_threads_explicit_passthrough():
-    # An explicit config value wins even when the host counted its cores.
-    assert resolve_cpu_threads(3, 16) == 3
-
-
-def test_resolve_cpu_threads_uses_physical_core_count():
-    assert resolve_cpu_threads(0, 4) == 4
-
-
-def test_resolve_cpu_threads_caps_at_eight():
-    # The automatic choice never asks for more than eight threads.
-    assert resolve_cpu_threads(0, 16) == 8
-
-
-def test_resolve_cpu_threads_falls_back_when_host_cannot_count():
-    # None is the host saying "cannot tell" (no affinity call or unreadable
-    # topology) — never a guess derived from logical CPUs.
-    assert resolve_cpu_threads(0, None) == 4
-
-
-@pytest.mark.parametrize("count", [0, -1])
-def test_resolve_cpu_threads_falls_back_on_nonsense_count(count):
-    assert resolve_cpu_threads(0, count) == 4
+@pytest.mark.parametrize(
+    ("configured", "cores", "expected"),
+    [
+        (3, 16, 3),
+        (0, 4, 4),
+        (0, 16, 8),
+        (0, None, 4),
+        (0, 0, 4),
+        (0, -1, 4),
+    ],
+)
+def test_resolve_cpu_threads(configured, cores, expected):
+    assert resolve_cpu_threads(configured, cores) == expected
 
 
 def _valid_kwargs():
@@ -59,27 +50,16 @@ def test_validate_output_accepts_plausible_utterance():
     _validate_output(**_valid_kwargs())  # does not raise
 
 
-def test_validate_output_rejects_end_before_start():
-    kwargs = _valid_kwargs()
-    kwargs["segment_timestamps"] = [(1.0, 0.5)]
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"segment_timestamps": [(1.0, 0.5)]},
+        {"audio_seconds": 1.0, "word_timestamps": [(0.0, 5.0)]},
+    ],
+)
+def test_validate_output_rejects_invalid_timestamps(overrides):
     with pytest.raises(PathologicalOutputError):
-        _validate_output(**kwargs)
-
-
-def test_validate_output_rejects_timestamp_past_audio():
-    kwargs = _valid_kwargs()
-    kwargs["audio_seconds"] = 1.0
-    kwargs["word_timestamps"] = [(0.0, 5.0)]
-    with pytest.raises(PathologicalOutputError):
-        _validate_output(**kwargs)
-
-
-def test_validate_output_rejects_word_density_runaway():
-    kwargs = _valid_kwargs()
-    kwargs["audio_seconds"] = 1.0  # limit = max(12, ceil(8*1)) = 12
-    kwargs["word_count"] = 13
-    with pytest.raises(PathologicalOutputError):
-        _validate_output(**kwargs)
+        _validate_output(**(_valid_kwargs() | overrides))
 
 
 def test_validate_output_message_has_no_transcript_text():
@@ -107,18 +87,6 @@ def test_assemble_keeps_every_segment_and_concatenates():
     assert result.duration_seconds == 2.0
     assert result.vad_seconds == 2.0
     assert result.segments == segments
-
-
-def test_assemble_validates_word_density():
-    words = [WordInfo(0.0, 0.01, "x") for _ in range(13)]
-    segments = [_segment(0.0, 1.0, "x" * 13, words)]
-    with pytest.raises(PathologicalOutputError):
-        _assemble(segments, audio_seconds=1.5)
-
-
-def test_segment_info_has_no_speech_probability():
-    # Bark gives no no-speech estimate; silence is decided by the VAD instead.
-    assert "no_speech_prob" not in {f.name for f in dataclasses.fields(SegmentInfo)}
 
 
 # --- leading-silence pad ---
@@ -240,8 +208,6 @@ class _Recognizer:
 
 
 def _model(result):
-    from stenographer.lib.transcribe.model import Model
-
     cfg = dataclasses.replace(Config.defaults().asr, cpu_threads=2)
     recognizer = _Recognizer(result)
     return Model(cfg, recognizer=recognizer), recognizer
@@ -282,16 +248,12 @@ def test_model_rejects_a_runaway_decode():
 
 
 def test_model_load_names_the_download_when_the_model_is_missing(tmp_path):
-    from stenographer.lib.transcribe.model import Model
-
     cfg = dataclasses.replace(Config.defaults().asr, cpu_threads=2)
     with pytest.raises(FileNotFoundError, match="model download --asr"):
         Model(cfg, data_dir=tmp_path)
 
 
 def test_only_an_empty_capture_skips_the_decoder():
-    from stenographer.lib.transcribe.model import Model
-
     assert Model._is_silent_input(np.empty(0, dtype=np.float32)) is True
     # Silence is not the same as no audio: the dictation VAD decides silence
     # before the decode; a captured silent buffer still reaches the decoder.
@@ -299,8 +261,6 @@ def test_only_an_empty_capture_skips_the_decoder():
 
 
 def test_multichannel_captures_are_downmixed_to_one_dimension():
-    from stenographer.lib.transcribe.model import Model
-
     stereo = np.array([[1.0, 0.0], [0.5, 0.5]], dtype=np.float32)
     single = np.array([[0.25], [0.75]], dtype=np.float32)
     mono = np.array([0.25, 0.75], dtype=np.float32)

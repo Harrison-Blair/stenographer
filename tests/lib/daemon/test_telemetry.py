@@ -19,6 +19,7 @@ from .support import (
     CANARY,
     _current_stamp,
     _daemon,
+    _run_and_stop,
     _run_utterance,
     _summary,
 )
@@ -35,10 +36,7 @@ def test_delivered_utterance_logs_metrics_and_never_the_transcript(daemon_logs):
         vad_seconds=0.9,
     )
     daemon = _daemon(result=result)
-    try:
-        _run_utterance(daemon)
-    finally:
-        daemon.stop()
+    _run_and_stop(daemon)
 
     expected = transcript_text(result)
     assert daemon._deliverer.delivered == [expected]

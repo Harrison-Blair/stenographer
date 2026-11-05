@@ -49,34 +49,30 @@ class _Keys:
 KEYS = _Keys()
 
 
-def test_parse_single_key():
-    assert parse_binding("KEY_RIGHTALT", KEYS) == frozenset({100})
+@pytest.mark.parametrize(
+    ("binding", "expected"),
+    [
+        ("KEY_RIGHTALT", frozenset({100})),
+        ("KEY_LEFTCTRL+KEY_A", frozenset({29, 30})),
+        ("KEY_A+KEY_LEFTCTRL", frozenset({29, 30})),
+        ("  KEY_A + KEY_LEFTCTRL ", frozenset({29, 30})),
+    ],
+)
+def test_parse_accepted_binding(binding, expected):
+    assert parse_binding(binding, KEYS) == expected
 
 
-def test_parse_chord_is_order_independent():
-    forward = parse_binding("KEY_LEFTCTRL+KEY_A", KEYS)
-    reversed_ = parse_binding("KEY_A+KEY_LEFTCTRL", KEYS)
-    assert forward == reversed_
-    assert forward == frozenset({29, 30})
-
-
-def test_parse_tolerates_whitespace():
-    assert parse_binding("  KEY_A + KEY_LEFTCTRL ", KEYS) == frozenset({30, 29})
-
-
-def test_parse_empty_raises():
-    with pytest.raises(BindingError):
-        parse_binding("   ", KEYS)
-
-
-def test_parse_trailing_plus_raises():
-    with pytest.raises(BindingError):
-        parse_binding("KEY_A+", KEYS)
-
-
-def test_parse_unknown_token_names_it():
-    with pytest.raises(BindingError, match="KEY_NOPE"):
-        parse_binding("KEY_NOPE", KEYS)
+@pytest.mark.parametrize(
+    ("binding", "message"),
+    [
+        ("   ", None),
+        ("KEY_A+", None),
+        ("KEY_NOPE", "KEY_NOPE"),
+    ],
+)
+def test_parse_rejected_binding(binding, message):
+    with pytest.raises(BindingError, match=message):
+        parse_binding(binding, KEYS)
 
 
 def test_chord_active_requires_full_subset():

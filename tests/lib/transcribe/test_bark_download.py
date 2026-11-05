@@ -393,32 +393,25 @@ def test_each_converter_exit_code_has_its_message_and_installs_nothing(tmp_path,
     assert _asr_entries(tmp_path) == []
 
 
-def test_an_output_sha256_mismatch_fails_closed_and_names_the_file(tmp_path):
-    host = Host(outputs={**CONVERTED_BYTES, "joiner.int8.onnx": b"different"})
-
-    with pytest.raises(BarkDownloadError, match=r"Output file joiner\.int8\.onnx does not match"):
-        _download(tmp_path, host)
-
-    assert _asr_entries(tmp_path) == []
-
-
-def test_unpinned_outputs_fail_closed(tmp_path):
-    host = Host()
-
-    with pytest.raises(BarkDownloadError, match=r"Output file encoder\.int8\.onnx"):
-        _download(tmp_path, host, pins=_pins(outputs={}))
-
-    assert _asr_entries(tmp_path) == []
-
-
-def test_a_missing_output_fails_closed(tmp_path):
-    outputs = dict(CONVERTED_BYTES)
-    del outputs["tokens.txt"]
+@pytest.mark.parametrize(
+    ("outputs", "pins", "expected_file"),
+    [
+        (
+            {**CONVERTED_BYTES, "joiner.int8.onnx": b"different"},
+            None,
+            r"joiner\.int8\.onnx does not match",
+        ),
+        (CONVERTED_BYTES, _pins(outputs={}), r"encoder\.int8\.onnx"),
+        ({k: v for k, v in CONVERTED_BYTES.items() if k != "tokens.txt"}, None, r"tokens\.txt"),
+    ],
+)
+def test_invalid_outputs_fail_closed(tmp_path, outputs, pins, expected_file):
     host = Host(outputs=outputs)
-
-    with pytest.raises(BarkDownloadError, match=r"Output file tokens\.txt"):
-        _download(tmp_path, host)
-
+    with pytest.raises(BarkDownloadError, match=f"Output file {expected_file}"):
+        if pins is None:
+            _download(tmp_path, host)
+        else:
+            _download(tmp_path, host, pins=pins)
     assert _asr_entries(tmp_path) == []
 
 
