@@ -181,7 +181,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,
   `pageup`/`pagedown`, `home`/`end`, or the mouse wheel; the view follows new
   lines at the bottom. Library lists recordings, file sessions, and file
-  jobs; press `/` to search session IDs, times, file names, and transcripts, `p` to play, `d` or `t` to
+  jobs; press `/` to search session IDs, times (including displayed recording
+  dates), file names, and transcripts, `p` to play, `d` or `t` to
   re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
   a job; confirm with `y` or cancel with `n`. Press `n` there to transcribe a file: the dialog browses from your
   home folder, sets Separate speakers, Speaker count, and Refine text, and

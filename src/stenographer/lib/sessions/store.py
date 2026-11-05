@@ -326,6 +326,8 @@ class SessionStore:
             name = metadata.get("source_name")
             if isinstance(name, str):
                 titles += (name,)
+        else:
+            titles += (session_started_at(session_id).astimezone().strftime("%d %b %H:%M"),)
         lines, _ = read_transcript(path)
         texts = tuple(text.casefold() for text in (*titles, *(line.text for line in lines)))
         self._search_texts[session_id] = (key, texts)

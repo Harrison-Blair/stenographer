@@ -263,8 +263,9 @@ not finished, newest first. Its columns are `date`, `dur`, `kind` (`rec` or
 `file`), `spk` (speaker count), and `labels`:
 
 - **Recording:** `labels` is `live` for live speaker labels, `relabeled` after
-  the relabel pass or a re-diarize, or `! interrupted` when the recording
-  stopped without a clean save.
+  the relabel pass or a re-diarize, a revision method such as `rename` or
+  `re-transcribe`, or `! interrupted` when the recording stopped without a
+  clean save.
 - **File session:** `labels` is the name of the source file.
 - **File job:** `dur` shows `queued` or the percent done, and `labels` shows the
   source file name. A failed job shows `× failed`; press `delete` to remove its
@@ -278,9 +279,10 @@ the selected entry. The active recording does not appear until it is saved.
 The context card shows the entry count, the audio size, and the sessions
 folder; the navigation row shows the entry count.
 
-Press `/` to search session IDs, start times, file names, and transcripts; the search ignores case and runs in
-the background. A job row matches by its source file name. Press `escape` to
-clear the search.
+Press `/` to search session IDs, start times, file names, and transcripts; the
+search ignores case and runs in the background. Recording times include the
+local date and time shown in the list and the UTC timestamp. A job row matches
+by its source file name. Press `escape` to clear the search.
 
 The detail shows the date, time, duration, and kind, the label state, each
 speaker's talk time, the microphone and system activity of a recording, and
