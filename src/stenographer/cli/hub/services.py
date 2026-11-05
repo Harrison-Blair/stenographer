@@ -241,9 +241,17 @@ class HubServices:
         self.next_device = value
         self.next_device_label = label
 
-    def toggle_session_playback(self, session_id: str) -> None:
+    def toggle_session_playback(
+        self, session_id: str, on_failure: Callable[[int], None] | None = None
+    ) -> None:
+        """Stop this session's player, or play it in place of any other session.
+
+        ``on_failure`` gets the status of a player that exits with an error by
+        itself; it runs on the player's watcher thread.
+        """
         with self._player_lock:
-            if self._stop_player_locked():
+            same_session = self._player_session_id == session_id
+            if self._stop_player_locked() and same_session:
                 return
             if self._player_temp_path is not None:
                 self._player_temp_path.unlink(missing_ok=True)
@@ -262,7 +270,7 @@ class HubServices:
             )
             threading.Thread(
                 target=self._watch_player,
-                args=(process, mixed_path, session_id),
+                args=(process, mixed_path, session_id, on_failure),
                 name="stenographer-session-player",
                 daemon=True,
             ).start()
@@ -285,9 +293,17 @@ class HubServices:
                 pid=process.pid,
             )
         )
+        self._player = None
+        self._player_session_id = None
         return True
 
-    def _watch_player(self, process: subprocess.Popen, mixed_path: Path, session_id: str) -> None:
+    def _watch_player(
+        self,
+        process: subprocess.Popen,
+        mixed_path: Path,
+        session_id: str,
+        on_failure: Callable[[int], None] | None,
+    ) -> None:
         returncode = process.wait()
         log.info(
             fmt_event(
@@ -299,12 +315,15 @@ class HubServices:
             )
         )
         with self._player_lock:
-            if self._player is process:
+            ended_by_itself = self._player is process
+            if ended_by_itself:
                 self._player = None
                 self._player_session_id = None
             if self._player_temp_path == mixed_path:
                 self._player_temp_path = None
             mixed_path.unlink(missing_ok=True)
+        if ended_by_itself and returncode != 0 and on_failure is not None:
+            on_failure(returncode)
 
     def cancel_files(self) -> None:
         engine = self._files_engine

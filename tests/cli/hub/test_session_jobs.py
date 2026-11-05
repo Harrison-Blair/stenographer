@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import queue
+import shutil
 import threading
 import time
 import tracemalloc
@@ -64,10 +66,11 @@ class FakePlayer:
     def __init__(self):
         self.pid = 43210
         self.terminated = False
+        self.returncode = 0
         self.finished = threading.Event()
 
     def poll(self):
-        return 0 if self.finished.is_set() else None
+        return self.returncode if self.finished.is_set() else None
 
     def terminate(self):
         self.terminated = True
@@ -75,7 +78,7 @@ class FakePlayer:
 
     def wait(self):
         self.finished.wait()
-        return 0
+        return self.returncode
 
 
 def _write_session(root: Path) -> Path:
@@ -256,6 +259,85 @@ def test_playback_mixes_saved_sources_and_second_press_stops_own_player(tmp_path
     while mixed_path.exists() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not mixed_path.exists()
+
+
+def _two_session_services(tmp_path):
+    """Return services with a first and a second saved session, and each started player."""
+    sessions_root = tmp_path / "sessions"
+    first = _write_session(sessions_root)
+    second = sessions_root / "20261020T011219Z"
+    shutil.copytree(first, second)
+    players = []
+
+    def start_player(command):
+        players.append(FakePlayer())
+        return players[-1]
+
+    services = HubServices(
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        session_store=SessionStore(sessions_root),
+        player_factory=start_player,
+    )
+    return services, first.name, second.name, players
+
+
+def test_playback_of_another_session_stops_the_first_and_starts_in_one_press(tmp_path):
+    services, first, second, players = _two_session_services(tmp_path)
+
+    services.toggle_session_playback(first)
+    services.toggle_session_playback(second)
+
+    assert len(players) == 2
+    assert players[0].terminated
+    assert not players[1].terminated
+
+    # The same session still toggles: its second press stops it and starts nothing.
+    services.toggle_session_playback(second)
+    assert players[1].terminated
+    assert len(players) == 2
+
+
+def test_playback_reports_a_player_that_exits_with_an_error(tmp_path):
+    session = _write_session(tmp_path / "sessions")
+    player = FakePlayer()
+    player.returncode = 3
+    failures = queue.Queue()
+    services = HubServices(
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        session_store=SessionStore(tmp_path / "sessions"),
+        player_factory=lambda _command: player,
+    )
+
+    services.toggle_session_playback(session.name, on_failure=failures.put)
+    player.finished.set()
+
+    assert failures.get(timeout=1) == 3
+
+
+def test_playback_does_not_report_a_stop_or_a_clean_end(tmp_path):
+    services, first, second, players = _two_session_services(tmp_path)
+    failures = []
+
+    # A stopped player exits with the signal status: the stop is not a failure.
+    services.toggle_session_playback(first, on_failure=failures.append)
+    players[0].returncode = -15
+    services.stop_session_playback()
+    assert players[0].finished.wait(timeout=1)
+
+    # A player replaced by another session is a stop too.
+    services.toggle_session_playback(first, on_failure=failures.append)
+    players[1].returncode = -15
+    services.toggle_session_playback(second, on_failure=failures.append)
+
+    # A player that ends by itself with status zero is a clean end.
+    players[2].finished.set()
+
+    for thread in threading.enumerate():
+        if thread.name == "stenographer-session-player":
+            thread.join(timeout=1)
+    assert failures == []
 
 
 class RecordingDecoder:

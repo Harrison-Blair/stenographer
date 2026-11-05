@@ -294,7 +294,7 @@ the transcript. Each action is a button that prints its key:
 | `up` / `down` | Select the previous or next entry. |
 | `/` | Search titles and transcripts. |
 | `escape` | Clear the search. |
-| `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. |
+| `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. On another session, `p` stops the audio that plays and starts that session. A notice shows when the player exits with an error. |
 | `r` | Rename a speaker of the session. |
 | `d` | Re-diarize the session. A file session cannot: use Re-transcribe. |
 | `t` | Re-transcribe the session. |
