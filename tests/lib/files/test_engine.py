@@ -68,7 +68,7 @@ class FakeSegmenter:
 
 
 def _phrase(start, end, samples):
-    from stenographer.lib.live.phrase import Phrase
+    from stenographer.lib.live.phrase_segmenter import Phrase
 
     return Phrase("system", start, end, samples)
 
@@ -85,13 +85,26 @@ def _wait_for(job, state):
 _JOB_START = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
 
 
+class FakeFilesPlatform:
+    def __init__(self, data_dir, process):
+        self._data_dir = data_dir
+        self._process = process
+
+    def data_dir(self, _env, _home):
+        return self._data_dir
+
+    def ffmpeg_decoder(self):
+        return SubprocessFfmpegDecoder()
+
+    def asr_transport(self):
+        return FakeAsrTransport(self._process)
+
+
 def _engine(tmp_path, process, **kwargs):
     kwargs.setdefault("clock", lambda: _JOB_START)
     return FilesEngine(
         Config.defaults(),
-        data_dir=tmp_path / "data",
-        decoder=SubprocessFfmpegDecoder(),
-        transport=FakeAsrTransport(process),
+        platform=FakeFilesPlatform(tmp_path / "data", process),
         segmenter_factory=FakeSegmenter,
         **kwargs,
     )
@@ -111,7 +124,7 @@ def test_file_job_writes_phrase_text_to_a_new_file_session_and_progress_preview(
     source = _audio(tmp_path / "Meeting Notes.WAV")
     job = engine.submit(source, diarize=False)
     try:
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
         assert job.session_id == "20260302T040506Z"
         session = _sessions(tmp_path) / job.session_id
         assert sorted(path.name for path in session.iterdir()) == [
@@ -155,7 +168,7 @@ def test_file_session_name_adds_one_second_while_the_name_exists(tmp_path):
     engine = _engine(tmp_path, _file_asr_process())
     job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
     try:
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
         assert job.session_id == "20260302T040508Z"
         assert sorted(path.name for path in _sessions(tmp_path).iterdir()) == [
             "20260302T040506Z",
@@ -179,7 +192,7 @@ def test_cancel_finishes_current_phrase_without_saving_output(tmp_path):
         assert started.wait(5)
         assert job.cancel()
         release.set()
-        assert job.wait(5) == "cancelled"
+        _wait_for(job, "cancelled")
         assert process.decode_count == 1
         assert any(event.stage == "transcribe" for event in progress_events)
         assert job.session_id is None
@@ -201,8 +214,8 @@ def test_jobs_run_in_fifo_order(tmp_path):
         assert first.state == "running"
         assert second.state == "queued"
         release.set()
-        assert first.wait(5) == "completed"
-        assert second.wait(5) == "completed"
+        _wait_for(first, "completed")
+        _wait_for(second, "completed")
         assert first.started_at <= second.started_at
         assert second.session_id == "20260302T040507Z"
         assert "recognized phrase 3" in (
@@ -222,7 +235,7 @@ def test_missing_ffmpeg_blocks_an_unsupported_file_before_asr_starts(tmp_path, m
 
     try:
         job = engine.submit(path, diarize=False)
-        assert job.wait(5) == "needs_ffmpeg"
+        _wait_for(job, "needs_ffmpeg")
         assert job.error == "needs ffmpeg"
         assert not process.sent
         assert job.session_id is None
@@ -246,7 +259,7 @@ def test_refine_is_opt_in_and_updates_the_preview(tmp_path):
         refine=True,
     )
     try:
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
         assert "clean recognized phrase 1" in (
             _sessions(tmp_path) / job.session_id / "transcript.md"
         ).read_text(encoding="utf-8")
@@ -287,7 +300,7 @@ def test_fixed_speaker_count_runs_batch_diarization(tmp_path):
     try:
         assert started.wait(5)
         release.set()
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
         assert any(event.stage == "diarize" for event in progress_events)
         assert job.progress.stage == "save"
         assert {line.speaker_id for line in job.progress.completed_lines} == {"speaker-1"}
@@ -306,14 +319,12 @@ def test_a_file_job_refine_request_carries_the_vocabulary(tmp_path, ollama_wire)
     )
     engine = FilesEngine(
         config,
-        data_dir=tmp_path / "data",
-        decoder=SubprocessFfmpegDecoder(),
-        transport=FakeAsrTransport(_file_asr_process()),
+        platform=FakeFilesPlatform(tmp_path / "data", _file_asr_process()),
         segmenter_factory=FakeSegmenter,
     )
     job = engine.submit(_audio(tmp_path / "refine.wav"), diarize=False, refine=True)
     try:
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
     finally:
         engine.close()
 
@@ -359,7 +370,7 @@ def test_failed_file_session_save_removes_only_its_own_folder(tmp_path, monkeypa
     engine = _engine(tmp_path, _file_asr_process())
     job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
     try:
-        assert job.wait(5) == "failed"
+        _wait_for(job, "failed")
         assert job.session_id is None
         assert sorted(path.name for path in _sessions(tmp_path).iterdir()) == [other.name]
         assert (other / "keep.txt").read_text(encoding="utf-8") == "keep"
@@ -375,7 +386,7 @@ def test_cancel_during_file_session_save_removes_only_its_own_folder(tmp_path, m
     engine = _engine(tmp_path, _file_asr_process())
     holder["job"] = job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
     try:
-        assert job.wait(5) == "cancelled"
+        _wait_for(job, "cancelled")
         assert job.session_id is None
         assert sorted(path.name for path in _sessions(tmp_path).iterdir()) == [other.name]
         assert (other / "keep.txt").read_text(encoding="utf-8") == "keep"
@@ -427,7 +438,7 @@ def test_source_name_copy_uses_a_safe_lowercase_suffix(tmp_path, name, copied):
     engine = _engine(tmp_path, _file_asr_process())
     job = engine.submit(source, diarize=False)
     try:
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
     finally:
         engine.close()
     store = SessionStore(_sessions(tmp_path))
@@ -504,7 +515,7 @@ def test_mic_source_job_writes_a_revision_and_keeps_system_lines_and_renames(tmp
     engine = _engine(tmp_path, _file_asr_process())
     try:
         job = engine.submit(session / "mic.flac", diarize=False)
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
         assert job.session_id == session.name
         assert sorted(path.name for path in _sessions(tmp_path).iterdir()) == [session.name]
         detail = store.read(session.name)
@@ -526,7 +537,7 @@ def test_mic_source_job_writes_a_revision_and_keeps_system_lines_and_renames(tmp
         ]
 
         second = engine.submit(session / "mic.flac", diarize=False)
-        assert second.wait(5) == "completed"
+        _wait_for(second, "completed")
         assert store.read(session.name).revision == "transcript.r5.jsonl"
         assert _file_rows(session, "transcript.r5.jsonl") == [
             (0.0, "mic", "mic-file-r5-1", "You", "recognized phrase 3"),
@@ -582,7 +593,7 @@ def test_diarized_source_job_numbers_new_speakers_and_keeps_the_other_source(
     engine = _engine(tmp_path, _file_asr_process(), speaker_tracker_factory=TwoVoiceTracker)
     try:
         job = engine.submit(session / f"{source}.flac", diarize=True, speaker_count=2)
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
     finally:
         engine.close()
     rows = _file_rows(session, "transcript.r2.jsonl")
@@ -602,7 +613,7 @@ def test_system_source_job_without_diarization_uses_one_speaker(tmp_path):
     engine = _engine(tmp_path, _file_asr_process())
     try:
         job = engine.submit(session / "system.flac", diarize=False)
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
     finally:
         engine.close()
 
@@ -620,12 +631,12 @@ def test_file_session_source_job_replaces_all_lines(tmp_path):
     engine = _engine(tmp_path, _file_asr_process())
     try:
         first = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
-        assert first.wait(5) == "completed"
+        _wait_for(first, "completed")
         session = _sessions(tmp_path) / first.session_id
         store = SessionStore(_sessions(tmp_path))
         store.rename_speaker(first.session_id, "speaker-1", "Alice")
         again = engine.submit(session / "source.wav", diarize=False)
-        assert again.wait(5) == "completed"
+        _wait_for(again, "completed")
     finally:
         engine.close()
 
@@ -665,7 +676,7 @@ def test_source_paths_that_leave_a_session_folder_make_a_new_session(tmp_path, l
     engine = _engine(tmp_path, _file_asr_process())
     try:
         job = engine.submit(path, diarize=False)
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
     finally:
         engine.close()
 
@@ -693,7 +704,7 @@ def test_cancelled_revision_job_leaves_the_session_byte_identical(tmp_path):
         assert started.wait(5)
         assert job.cancel()
         release.set()
-        assert job.wait(5) == "cancelled"
+        _wait_for(job, "cancelled")
     finally:
         release.set()
         engine.close()
@@ -716,7 +727,7 @@ def test_revision_job_stopped_while_saving_leaves_the_session_byte_identical(
     engine = _engine(tmp_path, _file_asr_process())
     try:
         holder["job"] = job = engine.submit(session / "mic.flac", diarize=False)
-        assert job.wait(5) == step
+        _wait_for(job, step)
     finally:
         engine.close()
     monkeypatch.undo()
@@ -744,7 +755,7 @@ def test_revision_job_stale_revision_keeps_a_rename_made_during_the_job(tmp_path
     )
     try:
         job = engine.submit(session / "mic.flac", diarize=False)
-        assert job.wait(5) == "failed"
+        _wait_for(job, "failed")
     finally:
         engine.close()
 
@@ -766,7 +777,7 @@ def test_engine_exposes_its_worker_pids_and_idle_unload_deadline(tmp_path):
         assert engine.process_ids == ()
         assert engine.idle_unload_deadline is None
         job = engine.submit(_audio(tmp_path / "voice.wav"), diarize=False)
-        assert job.wait(5) == "completed"
+        _wait_for(job, "completed")
 
         assert engine.process_ids == (713,)
         assert engine.idle_unload_deadline is not None

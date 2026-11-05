@@ -32,6 +32,7 @@ from stenographer.lib.daemon.policy import (
 )
 from stenographer.lib.daemon.telemetry import UtteranceTelemetry
 from stenographer.lib.delivery.deliverer import Deliverer
+from stenographer.lib.live.models import VAD_MODEL, live_model_dir
 from stenographer.lib.logging.pipeline import fmt_event, log_failure, set_utterance
 from stenographer.lib.platform import current_platform
 from stenographer.lib.refine.factory import build_refiner
@@ -252,7 +253,7 @@ class Daemon:
             deliverer,
             lambda samples: dictation_speech(
                 samples,
-                plat.data_dir(os.environ, Path.home()) / "models" / "live" / "silero_vad.onnx",
+                live_model_dir(plat.data_dir(os.environ, Path.home())) / VAD_MODEL.filename,
             ),
         )
         return daemon

@@ -13,8 +13,7 @@ import pytest
 import soundfile as sf
 
 from stenographer.lib.live.models import LIVE_MODELS
-from stenographer.lib.live.phrase import Phrase
-from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
+from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
 from stenographer.lib.platform import current_platform
 
 

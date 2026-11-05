@@ -34,5 +34,4 @@ class FileJobProgress:
 
     stage: str
     percent: int
-    eta_seconds: float | None
     completed_lines: tuple[TranscriptLine, ...]

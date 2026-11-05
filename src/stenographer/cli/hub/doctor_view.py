@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
+
 if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
 
@@ -330,7 +332,7 @@ def build_report(config: Config, config_path: pathlib.Path | None = None) -> Doc
         live.detail,
         live.fix,
         failed="warn",
-        path=str(data_dir / "models" / "live"),
+        path=str(live_model_dir(data_dir)),
     )
     checks.append(_refine_check(config))
     capture = extra.pop("system_capture")
@@ -413,8 +415,8 @@ def default_model_status() -> tuple[ModelEntry, ...]:
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
 
-    live_dir = current_platform().data_dir(os.environ, pathlib.Path.home()) / "models" / "live"
-    names = {"silero_vad.onnx": "vad", "nemo_en_titanet_small.onnx": "speaker"}
+    live_dir = live_model_dir(current_platform().data_dir(os.environ, pathlib.Path.home()))
+    names = {VAD_MODEL.filename: "vad", SPEAKER_MODEL.filename: "speaker"}
     labels = {"vad": "voice activity", "speaker": "speaker model"}
     sizes = {"vad": "about 0.6 MB", "speaker": "about 40 MB"}
     entries = [
@@ -453,5 +455,5 @@ def default_model_download(model_id: str) -> None:
     if model_id == "asr":
         download_bark_pro(data_dir)
         return
-    filename = {"vad": "silero_vad.onnx", "speaker": "nemo_en_titanet_small.onnx"}[model_id]
+    filename = {"vad": VAD_MODEL.filename, "speaker": SPEAKER_MODEL.filename}[model_id]
     download_live_models(data_dir, models=tuple(m for m in LIVE_MODELS if m.filename == filename))

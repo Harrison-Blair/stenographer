@@ -12,7 +12,7 @@ import numpy as np
 import soundfile as sf
 
 from stenographer.lib.files.media import DecodedAudio, decode_media, inspect_media
-from stenographer.lib.live.models import LIVE_MODELS
+from stenographer.lib.live.models import SPEAKER_MODEL, live_model_dir
 from stenographer.lib.live.relabel import relabel_system_lines
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -68,10 +68,8 @@ class SessionJobs:
         lines = list(detail.lines)
         if any(indices.values()):
             model_path = (
-                self._platform.data_dir(os.environ, Path.home())
-                / "models"
-                / "live"
-                / LIVE_MODELS[1].filename
+                live_model_dir(self._platform.data_dir(os.environ, Path.home()))
+                / SPEAKER_MODEL.filename
             )
             if not model_path.is_file():
                 raise FileNotFoundError(f"speaker model is missing: {model_path}")

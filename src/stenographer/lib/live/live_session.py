@@ -18,9 +18,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stenographer.lib.audio.recorder import Recorder
-from stenographer.lib.live.models import LIVE_MODELS
-from stenographer.lib.live.phrase import Phrase
-from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
+from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
+from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
 from stenographer.lib.live.relabel import relabel_system_lines, relabel_work_units
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
@@ -71,9 +70,9 @@ class LiveSession:
         self._writer = SessionWriter.open(data_dir, self._started_at)
         if diarize_mic:
             self._writer.mark_mic_diarized()
-        model_dir = data_dir / "models" / "live"
-        vad_model = model_dir / LIVE_MODELS[0].filename
-        speaker_model = model_dir / LIVE_MODELS[1].filename
+        model_dir = live_model_dir(data_dir)
+        vad_model = model_dir / VAD_MODEL.filename
+        speaker_model = model_dir / SPEAKER_MODEL.filename
         self._worker = Worker(cfg.asr, transport=self._platform.asr_transport())
         self._trackers = {"system": SpeakerTracker(speaker_model)}
         if diarize_mic:
@@ -231,11 +230,10 @@ class LiveSession:
 
     @property
     def meter_floor_dbfs(self) -> float:
-        feedback = getattr(self._cfg, "feedback", None)
-        floor = getattr(feedback, "spectrum_floor_dbfs", None)
-        if isinstance(floor, (tuple, list)):
-            floor = floor[0] if floor else None
-        return -70.0 if floor is None else float(floor)
+        floor = self._cfg.feedback.spectrum_floor_dbfs
+        if isinstance(floor, tuple):
+            floor = floor[0]
+        return float(floor)
 
     @property
     def failed_phrase_count(self) -> int:

@@ -18,7 +18,7 @@ import soundfile as sf
 from stenographer.cli.hub.session_jobs import SessionJobs
 from stenographer.lib.files.media import DecodedAudio, decode_media, inspect_media
 from stenographer.lib.live.live_session import LiveSession
-from stenographer.lib.live.models import LIVE_MODELS
+from stenographer.lib.live.models import LIVE_MODELS, live_model_dir
 from stenographer.lib.logging.pipeline import fmt_event
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionNotFoundError
@@ -160,7 +160,7 @@ class HubServices:
     def start_recording(self) -> None:
         if self._session is not None:
             return
-        model_dir = self._platform.data_dir(os.environ, Path.home()) / "models" / "live"
+        model_dir = live_model_dir(self._platform.data_dir(os.environ, Path.home()))
         missing = [
             model.filename for model in LIVE_MODELS if not (model_dir / model.filename).is_file()
         ]
