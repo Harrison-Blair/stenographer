@@ -190,8 +190,6 @@ def test_bundled_names_win_custom_collisions(tmp_path):
     selected = load_sound_pack("legacy", tmp_path, bundled_root=_BUNDLED)
 
     assert selected is not None
-    assert selected.bundled
-    assert selected.root == _BUNDLED / "legacy"
     assert all(custom_legacy not in path.parents for path in selected.cue_paths if path is not None)
     assert discover_sound_packs(tmp_path, bundled_root=_BUNDLED).count("legacy") == 1
 
@@ -201,8 +199,6 @@ def test_missing_custom_falls_back_once_to_minimal_ui(tmp_path, caplog):
         selected = resolve_sound_pack("missing", tmp_path, bundled_root=_BUNDLED)
 
     assert selected.name == DEFAULT_SOUND_PACK
-    assert selected.bundled
-    assert selected.fallback
     assert selected.complete
     assert len(caplog.records) == 1
 
@@ -215,7 +211,6 @@ def test_missing_fallback_assets_disable_only_unavailable_cues(tmp_path, caplog)
     with caplog.at_level(logging.WARNING):
         selected = resolve_sound_pack("missing", tmp_path, bundled_root=bundled)
 
-    assert selected.fallback
     assert selected.path_for("record_start") is not None
     assert selected.path_for("error") is None
     assert len(caplog.records) == 2

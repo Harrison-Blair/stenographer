@@ -49,11 +49,11 @@ def _pack_location(
     name: str,
     config_dir: pathlib.Path,
     bundled_root: pathlib.Path,
-) -> tuple[pathlib.Path, pathlib.Path, bool]:
+) -> tuple[pathlib.Path, pathlib.Path]:
     if name in BUNDLED_PACKS:
-        return bundled_root / name, bundled_root, True
+        return bundled_root / name, bundled_root
     custom_root = config_dir / "sounds"
-    return custom_root / name, custom_root, False
+    return custom_root / name, custom_root
 
 
 def load_sound_pack(
@@ -66,8 +66,8 @@ def load_sound_pack(
     if not is_valid_pack_name(name):
         return None
     assets = bundled_root if bundled_root is not None else bundled_sound_root()
-    root, boundary, bundled = _pack_location(name, config_dir, assets)
-    if not bundled:
+    root, boundary = _pack_location(name, config_dir, assets)
+    if name not in BUNDLED_PACKS:
         resolved_custom_root = _resolved_within(boundary, config_dir)
         if resolved_custom_root is None or not resolved_custom_root.is_dir():
             return None
@@ -76,7 +76,7 @@ def load_sound_pack(
     cue_paths = sound_pack_cue_paths(root, containment_root=boundary)
     if cue_paths is None:
         return None
-    return SoundPack(name=name, root=root, cue_paths=cue_paths, bundled=bundled)
+    return SoundPack(name=name, cue_paths=cue_paths)
 
 
 def discover_sound_packs(
@@ -117,13 +117,7 @@ def _partial_bundled_fallback(bundled_root: pathlib.Path) -> SoundPack:
     for cue in CUE_ORDER:
         path = _resolved_within(root / f"{cue}.wav", root)
         cue_paths.append(path if path is not None and path.is_file() and _valid_wav(path) else None)
-    return SoundPack(
-        name=DEFAULT_SOUND_PACK,
-        root=root,
-        cue_paths=tuple(cue_paths),
-        bundled=True,
-        fallback=True,
-    )
+    return SoundPack(name=DEFAULT_SOUND_PACK, cue_paths=tuple(cue_paths))
 
 
 def _resolve_sound_pack_quietly(
@@ -138,16 +132,7 @@ def _resolve_sound_pack_quietly(
 
     fallback = load_sound_pack(DEFAULT_SOUND_PACK, config_dir, bundled_root=assets)
     if fallback is not None:
-        return (
-            SoundPack(
-                name=fallback.name,
-                root=fallback.root,
-                cue_paths=fallback.cue_paths,
-                bundled=True,
-                fallback=True,
-            ),
-            1,
-        )
+        return fallback, 1
 
     return _partial_bundled_fallback(assets), 2
 

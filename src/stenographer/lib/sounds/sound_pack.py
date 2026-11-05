@@ -18,10 +18,7 @@ class SoundPack:
     """
 
     name: str
-    root: pathlib.Path
     cue_paths: tuple[pathlib.Path | None, ...]
-    bundled: bool
-    fallback: bool = False
 
     def path_for(self, cue: str) -> pathlib.Path | None:
         """Return the resolved path for *cue*, or ``None`` when unavailable."""
