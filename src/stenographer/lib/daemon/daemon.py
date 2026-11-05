@@ -16,7 +16,6 @@ from stenographer.lib.contracts.null_status_sink import NullStatusSink
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.contracts.publication import should_publish_state
 from stenographer.lib.contracts.status_sink import StatusSink
-from stenographer.lib.daemon.feedback import _play_cue, _publish_loading_activity, _publish_status
 from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.pipeline import UtterancePipeline
 from stenographer.lib.daemon.policy import (
@@ -261,12 +260,46 @@ class Daemon:
             telemetry=self._telemetry,
             publish_state=self._publish_state,
             fail=self._fail,
-            play_cue=lambda name: _play_cue(self._feedback, name),
+            play_cue=self._cue,
             cancelled=self._cancel_pending,
             cancel_state=lambda: cancel_state(shutting_down=self._stop_event.is_set()),
             copy_original=self._cfg.delivery.copy_original,
             speech_filter=speech_filter,
         )
+
+    def _cue(self, name: str) -> None:
+        """Launch a cue without allowing player failure to break daemon state."""
+        try:
+            self._feedback.play(name)
+        except Exception as exc:
+            log_failure(log, logging.WARNING, "feedback: cue_failed", exc, safe=True, cue=name)
+
+    def _publish_status(self, state: OverlayState) -> None:
+        """Enqueue fixed lifecycle metadata without allowing overlay failure through."""
+        try:
+            publish_profiled = getattr(self._status, "publish_profiled", None)
+            if publish_profiled is None:
+                self._status.publish(state)
+            else:
+                publish_profiled(state, self._record_profile)
+        except Exception as exc:
+            log_failure(
+                log, logging.WARNING, "overlay: publish_failed", exc, safe=True, state=state.value
+            )
+
+    def _publish_loading_activity(self, model: LoadingModel, active: bool) -> None:
+        try:
+            self._status.loading_activity(model, active)
+        except Exception as exc:
+            log_failure(
+                log,
+                logging.WARNING,
+                "overlay: loading_activity_failed",
+                exc,
+                safe=True,
+                model=model.value,
+                active=int(active),
+            )
 
     def _publish_state(self, state: OverlayState) -> None:
         """Serialize display state and suppress duplicate helper updates."""
@@ -274,7 +307,7 @@ class Daemon:
             if not should_publish_state(self._overlay_state, state):
                 return
             self._overlay_state = state
-            _publish_status(self._status, state, self._record_profile)
+            self._publish_status(state)
 
     def _fail(self, notify_msg: str) -> None:
         """Announce a failed phase on every user-facing channel at once.
@@ -284,13 +317,13 @@ class Daemon:
         the recorded event differ per phase.
         """
         self._publish_state(OverlayState.ERROR)
-        _play_cue(self._feedback, "error")
+        self._cue("error")
         self._notifier.error(notify_msg)
 
     def _publish_cancelled(self) -> None:
         """Show an immediate cancellation result without treating it as a failure."""
         self._publish_state(cancel_state(shutting_down=self._stop_event.is_set()))
-        _play_cue(self._feedback, "error")
+        self._cue("error")
 
     def _cancel_pending(self) -> bool:
         """Return whether the current utterance has been cancelled or shutdown began."""
@@ -303,7 +336,7 @@ class Daemon:
                 return
             self._model_load_started_at = time.perf_counter()
             self._model_load_utterance = self._utterance_id
-            _publish_loading_activity(self._status, LoadingModel.ASR, True)
+            self._publish_loading_activity(LoadingModel.ASR, True)
 
     def _on_model_loading_finished(self) -> None:
         """Remove display activity after either model-ready or load failure."""
@@ -316,7 +349,7 @@ class Daemon:
                 self._record.load_ms = (time.perf_counter() - self._model_load_started_at) * 1000
             self._model_load_started_at = None
             self._model_load_utterance = None
-            _publish_loading_activity(self._status, LoadingModel.ASR, False)
+            self._publish_loading_activity(LoadingModel.ASR, False)
 
     def _on_refine_loading(self) -> None:
         """Publish refine activity only on the open→active edge.
@@ -328,7 +361,7 @@ class Daemon:
         with self._refine_load_lock:
             self._refine_loads += 1
             if self._refine_loads == 1 and not self._stop_event.is_set():
-                _publish_loading_activity(self._status, LoadingModel.REFINE, True)
+                self._publish_loading_activity(LoadingModel.REFINE, True)
 
     def _on_refine_loading_finished(self) -> None:
         """Lower refine activity once every open load has finished.
@@ -339,7 +372,7 @@ class Daemon:
         with self._refine_load_lock:
             self._refine_loads = max(0, self._refine_loads - 1)
             if self._refine_loads == 0:
-                _publish_loading_activity(self._status, LoadingModel.REFINE, False)
+                self._publish_loading_activity(LoadingModel.REFINE, False)
 
     def _warm_model(self, utterance: int) -> None:
         try:
@@ -555,7 +588,7 @@ class Daemon:
             if self._cfg.hotkey.mode == "toggle":
                 self._arm_max_timer(started_at)
             self._publish_state(OverlayState.RECORDING)
-            _play_cue(self._feedback, "record_start")
+            self._cue("record_start")
             self._start_model_warmup(self._utterance_id)
 
     def on_cancel(self) -> None:
@@ -634,7 +667,7 @@ class Daemon:
                         self._publish_cancelled()
                     self._emit_summary(self._take_record("CANCELLED"))
                     return
-                _play_cue(self._feedback, "record_stop")
+                self._cue("record_stop")
                 thread = threading.Thread(
                     target=self._run_pipeline,
                     args=(samples,),
