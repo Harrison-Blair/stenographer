@@ -8,8 +8,8 @@ import pathlib
 from types import SimpleNamespace
 
 from stenographer.cli.run import startup
-from stenographer.cli.run.startup import startup_clipboard_backend
-from stenographer.cli.shared.capabilities import REQUIRED
+from stenographer.cli.run.startup import run
+from stenographer.cli.shared.capabilities import REQUIRED, missing_required
 from stenographer.lib.config.models import Config
 from stenographer.lib.daemon.daemon import Daemon
 from stenographer.lib.updates import notice
@@ -22,11 +22,16 @@ def _startup_caps(**overrides):
     return capabilities(**({"overlay": OverlayCapability.disabled()} | overrides))
 
 
-def test_startup_gate_tracks_every_current_doctor_requirement():
-    assert startup_clipboard_backend(_startup_caps()) == "wl-copy"
+def test_startup_gate_tracks_every_current_doctor_requirement(monkeypatch, capsys):
+    from stenographer.cli.run import startup
+    from stenographer.cli.shared import capabilities as capability_probe
+
+    monkeypatch.setattr(startup, "_log_banner", lambda *args: None)
     for name in REQUIRED:
         caps = dataclasses.replace(_startup_caps(), **{name: False})
-        assert startup_clipboard_backend(caps) is None, name
+        monkeypatch.setattr(capability_probe, "probe", lambda cfg, caps=caps: caps)
+        assert run(Config.defaults()) == 78, name
+        assert "required capabilities unavailable" in capsys.readouterr().err
 
 
 def test_startup_gate_ignores_optional_capabilities_and_reuses_backend():
@@ -37,7 +42,8 @@ def test_startup_gate_ignores_optional_capabilities_and_reuses_backend():
         service_active=None,
         overlay=OverlayCapability.disabled(),
     )
-    assert startup_clipboard_backend(caps) == "x11"
+    assert not missing_required(caps)
+    assert caps.clipboard_backend == "x11"
 
 
 def test_run_prepares_the_recorder_and_hands_the_notifier_to_the_update_check(

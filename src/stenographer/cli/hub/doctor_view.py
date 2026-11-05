@@ -231,7 +231,6 @@ def build_report(config: Config) -> DoctorReport:
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay.platform import current_platform as overlay_platform
-    from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 
     caps = probe(config)
     host = current_platform().guidance()
@@ -363,14 +362,13 @@ def build_report(config: Config) -> DoctorReport:
         "available" if caps.clipboard_ok else f"{caps.clipboard_backend} is unavailable",
         host.clipboard_fix_hints.get(caps.clipboard_backend, host.clipboard_fix_hint_default),
     )
-    overlay_reason = caps.overlay.reason or UnavailableReason.BACKENDS_UNAVAILABLE
     add(
         "overlay",
         "overlay",
         "other",
         not caps.overlay.enabled or caps.overlay.backend is not None,
         cli_doctor.format_overlay_status(caps.overlay, overlay),
-        overlay.overlay_fix_hints.get(overlay_reason, overlay.overlay_fix_hint_default),
+        overlay.overlay_fix_hints.get(caps.overlay.reason, overlay.overlay_fix_hint_default),
         failed="warn",
     )
     add(

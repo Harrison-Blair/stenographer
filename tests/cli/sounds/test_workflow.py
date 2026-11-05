@@ -15,13 +15,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from stenographer.cli.setup.workflow import parse_sound_pack_choice
 from stenographer.cli.shared.console import Console
 from stenographer.cli.sounds import workflow as sounds
 from stenographer.cli.sounds.workflow import (
     MenuAction,
     format_pack_lines,
     parse_menu_action,
-    parse_sound_pack_choice,
 )
 from stenographer.lib.config.models import Config
 from tests.cli.support import GUIDANCE as _GUIDANCE

@@ -26,7 +26,6 @@ from stenographer.cli.setup import workflow as setup
 from stenographer.cli.setup.default import write_default
 from stenographer.cli.setup.workflow import (
     field_display,
-    followup_exit_code,
     parse_bool,
     parse_choice,
     parse_number,
@@ -34,7 +33,6 @@ from stenographer.cli.setup.workflow import (
     parse_review_action,
     quick_review_lines,
     quick_tryout_lines,
-    restart_eligible,
     review_lines,
 )
 from stenographer.lib.config.defaults import default_toml
@@ -122,32 +120,17 @@ def test_quick_review_rejects_reedit_actions():
 
 
 @pytest.mark.parametrize(
-    ("changed", "custom", "active", "expected"),
-    [
-        (True, False, "active", True),
-        (False, False, "active", False),
-        (True, True, "active", False),
-        (True, False, "inactive", False),
-        (True, False, None, False),
-    ],
-)
-def test_restart_eligibility(changed, custom, active, expected):
-    assert (
-        restart_eligible(
-            config_changed=changed,
-            custom_config=custom,
-            service_active=active,
-        )
-        is expected
-    )
-
-
-@pytest.mark.parametrize(
     ("operational", "missing", "expected"),
     [(False, False, 0), (False, True, 78), (True, False, 1), (True, True, 1)],
 )
-def test_followup_exit_precedence(operational, missing, expected):
-    assert followup_exit_code(operational_failure=operational, missing_required=missing) == expected
+def test_followup_exit_precedence(guided, operational, missing, expected):
+    code, _, _, _ = guided(
+        changed=False,
+        answers="n\n",
+        cache_error=OSError("cache failed") if operational else None,
+        missing=("has_mic",) if missing else (),
+    )
+    assert code == expected
 
 
 def test_tryout_sends_a_custom_config_path_to_a_foreground_run():

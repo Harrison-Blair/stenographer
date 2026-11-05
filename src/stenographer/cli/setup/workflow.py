@@ -136,27 +136,6 @@ def parse_quick_review_action(text: str) -> str:
     raise ValueError("choose Save or Cancel")
 
 
-def restart_eligible(
-    *,
-    config_changed: bool,
-    custom_config: bool,
-    service_active: str | None,
-) -> bool:
-    """Whether setup may offer a service restart."""
-
-    return config_changed and not custom_config and service_active == "active"
-
-
-def followup_exit_code(*, operational_failure: bool, missing_required: bool) -> int:
-    """Operational failures take precedence over a doctor capability failure."""
-
-    if operational_failure:
-        return 1
-    if missing_required:
-        return 78
-    return 0
-
-
 def _display_optional(value: object) -> str:
     return "automatic/unset" if value is None else str(value)
 
@@ -254,15 +233,40 @@ def parse_refine_host(text: str, current: str) -> str:
     return validated_host(value) if value else current
 
 
+def _numbered_choice[Choice](value: str, choices: Sequence[Choice]) -> Choice | None:
+    if value.isdecimal() and 1 <= int(value) <= len(choices):
+        return choices[int(value) - 1]
+    return None
+
+
+def _list_choices(console: Console, choices: Iterable[str]) -> None:
+    for number, name in enumerate(choices, 1):
+        console.write(f"  {number}. {name}")
+
+
+def parse_sound_pack_choice(text: str, current: str, choices: Sequence[str]) -> str:
+    """Parse a setup selection by number or case-insensitive pack name."""
+
+    value = text.strip()
+    if not value:
+        return current
+    choice = _numbered_choice(value, choices)
+    if choice is not None:
+        return choice
+    matches = [choice for choice in choices if choice.casefold() == value.casefold()]
+    if matches:
+        return matches[0]
+    raise ValueError(f"choose a number from 1-{len(choices)} or an available sound-pack name")
+
+
 def parse_model_choice(text: str, current: str, choices: Sequence[str]) -> str:
     """Enter keeps, a number picks from the listing, anything else is a tag. PURE."""
 
     value = text.strip()
     if not value:
         return current
-    if value.isdecimal() and 1 <= int(value) <= len(choices):
-        return choices[int(value) - 1]
-    return value
+    choice = _numbered_choice(value, choices)
+    return choice if choice is not None else value
 
 
 def quick_tryout_lines(
@@ -361,13 +365,11 @@ def _prompt_number(
 def _prompt_sound_pack(console: Console, current: str, config_dir: pathlib.Path) -> str:
     """Offer bundled and valid custom packs without playing any cue."""
 
-    from stenographer.cli.sounds.workflow import parse_sound_pack_choice
     from stenographer.lib.sounds.packs import discover_sound_packs
 
     choices = discover_sound_packs(config_dir)
     console.write("Sound packs:")
-    for number, name in enumerate(choices, 1):
-        console.write(f"  {number}. {name}")
+    _list_choices(console, choices)
     prompt = f"Sound pack [{current}; Enter keeps, number/name selects]: "
     return str(
         console.validated(
@@ -421,8 +423,7 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
     console.write(refine_model_hint())
     if installed:
         console.write("Installed Ollama models:")
-        for number, name in enumerate(installed, 1):
-            console.write(f"  {number}. {name}")
+        _list_choices(console, installed)
     else:
         console.write(
             f"No refine model is available at {refine.host} yet (either nothing "
@@ -484,8 +485,9 @@ def parse_device_choice(
         return current
     if value.casefold() in {"clear", "auto", "automatic"}:
         return None
-    if value.isdecimal() and 1 <= int(value) <= len(devices):
-        return devices[int(value) - 1][0]
+    choice = _numbered_choice(value, devices)
+    if choice is not None:
+        return choice[0]
     return value
 
 
@@ -497,8 +499,7 @@ def _prompt_device(
 ) -> str | None:
     console.write(f"{label} devices (automatic selection is always available):")
     if devices:
-        for number, (_, description) in enumerate(devices, 1):
-            console.write(f"  {number}. {description}")
+        _list_choices(console, (description for _, description in devices))
     else:
         console.write("  (no selectable devices found; manual entry is still available)")
 
@@ -858,14 +859,10 @@ def _guided_setup(
     missing = bool(missing_required(caps))
     if missing:
         console.write("Service restart skipped until required capabilities are available.")
-        return followup_exit_code(operational_failure=operational_failure, missing_required=True)
+        return 1 if operational_failure else 78
 
     restart_pending = False
-    if restart_eligible(
-        config_changed=changed,
-        custom_config=custom_config,
-        service_active=caps.service_active,
-    ):
+    if changed and not custom_config and caps.service_active == "active":
         if ask_yes_no(
             console,
             f"Restart the active {guidance.service_name} to apply changes?",
@@ -885,10 +882,7 @@ def _guided_setup(
                 "Service is not active; setup did not start it. "
                 f"Run `{guidance.service_start_command}` when ready."
             )
-    exit_code = followup_exit_code(
-        operational_failure=operational_failure,
-        missing_required=False,
-    )
+    exit_code = 1 if operational_failure else 0
     if quick and exit_code == 0:
         for line in quick_tryout_lines(
             config,
