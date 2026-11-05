@@ -42,7 +42,6 @@ _HELPER_LOG_FILENAME = "overlay-helper.log"
 _MAX_BYTES = 5 * 1024 * 1024
 _BACKUP_COUNT = 3
 _HANDLER_MARKER = "_stenographer_owned"
-_FILE_WARNING_MARKER = "_stenographer_file_warning_emitted"
 _FORMAT = "%(asctime)s %(levelname)s %(name)s%(utt_suffix)s %(message)s"
 _JOURNAL_FORMAT = "%(levelname)s %(name)s%(utt_suffix)s %(message)s"
 # Records that never passed an owned queue handler (logging's own, an embedding
@@ -310,8 +309,6 @@ def shutdown_logging() -> None:
         listener.stop()
         for handler in listener.handlers:
             handler.close()
-    if hasattr(logger, _FILE_WARNING_MARKER):
-        delattr(logger, _FILE_WARNING_MARKER)
 
 
 def _with_fields(head: str, fields: Mapping[str, object]) -> str:
@@ -361,7 +358,7 @@ def _build_file_handler(
 ) -> logging.Handler | None:
     log_path: Path | None = None
     try:
-        log_path = current_platform().state_dir(env, home) / _LOG_FILENAME
+        log_path = log_paths(env, home)[0]
         log_path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.handlers.RotatingFileHandler(
             log_path,
@@ -370,21 +367,19 @@ def _build_file_handler(
             encoding="utf-8",
         )
     except (OSError, ValueError) as exc:
-        if not getattr(logger, _FILE_WARNING_MARKER, False):
-            setattr(logger, _FILE_WARNING_MARKER, True)
-            _emit_file_warning(
-                logger,
-                stream_handler,
-                fmt_event(
-                    "logging",
-                    "file_unavailable",
-                    path=log_path,
-                    error=type(exc).__name__,
-                    errno=getattr(exc, "errno", None),
-                    detail=getattr(exc, "strerror", None) or str(exc),
-                    fallback="stderr",
-                ),
-            )
+        _emit_file_warning(
+            logger,
+            stream_handler,
+            fmt_event(
+                "logging",
+                "file_unavailable",
+                path=log_path,
+                error=type(exc).__name__,
+                errno=getattr(exc, "errno", None),
+                detail=getattr(exc, "strerror", None) or str(exc),
+                fallback="stderr",
+            ),
+        )
         return None
     _mark_owned(file_handler)
     # Unconditionally DEBUG: the file is the report, and a threshold applied
