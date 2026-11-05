@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The integration smoke suite is opt-in and never collected without the flag.
+"""The integration suite is opt-in: nothing marked runs without the flag.
 
 `*_smoke.py` modules import at module scope what they exercise for real (evdev,
-uinput, pty/termios, the ASR model, Xlib). Skipping has to happen at collection
-time so those imports never run in the unit suite; a marker-based skip would
-already have imported the module.
+uinput, pty/termios, the ASR model, Xlib). Skipping those has to happen at
+collection time so the imports never run in the unit suite; a marker-based skip
+would already have imported the module. Integration tests in any other file are
+collected and then skipped by :func:`pytest_runtest_setup`.
 
 The unit suite is also fenced off from the user's own directories and from the
 network: see :func:`_isolate_host_directories` and
@@ -81,8 +82,8 @@ def _refuse(address: object) -> None:
         "`integration` is the other answer, but it costs more than it looks: "
         "an integration test also gives up the host-directory isolation in "
         "`tests/conftest.py`, "
-        "CI never runs it (`-m 'not integration'`), and a bare local `pytest` "
-        "does run it with both fences down."
+        "CI never runs it (`-m 'not integration'`), and with "
+        "`STENOGRAPHER_INTEGRATION=1` it runs with both fences down."
     )
 
 
@@ -188,3 +189,11 @@ def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
     if collection_path.name.endswith("_smoke.py"):
         return os.environ.get("STENOGRAPHER_INTEGRATION") != "1"
     return None
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    if (
+        item.get_closest_marker("integration") is not None
+        and os.environ.get("STENOGRAPHER_INTEGRATION") != "1"
+    ):
+        pytest.skip("integration suite requires STENOGRAPHER_INTEGRATION=1")
