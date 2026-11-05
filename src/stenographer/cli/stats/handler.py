@@ -22,9 +22,21 @@ def local_date_bound(value: str, *, end: bool = False) -> str:
 
 
 def cmd_stats(args) -> int:
+    if args.stats_command != "export" and (args.format is not None or args.output is not None):
+        print("stenographer: --format and --output require stats export", file=sys.stderr)
+        return 2
+    if args.stats_command == "reset" and any(
+        getattr(args, name) is not None
+        for name in ("source", "since", "until", "model", "app_version", "device", "outcome")
+    ):
+        print(
+            "stenographer: stats reset deletes all records; use stats delete for filtered deletion",
+            file=sys.stderr,
+        )
+        return 2
     try:
         filters = Filters(
-            source=None if args.source == "all" else args.source,
+            source=None if args.source == "all" else (args.source or "hotkey"),
             since=local_date_bound(args.since) if args.since else None,
             until=local_date_bound(args.until, end=True) if args.until else None,
             model=args.model,
@@ -59,6 +71,7 @@ def _export(args, store, filters) -> int:
     content = store.export_csv(filters) if args.format == "csv" else store.export_json(filters)
     if args.output:
         Path(args.output).write_text(content, encoding="utf-8")
+        print(f"Exported statistics to {args.output}")
     else:
         print(content, end="" if content.endswith("\n") else "\n")
     return 0

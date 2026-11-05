@@ -115,6 +115,12 @@ def _choose_from_menu(
     """Loop until a pack is selected or the menu is cancelled."""
 
     while True:
+        if not packs:
+            console.error(
+                "no valid sound packs available; restore bundled assets "
+                "or install a valid custom pack"
+            )
+            return None
         console.write("Sound packs")
         for line in format_pack_lines(
             packs,

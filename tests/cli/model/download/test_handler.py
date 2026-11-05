@@ -241,3 +241,23 @@ def test_a_stray_enter_declines_the_combined_offer_instead_of_starting_it(monkey
     assert "Nothing was downloaded." in console.stdout.getvalue()
     assert "--asr" in console.stdout.getvalue()
     assert "--refine" in console.stdout.getvalue()
+
+
+def test_live_download_reports_completed_model_before_later_failure(monkeypatch, capsys):
+    from stenographer.cli.model.download.handler import _download_live
+    from stenographer.lib.live import download
+    from stenographer.lib.live.errors import LiveDownloadError
+    from stenographer.lib.live.models import LIVE_MODELS
+
+    def fetch_one(data_dir, *, models):
+        model = models[0]
+        if model == LIVE_MODELS[1]:
+            raise LiveDownloadError("second failed")
+        return (model.filename,)
+
+    monkeypatch.setattr(download, "download_live_models", fetch_one)
+    assert _download_live() == 1
+    captured = capsys.readouterr()
+    assert "downloading live models" in captured.out
+    assert f"{LIVE_MODELS[0].filename} downloaded" in captured.out
+    assert "second failed" in captured.err

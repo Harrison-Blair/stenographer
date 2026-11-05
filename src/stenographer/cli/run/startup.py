@@ -38,7 +38,7 @@ def _startup_failure(status: StatusSink, message: str, code: int) -> int:
 
 def run(cfg: Config) -> int:
     """Build and run the daemon. Returns the process exit code."""
-    from stenographer.cli.shared.capabilities import missing_required, probe
+    from stenographer.cli.shared.capabilities import REQUIRED, missing_required, probe
     from stenographer.lib.config.paths import resolve_config_path
     from stenographer.lib.hotkey.errors import BindingError
 
@@ -47,8 +47,14 @@ def run(cfg: Config) -> int:
     caps = probe(cfg)
     _log_banner(cfg, plat, caps, resolve_config_path(create_parent=False))
     if missing_required(caps):
+        from stenographer.cli.doctor.report import format_required_capabilities
+
+        missing = set(missing_required(caps))
+        guidance = plat.guidance()
+        lines = format_required_capabilities(caps, guidance)
+        details = [line for name, line in zip(REQUIRED, lines, strict=True) if name in missing]
         return _startup_failure(
-            status, "required capabilities unavailable; run `stenographer doctor`", 78
+            status, "required capabilities unavailable:\n" + "\n".join(details), 78
         )
 
     if cfg.feedback.overlay:

@@ -630,3 +630,15 @@ def test_render_a_clipboard_restore_turned_off_in_config_says_so():
     )
     report = _render(_caps(clipboard_read_ok=False), cfg=cfg, logs=_LOGS)
     assert "  clipboard restore: disabled" in report
+
+
+def test_log_stat_failure_is_not_reported_as_absent(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    def deny(_self):
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(Path, "stat", deny)
+    status = doctor._log_status("daemon", tmp_path / "daemon.log")
+    assert "inspection failed" in doctor._log_state(status)
+    assert "access denied" in doctor._log_state(status)

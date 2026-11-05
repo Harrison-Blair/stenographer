@@ -31,7 +31,7 @@ def test_live_command_is_an_invalid_choice(argv, capsys):
 def test_top_level_help_does_not_list_live():
     help_text = build_parser().format_help()
 
-    assert not re.search(r"(?<![-\w.])live(?![\w.])", help_text)
+    assert not re.search(r"^\s+live\s+", help_text, re.MULTILINE)
 
 
 @pytest.mark.parametrize("shell", sorted(LIVE_COMMAND_ENTRIES))

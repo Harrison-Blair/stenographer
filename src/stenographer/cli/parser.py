@@ -22,11 +22,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
 
     subparsers = parser.add_subparsers(dest="command", required=False)
-    subparsers.add_parser("run", help="Run the dictation daemon.")
+    subparsers.add_parser(
+        "run", help="Run the dictation daemon.", description="Run the dictation daemon."
+    )
     _transcribe(subparsers)
     _model(subparsers)
-    subparsers.add_parser("doctor", help="Probe required capabilities.")
-    subparsers.add_parser("devices", help="List audio input devices.")
+    subparsers.add_parser(
+        "doctor", help="Probe required capabilities.", description="Probe required capabilities."
+    )
+    subparsers.add_parser(
+        "devices", help="List audio input devices.", description="List audio input devices."
+    )
     _setup(subparsers)
     _sounds(subparsers)
     _completion(subparsers)
@@ -87,29 +93,42 @@ def _completion(subparsers) -> None:
 
 
 def _stats(subparsers) -> None:
-    stats = subparsers.add_parser("stats", help="Report durable personal dictation analytics.")
+    stats = subparsers.add_parser(
+        "stats",
+        help="Report durable personal dictation analytics.",
+        description="Reset deletes all records; use delete for filtered deletion.",
+    )
     stats.add_argument(
         "stats_command",
         nargs="?",
         default="summary",
         choices=("summary", "export", "delete", "reset"),
     )
-    stats.add_argument("--source", choices=("hotkey", "file", "all"), default="hotkey")
+    stats.add_argument(
+        "--source",
+        choices=("hotkey", "file", "all"),
+        default=None,
+        help="Filter by source (default: hotkey); unavailable for reset.",
+    )
     stats.add_argument("--since", metavar="YYYY-MM-DD", help="First local calendar day, inclusive.")
     stats.add_argument("--until", metavar="YYYY-MM-DD", help="Last local calendar day, inclusive.")
     stats.add_argument("--model", help="Exact model identifier.")
     stats.add_argument("--app-version", help="Exact application version.")
     stats.add_argument("--device", help="Exact microphone name.")
     stats.add_argument("--outcome", help="Exact terminal outcome.")
-    stats.add_argument("--format", choices=("json", "csv"), default="json")
-    stats.add_argument("--output", help="Write export to this file instead of standard output.")
+    stats.add_argument(
+        "--format", choices=("json", "csv"), help="Export format (export only; default: json)."
+    )
+    stats.add_argument(
+        "--output", help="Write export to this file instead of standard output (export only)."
+    )
     stats.add_argument(
         "--yes", action="store_true", help="Confirm deletion after showing its count."
     )
 
 
 def _model(subparsers) -> None:
-    model = subparsers.add_parser("model", help="Manage the ASR and refine models.")
+    model = subparsers.add_parser("model", help="Manage ASR, refine, and live voice models.")
     model_sub = model.add_subparsers(dest="model_command", required=True)
     _model_download(model_sub)
 
@@ -117,17 +136,18 @@ def _model(subparsers) -> None:
 def _model_download(subparsers) -> None:
     download = subparsers.add_parser(
         "download",
-        help="Download the ASR model, the refine model, or both.",
+        help="Download ASR, refine, or live models; flags can be combined.",
+        description="Download models; selection flags can be combined.",
     )
     download.add_argument(
         "--asr",
         action="store_true",
-        help="Download only the speech-recognition model.",
+        help="Add the speech-recognition model to the selection.",
     )
     download.add_argument(
         "--refine",
         action="store_true",
-        help="Pull only the refine model through the configured Ollama host.",
+        help="Add the refine model through the configured Ollama host.",
     )
     download.add_argument(
         "--live",

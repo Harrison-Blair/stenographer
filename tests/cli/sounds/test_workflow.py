@@ -633,3 +633,11 @@ def test_run_treats_an_exhausted_menu_input_as_an_interruption(sounds_run, tmp_p
 
     assert code == 130
     assert stderr == "stenographer: sounds interrupted\n"
+
+
+def test_empty_menu_explains_how_to_restore_packs(tmp_path):
+    output, errors = io.StringIO(), io.StringIO()
+    console = Console(io.StringIO(), output, errors)
+    assert sounds._choose_from_menu(console, Config.defaults(), tmp_path, ()) is None
+    assert "restore bundled assets" in errors.getvalue()
+    assert "1-0" not in output.getvalue()

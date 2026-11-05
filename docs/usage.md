@@ -182,7 +182,10 @@ stenographer stats delete --since 2026-09-01 --until 2026-09-07
 stenographer stats delete --since 2026-09-01 --until 2026-09-07 --yes
 ```
 
-Preview removal of all sources with `stenographer stats reset`; add `--yes` to
+Preview removal of all sources with `stenographer stats reset`; filters are
+rejected, so use `stats delete` for filtered deletion. Export-only options
+`--format` and `--output` are rejected for other actions; file exports confirm
+their destination. Add `--yes` to
 confirm. No audio, transcript, or prompt text is retained in these
 records. Disable collection with:
 
@@ -231,7 +234,7 @@ or stdout is not a terminal, the command prints help. See the [hub guide](hub.md
 for recording, transcribing files, and separating speakers.
 
 Download the voice and speaker models with `stenographer model download --live`;
-build the ASR model separately with `stenographer model download --asr`.
+build the ASR model separately with `stenographer model download --asr`. Download flags can be combined; live models report progress and each completed model.
 
 ## Troubleshoot a running service
 
@@ -296,3 +299,7 @@ the microphone never captured. It can also amplify background noise and expose
 clipping or distortion. In the project's public-audio evaluation it improved
 development clips but regressed the held-out clips, so it is not enabled by
 default. Fix microphone placement and capture level first.
+
+When startup cannot meet required capabilities, it shows their labels and fixes.
+Doctor distinguishes absent logs from logs it cannot inspect. If the sound-pack
+menu finds no valid packs, restore bundled assets or install a valid custom pack.

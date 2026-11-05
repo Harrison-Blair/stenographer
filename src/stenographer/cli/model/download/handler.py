@@ -98,15 +98,15 @@ def _download_live() -> int:
 
     data_dir = current_platform().data_dir(os.environ, Path.home())
     model_dir = live_model_dir(data_dir)
-    try:
-        downloaded = set(download_live_models(data_dir))
-    except LiveDownloadError as exc:
-        print(f"stenographer: could not download live models: {exc}", file=sys.stderr)
-        return 1
-
+    print("stenographer: downloading live models...", flush=True)
     for model in LIVE_MODELS:
-        status = "downloaded" if model.filename in downloaded else "already present"
-        print(f"stenographer: live model {model.filename} {status} at {model_dir}")
+        try:
+            downloaded = download_live_models(data_dir, models=(model,))
+        except LiveDownloadError as exc:
+            print(f"stenographer: could not download live models: {exc}", file=sys.stderr)
+            return 1
+        status = "downloaded" if downloaded else "already present"
+        print(f"stenographer: live model {model.filename} {status} at {model_dir}", flush=True)
     return 0
 
 

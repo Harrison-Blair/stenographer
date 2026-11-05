@@ -44,13 +44,13 @@ def test_csv_export_to_stdout_is_a_single_trailing_newline_document(seed, capsys
     assert rows[0]["context.model"] == "medium.en"
 
 
-def test_export_to_a_file_writes_there_and_prints_nothing(seed, tmp_path, capsys):
+def test_export_to_a_file_writes_there_and_confirms_destination(seed, tmp_path, capsys):
     store = seed(checkpoint("hotkey-1", source="hotkey", recognized_words=5))
     target = tmp_path / "export" / "analytics.json"
     target.parent.mkdir()
 
     assert run(SimpleNamespace(format="json", output=str(target)), store, Filters()) == 0
 
-    assert capsys.readouterr().out == ""
+    assert capsys.readouterr().out == f"Exported statistics to {target}\n"
     payload = json.loads(target.read_text(encoding="utf-8"))
     assert [record["id"] for record in payload["records"]] == ["hotkey-1"]

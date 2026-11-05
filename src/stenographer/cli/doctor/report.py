@@ -59,6 +59,7 @@ class LogStatus:
     size: int | None
     tail: tuple[str, ...] = ()
     readable: bool = True
+    inspection_error: str | None = None
 
 
 #: Levels worth replaying in the report; DEBUG and INFO are the healthy path.
@@ -89,6 +90,8 @@ def tail_errors(text: str) -> list[str]:
 
 def _log_state(log: LogStatus) -> str:
     """Pure: one parenthetical for a log file's size and reachability."""
+    if log.inspection_error is not None:
+        return f"inspection failed: {log.inspection_error}"
     if log.size is None:
         return "absent"
     return f"{log.size} bytes, unreadable" if not log.readable else f"{log.size} bytes"
@@ -134,6 +137,28 @@ def format_clipboard_restore_status(caps: Capabilities, cfg: Config, guidance: H
     return f"unavailable — {hint}"
 
 
+def format_required_capabilities(caps: Capabilities, guidance: HostGuidance) -> list[str]:
+    """Render required capability labels and fixes."""
+    lines = []
+    for name in REQUIRED:
+        ok = bool(getattr(caps, name))
+        label = guidance.capability_labels[name]
+        if name == "clipboard_ok":
+            label = f"{label} ({caps.clipboard_backend})"
+        line = f"  {label}: {'ok' if ok else 'MISSING'}"
+        if not ok:
+            hint = (
+                guidance.clipboard_fix_hints.get(
+                    caps.clipboard_backend, guidance.clipboard_fix_hint_default
+                )
+                if name == "clipboard_ok"
+                else guidance.capability_fix_hints[name]
+            )
+            line += f" — {hint}"
+        lines.append(line)
+    return lines
+
+
 def render(
     caps: Capabilities,
     cfg: Config,
@@ -156,22 +181,7 @@ def render(
         f"hotkey cancel binding: {cfg.hotkey.cancel_binding or '<disabled>'}",
         "",
     ]
-    for name in REQUIRED:
-        ok = bool(getattr(caps, name))
-        label = guidance.capability_labels[name]
-        if name == "clipboard_ok":
-            label = f"{label} ({caps.clipboard_backend})"
-        line = f"  {label}: {'ok' if ok else 'MISSING'}"
-        if not ok:
-            hint = (
-                guidance.clipboard_fix_hints.get(
-                    caps.clipboard_backend, guidance.clipboard_fix_hint_default
-                )
-                if name == "clipboard_ok"
-                else guidance.capability_fix_hints[name]
-            )
-            line += f" — {hint}"
-        lines.append(line)
+    lines.extend(format_required_capabilities(caps, guidance))
     player = caps.cue_player or "none (sound cues disabled)"
     lines.append(f"  audio player: {player}")
     service = format_service_status(caps.service_enabled, caps.service_active, guidance)
@@ -242,8 +252,10 @@ def _log_status(name: str, path: pathlib.Path) -> LogStatus:
     """
     try:
         size = path.stat().st_size
-    except OSError:
+    except FileNotFoundError:
         return LogStatus(name, path, None)
+    except OSError as exc:
+        return LogStatus(name, path, None, inspection_error=str(exc))
     try:
         with path.open("rb") as handle:
             handle.seek(max(0, size - _TAIL_WINDOW_BYTES))
