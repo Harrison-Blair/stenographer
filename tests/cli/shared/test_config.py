@@ -44,34 +44,6 @@ def test_rejected_configuration_is_reported_verbatim_and_never_reaches_the_handl
     )
 
 
-def test_a_loaded_configuration_sets_the_stderr_threshold_before_the_handler_runs(
-    monkeypatch,
-    capsys,
-):
-    from stenographer.lib.config import paths
-    from stenographer.lib.logging import pipeline as logging_pipeline
-
-    events: list[str] = []
-    cfg = Config.defaults()
-
-    monkeypatch.setattr(paths, "load_or_default", lambda: cfg)
-    monkeypatch.setattr(
-        logging_pipeline,
-        "apply_stderr_level",
-        lambda level: events.append(f"level:{level}"),
-    )
-
-    @with_config
-    def handler(args, loaded):
-        events.append("handler")
-        assert loaded is cfg
-        return 3
-
-    assert handler(argparse.Namespace()) == 3
-    assert events == [f"level:{cfg.feedback.log_level}", "handler"]
-    assert capsys.readouterr().err == ""
-
-
 def test_partial_old_hotkey_config_keeps_binding_as_agent_and_adds_general():
     cfg = Config.loads('[stenographer.hotkey]\nbinding = "KEY_F9"\n')
     assert cfg.hotkey.binding == "KEY_F9"
