@@ -24,6 +24,8 @@ from stenographer.lib.hotkey.binding import chord_active, edge, parse_binding
 from stenographer.lib.hotkey.chord_tracker import ChordTracker
 from stenographer.lib.hotkey.errors import BindingError
 
+from .support import make_tracker
+
 _TABLE = {
     "KEY_A": 30,
     "KEY_ESC": 1,
@@ -94,13 +96,12 @@ def test_edge_maps_all_four_combinations():
 
 def _tracker(chord: frozenset[int], *devices: int) -> tuple[ChordTracker, list[str]]:
     events: list[str] = []
-    tracker = ChordTracker(
-        bindings={"default": chord},
-        on_binding_start=lambda _name: events.append("start"),
-        on_binding_stop=lambda _name: events.append("stop"),
-        lock=threading.RLock(),
+    tracker = make_tracker(
+        {"default": chord},
+        on_start=lambda _name: events.append("start"),
+        on_stop=lambda _name: events.append("stop"),
+        devices=devices,
     )
-    tracker._held_by_device = {device: set() for device in devices}
     return tracker, events
 
 
@@ -145,15 +146,11 @@ def test_tracker_rejects_unregistered_device():
 
 def test_tracker_reports_cancel_only_on_the_rising_edge():
     cancels: list[str] = []
-    tracker = ChordTracker(
-        bindings={"default": frozenset({100})},
-        on_binding_start=lambda _name: None,
-        on_binding_stop=lambda _name: None,
-        lock=threading.RLock(),
+    tracker = make_tracker(
+        {"default": frozenset({100})},
         cancel=frozenset({1}),
         on_cancel=lambda: cancels.append("cancel"),
     )
-    tracker._held_by_device = {1: set()}
 
     tracker._key_event(1, 1, 1)
     tracker._key_event(1, 1, 2)
@@ -166,15 +163,13 @@ def test_tracker_reports_cancel_only_on_the_rising_edge():
 
 def test_tracker_keeps_cancel_and_main_chords_independent_while_held():
     events: list[str] = []
-    tracker = ChordTracker(
-        bindings={"default": frozenset({29, 30})},
-        on_binding_start=lambda _name: events.append("start"),
-        on_binding_stop=lambda _name: events.append("stop"),
-        lock=threading.RLock(),
+    tracker = make_tracker(
+        {"default": frozenset({29, 30})},
+        on_start=lambda _name: events.append("start"),
+        on_stop=lambda _name: events.append("stop"),
         cancel=frozenset({1}),
         on_cancel=lambda: events.append("cancel"),
     )
-    tracker._held_by_device = {1: set()}
 
     tracker._key_event(1, 1, 1)
     tracker._key_event(1, 29, 1)
