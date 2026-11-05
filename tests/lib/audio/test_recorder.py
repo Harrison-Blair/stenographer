@@ -331,6 +331,14 @@ def _prepared(sounddevice: FakeSoundDevice, **kwargs) -> Recorder:
     return recorder
 
 
+def _capturing_mono(**kwargs) -> tuple[FakeSoundDevice, Recorder]:
+    """A recorder already capturing from a device that only accepts mono."""
+    sounddevice = FakeSoundDevice(reject=_only(channels=1))
+    recorder = _prepared(sounddevice, **kwargs)
+    recorder.start()
+    return sounddevice, recorder
+
+
 def _warnings(caplog) -> list[str]:
     """Only the warnings: DEBUG activity is not part of the reporting contract."""
     return [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING]
@@ -458,9 +466,7 @@ def test_start_activates_the_retained_stream_and_refuses_a_second_start():
 
 
 def test_a_mono_capture_returns_its_samples_and_the_cost_of_taking_them():
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+    sounddevice, recorder = _capturing_mono()
 
     _feed(recorder, np.full(800, 0.25, dtype=np.float32), adc=1.0)
     _feed(recorder, np.full(400, -0.5, dtype=np.float32), adc=1.05)
@@ -522,9 +528,7 @@ def test_a_capture_at_a_fallback_rate_is_resampled_to_the_asr_rate():
 
 
 def test_an_input_overflow_is_counted_and_reported(caplog):
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+    _, recorder = _capturing_mono()
 
     _feed(recorder, np.zeros(800, dtype=np.float32))
     _feed(recorder, np.zeros(800, dtype=np.float32), overflow=True)
@@ -540,9 +544,7 @@ def test_an_input_overflow_is_counted_and_reported(caplog):
 
 
 def test_the_cap_stops_buffering_without_ending_the_capture(caplog):
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice, max_seconds=1)
-    recorder.start()
+    _, recorder = _capturing_mono(max_seconds=1)
 
     for _ in range(3):
         _feed(recorder, np.zeros(10000, dtype=np.float32))
@@ -564,9 +566,7 @@ def test_streaming_keeps_no_blocks_has_no_cap_and_emits_16khz_blocks():
         received.append(block.copy())
         rates.append(rate)
 
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice, max_seconds=1, streaming=True, on_block=sink)
-    recorder.start()
+    _, recorder = _capturing_mono(max_seconds=1, streaming=True, on_block=sink)
 
     for _ in range(3):
         _feed(recorder, np.full(8000, 0.25, dtype=np.float32))
@@ -612,9 +612,7 @@ def test_the_optional_block_sink_sees_mono_blocks_and_cannot_break_the_capture()
         seen.append((block.shape[0], rate, epoch))
         raise RuntimeError("spectrum consumer failed")
 
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice, on_block=sink)
-    recorder.start()
+    _, recorder = _capturing_mono(on_block=sink)
 
     _feed(recorder, np.zeros(800, dtype=np.float32))
     _feed(recorder, np.zeros(400, dtype=np.float32))
@@ -655,9 +653,7 @@ def test_stopping_a_merely_prepared_recorder_returns_no_audio():
 def test_a_stream_failure_at_stop_discards_the_whole_capture(
     caplog, break_stream, expected_exception
 ):
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+    sounddevice, recorder = _capturing_mono()
     _feed(recorder, np.full(800, 0.25, dtype=np.float32))
     break_stream(sounddevice.streams[0])
 
@@ -716,9 +712,7 @@ def test_a_failing_close_is_reported_and_swallowed(caplog):
 
 
 def test_adc_clock_gaps_are_measured_from_the_callbacks_of_this_activation():
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+    _, recorder = _capturing_mono()
 
     # 800 frames at 16 kHz is 50 ms of audio; the third callback's ADC stamp
     # jumps a further 200 ms, which is a clock discontinuity, not lost speech.
@@ -734,9 +728,7 @@ def test_adc_clock_gaps_are_measured_from_the_callbacks_of_this_activation():
 
 
 def test_a_second_capture_starts_from_a_clean_slate():
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+    sounddevice, recorder = _capturing_mono()
     _feed(recorder, np.full(800, 0.25, dtype=np.float32))
     first = recorder.stop()
 
