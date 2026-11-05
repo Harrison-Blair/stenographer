@@ -90,6 +90,7 @@ depend on colour.
 | Recording | `● REC`, the elapsed clock, `started HH:MM`, `[enter] ■ Stop & save`, `[space] Ⅱ Pause` | `enter` stop & save · `space` pause · `m` mic · `s` system · `v` view · `r` rename |
 | Paused | `Ⅱ PAUSED` and `[space] ▶ Resume` | as Recording, with `space` resume |
 | Saved | `■ SAVED`, the final duration, `saved HH:MM`, the session ID, `[space] ● Record again`, `[o] Open in Library` | `space` record again · `o` open in Library · `d` device · `m` mic · `s` system · `v` view · `r` rename |
+| Save failed | `! SAVE FAILED`, the error, the session ID, `[space] ● Record again`, `[o] Open in Library` | as Saved, without `r` rename |
 
 | Key | Action |
 | --- | --- |
@@ -111,7 +112,9 @@ busy: `[r] Rename… busy` shows in the speakers card, and `r` shows the notice
 several stopped sessions can relabel at the same time. When the pass ends, the
 transcript ends with a marker line such as
 `── saved · 31 phrases · mic.flac 88 MB · system.flac 0.2 MB ──` (only the
-audio files that exist). Press `o` to show the session in Library.
+audio files that exist). Press `o` to show the session in Library. If the save
+fails, a notice shows the error and the REC panel stays on `! SAVE FAILED` until
+the next recording stops; `o` still shows what the session folder holds.
 
 If you quit while a relabel pass runs, the hub asks "Relabel is still running.
 Quit and keep the live labels?" Press `y` to skip each pass; the hub waits until

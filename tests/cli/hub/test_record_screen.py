@@ -11,6 +11,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
+import pytest
 from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.app import HubApp
@@ -695,6 +696,72 @@ async def test_record_device_dialog_keeps_a_disconnected_device_until_an_explici
         await pilot.press("enter")
         await pilot.pause()
         assert services.next_device is None
+
+
+def _fail_stop(session):
+    def stop():
+        raise OSError("no space left on device")
+
+    session.stop = stop
+
+
+async def test_record_failed_stop_shows_a_lasting_failure_and_keeps_library_access(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        _fail_stop(created[0])
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        assert "■ SAVED" not in text
+        assert "no space left on device" in text
+        assert created[0].path.name in text
+        assert "── saved" not in text
+        assert app.record_screen.check_action("open_library", ()) is True
+
+        await pilot.press("o")
+        await pilot.pause()
+        assert app.current_mode == "library"
+        await pilot.press("1")
+        await pilot.pause()
+
+        # The next recording that saves leaves the failed state.
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[1].release.set()
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(5):
+            app.refresh_view()
+            await pilot.pause(0.02)
+        text = _screen_text(app)
+        assert "■ SAVED" in text
+        assert "SAVE FAILED" not in text
+
+
+def test_record_services_failed_stop_of_an_older_session_leaves_the_newer_one_saved(tmp_path):
+    services, created = _services(tmp_path)
+    services.start_recording()
+    older = services.begin_stop()
+    services.start_recording()
+    newer = services.begin_stop()
+    _fail_stop(older)
+
+    with pytest.raises(OSError, match="no space"):
+        services.finish_stop(older)
+
+    assert services.last_saved is newer
+    assert services.last_stop_error is None
+    assert services.stopping_sessions == (newer,)
+    created[1].release.set()
+    services.finish_stop(newer)
 
 
 def test_record_services_skip_each_pass_and_wait(tmp_path):

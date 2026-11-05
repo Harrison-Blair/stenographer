@@ -45,6 +45,7 @@ _STATE_TOKENS = {
     "recording": ("●", "REC", "danger"),
     "paused": ("Ⅱ", "PAUSED", "warn"),
     "saved": ("■", "SAVED", "ok"),
+    "failed": ("!", "SAVE FAILED", "danger"),
 }
 _RECORD_HINTS = (("m", "mic"), ("s", "system"), ("v", "view"))
 
@@ -160,7 +161,12 @@ class RecordScreen(HubScreen):
         if services.recording:
             session = getattr(services, "session", None)
             return "paused" if session is not None and session.paused else "recording"
+        if self._stop_error() is not None:
+            return "failed"
         return "saved" if self.saved_session is not None else "idle"
+
+    def _stop_error(self) -> str | None:
+        return getattr(self.app.services, "last_stop_error", None)
 
     def _stopping(self, session) -> bool:
         return any(item is session for item in getattr(self.app.services, "stopping_sessions", ()))
@@ -170,9 +176,9 @@ class RecordScreen(HubScreen):
         if action == "stop":
             return state in {"recording", "paused"}
         if action == "choose_device":
-            return state in {"idle", "saved"}
+            return state in {"idle", "saved", "failed"}
         if action == "open_library":
-            return state == "saved"
+            return state in {"saved", "failed"}
         return True
 
     # Drawing
@@ -190,7 +196,7 @@ class RecordScreen(HubScreen):
 
         live = self.session
         self._attach_meters(live)
-        shown = live if live is not None else self.saved_session if state == "saved" else None
+        shown = live if live is not None else self.saved_session if state != "idle" else None
         lines = self._lines(shown)
         speakers = self._speaker_rows(shown, lines)
         self._draw_rec_panel(state, shown)
@@ -201,7 +207,9 @@ class RecordScreen(HubScreen):
             self._speakers_card(shown, speakers),
             title="speakers",
             buttons=(("Rename…", "r", self.action_rename_speaker),),
-            disabled=frozenset({"r"}) if self._rename_busy(shown) else frozenset(),
+            disabled=frozenset({"r"})
+            if state == "failed" or self._rename_busy(shown)
+            else frozenset(),
         )
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
@@ -216,6 +224,13 @@ class RecordScreen(HubScreen):
                 ("d", "device"),
                 *_RECORD_HINTS,
                 ("r", "rename"),
+            )
+        elif state == "failed":
+            items = (
+                ("space", "record again"),
+                ("o", "open in Library"),
+                ("d", "device"),
+                *_RECORD_HINTS,
             )
         else:
             items = (("space", "record"), ("d", "device"), *_RECORD_HINTS)
@@ -232,6 +247,8 @@ class RecordScreen(HubScreen):
             session_id = session.path.name
             saved_at = self._saved_at.get(session_id)
             info = f"saved {saved_at:%H:%M}\n{session_id}" if saved_at else session_id
+        elif state == "failed":
+            info = f"{self._stop_error()}\n{session.path.name}"
         else:
             started = session_started_at(session.path.name) if session is not None else None
             info = f"started {started.astimezone():%H:%M}" if started else "started"
@@ -245,13 +262,13 @@ class RecordScreen(HubScreen):
             self._set_button(
                 secondary, "space", "▶ Resume" if resume else "Ⅱ Pause", "record_toggle"
             )
-        elif state == "saved":
+        elif state in {"saved", "failed"}:
             self._set_button(primary, "space", "● Record again", "record_toggle")
             self._set_button(secondary, "o", "Open in Library", "open_library")
         else:
             self._set_button(primary, "space", "● Record", "record_toggle")
         secondary.display = state != "idle"
-        self.query_one("#device-button").visible = state in {"idle", "saved"}
+        self.query_one("#device-button").visible = state in {"idle", "saved", "failed"}
 
     @staticmethod
     def _set_button(button: HubButton, key: str, label: str, action: str) -> None:

@@ -64,6 +64,7 @@ class HubServices:
         self._stopping: list[LiveSession] = []
         self._stops_changed = threading.Condition()
         self.last_saved: LiveSession | None = None
+        self.last_stop_error: str | None = None
         self.next_sources = {"mic": True, "system": True}
         self.next_device: str | None = None
         self.next_device_label: str | None = None
@@ -203,12 +204,18 @@ class HubServices:
             self._session = None
             self._stopping.append(session)
             self.last_saved = session
+            self.last_stop_error = None
         return session
 
     def finish_stop(self, session: LiveSession) -> None:
         """Save the session and run its relabel pass; it leaves the stopping list at the end."""
         try:
             session.stop()
+        except Exception as exc:
+            with self._stops_changed:
+                if self.last_saved is session:
+                    self.last_stop_error = str(exc)
+            raise
         finally:
             with self._stops_changed:
                 self._stopping.remove(session)
