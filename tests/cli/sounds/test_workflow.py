@@ -404,7 +404,7 @@ def test_post_save_failed_restart_reports_the_detail_and_fails(monkeypatch):
         _platform(restart=(False, "unit not loaded")),
     )
 
-    code, _, stderr = _post_save(
+    code, stdout, stderr = _post_save(
         "y\n",
         changed=True,
         custom_config=False,
@@ -412,6 +412,7 @@ def test_post_save_failed_restart_reports_the_detail_and_fails(monkeypatch):
     )
 
     assert code == 1
+    assert "Restarted" not in stdout
     assert stderr == "stenographer: could not restart steno-agent: unit not loaded\n"
 
 

@@ -38,6 +38,7 @@ from stenographer.cli.setup.workflow import (
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
 from stenographer.lib.refine import client as refine_client
+from stenographer.overlay.spectrum.errors import CalibrationError
 from tests.cli.support import GUIDANCE as _GUIDANCE
 from tests.cli.support import capabilities, document
 from tests.cli.support import console as _console
@@ -867,56 +868,47 @@ def test_automatic_calibration_accepted_returns_the_learned_profile(calibrator):
     assert "Background profile learned." in stdout
 
 
-def test_automatic_calibration_retries_before_accepting(calibrator):
-    second = (-58.0,) * 18
-    calibrator((-70.0,) * 18, second)
-    console = _console("retry\naccept\n")
+@pytest.mark.parametrize(
+    ("results", "answers", "expected_floor", "expected_stderr"),
+    [
+        pytest.param(
+            [(-70.0,) * 18, (-58.0,) * 18],
+            "retry\naccept\n",
+            (-58.0,) * 18,
+            "",
+            id="retry-then-accept",
+        ),
+        pytest.param([(-70.0,) * 18], "manual\n-61.5\n", -61.5, "", id="manual-after-result"),
+        pytest.param([(-70.0,) * 18], "keep\n", -45.0, "", id="keep-after-result"),
+        pytest.param(
+            [CalibrationError("the room was not quiet")],
+            "keep\n",
+            -45.0,
+            "stenographer: automatic calibration rejected: the room was not quiet\n",
+            id="rejected-then-keep",
+        ),
+        pytest.param(
+            [OSError("no such device")],
+            "manual\n-70\n",
+            -70.0,
+            "stenographer: automatic calibration failed: no such device\n",
+            id="failed-then-manual",
+        ),
+        pytest.param(
+            [OSError("device busy"), (-59.0,) * 18],
+            "retry\naccept\n",
+            (-59.0,) * 18,
+            "stenographer: automatic calibration failed: device busy\n",
+            id="failed-then-retry",
+        ),
+    ],
+)
+def test_automatic_calibration_arms(calibrator, results, answers, expected_floor, expected_stderr):
+    calibrator(*results)
+    console = _console(answers)
 
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == second
-
-
-def test_automatic_calibration_can_hand_over_to_the_manual_value(calibrator):
-    calibrator((-70.0,) * 18)
-    console = _console("manual\n-61.5\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == -61.5
-
-
-def test_automatic_calibration_keep_retains_the_current_response(calibrator):
-    calibrator((-70.0,) * 18)
-    console = _console("keep\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == -45.0
-
-
-def test_a_rejected_capture_is_reported_as_rejected_and_may_be_kept(calibrator):
-    from stenographer.overlay.spectrum.errors import CalibrationError
-
-    calibrator(CalibrationError("the room was not quiet"))
-    console = _console("keep\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == -45.0
-    assert console.stderr.getvalue() == (
-        "stenographer: automatic calibration rejected: the room was not quiet\n"
-    )
-
-
-def test_a_broken_capture_is_reported_as_failed_and_may_fall_back_to_manual(calibrator):
-    calibrator(OSError("no such device"))
-    console = _console("manual\n-70\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == -70.0
-    assert console.stderr.getvalue() == (
-        "stenographer: automatic calibration failed: no such device\n"
-    )
-
-
-def test_a_failed_capture_may_be_retried(calibrator):
-    profile = (-59.0,) * 18
-    calibrator(OSError("device busy"), profile)
-    console = _console("retry\naccept\n")
-
-    assert setup._automatic_floor(console, Config.defaults(), -45.0) == profile
+    assert setup._automatic_floor(console, Config.defaults(), -45.0) == expected_floor
+    assert console.stderr.getvalue() == expected_stderr
 
 
 def test_choose_floor_automatic_arm_runs_the_calibration(calibrator):

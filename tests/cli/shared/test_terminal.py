@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Gate, save-report, document-load, and service-restart tests for the shared CLI frame."""
+"""Gate, save-report, and document-load tests for the shared CLI frame."""
 
 from __future__ import annotations
 
 import io
 import pathlib
-from types import SimpleNamespace
 
 import pytest
 
@@ -184,43 +183,3 @@ def test_unreadable_configuration_reports_a_persistence_failure_and_exits_one(mo
 
     assert code == 1
     assert "too many levels of symbolic links" in console.stderr.getvalue()
-
-
-def test_restart_reports_the_platform_service_name_on_success(monkeypatch):
-    from stenographer.cli.shared import terminal as terminal_module
-    from stenographer.lib import platform as platform_module
-
-    class Plat:
-        def restart_service(self):
-            return True, ""
-
-        def guidance(self):
-            return SimpleNamespace(service_name="steno-agent")
-
-    monkeypatch.setattr(platform_module, "current_platform", Plat)
-    console = Console(io.StringIO(), io.StringIO(), io.StringIO())
-
-    assert terminal_module.restart_service(console) is True
-    assert console.stdout.getvalue() == "Restarted steno-agent.\n"
-    assert console.stderr.getvalue() == ""
-
-
-def test_restart_reports_the_platform_detail_on_failure(monkeypatch):
-    from stenographer.cli.shared import terminal as terminal_module
-    from stenographer.lib import platform as platform_module
-
-    class Plat:
-        def restart_service(self):
-            return False, "unit not loaded"
-
-        def guidance(self):
-            return SimpleNamespace(service_name="steno-agent")
-
-    monkeypatch.setattr(platform_module, "current_platform", Plat)
-    console = Console(io.StringIO(), io.StringIO(), io.StringIO())
-
-    assert terminal_module.restart_service(console) is False
-    assert console.stdout.getvalue() == ""
-    assert console.stderr.getvalue() == (
-        "stenographer: could not restart steno-agent: unit not loaded\n"
-    )
