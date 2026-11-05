@@ -47,16 +47,17 @@ class OutboundMailbox:
         self._loading_models: list[LoadingModel] = []
         self._recording_generation: int | None = None
         self._transient_deadline: float | None = None
-        self._condition = threading.Condition()
+        # Reentrant because expire_transient publishes while it holds the lock.
+        self._lock = threading.RLock()
 
     @property
     def current_state(self) -> StateMessage:
-        with self._condition:
+        with self._lock:
             return self._current_state
 
     @property
     def transient_deadline(self) -> float | None:
-        with self._condition:
+        with self._lock:
             return self._transient_deadline
 
     def _append(self, message: StateMessage | LoadingActivityMessage) -> None:
@@ -81,7 +82,7 @@ class OutboundMailbox:
     def publish(self, state: OverlayState, profile: RefineProfile | None = None) -> int:
         if not isinstance(state, OverlayState):
             raise TypeError("state must be an OverlayState")
-        with self._condition:
+        with self._lock:
             if self._closed or self._disabled:
                 return self._current_state.generation
             message = StateMessage(self._generation(), state, profile)
@@ -97,7 +98,6 @@ class OutboundMailbox:
             self._transient_deadline = (
                 None if display_seconds is None else time.monotonic() + display_seconds
             )
-            self._condition.notify()
             return message.generation
 
     def loading_activity(self, model: LoadingModel, active: bool) -> None:
@@ -106,7 +106,7 @@ class OutboundMailbox:
             raise TypeError("loading model must be a LoadingModel")
         if not isinstance(active, bool):
             raise TypeError("loading activity must be a boolean")
-        with self._condition:
+        with self._lock:
             present = model in self._loading_models
             if self._closed or self._disabled or active == present:
                 return
@@ -117,7 +117,6 @@ class OutboundMailbox:
                 self._loading_models.append(model)
             else:
                 self._loading_models.remove(model)
-            self._condition.notify()
 
     def audio_block(self, samples: object, sample_rate: int, stream_epoch: int) -> None:
         """Replace the raw block slot without copying, locking, or performing I/O."""
@@ -133,13 +132,13 @@ class OutboundMailbox:
         self._audio_pending = _AudioBlock(generation, samples, sample_rate, stream_epoch)
 
     def take_audio_nowait(self) -> _AudioBlock | None:
-        with self._condition:
+        with self._lock:
             block, self._audio_pending = self._audio_pending, None
             return block
 
     def publish_spectrum(self, generation: int, levels: tuple[int, ...]) -> int | None:
         """Replace the latest frame only when its recording is still current."""
-        with self._condition:
+        with self._lock:
             if (
                 self._closed
                 or self._disabled
@@ -151,21 +150,20 @@ class OutboundMailbox:
             encode_message(message)
             self._next_sequence += 1
             self._spectrum_pending = message
-            self._condition.notify()
             return message.sequence
 
     def expire_transient(self, now: float | None = None) -> int | None:
         """Queue a guarded hide when the current transient state expires."""
         if now is None:
             now = time.monotonic()
-        with self._condition:
+        with self._lock:
             deadline = self._transient_deadline
             if deadline is None or now < deadline:
                 return None
             return self.publish(OverlayState.HIDDEN, self._current_state.profile)
 
     def close(self) -> None:
-        with self._condition:
+        with self._lock:
             if self._closed:
                 return
             self._closed = True
@@ -174,18 +172,16 @@ class OutboundMailbox:
             self._spectrum_pending = None
             self._transient_deadline = None
             self._shutdown_pending = True
-            self._condition.notify_all()
 
     def disable(self) -> None:
         """Discard optional work after the helper has permanently stopped."""
-        with self._condition:
+        with self._lock:
             self._disabled = True
             self._pending.clear()
             self._audio_pending = None
             self._spectrum_pending = None
             self._recording_generation = None
             self._loading_models = []
-            self._condition.notify_all()
 
     def replay_for_helper(self) -> tuple[StateMessage | LoadingActivityMessage, ...]:
         """Return one atomic current snapshot and discard superseded metadata.
@@ -194,7 +190,7 @@ class OutboundMailbox:
         the same critical section prevents an ungenerated loading edge from
         replaying out of order after the current snapshot.
         """
-        with self._condition:
+        with self._lock:
             replay: list[StateMessage | LoadingActivityMessage] = [
                 LoadingActivityMessage(model, True) for model in self._loading_models
             ]
@@ -205,22 +201,13 @@ class OutboundMailbox:
             return tuple(replay)
 
     def take_nowait(self) -> ProtocolMessage | None:
-        with self._condition:
-            return self._take_locked()
-
-    def take(self, timeout: float | None = None) -> ProtocolMessage | None:
-        with self._condition:
-            if not self._shutdown_pending and not self._pending and self._spectrum_pending is None:
-                self._condition.wait(timeout)
-            return self._take_locked()
-
-    def _take_locked(self) -> ProtocolMessage | None:
-        if self._shutdown_pending:
-            self._shutdown_pending = False
-            return CommandMessage(Command.SHUTDOWN)
-        if self._pending:
-            return self._pending.popleft()
-        if self._spectrum_pending is not None:
-            message, self._spectrum_pending = self._spectrum_pending, None
-            return message
-        return None
+        with self._lock:
+            if self._shutdown_pending:
+                self._shutdown_pending = False
+                return CommandMessage(Command.SHUTDOWN)
+            if self._pending:
+                return self._pending.popleft()
+            if self._spectrum_pending is not None:
+                message, self._spectrum_pending = self._spectrum_pending, None
+                return message
+            return None

@@ -1,15 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure tests for overlay supervision policy (no child processes).
-
-The mailbox's blocking ``take`` is the one exception: two real threads, because
-a queue that never wakes its consumer is exactly the bug worth catching.
-"""
+"""Pure tests for overlay supervision policy (no child processes)."""
 
 from __future__ import annotations
 
 import logging
-import threading
-import time
 from itertools import pairwise
 
 import pytest
@@ -386,48 +380,6 @@ def test_expire_transient_reads_the_clock_when_the_caller_does_not() -> None:
 
     assert mailbox.expire_transient() is None
     assert mailbox.current_state.state is OverlayState.RECORDING
-
-
-def test_a_blocking_take_wakes_on_the_next_published_record() -> None:
-    """The supervisor's wait has to end when work arrives, not when it expires.
-
-    Seen to FAIL against a ``take`` that waited without being notified: the
-    first state change of a session would be delayed by the whole timeout.
-    """
-    mailbox = OutboundMailbox()
-    taken: list[object] = []
-    ready = threading.Event()
-
-    def consume() -> None:
-        ready.set()
-        taken.append(mailbox.take(timeout=10.0))
-
-    consumer = threading.Thread(target=consume, name="mailbox-take")
-    consumer.start()
-    try:
-        assert ready.wait(10.0)
-        started = time.monotonic()
-        mailbox.publish(OverlayState.DELIVERING)
-        consumer.join(timeout=10.0)
-    finally:
-        consumer.join(timeout=10.0)
-
-    assert not consumer.is_alive()
-    assert taken == [StateMessage(0, OverlayState.DELIVERING)]
-    assert time.monotonic() - started < 5.0
-
-
-def test_a_blocking_take_returns_nothing_once_its_timeout_expires() -> None:
-    mailbox = OutboundMailbox()
-
-    assert mailbox.take(timeout=0.01) is None
-
-
-def test_a_blocking_take_returns_a_waiting_record_without_waiting() -> None:
-    mailbox = OutboundMailbox()
-    mailbox.publish(OverlayState.ERROR)
-
-    assert mailbox.take(timeout=10.0) == StateMessage(0, OverlayState.ERROR)
 
 
 def test_the_helper_stderr_file_is_created_under_the_state_directory(tmp_path, monkeypatch) -> None:
