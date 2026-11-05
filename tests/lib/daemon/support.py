@@ -249,6 +249,7 @@ def _daemon(
         worker=_Worker(result, error),
         recorder=_Recorder(samples),
     )
+    daemon._listener = _Listener(device=None, lock=threading.RLock())
     daemon._deliverer = _Deliverer()
     if refiner is not None:
         daemon._refiner = refiner

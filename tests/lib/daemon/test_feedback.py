@@ -5,11 +5,7 @@ from __future__ import annotations
 
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
-from stenographer.lib.daemon.feedback import (
-    _play_cue,
-    _publish_loading_activity,
-    _publish_status,
-)
+from tests.lib.daemon.support import _daemon
 
 
 class _BrokenFeedback:
@@ -39,7 +35,9 @@ class _BrokenStatus:
 def test_a_failing_cue_player_never_reaches_the_caller(daemon_logs):
     feedback = _BrokenFeedback()
 
-    _play_cue(feedback, "record_start")
+    daemon = _daemon()
+    daemon._feedback = feedback
+    daemon._cue("record_start")
 
     assert feedback.attempts == ["record_start"]
     assert "feedback: cue_failed cue=record_start error=OSError" in daemon_logs.text
@@ -49,7 +47,9 @@ def test_a_failing_cue_player_never_reaches_the_caller(daemon_logs):
 def test_a_failing_overlay_publish_never_reaches_the_caller(daemon_logs):
     status = _BrokenStatus()
 
-    _publish_status(status, OverlayState.RECORDING)
+    daemon = _daemon()
+    daemon._status = status
+    daemon._publish_status(OverlayState.RECORDING)
 
     assert status.attempts == [OverlayState.RECORDING]
     assert "overlay: publish_failed state=recording error=RuntimeError" in daemon_logs.text
@@ -59,8 +59,10 @@ def test_a_failing_overlay_publish_never_reaches_the_caller(daemon_logs):
 def test_a_failing_loading_activity_never_reaches_the_caller(daemon_logs):
     status = _BrokenStatus()
 
-    _publish_loading_activity(status, LoadingModel.ASR, True)
-    _publish_loading_activity(status, LoadingModel.ASR, False)
+    daemon = _daemon()
+    daemon._status = status
+    daemon._publish_loading_activity(LoadingModel.ASR, True)
+    daemon._publish_loading_activity(LoadingModel.ASR, False)
 
     assert status.attempts == [(LoadingModel.ASR, True), (LoadingModel.ASR, False)]
     assert (

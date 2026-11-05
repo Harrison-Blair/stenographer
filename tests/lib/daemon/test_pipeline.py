@@ -11,6 +11,7 @@ import pytest
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.pipeline import UtterancePipeline
 from stenographer.lib.delivery.timings import DeliveryTimings
+from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.transcribe.errors import WorkerError, WorkerPathologicalError
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.utterance_record import UtteranceRecord
@@ -91,7 +92,7 @@ def test_an_inference_failure_beside_it_still_renders_nothing(daemon_logs):
 
 def test_the_pill_stays_up_from_release_until_the_paste_lands():
     # The pill is the only sign the tool is still working after release. It
-    # must run recording -> transcribing -> delivering -> hidden with no hidden
+    # must run recording -> transcribing -> delivering -> skipped with no hidden
     # gap, even when the model is already warm. Seen to FAIL against a key-up
     # that published HIDDEN and only a cold load published TRANSCRIBING: the
     # sequence read [RECORDING, HIDDEN, DELIVERING, HIDDEN].
@@ -107,6 +108,7 @@ def test_the_pill_stays_up_from_release_until_the_paste_lands():
         OverlayState.RECORDING,
         OverlayState.TRANSCRIBING,
         OverlayState.DELIVERING,
+        OverlayState.SKIPPED,
         OverlayState.HIDDEN,
     ]
 
@@ -173,7 +175,7 @@ def test_feedback_failures_preserve_the_already_delivered_outcome(daemon_logs):
     daemon._busy = True
 
     def publish_state(state):
-        if state is OverlayState.HIDDEN:
+        if state is OverlayState.SKIPPED:
             raise ValueError("feedback failed after delivery")
 
     def fail(message):
@@ -192,6 +194,7 @@ def test_feedback_failures_preserve_the_already_delivered_outcome(daemon_logs):
     )
     try:
         with pytest.raises(RuntimeError, match="failure reporting also failed"):
+            daemon._record_profile = RefineProfile.AGENT
             daemon._run_pipeline(_SPEECH)
         assert daemon._busy is False
         assert daemon._record is None
@@ -298,7 +301,10 @@ def test_a_cancel_before_the_gate_skips_every_later_stage():
     pipeline, reported = _pipeline(daemon, cancelled=lambda: True)
     record = _record()
 
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "CANCELLED"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT)
+        == "CANCELLED"
+    )
 
     assert record.outcome == "CANCELLED"
     assert record.gate is None
@@ -315,7 +321,10 @@ def test_a_cancel_racing_a_transcription_failure_is_reported_as_cancelled(daemon
     pipeline, reported = _pipeline(daemon, cancelled=cancelled)
     record = _record()
 
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "CANCELLED"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT)
+        == "CANCELLED"
+    )
 
     assert record.outcome == "CANCELLED"
     assert record.failure is None
@@ -330,7 +339,7 @@ def test_a_failed_copy_is_reported_as_a_copy_failure(daemon_logs):
     pipeline, reported = _pipeline(daemon, deliverer=deliverer)
     record = _record()
 
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "ERROR"
+    assert pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT) == "ERROR"
 
     assert record.failure == "copy_failed"
     assert reported.failures == ["delivery failed"]
@@ -347,7 +356,7 @@ def test_a_chord_failure_after_a_confirmed_copy_keeps_the_copied_words(daemon_lo
     pipeline, reported = _pipeline(daemon, deliverer=deliverer)
     record = _record()
 
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "ERROR"
+    assert pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT) == "ERROR"
 
     assert record.failure == "chord_failed"
     assert record.copied_words == 3
@@ -365,7 +374,10 @@ def test_a_cancel_during_delivery_is_reported_as_cancelled(daemon_logs):
     pipeline, reported = _pipeline(daemon, deliverer=deliverer, cancelled=cancelled)
     record = _record()
 
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "CANCELLED"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT)
+        == "CANCELLED"
+    )
 
     assert record.failure is None
     assert reported.failures == []
@@ -382,7 +394,10 @@ def test_a_cancel_that_withheld_the_chord_clears_the_failure():
     pipeline, reported = _pipeline(daemon, deliverer=deliverer, cancelled=cancelled)
     record = _record()
 
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "CANCELLED"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT)
+        == "CANCELLED"
+    )
 
     assert record.failure is None
     assert reported.failures == []
@@ -396,7 +411,7 @@ def test_a_refused_copy_without_a_cancel_is_an_error_with_its_own_message():
     pipeline, reported = _pipeline(daemon, deliverer=deliverer)
     record = _record()
 
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "ERROR"
+    assert pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT) == "ERROR"
 
     assert record.failure == "copy_failed"
     assert reported.failures == ["could not copy transcript to clipboard"]
@@ -409,7 +424,9 @@ def test_an_empty_transcript_takes_the_pill_down_without_delivering():
     pipeline, reported = _pipeline(daemon, deliverer=deliverer)
     record = _record()
 
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "SILENT"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT) == "SILENT"
+    )
 
     assert record.failure == "empty"
     assert record.chars_out == 0
@@ -424,12 +441,15 @@ def test_a_confirmed_copy_checkpoints_the_clipboard_before_the_chord():
     pipeline, reported = _pipeline(daemon, deliverer=deliverer)
     record = _record()
 
-    assert pipeline.run(_SPEECH, utterance=1, record=record) == "DELIVERED"
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT)
+        == "DELIVERED"
+    )
 
     assert record.copied_words == 2
     assert record.chord_words == 2
     assert record.stop_to_chord_ms is not None
-    assert reported.states == [OverlayState.DELIVERING, OverlayState.HIDDEN]
+    assert reported.states == [OverlayState.DELIVERING, OverlayState.SKIPPED]
     assert reported.cues == ["delivered"]
 
 
@@ -439,17 +459,21 @@ def test_a_run_without_a_record_still_reports_its_outcome(daemon_logs):
     daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
     pipeline, reported = _pipeline(daemon, deliverer=_StubDeliverer())
 
-    assert pipeline.run(_SPEECH, utterance=1, record=None) == "DELIVERED"
-    assert reported.states == [OverlayState.DELIVERING, OverlayState.HIDDEN]
+    assert (
+        pipeline.run(_SPEECH, utterance=1, record=None, profile=RefineProfile.AGENT) == "DELIVERED"
+    )
+    assert reported.states == [OverlayState.DELIVERING, OverlayState.SKIPPED]
 
     broken, failed = _pipeline(daemon, deliverer=_StubDeliverer(error=RuntimeError("no clipboard")))
-    assert broken.run(_SPEECH, utterance=2, record=None) == "ERROR"
+    assert broken.run(_SPEECH, utterance=2, record=None, profile=RefineProfile.AGENT) == "ERROR"
     assert failed.failures == ["delivery failed"]
 
     refused, cancelled = _pipeline(
         daemon, deliverer=_StubDeliverer(result=False), cancelled=_CountingCancel(after=2)
     )
-    assert refused.run(_SPEECH, utterance=3, record=None) == "CANCELLED"
+    assert (
+        refused.run(_SPEECH, utterance=3, record=None, profile=RefineProfile.AGENT) == "CANCELLED"
+    )
     assert cancelled.states[-1] is OverlayState.CANCELLED
 
     assert daemon_logs.text.count("pipeline: delivery_failed") == 1

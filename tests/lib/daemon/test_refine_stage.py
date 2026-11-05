@@ -72,7 +72,7 @@ class _SlowRefiner:
     def will_refine(self, text: str) -> bool:
         return True
 
-    def refine(self, text: str, *, cancelled=never_cancelled) -> str:
+    def refine(self, text: str, *, profile, cancelled=never_cancelled) -> str:
         self.started.set()
         started_at = time.perf_counter()
         while time.perf_counter() - started_at < self._budget:

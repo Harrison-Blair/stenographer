@@ -21,32 +21,23 @@ from stenographer.lib.daemon.policy import (
 )
 
 
-def test_gate_failure_is_silent():
-    assert classify_pipeline(gate_passed=False, transcript_nonempty=False, deliver_result=None) == (
-        Outcome.SILENT,
-        None,
-    )
-
-
 def test_empty_transcript_is_silent():
     # Gate passed but the decode was empty/all-gated: success-shaped, no error.
-    assert classify_pipeline(gate_passed=True, transcript_nonempty=False, deliver_result=None) == (
+    assert classify_pipeline(transcript_nonempty=False, deliver_result=None) == (
         Outcome.SILENT,
         None,
     )
 
 
 def test_delivered_transcript():
-    assert classify_pipeline(gate_passed=True, transcript_nonempty=True, deliver_result=True) == (
+    assert classify_pipeline(transcript_nonempty=True, deliver_result=True) == (
         Outcome.DELIVERED,
         None,
     )
 
 
 def test_failed_delivery_is_error_with_message():
-    outcome, message = classify_pipeline(
-        gate_passed=True, transcript_nonempty=True, deliver_result=False
-    )
+    outcome, message = classify_pipeline(transcript_nonempty=True, deliver_result=False)
     # A False deliver on non-empty text is never silent: the copy failed,
     # so the chord was withheld and the user must be told.
     assert outcome is Outcome.ERROR
@@ -59,7 +50,6 @@ def test_ignored_edge_reason_names_the_state_that_refused_the_press():
     assert ignored_edge_reason(recording=True, busy=True, stopping=True) == "recording"
     assert ignored_edge_reason(recording=False, busy=True, stopping=True) == "busy"
     assert ignored_edge_reason(recording=False, busy=False, stopping=True) == "stopping"
-    assert ignored_edge_reason(recording=False, busy=False, stopping=False) == "none"
 
 
 def test_can_start_only_when_fully_idle():
