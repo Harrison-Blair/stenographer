@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 
 def _polyphase_filter(up: int, down: int) -> np.ndarray:
@@ -30,23 +31,21 @@ def _resample_poly(data: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
     up = rate_out // gcd
     down = rate_in // gcd
     filt = _polyphase_filter(up, down)
-    n_taps = filt.size
-    half = n_taps // 2
-    # Output m taps the virtual full convolution at n = half + m*down; grouping
-    # by p = n % up turns each group into a plain convolution with sub-filter
-    # filt[p::up], sampled at q = n // up, so no zero-stuffed array is built.
-    total = data.size * up + n_taps - 1
-    ms = np.arange((total - half + down - 1) // down)
-    ns = half + ms * down
-    ps = ns % up
-    qs = ns // up
-    out = np.zeros(ms.size, dtype=np.float32)
-    for p in np.unique(ps):
-        sel = ps == p
-        conv_p = np.convolve(data, filt[p::up], mode="full")
-        q_sel = qs[sel]
-        valid = q_sel < conv_p.size
-        vals = np.zeros(q_sel.size, dtype=np.float32)
-        vals[valid] = conv_p[q_sel[valid]]
-        out[sel] = vals
+    half = filt.size // 2
+    longest_taps = (filt.size + up - 1) // up
+    padded = np.concatenate(
+        (np.zeros(longest_taps - 1, np.float32), data, np.zeros(longest_taps, np.float32))
+    )
+    # Output m taps the virtual full convolution at n = half + m*down. Outputs
+    # up apart share the sub-filter filt[n % up::up] and read input windows
+    # down apart, so each phase is one matrix product over a strided view.
+    out = np.zeros((data.size * up + filt.size - 1 - half + down - 1) // down, dtype=np.float32)
+    for phase in range(min(up, out.size)):
+        n = half + phase * down
+        taps = filt[n % up :: up]
+        first_window = n // up + longest_taps - taps.size
+        windows = sliding_window_view(padded, taps.size)[first_window::down]
+        targets = out[phase::up]
+        count = min(targets.size, windows.shape[0])
+        targets[:count] = windows[:count] @ taps[::-1]
     return out

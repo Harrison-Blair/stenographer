@@ -14,6 +14,7 @@ stream.
 from __future__ import annotations
 
 import logging
+import math
 from types import SimpleNamespace
 
 import numpy as np
@@ -26,7 +27,7 @@ from stenographer.lib.audio.recorder import (
     Recorder,
     RecorderState,
 )
-from stenographer.lib.audio.resample import _resample_poly
+from stenographer.lib.audio.resample import _polyphase_filter, _resample_poly
 
 _LOGGER = "stenographer.lib.audio.recorder"
 
@@ -133,6 +134,28 @@ def test_resample_preserves_dc_level():
     interior = out[100:-100]
     assert interior.size > 0
     assert np.allclose(interior, 0.3, atol=0.02)
+
+
+def _zero_stuffed_reference(data: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
+    """The textbook definition: stuff zeros, filter at the high rate, decimate."""
+    gcd = math.gcd(rate_in, rate_out)
+    up, down = rate_out // gcd, rate_in // gcd
+    filt = _polyphase_filter(up, down)
+    stuffed = np.zeros(data.size * up, dtype=np.float64)
+    stuffed[::up] = data
+    return np.convolve(stuffed, filt.astype(np.float64))[filt.size // 2 :: down]
+
+
+@pytest.mark.parametrize("rate", [48000, 44100, 22050, 8000])
+@pytest.mark.parametrize("frames", [1, 7, 500, 3000])
+def test_resample_matches_the_zero_stuffed_definition(rate, frames):
+    data = np.random.default_rng(frames).standard_normal(frames).astype(np.float32)
+
+    out = _resample_poly(data, rate, 16000)
+
+    expected = _zero_stuffed_reference(data, rate, 16000)
+    assert out.size == expected.size
+    assert out == pytest.approx(expected, abs=1e-5)
 
 
 @pytest.mark.parametrize("min_rms", [0.0, -1.0])
