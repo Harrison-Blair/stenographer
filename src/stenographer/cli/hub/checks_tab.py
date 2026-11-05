@@ -166,6 +166,7 @@ class ChecksTab(Vertical):
         self.checking = False
         self.index = 0
         self._test_statuses: dict[str, str] = {}
+        self._view_key = None
 
     @property
     def test_status(self) -> str:
@@ -246,6 +247,9 @@ class ChecksTab(Vertical):
     def refresh_view(self) -> None:
         if not self.is_mounted:
             return
+        key = (self.report, self.index, self.checking, self.test_status)
+        if key == self._view_key:
+            return
         self._refresh_checks()
         check = self.selected
         head = self.query_one("#checks-detail-head", Static)
@@ -283,6 +287,7 @@ class ChecksTab(Vertical):
         status = self.query_one("#checks-test-status", Static)
         status.update(f"test: {self.test_status}" if self.test_status else "")
         self.query_one("#checks-warnings", Static).update(self._warnings_text())
+        self._view_key = key
 
     def _warnings_text(self) -> Text:
         entries = self.report.warning_entries() if self.report is not None else ()
