@@ -45,27 +45,6 @@ from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport, _repl
 _WORKER_LOGGER = "stenographer.lib.transcribe.worker"
 
 
-def test_lifecycle_observer_failure_is_logged_and_suppressed(caplog):
-    observed = []
-
-    def raising_observer():
-        raise RuntimeError("observer failed")
-
-    worker = Worker(
-        Config.loads("").asr,
-        on_model_loading=raising_observer,
-        on_model_ready=lambda: observed.append("ready"),
-    )
-    with caplog.at_level(logging.WARNING, logger="stenographer.lib.transcribe.worker"):
-        worker._emit_lifecycle((WorkerLifecycle.MODEL_LOADING, WorkerLifecycle.MODEL_READY))
-    assert observed == ["ready"]
-    messages = [record.getMessage() for record in caplog.records]
-    assert len(messages) == 1
-    assert "worker: lifecycle_callback_failed" in messages[0]
-    assert "lifecycle_event=model_loading" in messages[0]
-    assert 'error=RuntimeError detail="observer failed"' in messages[0]
-
-
 def test_interpret_response_returns_ok_result():
     result = TranscriptionResult(text="hi", duration_seconds=1.0, segments=[])
     assert interpret_response(("ok", result)) is result

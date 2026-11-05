@@ -40,6 +40,7 @@ from stenographer.lib.transcribe.errors import (
     WorkerProtocolError,
     WorkerTimeoutError,
 )
+from stenographer.lib.transcribe.results import WorkerTimings
 from stenographer.lib.transcribe.worker_event import WorkerEvent
 from stenographer.lib.transcribe.worker_lifecycle import WorkerLifecycle
 from stenographer.lib.transcribe.worker_policy import (
@@ -50,7 +51,6 @@ from stenographer.lib.transcribe.worker_policy import (
     should_arm_idle_timer,
     should_teardown_for_response_error,
 )
-from stenographer.lib.transcribe.results import WorkerTimings
 
 log = logging.getLogger(__name__)
 
@@ -265,24 +265,12 @@ class Worker:
             WorkerLifecycle.TRANSCRIBING: self._on_transcribing,
         }
         for event in events:
-            self._notify(callbacks[event], event.name.lower())
+            self._notify(callbacks[event])
 
     @staticmethod
-    def _notify(callback: Callable[[], None] | None, event: str) -> None:
-        if callback is None:
-            return
-        try:
+    def _notify(callback: Callable[[], None] | None) -> None:
+        if callback is not None:
             callback()
-        except Exception as exc:
-            # Optional observers must never change transcription success.
-            log_failure(
-                log,
-                logging.WARNING,
-                "worker: lifecycle_callback_failed",
-                exc,
-                safe=True,
-                lifecycle_event=event,
-            )
 
     def is_alive(self) -> bool:
         proc = self._process
