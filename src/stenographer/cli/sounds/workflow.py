@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, TextIO
 
 from stenographer.cli.shared.console import Console
@@ -22,6 +22,7 @@ from stenographer.cli.sounds.menu_action import MenuAction
 from stenographer.cli.sounds.preview import _preview
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
+from stenographer.lib.sounds import packs as sound_packs
 
 if TYPE_CHECKING:
     from stenographer.lib.platform.host_guidance import HostGuidance
@@ -71,53 +72,24 @@ def _pack_description(
     return f"{pack} ({', '.join(labels)})"
 
 
-def _unavailable_line(current: str) -> str:
-    """The trailing note for a configured pack that is not among the available ones."""
-
-    return f"  configured: {current} (unavailable)"
-
-
-def format_sound_pack_list(
+def format_pack_lines(
     packs: Sequence[str],
     bundled: Sequence[str],
     *,
     current: str,
     effective: str | None,
+    numbered: bool,
 ) -> list[str]:
-    """Render available packs, their source, and current/effective markers."""
-
+    """Render pack names and labels for the list or the numbered menu."""
     bundled_names = frozenset(bundled)
-    lines = [
-        f"{'*' if pack == effective else ' '} "
-        f"{_pack_description(pack, bundled_names, current=current, effective=effective)}"
-        for pack in packs
-    ]
+    lines = []
+    for number, pack in enumerate(packs, 1):
+        prefix = f"  {number}. " if numbered else f"{'*' if pack == effective else ' '} "
+        lines.append(
+            prefix + _pack_description(pack, bundled_names, current=current, effective=effective)
+        )
     if current not in packs:
-        lines.append(_unavailable_line(current))
-    return lines
-
-
-def format_menu_lines(
-    packs: Sequence[str],
-    bundled: Sequence[str],
-    *,
-    current: str,
-    effective: str | None,
-) -> list[str]:
-    """Render the numbered selection menu: one line per pack, then any unavailable note.
-
-    The menu numbers the choices instead of marking the effective pack, but names
-    and labels stay identical to the listing's.
-    """
-
-    bundled_names = frozenset(bundled)
-    lines = [
-        f"  {number}. "
-        f"{_pack_description(pack, bundled_names, current=current, effective=effective)}"
-        for number, pack in enumerate(packs, 1)
-    ]
-    if current not in packs:
-        lines.append(_unavailable_line(current))
+        lines.append(f"  configured: {current} (unavailable)")
     return lines
 
 
@@ -179,14 +151,8 @@ def selection_may_prompt(*, terminal: bool) -> bool:
     return terminal
 
 
-def _sound_pack_api():
-    from stenographer.lib.sounds import packs as feedback
-
-    return feedback
-
-
 def _effective_name(config: Config, config_dir: pathlib.Path) -> str | None:
-    return _sound_pack_api().effective_sound_pack_name(config.feedback.sound_pack, config_dir)
+    return sound_packs.effective_sound_pack_name(config.feedback.sound_pack, config_dir)
 
 
 def _choose_from_menu(
@@ -194,32 +160,17 @@ def _choose_from_menu(
     config: Config,
     config_dir: pathlib.Path,
     packs: Sequence[str],
-    *,
-    preview: Callable[[Console, Config, object], bool] = _preview,
-    discover: Callable[[], Sequence[str]] | None = None,
-    load: Callable[[str], object] | None = None,
 ) -> str | None:
-    """Loop until a pack is selected or the menu is cancelled.
-
-    A failed preview or a pack that vanished is reported and the menu re-prompts;
-    the injectable callables exist so the loop stays testable without playback.
-    """
-
-    api = _sound_pack_api()
-
-    def discover_packs() -> Sequence[str]:
-        return api.discover_sound_packs(config_dir) if discover is None else discover()
-
-    def load_pack(name: str) -> object:
-        return api.load_sound_pack(name, config_dir) if load is None else load(name)
+    """Loop until a pack is selected or the menu is cancelled."""
 
     while True:
         console.write("Sound packs")
-        for line in format_menu_lines(
+        for line in format_pack_lines(
             packs,
-            api.BUNDLED_PACKS,
+            sound_packs.BUNDLED_PACKS,
             current=config.feedback.sound_pack,
             effective=_effective_name(config, config_dir),
+            numbered=True,
         ):
             console.write(line)
         count = len(packs)
@@ -234,11 +185,11 @@ def _choose_from_menu(
         selected = packs[action.index]
         if action.kind == "select":
             return selected
-        pack = load_pack(selected)
+        pack = sound_packs.load_sound_pack(selected, config_dir)
         if pack is None:
             console.error(f"invalid or unavailable sound pack: {selected}")
-            packs = discover_packs()
-        elif preview(console, config, pack):
+            packs = sound_packs.discover_sound_packs(config_dir)
+        elif _preview(console, config, pack):
             console.write()
 
 
@@ -318,9 +269,8 @@ def run(
     apply_stderr_level(document.config.feedback.log_level)
 
     config_dir = document.path.parent
-    api = _sound_pack_api()
     try:
-        packs = api.discover_sound_packs(config_dir)
+        packs = sound_packs.discover_sound_packs(config_dir)
     except KeyboardInterrupt:
         console.error("sounds interrupted")
         return 130
@@ -330,17 +280,18 @@ def run(
 
     try:
         if list_only:
-            for line in format_sound_pack_list(
+            for line in format_pack_lines(
                 packs,
-                api.BUNDLED_PACKS,
+                sound_packs.BUNDLED_PACKS,
                 current=document.config.feedback.sound_pack,
                 effective=_effective_name(document.config, config_dir),
+                numbered=False,
             ):
                 console.write(line)
             return 0
 
         if preview_name is not None:
-            pack = api.load_sound_pack(preview_name, config_dir)
+            pack = sound_packs.load_sound_pack(preview_name, config_dir)
             if pack is None:
                 console.error(f"invalid or unavailable sound pack: {preview_name}")
                 return 2
@@ -353,7 +304,7 @@ def run(
                 console.write("Sound-pack selection cancelled; configuration was not changed.")
                 return 0
         assert selected is not None
-        if api.load_sound_pack(selected, config_dir) is None:
+        if sound_packs.load_sound_pack(selected, config_dir) is None:
             console.error(f"invalid or unavailable sound pack: {selected}")
             return 2
 

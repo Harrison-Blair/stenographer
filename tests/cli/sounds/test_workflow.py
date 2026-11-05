@@ -19,8 +19,7 @@ from stenographer.cli.shared.console import Console
 from stenographer.cli.sounds import workflow as sounds
 from stenographer.cli.sounds.workflow import (
     MenuAction,
-    format_menu_lines,
-    format_sound_pack_list,
+    format_pack_lines,
     parse_menu_action,
     parse_sound_pack_choice,
     post_save_lines,
@@ -82,11 +81,12 @@ def test_setup_sound_pack_choice_accepts_number_name_and_enter():
 
 
 def test_list_marks_available_current_and_effective_pack():
-    lines = format_sound_pack_list(
+    lines = format_pack_lines(
         ("legacy", "warm-desk", "soft-electronic", "minimal-ui", "my-pack"),
         ("legacy", "warm-desk", "soft-electronic", "minimal-ui"),
         current="my-pack",
         effective="my-pack",
+        numbered=False,
     )
 
     assert lines[-1] == "* my-pack (custom, current, effective)"
@@ -94,11 +94,12 @@ def test_list_marks_available_current_and_effective_pack():
 
 
 def test_list_reports_unavailable_configured_pack_and_effective_fallback():
-    lines = format_sound_pack_list(
+    lines = format_pack_lines(
         ("legacy", "warm-desk", "soft-electronic", "minimal-ui"),
         ("legacy", "warm-desk", "soft-electronic", "minimal-ui"),
         current="gone-pack",
         effective="minimal-ui",
+        numbered=False,
     )
 
     assert "* minimal-ui (bundled, effective)" in lines
@@ -106,11 +107,12 @@ def test_list_reports_unavailable_configured_pack_and_effective_fallback():
 
 
 def test_menu_numbers_every_pack_and_keeps_the_listing_labels():
-    lines = format_menu_lines(
+    lines = format_pack_lines(
         ("legacy", "warm-desk", "my-pack"),
         _BUNDLED,
         current="my-pack",
         effective="my-pack",
+        numbered=True,
     )
 
     assert lines == [
@@ -121,11 +123,12 @@ def test_menu_numbers_every_pack_and_keeps_the_listing_labels():
 
 
 def test_menu_appends_the_unavailable_note_for_a_configured_pack_that_is_gone():
-    lines = format_menu_lines(
+    lines = format_pack_lines(
         ("legacy", "minimal-ui"),
         _BUNDLED,
         current="gone-pack",
         effective="minimal-ui",
+        numbered=True,
     )
 
     assert lines == [
@@ -200,7 +203,13 @@ def test_only_tty_selection_may_offer_restart_prompt():
     assert selection_may_prompt(terminal=False) is False
 
 
-def _menu(answers: str, packs, *, load, preview, discover):
+def _menu(monkeypatch, answers: str, packs, *, load, preview, discover):
+    monkeypatch.setattr(sounds, "_preview", preview)
+    monkeypatch.setattr(
+        sounds.sound_packs, "effective_sound_pack_name", lambda name, directory: name
+    )
+    monkeypatch.setattr(sounds.sound_packs, "load_sound_pack", lambda name, directory: load(name))
+    monkeypatch.setattr(sounds.sound_packs, "discover_sound_packs", lambda directory: discover())
     stdout, stderr = io.StringIO(), io.StringIO()
     console = Console(io.StringIO(answers), stdout, stderr)
     chosen = sounds._choose_from_menu(
@@ -208,14 +217,11 @@ def _menu(answers: str, packs, *, load, preview, discover):
         Config.defaults(),
         pathlib.Path("/nonexistent-config-dir"),
         packs,
-        preview=preview,
-        discover=discover,
-        load=load,
     )
     return chosen, stdout.getvalue(), stderr.getvalue()
 
 
-def test_menu_reports_failed_preview_and_reprompts():
+def test_menu_reports_failed_preview_and_reprompts(monkeypatch):
     packs = ("legacy", "warm-desk")
     previewed: list[object] = []
 
@@ -225,6 +231,7 @@ def test_menu_reports_failed_preview_and_reprompts():
         return False
 
     chosen, stdout, stderr = _menu(
+        monkeypatch,
         "P1\n2\n",
         packs,
         load=lambda name: f"pack:{name}",
@@ -238,7 +245,7 @@ def test_menu_reports_failed_preview_and_reprompts():
     assert stdout.count("Sound packs") == 2
 
 
-def test_menu_reports_vanished_pack_rediscovers_and_reprompts():
+def test_menu_reports_vanished_pack_rediscovers_and_reprompts(monkeypatch):
     discoveries = iter([("warm-desk",)])
     previewed: list[object] = []
 
@@ -247,6 +254,7 @@ def test_menu_reports_vanished_pack_rediscovers_and_reprompts():
         return True
 
     chosen, stdout, stderr = _menu(
+        monkeypatch,
         "P1\n1\n",
         ("legacy", "warm-desk"),
         load=lambda name: None if name == "legacy" else f"pack:{name}",
@@ -286,7 +294,7 @@ def test_sounds_applies_the_loaded_log_level_before_discovery(monkeypatch, tmp_p
     )
 
     monkeypatch.setattr(sounds, "load_document", lambda *args, **kwargs: document)
-    monkeypatch.setattr(sounds, "_sound_pack_api", lambda: api)
+    monkeypatch.setattr(sounds, "sound_packs", api)
     monkeypatch.setattr(
         logging_setup,
         "apply_stderr_level",
@@ -320,7 +328,7 @@ def _platform(*, service_active="active", restart=(True, ""), probe_error=None):
     return Plat
 
 
-def test_menu_spaces_the_listing_after_a_successful_preview():
+def test_menu_spaces_the_listing_after_a_successful_preview(monkeypatch):
     packs = ("legacy", "warm-desk")
     previewed: list[object] = []
 
@@ -329,6 +337,7 @@ def test_menu_spaces_the_listing_after_a_successful_preview():
         return True
 
     chosen, stdout, stderr = _menu(
+        monkeypatch,
         "P1\n2\n",
         packs,
         load=lambda name: f"pack:{name}",
@@ -496,7 +505,7 @@ def sounds_run(monkeypatch):
 
     def invoke(*, document, api, answers="", terminal=False, **kwargs):
         monkeypatch.setattr(sounds, "load_document", lambda *args, **kw: document)
-        monkeypatch.setattr(sounds, "_sound_pack_api", lambda: api)
+        monkeypatch.setattr(sounds, "sound_packs", api)
         stream = _Terminal if terminal else io.StringIO
         stdin, stdout, stderr = stream(answers), stream(), io.StringIO()
         code = sounds.run(stdin=stdin, stdout=stdout, stderr=stderr, **kwargs)
