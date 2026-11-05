@@ -86,14 +86,20 @@ def test_parse_release_tag_rejects_anything_else(text):
     assert parse_release_tag(text) is None
 
 
-@pytest.mark.parametrize("text", [None, "", "{", "[]", '"v1.2.3"', "null", "not json at all"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        None,
+        "",
+        "{",
+        "[]",
+        '"v1.2.3"',
+        "null",
+        "not json at all",
+        json.dumps({"checked_at": "yesterday", "latest": 12, "notified_at": [1]}),
+    ],
+)
 def test_load_record_tolerates_missing_and_corrupt_text(text):
-    assert load_record(text) == CheckRecord()
-
-
-def test_load_record_drops_wrongly_typed_fields():
-    text = json.dumps({"checked_at": "yesterday", "latest": 12, "notified_at": [1]})
-
     assert load_record(text) == CheckRecord()
 
 
@@ -109,128 +115,96 @@ def test_dump_and_load_round_trip():
     assert load_record(dump_record(record)) == record
 
 
-def test_needs_fetch_is_true_when_never_checked():
-    assert needs_fetch(CheckRecord(), 1000.0)
+@pytest.mark.parametrize(
+    ("checked_at", "now", "expected"),
+    [
+        (None, 1000.0, True),
+        (1000.0, 1000.0 + CHECK_TTL_SECONDS - 1, False),
+        (1000.0, 1000.0 + CHECK_TTL_SECONDS, True),
+        # An RTC-less box can record a far-future time before NTP corrects it.
+        (4_000_000_000.0, 1_770_000_000.0, True),
+        # json.loads accepts NaN, and comparisons with it are false.
+        (math.nan, 1000.0, True),
+        (math.inf, 1000.0, True),
+        (-math.inf, 1000.0, True),
+    ],
+)
+def test_needs_fetch(checked_at, now, expected):
+    assert needs_fetch(CheckRecord(checked_at=checked_at), now) is expected
 
 
-def test_needs_fetch_is_false_within_the_ttl():
-    record = CheckRecord(checked_at=1000.0)
+@pytest.mark.parametrize(
+    ("record", "installed", "fetched", "now", "expected_record", "notifies"),
+    [
+        (
+            CheckRecord(500.0, "v0.12.0", math.nan),
+            "0.11.5",
+            None,
+            1000.0,
+            CheckRecord(500.0, "v0.12.0", 1000.0),
+            True,
+        ),
+        (
+            CheckRecord(500.0, "v0.12.0", 4_000_000_000.0),
+            "0.11.5",
+            None,
+            1000.0,
+            CheckRecord(500.0, "v0.12.0", 1000.0),
+            True,
+        ),
+        (
+            CheckRecord(),
+            "0.11.5",
+            "v0.12.0",
+            1000.0,
+            CheckRecord(latest="v0.12.0", notified_at=1000.0),
+            True,
+        ),
+        (CheckRecord(), "0.11.5", "v0.11.5", 1000.0, CheckRecord(latest="v0.11.5"), False),
+        # A local dev build ahead of the published tag is not news.
+        (CheckRecord(), "0.11.5", "v0.11.0", 1000.0, CheckRecord(latest="v0.11.0"), False),
+        (
+            CheckRecord(500.0, "v0.12.0"),
+            "0.11.5",
+            None,
+            1000.0,
+            CheckRecord(500.0, "v0.12.0", 1000.0),
+            True,
+        ),
+        (
+            CheckRecord(500.0, "v0.12.0", 900.0),
+            "0.11.5",
+            None,
+            900.0 + NOTIFY_FLOOR_SECONDS - 1,
+            CheckRecord(500.0, "v0.12.0", 900.0),
+            False,
+        ),
+        (
+            CheckRecord(500.0, "v0.12.0", 900.0),
+            "0.11.5",
+            None,
+            900.0 + NOTIFY_FLOOR_SECONDS,
+            CheckRecord(500.0, "v0.12.0", 900.0 + NOTIFY_FLOOR_SECONDS),
+            True,
+        ),
+        (
+            CheckRecord(),
+            "0.11.5.dev1+local",
+            "v0.12.0",
+            1000.0,
+            CheckRecord(latest="v0.12.0"),
+            False,
+        ),
+        (CheckRecord(), "0.11.5", "latest", 1000.0, CheckRecord(latest="latest"), False),
+    ],
+)
+def test_evaluate(record, installed, fetched, now, expected_record, notifies):
+    updated, message = evaluate(record, installed, fetched, now)
 
-    assert not needs_fetch(record, 1000.0 + CHECK_TTL_SECONDS - 1)
-
-
-def test_needs_fetch_is_true_once_the_ttl_has_elapsed():
-    record = CheckRecord(checked_at=1000.0)
-
-    assert needs_fetch(record, 1000.0 + CHECK_TTL_SECONDS)
-
-
-def test_needs_fetch_is_true_when_the_record_is_from_the_future():
-    """A clock correction must not disable the check forever.
-
-    An RTC-less box boots at a bogus far-future time, writes that as
-    ``checked_at``, then NTP pulls the clock back. A one-sided window would
-    stay inside the TTL for decades.
-    """
-
-    record = CheckRecord(checked_at=4_000_000_000.0)
-
-    assert needs_fetch(record, 1_770_000_000.0)
-
-
-def test_needs_fetch_is_true_for_a_nonfinite_timestamp():
-    """``json.loads`` accepts bare ``NaN``; every comparison against it is False."""
-
-    assert needs_fetch(CheckRecord(checked_at=math.nan), 1000.0)
-
-
-@pytest.mark.parametrize("bogus", [math.inf, -math.inf])
-def test_needs_fetch_is_true_for_an_infinite_timestamp(bogus):
-    assert needs_fetch(CheckRecord(checked_at=bogus), 1000.0)
-
-
-def test_evaluate_notifies_despite_a_nonfinite_notified_at():
-    record = CheckRecord(checked_at=500.0, latest="v0.12.0", notified_at=math.nan)
-
-    _, message = evaluate(record, "0.11.5", None, 1000.0)
-
-    assert message == notification_message("0.11.5", "v0.12.0")
-
-
-def test_evaluate_notifies_despite_a_future_notified_at():
-    record = CheckRecord(checked_at=500.0, latest="v0.12.0", notified_at=4_000_000_000.0)
-
-    updated, message = evaluate(record, "0.11.5", None, 1000.0)
-
-    assert message == notification_message("0.11.5", "v0.12.0")
-    assert updated.notified_at == 1000.0
-
-
-def test_evaluate_notifies_when_installed_is_behind():
-    updated, message = evaluate(CheckRecord(), "0.11.5", "v0.12.0", 1000.0)
-
-    assert updated == CheckRecord(latest="v0.12.0", notified_at=1000.0)
-    assert message == notification_message("0.11.5", "v0.12.0")
-
-
-def test_evaluate_is_silent_when_versions_match():
-    updated, message = evaluate(CheckRecord(), "0.11.5", "v0.11.5", 1000.0)
-
-    assert message is None
-    assert updated == CheckRecord(latest="v0.11.5")
-
-
-def test_evaluate_is_silent_when_installed_is_ahead():
-    """A local dev build is ahead of the newest published tag; that is not news."""
-
-    updated, message = evaluate(CheckRecord(), "0.11.5", "v0.11.0", 1000.0)
-
-    assert message is None
-    assert updated.notified_at is None
-
-
-def test_evaluate_without_a_fetch_keeps_the_cached_tag_and_still_notifies():
-    record = CheckRecord(checked_at=500.0, latest="v0.12.0")
-
-    updated, message = evaluate(record, "0.11.5", None, 1000.0)
-
-    assert updated.checked_at == 500.0
-    assert updated.latest == "v0.12.0"
-    assert updated.notified_at == 1000.0
-    assert message == notification_message("0.11.5", "v0.12.0")
-
-
-def test_evaluate_suppresses_a_repeat_inside_the_notify_floor():
-    record = CheckRecord(checked_at=500.0, latest="v0.12.0", notified_at=900.0)
-
-    updated, message = evaluate(record, "0.11.5", None, 900.0 + NOTIFY_FLOOR_SECONDS - 1)
-
-    assert message is None
-    assert updated.notified_at == 900.0
-
-
-def test_evaluate_notifies_again_once_the_floor_has_passed():
-    record = CheckRecord(checked_at=500.0, latest="v0.12.0", notified_at=900.0)
-    now = 900.0 + NOTIFY_FLOOR_SECONDS
-
-    updated, message = evaluate(record, "0.11.5", None, now)
-
-    assert message == notification_message("0.11.5", "v0.12.0")
-    assert updated.notified_at == now
-
-
-def test_evaluate_is_silent_when_the_installed_version_is_unparseable():
-    updated, message = evaluate(CheckRecord(), "0.11.5.dev1+local", "v0.12.0", 1000.0)
-
-    assert message is None
-    assert updated.notified_at is None
-
-
-def test_evaluate_is_silent_when_the_fetched_tag_is_unparseable():
-    updated, message = evaluate(CheckRecord(), "0.11.5", "latest", 1000.0)
-
-    assert message is None
-    assert updated.latest == "latest"
+    assert updated == expected_record
+    assert message == (
+        notification_message(installed, expected_record.latest) if notifies else None
+    )
 
 
 def test_notification_message_is_exact():
@@ -259,10 +233,6 @@ def test_tag_from_location_rejects_anything_but_our_release_tag_url(url):
     """A redirect we did not expect must never reach the notification text."""
 
     assert tag_from_location(url) is None
-
-
-def test_notification_message_never_shows_the_v_prefix():
-    assert "v0.12.0" not in notification_message("0.11.5", "v0.12.0")
 
 
 def test_build_request_is_a_bare_head_with_our_user_agent():

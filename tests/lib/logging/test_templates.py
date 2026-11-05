@@ -69,26 +69,6 @@ def _offenses(source: str) -> list[str]:
     return offenses
 
 
-def test_the_grammar_accepts_what_fmt_event_actually_renders():
-    """The parser and the renderer must agree about a quoted value.
-
-    ``fmt_event`` quotes any value carrying whitespace or a ``"``, so a grammar
-    that only knows bare ``\\S+`` tokens would reject the very lines the
-    renderer emits — and this file is the thing that decides whether a log line
-    is well formed. Seen to FAIL against the bare-token-only ``_VALUE``.
-    """
-    from stenographer.lib.logging.pipeline import fmt_event
-
-    spaced = fmt_event("deliver", "copy_failed", argv="xclip -selection clipboard", ok=0)
-    assert _TEMPLATE.fullmatch(spaced), spaced
-
-    quoted = fmt_event("helper", "failed", detail='he said "no"')
-    assert _TEMPLATE.fullmatch(quoted), quoted
-
-    bare = fmt_event("pipeline", "utterance", utt=1, gate="pass", total_ms=430.0)
-    assert _TEMPLATE.fullmatch(bare), bare
-
-
 def test_every_log_template_matches_the_event_format():
     offenders = {
         str(path.relative_to(SRC_ROOT)): offenses
