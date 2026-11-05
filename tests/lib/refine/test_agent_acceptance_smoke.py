@@ -19,7 +19,7 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED
-from tests.lib.refine.test_refine_smoke import refiner as production_refiner
+from tests.lib.refine.helpers import installed_refiner as installed_refiner
 
 _PRESERVE = (
     "Preserve every fact, request, uncertainty, condition, and authorization limit "
@@ -36,8 +36,6 @@ SEMANTIC_REGRESSIONS = [
     (case_id, spoken, wrong, checklist if checklist is not None else _PRESERVE + spoken)
     for case_id, spoken, wrong, checklist in _rows
 ]
-
-installed_refiner = production_refiner
 
 
 @pytest.fixture
