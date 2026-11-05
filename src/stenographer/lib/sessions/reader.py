@@ -53,11 +53,7 @@ def list_session_ids(root: Path) -> list[str]:
         entries = tuple(root.iterdir())
     except OSError:
         return []
-    ids = [
-        entry.name
-        for entry in entries
-        if session_directory(root, entry.name)
-    ]
+    ids = [entry.name for entry in entries if session_directory(root, entry.name)]
     return sorted(ids, key=lambda value: (session_started_at(value), value), reverse=True)
 
 
