@@ -11,7 +11,6 @@ import pytest
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.overlay.spectrum import calibration
 from stenographer.overlay.spectrum.calibration import (
-    estimate_spectrum_floor,
     estimate_spectrum_profile,
 )
 from stenographer.overlay.spectrum.errors import CalibrationError
@@ -25,17 +24,21 @@ def _tone(amplitude: float, *, seconds: float = _SECONDS, frequency: float = 100
     return (amplitude * np.sin(2.0 * math.pi * frequency * times)).astype(np.float32)
 
 
+def _estimate_spectrum_floor(samples: object) -> float:
+    return max(estimate_spectrum_profile(samples))
+
+
 def test_estimator_adds_three_db_and_rounds_upward() -> None:
     # An FFT-bin-centered tone measures at its peak amplitude in the dominant band.
     audio = _tone(10.0 ** (-50.2 / 20.0))
 
-    assert estimate_spectrum_floor(audio, _RATE) == -47.0
+    assert _estimate_spectrum_floor(audio) == -47.0
 
 
 def test_profile_estimator_returns_independent_fixed_band_floors() -> None:
     audio = _tone(10.0 ** (-50.2 / 20.0), frequency=1000.0)
 
-    profile = estimate_spectrum_profile(audio, _RATE)
+    profile = estimate_spectrum_profile(audio)
 
     assert len(profile) == SPECTRUM_BANDS
     assert max(profile) == -47.0
@@ -46,7 +49,7 @@ def test_estimator_discards_the_first_half_second() -> None:
     audio = _tone(10.0 ** (-62.0 / 20.0))
     audio[: round(0.5 * _RATE)] = _tone(0.5, seconds=0.5)
 
-    assert estimate_spectrum_floor(audio, _RATE) == -59.0
+    assert _estimate_spectrum_floor(audio) == -59.0
 
 
 def test_estimator_uses_bandwise_ninety_fifth_percentiles() -> None:
@@ -58,11 +61,11 @@ def test_estimator_uses_bandwise_ninety_fifth_percentiles() -> None:
         start = first_analyzed + index * window
         audio[start : start + window] = _tone(10.0 ** (-25.0 / 20.0), seconds=0.032)
 
-    assert estimate_spectrum_floor(audio, _RATE) == -52.0
+    assert _estimate_spectrum_floor(audio) == -52.0
 
 
 def test_estimator_clamps_an_extremely_quiet_capture_to_minus_ninety_six() -> None:
-    assert estimate_spectrum_floor(_tone(1e-7), _RATE) == -96.0
+    assert _estimate_spectrum_floor(_tone(1e-7)) == -96.0
 
 
 @pytest.mark.parametrize(
@@ -75,7 +78,7 @@ def test_estimator_clamps_an_extremely_quiet_capture_to_minus_ninety_six() -> No
 )
 def test_estimator_rejects_unusable_captures(audio: np.ndarray, message: str) -> None:
     with pytest.raises(CalibrationError, match=message):
-        estimate_spectrum_floor(audio, _RATE)
+        _estimate_spectrum_floor(audio)
 
 
 def test_estimator_rejects_strongly_nonstationary_capture() -> None:
@@ -84,7 +87,7 @@ def test_estimator_rejects_strongly_nonstationary_capture() -> None:
     audio[midpoint:] = _tone(10.0 ** (-35.0 / 20.0), seconds=_SECONDS / 2.0)
 
     with pytest.raises(CalibrationError, match="nonstationary"):
-        estimate_spectrum_floor(audio, _RATE)
+        _estimate_spectrum_floor(audio)
 
 
 def test_estimator_tolerates_one_zero_callback_window() -> None:
@@ -93,7 +96,7 @@ def test_estimator_tolerates_one_zero_callback_window() -> None:
     first_analyzed = round(0.5 * _RATE)
     audio[first_analyzed : first_analyzed + window] = 0.0
 
-    assert estimate_spectrum_floor(audio, _RATE) == -52.0
+    assert _estimate_spectrum_floor(audio) == -52.0
 
 
 def test_estimator_rejects_nonfinite_samples() -> None:
@@ -101,7 +104,7 @@ def test_estimator_rejects_nonfinite_samples() -> None:
     audio[100] = np.nan
 
     with pytest.raises(CalibrationError, match="non-finite"):
-        estimate_spectrum_floor(audio, _RATE)
+        _estimate_spectrum_floor(audio)
 
 
 class _FakeRecorder:
@@ -156,7 +159,7 @@ def _recorder_factory(capture: np.ndarray, log: list[str]):
 
 def test_calibration_counts_the_room_down_then_measures_it(instant_waits) -> None:
     quiet = _tone(0.001)
-    expected = estimate_spectrum_profile(quiet, _RATE)
+    expected = estimate_spectrum_profile(quiet)
     events: list[str] = []
     factory, made = _recorder_factory(quiet, log=events)
 

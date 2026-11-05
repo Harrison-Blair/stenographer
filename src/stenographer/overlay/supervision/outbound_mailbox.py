@@ -30,10 +30,7 @@ class OutboundMailbox:
     Shutdown clears everything and occupies the sole command slot.
     """
 
-    def __init__(self, capacity: int = _MAILBOX_CAPACITY) -> None:
-        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
-            raise ValueError("mailbox capacity must be a positive integer")
-        self._capacity = capacity
+    def __init__(self) -> None:
         self._pending: deque[StateMessage | LoadingActivityMessage] = deque()
         self._spectrum_pending: SpectrumMessage | None = None
         self._audio_pending: _AudioBlock | None = None
@@ -54,11 +51,6 @@ class OutboundMailbox:
         with self._lock:
             return self._current_state
 
-    @property
-    def transient_deadline(self) -> float | None:
-        with self._lock:
-            return self._transient_deadline
-
     def _append(self, message: StateMessage | LoadingActivityMessage) -> None:
         if (
             isinstance(message, StateMessage)
@@ -67,7 +59,7 @@ class OutboundMailbox:
         ):
             self._pending[-1] = message
         else:
-            if len(self._pending) == self._capacity:
+            if len(self._pending) == _MAILBOX_CAPACITY:
                 self._pending.popleft()
             self._pending.append(message)
 

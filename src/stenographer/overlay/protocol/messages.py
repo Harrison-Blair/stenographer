@@ -46,6 +46,9 @@ class UnavailableMessage:
     reason: UnavailableReason
 
 
+DisplayRecord = StateMessage | SpectrumMessage | LoadingActivityMessage | CommandMessage
+
+
 ProtocolMessage = (
     StateMessage
     | SpectrumMessage

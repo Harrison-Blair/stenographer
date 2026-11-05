@@ -4,7 +4,7 @@
 Pure: a stand-in ``HelperProcess`` records the call sequence, so no child
 process, pipe, or signal is involved. What is asserted is the *policy* the
 core owns — who gets a grace period — not the escalation itself, which is
-host semantics inside ``platform/linux/helper.py``.
+host semantics inside ``platform/linux/linux_helper_transport.py``.
 """
 
 from __future__ import annotations

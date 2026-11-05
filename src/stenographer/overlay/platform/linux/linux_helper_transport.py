@@ -9,8 +9,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-from stenographer.overlay.platform.linux.helper import _SPAWN_CLEANUP_SECONDS
 from stenographer.overlay.platform.linux.linux_helper_process import LinuxHelperProcess
+
+_SPAWN_CLEANUP_SECONDS = 0.75
 
 
 class LinuxHelperTransport:

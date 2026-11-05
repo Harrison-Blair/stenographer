@@ -127,19 +127,12 @@ def encode_message(message: ProtocolMessage) -> str:
     return record
 
 
-def decode_message(record: str | bytes) -> ProtocolMessage:
+def decode_message(record: bytes) -> ProtocolMessage:
     """Decode one strict NDJSON record without reflecting malformed content."""
-    if isinstance(record, bytes):
-        if len(record) > MAX_MESSAGE_BYTES:
-            raise ProtocolError("protocol record is too large")
-        try:
-            record = record.decode("utf-8")
-        except UnicodeDecodeError:
-            raise ProtocolError("protocol record is not UTF-8") from None
-    elif not isinstance(record, str):
-        raise ProtocolError("protocol record has wrong type")
-    if len(record.encode("utf-8")) > MAX_MESSAGE_BYTES:
-        raise ProtocolError("protocol record is too large")
+    try:
+        record = record.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ProtocolError("protocol record is not UTF-8") from None
     if record.endswith("\n"):
         record = record[:-1]
     if not record or "\n" in record or "\r" in record:

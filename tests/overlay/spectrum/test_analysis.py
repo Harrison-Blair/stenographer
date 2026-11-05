@@ -434,31 +434,10 @@ def test_smoothing_refuses_an_elapsed_time_that_is_not_a_real_interval(
         smooth_spectrum(frame, frame, elapsed)
 
 
-@pytest.mark.parametrize(
-    ("attack", "release"),
-    [(0.0, RELEASE_SECONDS), (ATTACK_SECONDS, 0.0), (-1.0, RELEASE_SECONDS)],
-)
-def test_smoothing_refuses_time_constants_that_would_divide_by_zero(
-    attack: float, release: float
-) -> None:
-    frame = np.zeros(SPECTRUM_BANDS)
-
-    with pytest.raises(ValueError, match="finite and positive"):
-        smooth_spectrum(frame, frame, _FRAME_SECONDS, attack=attack, release=release)
-
-
 @pytest.mark.parametrize("size", [SPECTRUM_BANDS - 1, SPECTRUM_BANDS + 1])
 def test_quantization_requires_exactly_eighteen_levels(size: int) -> None:
     with pytest.raises(ValueError, match=f"requires {SPECTRUM_BANDS} levels"):
         quantize_spectrum(np.zeros(size))
-
-
-def test_the_analyzer_reports_the_fixed_floor_it_was_configured_with() -> None:
-    scalar = SpectrumAnalyzer(-40.0)
-    profile = SpectrumAnalyzer(tuple(float(-50 - index) for index in range(SPECTRUM_BANDS)))
-
-    assert scalar.floor_dbfs == -40.0
-    assert profile.floor_dbfs == tuple(float(-50 - index) for index in range(SPECTRUM_BANDS))
 
 
 def test_an_analyzer_cannot_be_built_on_an_unusable_floor() -> None:

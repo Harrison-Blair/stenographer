@@ -16,11 +16,12 @@ from stenographer.overlay.platform.linux.backends.base import (
 from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.display_message_gate import DisplayMessageGate
 from stenographer.overlay.protocol.line_reader import LineReader
+from stenographer.overlay.protocol.messages import DisplayRecord
 from stenographer.overlay.protocol.ordering import drain_display_stream
 from stenographer.overlay.rendering.display_intent import DisplayIntent
 from stenographer.overlay.rendering.frame import OverlayFrame
 from stenographer.overlay.rendering.loading_pulse import LoadingPulse
-from stenographer.overlay.rendering.reducer import DisplayRecord, OverlayReducer
+from stenographer.overlay.rendering.reducer import OverlayReducer
 from stenographer.overlay.rendering.render import render_overlay
 
 
