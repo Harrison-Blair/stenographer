@@ -622,9 +622,6 @@ def _automatic_floor(
                     if remaining == 0
                     else f"Stay silent — recording starts in {remaining}..."
                 ),
-                on_voice_prompt=lambda: console.write(
-                    "Speak normally now for three seconds so visibility can be verified."
-                ),
             )
         except Exception as exc:
             # A CalibrationError is the estimator refusing the capture; anything
@@ -638,7 +635,7 @@ def _automatic_floor(
                 return _manual_floor(console, current)
             return current
 
-        console.write("Background profile learned and normal voice visibility verified.")
+        console.write("Background profile learned.")
         action = _prompt_choice(console, "Result", "accept", ("accept", "retry", "manual", "keep"))
         if action == "accept":
             return estimate

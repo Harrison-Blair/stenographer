@@ -16,7 +16,6 @@ from stenographer.overlay.spectrum.calibration import (
     _record_room_noise,
     estimate_spectrum_floor,
     estimate_spectrum_profile,
-    validate_voice_visibility,
     wait_for_capture,
 )
 from stenographer.overlay.spectrum.errors import CalibrationCancelledError, CalibrationError
@@ -115,22 +114,6 @@ def test_estimator_rejects_nonfinite_samples() -> None:
         estimate_spectrum_floor(audio, _RATE)
 
 
-def test_voice_validation_accepts_visible_speech_without_changing_profile() -> None:
-    profile = tuple([-70.0] * SPECTRUM_BANDS)
-    voice = _tone(0.01, seconds=3.0)
-
-    assert validate_voice_visibility(voice, _RATE, profile) is None
-    assert profile == tuple([-70.0] * SPECTRUM_BANDS)
-
-
-def test_voice_validation_rejects_signal_at_the_noise_profile() -> None:
-    profile = tuple([-40.0] * SPECTRUM_BANDS)
-    voice = _tone(0.001, seconds=3.0)
-
-    with pytest.raises(CalibrationError, match="not clearly above room noise"):
-        validate_voice_visibility(voice, _RATE, profile)
-
-
 def test_an_uncancelled_wait_is_an_ordinary_delay() -> None:
     started = time.monotonic()
 
@@ -174,52 +157,18 @@ def test_a_capture_with_no_measurable_band_is_treated_as_digital_silence() -> No
         estimate_spectrum_profile(audio, rate)
 
 
-@pytest.mark.parametrize("samples", [object(), "audio"])
-def test_voice_validation_rejects_a_sample_it_cannot_read(samples: object) -> None:
-    profile = (-45.0,) * SPECTRUM_BANDS
-
-    with pytest.raises(CalibrationError, match="voice validation samples are invalid"):
-        validate_voice_visibility(samples, _RATE, profile)
-
-
-def test_voice_validation_rejects_a_capture_shorter_than_the_prompt() -> None:
-    profile = (-45.0,) * SPECTRUM_BANDS
-
-    with pytest.raises(CalibrationError, match="voice validation capture is too short"):
-        validate_voice_visibility(_tone(0.1, seconds=1.0), _RATE, profile)
-
-
-def test_voice_validation_rejects_a_capture_with_non_finite_samples() -> None:
-    profile = (-45.0,) * SPECTRUM_BANDS
-    audio = _tone(0.1, seconds=3.0)
-    audio[100] = np.nan
-
-    with pytest.raises(CalibrationError, match="non-finite samples"):
-        validate_voice_visibility(audio, _RATE, profile)
-
-
-@pytest.mark.parametrize("size", [SPECTRUM_BANDS - 1, SPECTRUM_BANDS + 1, 1])
-def test_voice_validation_requires_a_profile_covering_every_band(size: int) -> None:
-    with pytest.raises(CalibrationError, match="must contain 18 bands"):
-        validate_voice_visibility(_tone(0.1, seconds=3.0), _RATE, (-45.0,) * size)
-
-
 class _FakeRecorder:
-    """A capture source with the four methods the calibration flow drives.
-
-    Successive ``stop()`` calls hand back the prepared captures in order and
-    then repeat the last one, so one recorder serves both the quiet pass and
-    the voice pass exactly as a real one does.
-    """
+    """A capture source with the four methods the calibration flow drives."""
 
     def __init__(
         self,
-        *captures: np.ndarray,
+        capture: np.ndarray,
+        *,
         device: object = None,
         max_seconds: object = None,
         log: list[str] | None = None,
     ) -> None:
-        self._captures = list(captures)
+        self._capture = capture
         self.device = device
         self.max_seconds = max_seconds
         self.calls: list[str] = [] if log is None else log
@@ -232,7 +181,7 @@ class _FakeRecorder:
 
     def stop(self) -> np.ndarray:
         self.calls.append("stop")
-        return self._captures.pop(0) if len(self._captures) > 1 else self._captures[0]
+        return self._capture
 
     def close(self) -> None:
         self.calls.append("close")
@@ -310,30 +259,23 @@ def test_cancelling_before_the_countdown_never_prepares_the_recorder() -> None:
     assert recorder.calls == []
 
 
-def _recorder_factory(*captures: np.ndarray, log: list[str]):
+def _recorder_factory(capture: np.ndarray, log: list[str]):
     """Build the ``recorder_factory`` the calibration calls, and expose it."""
     made: list[_FakeRecorder] = []
 
     def factory(*, device, max_seconds):
-        recorder = _FakeRecorder(*captures, device=device, max_seconds=max_seconds, log=log)
+        recorder = _FakeRecorder(capture, device=device, max_seconds=max_seconds, log=log)
         made.append(recorder)
         return recorder
 
     return factory, made
 
 
-def test_calibration_counts_the_room_down_then_prompts_then_measures_voice(
-    instant_waits,
-) -> None:
-    """The two captures are what the whole flow exists to order: room noise is
-    measured before the user is ever asked to speak, and the voice check runs
-    against the floors that silence produced.
-    """
+def test_calibration_counts_the_room_down_then_measures_it(instant_waits) -> None:
     quiet = _tone(0.001)
-    voice = _tone(0.01, seconds=3.0)
     expected = estimate_spectrum_profile(quiet, _RATE)
     events: list[str] = []
-    factory, made = _recorder_factory(quiet, voice, log=events)
+    factory, made = _recorder_factory(quiet, log=events)
 
     def on_countdown(remaining: int) -> None:
         events.append(f"countdown:{remaining}")
@@ -341,7 +283,6 @@ def test_calibration_counts_the_room_down_then_prompts_then_measures_voice(
     profile = calibration.calibrate_spectrum_profile(
         "hw:1,0",
         on_countdown=on_countdown,
-        on_voice_prompt=lambda: events.append("prompt"),
         recorder_factory=factory,
     )
 
@@ -355,38 +296,31 @@ def test_calibration_counts_the_room_down_then_prompts_then_measures_voice(
         "countdown:0",
         "start",
         "stop",
-        "prompt",
-        "start",
-        "stop",
         "close",
     ]
     assert [recorder.device for recorder in made] == ["hw:1,0"]
     # The recorder's buffer must be sized for the window it is about to record.
     assert calibration.CAPTURE_SECONDS == 5
     assert [recorder.max_seconds for recorder in made] == [calibration.CAPTURE_SECONDS]
-    # Both capture windows were waited out at their shipped lengths.
+    # The capture window was waited out at its shipped length.
     assert instant_waits.count(1.0) == calibration.COUNTDOWN_SECONDS
     assert float(calibration.CAPTURE_SECONDS) in instant_waits
-    assert float(calibration.VOICE_CAPTURE_SECONDS) in instant_waits
 
 
-def test_calibration_wipes_both_captures_before_it_returns(instant_waits) -> None:
-    """Neither buffer may outlive the call: they are microphone audio, and the
-    caller was handed only 18 fixed numbers derived from them.
+def test_calibration_wipes_the_capture_before_it_returns(instant_waits) -> None:
+    """The buffer may not outlive the call: it is microphone audio, and the
+    caller was handed only 18 fixed numbers derived from it.
     """
     quiet = _tone(0.001)
-    voice = _tone(0.01, seconds=3.0)
-    factory, _made = _recorder_factory(quiet, voice, log=[])
+    factory, _made = _recorder_factory(quiet, log=[])
 
     calibration.calibrate_spectrum_profile(
         None,
         on_countdown=lambda remaining: None,
-        on_voice_prompt=lambda: None,
         recorder_factory=factory,
     )
 
     assert not quiet.any()
-    assert not voice.any()
 
 
 def test_a_cancelled_calibration_still_releases_the_input_device(instant_waits) -> None:
@@ -402,7 +336,6 @@ def test_a_cancelled_calibration_still_releases_the_input_device(instant_waits) 
         calibration.calibrate_spectrum_profile(
             None,
             on_countdown=lambda remaining: None,
-            on_voice_prompt=lambda: None,
             cancellation=cancellation,
             recorder_factory=factory,
         )
@@ -411,26 +344,18 @@ def test_a_cancelled_calibration_still_releases_the_input_device(instant_waits) 
     assert len(made) == 1
 
 
-def test_a_voice_sample_lost_in_the_room_noise_fails_and_still_closes(
-    instant_waits,
-) -> None:
-    """A profile the user's own voice cannot clear would draw a flat spectrum
-    for the rest of the install, so the refusal belongs here, not later.
-    """
-    quiet = _tone(0.001)
-    faint = _tone(0.0001, seconds=3.0)
+def test_a_rejected_room_capture_fails_and_still_closes(instant_waits) -> None:
+    quiet = _tone(0.5)
     events: list[str] = []
-    factory, _made = _recorder_factory(quiet, faint, log=events)
+    factory, _made = _recorder_factory(quiet, log=events)
 
-    with pytest.raises(CalibrationError, match="not clearly above room noise"):
+    with pytest.raises(CalibrationError, match="too loud"):
         calibration.calibrate_spectrum_profile(
             None,
             on_countdown=lambda remaining: None,
-            on_voice_prompt=lambda: None,
             recorder_factory=factory,
         )
 
     assert events[-1] == "close"
     assert events.count("close") == 1
     assert not quiet.any()
-    assert not faint.any()

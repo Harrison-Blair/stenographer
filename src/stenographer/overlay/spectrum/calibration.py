@@ -9,13 +9,11 @@ from collections.abc import Callable
 import numpy as np
 
 from stenographer.lib.audio.recorder import Recorder
-from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.overlay.spectrum.analysis import (
     MAX_SPECTRUM_FLOOR_DBFS,
     MIN_SPECTRUM_FLOOR_DBFS,
     WINDOW_SECONDS,
     _band_dbfs,
-    display_levels,
 )
 from stenographer.overlay.spectrum.errors import CalibrationCancelledError, CalibrationError
 
@@ -35,18 +33,6 @@ CALIBRATION_HEADROOM_DB = 3.0
 
 
 NONSTATIONARY_SPREAD_DB = 12.0
-
-
-VOICE_CAPTURE_SECONDS = 3
-
-
-MIN_VOICE_CAPTURE_SECONDS = 2.5
-
-
-MIN_VOICE_CONTRAST_DB = 6.0
-
-
-MIN_VISIBLE_LEVEL = 0.25
 
 
 def wait_for_capture(seconds: float, cancellation: threading.Event | None = None) -> None:
@@ -126,36 +112,6 @@ def estimate_spectrum_floor(samples: object, sample_rate: int) -> float:
     return max(estimate_spectrum_profile(samples, sample_rate))
 
 
-def validate_voice_visibility(
-    samples: object,
-    sample_rate: int,
-    profile: object,
-) -> None:
-    """Reject a voice sample that the fixed profile would not visibly render."""
-    _validate_sample_rate(sample_rate)
-    try:
-        audio = np.asarray(samples, dtype=np.float64).reshape(-1)
-        floors = np.asarray(profile, dtype=np.float64).reshape(-1)
-    except (TypeError, ValueError) as exc:
-        raise CalibrationError("voice validation samples are invalid") from exc
-    if audio.size < math.ceil(sample_rate * MIN_VOICE_CAPTURE_SECONDS):
-        raise CalibrationError("voice validation capture is too short")
-    if not np.all(np.isfinite(audio)):
-        raise CalibrationError("voice validation capture contains non-finite samples")
-    if floors.size != SPECTRUM_BANDS:
-        raise CalibrationError("voice validation profile must contain 18 bands")
-
-    window_size = max(2, round(sample_rate * WINDOW_SECONDS))
-    window_count = audio.size // window_size
-    windows = audio[: window_count * window_size].reshape(window_count, window_size)
-    band_windows = np.stack([_band_dbfs(window, sample_rate) for window in windows])
-    mapped = np.stack([display_levels(frame, floors) for frame in band_windows])
-    visible = float(np.percentile(np.max(mapped, axis=1), 90))
-    contrast = float(np.max(np.percentile(band_windows, 90, axis=0) - floors))
-    if visible < MIN_VISIBLE_LEVEL or contrast < MIN_VOICE_CONTRAST_DB:
-        raise CalibrationError("voice sample is not clearly above room noise")
-
-
 def _record_room_noise(
     recorder: Recorder,
     on_countdown: Callable[[int], None],
@@ -183,11 +139,10 @@ def calibrate_spectrum_profile(
     device: str | int | None,
     *,
     on_countdown: Callable[[int], None],
-    on_voice_prompt: Callable[[], None],
     cancellation: threading.Event | None = None,
     recorder_factory: Callable[..., Recorder] | None = None,
 ) -> tuple[float, ...]:
-    """Capture known silence plus normal voice and return one fixed profile.
+    """Capture known silence and return one fixed profile.
 
     *recorder_factory* defaults to :class:`Recorder` and is called with the same
     ``device``/``max_seconds`` keywords, so tests can supply a substitute capture
@@ -196,21 +151,9 @@ def calibrate_spectrum_profile(
     factory = recorder_factory if recorder_factory is not None else Recorder
     recorder = factory(device=device, max_seconds=CAPTURE_SECONDS)
     quiet = np.empty(0, dtype=np.float32)
-    voice = np.empty(0, dtype=np.float32)
     try:
         quiet = _record_room_noise(recorder, on_countdown, cancellation)
-        profile = estimate_spectrum_profile(quiet, 16000)
-
-        wait_for_capture(0, cancellation)
-        on_voice_prompt()
-        wait_for_capture(0, cancellation)
-        recorder.start()
-        wait_for_capture(float(VOICE_CAPTURE_SECONDS), cancellation)
-        voice = recorder.stop()
-        validate_voice_visibility(voice, 16000, profile)
-        wait_for_capture(0, cancellation)
-        return profile
+        return estimate_spectrum_profile(quiet, 16000)
     finally:
         recorder.close()
         quiet.fill(0.0)
-        voice.fill(0.0)

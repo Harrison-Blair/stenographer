@@ -820,10 +820,9 @@ def calibrator(monkeypatch):
     def install(*results):
         pending = list(results)
 
-        def calibrate(device, *, on_countdown, on_voice_prompt, **kwargs):
+        def calibrate(device, *, on_countdown, **kwargs):
             on_countdown(3)
             on_countdown(0)
-            on_voice_prompt()
             outcome = pending.pop(0)
             if isinstance(outcome, Exception):
                 raise outcome
@@ -846,8 +845,8 @@ def test_automatic_calibration_accepted_returns_the_learned_profile(calibrator):
     assert "Keep the room quiet." in stdout
     assert "Stay silent — recording starts in 3..." in stdout
     assert "Recording room noise now." in stdout
-    assert "Speak normally now for three seconds so visibility can be verified." in stdout
-    assert "Background profile learned and normal voice visibility verified." in stdout
+    assert "Speak normally" not in stdout
+    assert "Background profile learned." in stdout
 
 
 def test_automatic_calibration_retries_before_accepting(calibrator):

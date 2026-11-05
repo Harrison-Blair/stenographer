@@ -106,7 +106,6 @@ def test_real_microphone_display_floor_calibration():
     profile = calibrate_spectrum_profile(
         Config.defaults().audio.input_device,
         on_countdown=lambda _: None,
-        on_voice_prompt=lambda: print("Speak normally for three seconds."),
     )
 
     assert len(profile) == SPECTRUM_BANDS
