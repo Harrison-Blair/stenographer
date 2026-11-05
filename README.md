@@ -179,7 +179,7 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   lines at the bottom. Library lists recordings, file sessions, and file
   jobs; press `/` to search transcripts, `p` to play, `d` or `t` to
   re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
-  a job. Press `n` there to transcribe a file: the dialog browses from your
+  a job; confirm with `y` or cancel with `n`. Press `n` there to transcribe a file: the dialog browses from your
   home folder, sets Separate speakers, Speaker count, and Refine text, and
   queues one job that shows in the list at once. Settings has the General, Audio,
   Recognition, Live, and Checks tabs; `●` marks an unsaved change, `ctrl+s`

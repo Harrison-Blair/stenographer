@@ -296,6 +296,9 @@ the transcript. Each action is a button that prints its key:
 | `delete` | Delete the session after confirmation. On a queued or running job, cancel it after confirmation. |
 | `pageup` / `pagedown`, `home` / `end` | Scroll the transcript. |
 
+For delete and job cancellation confirmations, press `y` to confirm or `n`
+to keep the session or job. `q` and `ctrl+c` do not confirm these prompts.
+
 While a re-diarize, re-transcribe, rename, delete, or file job changes a
 session, that session is busy: its Rename, Re-diarize, Re-transcribe, and
 Delete buttons show `busy` and do nothing, and a second change shows the

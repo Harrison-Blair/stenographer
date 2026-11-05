@@ -20,8 +20,8 @@ class QuitConfirm(ModalScreen[bool]):
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("y", "confirm", "Confirm"),
-        ("q", "confirm", "Confirm"),
-        ("ctrl+c", "confirm", "Confirm"),
+        ("q", "confirm_quit", "Confirm"),
+        ("ctrl+c", "confirm_quit", "Confirm"),
         ("n", "cancel", "Cancel"),
         ("escape", "cancel", "Cancel"),
         Binding("question_mark", "app.help", "Help", show=False),
@@ -51,11 +51,19 @@ class QuitConfirm(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, message: str, *, confirm: str = "Confirm", cancel: str = "Cancel") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        confirm: str = "Confirm",
+        cancel: str = "Cancel",
+        quit_keys: bool = False,
+    ) -> None:
         super().__init__()
         self._message = message
         self._confirm = confirm
         self._cancel = cancel
+        self._quit_keys = quit_keys
 
     def compose(self) -> ComposeResult:
         with Vertical(id="quit-dialog"):
@@ -74,6 +82,10 @@ class QuitConfirm(ModalScreen[bool]):
 
     def action_confirm(self) -> None:
         self.dismiss(True)
+
+    def action_confirm_quit(self) -> None:
+        if self._quit_keys:
+            self.dismiss(True)
 
     def action_cancel(self) -> None:
         self.dismiss(False)
