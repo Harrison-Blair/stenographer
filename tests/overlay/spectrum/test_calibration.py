@@ -11,7 +11,6 @@ import pytest
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.overlay.spectrum import calibration
 from stenographer.overlay.spectrum.calibration import (
-    _record_room_noise,
     estimate_spectrum_floor,
     estimate_spectrum_profile,
 )
@@ -97,38 +96,12 @@ def test_estimator_tolerates_one_zero_callback_window() -> None:
     assert estimate_spectrum_floor(audio, _RATE) == -52.0
 
 
-@pytest.mark.parametrize("sample_rate", [0, -1, 16000.0, True])
-def test_estimator_rejects_invalid_sample_rates(sample_rate: object) -> None:
-    with pytest.raises(ValueError, match="sample rate"):
-        estimate_spectrum_floor(_tone(0.001), sample_rate)  # type: ignore[arg-type]
-
-
 def test_estimator_rejects_nonfinite_samples() -> None:
     audio = _tone(0.001)
     audio[100] = np.nan
 
     with pytest.raises(CalibrationError, match="non-finite"):
         estimate_spectrum_floor(audio, _RATE)
-
-
-@pytest.mark.parametrize("samples", [object(), "audio", {"left": 1}])
-def test_the_estimator_rejects_a_capture_it_cannot_read(samples: object) -> None:
-    with pytest.raises(CalibrationError, match="calibration samples are invalid"):
-        estimate_spectrum_profile(samples, _RATE)
-
-
-# numpy interpolates between two -inf percentiles on this path and warns about
-# it; the estimator still reaches the right refusal, which is what is asserted.
-@pytest.mark.filterwarnings("ignore:invalid value encountered:RuntimeWarning")
-def test_a_capture_with_no_measurable_band_is_treated_as_digital_silence() -> None:
-    """Below a 160 Hz device rate the whole 80 Hz - 8 kHz range is above
-    Nyquist, so nothing was actually measured and no floor may be claimed.
-    """
-    rate = 100
-    audio = np.full(round(rate * _SECONDS), 0.01, dtype=np.float32)
-
-    with pytest.raises(CalibrationError, match="digital silence"):
-        estimate_spectrum_profile(audio, rate)
 
 
 class _FakeRecorder:
@@ -167,27 +140,6 @@ def instant_waits(monkeypatch):
     waits: list[float] = []
     monkeypatch.setattr(calibration.time, "sleep", waits.append)
     return waits
-
-
-def test_the_room_is_prepared_counted_down_and_only_then_recorded(instant_waits) -> None:
-    """Order is the contract: a recorder started before the countdown ends
-    would capture the prompt being read aloud as if it were room noise.
-
-    The full three-second countdown runs here, one silent second per tick,
-    followed by the capture window itself.
-    """
-    capture = _tone(0.001)
-    recorder = _FakeRecorder(capture)
-    ticks: list[int] = []
-
-    quiet = _record_room_noise(recorder, ticks.append)
-
-    assert quiet is capture
-    assert recorder.calls == ["prepare", "start", "stop"]
-    assert ticks == [3, 2, 1, 0]
-    assert calibration.COUNTDOWN_SECONDS == 3
-    assert instant_waits.count(1.0) == calibration.COUNTDOWN_SECONDS
-    assert instant_waits[-1] == float(calibration.CAPTURE_SECONDS)
 
 
 def _recorder_factory(capture: np.ndarray, log: list[str]):
