@@ -328,10 +328,7 @@ class _Listener:
     def __init__(
         self,
         *,
-        chord,
         device,
-        on_start,
-        on_stop,
         lock,
         bindings=None,
         on_binding_start=None,
@@ -339,15 +336,12 @@ class _Listener:
         cancel=frozenset(),
         on_cancel=None,
     ) -> None:
-        self.chord = chord
         self.device = device
         self.cancel = cancel
         self.lock = lock
         self.bindings = bindings
         self.on_binding_start = on_binding_start
         self.on_binding_stop = on_binding_stop
-        self._on_start = on_start
-        self._on_stop = on_stop
         self.on_cancel = on_cancel
         self.started = threading.Event()
         self.stopped = threading.Event()

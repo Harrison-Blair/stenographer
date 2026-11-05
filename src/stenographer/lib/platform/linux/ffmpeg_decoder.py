@@ -18,6 +18,18 @@ from stenographer.lib.logging.pipeline import fmt_event
 log = logging.getLogger(__name__)
 
 
+def _log_finished(process: str, started: float, **fields: object) -> None:
+    log.info(
+        fmt_event(
+            "files",
+            "external_process_finished",
+            process=process,
+            **fields,
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
+    )
+
+
 class SubprocessFfmpegDecoder:
     """Run ffmpeg without a shell and stream mono 16 kHz float32 samples."""
 
@@ -48,25 +60,9 @@ class SubprocessFfmpegDecoder:
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            log.info(
-                fmt_event(
-                    "files",
-                    "external_process_finished",
-                    process="ffprobe",
-                    error=type(exc).__name__,
-                    duration_ms=round((time.perf_counter() - started) * 1000),
-                )
-            )
+            _log_finished("ffprobe", started, error=type(exc).__name__)
             return None
-        log.info(
-            fmt_event(
-                "files",
-                "external_process_finished",
-                process="ffprobe",
-                exit_code=result.returncode,
-                duration_ms=round((time.perf_counter() - started) * 1000),
-            )
-        )
+        _log_finished("ffprobe", started, exit_code=result.returncode)
         if result.returncode != 0:
             return None
         try:
@@ -76,8 +72,6 @@ class SubprocessFfmpegDecoder:
         return value if math.isfinite(value) and value >= 0 else None
 
     def decode(self, path: Path, *, block_frames: int = 65536) -> Iterator[np.ndarray]:
-        if block_frames <= 0:
-            raise ValueError("block_frames must be greater than zero")
         process = subprocess.Popen(
             [
                 "ffmpeg",
@@ -102,7 +96,6 @@ class SubprocessFfmpegDecoder:
         log.info(fmt_event("files", "external_process_started", process="ffmpeg", pid=process_id))
         assert process.stdout is not None
         pending = b""
-        finished = False
         try:
             while chunk := process.stdout.read(block_frames * 4):
                 data = pending + chunk
@@ -111,35 +104,16 @@ class SubprocessFfmpegDecoder:
                     yield np.frombuffer(data[:aligned_size], dtype="<f4").copy()
                 pending = data[aligned_size:]
             return_code = process.wait()
-            log.info(
-                fmt_event(
-                    "files",
-                    "external_process_finished",
-                    process="ffmpeg",
-                    pid=process_id,
-                    exit_code=return_code,
-                    duration_ms=round((time.perf_counter() - started) * 1000),
-                )
-            )
-            finished = True
+            _log_finished("ffmpeg", started, pid=process_id, exit_code=return_code)
             if pending:
                 raise RuntimeError("ffmpeg returned incomplete float32 audio samples")
             if return_code != 0:
                 raise RuntimeError(f"ffmpeg exited with status {return_code}")
         finally:
             process.stdout.close()
-            if process.pid == process_id and process.poll() is None:
+            if process.poll() is None:
                 process.terminate()
                 process.wait()
-                if not finished:
-                    log.info(
-                        fmt_event(
-                            "files",
-                            "external_process_finished",
-                            process="ffmpeg",
-                            pid=process_id,
-                            exit_code=process.returncode,
-                            cancelled=1,
-                            duration_ms=round((time.perf_counter() - started) * 1000),
-                        )
-                    )
+                _log_finished(
+                    "ffmpeg", started, pid=process_id, exit_code=process.returncode, cancelled=1
+                )

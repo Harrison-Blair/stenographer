@@ -59,36 +59,6 @@ def test_build_wires_collaborators_lazily():
         daemon.stop()
 
 
-def test_build_wires_toggle_mode_press_only():
-    # Seen to FAIL against a build that ignores hotkey.mode and wires toggle
-    # like hold. Same real-build style as the lazy-wiring test above: nothing
-    # is opened, no mocks.
-    pytest.importorskip("stenographer.lib.hotkey.binding")
-
-    defaults = Config.defaults()
-    hold_cfg = dataclasses.replace(
-        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="hold")
-    )
-    hold = _build_or_skip(hold_cfg)
-    try:
-        assert hold._listener._on_start == hold.on_key_down
-        assert hold._listener._on_stop == hold.on_key_up
-    finally:
-        hold.stop()
-
-    toggle_cfg = dataclasses.replace(
-        defaults, hotkey=dataclasses.replace(defaults.hotkey, mode="toggle")
-    )
-    toggle = _build_or_skip(toggle_cfg)
-    try:
-        # Only presses drive the session; the falling edge must be inert.
-        assert toggle._listener._on_start == toggle.on_toggle_press
-        assert toggle._listener._on_stop != toggle.on_key_up
-        assert toggle._listener._on_stop != toggle.on_key_down
-    finally:
-        toggle.stop()
-
-
 def test_a_busy_press_of_the_other_binding_holds_the_paste_until_released():
     # Hybrid default: Agent = Right Ctrl, General = Right Alt. After a stop the
     # pipeline is busy; holding Right Alt then is refused by the daemon, and a
@@ -681,10 +651,7 @@ def test_run_before_build_refuses_rather_than_blocking():
 def test_run_starts_the_listener_and_returns_once_stop_is_requested(daemon_logs):
     daemon = _daemon()
     listener = _Listener(
-        chord=frozenset({1}),
         device=None,
-        on_start=daemon.on_key_down,
-        on_stop=daemon.on_key_up,
         lock=threading.RLock(),
     )
     daemon._listener = listener

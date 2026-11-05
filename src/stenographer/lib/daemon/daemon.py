@@ -23,7 +23,6 @@ from stenographer.lib.daemon.policy import (
     can_start,
     cancel_action,
     cancel_state,
-    edge_handlers,
     hybrid_release_action,
     ignored_edge_reason,
     max_duration_applies,
@@ -189,7 +188,6 @@ class Daemon:
             status=status,
         )
         daemon_ref = daemon
-        on_start, on_stop = edge_handlers(daemon, cfg.hotkey.mode)
         keys = plat.keys()
         cancel = (
             parse_binding(cfg.hotkey.cancel_binding, keys)
@@ -212,10 +210,7 @@ class Daemon:
                 daemon.on_key_up()
 
         listener = plat.hotkey_listener(
-            chord=parse_binding(cfg.hotkey.binding, keys),
             device=cfg.hotkey.device,
-            on_start=on_start,
-            on_stop=on_stop,
             lock=threading.RLock(),
             bindings={
                 RefineProfile.AGENT.value: parse_binding(cfg.hotkey.binding, keys),

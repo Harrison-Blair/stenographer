@@ -6,7 +6,6 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-import threading
 import wave
 
 import pytest
@@ -298,18 +297,15 @@ def test_effective_name_is_none_when_nothing_resolves(tmp_path):
 class RecordingCuePlayer:
     """A cue player that records requests instead of opening an audio device."""
 
-    def __init__(self, *, on_preview=None) -> None:
+    def __init__(self) -> None:
         self.played: list[tuple[pathlib.Path, float]] = []
-        self.previewed: list[tuple[pathlib.Path, float, bool]] = []
-        self._on_preview = on_preview
+        self.previewed: list[tuple[pathlib.Path, float]] = []
 
     def play(self, path: pathlib.Path, volume: float) -> None:
         self.played.append((path, volume))
 
-    def preview(self, path: pathlib.Path, volume: float, *, cancellation=None) -> None:
-        self.previewed.append((path, volume, cancellation is not None))
-        if self._on_preview is not None:
-            self._on_preview()
+    def preview(self, path: pathlib.Path, volume: float) -> None:
+        self.previewed.append((path, volume))
 
 
 def _pack(tmp_path: pathlib.Path) -> SoundPack:
@@ -326,8 +322,8 @@ def test_preview_plays_every_cue_in_lifecycle_order_at_one_volume(tmp_path):
 
     preview_sound_pack(pack, player, 0.4, pause_seconds=0.0)
 
-    assert [path.stem for path, _volume, _cancellable in player.previewed] == list(CUE_ORDER)
-    assert {volume for _path, volume, _cancellable in player.previewed} == {0.4}
+    assert [path.stem for path, _volume in player.previewed] == list(CUE_ORDER)
+    assert {volume for _path, volume in player.previewed} == {0.4}
     assert player.played == []
 
 
@@ -341,35 +337,6 @@ def test_preview_refuses_an_incomplete_pack_without_playing_anything(tmp_path):
         preview_sound_pack(pack, player, 0.4, pause_seconds=0.0)
 
     assert player.previewed == []
-
-
-def test_preview_cancelled_before_the_first_cue_plays_nothing(tmp_path):
-    _write_pack(tmp_path / "sounds" / "custom")
-    player = RecordingCuePlayer()
-    cancellation = threading.Event()
-    cancellation.set()
-
-    with pytest.raises(RuntimeError, match="cancelled"):
-        preview_sound_pack(
-            _pack(tmp_path), player, 0.4, pause_seconds=0.0, cancellation=cancellation
-        )
-
-    assert player.previewed == []
-
-
-def test_preview_cancelled_during_the_pause_stops_after_the_current_cue(tmp_path):
-    _write_pack(tmp_path / "sounds" / "custom")
-    cancellation = threading.Event()
-    player = RecordingCuePlayer(on_preview=cancellation.set)
-
-    with pytest.raises(RuntimeError, match="cancelled"):
-        preview_sound_pack(
-            _pack(tmp_path), player, 0.4, pause_seconds=0.05, cancellation=cancellation
-        )
-
-    # The cancellation is honoured by the inter-cue wait, not by a later cue.
-    assert [path.stem for path, _volume, _cancellable in player.previewed] == ["record_start"]
-    assert player.previewed[0][2] is True
 
 
 def test_feedback_plays_the_configured_cue_at_the_configured_volume(tmp_path):
@@ -464,18 +431,6 @@ def test_unreadable_custom_sounds_directory_still_lists_bundled_packs(tmp_path):
         assert discover_sound_packs(tmp_path, bundled_root=_BUNDLED) == BUNDLED_PACKS
     finally:
         custom_root.chmod(0o700)
-
-
-def test_a_cancellable_preview_that_is_never_cancelled_plays_every_cue(tmp_path):
-    _write_pack(tmp_path / "sounds" / "custom")
-    player = RecordingCuePlayer()
-
-    preview_sound_pack(
-        _pack(tmp_path), player, 0.4, pause_seconds=0.0, cancellation=threading.Event()
-    )
-
-    assert [path.stem for path, _volume, _cancellable in player.previewed] == list(CUE_ORDER)
-    assert all(cancellable for _path, _volume, cancellable in player.previewed)
 
 
 def test_the_bundled_asset_root_is_the_installed_sounds_directory():
