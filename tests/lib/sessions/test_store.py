@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -293,3 +293,36 @@ def test_revision_allows_absent_legacy_metadata(tmp_path):
 
     assert store.rename_speaker(session.name, "speaker-1", "Bob") == "transcript.r2.jsonl"
     assert store.read(session.name).lines[0].label == "Bob"
+
+
+def test_list_sessions_reuses_a_summary_until_a_process_changes_the_session(tmp_path):
+    started = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
+    path = _write_session(tmp_path, started)
+    store = SessionStore(tmp_path / "sessions")
+    other_process = SessionStore(tmp_path / "sessions")
+
+    (first,) = store.list_sessions()
+    assert store.list_sessions()[0] is first
+    assert first.speaker_count == 2 and first.duration_seconds == 2.0
+
+    with (path / "transcript.jsonl").open("a", encoding="utf-8") as transcript:
+        record = asdict(_line(2.0, 9.0, "speaker-2", "Speaker 2", "added"))
+        transcript.write(json.dumps(record) + "\n")
+    (appended,) = store.list_sessions()
+    assert appended.speaker_count == 3 and appended.duration_seconds == 9.0
+
+    detail = other_process.read(path.name)
+    other_process.write_revision(
+        path.name, detail.lines, method="diarization", expected_revision=detail.revision
+    )
+    (revised,) = store.list_sessions()
+    assert revised.label_state == "relabeled"
+
+    (path / "system.flac").unlink()
+    (damaged,) = store.list_sessions()
+    assert damaged.audio_size_bytes == (path / "mic.flac").stat().st_size
+
+    newer = _write_session(tmp_path, started + timedelta(minutes=1))
+    assert [s.session_id for s in store.list_sessions()] == [newer.name, path.name]
+    other_process.delete(newer.name)
+    assert [s.session_id for s in store.list_sessions()] == [path.name]
