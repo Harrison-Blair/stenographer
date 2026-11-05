@@ -191,17 +191,18 @@ def test_parse_changelog_accepts_one_to_three_sentence_synopses(synopsis: str) -
 )
 def test_parse_changelog_rejects_malformed_bodies(body: str, message: str) -> None:
     with pytest.raises(ReleaseNotesError, match=rf"v1\.0\.0: .*{message}"):
-        parse_changelog(_changelog(body))
+        note_for_version(_changelog(body), "1.0.0")
 
 
-def test_parse_changelog_rejects_a_malformed_entry_for_another_version() -> None:
+def test_note_for_version_ignores_a_malformed_body_for_another_version() -> None:
     changelog = (
         _changelog(_THREE_SECTION_BODY, version="v1.1.0", published="2026-09-02").rstrip("\n")
         + "\n\n## [v1.0.0] - 2026-09-01\n\n### Added\n\n- Adds a thing.\n"
     )
 
+    assert note_for_version(changelog, "1.1.0").version == "v1.1.0"
     with pytest.raises(ReleaseNotesError, match=r"v1\.0\.0: .*synopsis"):
-        note_for_version(changelog, "1.1.0")
+        note_for_version(changelog, "1.0.0")
 
 
 @pytest.mark.parametrize(

@@ -34,7 +34,8 @@ effect — is folded into the synopsis or left out, never listed as a fix. An
 `[Unreleased]` section may be empty while nothing is pending, and otherwise
 follows the same structure.
 
-`scripts/release_notes.py check` enforces this for every entry in the file. It
+`scripts/release_notes.py check` enforces this for the requested release and
+`[Unreleased]`. It
 runs in a manually dispatched release rehearsal and again in the draft-release
 workflow, so a missing or malformed entry fails before the draft is written.
 
