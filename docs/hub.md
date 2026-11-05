@@ -63,13 +63,15 @@ session is active, `space` pauses or resumes it. Recording continues when you
 change screens. The hub runs recording start, stop, and save work in the
 background so the interface can remain responsive.
 
-Press `q` or `ctrl+c` to quit. When a recording is active, the hub asks "Stop
-recording and save before quitting?" Press `y`, `q`, or `ctrl+c` (or click
-`[y] Save and quit`) to stop and save; press `n` or `escape` (or click
-`[n] Keep recording`) to keep recording. When a file job is running, the hub
-asks before it cancels the job and quits. A cancelled file job does not leave
-a partial output file. If a start, stop, or save operation is still in
-progress, wait for its status to finish before you send another quit key.
+Press `q` or `ctrl+c` to quit. When work is active, the hub asks one question
+that lists each action: stop and save the recording, skip the running relabel,
+and cancel the running file job. Press `y`, `q`, or `ctrl+c` (or click the
+confirm button) to run the actions in order and quit; press `n` or `escape` (or
+click the cancel button) to keep working. If a recording cannot save or the
+file job cannot cancel, a notice shows the error and the hub stays open. A
+cancelled file job does not leave a partial output file. If a start, stop, or
+save operation is still in progress, wait for its status to finish before you
+send another quit key.
 
 If Settings has unsaved changes, the hub asks whether to save, discard, or stay
 before it leaves Settings or quits. A tab change inside Settings keeps the
@@ -90,6 +92,7 @@ depend on colour.
 | Recording | `● REC`, the elapsed clock, `started HH:MM`, `[enter] ■ Stop & save`, `[space] Ⅱ Pause` | `enter` stop & save · `space` pause · `m` mic · `s` system · `v` view · `r` rename |
 | Paused | `Ⅱ PAUSED` and `[space] ▶ Resume` | as Recording, with `space` resume |
 | Saved | `■ SAVED`, the final duration, `saved HH:MM`, the session ID, `[space] ● Record again`, `[o] Open in Library` | `space` record again · `o` open in Library · `d` device · `m` mic · `s` system · `v` view · `r` rename |
+| Save failed | `! SAVE FAILED`, the error, the session ID, `[space] ● Record again`, `[o] Open in Library` | as Saved, without `r` rename |
 
 | Key | Action |
 | --- | --- |
@@ -111,12 +114,16 @@ busy: `[r] Rename… busy` shows in the speakers card, and `r` shows the notice
 several stopped sessions can relabel at the same time. When the pass ends, the
 transcript ends with a marker line such as
 `── saved · 31 phrases · mic.flac 88 MB · system.flac 0.2 MB ──` (only the
-audio files that exist). Press `o` to show the session in Library.
+audio files that exist). Press `o` to show the session in Library. If the save
+fails, also for an older session that was still saving, a notice shows the error
+and the REC panel shows `! SAVE FAILED` with that session until the next recording
+starts; `o` still shows what the session folder holds. If several saves fail, the
+panel lists each error and session, and each press of `o` shows the next session.
 
-If you quit while a relabel pass runs, the hub asks "Relabel is still running.
-Quit and keep the live labels?" Press `y` to skip each pass; the hub waits until
-each session has saved its files, then quits. The saved session keeps the
-labels that it had during the recording. Press `n` to keep the hub open.
+If you quit while a relabel pass runs, the quit question lists it. Press `y` to
+skip each pass; the hub waits until each session has saved its files, then
+quits. The saved session keeps the labels that it had during the recording.
+Press `n` to keep the hub open.
 
 Each meter shows 18 frequency bands in 8 rows, the band labels
 `100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS, and a
@@ -129,10 +136,11 @@ of the next recording; a source that is off shows `off · press m to enable` (or
 `s`). System audio captures the current output mix, not separate applications.
 
 Press `d` (or click `[d] change device…`) while no recording runs to choose the
-input device. The dialog lists each input device and `Settings default`. The
-choice shows in the MIC meter and applies to the next recordings until the hub
-quits. It does not change `config.toml`; the Audio tab of Settings edits the
-saved device.
+input device. The dialog lists each input device and `Settings default`. A
+chosen device that is gone shows as `unavailable` and stays selected until you
+choose another row. The choice shows in the MIC meter and applies to the next
+recordings until the hub quits. It does not change `config.toml`; the Audio tab
+of Settings edits the saved device.
 
 The transcript opens in mixed view, with one time-ordered stream and speaker
 labels. Press `v` (or click `[v] ▶ mixed  split`) to switch to split view,
@@ -294,7 +302,7 @@ the transcript. Each action is a button that prints its key:
 | `up` / `down` | Select the previous or next entry. |
 | `/` | Search titles and transcripts. |
 | `escape` | Clear the search. |
-| `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. |
+| `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. On another session, `p` stops the audio that plays and starts that session. A notice shows when the player exits with an error. |
 | `r` | Rename a speaker of the session. |
 | `d` | Re-diarize the session. A file session cannot: use Re-transcribe. |
 | `t` | Re-transcribe the session. |
@@ -504,9 +512,11 @@ The dialogs:
 - **Quick setup** shows input access, microphone, and hotkey with their state
   and current value. Press `t` to test the selected step and `e` to open its
   setting.
-- **Models** shows the speech model and the two voice models as present or
-  missing or corrupt. Press `enter` on a missing or corrupt model to download it after a
-  confirmation; a corrupt file is replaced only after the download is verified.
+- **Models** shows the speech model and the two voice models with their size,
+  as present or missing or corrupt. Press `enter` on a missing or corrupt model
+  to download it; a corrupt file is replaced only after the download is
+  verified. One download runs at a time; a notice shows when another one is
+  running.
 - **Defaults** writes the default configuration after a confirmation and
   keeps the current file as a timestamped backup.
 

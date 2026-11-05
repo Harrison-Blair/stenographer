@@ -792,9 +792,14 @@ class LibraryScreen(HubScreen):
             return
         self.app.run_worker(partial(self._play, toggle, entry.entry_id), group="library-play")
 
-    async def _play(self, toggle: Callable[[str], None], session_id: str) -> None:
+    async def _play(self, toggle: Callable[..., None], session_id: str) -> None:
+        app = self.app
+
+        def report_failure(status: int) -> None:
+            app.notify(f"Playback failed: player exit status {status}.", severity="error")
+
         try:
-            await asyncio.to_thread(toggle, session_id)
+            await asyncio.to_thread(toggle, session_id, on_failure=report_failure)
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: session_playback_failed", exc, safe=True)
             self.app.notify(f"Could not play this session: {exc}", severity="error")

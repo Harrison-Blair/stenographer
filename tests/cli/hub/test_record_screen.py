@@ -11,9 +11,11 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
+import pytest
 from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.engine_sampler import EngineSampler
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.services import HubServices
@@ -375,7 +377,10 @@ async def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
         await pilot.press("q")
         await pilot.pause()
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-        assert prompt == "Relabel is still running. Quit and keep the live labels?"
+        assert prompt == (
+            "Quit and do this first?\n"
+            "· Skip the running relabel; those sessions keep their live labels."
+        )
         await pilot.press("n")
         await pilot.pause()
         assert app.is_running
@@ -388,6 +393,52 @@ async def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
     assert services.stopping_sessions == ()
 
 
+@pytest.mark.parametrize("fails_during", ["prompt", "wait"])
+async def test_record_quit_stays_open_when_a_running_stop_fails(tmp_path, fails_during):
+    services, created = _services(tmp_path)
+    app = _app(services)
+    release = threading.Event()
+
+    def slow_failing_stop():
+        assert release.wait(5)
+        raise OSError("no space left on device")
+
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[0].stop = slow_failing_stop
+        await pilot.press("enter")
+        await _until(pilot, lambda: not services.recording)
+
+        await pilot.press("q")
+        await pilot.pause()
+        if fails_during == "prompt":
+            release.set()
+            await _until(pilot, lambda: services.stopping_sessions == ())
+            await pilot.press("y")
+        else:
+            await pilot.press("y")
+            await _until(pilot, lambda: app.activity_status is not None)
+            release.set()
+        await _until(pilot, lambda: services.failed_stops != [])
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        assert app.is_running, "the quit must not hide a save that failed"
+        assert app.activity_status is None
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        assert created[0].path.name in text
+        await pilot.press("o")
+        await pilot.pause()
+        assert app.library_screen.selected_id == created[0].path.name
+
+        # The failure is on screen now, so the next quit leaves.
+        await pilot.press("q")
+        await _until(pilot, lambda: not app.is_running, "the hub did not quit")
+
+
 async def test_record_quit_while_recording_asks_then_saves(tmp_path):
     services, created = _services(tmp_path)
     app = _app(services)
@@ -397,7 +448,7 @@ async def test_record_quit_while_recording_asks_then_saves(tmp_path):
         await pilot.press("q")
         await pilot.pause()
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-        assert prompt == "Stop recording and save before quitting?"
+        assert prompt == "Quit and do this first?\n· Stop and save the recording."
         await pilot.press("n")
         assert services.recording
         created[0].release.set()
@@ -659,6 +710,197 @@ def test_record_services_choose_sources_and_device_for_this_run_only(tmp_path):
     services.finish_stop(stopped)
     assert services.stopping_sessions == ()
     assert services.wait_for_stops(timeout=0.1)
+
+
+async def test_record_device_dialog_keeps_a_disconnected_device_until_an_explicit_choice(tmp_path):
+    services, _created = _services(tmp_path, (("2", "2: Alpha USB mic"),))
+    services.choose_device("5", "5: Bravo headset")
+    app = _app(services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("d")
+        await pilot.pause()
+        assert "▶ 5: Bravo headset · unavailable" in _screen_text(app)
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ChoiceDialog), "enter must not replace the missing device"
+        assert services.next_device == "5"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert services.next_device == "5"
+
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert services.next_device == "2"
+        assert services.next_device_label == "2: Alpha USB mic"
+
+        services.choose_device("5", "5: Bravo headset")
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("up", "up")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert services.next_device is None
+
+
+def _fail_stop(session):
+    def stop():
+        raise OSError("no space left on device")
+
+    session.stop = stop
+
+
+async def test_record_failed_stop_shows_a_lasting_failure_and_keeps_library_access(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        _fail_stop(created[0])
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        assert "■ SAVED" not in text
+        assert "no space left on device" in text
+        assert created[0].path.name in text
+        assert "── saved" not in text
+        assert app.record_screen.check_action("open_library", ()) is True
+
+        await pilot.press("o")
+        await pilot.pause()
+        assert app.current_mode == "library"
+        await pilot.press("1")
+        await pilot.pause()
+
+        # The next recording that saves leaves the failed state.
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[1].release.set()
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(5):
+            app.refresh_view()
+            await pilot.pause(0.02)
+        text = _screen_text(app)
+        assert "■ SAVED" in text
+        assert "SAVE FAILED" not in text
+
+
+async def test_record_failed_stop_of_an_older_session_still_shows_that_session(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(services)
+    release_older = threading.Event()
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+
+        def slow_failing_stop():
+            assert release_older.wait(5)
+            raise OSError("no space left on device")
+
+        created[0].stop = slow_failing_stop
+        await pilot.press("enter")
+        await _until(pilot, lambda: not services.recording)
+
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[1].release.set()
+        await pilot.press("enter")
+        await _until(pilot, lambda: services.stopping_sessions == (created[0],))
+
+        release_older.set()
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        assert created[0].path.name in text
+        assert app.record_screen.saved_session is created[0]
+
+
+async def test_record_two_failed_stops_keep_each_error_and_library_link(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(services)
+    release_first = threading.Event()
+    release_second = threading.Event()
+
+    def failing_stop(release, error):
+        def stop():
+            assert release.wait(5)
+            raise OSError(error)
+
+        return stop
+
+    created_stops = (
+        failing_stop(release_first, "no space left on device"),
+        failing_stop(release_second, "session folder is gone"),
+    )
+    async with app.run_test(size=(150, 45)) as pilot:
+        for index, stop in enumerate(created_stops):
+            await pilot.press("space")
+            await _until(pilot, lambda: services.recording)
+            created[index].stop = stop
+            await pilot.press("enter")
+            await _until(pilot, lambda: not services.recording)
+        await _until(pilot, lambda: len(services.stopping_sessions) == 2)
+
+        release_first.set()
+        await _until(pilot, lambda: len(services.stopping_sessions) == 1)
+        release_second.set()
+        await _until(pilot, lambda: services.stopping_sessions == ())
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        first, second = created[0].path.name, created[1].path.name
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        for shown in (first, second, "no space left on device", "session folder is gone"):
+            assert shown in text
+
+        opened = []
+        for _ in range(2):
+            await pilot.press("o")
+            await pilot.pause()
+            assert app.current_mode == "library"
+            opened.append(app.library_screen.selected_id)
+            await pilot.press("1")
+            await pilot.pause()
+        assert sorted(opened) == sorted([first, second])
+
+
+def test_record_services_keep_a_failed_stop_until_the_next_recording_starts(tmp_path):
+    services, created = _services(tmp_path)
+    services.start_recording()
+    older = services.begin_stop()
+    services.start_recording()
+    _fail_stop(older)
+
+    # The failure arrives during the next recording, and that recording then stops.
+    with pytest.raises(OSError, match="no space"):
+        services.finish_stop(older)
+    newer = services.begin_stop()
+    created[1].release.set()
+    services.finish_stop(newer)
+
+    assert services.last_saved is newer
+    assert services.failed_stops == [(older, "no space left on device")]
+
+    services.start_recording()
+    assert services.failed_stops == []
+    created[2].release.set()
+    services.stop_recording()
 
 
 def test_record_services_skip_each_pass_and_wait(tmp_path):

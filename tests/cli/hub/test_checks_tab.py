@@ -512,11 +512,9 @@ def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch):
     asyncio.run(exercise())
 
 
-def test_checks_microphone_test_without_an_audio_server_shows_a_plain_failure(
-    monkeypatch, tmp_path
-):
+def test_checks_microphone_test_shows_the_probe_error(monkeypatch, tmp_path):
     # Importing the real sounddevice starts PortAudio; with no audio server that
-    # raises PortAudioError. The row shows plain words, not the exception name.
+    # raises PortAudioError. The row shows the error of the probe, not a guessed cause.
     (tmp_path / "sounddevice.py").write_text(
         "class PortAudioError(Exception):\n"
         "    pass\n"
@@ -535,7 +533,8 @@ def test_checks_microphone_test_without_an_audio_server_shows_a_plain_failure(
             await _settle(pilot, lambda: app.checks_tab.test_status not in {"", "running…"})
             await pilot.pause()
             assert _plain(app, "#checks-test-status") == (
-                f"test: {FAIL} no audio server; no audio was captured"
+                f"test: {FAIL} audio subsystem unavailable: Error querying host API -9999; "
+                "no audio was captured"
             )
 
     asyncio.run(exercise())
@@ -752,7 +751,7 @@ def test_checks_quick_setup_tests_edits_and_closes(tmp_path):
     asyncio.run(exercise())
 
 
-def test_checks_models_dialog_shows_each_model_and_downloads_after_confirmation():
+def test_checks_models_dialog_shows_each_model_and_downloads_directly():
     present = {"asr": False, "vad": True, "speaker": False}
     downloads = []
 
@@ -775,22 +774,14 @@ def test_checks_models_dialog_shows_each_model_and_downloads_after_confirmation(
             await pilot.pause()
             assert isinstance(app.screen, ModelsDialog)
             rows = _plain(app, "#models-list").splitlines()
-            assert rows[0].startswith("▶ speech model · alpha model")
+            assert rows[0].startswith("▶ speech model · alpha model · about 1 GB")
             assert rows[0].endswith(f"{FAIL} missing")
             assert rows[1].endswith("✓ present")
             assert rows[2].endswith(f"{FAIL} missing")
 
             await pilot.press("enter")
-            await pilot.pause()
-            prompt = _plain(app, "#quit-prompt")
-            assert prompt == "Download speech model alpha model now? (about 1 GB)"
-            await pilot.press("n")
-            await pilot.pause()
-            assert downloads == []
-            assert isinstance(app.screen, ModelsDialog)
-
-            await pilot.press("enter", "y")
             await _settle(pilot, lambda: downloads == ["asr"])
+            assert isinstance(app.screen, ModelsDialog)
             await _settle(
                 pilot, lambda: _plain(app, "#models-list").splitlines()[0].endswith("✓ present")
             )
@@ -804,6 +795,59 @@ def test_checks_models_dialog_shows_each_model_and_downloads_after_confirmation(
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, ModelsDialog)
+
+    asyncio.run(exercise())
+
+
+def test_checks_models_dialog_allows_one_download_also_after_a_reopen():
+    release = threading.Event()
+    downloads = []
+
+    def model_status():
+        return (
+            ModelEntry("asr", "speech model", "alpha model", False, "about 1 GB"),
+            ModelEntry("vad", "voice activity", "bravo.onnx", False, "2 MB"),
+        )
+
+    def model_download(model_id):
+        downloads.append(model_id)
+        assert release.wait(5)
+
+    async def exercise():
+        app = _app(model_status=model_status, model_download=model_download)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_checks(pilot)
+            await pilot.press("m")
+            await pilot.pause()
+            try:
+                await pilot.press("enter")
+                await _settle(pilot, lambda: downloads == ["asr"])
+
+                await pilot.press("down", "enter")
+                await pilot.pause(0.1)
+                assert downloads == ["asr"], "the first download is still running"
+                notices = [str(notice.message) for notice in app._notifications]
+                assert "A model download is running." in notices
+                assert _plain(app, "#models-status") == "downloading speech model…"
+
+                # Closing the dialog does not end the download thread.
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("m")
+                await pilot.pause()
+                await pilot.press("down", "enter")
+                await pilot.pause(0.1)
+                assert downloads == ["asr"]
+            finally:
+                release.set()
+
+            # The running download ends, and the next one can start.
+            for _ in range(100):
+                await pilot.press("enter")
+                await pilot.pause(0.02)
+                if len(downloads) == 2:
+                    break
+            assert downloads == ["asr", "vad"]
 
     asyncio.run(exercise())
 

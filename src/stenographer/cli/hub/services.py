@@ -53,6 +53,7 @@ class HubServices:
         self._player_session_id: str | None = None
         self._player_temp_path: Path | None = None
         self._player_lock = threading.Lock()
+        self._stopped_players: set[subprocess.Popen] = set()
         self._session: LiveSession | None = None
         self._files_engine_factory = files_engine_factory
         self._files_engine = None
@@ -64,6 +65,8 @@ class HubServices:
         self._stopping: list[LiveSession] = []
         self._stops_changed = threading.Condition()
         self.last_saved: LiveSession | None = None
+        # Each failed stop and its error since the last recording start; Record shows the last one.
+        self.failed_stops: list[tuple[LiveSession, str]] = []
         self.next_sources = {"mic": True, "system": True}
         self.next_device: str | None = None
         self.next_device_label: str | None = None
@@ -182,6 +185,8 @@ class HubServices:
             self._session = None
             session.stop()
             raise
+        with self._stops_changed:
+            self.failed_stops = []
 
     def stop_recording(self) -> None:
         session = self.begin_stop()
@@ -209,10 +214,19 @@ class HubServices:
         """Save the session and run its relabel pass; it leaves the stopping list at the end."""
         try:
             session.stop()
+        except Exception as exc:
+            with self._stops_changed:
+                self.failed_stops.append((session, str(exc)))
+            raise
         finally:
             with self._stops_changed:
                 self._stopping.remove(session)
                 self._stops_changed.notify_all()
+
+    def show_next_failed_stop(self) -> None:
+        """Bring the next failed stop forward on Record."""
+        with self._stops_changed:
+            self.failed_stops.insert(0, self.failed_stops.pop())
 
     def skip_relabels(self) -> None:
         """Skip the relabel pass of each stopping session; each keeps its live labels."""
@@ -241,9 +255,17 @@ class HubServices:
         self.next_device = value
         self.next_device_label = label
 
-    def toggle_session_playback(self, session_id: str) -> None:
+    def toggle_session_playback(
+        self, session_id: str, on_failure: Callable[[int], None] | None = None
+    ) -> None:
+        """Stop this session's player, or play it in place of any other session.
+
+        ``on_failure`` gets the status of a player that exits with an error by
+        itself; it runs on the player's watcher thread.
+        """
         with self._player_lock:
-            if self._stop_player_locked():
+            same_session = self._player_session_id == session_id
+            if self._stop_player_locked() and same_session:
                 return
             if self._player_temp_path is not None:
                 self._player_temp_path.unlink(missing_ok=True)
@@ -262,7 +284,7 @@ class HubServices:
             )
             threading.Thread(
                 target=self._watch_player,
-                args=(process, mixed_path, session_id),
+                args=(process, mixed_path, session_id, on_failure),
                 name="stenographer-session-player",
                 daemon=True,
             ).start()
@@ -276,6 +298,7 @@ class HubServices:
         process = self._player
         if process is None or process.poll() is not None:
             return False
+        self._stopped_players.add(process)
         process.terminate()
         log.info(
             fmt_event(
@@ -285,9 +308,17 @@ class HubServices:
                 pid=process.pid,
             )
         )
+        self._player = None
+        self._player_session_id = None
         return True
 
-    def _watch_player(self, process: subprocess.Popen, mixed_path: Path, session_id: str) -> None:
+    def _watch_player(
+        self,
+        process: subprocess.Popen,
+        mixed_path: Path,
+        session_id: str,
+        on_failure: Callable[[int], None] | None,
+    ) -> None:
         returncode = process.wait()
         log.info(
             fmt_event(
@@ -299,12 +330,16 @@ class HubServices:
             )
         )
         with self._player_lock:
+            stopped = process in self._stopped_players
+            self._stopped_players.discard(process)
             if self._player is process:
                 self._player = None
                 self._player_session_id = None
             if self._player_temp_path == mixed_path:
                 self._player_temp_path = None
             mixed_path.unlink(missing_ok=True)
+        if not stopped and returncode != 0 and on_failure is not None:
+            on_failure(returncode)
 
     def cancel_files(self) -> None:
         engine = self._files_engine

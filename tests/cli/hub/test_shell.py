@@ -451,7 +451,7 @@ async def test_shell_quit_asks_while_recording_from_each_screen(screen):
         await pilot.press("q")
         await pilot.pause()
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-        assert prompt == "Stop recording and save before quitting?"
+        assert prompt == "Quit and do this first?\n· Stop and save the recording."
         await pilot.press("n")
         assert app.is_running
         assert app.current_mode == screen

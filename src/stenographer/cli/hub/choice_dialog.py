@@ -27,12 +27,19 @@ class ChoiceDialog(Dialog[int | None]):
     ]
 
     def __init__(
-        self, title: str, options: tuple[str, ...], selected: int, *, label: str = "Choose"
+        self,
+        title: str,
+        options: tuple[str, ...],
+        selected: int,
+        *,
+        label: str = "Choose",
+        unavailable: int | None = None,
     ) -> None:
         super().__init__(title)
         self.label = label
         self.options = options
         self.selected = selected
+        self.unavailable = unavailable
 
     def compose_body(self) -> ComposeResult:
         yield SelectableList(id="choice-list")
@@ -52,6 +59,12 @@ class ChoiceDialog(Dialog[int | None]):
         self._show()
 
     def action_choose(self) -> None:
+        if self.selected == self.unavailable:
+            self.app.notify(
+                "This device is unavailable. Choose another device or Settings default.",
+                severity="warning",
+            )
+            return
         self.dismiss(self.selected)
 
     def on_row_selected(self, event: RowSelected) -> None:

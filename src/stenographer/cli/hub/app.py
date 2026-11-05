@@ -8,7 +8,6 @@ import logging
 import pathlib
 import threading
 from collections.abc import Callable
-from functools import partial
 from typing import TYPE_CHECKING, ClassVar
 
 from rich.text import Text
@@ -374,97 +373,76 @@ class HubApp(App[None]):
         self._continue_quit()
 
     def _continue_quit(self) -> None:
-        if self.services.recording:
-            log.info(fmt_event("hub", "quit_prompted", work="recording"))
-            self.push_screen(
-                QuitConfirm(
-                    "Stop recording and save before quitting?",
-                    confirm="Save and quit",
-                    cancel="Keep recording",
-                    quit_keys=True,
-                ),
-                partial(
-                    self._confirm_quit,
-                    "recording",
-                    "Saving recording...",
-                    "save-recording",
-                    lambda: self._run_quit_step(
-                        self.services.stop_recording,
-                        "recording_stop_failed",
-                        "Could not save the recording",
-                        self._after_recording_quit,
-                    ),
-                ),
+        recording = self.services.recording
+        work = []
+        if recording:
+            work.append(("recording", "Stop and save the recording."))
+        if getattr(self.services, "stopping_sessions", ()):
+            work.append(
+                ("relabel", "Skip the running relabel; those sessions keep their live labels.")
             )
-        elif getattr(self.services, "stopping_sessions", ()):
-            self._prompt_relabel_quit()
-        elif self.library_screen.files_running:
-            self._prompt_files_quit()
-        else:
+        if self.library_screen.files_running:
+            work.append(("files", "Cancel the running file job."))
+        if not work:
             self.exit()
-
-    def _confirm_quit(self, work, status, name, worker_factory, confirmed: bool | None) -> None:
-        log.info(fmt_event("hub", "quit_confirmed", work=work, confirmed=bool(confirmed)))
-        if not confirmed:
             return
-        self._switch("record")
+        names = ",".join(name for name, _line in work)
+        failed_before = len(getattr(self.services, "failed_stops", ()))
+        log.info(fmt_event("hub", "quit_prompted", work=names))
+        lines = "\n".join(f"· {line}" for _name, line in work)
+        self.push_screen(
+            QuitConfirm(
+                f"Quit and do this first?\n{lines}",
+                confirm="Save and quit" if recording else "Quit",
+                cancel="Keep recording" if recording else "Cancel",
+                quit_keys=True,
+            ),
+            lambda confirmed: self._confirm_quit(names, failed_before, confirmed),
+        )
+
+    def _confirm_quit(self, work: str, failed_before: int, confirmed: bool | None) -> None:
+        log.info(fmt_event("hub", "quit_confirmed", work=work, confirmed=bool(confirmed)))
+        if confirmed:
+            self._switch("record")
+            self.run_worker(
+                self._finish_work_and_quit(failed_before), name="quit-work", group="hub-work"
+            )
+
+    def _show_quit_status(self, status: str) -> None:
         self.activity_status = status
         self.refresh_view()
-        self.run_worker(worker_factory(), name=name, group="hub-work")
 
-    async def _run_quit_step(self, work, failure_event, failure_text, proceed) -> None:
-        try:
-            await asyncio.to_thread(work)
-        except Exception as exc:
-            if failure_event == "recording_stop_failed":
+    async def _finish_work_and_quit(self, failed_before: int) -> None:
+        services = self.services
+        if services.recording:
+            self._show_quit_status("Saving recording...")
+            try:
+                await asyncio.to_thread(services.stop_recording)
+            except Exception as exc:
                 log_failure(log, logging.ERROR, "hub: recording_stop_failed", exc, safe=True)
-            else:
-                log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
-            self.notify(f"{failure_text}: {exc}", severity="error")
-            self.activity_status = None
-            self.refresh_view()
+                self._quit_step_failed(f"Could not save the recording: {exc}")
+                return
+        if getattr(services, "stopping_sessions", ()):
+            # Each stop still finishes writing its files; only the relabel passes end early.
+            self._show_quit_status("Saving recordings...")
+            await asyncio.to_thread(services.skip_relabels)
+            await asyncio.to_thread(services.wait_for_stops)
+        # A stop that failed after the question opened: Record must show it before the hub leaves.
+        if len(getattr(services, "failed_stops", ())) > failed_before:
+            self._quit_step_failed("A recording could not save, so the hub stays open.")
             return
+        if self.library_screen.files_running:
+            self._show_quit_status("Canceling the file job...")
+            try:
+                await asyncio.to_thread(services.cancel_files)
+            except Exception as exc:
+                log_failure(log, logging.ERROR, "hub: files_cancel_failed", exc, safe=True)
+                self._quit_step_failed(f"Could not cancel the file job: {exc}")
+                return
         self.activity_status = None
-        proceed()
+        self.exit()
 
-    def _after_recording_quit(self) -> None:
+    def _quit_step_failed(self, message: str) -> None:
+        self.notify(message, severity="error")
+        self.activity_status = None
         self.refresh_view()
-        self._continue_quit()
-
-    def _prompt_relabel_quit(self) -> None:
-        log.info(fmt_event("hub", "quit_prompted", work="relabel"))
-        self.push_screen(
-            QuitConfirm("Relabel is still running. Quit and keep the live labels?", quit_keys=True),
-            partial(
-                self._confirm_quit,
-                "relabel",
-                "Saving recordings...",
-                "skip-relabels",
-                self._skip_relabels_and_quit,
-            ),
-        )
-
-    async def _skip_relabels_and_quit(self) -> None:
-        # Each stop still finishes writing its files; only the relabel passes end early.
-        await asyncio.to_thread(self.services.skip_relabels)
-        await asyncio.to_thread(self.services.wait_for_stops)
-        self.activity_status = None
-        self._continue_quit()
-
-    def _prompt_files_quit(self) -> None:
-        log.info(fmt_event("hub", "quit_prompted", work="files"))
-        self.push_screen(
-            QuitConfirm("Cancel the running file job before quitting?", quit_keys=True),
-            partial(
-                self._confirm_quit,
-                "files",
-                "Canceling the file job...",
-                "cancel-files",
-                lambda: self._run_quit_step(
-                    self.services.cancel_files,
-                    "files_cancel_failed",
-                    "Could not cancel the file job",
-                    self.exit,
-                ),
-            ),
-        )

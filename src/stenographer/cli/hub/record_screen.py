@@ -45,6 +45,7 @@ _STATE_TOKENS = {
     "recording": ("●", "REC", "danger"),
     "paused": ("Ⅱ", "PAUSED", "warn"),
     "saved": ("■", "SAVED", "ok"),
+    "failed": ("!", "SAVE FAILED", "danger"),
 }
 _RECORD_HINTS = (("m", "mic"), ("s", "system"), ("v", "view"))
 
@@ -153,14 +154,21 @@ class RecordScreen(HubScreen):
 
     @property
     def saved_session(self):
-        return getattr(self.app.services, "last_saved", None)
+        services = self.app.services
+        failed = self._failed_stops()
+        return failed[-1][0] if failed else getattr(services, "last_saved", None)
 
     def record_state(self) -> str:
         services = self.app.services
         if services.recording:
             session = getattr(services, "session", None)
             return "paused" if session is not None and session.paused else "recording"
+        if self._failed_stops():
+            return "failed"
         return "saved" if self.saved_session is not None else "idle"
+
+    def _failed_stops(self) -> list:
+        return getattr(self.app.services, "failed_stops", [])
 
     def _stopping(self, session) -> bool:
         return any(item is session for item in getattr(self.app.services, "stopping_sessions", ()))
@@ -170,9 +178,9 @@ class RecordScreen(HubScreen):
         if action == "stop":
             return state in {"recording", "paused"}
         if action == "choose_device":
-            return state in {"idle", "saved"}
+            return state in {"idle", "saved", "failed"}
         if action == "open_library":
-            return state == "saved"
+            return state in {"saved", "failed"}
         return True
 
     # Drawing
@@ -190,7 +198,7 @@ class RecordScreen(HubScreen):
 
         live = self.session
         self._attach_meters(live)
-        shown = live if live is not None else self.saved_session if state == "saved" else None
+        shown = live if live is not None else self.saved_session if state != "idle" else None
         lines = self._lines(shown)
         speakers = self._speaker_rows(shown, lines)
         self._draw_rec_panel(state, shown)
@@ -201,7 +209,9 @@ class RecordScreen(HubScreen):
             self._speakers_card(shown, speakers),
             title="speakers",
             buttons=(("Rename…", "r", self.action_rename_speaker),),
-            disabled=frozenset({"r"}) if self._rename_busy(shown) else frozenset(),
+            disabled=frozenset({"r"})
+            if state == "failed" or self._rename_busy(shown)
+            else frozenset(),
         )
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
@@ -216,6 +226,13 @@ class RecordScreen(HubScreen):
                 ("d", "device"),
                 *_RECORD_HINTS,
                 ("r", "rename"),
+            )
+        elif state == "failed":
+            items = (
+                ("space", "record again"),
+                ("o", "open in Library"),
+                ("d", "device"),
+                *_RECORD_HINTS,
             )
         else:
             items = (("space", "record"), ("d", "device"), *_RECORD_HINTS)
@@ -232,6 +249,10 @@ class RecordScreen(HubScreen):
             session_id = session.path.name
             saved_at = self._saved_at.get(session_id)
             info = f"saved {saved_at:%H:%M}\n{session_id}" if saved_at else session_id
+        elif state == "failed":
+            info = "\n".join(
+                f"{error}\n{failed.path.name}" for failed, error in reversed(self._failed_stops())
+            )
         else:
             started = session_started_at(session.path.name) if session is not None else None
             info = f"started {started.astimezone():%H:%M}" if started else "started"
@@ -245,13 +266,13 @@ class RecordScreen(HubScreen):
             self._set_button(
                 secondary, "space", "▶ Resume" if resume else "Ⅱ Pause", "record_toggle"
             )
-        elif state == "saved":
+        elif state in {"saved", "failed"}:
             self._set_button(primary, "space", "● Record again", "record_toggle")
             self._set_button(secondary, "o", "Open in Library", "open_library")
         else:
             self._set_button(primary, "space", "● Record", "record_toggle")
         secondary.display = state != "idle"
-        self.query_one("#device-button").visible = state in {"idle", "saved"}
+        self.query_one("#device-button").visible = state in {"idle", "saved", "failed"}
 
     @staticmethod
     def _set_button(button: HubButton, key: str, label: str, action: str) -> None:
@@ -522,6 +543,8 @@ class RecordScreen(HubScreen):
         session = self.saved_session
         if session is not None and not self.app.services.recording:
             self.app.show_library(session.path.name)
+            if self._failed_stops():
+                self.app.services.show_next_failed_stop()
 
     def action_choose_device(self) -> None:
         if self.app.services.recording or self.app.activity_status is not None:
@@ -533,14 +556,21 @@ class RecordScreen(HubScreen):
         services = app.services
         devices = await asyncio.to_thread(services.input_devices)
         setting = app.current_config().audio.input_device
-        choices = ((None, None), *devices)
-        selected = next(
-            (index for index, (value, _) in enumerate(choices) if value == services.next_device), 0
-        )
+        choices: tuple[tuple[str | None, str | None], ...] = ((None, None), *devices)
+        current = services.next_device
+        # A chosen device that is gone stays selected, so Enter cannot replace it by accident.
+        unavailable = None
+        if current is not None and all(value != current for value, _ in devices):
+            unavailable = len(choices)
+            label = f"{services.next_device_label or current} · unavailable"
+            choices = (*choices, (current, label))
+        selected = next((index for index, (value, _) in enumerate(choices) if value == current), 0)
         labels = tuple(
             label or f"Settings default · {setting or 'Default input'}" for _, label in choices
         )
-        dialog = ChoiceDialog("Input device", labels, selected, label="Use device")
+        dialog = ChoiceDialog(
+            "Input device", labels, selected, label="Use device", unavailable=unavailable
+        )
         app.push_screen(
             dialog, lambda index: self._choose_device(choices[index] if index is not None else None)
         )

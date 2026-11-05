@@ -72,6 +72,7 @@ class FakeServices:
         self.actions: list[tuple] = []
         self.job_started = threading.Event()
         self.release_job = threading.Event()
+        self.player_exit_status: int | None = None
 
     @property
     def files_jobs(self):
@@ -91,8 +92,10 @@ class FakeServices:
         self.actions.append(("cancel", job.id))
         return job.cancel()
 
-    def toggle_session_playback(self, session_id):
+    def toggle_session_playback(self, session_id, on_failure=None):
         self.actions.append(("play", session_id))
+        if self.player_exit_status is not None:
+            threading.Thread(target=on_failure, args=(self.player_exit_status,)).start()
 
     def rediarize(self, session_id):
         self._run_fake_job(session_id, "diarization")
@@ -530,6 +533,22 @@ def test_library_play_rediarize_and_retranscribe_by_key_and_click(tmp_path, by):
         asyncio.run(exercise())
     finally:
         services.release_job.set()
+
+
+def test_library_player_failure_after_launch_shows_a_notice(tmp_path):
+    root, _sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.player_exit_status = 3
+    app = HubApp(services)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 4)
+            await pilot.press("p")
+            await _until(pilot, lambda: "Playback failed" in _notices(app))
+            assert "status 3" in _notices(app)
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("by", ["key", "click"])
