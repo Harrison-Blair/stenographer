@@ -64,20 +64,6 @@ def parse_menu_action(text: str, choice_count: int) -> MenuAction:
     raise ValueError(f"enter 1-{choice_count}, P1-P{choice_count}, or Q")
 
 
-def parse_sound_pack_choice(text: str, current: str, choices: Sequence[str]) -> str:
-    """Parse a setup selection by number or case-insensitive pack name."""
-
-    value = text.strip()
-    if not value:
-        return current
-    if value.isdecimal() and 1 <= int(value) <= len(choices):
-        return choices[int(value) - 1]
-    matches = [choice for choice in choices if choice.casefold() == value.casefold()]
-    if matches:
-        return matches[0]
-    raise ValueError(f"choose a number from 1-{len(choices)} or an available sound-pack name")
-
-
 def _pack_description(
     pack: str,
     bundled_names: frozenset[str],

@@ -254,15 +254,40 @@ def parse_refine_host(text: str, current: str) -> str:
     return validated_host(value) if value else current
 
 
+def _numbered_choice[Choice](value: str, choices: Sequence[Choice]) -> Choice | None:
+    if value.isdecimal() and 1 <= int(value) <= len(choices):
+        return choices[int(value) - 1]
+    return None
+
+
+def _list_choices(console: Console, choices: Iterable[str]) -> None:
+    for number, name in enumerate(choices, 1):
+        console.write(f"  {number}. {name}")
+
+
+def parse_sound_pack_choice(text: str, current: str, choices: Sequence[str]) -> str:
+    """Parse a setup selection by number or case-insensitive pack name."""
+
+    value = text.strip()
+    if not value:
+        return current
+    choice = _numbered_choice(value, choices)
+    if choice is not None:
+        return choice
+    matches = [choice for choice in choices if choice.casefold() == value.casefold()]
+    if matches:
+        return matches[0]
+    raise ValueError(f"choose a number from 1-{len(choices)} or an available sound-pack name")
+
+
 def parse_model_choice(text: str, current: str, choices: Sequence[str]) -> str:
     """Enter keeps, a number picks from the listing, anything else is a tag. PURE."""
 
     value = text.strip()
     if not value:
         return current
-    if value.isdecimal() and 1 <= int(value) <= len(choices):
-        return choices[int(value) - 1]
-    return value
+    choice = _numbered_choice(value, choices)
+    return choice if choice is not None else value
 
 
 def quick_tryout_lines(
@@ -361,13 +386,11 @@ def _prompt_number(
 def _prompt_sound_pack(console: Console, current: str, config_dir: pathlib.Path) -> str:
     """Offer bundled and valid custom packs without playing any cue."""
 
-    from stenographer.cli.sounds.workflow import parse_sound_pack_choice
     from stenographer.lib.sounds.packs import discover_sound_packs
 
     choices = discover_sound_packs(config_dir)
     console.write("Sound packs:")
-    for number, name in enumerate(choices, 1):
-        console.write(f"  {number}. {name}")
+    _list_choices(console, choices)
     prompt = f"Sound pack [{current}; Enter keeps, number/name selects]: "
     return str(
         console.validated(
@@ -421,8 +444,7 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
     console.write(refine_model_hint())
     if installed:
         console.write("Installed Ollama models:")
-        for number, name in enumerate(installed, 1):
-            console.write(f"  {number}. {name}")
+        _list_choices(console, installed)
     else:
         console.write(
             f"No refine model is available at {refine.host} yet (either nothing "
@@ -484,8 +506,9 @@ def parse_device_choice(
         return current
     if value.casefold() in {"clear", "auto", "automatic"}:
         return None
-    if value.isdecimal() and 1 <= int(value) <= len(devices):
-        return devices[int(value) - 1][0]
+    choice = _numbered_choice(value, devices)
+    if choice is not None:
+        return choice[0]
     return value
 
 
@@ -497,8 +520,7 @@ def _prompt_device(
 ) -> str | None:
     console.write(f"{label} devices (automatic selection is always available):")
     if devices:
-        for number, (_, description) in enumerate(devices, 1):
-            console.write(f"  {number}. {description}")
+        _list_choices(console, (description for _, description in devices))
     else:
         console.write("  (no selectable devices found; manual entry is still available)")
 
