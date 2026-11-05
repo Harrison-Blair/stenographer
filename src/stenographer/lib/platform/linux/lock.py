@@ -55,3 +55,20 @@ def acquire_single_instance_lock(path: pathlib.Path = LOCK_PATH) -> int:
             f"[{errno.errorcode.get(exc.errno, exc.errno)}] {exc.strerror}"
         ) from exc
     return fd
+
+
+class FlockSingleInstanceLock:
+    """The daemon's ``SingleInstanceLock``: one flock held for the process lifetime."""
+
+    def __init__(self, path: pathlib.Path = LOCK_PATH) -> None:
+        self._path = path
+        self._fd = -1
+
+    def acquire(self) -> bool:
+        self._fd = acquire_single_instance_lock(self._path)
+        return self._fd >= 0
+
+    def release(self) -> None:
+        if self._fd >= 0:
+            os.close(self._fd)
+            self._fd = -1

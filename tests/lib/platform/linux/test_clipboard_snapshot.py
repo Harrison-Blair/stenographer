@@ -18,9 +18,9 @@ import time
 
 import pytest
 
-from stenographer.lib.platform.clipboard_snapshot import ClipboardSnapshot
 from stenographer.lib.platform.linux import clipboard
 from stenographer.lib.platform.linux.clipboard import (
+    ClipboardBackend,
     clipboard_read_available,
     pick_snapshot_type,
     read_clipboard,
@@ -30,7 +30,7 @@ from stenographer.lib.platform.linux.clipboard import (
     restore_clipboard_x11,
     restorer_for_backend,
 )
-from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
+from stenographer.lib.platform.types import ClipboardSnapshot
 
 _LOGGER = "stenographer.lib.platform.linux.clipboard"
 SENTINEL = b"supercalifragilisticexpialidocious"

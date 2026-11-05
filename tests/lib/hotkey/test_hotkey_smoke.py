@@ -21,8 +21,8 @@ import evdev
 import pytest
 
 from stenographer.lib.hotkey.binding import parse_binding
-from stenographer.lib.platform.linux.evdev_hotkey_listener import EvdevHotkeyListener
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
+from stenographer.lib.platform.linux.hotkey import EvdevHotkeyListener
 
 pytestmark = pytest.mark.integration
 

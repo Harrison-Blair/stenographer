@@ -15,6 +15,7 @@ import os
 import shutil
 
 from stenographer.lib.platform.linux.clipboard import (
+    ClipboardBackend,
     _wayland_global_interfaces,
     copy_both_selections,
     copy_both_selections_x11,
@@ -23,7 +24,6 @@ from stenographer.lib.platform.linux.clipboard import (
     pick_backend,
     probe_clipboard,
 )
-from stenographer.lib.platform.linux.clipboard_backend import ClipboardBackend
 
 _CLIPBOARD_LOGGER = "stenographer.lib.platform.linux.clipboard"
 

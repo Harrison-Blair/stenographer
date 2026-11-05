@@ -22,11 +22,11 @@ from stenographer.lib.logging.pipeline import fmt_event, log_failure
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from stenographer.lib.platform.clipboard_snapshot import ClipboardSnapshot
     from stenographer.lib.platform.key_injector import KeyInjector
     from stenographer.lib.platform.types import (
         ClipboardReader,
         ClipboardRestorer,
+        ClipboardSnapshot,
         ClipboardWriter,
     )
 

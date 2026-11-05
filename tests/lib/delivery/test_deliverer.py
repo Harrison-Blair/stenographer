@@ -14,7 +14,7 @@ import logging
 import pytest
 
 from stenographer.lib.delivery.deliverer import Deliverer
-from stenographer.lib.platform.clipboard_snapshot import ClipboardSnapshot
+from stenographer.lib.platform.types import ClipboardSnapshot
 
 CANARY = "supercalifragilisticexpialidocious"
 

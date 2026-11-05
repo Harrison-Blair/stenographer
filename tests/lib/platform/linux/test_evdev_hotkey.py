@@ -20,9 +20,9 @@ import pytest
 
 from stenographer.lib.hotkey.binding import parse_binding
 from stenographer.lib.platform.linux import hotkey as hotkey_module
-from stenographer.lib.platform.linux.evdev_hotkey_listener import EvdevHotkeyListener
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
 from stenographer.lib.platform.linux.hotkey import (
+    EvdevHotkeyListener,
     _glob_event_nodes,
     _list_device_nodes,
     auto_detect_paths,

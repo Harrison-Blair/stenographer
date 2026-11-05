@@ -19,11 +19,11 @@ import pytest
 
 from stenographer.lib.platform.linux import cues
 from stenographer.lib.platform.linux.cues import (
+    LinuxCuePlayer,
     _cancellable_preview,
     build_play_command,
     detect_player,
 )
-from stenographer.lib.platform.linux.linux_cue_player import LinuxCuePlayer
 
 
 def _script(path, body):

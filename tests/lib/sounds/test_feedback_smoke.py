@@ -20,8 +20,7 @@ import time
 import pytest
 
 from stenographer.lib.config.models import FeedbackConfig
-from stenographer.lib.platform.linux.cues import detect_player
-from stenographer.lib.platform.linux.linux_cue_player import LinuxCuePlayer
+from stenographer.lib.platform.linux.cues import LinuxCuePlayer, detect_player
 from stenographer.lib.sounds.constants import BUNDLED_PACKS, CUE_ORDER
 from stenographer.lib.sounds.feedback import Feedback
 from stenographer.lib.sounds.packs import bundled_sound_root, load_sound_pack

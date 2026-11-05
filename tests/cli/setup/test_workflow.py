@@ -820,7 +820,7 @@ def test_capture_is_the_default_offer_for_a_brand_new_configuration(key_vocabula
 
 def test_audio_device_menu_comes_from_the_shared_portaudio_enumeration(monkeypatch):
     from stenographer.lib.audio import probe
-    from stenographer.lib.audio.device_query import DeviceQuery
+    from stenographer.lib.audio.probe import DeviceQuery
 
     monkeypatch.setattr(
         probe,

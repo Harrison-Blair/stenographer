@@ -12,9 +12,12 @@ import logging
 import shlex
 import time
 
-from stenographer.lib.platform.linux import notify_send_notifier
-from stenographer.lib.platform.linux.notify import build_notify_command, bundled_icon_path
-from stenographer.lib.platform.linux.notify_send_notifier import NotifySendNotifier
+from stenographer.lib.platform.linux import notify
+from stenographer.lib.platform.linux.notify import (
+    NotifySendNotifier,
+    build_notify_command,
+    bundled_icon_path,
+)
 
 _NOTIFY_LOGGER = "stenographer.lib.platform.linux.notify"
 
@@ -151,7 +154,7 @@ def test_notifier_drops_the_icon_when_the_bundled_asset_cannot_be_read(
     record = tmp_path / "argv"
     _stub_notify_send(tmp_path, record)
     monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.setattr(notify_send_notifier, "bundled_icon_path", unreadable)
+    monkeypatch.setattr(notify, "bundled_icon_path", unreadable)
 
     with caplog.at_level(logging.DEBUG, logger=_NOTIFY_LOGGER):
         notifier = NotifySendNotifier()
@@ -168,7 +171,7 @@ def test_notifier_drops_the_icon_when_the_bundled_asset_is_missing(tmp_path, mon
     record = tmp_path / "argv"
     _stub_notify_send(tmp_path, record)
     monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.setattr(notify_send_notifier, "bundled_icon_path", lambda: missing)
+    monkeypatch.setattr(notify, "bundled_icon_path", lambda: missing)
 
     NotifySendNotifier().error("copy failed")
     assert "-i" not in _wait_for_argv(record, "copy failed")

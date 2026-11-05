@@ -11,8 +11,8 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
   `lib/` imports neither CLI nor overlay code. Put native code behind
   contracts in `lib/platform/` or `overlay/platform/`.
   Core code and provider imports must remain portable on Linux.
-- Keep ordinary classes in their own files without standalone helpers.
-  Related dataclasses may share files; related exceptions share domain
+- Small types and helpers may sit beside their single owner.
+  Related exceptions share domain
   `errors.py`. Keep errors with their domain; shared ones belong in
   `lib/utils/errors.py`. Split by responsibility and navigability; no size
   limit. Keep resources in `assets/`.
