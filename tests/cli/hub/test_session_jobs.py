@@ -14,7 +14,6 @@ import pytest
 import soundfile as sf
 
 from stenographer.cli.hub.services import HubServices
-from stenographer.cli.hub.session_jobs import SessionJobs
 from stenographer.lib.config.models import Config
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.session_writer import SessionWriter
@@ -22,6 +21,7 @@ from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.null_process_counters import NullProcessCounters
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError, StaleRevisionError
+from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
 
 
