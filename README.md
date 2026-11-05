@@ -191,8 +191,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   dates), file names, and transcripts, `p` to play, `d` or `t` to
   re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
   a job; confirm with `y` or cancel with `n`. Press `n` there to transcribe a file: the dialog browses from your
-  home folder, sets Separate speakers, Speaker count, and Refine text, and
-  queues one job that shows in the list at once. Settings has the General, Audio,
+  home folder, including hidden folders; search with a leading dot to find hidden audio. Folder read errors show their reason. The dialog sets Separate speakers, Speaker count, and Refine text, and
+  queues one job that shows in the list at once. Help and quit appear first in the footer. Settings values wrap when long. Settings has the General, Audio,
   Recognition, Live, and Checks tabs; `●` marks an unsaved change, `ctrl+s`
   saves it with a backup, and the Vocabulary row edits the refine terms.
   Checks shows fix guidance and per-check test results, groups the system checks,

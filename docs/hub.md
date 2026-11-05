@@ -23,8 +23,8 @@ screen. Keys `4` to `6` do nothing.
 | `2` | Library | Review saved sessions, and transcribe audio files. |
 | `3` | Settings | Edit settings by tab, and run the system checks. |
 
-Each screen has a sidebar and one row of key hints at the bottom. The hint row
-ends with `? help · q quit`. Press `?` to open a help overlay that lists every
+Each screen has a sidebar and one row of key hints at the bottom. Settings values wrap within their control column. The hint row
+starts with `? help · q quit`. Press `?` to open a help overlay that lists every
 key of the current screen; press `?` or `escape` to close it. Each control on
 screen prints its key, for example `[r] Run again`, and a click on it does the
 same as the key.
@@ -331,8 +331,7 @@ Press `n` or click `[n] + Transcribe a file…` to open the Transcribe a file
 dialog. It has a file browser and the job options:
 
 - The browser starts in your home folder. It lists `..`, the folders, and the
-  supported audio files of the current folder, with durations when soundfile can determine them; names that
-  start with a dot are hidden. Press `up` and `down` (or click a row) to select
+  supported audio files of the current folder, with durations when soundfile can determine them. Hidden folders are listed; search with a leading dot to show hidden audio files. If a folder cannot be read, the browser shows the reason and retains `..` for navigation. Press `up` and `down` (or click a row) to select
   an entry. Press `enter` on a folder to open it. Press `/` to search names in
   the current folder; `escape` clears the search.
 - **Separate speakers** (`s`): identify and label speakers. On by default.

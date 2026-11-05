@@ -56,7 +56,6 @@ def _home(tmp_path: Path) -> Path:
     _write_audio(home / "bravo.flac", 75)
     _write_audio(home / "meetings" / "charlie.wav", 1)
     (home / "notes.txt").write_text("not audio", encoding="utf-8")
-    (home / ".cache").mkdir()
     return home
 
 
@@ -106,7 +105,7 @@ def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
             assert rows[1] == "▶ meetings/"
             assert rows[2].startswith("  alpha.wav") and rows[2].endswith("0:02")
             assert rows[3].startswith("  bravo.flac") and rows[3].endswith("1:15")
-            assert len(rows) == 4  # no text file, no hidden folder
+            assert len(rows) == 4  # no text file
 
             # enter opens the selected folder; ``..`` goes back up.
             await pilot.press("enter")
@@ -311,3 +310,45 @@ def test_transcribe_an_m4a_without_ffmpeg_shows_the_needs_ffmpeg_message(tmp_pat
 
 
 pytestmark = pytest.mark.usefixtures("utc")
+
+
+def test_hidden_folders_and_audio_search(tmp_path):
+    home = _home(tmp_path)
+    hidden = home / ".local"
+    hidden.mkdir()
+    _write_audio(hidden / ".recording.wav")
+    app = HubApp(RecordingServices(tmp_path / "sessions"), files_home=home)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            dialog = await _open_dialog(pilot, app)
+            assert any(".local/" in row for row in _list_rows(app))
+            await _search(pilot, ".local")
+            await pilot.press("enter")
+            assert dialog.directory == hidden
+            assert not any(".recording.wav" in row for row in _list_rows(app))
+            await _search(pilot, ".recording")
+            assert any(".recording.wav" in row for row in _list_rows(app))
+
+    asyncio.run(exercise())
+
+
+def test_unreadable_folder_shows_error_and_parent(tmp_path):
+    home = _home(tmp_path)
+    vanished = home / "vanished"
+    vanished.mkdir()
+    app = HubApp(RecordingServices(tmp_path / "sessions"), files_home=home)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            dialog = await _open_dialog(pilot, app)
+            vanished.rmdir()
+            dialog._open(vanished)
+            await pilot.pause()
+            rows = _list_rows(app)
+            assert rows[0].strip("▶ ") == ".."
+            assert any("Cannot read folder:" in row and "No such file" in row for row in rows)
+            await pilot.press("enter")
+            assert dialog.directory == home
+
+    asyncio.run(exercise())

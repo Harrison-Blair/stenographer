@@ -177,14 +177,14 @@ async def _until(pilot, condition, message="condition not met") -> None:
     raise AssertionError(message)
 
 
-IDLE_HINTS = "space record · d device · m mic · s system · v view · 1 2 3 screens · ? help · q quit"
+IDLE_HINTS = "? help · q quit · space record · d device · m mic · s system · v view · 1 2 3 screens"
 RECORDING_HINTS = (
-    "enter stop & save · space pause · m mic · s system · v view · r rename · 1 2 3 screens"
-    " · ? help · q quit"
+    "? help · q quit · enter stop & save · space pause · m mic · s system"
+    " · v view · r rename · 1 2 3 screens"
 )
 SAVED_HINTS = (
-    "space record again · o open in Library · d device · m mic · s system · v view · r rename"
-    " · 1 2 3 screens · ? help · q quit"
+    "? help · q quit · space record again · o open in Library · d device · m mic · s system"
+    " · v view · r rename · 1 2 3 screens"
 )
 
 
