@@ -68,6 +68,8 @@ class Deliverer:
         self._snapshot: ClipboardSnapshot | None = None
         # What the last delivery may have left on the clipboard.
         self._written: frozenset[bytes] = frozenset()
+        # Set before the chord: a chord that raises may have injected its keys.
+        self._chord_attempted = False
 
     def deliver(
         self,
@@ -88,6 +90,7 @@ class Deliverer:
         """
         self.last_timings = None
         self._snapshot = None
+        self._chord_attempted = False
         if not text or (cancelled is not None and cancelled()):
             return False
         self._written = frozenset(item.encode("utf-8") for item in (text, original) if item)
@@ -175,6 +178,7 @@ class Deliverer:
                 )
         if cancelled is not None and cancelled():
             return False
+        self._chord_attempted = True
         self._keyboard.send_chord()
         self.last_timings = replace(timings, chord_sent=True)
         return True
@@ -183,8 +187,8 @@ class Deliverer:
         """Put back the clipboard item the last :meth:`deliver` wrote over.
 
         A no-op returning False unless that delivery took a snapshot, which it
-        keeps only once a write follows. Otherwise wait the settle delay, so the target window
-        has read the paste, then write the snapshot back once; it is dropped
+        keeps only once a write follows. After a chord attempt, wait the settle delay, so the
+        target window has read the paste. Then write the snapshot back once; it is dropped
         either way. The clipboard keeps its item unless it still holds this
         delivery's bytes: another application may have copied during the delay.
         Never raises: a failure is logged and returns False. A cancel is
@@ -196,7 +200,8 @@ class Deliverer:
         restored = False
         restore_started_at = time.perf_counter()
         try:
-            self._sleep(self._restore_delay)
+            if self._chord_attempted:
+                self._sleep(self._restore_delay)
             restore_started_at = time.perf_counter()
             current = self._read()
             if current is None or current.data not in self._written:

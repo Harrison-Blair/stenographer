@@ -232,15 +232,34 @@ def test_venv_probe_fails_for_a_python_that_does_not_exist(tmp_path):
 # --- check order ---
 
 
-def test_venv_check_fails_first_with_the_apt_fix_and_no_network(tmp_path):
+def test_venv_check_fails_first_with_a_package_manager_hint_and_no_network(tmp_path):
     host = Host(probe_code=1)
 
-    with pytest.raises(
-        BarkDownloadError, match=r"Venv check failed.*sudo apt install python3-venv"
-    ):
+    with pytest.raises(BarkDownloadError, match=r"Venv check failed") as caught:
         _download(tmp_path, host, min_free_bytes=10**30)
 
+    message = str(caught.value)
+    assert "system package manager" in message
+    assert "ensurepip" in message
+    assert "sudo apt" not in message
     assert host.calls == ["probe"]
+    assert _asr_entries(tmp_path) == []
+
+
+def test_venv_creation_failure_names_a_lasting_target_and_a_way_to_see_the_output(tmp_path):
+    host = Host(venv_code=1)
+
+    with pytest.raises(BarkDownloadError, match=r"Venv creation failed") as caught:
+        _download(tmp_path, host)
+
+    message = str(caught.value)
+    # The hub discards subprocess output, so nothing may rely on it being "above".
+    assert "above" not in message
+    assert "`stenographer model download --asr`" in message
+    # The build directory is temporary; the fix must name what outlasts it.
+    assert f"Check {tmp_path / 'models' / 'asr'} " in message
+    assert "package manager" not in message
+    assert "apt" not in message
     assert _asr_entries(tmp_path) == []
 
 

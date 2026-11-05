@@ -103,7 +103,8 @@ puts your previous clipboard item back after each paste. It saves
 the clipboard before it copies the transcript, pastes, plays the delivered
 sound, waits `restore_delay_ms`, and then writes the saved item back. If you
 copied something else during the wait, your newer item stays and the saved item
-is dropped. The primary selection keeps the transcript. The saved item is held in memory only
+is dropped. If delivery stops before the paste, the saved item comes back
+without the wait. The primary selection keeps the transcript. The saved item is held in memory only
 until it is restored, and it is never logged.
 
 When Agent changes the text and `copy_original` is enabled, the app attempts

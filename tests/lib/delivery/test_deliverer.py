@@ -402,13 +402,15 @@ def test_restore_runs_once_and_then_has_nothing_left_to_restore():
 
 def test_restore_runs_when_cancelled_after_the_main_copy():
     verdicts = iter([False, False, True])
-    deliverer, copy, keyboard, restore, _sleeps = _restoring()
+    deliverer, copy, keyboard, restore, sleeps = _restoring()
 
     assert deliverer.deliver("refined ", cancelled=lambda: next(verdicts)) is False
     assert copy.texts == ["refined "]
     assert keyboard.chords == 0
     assert deliverer.restore_clipboard() is True
     assert restore.snapshots == [SEED]
+    # No chord went out, so no window has a paste to read.
+    assert sleeps == []
 
 
 def test_restore_runs_when_the_chord_raises():
@@ -416,21 +418,39 @@ def test_restore_runs_when_the_chord_raises():
         def send_chord(self) -> None:
             raise RuntimeError("uinput gone")
 
-    deliverer, _copy, _keyboard, restore, _sleeps = _restoring(keyboard=BrokenKeyboard())
+    deliverer, _copy, _keyboard, restore, sleeps = _restoring(keyboard=BrokenKeyboard())
 
     with pytest.raises(RuntimeError):
         deliverer.deliver("refined ")
     assert deliverer.restore_clipboard() is True
     assert restore.snapshots == [SEED]
+    # A raising chord may have injected its keys, so the delay stays.
+    assert sleeps == [0.5]
 
 
 def test_restore_runs_when_the_main_copy_fails_after_writing():
-    deliverer, _copy, keyboard, restore, _sleeps = _restoring(copy=RecordingClipboard(result=False))
+    deliverer, _copy, keyboard, restore, sleeps = _restoring(copy=RecordingClipboard(result=False))
 
     assert deliverer.deliver("refined ") is False
     assert keyboard.chords == 0
     assert deliverer.restore_clipboard() is True
     assert restore.snapshots == [SEED]
+    assert sleeps == []
+
+
+def test_a_cancelled_delivery_after_a_paste_restores_without_the_delay():
+    verdicts = iter([False, False, True])
+    deliverer, _copy, keyboard, restore, sleeps = _restoring()
+
+    assert deliverer.deliver("first ") is True
+    assert deliverer.restore_clipboard() is True
+    assert sleeps == [0.5]
+
+    assert deliverer.deliver("second ", cancelled=lambda: next(verdicts)) is False
+    assert keyboard.chords == 1
+    assert deliverer.restore_clipboard() is True
+    assert len(restore.snapshots) == 2
+    assert sleeps == [0.5]
 
 
 def test_no_snapshot_and_no_restore_when_cancelled_before_any_write():
