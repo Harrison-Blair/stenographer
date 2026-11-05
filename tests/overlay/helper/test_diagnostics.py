@@ -57,7 +57,7 @@ def test_the_dependency_reason_round_trips_over_the_v5_protocol():
 
     assert '"v":5' in record
     assert '"reason":"backend_dependency_missing"' in record
-    assert decode_message(record) == message
+    assert decode_message(record.encode()) == message
 
 
 def test_doctor_and_the_helper_fold_the_same_refusals_the_same_way(monkeypatch):

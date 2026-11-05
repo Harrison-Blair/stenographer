@@ -21,7 +21,7 @@ from stenographer.overlay.rendering.render import render_overlay, spectrum_bar_b
 
 def test_profile_round_trips_with_a_state_message():
     message = StateMessage(4, OverlayState.REFINING, RefineProfile.AGENT)
-    assert decode_message(encode_message(message)) == message
+    assert decode_message(encode_message(message).encode()) == message
 
 
 def test_reducer_keeps_profile_for_rendering():
