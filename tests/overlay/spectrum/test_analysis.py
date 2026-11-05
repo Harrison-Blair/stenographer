@@ -453,14 +453,6 @@ def test_quantization_requires_exactly_eighteen_levels(size: int) -> None:
         quantize_spectrum(np.zeros(size))
 
 
-def test_the_analyzer_reports_the_fixed_floor_it_was_configured_with() -> None:
-    scalar = SpectrumAnalyzer(-40.0)
-    profile = SpectrumAnalyzer(tuple(float(-50 - index) for index in range(SPECTRUM_BANDS)))
-
-    assert scalar.floor_dbfs == -40.0
-    assert profile.floor_dbfs == tuple(float(-50 - index) for index in range(SPECTRUM_BANDS))
-
-
 def test_an_analyzer_cannot_be_built_on_an_unusable_floor() -> None:
     with pytest.raises(ValueError, match="spectrum floor must be in"):
         SpectrumAnalyzer(0.0)

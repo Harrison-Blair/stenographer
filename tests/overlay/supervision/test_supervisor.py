@@ -245,7 +245,7 @@ def test_helper_replay_lists_every_loading_model_earliest_first():
 def test_mailbox_transient_timeout_enqueues_a_generation_guarded_hide():
     mailbox = OutboundMailbox()
     error_generation = mailbox.publish(OverlayState.ERROR)
-    deadline = mailbox.transient_deadline
+    deadline = mailbox._transient_deadline
     assert deadline is not None
     assert mailbox.take_nowait() == StateMessage(error_generation, OverlayState.ERROR)
 
@@ -259,7 +259,7 @@ def test_mailbox_transient_timeout_enqueues_a_generation_guarded_hide():
 def test_mailbox_cancelled_timeout_is_short_and_generation_guarded():
     mailbox = OutboundMailbox()
     cancelled_generation = mailbox.publish(OverlayState.CANCELLED)
-    deadline = mailbox.transient_deadline
+    deadline = mailbox._transient_deadline
     assert deadline is not None
     assert mailbox.expire_transient(deadline - 0.001) is None
     hide_generation = mailbox.expire_transient(deadline)

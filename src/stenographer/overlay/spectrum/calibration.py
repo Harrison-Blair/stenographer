@@ -34,12 +34,10 @@ CALIBRATION_HEADROOM_DB = 3.0
 NONSTATIONARY_SPREAD_DB = 12.0
 
 
-def _validate_sample_rate(sample_rate: int) -> None:
-    if isinstance(sample_rate, bool) or not isinstance(sample_rate, int) or sample_rate <= 0:
-        raise ValueError("calibration sample rate must be a positive integer")
+_SAMPLE_RATE = 16000
 
 
-def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float, ...]:
+def estimate_spectrum_profile(samples: object) -> tuple[float, ...]:
     """Estimate 18 fixed display floors from a nominal five-second quiet capture.
 
     The first half-second is discarded. Remaining complete, non-overlapping
@@ -47,18 +45,17 @@ def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float,
     band's 95th percentile receives 3 dB of headroom and is rounded
     upward to a whole dB. No live recording can modify the returned profile.
     """
-    _validate_sample_rate(sample_rate)
     try:
         audio = np.asarray(samples, dtype=np.float64).reshape(-1)
     except (TypeError, ValueError) as exc:
         raise CalibrationError("calibration samples are invalid") from exc
-    if audio.size < math.ceil(sample_rate * MIN_CAPTURE_SECONDS):
+    if audio.size < math.ceil(_SAMPLE_RATE * MIN_CAPTURE_SECONDS):
         raise CalibrationError("calibration capture is too short")
     if not np.all(np.isfinite(audio)):
         raise CalibrationError("calibration capture contains non-finite samples")
 
-    discard = round(sample_rate * DISCARD_SECONDS)
-    window_size = max(2, round(sample_rate * WINDOW_SECONDS))
+    discard = round(_SAMPLE_RATE * DISCARD_SECONDS)
+    window_size = max(2, round(_SAMPLE_RATE * WINDOW_SECONDS))
     usable = audio[discard:]
     window_count = usable.size // window_size
     windows = usable[: window_count * window_size].reshape(window_count, window_size)
@@ -79,7 +76,7 @@ def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float,
     if spread > NONSTATIONARY_SPREAD_DB:
         raise CalibrationError("calibration capture is strongly nonstationary")
 
-    band_windows = np.stack([_band_dbfs(window, sample_rate) for window in windows])
+    band_windows = np.stack([_band_dbfs(window, _SAMPLE_RATE) for window in windows])
     band_percentiles = np.percentile(band_windows, 95, axis=0)
     loudest = float(np.max(band_percentiles))
     if not math.isfinite(loudest):
@@ -94,11 +91,6 @@ def estimate_spectrum_profile(samples: object, sample_rate: int) -> tuple[float,
         else MIN_SPECTRUM_FLOOR_DBFS
         for candidate in candidates
     )
-
-
-def estimate_spectrum_floor(samples: object, sample_rate: int) -> float:
-    """Return the legacy scalar floor represented by a calibrated profile."""
-    return max(estimate_spectrum_profile(samples, sample_rate))
 
 
 def _record_room_noise(recorder: Recorder, on_countdown: Callable[[int], None]) -> np.ndarray:
@@ -135,7 +127,7 @@ def calibrate_spectrum_profile(
     quiet = np.empty(0, dtype=np.float32)
     try:
         quiet = _record_room_noise(recorder, on_countdown)
-        return estimate_spectrum_profile(quiet, 16000)
+        return estimate_spectrum_profile(quiet)
     finally:
         recorder.close()
         quiet.fill(0.0)

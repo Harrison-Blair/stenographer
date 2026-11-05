@@ -54,11 +54,6 @@ class OutboundMailbox:
         with self._lock:
             return self._current_state
 
-    @property
-    def transient_deadline(self) -> float | None:
-        with self._lock:
-            return self._transient_deadline
-
     def _append(self, message: StateMessage | LoadingActivityMessage) -> None:
         if (
             isinstance(message, StateMessage)

@@ -32,11 +32,6 @@ class SpectrumAnalyzer:
         self._window = np.empty(0, dtype=np.float32)
         self._smoothed = np.zeros(SPECTRUM_BANDS, dtype=np.float64)
 
-    @property
-    def floor_dbfs(self) -> float | tuple[float, ...]:
-        """Return the fixed display floor configured for this analyzer."""
-        return self._floor_dbfs
-
     def begin_recording(self) -> None:
         """Clear samples and motion at the start of every recording."""
         if self._window.size:
