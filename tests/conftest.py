@@ -63,7 +63,6 @@ _NETWORK_FAMILIES = frozenset({socket.AF_INET, socket.AF_INET6})
 #: The real callables, captured before any test can replace them.
 _REAL_CONNECT = socket.socket.connect
 _REAL_CONNECT_EX = socket.socket.connect_ex
-_REAL_CREATE_CONNECTION = socket.create_connection
 
 
 def _describe(address: object) -> str:
@@ -87,16 +86,17 @@ def _refuse(address: object) -> None:
     )
 
 
-def _connect(self, address, *args, **kwargs):
-    if self.family in _NETWORK_FAMILIES:
-        _refuse(address)
-    return _REAL_CONNECT(self, address, *args, **kwargs)
+def _guard(real):
+    def connect(self, address, *args, **kwargs):
+        if self.family in _NETWORK_FAMILIES:
+            _refuse(address)
+        return real(self, address, *args, **kwargs)
+
+    return connect
 
 
-def _connect_ex(self, address, *args, **kwargs):
-    if self.family in _NETWORK_FAMILIES:
-        _refuse(address)
-    return _REAL_CONNECT_EX(self, address, *args, **kwargs)
+_connect = _guard(_REAL_CONNECT)
+_connect_ex = _guard(_REAL_CONNECT_EX)
 
 
 def _create_connection(address, *args, **kwargs):
@@ -104,7 +104,6 @@ def _create_connection(address, *args, **kwargs):
     # ``connect`` so the failure names the address the caller asked for rather
     # than whichever resolved address was dialled first.
     _refuse(address)
-    return _REAL_CREATE_CONNECTION(address, *args, **kwargs)
 
 
 @pytest.fixture(autouse=True)
