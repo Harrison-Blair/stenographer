@@ -13,7 +13,6 @@
   var lbl = document.getElementById("lbl");
   var bars = document.getElementById("bars").children;
   var tiles = document.getElementById("states").children;
-  if (!stage || !cap || !lbl || bars.length !== 18) return;
 
   var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var script = [
@@ -24,7 +23,7 @@
     { s: "delivering", ms: 900, cap: "your clipboard, then Shift+Insert at your cursor" },
     { s: "applied", ms: 1200, cap: "profile applied · no transcript content shown" }
   ];
-  var labels = { recording: "Recording", transcribing: "Transcribing", refining: "Refining", delivering: "Delivering", applied: "Applied", cancelled: "Cancelled", error: "Error" };
+  var labels = { recording: "Recording", transcribing: "Transcribing", refining: "Refining", delivering: "Delivering", applied: "Applied" };
   var loadingCaptions = { asr: " · your speech model is loading", refine: " · your cleanup model is loading" };
   var index = 0;
   var pass = 0;
