@@ -14,7 +14,6 @@ from stenographer.lib.refine.client import (
     installed_model_names,
     is_model_loaded,
     pull_progress_line,
-    running_model_names,
 )
 from stenographer.lib.refine.errors import RefineError
 
@@ -142,9 +141,8 @@ def test_the_residency_probe_reads_api_ps_and_reports_running_tags(monkeypatch):
         {"models": [{"name": "gemma4:e2b", "model": "gemma4:e2b"}, {"model": "qwen3.5:4b"}, 7]},
     )
 
-    assert running_model_names("http://127.0.0.1:11434/") == ["gemma4:e2b", "qwen3.5:4b"]
-    assert seen == ["http://127.0.0.1:11434/api/ps"]
     assert is_model_loaded("http://127.0.0.1:11434", "gemma4:e2b") is True
+    assert seen == ["http://127.0.0.1:11434/api/ps"]
     assert is_model_loaded("http://127.0.0.1:11434", "qwen3.5:4b") is True
     assert is_model_loaded("http://127.0.0.1:11434", "gemma3:4b") is False
 
@@ -158,7 +156,6 @@ def test_a_probe_that_cannot_answer_counts_as_nothing_loaded(monkeypatch, payloa
     warms, and the warm is what reports the real failure."""
     _serve_ps(monkeypatch, payload)
 
-    assert running_model_names("http://127.0.0.1:11434") == []
     assert is_model_loaded("http://127.0.0.1:11434", "gemma4:e2b") is False
 
 

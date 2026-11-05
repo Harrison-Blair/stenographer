@@ -118,7 +118,7 @@ def test_a_socket_pair_still_connects():
 
 @pytest.mark.parametrize("operation", ["chat", "probe"])
 def test_loopback_refine_requests_bypass_environment_proxy(monkeypatch, operation):
-    from stenographer.lib.refine.client import post_chat, running_model_names
+    from stenographer.lib.refine.client import is_model_loaded, post_chat
 
     monkeypatch.setenv("http_proxy", "http://proxy.invalid:3128")
     monkeypatch.setenv("no_proxy", "")
@@ -127,7 +127,7 @@ def test_loopback_refine_requests_bypass_environment_proxy(monkeypatch, operatio
         if operation == "chat":
             post_chat("http://127.0.0.1:11434", {"messages": ["private"]}, timeout=1)
         else:
-            running_model_names("http://127.0.0.1:11434", timeout=1)
+            is_model_loaded("http://127.0.0.1:11434", "test")
     assert "127.0.0.1:11434" in str(refusal.value)
 
 

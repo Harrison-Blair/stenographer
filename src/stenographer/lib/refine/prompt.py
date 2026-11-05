@@ -7,11 +7,11 @@ Nothing in this module performs I/O or depends on configuration, so swapping a
 value cannot change the shape of a request, only its content.
 
 The values below are the 2026-09-11 benchmark's result on an RTX 3080 Laptop
-(8 GB). :data:`SYSTEM_PROMPT` and :data:`FEW_SHOT_EXAMPLES` are copied verbatim
-from the script's own constants and must stay that way: the benchmark found the
-examples, not the rules, are what actually change model behaviour — rewriting
-one few-shot answer to delete a correction marker fixed self-correction
-collapse across the entire field in a single step, and stating the same thing
+(8 GB). :data:`SYSTEM_PROMPT` and :data:`FEW_SHOT_EXAMPLES` are shared with
+the benchmark. The benchmark found the examples, not the rules, are what
+actually change model behaviour — rewriting one few-shot answer to delete a
+correction marker fixed self-correction collapse across the entire field in a
+single step, and stating the same thing
 in prose never did. Paraphrasing here silently un-tunes the feature.
 """
 

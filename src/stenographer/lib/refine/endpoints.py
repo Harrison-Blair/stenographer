@@ -95,32 +95,7 @@ def qualify_tag(model: str) -> str:
     return model if ":" in last else f"{model}:latest"
 
 
-def chat_url(host: str) -> str:
-    """The native chat endpoint, which the refine request posts to."""
+def api_url(host: str, name: str) -> str:
+    """Build an Ollama API endpoint from a normalized host."""
 
-    return f"{normalize_host(host)}/api/chat"
-
-
-def tags_url(host: str) -> str:
-    """The installed-model listing, used to detect Ollama and size a pull."""
-
-    return f"{normalize_host(host)}/api/tags"
-
-
-def pull_url(host: str) -> str:
-    """The streaming model pull, reached only from an explicit download."""
-
-    return f"{normalize_host(host)}/api/pull"
-
-
-def generate_url(host: str) -> str:
-    """The generate endpoint, used only to warm and to unload a model."""
-
-    return f"{normalize_host(host)}/api/generate"
-
-
-def ps_url(host: str) -> str:
-    """The running-model listing, asked before each utterance to tell a cold
-    model from a warm one so a load is never charged against the reply budget."""
-
-    return f"{normalize_host(host)}/api/ps"
+    return f"{normalize_host(host)}/api/{name}"

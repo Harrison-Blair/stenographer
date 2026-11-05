@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.refine.cancellation import never_cancelled
-from stenographer.lib.refine.client import is_model_loaded, post_chat, warm_model
+from stenographer.lib.refine.client import is_model_loaded, post_chat, unload_model, warm_model
 from stenographer.lib.refine.errors import (
     RefineCancelledError,
     RefineError,
@@ -90,18 +90,6 @@ class OllamaRefiner:
         self._lock = threading.Lock()
         self._shutdown = False
         self._in_flight = 0
-
-    @property
-    def host(self) -> str:
-        return self._host
-
-    @property
-    def model(self) -> str:
-        return self._model
-
-    @property
-    def keep_alive(self) -> int:
-        return self._keep_alive
 
     @property
     def last_result(self) -> RefineResult | None:
@@ -295,8 +283,6 @@ class OllamaRefiner:
     def _unload_now(self) -> None:
         """Ask Ollama to release the model, swallowing whatever comes back."""
 
-        from stenographer.lib.refine.client import unload_model
-
         try:
             unload_model(self._host, self._model)
         except Exception as exc:
@@ -344,7 +330,7 @@ class OllamaRefiner:
         if cancelled():
             raise RefineCancelledError("the utterance was cancelled")
 
-    def _ensure_loaded(self, cancelled: Callable[[], bool] = never_cancelled) -> None:
+    def _ensure_loaded(self, cancelled: Callable[[], bool]) -> None:
         """Wait for a cold model to load before the reply budget starts.
 
         The per-utterance budget in :func:`timeout_seconds` prices a reply

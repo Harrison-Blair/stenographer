@@ -15,6 +15,7 @@ import pytest
 
 from stenographer.lib.config.models import Config
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
+from stenographer.lib.refine.policy import keep_alive_for
 from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.lib.refine.results import OUTCOME_APPLIED
 from tests.lib.refine.agent_acceptance_corpus import SEMANTIC_REGRESSIONS
@@ -27,10 +28,11 @@ installed_refiner = production_refiner
 def refiner(installed_refiner):
     """Reuse the installed-model warm check; admit short synthetic inputs."""
 
+    config = Config.defaults()
     return OllamaRefiner(
-        host=installed_refiner.host,
-        model=installed_refiner.model,
-        keep_alive=installed_refiner.keep_alive,
+        host=config.refine.host,
+        model=config.refine.model,
+        keep_alive=keep_alive_for(config.asr.idle_unload_seconds),
         structured_output=Config.defaults().refine.structured_output,
         min_words=1,
     )

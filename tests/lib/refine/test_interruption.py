@@ -19,7 +19,7 @@ import threading
 
 import pytest
 
-from stenographer.lib.refine import client, ollama_refiner
+from stenographer.lib.refine import ollama_refiner
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 from stenographer.lib.refine.prompt import RESPONSE_KEY
 from stenographer.lib.refine.results import OUTCOME_APPLIED, OUTCOME_CANCELLED
@@ -108,7 +108,7 @@ def transport(monkeypatch) -> _Transport:
     monkeypatch.setattr(ollama_refiner, "post_chat", stub.post_chat)
     monkeypatch.setattr(ollama_refiner, "is_model_loaded", stub.is_model_loaded)
     monkeypatch.setattr(ollama_refiner, "warm_model", stub.warm_model)
-    monkeypatch.setattr(client, "unload_model", stub.unload_model)
+    monkeypatch.setattr(ollama_refiner, "unload_model", stub.unload_model)
     return stub
 
 
