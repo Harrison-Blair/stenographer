@@ -16,7 +16,8 @@ import numpy as np
 import soundfile as sf
 
 from stenographer.cli.hub.session_jobs import SessionJobs
-from stenographer.lib.files.media import DecodedAudio, decode_media, inspect_media
+from stenographer.lib.audio.constants import SAMPLE_RATE
+from stenographer.lib.files.media import inspect_media, iter_media_audio
 from stenographer.lib.live.live_session import LiveSession
 from stenographer.lib.live.models import LIVE_MODELS, live_model_dir
 from stenographer.lib.logging.pipeline import fmt_event
@@ -27,7 +28,7 @@ from stenographer.lib.sessions.reader import session_directory, session_metadata
 log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
     from stenographer.lib.config.models import Config
     from stenographer.lib.files.engine import FilesEngine
@@ -47,7 +48,7 @@ class HubServices:
         player_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
         files_engine_factory: Callable[..., FilesEngine] | None = None,
         device_query: Callable[[], list[tuple[str, str]]] | None = None,
-        media_decoder: Callable[[Path], DecodedAudio] | None = None,
+        media_decoder: Callable[[Path], Generator[np.ndarray]] | None = None,
     ) -> None:
         self._config = config
         self._platform = platform
@@ -334,24 +335,22 @@ class HubServices:
     def _write_source_audio(self, source: Path) -> Path:
         """Decode the copied source of a file session into a private temporary WAV file."""
         if self._media_decoder is not None:
-            audio = self._media_decoder(source)
+            blocks = self._media_decoder(source)
         else:
             decoder = self._platform.ffmpeg_decoder()
-            audio = decode_media(source, inspect_media(source, decoder), decoder)
+            blocks = iter_media_audio(source, inspect_media(source, decoder), decoder)
         fd, name = tempfile.mkstemp(prefix="stenographer-session-", suffix=".wav")
         os.close(fd)
         path = Path(name)
         try:
-            sf.write(
-                path,
-                np.clip(audio.samples, -1.0, 1.0),
-                audio.sample_rate,
-                format="WAV",
-                subtype="PCM_16",
-            )
+            with sf.SoundFile(path, "w", SAMPLE_RATE, 1, format="WAV", subtype="PCM_16") as output:
+                for block in blocks:
+                    output.write(np.clip(block, -1.0, 1.0))
         except Exception:
             path.unlink(missing_ok=True)
             raise
+        finally:
+            blocks.close()
         return path
 
     def _write_mixed_audio(self, directory: Path, session_id: str) -> Path:
