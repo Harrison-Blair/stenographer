@@ -6,6 +6,7 @@ import logging
 import mmap
 import os
 import selectors
+from collections.abc import Callable
 
 from pywayland import ffi
 from pywayland.client import Display
@@ -185,35 +186,31 @@ class LayerShellBackend(HelperBackend):
     def _on_output_scale(self, output, factor: int) -> None:
         if output not in self._output_scales:
             return
-        try:
-            old_scale = self._integer_scale()
+
+        def mutate() -> None:
             self._output_scales[output] = max(1, factor)
-            if output in self._entered_outputs and self._integer_scale() != old_scale:
-                self._present_if_configured()
-        except Exception as exc:
-            self._display_lost(exc, "output_scale")
+
+        self._rescale_after(mutate, "output_scale")
 
     def _on_surface_enter(self, _surface, output) -> None:
         if not callback_is_current(_surface, self._surface) or output not in self._output_scales:
             return
-        try:
-            old_scale = self._integer_scale()
-            self._entered_outputs.add(output)
-            if self._integer_scale() != old_scale:
-                self._present_if_configured()
-        except Exception as exc:
-            self._display_lost(exc, "surface_enter")
+        self._rescale_after(lambda: self._entered_outputs.add(output), "surface_enter")
 
     def _on_surface_leave(self, _surface, output) -> None:
         if not callback_is_current(_surface, self._surface) or output not in self._output_scales:
             return
+        self._rescale_after(lambda: self._entered_outputs.discard(output), "surface_leave")
+
+    def _rescale_after(self, mutate: Callable[[], None], where: str) -> None:
+        """Apply one scale input and repaint only if the effective scale moved."""
         try:
             old_scale = self._integer_scale()
-            self._entered_outputs.discard(output)
+            mutate()
             if self._integer_scale() != old_scale:
                 self._present_if_configured()
         except Exception as exc:
-            self._display_lost(exc, "surface_leave")
+            self._display_lost(exc, where)
 
     def _display_lost(self, exc: Exception, where: str) -> None:
         """Mark the connection unusable and say which callback found it out.
