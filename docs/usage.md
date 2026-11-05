@@ -145,6 +145,9 @@ stenographer sounds --list
 stenographer sounds --preview warm-desk
 ```
 
+When cues are muted or volume is zero, a preview says so and plays at volume 0.6
+without changing either setting.
+
 Select a pack for the daemon:
 
 ```sh
