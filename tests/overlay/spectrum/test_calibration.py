@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import math
-import threading
-import time
 
 import numpy as np
 import pytest
@@ -16,9 +14,8 @@ from stenographer.overlay.spectrum.calibration import (
     _record_room_noise,
     estimate_spectrum_floor,
     estimate_spectrum_profile,
-    wait_for_capture,
 )
-from stenographer.overlay.spectrum.errors import CalibrationCancelledError, CalibrationError
+from stenographer.overlay.spectrum.errors import CalibrationError
 
 _RATE = 16000
 _SECONDS = 5.0
@@ -114,29 +111,6 @@ def test_estimator_rejects_nonfinite_samples() -> None:
         estimate_spectrum_floor(audio, _RATE)
 
 
-def test_an_uncancelled_wait_is_an_ordinary_delay() -> None:
-    started = time.monotonic()
-
-    wait_for_capture(0.0)
-    wait_for_capture(0.0, threading.Event())
-
-    assert time.monotonic() - started < 1.0
-
-
-def test_a_cancelled_wait_ends_the_calibration_immediately() -> None:
-    """Seen to matter for the ``setup`` flow: a caller that pressed Ctrl-C
-    would otherwise stand through the remaining eight seconds of capture.
-    """
-    cancellation = threading.Event()
-    cancellation.set()
-    started = time.monotonic()
-
-    with pytest.raises(CalibrationCancelledError, match="Calibration cancelled"):
-        wait_for_capture(30.0, cancellation)
-
-    assert time.monotonic() - started < 1.0
-
-
 @pytest.mark.parametrize("samples", [object(), "audio", {"left": 1}])
 def test_the_estimator_rejects_a_capture_it_cannot_read(samples: object) -> None:
     with pytest.raises(CalibrationError, match="calibration samples are invalid"):
@@ -189,22 +163,9 @@ class _FakeRecorder:
 
 @pytest.fixture
 def instant_waits(monkeypatch):
-    """Run the real flow at its real durations without standing through them.
-
-    ``wait_for_capture`` is the module-level function every pause in the
-    calibration goes through. The stand-in keeps its whole contract —
-    cancellation still ends the capture on the spot — and drops only the
-    sleeping, so the countdown loop, the capture windows and the constants
-    they read stay exactly as they ship.
-    """
+    """Run the real flow at its real durations without standing through them."""
     waits: list[float] = []
-
-    def wait(seconds, cancellation=None):
-        waits.append(seconds)
-        if cancellation is not None and cancellation.is_set():
-            raise CalibrationCancelledError("Calibration cancelled")
-
-    monkeypatch.setattr(calibration, "wait_for_capture", wait)
+    monkeypatch.setattr(calibration.time, "sleep", waits.append)
     return waits
 
 
@@ -227,36 +188,6 @@ def test_the_room_is_prepared_counted_down_and_only_then_recorded(instant_waits)
     assert calibration.COUNTDOWN_SECONDS == 3
     assert instant_waits.count(1.0) == calibration.COUNTDOWN_SECONDS
     assert instant_waits[-1] == float(calibration.CAPTURE_SECONDS)
-
-
-def test_cancelling_during_the_countdown_never_starts_the_recorder() -> None:
-    """Seen to matter for the room-noise step: a recorder left running after a
-    cancelled calibration holds the input device for the next attempt.
-    """
-    cancellation = threading.Event()
-    recorder = _FakeRecorder(_tone(0.001))
-    ticks: list[int] = []
-
-    def on_countdown(remaining: int) -> None:
-        ticks.append(remaining)
-        cancellation.set()
-
-    with pytest.raises(CalibrationCancelledError):
-        _record_room_noise(recorder, on_countdown, cancellation)
-
-    assert ticks == [calibration.COUNTDOWN_SECONDS]
-    assert recorder.calls == ["prepare"]
-
-
-def test_cancelling_before_the_countdown_never_prepares_the_recorder() -> None:
-    cancellation = threading.Event()
-    cancellation.set()
-    recorder = _FakeRecorder(_tone(0.001))
-
-    with pytest.raises(CalibrationCancelledError):
-        _record_room_noise(recorder, lambda remaining: None, cancellation)
-
-    assert recorder.calls == []
 
 
 def _recorder_factory(capture: np.ndarray, log: list[str]):
@@ -321,27 +252,6 @@ def test_calibration_wipes_the_capture_before_it_returns(instant_waits) -> None:
     )
 
     assert not quiet.any()
-
-
-def test_a_cancelled_calibration_still_releases_the_input_device(instant_waits) -> None:
-    """Seen to matter for a second attempt: a recorder left open after Ctrl-C
-    holds the device, and the retry fails on a busy microphone.
-    """
-    cancellation = threading.Event()
-    cancellation.set()
-    events: list[str] = []
-    factory, made = _recorder_factory(_tone(0.001), log=events)
-
-    with pytest.raises(CalibrationCancelledError, match="Calibration cancelled"):
-        calibration.calibrate_spectrum_profile(
-            None,
-            on_countdown=lambda remaining: None,
-            cancellation=cancellation,
-            recorder_factory=factory,
-        )
-
-    assert events == ["close"]
-    assert len(made) == 1
 
 
 def test_a_rejected_room_capture_fails_and_still_closes(instant_waits) -> None:

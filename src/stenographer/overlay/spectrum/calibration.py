@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import math
-import threading
 import time
 from collections.abc import Callable
 
@@ -15,7 +14,7 @@ from stenographer.overlay.spectrum.analysis import (
     WINDOW_SECONDS,
     _band_dbfs,
 )
-from stenographer.overlay.spectrum.errors import CalibrationCancelledError, CalibrationError
+from stenographer.overlay.spectrum.errors import CalibrationError
 
 COUNTDOWN_SECONDS = 3
 
@@ -33,14 +32,6 @@ CALIBRATION_HEADROOM_DB = 3.0
 
 
 NONSTATIONARY_SPREAD_DB = 12.0
-
-
-def wait_for_capture(seconds: float, cancellation: threading.Event | None = None) -> None:
-    """Interrupt a calibration delay immediately when the caller cancels."""
-    if cancellation is None:
-        time.sleep(seconds)
-    elif cancellation.wait(seconds):
-        raise CalibrationCancelledError("Calibration cancelled")
 
 
 def _validate_sample_rate(sample_rate: int) -> None:
@@ -112,26 +103,20 @@ def estimate_spectrum_floor(samples: object, sample_rate: int) -> float:
     return max(estimate_spectrum_profile(samples, sample_rate))
 
 
-def _record_room_noise(
-    recorder: Recorder,
-    on_countdown: Callable[[int], None],
-    cancellation: threading.Event | None = None,
-) -> np.ndarray:
+def _record_room_noise(recorder: Recorder, on_countdown: Callable[[int], None]) -> np.ndarray:
     """Prepare *recorder*, count the room down to silence, and return the quiet capture.
 
     ``on_countdown`` receives 3, 2, 1 during the silent countdown and then 0
     immediately before capture starts. Clearing the returned buffer is the
     caller's job, because only the caller knows when it is done with it.
     """
-    wait_for_capture(0, cancellation)
     recorder.prepare()
     for remaining in range(COUNTDOWN_SECONDS, 0, -1):
         on_countdown(remaining)
-        wait_for_capture(1.0, cancellation)
+        time.sleep(1.0)
     on_countdown(0)
-    wait_for_capture(0, cancellation)
     recorder.start()
-    wait_for_capture(float(CAPTURE_SECONDS), cancellation)
+    time.sleep(float(CAPTURE_SECONDS))
     return recorder.stop()
 
 
@@ -139,7 +124,6 @@ def calibrate_spectrum_profile(
     device: str | int | None,
     *,
     on_countdown: Callable[[int], None],
-    cancellation: threading.Event | None = None,
     recorder_factory: Callable[..., Recorder] | None = None,
 ) -> tuple[float, ...]:
     """Capture known silence and return one fixed profile.
@@ -152,7 +136,7 @@ def calibrate_spectrum_profile(
     recorder = factory(device=device, max_seconds=CAPTURE_SECONDS)
     quiet = np.empty(0, dtype=np.float32)
     try:
-        quiet = _record_room_noise(recorder, on_countdown, cancellation)
+        quiet = _record_room_noise(recorder, on_countdown)
         return estimate_spectrum_profile(quiet, 16000)
     finally:
         recorder.close()
