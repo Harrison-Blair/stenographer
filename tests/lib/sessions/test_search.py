@@ -8,25 +8,21 @@ import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
-import numpy as np
 import pytest
 
-from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
+from tests.lib.sessions.helpers import make_recording
 
 _STARTED = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
 
 
 def _recording(data_root, started_at, *texts):
-    writer = SessionWriter.open(data_root, started_at)
-    writer.write_audio("system", np.zeros(16000, dtype=np.float32))
-    for index, text in enumerate(texts):
-        writer.append_line(
-            TranscriptLine(index, index + 0.5, "", "system", "speaker-1", "Speaker 1", text)
-        )
-    writer.close()
-    return writer.path.name
+    lines = (
+        TranscriptLine(index, index + 0.5, "", "system", "speaker-1", "Speaker 1", text)
+        for index, text in enumerate(texts)
+    )
+    return make_recording(data_root, lines, started_at).name
 
 
 def _file_session(store, tmp_path, started_at, name, *texts):
