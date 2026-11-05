@@ -17,9 +17,6 @@ import shutil
 from stenographer.lib.platform.linux.clipboard import (
     ClipboardBackend,
     _wayland_global_interfaces,
-    copy_both_selections,
-    copy_both_selections_x11,
-    copy_for_backend,
     detect_clipboard_backend,
     pick_backend,
     probe_clipboard,
@@ -58,11 +55,6 @@ def test_pick_backend_keeps_wl_copy_without_any_alternative():
     assert pick_backend(set(), have_display=False) is ClipboardBackend.WL_COPY
 
 
-def test_copy_for_backend_maps_each_backend_to_its_copier():
-    assert copy_for_backend(ClipboardBackend.WL_COPY) is copy_both_selections
-    assert copy_for_backend(ClipboardBackend.X11) is copy_both_selections_x11
-
-
 def test_backend_detection_runs_the_real_compositor_probe(caplog):
     """One registry roundtrip against whatever session this host is running.
 
@@ -90,8 +82,9 @@ def test_clipboard_probe_reports_unavailable_when_no_copy_binary_is_installed(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("PATH", str(tmp_path))
-    available, backend_name = probe_clipboard()
+    available, read_available, backend_name = probe_clipboard()
     assert available is False
+    assert read_available is False
     # Even with nothing installed, doctor is told which backend would be used.
     assert backend_name in {backend.value for backend in ClipboardBackend}
 
@@ -102,7 +95,7 @@ def test_clipboard_probe_finds_the_binary_the_detected_backend_needs(tmp_path, m
         stub.write_text("#!/bin/sh\nexit 0\n")
         stub.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
-    available, backend_name = probe_clipboard()
+    available, _read_available, backend_name = probe_clipboard()
     assert available is True
     backend = ClipboardBackend(backend_name)
     assert shutil.which("xclip" if backend is ClipboardBackend.X11 else "wl-copy") is not None
