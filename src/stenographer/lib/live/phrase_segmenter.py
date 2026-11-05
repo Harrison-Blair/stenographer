@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
+from stenographer.lib.live.errors import InvalidVadModelError
+
 
 @dataclass(frozen=True)
 class Phrase:
@@ -21,6 +23,7 @@ class Phrase:
 
 _RATE = 16000
 _VAD_WINDOW = 512
+_MAX_PHRASE_SECONDS = 25
 
 
 class PhraseSegmenter:
@@ -30,11 +33,7 @@ class PhraseSegmenter:
         self,
         source: str,
         vad_model_path: Path | str,
-        *,
-        max_phrase_seconds: float = 25,
     ) -> None:
-        if max_phrase_seconds <= 0:
-            raise ValueError("maximum phrase length must be greater than zero")
         import sherpa_onnx
 
         config = sherpa_onnx.VadModelConfig()
@@ -42,14 +41,14 @@ class PhraseSegmenter:
         config.silero_vad.threshold = 0.5
         config.silero_vad.min_speech_duration = 0.25
         config.silero_vad.min_silence_duration = 0.6
-        config.silero_vad.max_speech_duration = max_phrase_seconds
+        config.silero_vad.max_speech_duration = _MAX_PHRASE_SECONDS
         config.sample_rate = _RATE
         config.num_threads = 1
         config.provider = "cpu"
         if not config.validate():
-            raise ValueError(f"Invalid Silero VAD model: {vad_model_path}")
+            raise InvalidVadModelError(f"Invalid Silero VAD model: {vad_model_path}")
         self._source = source
-        self._max_phrase_frames = round(max_phrase_seconds * _RATE)
+        self._max_phrase_frames = round(_MAX_PHRASE_SECONDS * _RATE)
         self._vad = sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=120)
         self._flushed = False
 

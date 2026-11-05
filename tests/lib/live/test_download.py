@@ -81,3 +81,27 @@ def test_fetch_failure_removes_temporary_file(tmp_path):
 
     model_dir = tmp_path / "models" / "live"
     assert list(model_dir.iterdir()) == []
+
+
+def test_corrupt_model_is_replaced_only_after_verified_download(tmp_path):
+    model = LiveModel(
+        "vad.onnx", "https://example.test/vad.onnx", hashlib.sha256(b"good").hexdigest()
+    )
+    destination = tmp_path / "models" / "live" / model.filename
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"corrupt")
+
+    def fetch_bad(url, path):
+        path.write_bytes(b"bad")
+
+    with pytest.raises(LiveDownloadError, match="SHA-256"):
+        download.download_live_models(tmp_path, fetch=fetch_bad, models=(model,))
+    assert destination.read_bytes() == b"corrupt"
+
+    def fetch_good(url, path):
+        path.write_bytes(b"good")
+
+    assert download.download_live_models(tmp_path, fetch=fetch_good, models=(model,)) == (
+        model.filename,
+    )
+    assert destination.read_bytes() == b"good"

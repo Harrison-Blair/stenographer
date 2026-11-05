@@ -253,6 +253,10 @@ async def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(t
         await pilot.pause()
         text = _screen_text(app)
         assert "relabeling…" not in text
+        session.relabel_error = "disk full"
+        app.refresh_view()
+        await pilot.pause()
+        assert "Relabeling failed: disk full. Live labels kept." in _screen_text(app)
         assert "── saved · 2 phrases · mic.flac 88 MB · system.flac 0.2 MB ──" in text
         assert "busy" not in _card(app)
         assert not session.skipped

@@ -223,7 +223,7 @@ Each renamed label can go to only one cluster; when a label appears in several
 clusters, it stays with the cluster with the most shared speech time. The pass
 numbers clusters without a user name `Speaker 1`, `Speaker 2`, and so on, in
 order of first appearance in the session. If relabeling fails, the live labels
-remain and the hub shows the reason. Rename several speakers to the same name
+remain and the saved Record screen shows the reason. Rename several speakers to the same name
 to merge their displayed labels; this does not change their speaker IDs. The
 clustering threshold is 0.50; it was tested on only three clips, so labels are
 not reliable identification.
@@ -278,7 +278,7 @@ the selected entry. The active recording does not appear until it is saved.
 The context card shows the entry count, the audio size, and the sessions
 folder; the navigation row shows the entry count.
 
-Press `/` to search titles and transcripts; the search ignores case and runs in
+Press `/` to search session IDs, start times, file names, and transcripts; the search ignores case and runs in
 the background. A job row matches by its source file name. Press `escape` to
 clear the search.
 
@@ -504,8 +504,8 @@ The dialogs:
   and current value. Press `t` to test the selected step and `e` to open its
   setting.
 - **Models** shows the speech model and the two voice models as present or
-  missing. Press `enter` on a missing model to download it after a
-  confirmation.
+  missing or corrupt. Press `enter` on a missing or corrupt model to download it after a
+  confirmation; a corrupt file is replaced only after the download is verified.
 - **Defaults** writes the default configuration after a confirmation and
   keeps the current file as a timestamped backup.
 

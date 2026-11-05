@@ -238,7 +238,9 @@ or stdout is not a terminal, the command prints help. See the [hub guide](hub.md
 for recording, transcribing files, and separating speakers.
 
 Download the voice and speaker models with `stenographer model download --live`;
-build the ASR model separately with `stenographer model download --asr`. Download flags can be combined; live models report progress and each completed model.
+build the ASR model separately with `stenographer model download --asr`. Download flags
+can be combined; live models report progress and each completed model. A corrupt voice
+model is replaced only after the new download passes its hash check.
 
 ## Troubleshoot a running service
 

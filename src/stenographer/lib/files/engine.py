@@ -19,6 +19,7 @@ from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.job import FileJob
 from stenographer.lib.files.media import MediaInfo, inspect_media, iter_media_audio
 from stenographer.lib.files.models import FileJobOptions
+from stenographer.lib.live.errors import InvalidVadModelError
 from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
 from stenographer.lib.live.relabel import relabel_system_lines
@@ -207,6 +208,10 @@ class FilesEngine:
             job._complete(session_id, tuple(lines))
         except SessionWriteCancelledError:
             job._cancelled(job.progress.completed_lines)
+        except InvalidVadModelError:
+            job._fail(
+                "Invalid or missing voice activity model; run `stenographer model download --live`."
+            )
         except StaleRevisionError:
             job._fail("session changed during this job; nothing was saved")
         except Exception as exc:
