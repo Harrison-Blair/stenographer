@@ -33,10 +33,10 @@
         <h1>Dictation that stays on your machine.</h1>
         <p class="lead">Press a hotkey, speak, and your words land at your cursor. Local transcription runs on your own hardware, with no account. Your audio stays on your machine. Transcripts stay local by default; a configured remote refine host receives them.</p>
         <div class="cmd" id="quick-install">
-          <pre><code>curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start</code></pre>
-          <button type="button" id="copy" class="copy" aria-label="Copy the quick-install command">Copy</button>
+          <pre><code>curl -fsSL https://harrison-blair.github.io/stenographer/install.sh | bash</code></pre>
+          <button type="button" id="copy" class="copy" aria-label="Copy the install and update command">Copy</button>
         </div>
-        <p class="fine">You need Linux on x86_64 or AArch64, a Wayland session, and a systemd user manager. The script downloads the latest release, verifies it against <code>SHA256SUMS</code>, and installs the user service for you. You do not need Python or build tools to install. The model build is a separate choice, and it needs your system <code>python3-venv</code> package.</p>
+        <p class="fine">You need Linux on x86_64 or AArch64, a Wayland session, and a systemd user manager. The same command installs and updates. It downloads the latest release, verifies it against <code>SHA256SUMS</code>, and installs the user service for you. A new install leaves the service stopped. An update restarts a running service on the new version, a stopped service stays stopped, and a disabled service stays disabled. You do not need Python or build tools to install. The model build is a separate choice, and it needs your system <code>python3-venv</code> package.</p>
         <div class="cta">
           <a class="btn" href="#install">Install</a>
           <a class="btn ghost" href="https://github.com/Harrison-Blair/stenographer#readme">Read the README</a>
@@ -157,7 +157,7 @@ scripts/install.sh --no-start</code></pre>
   <footer>
     <div>
       <a href="https://github.com/Harrison-Blair/stenographer/releases/latest">Latest release __RELEASE_TAG__</a>
-      · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/CHANGELOG.md">Release notes</a>
+      · <a href="https://github.com/Harrison-Blair/stenographer/releases">Release notes</a>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/usage.md">User guide</a>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/hub.md">Hub guide</a>
       · <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">Build guide</a>

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Quick install from the latest published GitHub release. Meant to be run as
+# Install, update, or repair from the latest published GitHub release. Meant to
+# be run as
 #
-#   curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash
+#   curl -fsSL https://harrison-blair.github.io/stenographer/install.sh | bash
 #
 # Downloads the native standalone bundle, the matching source distribution and
 # SHA256SUMS, verifies the checksums, drops the bundle into the source tree's
 # dist/ and runs that tree's scripts/install.sh on it — so no Python, venv or
-# build toolchain is needed. Any options are forwarded to install.sh
+# build toolchain is needed. A running service restarts on the new version; a
+# stopped service, or a new install, stays stopped; a disabled service stays
+# disabled. Any options are forwarded to install.sh
 # (curl ... | bash -s -- --no-start).
 set -euo pipefail
 
@@ -17,11 +20,20 @@ usage() {
     cat <<EOF
 Usage: quick-install.sh [install.sh options]
 
-Install the latest published stenographer release for the current user:
+Install, update, or repair stenographer for the current user, using the latest
+published release:
+
+  curl -fsSL https://harrison-blair.github.io/stenographer/install.sh | bash
+
+Steps:
   1. Resolve the latest release and download the native standalone bundle,
      the source distribution and SHA256SUMS
   2. Verify the checksums
   3. Run the source distribution's scripts/install.sh on the prebuilt bundle
+
+A running service restarts on the new version. A stopped service stays stopped.
+A disabled service stays disabled. A new install is enabled, stays stopped, and
+prints the setup step.
 
 Every option is forwarded to install.sh (--no-enable, --no-start,
 --install-dir DIR, --verbose). When piping from curl, pass them after
@@ -36,9 +48,12 @@ die() {
 }
 
 main() {
+    local user_no_start=0 user_no_enable=0
     for arg in "$@"; do
         case "${arg}" in
             --help|-h) usage ;;
+            --no-start) user_no_start=1 ;;
+            --no-enable) user_no_enable=1 ;;
         esac
     done
 
@@ -94,11 +109,44 @@ main() {
         || die "unexpected source layout in ${sdist}"
     echo
 
-    if ! "${src}/scripts/install.sh" "$@"; then
+    local new_install=0
+    [[ -e "${HOME}/.local/bin/stenographer" ]] || new_install=1
+    local install_args=("$@")
+    local service_active=0 start_after=0
+    if systemctl --user is-active --quiet stenographer.service 2>/dev/null; then
+        service_active=1
+    elif [[ "${user_no_start}" -eq 0 ]]; then
+        install_args+=(--no-start)
+    fi
+    # Only the printed word counts: a missing unit or systemctl prints something
+    # else, so a new install still gets enabled.
+    if [[ "$(systemctl --user is-enabled stenographer.service 2>/dev/null)" == "disabled" ]] &&
+       [[ "${user_no_enable}" -eq 0 ]]; then
+        install_args+=(--no-enable)
+        # install.sh's --no-enable also skips the start, so a running service
+        # that is disabled restarts here.
+        if [[ "${service_active}" -eq 1 && "${user_no_start}" -eq 0 ]]; then
+            start_after=1
+        fi
+    fi
+
+    if ! "${src}/scripts/install.sh" "${install_args[@]}"; then
         keep_tmp=1
         echo "error: install.sh failed; downloaded files kept in ${tmp}" >&2
         echo "       log: ${src}/dist/install.log" >&2
         exit 1
+    fi
+
+    if [[ "${start_after}" -eq 1 ]]; then
+        systemctl --user start stenographer.service \
+            || die "the service failed to start; see: journalctl --user -u stenographer"
+    fi
+
+    if [[ "${new_install}" -eq 1 ]]; then
+        echo
+        echo "Next, configure stenographer and build the speech model, then start it:"
+        echo "  ~/.local/bin/stenographer setup --quick"
+        echo "  systemctl --user start stenographer.service"
     fi
 }
 

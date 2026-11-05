@@ -13,7 +13,7 @@ Inspect daemon and helper logs for numeric diagnostics without transcript or
 audio content. CI and sandbox checks never access the microphone; real-machine
 microphone checks require explicit consent.
 
-Before merging `dev` into `main`, run the integration suite on a real machine:
+Before starting a release, run the integration suite on a real machine:
 
 ```sh
 STENOGRAPHER_INTEGRATION=1 .venv/bin/pytest

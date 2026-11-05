@@ -13,21 +13,22 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
   Core code and provider imports must remain portable on Linux.
 - Small types and helpers may sit beside their single owner.
   Related exceptions share domain
-  `errors.py`. Keep errors with their domain; shared ones belong in
+  `errors.py`. Shared ones belong in
   `lib/utils/errors.py`. Split by responsibility and navigability; no size
   limit. Keep resources in `assets/`.
 - Dictation stays offline; model downloads are explicit. The daemon's only
   network calls are the metadata-only update notice and
   loopback-by-default refine request (docs/refine.md). Never put transcript
-  text or audio in logs or history or analytics. The hub Record screen may
+  text or audio in logs, history, or analytics. The hub Record screen may
   write both only to the user-requested session folder (docs/hub.md).
 - Preserve configuration compatibility; use the preservation layer for saves.
 - Unit-test pure logic; see new regression tests fail before fixing behavior.
   Test native behavior on real platforms, not mock OS calls. Never enable
   integration tests in CI/sandboxes or access the microphone without explicit
   consent.
-- Develop on `dev`. Use conventional commits without attribution trailers.
-  Merging to `main` requires real-machine acceptance.
+- Branch from `main`. Conventional commits, no attribution trailers. Merge
+  only when asked or per approved plan. Real-machine acceptance precedes
+  release; when asked to release, ask once whether the user tested.
 - After verification, offer `scripts/reinstall.sh`; run when authorized and
   report result.
 
@@ -40,7 +41,7 @@ env -u NO_COLOR .venv/bin/pytest -m "not integration"
 .venv/bin/stenographer --help
 ```
 
-See README.md for usage, docs/building.md for packaging, and
-packaging/NATIVE-ACCEPTANCE.md for release acceptance.
+See README.md (usage), docs/building.md (packaging),
+packaging/NATIVE-ACCEPTANCE.md (release acceptance).
 
 Keep this file under 300 words. Put feature details in their owning docs.
