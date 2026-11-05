@@ -54,10 +54,15 @@ def reduce_capture(state: CaptureState, event: KeyEvent | None) -> CaptureState:
         held.add(identity)
         if event.code not in codes:
             codes += (event.code,)
-    else:
-        if identity not in held:
-            return state
+    elif identity in held:
         held.remove(identity)
+    else:
+        # Some multi-interface keyboards route a key-up through a different
+        # device from its key-down.
+        same_code = {entry for entry in held if entry[1] == event.code}
+        if not same_code:
+            return state
+        held -= same_code
 
     return CaptureState(
         held=frozenset(held),
