@@ -10,7 +10,6 @@ from collections.abc import Sequence
 
 from stenographer.cli.parser import build_parser
 
-
 _HANDLERS = {
     "run": "stenographer.cli.run.handler:cmd_run",
     "transcribe": "stenographer.cli.transcribe.handler:cmd_transcribe",
