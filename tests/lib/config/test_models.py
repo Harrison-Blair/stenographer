@@ -487,3 +487,37 @@ def test_default_template_documents_the_live_section(tmp_path):
     assert "[stenographer.live]" in text
     assert "diarize_mic = false" in text
     assert Config.load(p).live == LiveConfig()
+
+
+def test_invalid_utf8_is_a_file_config_error(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_bytes(b"\xff")
+    with pytest.raises(ConfigError) as exc:
+        Config.load(path)
+    assert exc.value.path == path
+    assert exc.value.key == "<file>"
+    assert "UTF-8" in exc.value.reason
+
+
+@pytest.mark.parametrize("field", ["binding", "general_binding", "cancel_binding"])
+@pytest.mark.parametrize("chord", ["KEY_F8+", "KEY_NOT_A_REAL_KEY"])
+def test_invalid_hotkey_chord_names_its_field(field, chord):
+    with pytest.raises(ConfigError) as exc:
+        Config.loads(f'[stenographer.hotkey]\n{field} = "{chord}"\n')
+    assert exc.value.key == f"hotkey.{field}"
+
+
+def test_vocabulary_invalid_entry_reports_position_and_type():
+    with pytest.raises(ConfigError) as exc:
+        Config.loads('[stenographer.refine]\nvocabulary = ["private term", 42]\n')
+    assert exc.value.key == "refine.vocabulary"
+    assert "term 2" in exc.value.reason
+    assert "int" in exc.value.reason
+    assert "private term" not in str(exc.value)
+
+
+def test_invalid_refine_scheme_does_not_expose_credentials():
+    with pytest.raises(ConfigError) as exc:
+        Config.loads('[stenographer.refine]\nhost = "ftp://user:secret@example.com"\n')
+    assert exc.value.key == "refine.host"
+    assert "secret" not in str(exc.value)

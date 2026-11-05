@@ -24,7 +24,10 @@ from stenographer.lib.config.constants import (
 )
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
+from stenographer.lib.hotkey.binding import parse_binding
+from stenographer.lib.hotkey.errors import BindingError
 from stenographer.lib.hotkey.keycodes import CODE_NAMES, KEY_CODES
+from stenographer.lib.platform import current_platform
 from stenographer.lib.refine.endpoints import validated_host
 from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUTPUT
 
@@ -125,6 +128,8 @@ class Config:
             content = path.read_text(encoding="utf-8")
         except OSError as e:
             raise ConfigError(path, "<file>", f"cannot read: {e}") from e
+        except UnicodeDecodeError as e:
+            raise ConfigError(path, "<file>", f"cannot decode as UTF-8: {e}") from e
 
         return cls.loads(content, path)
 
@@ -191,8 +196,11 @@ class _Reader:
     def str_list(self, key: str) -> list[str]:
         """A TOML array of strings; the tuple is a merged dataclass default."""
         value = self.table.get(key)
-        if not isinstance(value, list | tuple) or not all(isinstance(item, str) for item in value):
+        if not isinstance(value, list | tuple):
             raise self._err(key, f"expected a list of strings, got {type(value).__name__}")
+        for position, item in enumerate(value, start=1):
+            if not isinstance(item, str):
+                raise self._err(key, f"term {position} must be a string, got {type(item).__name__}")
         return list(value)
 
     def _in_range(self, key: str, value: float, lo: float, hi: float) -> None:
@@ -263,6 +271,19 @@ def _build_hotkey(table: dict, path: pathlib.Path) -> HotkeyConfig:
     if not general_binding:
         raise ConfigError(path, "hotkey.general_binding", "must be non-empty")
     cancel_binding = r.optional_str("cancel_binding")
+    keys = current_platform().keys()
+    for name, value in (
+        ("binding", binding),
+        ("general_binding", general_binding),
+        ("cancel_binding", cancel_binding),
+    ):
+        if value is not None:
+            try:
+                parse_binding(value, keys)
+            except BindingError as exc:
+                raise ConfigError(
+                    path, f"hotkey.{name}", str(exc).removeprefix("hotkey.binding: ")
+                ) from exc
     _validate_binding_overlap(path, binding, general_binding, cancel_binding)
     return HotkeyConfig(
         binding,
@@ -391,10 +412,7 @@ def _build_refine(table: dict, path: pathlib.Path) -> RefineConfig:
     try:
         host = validated_host(raw_host)
     except ValueError as exc:
-        message = str(exc)
-        if message == "must be an http:// or https:// URL":
-            message += f", got {raw_host!r}"
-        raise ConfigError(path, "refine.host", message) from exc
+        raise ConfigError(path, "refine.host", str(exc)) from exc
     model = r.str("model").strip()
     if not model:
         raise ConfigError(path, "refine.model", "must be non-empty")

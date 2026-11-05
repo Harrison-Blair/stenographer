@@ -7,7 +7,7 @@ For the shortest path from install to dictation, see the [README](../README.md).
 
 ## Configure a different workflow
 
-Run the setup wizard to review every setting:
+Run the setup wizard to review the hotkey, audio, ASR, feedback, and refine settings:
 
 ```sh
 stenographer setup
@@ -16,7 +16,7 @@ stenographer setup
 For common settings only, use `stenographer setup --quick`. The wizard can
 check the microphone, clipboard, model, and input permissions, and offers the
 separate ASR and voice-activity model download. Nothing is downloaded until you
-choose it.
+choose it. Use hub Settings or the configuration file for the remaining settings.
 
 ## Build the speech model
 
@@ -98,15 +98,17 @@ Set `cancel_binding = ""` to disable this behavior, or choose another evdev
 
 ## Keep your clipboard
 
-The daemon puts your previous clipboard item back after each paste. It saves
+By default, when clipboard capture and restoration are available, the daemon
+puts your previous clipboard item back after each paste. It saves
 the clipboard before it copies the transcript, pastes, plays the delivered
 sound, waits `restore_delay_ms`, and then writes the saved item back. If you
 copied something else during the wait, your newer item stays and the saved item
 is dropped. The primary selection keeps the transcript. The saved item is held in memory only
 until it is restored, and it is never logged.
 
-When Agent rewrites the text, the unrefined transcript is copied just before
-the rewrite. A clipboard history manager therefore lists the original, then the
+When Agent changes the text and `copy_original` is enabled, the app attempts
+to copy the original immediately before the rewritten text. This copy is best
+effort. A clipboard history manager can therefore list the original, then the
 rewrite, and then your previous item again. General never copies the original.
 
 ```toml
