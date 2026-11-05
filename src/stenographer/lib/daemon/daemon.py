@@ -45,7 +45,6 @@ from stenographer.lib.transcribe.worker import Worker
 if TYPE_CHECKING:
     import numpy as np
 
-    from stenographer.lib.audio.records import CaptureStats
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.notifier import Notifier
     from stenographer.lib.platform.platform import Platform
@@ -361,15 +360,20 @@ class Daemon:
         """
         if self._refiner is None:
             return
-        thread = threading.Thread(
-            target=self._refiner.warm, name="stenographer-refine-warmup", daemon=True
+        thread = self._start_daemon_thread(
+            self._refiner.warm, (), "stenographer-refine-warmup", "refine: warm_start_failed"
         )
+        if thread is not None:
+            self._refine_warmup_thread = thread
+
+    def _start_daemon_thread(self, target, args, name, failure_event):
+        thread = threading.Thread(target=target, args=args, name=name, daemon=True)
         try:
             thread.start()
         except RuntimeError as exc:
-            log_failure(log, logging.WARNING, "refine: warm_start_failed", exc, safe=True)
-            return
-        self._refine_warmup_thread = thread
+            log_failure(log, logging.WARNING, failure_event, exc, safe=True)
+            return None
+        return thread
 
     def _release_refine_model(self, deadline: float) -> None:
         """Hand the refine model's VRAM back before the process goes away.
@@ -419,18 +423,14 @@ class Daemon:
             log_failure(log, logging.DEBUG, "refine: unload_failed", exc, safe=True)
 
     def _start_model_warmup(self, utterance: int) -> None:
-        thread = threading.Thread(
-            target=self._warm_model,
-            args=(utterance,),
-            name="stenographer-model-warmup",
-            daemon=True,
+        thread = self._start_daemon_thread(
+            self._warm_model,
+            (utterance,),
+            "stenographer-model-warmup",
+            "worker: warmup_start_failed",
         )
-        try:
-            thread.start()
-        except RuntimeError as exc:
-            log_failure(log, logging.WARNING, "worker: warmup_start_failed", exc, safe=True)
-            return
-        self._warmup_thread = thread
+        if thread is not None:
+            self._warmup_thread = thread
 
     def on_toggle_press(self, *, profile: RefineProfile | None = None) -> None:
         """Toggle and hybrid modes: one press starts a recording, the next press stops it."""
@@ -582,18 +582,14 @@ class Daemon:
             with self._lock:
                 if generation != self._utterance_id or not self._recording:
                     return
-                self._recording = False
+                self._mark_stopped()
                 self._busy = False
-                if self._record is not None:
-                    self._record.stopped_at = time.perf_counter()
-                self._cancel_max_timer()
             try:
                 self._recorder.stop()
             except Exception as exc:
                 log_failure(log, logging.DEBUG, "recorder: cancel_finalize_failed", exc, safe=True)
             with self._lock:
-                self._apply_capture(self._recorder.last_capture)
-                self._telemetry.checkpoint(self._record, "secured_capture")
+                self._secure_capture()
                 self._worker.release_model()
                 self._publish_cancelled()
                 self._emit_summary(self._take_record("CANCELLED"))
@@ -605,11 +601,8 @@ class Daemon:
             if not self._recording:
                 log.debug(fmt_event("hotkey", "key_up_ignored", reason="not_recording"))
                 return
-            self._recording = False
+            self._mark_stopped()
             self._busy = True
-            if self._record is not None:
-                self._record.stopped_at = time.perf_counter()
-            self._cancel_max_timer()
             # The pill stays up across the release: it is the only sign that
             # the tool is still working until the paste lands, so the release
             # moves it to TRANSCRIBING rather than hiding it. Every exit from
@@ -632,8 +625,7 @@ class Daemon:
                     self._emit_summary(self._take_record(Outcome.ERROR.name))
                 return
             with self._lock:
-                self._apply_capture(self._recorder.last_capture)
-                self._telemetry.checkpoint(self._record, "secured_capture")
+                self._secure_capture()
                 if self._cancel_pending():
                     self._busy = False
                     self._worker.release_model()
@@ -652,9 +644,15 @@ class Daemon:
                 self._pipeline_thread = thread
                 thread.start()
 
-    def _apply_capture(self, stats: CaptureStats | None) -> None:
-        """Fold the recorder's own numbers into the utterance record."""
-        apply_capture(self._record, stats)
+    def _mark_stopped(self) -> None:
+        self._recording = False
+        if self._record is not None:
+            self._record.stopped_at = time.perf_counter()
+        self._cancel_max_timer()
+
+    def _secure_capture(self) -> None:
+        apply_capture(self._record, self._recorder.last_capture)
+        self._telemetry.checkpoint(self._record, "secured_capture")
 
     def _take_record(self, outcome: str) -> UtteranceRecord | None:
         """Detach the in-flight record and stamp its outcome."""
@@ -729,10 +727,11 @@ class Daemon:
         with self._capture_lock:
             with self._lock:
                 was_recording = self._recording
-                self._recording = False
-                self._cancel_max_timer()
-                if was_recording and self._record is not None:
-                    self._record.stopped_at = time.perf_counter()
+                if was_recording:
+                    self._mark_stopped()
+                else:
+                    self._recording = False
+                    self._cancel_max_timer()
             if was_recording:
                 try:
                     self._recorder.stop()
@@ -742,8 +741,7 @@ class Daemon:
                     )
                 else:
                     with self._lock:
-                        self._apply_capture(self._recorder.last_capture)
-                        self._telemetry.checkpoint(self._record, "secured_capture")
+                        self._secure_capture()
             self._recorder.close()
         with contextlib.suppress(Exception):
             self._worker.shutdown()
