@@ -244,7 +244,8 @@ class SettingsScreen(HubScreen):
 
     def select_tab(self, tab: str) -> None:
         """Show one tab; unsaved changes stay."""
-        self._close_input()
+        if not self._commit_input():
+            return
         self.tab = tab
         editor = self.app.config_editor
         if tab != "checks" and editor is not None:

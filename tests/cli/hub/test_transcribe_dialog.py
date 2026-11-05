@@ -140,13 +140,12 @@ def test_transcribe_options_and_an_invalid_speaker_count(tmp_path, by):
             await _open_dialog(pilot, app)
             await pilot.press("down")
             if by == "key":
-                await pilot.press("s", "r", "c")
+                await pilot.press("r", "c")
             else:
-                await pilot.click("#transcribe-speakers")
                 await pilot.click("#transcribe-refine")
                 await pilot.click("#transcribe-count-button")
             text = _screen_text(app)
-            assert "[s] ( ) off" in text and "[r] (●) on" in text
+            assert "[s] (●) on" in text and "[r] (●) on" in text
             count = app.screen.query_one("#transcribe-count", Input)
             assert app.screen.focused is count
 
@@ -161,15 +160,14 @@ def test_transcribe_options_and_an_invalid_speaker_count(tmp_path, by):
                 )
             assert services.jobs == []
 
-            count.value = "3"
-            await pilot.pause()
-            assert FAIL not in _screen_text(app)
+            await pilot.click("#transcribe-speakers")
+            assert count.disabled
             await pilot.press("enter")
             await _until(pilot, lambda: len(services.jobs) == 1, "no job was queued")
             job = services.jobs[0]
             assert job.options.path == home / "alpha.wav"
             assert services.submitted_options == [
-                {"diarize": False, "speaker_count": 3, "refine": True}
+                {"diarize": False, "speaker_count": None, "refine": True}
             ]
 
     asyncio.run(exercise())

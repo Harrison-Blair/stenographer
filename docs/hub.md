@@ -511,3 +511,12 @@ The dialogs:
   keeps the current file as a timestamped backup.
 
 The `stenographer setup` and `stenographer doctor` commands do not change.
+
+The Record meters use the saved spectrum floor for each new recording. Returning
+to a saved recording refreshes its transcript; deleting that session clears Record.
+Library shows search progress and read errors, including alongside file jobs.
+Speaker rename waits for the session details to load. File transcription requires
+a valid configuration before the dialog opens; when speaker separation is off,
+the speaker count is disabled and ignored. Switching Settings tabs keeps a valid
+inline edit and stays on the current tab if the value is invalid. Model status
+refreshes when the dialog opens and before or after a download.
