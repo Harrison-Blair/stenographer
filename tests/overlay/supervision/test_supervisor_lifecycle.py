@@ -206,12 +206,6 @@ class _Platform:
             raise self._error
         return self._transport
 
-    def overlay_backends(self):  # pragma: no cover - parent never constructs one
-        raise AssertionError("the supervisor never constructs a backend")
-
-    def guidance(self):  # pragma: no cover - guidance is a doctor concern
-        raise AssertionError("the supervisor never renders guidance")
-
 
 @pytest.fixture
 def host(monkeypatch, tmp_path):

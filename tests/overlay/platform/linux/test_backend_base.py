@@ -52,9 +52,6 @@ def test_probe_translates_a_fixed_reason_and_never_leaves_a_connection_open() ->
         def __init__(self) -> None:
             raise BackendUnavailableError(UnavailableReason.NO_X_DISPLAY)
 
-        def close(self) -> None:  # pragma: no cover - never constructed
-            closed.append("unusable")
-
     class _Usable:
         def close(self) -> None:
             closed.append("usable")
@@ -68,9 +65,6 @@ def test_probe_lets_an_unexpected_construction_failure_reach_the_registry() -> N
     class _Broken:
         def __init__(self) -> None:
             raise RuntimeError("generated bindings missing")
-
-        def close(self) -> None:  # pragma: no cover - never constructed
-            raise AssertionError
 
     try:
         probe_backend(_Broken)

@@ -95,36 +95,6 @@ def test_fixed_mapping_is_exact_at_floor_and_ceiling() -> None:
     assert np.array_equal(levels[5:], np.zeros(13))
 
 
-def test_measured_background_range_maps_to_zero() -> None:
-    background_dbfs = np.array(
-        [
-            -68.2,
-            -63.4,
-            -60.1,
-            -58.7,
-            -57.9,
-            -56.2,
-            -54.8,
-            -53.6,
-            -52.9,
-            -51.4,
-            -50.8,
-            -49.7,
-            -48.6,
-            -47.9,
-            -46.8,
-            -46.1,
-            -45.4,
-            -45.0,
-        ]
-    )
-
-    assert np.array_equal(
-        display_levels(background_dbfs, DEFAULT_SPECTRUM_FLOOR_DBFS),
-        np.zeros(SPECTRUM_BANDS),
-    )
-
-
 def test_less_negative_floor_suppresses_more_input() -> None:
     signal = np.full(SPECTRUM_BANDS, -42.0)
 

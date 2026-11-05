@@ -9,6 +9,8 @@ the helper's construct loop and the read-only probe behind ``doctor``.
 
 from __future__ import annotations
 
+import pytest
+
 from stenographer.overlay.capabilities.models import OverlayCapability
 from stenographer.overlay.capabilities.probe import probe_overlay
 from stenographer.overlay.platform.overlay_backend_spec import OverlayBackendSpec
@@ -60,7 +62,17 @@ def test_the_dependency_reason_round_trips_over_the_v5_protocol():
     assert decode_message(record.encode()) == message
 
 
-def test_doctor_and_the_helper_fold_the_same_refusals_the_same_way(monkeypatch):
+@pytest.fixture
+def offer(monkeypatch):
+    def install(*specs):
+        monkeypatch.setattr(
+            "stenographer.overlay.capabilities.probe.current_platform", lambda: _Platform(specs)
+        )
+
+    return install
+
+
+def test_doctor_and_the_helper_fold_the_same_refusals_the_same_way(offer):
     """A generic last refusal must not hide a specific earlier one from doctor.
 
     Seen to FAIL against ``probe_overlay``'s own ``reason or
@@ -77,11 +89,7 @@ def test_doctor_and_the_helper_fold_the_same_refusals_the_same_way(monkeypatch):
         OverlayBackendSpec(backend, (lambda r=reason: r), _unreachable)
         for backend, reason in refusals.items()
     )
-    monkeypatch.setattr(
-        "stenographer.overlay.capabilities.probe.current_platform",
-        lambda: _Platform(specs),
-        raising=True,
-    )
+    offer(*specs)
 
     assert probe_overlay(True) == OverlayCapability.unavailable(
         UnavailableReason.REQUIRED_GLOBALS_MISSING
@@ -117,7 +125,7 @@ def test_a_disabled_overlay_is_never_probed_at_all(monkeypatch):
     assert probe_overlay(False) == OverlayCapability.disabled()
 
 
-def test_the_first_usable_backend_wins_and_the_rest_are_never_probed(monkeypatch):
+def test_the_first_usable_backend_wins_and_the_rest_are_never_probed(offer):
     """Probing stops at the first usable backend, so a working layer-shell
     session is never asked to also start an X connection.
     """
@@ -125,21 +133,13 @@ def test_the_first_usable_backend_wins_and_the_rest_are_never_probed(monkeypatch
         OverlayBackendSpec(Backend.LAYER_SHELL, lambda: None, _unreachable),
         OverlayBackendSpec(Backend.XWAYLAND, _unreachable, _unreachable),
     )
-    monkeypatch.setattr(
-        "stenographer.overlay.capabilities.probe.current_platform",
-        lambda: _Platform(specs),
-        raising=True,
-    )
+    offer(*specs)
 
     assert probe_overlay(True) == OverlayCapability.available(Backend.LAYER_SHELL)
 
 
-def test_a_host_with_no_registered_backends_is_unavailable_not_available(monkeypatch):
-    monkeypatch.setattr(
-        "stenographer.overlay.capabilities.probe.current_platform",
-        lambda: _Platform(()),
-        raising=True,
-    )
+def test_a_host_with_no_registered_backends_is_unavailable_not_available(offer):
+    offer(*())
 
     assert probe_overlay(True) == OverlayCapability.unavailable(
         UnavailableReason.BACKENDS_UNAVAILABLE

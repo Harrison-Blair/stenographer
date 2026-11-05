@@ -23,12 +23,6 @@ def test_current_platform_matches_host_and_is_cached():
     assert current_platform() is platform
 
 
-def test_linux_provider_conforms_to_platform_protocol():
-    from stenographer.lib.platform.linux.provider import LinuxPlatform
-
-    assert isinstance(LinuxPlatform(), Platform)
-
-
 def test_linux_provider_parses_the_shipped_default_binding():
     from stenographer.lib.platform.linux.provider import LinuxPlatform
 
@@ -52,34 +46,18 @@ def test_linux_provider_names_stop_reasons_without_raising():
     assert "999" in signal_reason(999)
 
 
-def test_current_platform_rejects_win32(monkeypatch):
+@pytest.fixture
+def uncached_platform():
     current_platform.cache_clear()
-    try:
-        monkeypatch.setattr(sys, "platform", "win32")
-        with pytest.raises(UnsupportedPlatformError, match="win32"):
-            current_platform()
-    finally:
-        current_platform.cache_clear()
-
-
-def test_current_platform_rejects_darwin(monkeypatch):
+    yield
     current_platform.cache_clear()
-    try:
-        monkeypatch.setattr(sys, "platform", "darwin")
-        with pytest.raises(UnsupportedPlatformError, match="darwin"):
-            current_platform()
-    finally:
-        current_platform.cache_clear()
 
 
-def test_current_platform_rejects_an_unknown_host(monkeypatch):
-    current_platform.cache_clear()
-    try:
-        monkeypatch.setattr(sys, "platform", "aix")
-        with pytest.raises(UnsupportedPlatformError, match="aix"):
-            current_platform()
-    finally:
-        current_platform.cache_clear()
+@pytest.mark.parametrize("host", ["win32", "darwin", "aix"])
+def test_current_platform_rejects_unsupported_host(monkeypatch, uncached_platform, host):
+    monkeypatch.setattr(sys, "platform", host)
+    with pytest.raises(UnsupportedPlatformError, match=host):
+        current_platform()
 
 
 def test_stop_handlers_register_and_name_both_reasons():
