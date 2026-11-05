@@ -14,6 +14,8 @@ import logging
 import os
 import shutil
 
+import pytest
+
 from stenographer.lib.platform.linux.clipboard import (
     ClipboardBackend,
     _wayland_global_interfaces,
@@ -25,34 +27,36 @@ from stenographer.lib.platform.linux.clipboard import (
 _CLIPBOARD_LOGGER = "stenographer.lib.platform.linux.clipboard"
 
 
-def test_pick_backend_prefers_wl_copy_with_ext_data_control():
-    globals_seen = {"wl_compositor", "ext_data_control_manager_v1"}
-    assert pick_backend(globals_seen, have_display=True) is ClipboardBackend.WL_COPY
-
-
-def test_pick_backend_prefers_wl_copy_with_zwlr_data_control():
-    globals_seen = {"wl_compositor", "zwlr_data_control_manager_v1"}
-    assert pick_backend(globals_seen, have_display=False) is ClipboardBackend.WL_COPY
-
-
-def test_pick_backend_x11_when_no_data_control_and_display_present():
-    # GNOME <= 46: no data-control global; XWayland available.
-    globals_seen = {"wl_compositor", "wl_shm", "xdg_wm_base"}
-    assert pick_backend(globals_seen, have_display=True) is ClipboardBackend.X11
-
-
-def test_pick_backend_x11_when_wayland_probe_fails_and_display_present():
-    assert pick_backend(None, have_display=True) is ClipboardBackend.X11
-
-
-def test_pick_backend_keeps_wl_copy_when_wayland_probe_fails_without_alternative():
-    assert pick_backend(None, have_display=False) is ClipboardBackend.WL_COPY
-
-
-def test_pick_backend_keeps_wl_copy_without_any_alternative():
-    # No data-control AND no X display: stay on wl-copy (status quo; its
-    # failure is already the safe no-chord path).
-    assert pick_backend(set(), have_display=False) is ClipboardBackend.WL_COPY
+@pytest.mark.parametrize(
+    ("globals_seen", "have_display", "expected"),
+    [
+        pytest.param(
+            {"wl_compositor", "ext_data_control_manager_v1"},
+            True,
+            ClipboardBackend.WL_COPY,
+            id="ext_data_control",
+        ),
+        pytest.param(
+            {"wl_compositor", "zwlr_data_control_manager_v1"},
+            False,
+            ClipboardBackend.WL_COPY,
+            id="zwlr_data_control",
+        ),
+        pytest.param(
+            {"wl_compositor", "wl_shm", "xdg_wm_base"},
+            True,
+            ClipboardBackend.X11,
+            id="gnome_46_no_data_control_with_xwayland",
+        ),
+        pytest.param(None, True, ClipboardBackend.X11, id="probe_failed_with_display"),
+        pytest.param(None, False, ClipboardBackend.WL_COPY, id="probe_failed_without_display"),
+        # No data-control AND no X display: stay on wl-copy (status quo; its
+        # failure is already the safe no-chord path).
+        pytest.param(set(), False, ClipboardBackend.WL_COPY, id="no_alternative"),
+    ],
+)
+def test_pick_backend(globals_seen, have_display, expected):
+    assert pick_backend(globals_seen, have_display=have_display) is expected
 
 
 def test_backend_detection_runs_the_real_compositor_probe(caplog):
