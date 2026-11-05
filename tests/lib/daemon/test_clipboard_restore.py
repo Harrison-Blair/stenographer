@@ -37,7 +37,6 @@ class _Deliverer:
         self._error = error
         self._copy_first = copy_first
         self.originals: list[str | None] = []
-        self.restores = 0
         self.last_timings: DeliveryTimings | None = None
 
     def deliver(self, text, *, original=None, on_copied=None, cancelled=None):
@@ -63,7 +62,6 @@ class _Deliverer:
 
     def restore_clipboard(self) -> bool:
         self._events.append("restore")
-        self.restores += 1
         if self.last_timings is not None:
             self.last_timings = DeliveryTimings(
                 **{**self.last_timings.__dict__, "restore_ms": 4.0, "restored": True}

@@ -72,11 +72,6 @@ def _list_rows(app: HubApp) -> list[str]:
     return app.screen.query_one("#transcribe-list").render().plain.splitlines()
 
 
-def _dialog(app: HubApp) -> TranscribeDialog:
-    assert isinstance(app.screen, TranscribeDialog)
-    return app.screen
-
-
 async def _open_dialog(pilot, app: HubApp) -> TranscribeDialog:
     await pilot.press("2")
     await _until(pilot, lambda: app.library_screen.loaded, "library did not load")

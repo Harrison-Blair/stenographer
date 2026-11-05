@@ -96,10 +96,6 @@ def _screen_text(app) -> str:
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
 
 
-def _messages(app) -> list[str]:
-    return [notification.message for notification in app._notifications]
-
-
 async def _open(pilot, tab="general"):
     await pilot.press("3")
     pilot.app.settings_screen.select_tab(tab)

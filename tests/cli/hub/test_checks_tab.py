@@ -823,7 +823,7 @@ def test_checks_models_dialog_shows_each_model_and_downloads_after_confirmation(
     asyncio.run(exercise())
 
 
-def test_checks_default_model_download_fetches_only_the_chosen_model(monkeypatch, tmp_path):
+def test_checks_default_model_download_fetches_only_the_chosen_model(monkeypatch):
     from stenographer.cli.hub import doctor_view
     from stenographer.lib.live import download as live_download
     from stenographer.lib.transcribe import bark_download
