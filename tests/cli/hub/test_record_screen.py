@@ -27,7 +27,7 @@ from stenographer.lib.config.models import Config
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
-from tests.cli.hub.support import _card, _screen_text, make_app
+from tests.cli.hub.support import _has_split_header, _screen_text, _speaker_bar, make_app
 from tests.lib.platform.support import NullProcessCounters
 
 MIC_BYTES = 88 * 1024 * 1024
@@ -170,7 +170,8 @@ def _hints(app: HubApp) -> str:
 
 
 def _engine_state(app: HubApp) -> str:
-    return str(app.screen.query_one("#engine-state", Static).render())
+    engine = str(app.screen.query_one("#top-engine", Static).render())
+    return engine.partition(" ")[2].partition("  cpu ")[0]
 
 
 async def _until(pilot, condition, message="condition not met") -> None:
@@ -181,14 +182,13 @@ async def _until(pilot, condition, message="condition not met") -> None:
     raise AssertionError(message)
 
 
-IDLE_HINTS = "? help · q quit · space record · d device · m mic · s system · v view · 1 2 3 screens"
+IDLE_HINTS = "? help · q quit · space record · d device · m mic · s system · v view"
 RECORDING_HINTS = (
-    "? help · q quit · enter stop & save · space pause · m mic · s system"
-    " · v view · r rename · 1 2 3 screens"
+    "? help · q quit · enter stop & save · space pause · m mic · s system · v view · r rename"
 )
 SAVED_HINTS = (
     "? help · q quit · space record again · o open in Library · d device · m mic · s system"
-    " · v view · r rename · 1 2 3 screens"
+    " · v view · r rename"
 )
 
 
@@ -239,11 +239,11 @@ async def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(t
         assert "[space] ● Record again" in text and "[o] Open in Library" in text
         assert "relabeling…" in text
         assert _engine_state(app) == "relabeling 1 of 3"
-        assert "busy" in _card(app)
+        assert "busy" in _speaker_bar(app)
         assert _hints(app) == SAVED_HINTS
         # The app answers keys during the slow pass.
         await pilot.press("v")
-        assert "MIC · what you said" in _screen_text(app)
+        assert _has_split_header(_screen_text(app))
         await pilot.press("v")
         await pilot.press("r")
         await pilot.pause()
@@ -262,7 +262,7 @@ async def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(t
         await pilot.pause()
         assert "Relabeling failed: disk full. Live labels kept." in _screen_text(app)
         assert "── saved · 2 phrases · mic.flac 88 MB · system.flac 0.2 MB ──" in text
-        assert "busy" not in _card(app)
+        assert "busy" not in _speaker_bar(app)
         assert not session.skipped
 
         await pilot.press("o")
@@ -289,18 +289,18 @@ async def test_record_rename_button_is_disabled_while_the_session_is_busy(tmp_pa
         await _until(pilot, lambda: app.is_busy(session.path.name))
         app.refresh_view()
         await pilot.pause()
-        button = app.screen.query_one("#card-r", HubButton)
+        button = app.screen.query_one("#rename-button", HubButton)
         assert button.disabled
-        assert "busy" in _card(app)
+        assert "busy" in _speaker_bar(app)
 
-        await pilot.click("#card-r")
+        await pilot.click("#rename-button")
         await pilot.pause()
         assert not isinstance(app.screen, RenameDialog)
 
         session.release.set()
         await _until(pilot, lambda: not app.is_busy(session.path.name))
-        await _until(pilot, lambda: not app.screen.query_one("#card-r", HubButton).disabled)
-        await pilot.click("#card-r")
+        await _until(pilot, lambda: not app.screen.query_one("#rename-button", HubButton).disabled)
+        await pilot.click("#rename-button")
         await pilot.pause()
         assert isinstance(app.screen, RenameDialog)
 
@@ -329,7 +329,7 @@ async def test_record_saved_buttons_by_click_match_their_keys(tmp_path):
         assert app.current_mode == "library"
 
 
-async def test_record_overlapping_stops_keep_the_first_on_the_engine_card(tmp_path):
+async def test_record_overlapping_stops_keep_the_first_in_the_engine_status(tmp_path):
     services, created = _services(tmp_path)
     app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
@@ -468,7 +468,6 @@ async def test_record_meters_follow_blocks_speech_and_source_choice(tmp_path):
         mic = app.screen.query_one("#mic-meter")
         system = app.screen.query_one("#system-meter")
         assert mic.model.state == "idle" and system.model.state == "idle"
-        assert "captures the default output mix" in _screen_text(app)
 
         await pilot.press("s")
         await pilot.pause()
@@ -566,20 +565,18 @@ async def test_record_transcript_split_view_and_talk_time(tmp_path):
         assert "transcript · 2 speakers" in text
         mixed = [row for row in text.splitlines() if "alpha bravo" in row]
         assert len(mixed) == 1 and "00:00:01" in mixed[0] and "You" in mixed[0]
-        card = _card(app)
-        assert "You" in card and "0:02" in card
-        assert "Speaker 1" in card and "0:01" in card
-        assert "[r] Rename…" in text and "[r] Rename…" not in card
+        assert _speaker_bar(app) == "You 0:02   Speaker 1 0:01"
+        assert "[r] Rename…" in text
 
         await pilot.press("v")
         split = _screen_text(app)
-        assert "MIC · what you said" in split and "SYSTEM · everyone else" in split
+        assert _has_split_header(split)
         rows = [row for row in split.splitlines() if "alpha" in row or "delta" in row]
         assert len(rows) == 2
         assert "alpha" in rows[0] and "delta" not in rows[0]
         assert "delta" in rows[1] and "alpha" not in rows[1]
         await pilot.click("#view-button")
-        assert "MIC · what you said" not in _screen_text(app)
+        assert not _has_split_header(_screen_text(app))
         created[0].release.set()
 
 
@@ -968,7 +965,7 @@ async def test_record_meter_head_clicks_match_their_keys(tmp_path):
         session.release.set()
 
 
-async def test_record_card_reports_a_source_whose_audio_was_not_saved(tmp_path):
+async def test_record_bar_reports_a_source_whose_audio_was_not_saved(tmp_path):
     services, created = _services(tmp_path)
     app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
@@ -976,11 +973,11 @@ async def test_record_card_reports_a_source_whose_audio_was_not_saved(tmp_path):
         await _until(pilot, lambda: services.recording)
         app.refresh_view()
         await pilot.pause()
-        assert "not saved" not in _card(app)
+        assert "not saved" not in _speaker_bar(app)
         created[-1].audio_failed_sources = ("mic",)
         app.refresh_view()
         await pilot.pause()
-        assert "! mic audio not saved" in _card(app)
+        assert "! mic audio not saved" in _speaker_bar(app)
 
 
 def test_record_meters_use_configured_spectrum_floor(tmp_path):
@@ -1020,8 +1017,7 @@ async def test_record_refresh_without_a_change_requests_no_redraw(tmp_path, monk
         refresh = Widget.refresh
 
         def count_refresh(widget, *args, **kwargs):
-            if not any(node.id == "engine-card" for node in widget.ancestors_with_self):
-                requests.append(widget)
+            requests.append(widget)
             return refresh(widget, *args, **kwargs)
 
         monkeypatch.setattr(Widget, "refresh", count_refresh)
@@ -1054,16 +1050,11 @@ async def test_record_transcript_data_follows_lines_and_speakers(tmp_path):
         app.refresh_view()
         await pilot.pause()
         assert "earlier" in _screen_text(app)
-        assert "Speaker 2" in _card(app)
+        assert "Speaker 2" in _speaker_bar(app)
         assert _screen_text(app).index("earlier") < _screen_text(app).index("alpha bravo")
-
-        session.speakers = (("speaker-1", "Speaker 1"), ("speaker-3", "Speaker 3"))
-        app.refresh_view()
-        await pilot.pause()
-        assert "Speaker 3" in _card(app)
 
         session.lines[0] = replace(session.lines[0], label="Renamed")
         app.refresh_view()
         await pilot.pause()
-        assert "Renamed" in _card(app)
+        assert "Renamed" in _speaker_bar(app)
         session.release.set()

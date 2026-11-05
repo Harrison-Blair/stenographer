@@ -57,7 +57,7 @@ async def test_pilot_shell_navigation_focus_and_recording_lifecycle(tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.current_mode == "record"
-        assert "Press space to start recording" in "\n".join(
+        assert "○ READY" in "\n".join(
             "".join(segment.text for segment in strip._segments)
             for strip in app.screen._compositor.render_strips()
         )
@@ -71,7 +71,7 @@ async def test_pilot_shell_navigation_focus_and_recording_lifecycle(tmp_path):
             assert app.current_mode == "settings"
         await pilot.pause()
 
-        settings_row = str(app.screen.query_one("#sidebar", Static).render()).splitlines()[-1]
+        settings_row = str(app.screen.query_one("#nav-settings").label)
         assert settings_row.split() == ["▶", "3", "Settings"]
 
         search = Input(id="test-input")

@@ -64,7 +64,6 @@ def _board_report(warnings=()) -> DoctorReport:
                 "warn",
                 "pack bravo · 1 cue missing",
                 "Choose another sound pack.",
-                explanation="The sound pack bravo has no charlie cue.",
                 path="/tmp/sounds/bravo",
             ),
             _check("model_cached", "speech model", "engine", detail="alpha model · pinned"),
@@ -105,7 +104,7 @@ def _button(app, selector: str) -> HubButton:
     return app.screen.query_one(selector, HubButton)
 
 
-# V1: list, detail, card, badge
+# V1: list, detail, summary, badge
 
 
 def _select_check(tab, check_id):
@@ -177,15 +176,14 @@ async def test_checks_glyphs_carry_the_state_and_colour_only_adds(tmp_path):
         assert head.get_style_at_offset(2).rich_style.color is None
 
 
-async def test_checks_detail_shows_title_state_explanation_path_and_buttons(tmp_path):
+async def test_checks_detail_shows_title_state_result_fix_path_and_buttons(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
         assert app.checks_tab.selected.check_id == "cue_player"
         assert _plain(app, "#checks-detail-head") == "! sounds · warning"
         body = _plain(app, "#checks-detail-body")
-        assert "The sound pack bravo has no charlie cue." in body
-        assert "pack bravo · 1 cue missing" in body
+        assert body == "pack bravo · 1 cue missing\nhow to fix: Choose another sound pack."
         assert _plain(app, "#checks-detail-path") == "checked 13:21 · /tmp/sounds/bravo"
         labels = [
             str(_button(app, selector).label)
@@ -203,12 +201,14 @@ async def test_checks_detail_shows_title_state_explanation_path_and_buttons(tmp_
             for selector in ("#checks-quick", "#checks-models", "#checks-defaults")
         ]
         assert dialogs == ["[Q] Quick setup…", "[m] Models…", "[D] Defaults…"]
-        assert not app.screen.query("#checks-run"), "Run again is in the context card"
+        run_again = _button(app, "#checks-run-again")
+        assert run_again.region.y < app.screen.query_one("#checks-body").region.y
+        assert run_again.region.y == app.screen.query_one("#checks-summary").region.y
         frame = app.screen.query_one("#checks-detail").content_region
         for name in ("fix", "test", "log", "copy", "quick", "models", "defaults"):
             region = _button(app, f"#checks-{name}").region
             assert frame.contains_region(region), f"{name} is cut at 150 x 45"
-        assert _plain(app, "#checks-warnings-title") == "recent warnings (no transcript text)"
+        assert _plain(app, "#checks-warnings-title") == "recent warnings"
 
         # A passing check without a path or a test: no fix, no test, no path.
         _select_check(app.checks_tab, "system_service")
@@ -258,21 +258,19 @@ async def test_checks_click_on_a_row_selects_that_check(tmp_path):
         assert app.current_mode == "settings"
 
 
-async def test_checks_card_badge_and_tab_label_follow_the_last_run(tmp_path):
+async def test_checks_summary_badge_and_tab_label_follow_the_last_run(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_checks(pilot)
-        card = app.screen.query_one("#sidebar-card", Static).render()
-        assert app.screen.query_one("#sidebar-context").border_title == "checks"
+        summary = app.screen.query_one("#checks-summary", Static).render()
         ran_at = app.checks_tab.report.checked_at
-        assert card.plain == f"6 pass · 1 warn · 1 fail\nlast run {ran_at:%H:%M}"
-        ok = card.get_style_at_offset(0)
+        assert summary.plain == f"6 pass · 1 warn · 1 fail · last run {ran_at:%H:%M}"
+        ok = summary.get_style_at_offset(0)
         assert ok.rich_style.color.get_truecolor() == Color.parse("#6ee69a").get_truecolor()
-        zero = card.get_style_at_offset(card.plain.index("1 fail"))
+        zero = summary.get_style_at_offset(summary.plain.index("1 fail"))
         assert zero.rich_style.color is not None
 
-        nav = app.screen.query_one("#sidebar", Static).render().plain.splitlines()
-        assert nav[2].endswith("1 F")
+        assert str(_button(app, "#nav-settings").label).endswith("1 F")
         assert str(_button(app, "#tab-checks").label) == "▶ Checks ●2"
 
 
@@ -334,17 +332,16 @@ def test_checks_run_again_replaces_the_results(tmp_path):
             ]
             assert f"{FAIL} microphone" in _plain(app, "#checks-input")
             assert not app.screen.query_one("#checks-section-engine").display
-            card_text = app.screen.query_one("#sidebar-card", Static).render()
-            card = card_text.plain
-            assert card.startswith("0 pass · 0 warn · 1 fail\n")
-            assert card_text.get_style_at_offset(0).rich_style.color is None, "a zero count"
+            summary = app.screen.query_one("#checks-summary", Static).render()
+            assert summary.plain.startswith("0 pass · 0 warn · 1 fail · ")
+            assert summary.get_style_at_offset(0).rich_style.color is None, "a zero count"
 
             assert str(_button(app, "#tab-checks").label) == "▶ Checks ●1"
 
     asyncio.run(exercise())
 
 
-def test_checks_card_run_again_button_starts_a_new_run(tmp_path):
+def test_checks_run_again_button_starts_a_new_run(tmp_path):
     calls = []
 
     def probe(_config):
@@ -356,18 +353,15 @@ def test_checks_card_run_again_button_starts_a_new_run(tmp_path):
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_checks(pilot)
             first = app.checks_tab.report
-            card = app.screen.query_one("#sidebar-context")
-            button = card.query_one("#card-r", HubButton)
+            button = _button(app, "#checks-run-again")
             assert str(button.label) == "[r] Run again"
-            assert card.content_region.contains_region(button.region)
             assert await pilot.click(button)
             await _settle(pilot, lambda: app.checks_tab.report is not first)
             assert calls == ["probe", "probe"]
 
             await pilot.press("1")
             await pilot.pause()
-            record_buttons = app.screen.query_one("#sidebar-context").query(HubButton)
-            assert "[r] Run again" not in [str(b.label) for b in record_buttons]
+            assert not app.screen.query("#checks-run-again")
 
     asyncio.run(exercise())
 
@@ -1061,7 +1055,6 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
         ("other", "overlay"),
         ("other", "clipboard restore"),
     ]
-    assert all(check.explanation for check in report.checks)
     assert checks["hotkey_access_ok"].status == "fail"
     assert checks["hotkey_access_ok"].fix == "Join the input group."
     assert checks["model_cached"].detail == "Underdog Bark 3.0 Pro"

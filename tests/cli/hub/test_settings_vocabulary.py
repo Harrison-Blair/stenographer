@@ -119,3 +119,25 @@ async def test_settings_vocabulary_shows_the_rejection_inside_the_open_editor(tm
         await pilot.pause()
         assert app.screen.terms == ["delta"]
         assert FAIL not in _screen_text(app)
+
+
+async def test_settings_vocabulary_row_shows_its_default_when_it_differs(tmp_path):
+    path = _config_path(tmp_path, _WITH_TERMS)
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("3")
+        app.settings_screen.select_tab("recognition")
+        await pilot.pause()
+        assert _field(app, "Vocabulary").note == "default 0 terms"
+        app.settings_screen._apply("refine.vocabulary", ())
+        await pilot.pause()
+        assert _field(app, "Vocabulary").note == ""
+
+
+async def test_vocabulary_dialog_shows_only_the_term_count(tmp_path):
+    path = _config_path(tmp_path, _WITH_TERMS)
+    app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
+    async with app.run_test(size=(150, 45)) as pilot:
+        await _open_vocabulary(pilot)
+        count = app.screen.query_one("#vocab-count").render().plain
+        assert count == "2 of 200 terms"

@@ -55,23 +55,6 @@ WARNING_DESCRIPTIONS = {
     "worker: spawn_failed": "The speech engine did not start.",
     "worker: warmup_failed": "The speech engine did not warm up.",
 }
-# What each check looks at; the detail pane shows it above the probe result.
-_EXPLANATIONS = {
-    "key_injector_ok": "Dictation types its text through a virtual keyboard.",
-    "hotkey_access_ok": "The hotkey is read from the keyboard devices.",
-    "has_mic": "Dictation and recordings read the configured input device.",
-    "cue_player": "Sound cues play through a system audio player.",
-    "model_cached": "The speech model turns audio into text on this machine.",
-    "live_models_cached": "Recordings find speech and speakers with two small models.",
-    "refine_service": "Refine sends text to the configured Ollama host to tidy it.",
-    "system_capture": "Recordings can capture the system audio through PipeWire.",
-    "system_service": "The user service runs the dictation daemon.",
-    "ffmpeg": "File jobs read M4A and AAC files through ffmpeg.",
-    "python_venv": "The speech model build needs a Python virtual environment.",
-    "clipboard_ok": "Dictated text is pasted through the clipboard.",
-    "overlay": "The overlay shows the dictation state on the screen.",
-    "clipboard_restore": "The clipboard is put back after each paste.",
-}
 
 
 @dataclass(frozen=True)
@@ -82,7 +65,6 @@ class DoctorCheck:
     status: str
     detail: str
     fix: str
-    explanation: str = ""
     path: str = ""
 
 
@@ -212,11 +194,8 @@ def _refine_check(config: Config) -> DoctorCheck:
     from stenographer.lib.refine.endpoints import host_name
 
     refine = config.refine
-    explanation = _EXPLANATIONS["refine_service"]
     if not refine.enabled:
-        return DoctorCheck(
-            "refine_service", "refine service", "engine", "ok", "off", "", explanation
-        )
+        return DoctorCheck("refine_service", "refine service", "engine", "ok", "off", "")
     detail = f"{host_name(refine.host)} · {refine.model}"
     if installed_model_bytes(refine.host, refine.model) is None:
         return DoctorCheck(
@@ -226,9 +205,8 @@ def _refine_check(config: Config) -> DoctorCheck:
             "warn",
             f"{detail} not found",
             "Start Ollama on the refine host, then run `stenographer model download --refine`.",
-            explanation,
         )
-    return DoctorCheck("refine_service", "refine service", "engine", "ok", detail, "", explanation)
+    return DoctorCheck("refine_service", "refine service", "engine", "ok", detail, "")
 
 
 def build_report(config: Config) -> DoctorReport:
@@ -268,7 +246,6 @@ def build_report(config: Config) -> DoctorReport:
                 "ok" if ok else failed,
                 detail,
                 "" if ok else fix,
-                _EXPLANATIONS.get(check_id, ""),
                 path,
             )
         )

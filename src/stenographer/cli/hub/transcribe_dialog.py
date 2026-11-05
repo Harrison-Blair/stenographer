@@ -18,6 +18,7 @@ from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.dialog import Dialog
 from stenographer.cli.hub.widgets.frame import Frame
+from stenographer.cli.hub.widgets.row_input import fit_input_to_row
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
 
@@ -78,7 +79,7 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
     TranscribeDialog #transcribe-browser { margin-bottom: 1; }
     TranscribeDialog #transcribe-head { height: 1; }
     TranscribeDialog #transcribe-folder { width: 1fr; color: #8b93a1; }
-    TranscribeDialog #transcribe-search { width: 1fr; height: 1; padding: 0; border: none; }
+    TranscribeDialog #transcribe-search { width: 1fr; }
     TranscribeDialog #transcribe-list-scroll { height: auto; max-height: 12; }
     TranscribeDialog .transcribe-option { height: 1; }
     TranscribeDialog #transcribe-speakers-row { height: 3; }
@@ -105,7 +106,7 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         with Frame(id="transcribe-browser"):
             with Horizontal(id="transcribe-head"):
                 yield Static("", id="transcribe-folder", markup=False)
-                yield Input(placeholder="search this folder", id="transcribe-search")
+                yield Input(placeholder="search", id="transcribe-search")
                 yield HubButton("search", key="/", action="search", id="transcribe-search-button")
             with VerticalScroll(id="transcribe-list-scroll", can_focus=False):
                 yield SelectableList(id="transcribe-list")
@@ -125,7 +126,9 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         return (("esc", "Cancel", "cancel"), ("enter", "Transcribe", "transcribe"))
 
     def on_mount(self) -> None:
-        self.query_one("#transcribe-search", Input).display = False
+        search = self.query_one("#transcribe-search", Input)
+        fit_input_to_row(search)
+        search.display = False
         # A focused scroll body would take the arrow keys of the list.
         self.body_widget().can_focus = False
         # The app rules of HubButton outrank dialog CSS; line the buttons up with the input text.

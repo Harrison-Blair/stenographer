@@ -99,7 +99,7 @@ def test_concurrent_rename_between_read_and_write_is_kept(tmp_path):
     assert [line.text for line in writer_store.read(session.name).lines] == ["alpha", "bravo"]
 
 
-@pytest.mark.parametrize("operation", ("delete", "rename"))
+@pytest.mark.parametrize("operation", ("delete", "rename", "rename_label"))
 def test_concurrent_delete_and_rename_wait_for_a_running_write(tmp_path, operation):
     session = _session(tmp_path)
     writer_store = SessionStore(tmp_path / "sessions")
@@ -130,6 +130,8 @@ def test_concurrent_delete_and_rename_wait_for_a_running_write(tmp_path, operati
         try:
             if operation == "delete":
                 other_store.delete(session.name)
+            elif operation == "rename_label":
+                other_store.rename_label(session.name, "speaker-1", "Alice")
             else:
                 other_store.rename_speaker(session.name, "speaker-1", "Alice")
         except Exception as exc:

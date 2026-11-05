@@ -345,6 +345,24 @@ class SessionStore:
                 session_id, renamed, method="rename", expected_revision=detail.revision
             )
 
+    def rename_label(self, session_id: str, speaker_id: str, name: str) -> str:
+        """Save one new revision with each speaker that shares this speaker's name renamed."""
+        cleaned_name = name.strip()
+        if not cleaned_name:
+            raise ValueError("speaker name must not be empty")
+        with _session_lock(self.root / session_id):
+            detail = read_session(self._directory(session_id), session_id, with_activity=False)
+            labels = {line.speaker_id: line.label for line in detail.lines}
+            if speaker_id not in labels:
+                raise ValueError(f"speaker not found: {speaker_id}")
+            renamed = tuple(
+                replace(line, label=cleaned_name) if line.label == labels[speaker_id] else line
+                for line in detail.lines
+            )
+            return self.write_revision(
+                session_id, renamed, method="rename", expected_revision=detail.revision
+            )
+
     def _searchable_texts(self, session_id: str) -> tuple[str, ...]:
         directory = session_directory(self.root, session_id)
         if directory is None:

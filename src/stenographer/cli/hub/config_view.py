@@ -10,43 +10,6 @@ from stenographer.lib.config.document import ConfigDocument, SaveResult
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
 
-_HELP = {
-    "hotkey.binding": "Agent binding for cleanup of agent-directed dictation.",
-    "hotkey.device": "Hotkey input; blank automatically listens on detected keyboards.",
-    "hotkey.cancel_binding": "Global cancel key; blank disables it.",
-    "hotkey.mode": "Choose hold, toggle, or hybrid hotkey behavior.",
-    "hotkey.hybrid_threshold_seconds": "Press duration that separates a tap from a hold.",
-    "hotkey.general_binding": "General binding for ordinary transcript cleanup.",
-    "audio.input_device": "Audio input device name or index; blank uses the default.",
-    "audio.min_speech_rms": "Ignore audio below this speech energy level; zero disables the gate.",
-    "audio.max_recording_seconds": "Maximum length of one recording.",
-    "asr.idle_unload_seconds": "seconds before the idle worker unloads · 0 never",
-    "asr.cpu_threads": "0 = automatic",
-    "live.diarize_mic": (
-        "Separate the speakers on the microphone as Room 1, Room 2, and so on; "
-        "off labels every microphone line You."
-    ),
-    "refine.enabled": "local text cleanup after each utterance",
-    "refine.host": "a remote host receives transcript text",
-    "refine.model": "the model name of the local refine service",
-    "refine.min_words": "shorter utterances skip refine",
-    "refine.structured_output": "ask the model for structured output",
-    "refine.vocabulary": "terms spelled this way by refine",
-    "feedback.volume": "Playback volume for feedback sounds.",
-    "feedback.mute": "Mute feedback sounds.",
-    "feedback.overlay": "Show the best-effort status overlay.",
-    "feedback.update_check": "Check for release metadata and show an update notice.",
-    "feedback.spectrum_floor_dbfs": "Fixed audio-meter floor in dBFS, or one value per band.",
-    "feedback.sound_pack": "Name of the feedback sound pack.",
-    "feedback.log_level": "Minimum level for console log messages.",
-    "analytics.enabled": (
-        "Store local numeric usage history; no audio or transcript text is stored."
-    ),
-    "analytics.resource_profiling": "Measure local resource use during utterances.",
-    "delivery.copy_original": "Copy the original transcript before cleanup.",
-    "delivery.restore_clipboard": "Restore the previous clipboard item after delivery.",
-    "delivery.restore_delay_ms": "Wait this many milliseconds before restoring the clipboard.",
-}
 _LABELS = {
     "hotkey.binding": "Agent key",
     "hotkey.device": "Hotkey device",
@@ -208,9 +171,6 @@ class ConfigEditor:
         if self.config is None or self._saved is None:
             return False
         return self.value(dotted_key) != self._get(self._saved, dotted_key)
-
-    def help(self, dotted_key: str) -> str:
-        return _HELP[dotted_key]
 
     def label(self, dotted_key: str) -> str:
         return _LABELS[dotted_key]

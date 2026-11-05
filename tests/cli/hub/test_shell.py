@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pilot tests for the hub shell: navigation, sidebar, badges and shell contracts."""
+"""Pilot tests for the hub shell: navigation, top bar, badges and shell contracts."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 from stenographer.cli.hub.engine_status import EngineStatus
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
-from tests.cli.hub.support import IdleServices, make_app
+from tests.cli.hub.support import IdleServices, _screen_text, make_app
 from tests.cli.hub.test_library import FakeServices as LibraryServices
 from tests.cli.hub.test_library import _write_rec as _write_session
 from tests.cli.hub.test_live_view import FakeServices as RecordingServices
@@ -48,7 +48,10 @@ def _report(*statuses: str) -> DoctorReport:
 
 
 def _nav_rows(app: HubApp) -> list[str]:
-    return str(app.screen.query_one("#sidebar", Static).render()).splitlines()
+    return [
+        str(app.screen.query_one(f"#nav-{name}").label)
+        for name in ("record", "library", "settings")
+    ]
 
 
 def _config_path(tmp_path):
@@ -82,8 +85,8 @@ async def test_shell_nav_row_click_shows_the_screen(tmp_path):
     app = make_app(tmp_path, IdleServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
-        for row, screen in ((1, "library"), (2, "settings"), (0, "record")):
-            assert await pilot.click("#sidebar", offset=(4, row))
+        for screen in ("library", "settings", "record"):
+            assert await pilot.click(f"#nav-{screen}")
             await pilot.pause()
             assert app.current_mode == screen
 
@@ -125,73 +128,53 @@ async def test_shell_nav_badges_show_recording_paused_entries_and_check_results(
         assert _nav_rows(library)[1].split() == ["2", "Library", "2"]
 
 
-async def test_shell_nav_badges_end_at_the_right_edge_on_each_screen(tmp_path):
-    sessions_root = tmp_path / "sessions"
-    _write_session(sessions_root, datetime(2026, 10, 21, 9, 0, tzinfo=UTC))
-    app = make_app(tmp_path, LibraryServices(sessions_root))
-    async with app.run_test(size=(150, 45)) as pilot:
-        for key in ("1", "2", "3", "2"):
-            await pilot.press(key)
-            await pilot.pause(0.1)
-            nav = app.screen.query_one("#sidebar", Static)
-            library_row = _nav_rows(app)[1]
-            assert library_row.split()[-1] == "1"
-            assert len(library_row) == nav.size.width, (key, library_row)
+async def test_shell_top_line_fits_its_longest_navigation_and_engine_text_at_120_columns(tmp_path):
+    services = RecordingServices()
+    status = EngineStatus("bark-pro-int8", "relabeling 12 of 120", 100.0, 100.0, 1_610_612_736)
+    app = make_app(tmp_path, services, engine_sampler=FakeSampler(status))
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.pause()
+        app.checks_tab.report = _report("fail", "fail")
+        app.library_screen.loaded = True
+        app.library_screen._all_count = 123
+        app.refresh_view()
+        await pilot.pause()
+        top_line = _screen_text(app).splitlines()[0]
+        assert "1 Record ● 00:00:03" in top_line
+        assert "2 Library 123" in top_line
+        assert "3 Settings 2 F" in top_line
+        assert top_line.rstrip().endswith(
+            "bark-pro-int8 relabeling 12 of 120  cpu 100% all 100%  ram 1.5G"
+        )
+        assert top_line.index("2 F") < top_line.index("bark-pro-int8") - 1
 
 
-async def test_shell_sidebar_engine_card_draws_the_sampler_snapshot_each_second(tmp_path):
-    sampler = FakeSampler(EngineStatus("bark-pro-int8", "idle · unloaded", None, None, None, ()))
+async def test_shell_top_line_draws_the_sampler_snapshot_each_second(tmp_path):
+    sampler = FakeSampler(EngineStatus("bark-pro-int8", "idle · unloaded", None, None, None))
     app = make_app(tmp_path, IdleServices(), engine_sampler=sampler)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
 
-        def card() -> list[str]:
-            return [
-                str(app.screen.query_one(f"#{name}", Static).render())
-                for name in (
-                    "engine-model",
-                    "engine-state",
-                    "engine-cpu-app",
-                    "engine-cpu-all",
-                    "engine-ram-app",
-                    "engine-history",
-                )
-            ]
+        def engine() -> str:
+            return str(app.screen.query_one("#top-engine", Static).render())
 
-        assert card() == [
-            "bark-pro-int8",
-            "idle · unloaded",
-            "cpu app      — ▕········▏",
-            "    all      — ▕········▏",
-            "ram app      —",
-            "···················· 60 s",
-        ]
+        assert engine() == "bark-pro-int8 idle · unloaded  cpu — all —  ram —"
         samples = sampler.samples
         sampler.status = EngineStatus(
-            "bark-pro-int8", "ready · 2 queued", 50.0, 25.0, 1_610_612_736, (0.0, 100.0)
+            "bark-pro-int8", "ready · 2 queued", 50.0, 25.0, 1_610_612_736
         )
         await pilot.pause(1.2)
         assert sampler.samples > samples
-        assert card() == [
-            "bark-pro-int8",
-            "ready · 2 queued",
-            "cpu app    50% ▕████····▏",
-            "    all    25% ▕██······▏",
-            "ram app 1.5 GB",
-            "▁█·················· 60 s",
-        ]
+        assert engine() == "bark-pro-int8 ready · 2 queued  cpu 50% all 25%  ram 1.5G"
 
 
-async def test_shell_show_screen_and_set_context_card_follow_the_screen(tmp_path):
+async def test_shell_show_screen_changes_the_screen(tmp_path):
     app = make_app(tmp_path, IdleServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         app.show_screen("settings")
         await pilot.pause()
         assert app.current_mode == "settings"
-        app.set_context_card("library", "library card", title="storage")
-        card = app.screen.query_one("#sidebar-card", Static)
-        assert "library card" not in str(card.render())
 
 
 async def test_shell_show_library_selects_listed_unloaded_and_unknown_sessions(tmp_path):
@@ -258,7 +241,7 @@ async def test_shell_open_setting_selects_tab_and_row_and_keeps_unsaved_changes(
         assert not app.screen.query("#config-prompt-message")
 
 
-async def test_shell_set_check_summary_sets_badge_checks_tab_label_and_checks_card(tmp_path):
+async def test_shell_set_check_summary_sets_badge_checks_tab_label_and_checks_summary(tmp_path):
     app = make_app(tmp_path, IdleServices(), doctor_probe=lambda _config: _report("ok", "warn"))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3")
@@ -273,9 +256,8 @@ async def test_shell_set_check_summary_sets_badge_checks_tab_label_and_checks_ca
         app.checks_tab.report = None
         await pilot.press("left")
         await pilot.pause()
-        card = app.screen.query_one("#sidebar-card", Static).render().plain
-        assert app.screen.query_one("#sidebar-context").border_title == "checks"
-        assert card.startswith("1 pass · 1 warn · 0 fail\nlast run ")
+        summary = app.screen.query_one("#checks-summary", Static).render().plain
+        assert summary.startswith("1 pass · 1 warn · 0 fail · last run ")
         assert _nav_rows(app)[2].endswith("1 W")
         assert str(app.screen.query_one("#tab-checks").label) == "▶ Checks ●1"
 
@@ -374,7 +356,7 @@ async def test_shell_guard_asks_before_leaving_settings_with_unsaved_changes(
         if leave == "key":
             await pilot.press("1")
         elif leave == "click":
-            await pilot.click("#sidebar", offset=(4, 1))
+            await pilot.click("#nav-library")
         else:
             app.show_library()
         await pilot.pause()

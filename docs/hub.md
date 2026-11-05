@@ -14,7 +14,7 @@ receives every record.
 
 ## Screens and keys
 
-Press `1`, `2`, or `3`, or click a row of the navigation list, to show a
+Press `1`, `2`, or `3`, or click its name in the top line, to show a
 screen. Keys `4` to `6` do nothing.
 
 | Key | Screen | Purpose |
@@ -23,7 +23,7 @@ screen. Keys `4` to `6` do nothing.
 | `2` | Library | Review saved sessions, and transcribe audio files. |
 | `3` | Settings | Edit settings by tab, and run the system checks. |
 
-Each screen has a sidebar and one row of key hints at the bottom. Settings values wrap within their control column. The hint row
+Each screen has one top line and one row of key hints at the bottom. Long Settings values wrap. The hint row
 starts with `? help · q quit`. Press `?` to open a help overlay that lists every
 key of the current screen; press `?` or `escape` to close it. Each control on
 screen prints its key, for example `[r] Run again`, and a click on it does the
@@ -38,20 +38,21 @@ While a text input has focus, such as the Library search or a Settings row,
 letters, `?`, and `q` go to the input. The hint row then shows only the keys
 that still act, for example `enter keep · esc cancel`.
 
-The sidebar shows, from top to bottom:
+The top line shows, from left to right:
 
 - **Navigation:** `1 Record`, `2 Library`, and `3 Settings`. The current screen
   has a bold `▶` marker. Record shows `● HH:MM:SS` while a recording runs and
   `Ⅱ HH:MM:SS` while it is paused. Library shows its entry count. Settings
   shows `N W` when the last check run has warnings and `N F` when it has
   failures.
-- **Engine card:** the model (`bark-pro-int8`), a state line such as
+- **Engine status:** the model (`bark-pro-int8`), a state such as
   `ready · 2 queued` or `idle · unloaded`, the CPU use of the hub and its speech
-  worker (`cpu app`), the CPU use of the system (`all`), the memory of the hub
-  and its worker (`ram app`), and a 60-second CPU history. The card updates
-  once per second. A gauge shows `—` before its first sample.
-- **Context card:** a card that the current screen sets, for example the
-  speakers of the recording or the size of the library.
+  worker (`cpu`), the CPU use of the system (`all`), and the memory of the hub
+  and its worker (`ram`). For example:
+  `bark-pro-int8 ready  cpu 12% all 40%  ram 1.2G`. The values update once per
+  second. A value shows `—` before its first sample.
+
+The screens need at least 120 columns.
 
 Scrollbars stay visible. Their thin accent-colour thumbs are the only exception
 to the no-background rule; tracks and corners stay transparent.
@@ -81,8 +82,8 @@ editor does not know about.
 
 ## Record
 
-Record has a REC panel, a MIC meter, a SYSTEM meter, the transcript, and a
-`speakers` context card. Capture is local: Record never sends audio or
+Record has a REC panel, a MIC meter, and a SYSTEM meter at the top. Below them,
+a speaker bar sits above the full-width transcript. Capture is local: Record never sends audio or
 transcript text over the network. Each state shows a glyph and a word, so it does not
 depend on colour.
 
@@ -107,9 +108,9 @@ depend on colour.
 
 Press `enter` (or click `[enter] ■ Stop & save`) to stop and save. The hub
 stays open. The save and the speaker relabel pass run in the background: the
-transcript title shows `relabeling…` and the engine card shows
+transcript title shows `relabeling…` and the top line shows
 `relabeling N of M` until the pass ends. While it runs, the saved session is
-busy: `[r] Rename… busy` shows in the speakers card, and `r` shows the notice
+busy: `rename busy` shows in the speaker bar, `[r] Rename…` is disabled, and `r` shows the notice
 `session busy`. You can press `space` to record again while the pass runs, and
 several stopped sessions can relabel at the same time. When the pass ends, the
 transcript ends with a marker line such as
@@ -128,8 +129,7 @@ Press `n` to keep the hub open.
 Each meter shows 18 frequency bands in 8 rows, the band labels
 `100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS, and a
 speech light (`● speech` or `○ quiet`) from the voice detector of the source.
-While no recording runs, a meter shows a dotted grid: the MIC meter shows
-`not recording` and the SYSTEM meter shows `captures the default output mix`.
+While no recording runs, a meter shows a dotted grid and `not recording`.
 Press `m` or `s` to turn a source on or off. During a recording, the key
 changes the running session. Before a recording, the key chooses the sources
 of the next recording; a source that is off shows `off · press m to enable` (or
@@ -151,11 +151,13 @@ also scrolls the transcript. New lines stay in view while the transcript is at
 the bottom. If you scroll up, refreshes do not move the view; press `end` or
 scroll to the bottom to follow new lines again.
 
-The `speakers` card lists each speaker with its talk time, the count of failed
-phrases when there are any, a `! mic audio not saved` line when a source's audio
-cannot be written, and `[r] Rename…`. After such a failure the source keeps
+The speaker bar lists each speaker that has transcript lines, with its talk time.
+The row wraps between speakers when it runs out of room. Each speaker shows as
+text, so it does not depend on colour. The end of the bar shows the count of failed
+phrases when there are any, and `! mic audio not saved` when a source's audio
+cannot be written. `[r] Rename…` sits in the transcript title row. After such a failure the source keeps
 transcribing, its audio file ends at the failure, and the recording still saves
-its transcript. Press `r` (or click the card) to open the Rename speaker dialog:
+its transcript. Press `r` (or click `[r] Rename…`) to open the Rename speaker dialog:
 choose the speaker, type the new name, and press `enter` (or click `[enter] Rename`); `escape` cancels. During a recording, the
 rename changes the live labels. On a saved session, the rename writes a new
 transcript revision of that session.
@@ -214,24 +216,20 @@ and both can compete for CPU time.
 
 ### Relabel rules
 
+During a recording, stenographer regroups speakers every 30 seconds of recording. It runs the batch speaker-label pass over the phrases so far, separately for system phrases and, when microphone diarization is on, microphone phrases. Between passes, each new phrase joins the nearest known speaker, so a new voice can show under another speaker's label until the next pass. Only the first phrase of a source creates a speaker without a pass. A pass can move earlier lines to a different speaker. Known speakers keep their numbers and given names from pass to pass during the recording. The speaker list shows only speakers that have lines.
+
 When you stop and save a session, stenographer runs a batch speaker-label pass
 on the saved system phrases, and separately on the microphone phrases when
 microphone diarization is on, and stores the revised labels in a new transcript
 revision. This pass also runs when you confirm quit during a recording. Speaker
-labels are similarity estimates, not reliable identity checks. During a
-recording, phrases shorter than 1.2 seconds reuse a known speaker and do not
-change its embedding mean. A minor voice gets its own label only if it has at
+labels are similarity estimates, not reliable identity checks. A minor voice gets its own label only if it has at
 least 15 seconds of phrases that are each at least 2 seconds long within a
 30-second window and at least two-thirds of its speech in those sustained
 phrases, or if it has at least 20% of the top speaker's speech time.
 Otherwise, stenographer merges that voice into the most similar voice. Short or
 sparse phrases can therefore remain under another speaker's label.
 
-Each renamed label can go to only one cluster; when a label appears in several
-clusters, it stays with the cluster with the most shared speech time. The pass
-numbers clusters without a user name `Speaker 1`, `Speaker 2`, and so on, in
-order of first appearance in the session. If relabeling fails, the live labels
-remain and the saved Record screen shows the reason. Rename several speakers to the same name
+When a pass merges speakers, the merged speaker keeps the number of the speaker with the most speech that an earlier pass grouped, and a renamed speaker chooses before an unnamed one. If two renamed speakers merge, only one name can stay on the merged speaker. When the session saves, speakers are numbered from 1 in order of first appearance, with no gaps, so a number can change once at save, for example `Room 3` becomes `Room 2`. Given names stay. If you skip the end pass, or it fails, stenographer saves the speakers and names shown on screen, numbered the same way, and a failure shows the reason on the saved Record screen. If that save fails, the stop shows as a failed save. File jobs and re-diarize number clusters by first appearance and keep each renamed label on one cluster, the one with the most shared speech time. Rename several speakers to the same name
 to merge their displayed labels; this does not change their speaker IDs. The
 clustering threshold is 0.50; it was tested on only three clips, so labels are
 not reliable identification.
@@ -265,13 +263,14 @@ network behavior.
 
 ## Library
 
-Library has a list on the left and the detail of the selected entry on the
-right. The list holds saved recordings, file sessions, and file jobs that are
+Library has a list of eight rows above the full-width detail of the selected
+entry. The list scrolls to keep the selected row in view. It holds saved recordings, file sessions, and file jobs that are
 not finished, newest first. Its columns are `date`, `dur`, `kind` (`rec` or
 `file`), `spk` (speaker count), and `labels`:
 
-- **Recording:** `labels` is `live` for live speaker labels, `relabeled` after
-  the relabel pass or a re-diarize, a revision method such as `rename` or
+- **Recording:** `labels` is `live` for live speaker labels, also after a
+  skipped or failed end pass, `relabeled` when the relabel pass or a re-diarize
+  ran, a revision method such as `rename` or
   `re-transcribe`, or `! interrupted` when the recording stopped without a
   clean save.
 - **File session:** `labels` is the name of the source file.
@@ -284,8 +283,8 @@ not finished, newest first. Its columns are `date`, `dur`, `kind` (`rec` or
 
 The list updates when a job ends and when a recording is saved, and it keeps
 the selected entry. The active recording does not appear until it is saved.
-The context card shows the entry count, the audio size, and the sessions
-folder; the navigation row shows the entry count.
+The top edge of the list shows the entry count, the audio size, and the sessions
+folder; the top line shows the entry count.
 
 Press `/` to search session IDs, start times, file names, and transcripts; the
 search ignores case and runs in the background. Recording times include the
@@ -303,7 +302,7 @@ the transcript. Each action is a button that prints its key:
 | `/` | Search titles and transcripts. |
 | `escape` | Clear the search. |
 | `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. On another session, `p` stops the audio that plays and starts that session. A notice shows when the player exits with an error. |
-| `r` | Rename a speaker of the session. |
+| `r` | Rename a speaker of the session. Speakers that share a name are one row, and all of them get the new name. |
 | `d` | Re-diarize the session. A file session cannot: use Re-transcribe. |
 | `t` | Re-transcribe the session. |
 | `x` | Export the transcript. |
@@ -405,7 +404,8 @@ tab. The first four tabs edit
 | Recognition | `asr.idle_unload_seconds`, `asr.cpu_threads`, and the refine settings |
 | Live | `live.diarize_mic` |
 
-Each row shows a `●` slot, the setting name, its control, and help. A `▶`
+Each row shows a `●` slot, the setting name, and its control. See the
+[settings reference](#settings-reference) for what each setting does. A `▶`
 marks the selected row. The controls are:
 
 | Control | Example | Edit |
@@ -420,12 +420,12 @@ marks the selected row. The controls are:
 While an input in a row has focus, letters go to the input. `enter` keeps the
 value, `escape` cancels it, `tab` keeps it and selects the next row, and
 `ctrl+s` keeps it and saves. When the config refuses a value, the input stays
-open and the help of the row reads `× <reason>`, for example
+open and the row shows `× <reason>`, for example
 `× must be non-empty`.
 
 A `●` marks a row whose value differs from the saved file, not from the
-default. The help of the selected row shows the default. The context card
-shows the config file, `● N unsaved changes`, and the newest
+default. A row shows `default <value>` when its value differs from the default. The first row of the
+panel shows the config file, `● N unsaved changes`, and the newest
 `config.toml.bak-<time>` backup with its time. Below the rows, `[ctrl+s] Save N
 changes`, `[u] Undo`, `[D] Reset row`, and `Discard all` act on the draft;
 Discard all asks first. Click a row to select it, and click it again to edit
@@ -457,6 +457,41 @@ unsaved change of Settings; `escape` cancels.
 Settings apply to new sessions and jobs. Work that is already running keeps
 its current settings.
 
+### Settings reference
+
+| Setting | Key | What it does |
+| --- | --- | --- |
+| Agent key | `hotkey.binding` | The binding for agent-directed dictation and its cleanup. |
+| Hotkey device | `hotkey.device` | The hotkey input device. Blank listens on the keyboards that stenographer detects. |
+| Cancel key | `hotkey.cancel_binding` | The global cancel key. Blank disables it. |
+| Hotkey mode | `hotkey.mode` | The hotkey behavior: hold, toggle, or hybrid. |
+| Hold threshold | `hotkey.hybrid_threshold_seconds` | The press duration that separates a tap from a hold. |
+| General key | `hotkey.general_binding` | The binding for ordinary transcript cleanup. |
+| Volume | `feedback.volume` | The playback volume of feedback sounds. |
+| Mute sounds | `feedback.mute` | Mutes feedback sounds. |
+| Overlay | `feedback.overlay` | Shows the best-effort status overlay. |
+| Sound pack | `feedback.sound_pack` | The name of the feedback sound pack. |
+| Update check | `feedback.update_check` | Checks release metadata and shows an update notice. |
+| Log level | `feedback.log_level` | The minimum level of console log messages. |
+| Copy original | `delivery.copy_original` | Copies the original transcript before cleanup. |
+| Restore clipboard | `delivery.restore_clipboard` | Restores the previous clipboard item after delivery. |
+| Restore delay | `delivery.restore_delay_ms` | The wait, in milliseconds, before the clipboard is restored. |
+| Usage history | `analytics.enabled` | Stores local numeric usage history. It stores no audio or transcript text. |
+| Resource profiling | `analytics.resource_profiling` | Measures local resource use during utterances. |
+| Microphone | `audio.input_device` | The audio input device name or index. Blank uses the default. |
+| Minimum speech level | `audio.min_speech_rms` | Ignores audio below this speech energy level. Zero disables the gate. |
+| Longest recording | `audio.max_recording_seconds` | The maximum length of one recording. |
+| Meter floor dBFS | `feedback.spectrum_floor_dbfs` | The audio meter floor in dBFS: one fixed value, or one value per band. |
+| Idle unload | `asr.idle_unload_seconds` | The seconds before the idle speech worker unloads. Zero never unloads it. |
+| CPU threads | `asr.cpu_threads` | The CPU threads of the speech worker. Zero is automatic. |
+| Vocabulary | `refine.vocabulary` | Terms that refine spells exactly as written. |
+| Refine | `refine.enabled` | Runs text cleanup after each utterance. |
+| Host | `refine.host` | The Ollama server of refine. A host that is not loopback receives transcript text. |
+| Model | `refine.model` | The model name on the refine service. |
+| Minimum words | `refine.min_words` | Shorter utterances skip refine. |
+| Structured output | `refine.structured_output` | Asks the model for structured output. |
+| Separate room speakers | `live.diarize_mic` | Separates the speakers on the microphone as Room 1, Room 2, and so on. Off labels every microphone line You. |
+
 ### Checks
 
 The Checks tab runs the system checks the first time it opens, in the
@@ -471,13 +506,13 @@ former Doctor and Setup sections. The checks are grouped:
 
 Each row shows a state glyph, the check name, and a short detail that is cut
 to fit: `✓` pass, `!` warning, `×` failure. The detail pane shows the
-selected check with its state word, what the check looks at, the result, fix guidance when available,
+selected check with its state word, the result, fix guidance when available,
 `checked HH:MM` and the related path when one applies, and the buttons
 `[f] Fix: …` (for a warning or failure that has a fix), `[t] Test: …` (when
 the area has a test), `[l] Open log`, and `[c] Copy report`.
 
-The context card shows `N pass · N warn · N fail` and the time of the last
-run. The Settings navigation badge shows `N W` for warnings or `N F` for
+The first row of the tab shows `N pass · N warn · N fail`, the time of the last
+run, and `[r] Run again`. The Settings navigation badge shows `N W` for warnings or `N F` for
 failures, and the tab label shows `●N` when the last run has warnings or
 failures. New optional checks appear as warnings and do not change the
 existing `stenographer doctor` exit status. The refine service check asks the
@@ -502,7 +537,7 @@ The microphone test lists the input devices and does not capture audio. The
 sound test plays the preview of the sound pack. The hub does not start or
 restart the system service.
 
-Recent warnings, under `recent warnings (no transcript text)`, show only the
+Recent warnings, under `recent warnings`, show only the
 time, the level, the event token, such as `live: system_source_failed`, and a
 fixed description for known tokens. They never show a log message, exception
 text, or a field of the log line. The copied report uses the same form.

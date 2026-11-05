@@ -33,7 +33,7 @@ from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError
-from tests.cli.hub.support import _card, _screen_text, make_app
+from tests.cli.hub.support import _screen_text, make_app
 from tests.cli.hub.test_session_jobs import FakePlatform, FakePlayer
 
 REC_RELABELED = datetime(2026, 10, 27, 13, 3, tzinfo=UTC)
@@ -167,6 +167,10 @@ def _rows(app: HubApp) -> list[str]:
     return app.screen.query_one("#library-list", Static).render().plain.splitlines()
 
 
+def _storage(app: HubApp) -> str:
+    return _screen_text(app).splitlines()[app.screen.query_one("#library-list-frame").region.y]
+
+
 def _button(app: HubApp, button_id: str) -> HubButton:
     return app.screen.query_one(f"#{button_id}", HubButton)
 
@@ -191,7 +195,7 @@ async def _open_library(pilot, app: HubApp, count: int, *, detail: bool = True) 
 # V1: list, search and select by ID
 
 
-def test_library_list_cells_storage_card_and_badge(tmp_path):
+def test_library_list_cells_storage_summary_and_badge(tmp_path):
     root, _sessions = _library(tmp_path)
     services = FakeServices(root)
     services.jobs.append(FakeJob("file-1", tmp_path / "sources" / "lecture.mp3"))
@@ -213,25 +217,22 @@ def test_library_list_cells_storage_card_and_badge(tmp_path):
             header = app.screen.query_one("#library-columns", Static).render().plain.split()
             assert header == ["date", "dur", "kind", "spk", "labels"]
 
-            card = _card(app)
-            assert app.screen.query_one("#sidebar-context").border_title == "storage"
-            assert "5 entries" in card
+            storage = _storage(app)
+            assert "5 entries" in storage
             # Stored audio: each recording's FLAC files and the file session's source copy.
             stored = [*root.glob("*/*.flac"), *root.glob("*/source.wav")]
             audio_bytes = sum(path.stat().st_size for path in stored)
-            assert f"{audio_bytes / 1024:.1f} KB audio" in card
-            assert str(root) in card
-            assert app.screen.query_one("#sidebar", Static).render().plain.splitlines()[
-                1
-            ].split() == ["▶", "2", "Library", "5"]
+            assert f"{audio_bytes / 1024:.1f} KB audio" in storage
+            assert str(root) in storage
+            assert str(_button(app, "nav-library").label).split() == ["▶", "2", "Library", "5"]
 
             text = _screen_text(app)
-            assert "[/] search titles and transcripts" in text
+            assert str(_button(app, "library-search-button").label) == "[/] search"
             assert "[n] + Transcribe a file…" in text
             hints = app.screen.query_one("#key-hints", Static).render().plain
             assert hints == (
-                "? help · q quit · n transcribe file · / search · p play · r rename · "
-                "d re-diarize · t re-transcribe · x export · del delete · 1 2 3 screens"
+                "? help · q quit · n transcribe · / search · p play · r rename · "
+                "d re-diarize · t re-transcribe · x export · del delete"
             )
 
             # The interrupted label carries the danger tone in addition to its "!" glyph.
@@ -378,7 +379,7 @@ def test_library_does_not_list_the_active_recording(tmp_path):
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("2")
             await _until(pilot, lambda: app.library_screen.entry_count == 0)
-            assert "0 entries" in _card(app)
+            assert "0 entries" in _storage(app)
             assert "No saved sessions." in _screen_text(app)
 
     asyncio.run(exercise())
@@ -410,7 +411,7 @@ def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
             assert app.screen.query_one("#library-sys").render().plain.startswith("sys ")
             for label in (
                 "[p] ▶ Play",
-                "[r] Rename speaker…",
+                "[r] Rename…",
                 "[d] Re-diarize",
                 "[t] Re-transcribe",
                 "[x] Export…",
@@ -439,7 +440,6 @@ def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
             assert "golf hotel india" in text
             rediarize = _button(app, "library-rediarize")
             assert rediarize.disabled
-            assert "d re-diarize: use Re-transcribe" in text
             await pilot.press("d")
             await pilot.pause()
             assert "use Re-transcribe" in "\n".join(str(n.message) for n in app._notifications)
@@ -1107,21 +1107,16 @@ def test_library_layout_frames_rows_state_rule_and_transcript_colours(tmp_path):
             detail = app.screen.query_one("#library-detail-frame")
             assert listing.styles.border.top[0] == "round"
             assert detail.styles.border.top[0] == "round"
-            assert listing.region.x < detail.region.x
-            # The board fixes the list width and the detail takes the rest.
-            assert listing.region.width < detail.region.width
-            assert listing.region.y == detail.region.y
-            assert listing.region.height == detail.region.height
-
-            # The board gives the list and the detail no frame title.
-            assert not listing.border_title
+            # The list sits above the detail; both take the full width.
+            assert listing.region.bottom <= detail.region.y
+            assert listing.region.x == detail.region.x
+            assert listing.region.width == detail.region.width
+            assert app.screen.query_one("#library-list-scroll").region.height == 8
             assert not detail.border_title
 
-            # The storage card sits under the navigation, in the same column.
-            card = app.screen.query_one("#sidebar-card", Static)
-            nav = app.screen.query_one("#sidebar", Static)
-            assert card.region.x == nav.region.x
-            assert card.region.y > nav.region.y
+            # The storage summary is on the first row of the Library.
+            first_row = _screen_text(app).splitlines()[listing.region.y]
+            assert "4 entries" in first_row
 
             # Each row stays on one line, the interrupted one too, as the selection moves.
             rows = app.screen.query_one("#library-list", Static)
@@ -1145,7 +1140,7 @@ def test_library_layout_frames_rows_state_rule_and_transcript_colours(tmp_path):
             transcript = app.screen.query_one("#library-transcript")
             assert rule.region.width == detail.content_region.width
             assert rule.region.y < transcript.region.y
-            assert app.screen.query_one("#library-actions-4").region.y < rule.region.y
+            assert app.screen.query_one("#library-actions").region.y < rule.region.y
 
             # A speaker name in the transcript is bold in its speaker colour.
             content = app.screen.query_one("#transcript-scroll-content", Static)
@@ -1158,7 +1153,7 @@ def test_library_layout_frames_rows_state_rule_and_transcript_colours(tmp_path):
     asyncio.run(exercise())
 
 
-def test_library_storage_card_shortens_the_home_folder(tmp_path, monkeypatch):
+def test_library_storage_summary_shortens_the_home_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     root, _sessions = _library(tmp_path)
     app = make_app(tmp_path, FakeServices(root))
@@ -1166,8 +1161,8 @@ def test_library_storage_card_shortens_the_home_folder(tmp_path, monkeypatch):
     async def exercise():
         async with app.run_test(size=(150, 45)) as pilot:
             await _open_library(pilot, app, 4, detail=False)
-            assert "~/sessions" in _card(app)
-            assert str(tmp_path) not in _card(app)
+            assert "~/sessions" in _storage(app)
+            assert str(tmp_path) not in _storage(app)
 
     asyncio.run(exercise())
 

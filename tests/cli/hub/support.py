@@ -32,8 +32,13 @@ def _screen_text(app: HubApp) -> str:
     )
 
 
-def _card(app: HubApp) -> str:
-    return str(app.screen.query_one("#sidebar-card", Static).render())
+def _has_split_header(text: str) -> bool:
+    """Return whether a screen row holds only the two column headers of the split transcript."""
+    return any(row.replace("│", " ").split() == ["MIC", "SYSTEM"] for row in text.splitlines())
+
+
+def _speaker_bar(app: HubApp) -> str:
+    return str(app.screen.query_one("#speaker-bar", Static).render())
 
 
 def make_app(tmp_path, services, **kwargs) -> HubApp:

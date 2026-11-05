@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Engine card snapshot: state precedence and /proc gauges with fake services."""
+"""Engine status snapshot: state precedence and /proc gauges with fake services."""
 
 from __future__ import annotations
 
@@ -230,7 +230,6 @@ def test_engine_gauges_are_none_before_the_first_sample(tmp_path):
     assert status.cpu_app_percent is None
     assert status.cpu_all_percent is None
     assert status.ram_app_bytes is None
-    assert status.cpu_history == ()
 
 
 def test_engine_samples_app_cpu_over_hub_and_worker_pids_system_cpu_and_app_ram(tmp_path):
@@ -252,7 +251,6 @@ def test_engine_samples_app_cpu_over_hub_and_worker_pids_system_cpu_and_app_ram(
     assert first.cpu_app_percent is None
     assert first.cpu_all_percent is None
     assert first.ram_app_bytes == 600 * 4096
-    assert first.cpu_history == ()
 
     clock.now += 1.0
     # 50 + 150 + 0 ticks at 100 ticks/s over 1 s on 4 CPUs is 50 %.
@@ -267,7 +265,6 @@ def test_engine_samples_app_cpu_over_hub_and_worker_pids_system_cpu_and_app_ram(
     assert second.cpu_app_percent == pytest.approx(50.0)
     assert second.cpu_all_percent == pytest.approx(75.0)
     assert second.ram_app_bytes == 610 * 4096
-    assert second.cpu_history == pytest.approx((50.0,))
 
 
 def test_engine_app_cpu_counts_a_new_worker_and_drops_a_gone_one(tmp_path):
@@ -294,27 +291,6 @@ def test_engine_app_cpu_counts_a_new_worker_and_drops_a_gone_one(tmp_path):
     assert status.ram_app_bytes == 30 * 4096
 
 
-def test_engine_cpu_history_keeps_the_last_sixty_seconds(tmp_path):
-    clock = FakeClock()
-    proc = FakeProc(tmp_path)
-    sampler = _sampler(FakeServices(), tmp_path, clock)
-    ticks = 0
-    proc.system(1_000, 500)
-    proc.process(HUB_PID, ticks, 1)
-    sampler.sample()
-    for second in range(1, 66):
-        clock.now += 1.0
-        # Second n uses n ticks: n / 100 s of CPU on 4 CPUs is n / 4 %.
-        ticks += second
-        proc.process(HUB_PID, ticks, 1)
-        proc.system(1_000 + 100 * second, 500)
-        sampler.sample()
-
-    history = sampler.snapshot().cpu_history
-    assert len(history) == 60
-    assert history == pytest.approx(tuple(second / 4 for second in range(6, 66)))
-
-
 def test_engine_gauges_stay_none_when_proc_is_unreadable(tmp_path):
     clock = FakeClock()
     sampler = _sampler(FakeServices(), tmp_path, clock)
@@ -328,7 +304,6 @@ def test_engine_gauges_stay_none_when_proc_is_unreadable(tmp_path):
         None,
         None,
     )
-    assert status.cpu_history == ()
 
 
 def test_engine_gauges_stay_none_on_a_host_without_counters(tmp_path):
@@ -344,7 +319,6 @@ def test_engine_gauges_stay_none_on_a_host_without_counters(tmp_path):
         None,
         None,
     )
-    assert status.cpu_history == ()
     assert status.state == "idle · unloaded"
 
 
@@ -387,7 +361,7 @@ def test_engine_reads_the_files_engine_that_hub_services_create(tmp_path):
     assert services.files_engine is None
 
 
-def test_engine_sampler_feeds_the_sidebar_engine_card(tmp_path):
+def test_engine_sampler_feeds_the_top_line(tmp_path):
     import asyncio
 
     from textual.widgets import Static
@@ -411,15 +385,14 @@ def test_engine_sampler_feeds_the_sidebar_engine_card(tmp_path):
         async with app.run_test(size=(150, 45)) as pilot:
             await pilot.press("2")
             await pilot.pause()
-            gauge = app.screen.query_one("#engine-cpu-all", Static)
-            assert str(gauge.render()) == "    all      — ▕········▏"
+            engine = app.screen.query_one("#top-engine", Static)
+            assert " all — " in str(engine.render())
 
             # 1000 jiffies pass, 250 of them idle: 75 % busy.
             clock.now += 1.0
             proc.system(2_000, 750)
             app._sample_engine()
             await pilot.pause()
-            gauge = app.screen.query_one("#engine-cpu-all", Static)
-            assert str(gauge.render()) == "    all    75% ▕██████··▏"
+            assert " all 75% " in str(engine.render())
 
     asyncio.run(exercise())

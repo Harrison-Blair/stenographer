@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Record screen: REC panel, spectrum meters, transcript and speakers card."""
+"""The Record screen: REC panel, spectrum meters, speaker bar and transcript."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.key_hints import KeyHints
+from stenographer.cli.hub.widgets.speaker_bar import SpeakerBar
 from stenographer.cli.hub.widgets.spectrum_meter import SpectrumMeter
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_IDLE_TEXT = {"mic": "not recording", "system": "captures the default output mix"}
+_IDLE_TEXT = "not recording"
 _SYSTEM_DEVICE = "default output"
 _STATE_TOKENS = {
     "idle": ("○", "READY", "dim"),
@@ -145,7 +146,9 @@ class RecordScreen(HubScreen):
             with Frame(id="transcript-frame", variant="fill"):
                 with Horizontal(id="transcript-head"):
                     yield Static("", id="transcript-title", markup=False)
+                    yield HubButton("Rename…", key="r", action="rename_speaker", id="rename-button")
                     yield HubButton("", key="v", action="toggle_view", id="view-button")
+                yield SpeakerBar(id="speaker-bar")
                 yield TranscriptScroll(id="transcript", can_focus=False)
                 yield KeyHints(footer=False, id="transcript-hints")
 
@@ -207,14 +210,11 @@ class RecordScreen(HubScreen):
         self._draw_rec_panel(state, shown)
         self._draw_meters(live)
         self._draw_transcript(state, shown, lines, speakers)
-        app.set_context_card(
-            "record",
-            self._speakers_card(shown, speakers),
-            title="speakers",
-            buttons=(("Rename…", "r", self.action_rename_speaker),),
-            disabled=frozenset({"r"})
-            if state == "failed" or self._rename_busy(shown)
-            else frozenset(),
+        self.query_one("#speaker-bar", SpeakerBar).set_items(
+            self._speaker_items(shown, lines, speakers)
+        )
+        self.query_one("#rename-button", HubButton).disabled = (
+            state == "failed" or self._rename_busy(shown)
         )
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
@@ -239,7 +239,7 @@ class RecordScreen(HubScreen):
             )
         else:
             items = (("space", "record"), ("d", "device"), *_RECORD_HINTS)
-        return (*items, ("1 2 3", "screens"))
+        return items
 
     def _draw_rec_panel(self, state: str, session) -> None:
         update_changed(
@@ -300,7 +300,7 @@ class RecordScreen(HubScreen):
                 current = session.source_states.get(source, "off")
                 wanted = {"on": ("on", ""), "paused": ("idle", "paused")}.get(current, ("off", ""))
             else:
-                wanted = ("idle", _IDLE_TEXT[source]) if sources.get(source) else ("off", "")
+                wanted = ("idle", _IDLE_TEXT) if sources.get(source) else ("off", "")
             if self._meter_states.get(source) != wanted:
                 self._meter_states[source] = wanted
                 meter.set_state(wanted[0], idle_text=wanted[1])
@@ -327,14 +327,8 @@ class RecordScreen(HubScreen):
         )
 
         marker = self._marker(session, lines) if state == "saved" else None
-        if state == "idle":
-            message = "Press space to start recording."
-        elif state in {"recording", "paused"}:
-            message = "Recording is active. Change screens without stopping it."
-        else:
-            message = ""
         relabel_error = getattr(session, "relabel_error", None) if state == "saved" else None
-        key = (lines, speakers, self.split, marker, message, relabel_error)
+        key = (lines, speakers, self.split, marker, relabel_error)
         if key == self._transcript_key:
             return
         self._transcript_key = key
@@ -348,8 +342,8 @@ class RecordScreen(HubScreen):
             header.add_column(ratio=1)
             header.add_row(
                 "",
-                Text("MIC · what you said", style="bold #5fd7ff"),
-                Text("SYSTEM · everyone else", style="bold #ffaf5f"),
+                Text("MIC", style="bold #5fd7ff"),
+                Text("SYSTEM", style="bold #ffaf5f"),
             )
             rows.append(header)
         rows.extend(self._rows.rows(lines, speaker_ids, layout=layout))
@@ -359,17 +353,15 @@ class RecordScreen(HubScreen):
             rows.append(
                 Text(f"Relabeling failed: {relabel_error}. Live labels kept.", style="#ffaf5f")
             )
-        if not lines and message:
-            rows.append(Text(message))
         self.query_one("#transcript", TranscriptScroll).update_content(Group(*rows))
 
     def _transcript_data(self, session) -> tuple[tuple, tuple]:
         """Return the sorted lines and speaker rows; compute them again only on a change."""
-        key = (self._source_lines(session), getattr(session, "speakers", ()))
+        key = self._source_lines(session)
         if self._transcript_data_key != key:
             self._transcript_data_key = key
             lines = self._lines(session)
-            self._transcript_data_value = (lines, self._speaker_rows(session, lines))
+            self._transcript_data_value = (lines, self._speaker_rows(lines))
         return self._transcript_data_value
 
     def _source_lines(self, session) -> tuple:
@@ -383,7 +375,7 @@ class RecordScreen(HubScreen):
         return tuple(sorted(self._source_lines(session), key=lambda line: line.start))
 
     @staticmethod
-    def _speaker_rows(session, lines: tuple) -> tuple[tuple[str, str, float], ...]:
+    def _speaker_rows(lines: tuple) -> tuple[tuple[str, str, float], ...]:
         """Return ``(speaker_id, label, talk seconds)`` in first-line order."""
         labels: dict[str, str] = {}
         seconds: dict[str, float] = {}
@@ -392,12 +384,8 @@ class RecordScreen(HubScreen):
             seconds[line.speaker_id] = seconds.get(line.speaker_id, 0.0) + max(
                 0.0, line.end - line.start
             )
-        if session is not None:
-            for speaker_id, label in getattr(session, "speakers", ()):
-                labels.setdefault(speaker_id, label)
         return tuple(
-            (speaker_id, label, seconds.get(speaker_id, 0.0))
-            for speaker_id, label in labels.items()
+            (speaker_id, label, seconds[speaker_id]) for speaker_id, label in labels.items()
         )
 
     @staticmethod
@@ -414,30 +402,29 @@ class RecordScreen(HubScreen):
             )
         return " · ".join(parts)
 
-    def _speakers_card(self, session, speakers: tuple) -> Text:
-        card = Text()
+    def _speaker_items(self, session, lines: tuple, speakers: tuple) -> tuple[Text, ...]:
+        """Return one ``label time`` item per speaker, then the warnings of the session."""
+        items: list[Text] = []
+        sources = {line.speaker_id: line.source for line in lines}
         speaker_ids = tuple(speaker_id for speaker_id, _label, _seconds in speakers)
         for speaker_id, label, seconds in speakers:
-            if card:
-                card.append("\n")
-            color = speaker_color(
-                speaker_id, speaker_ids, source="mic" if speaker_id == "you" else None
-            )
-            card.append(f"{label[:14]:<14}", style=f"bold {color}")
-            whole = int(seconds)
-            card.append(f" {whole // 60}:{whole % 60:02d}")
-        if not card:
-            card.append("no speakers yet", style="#8b93a1")
+            color = speaker_color(speaker_id, speaker_ids, source=sources.get(speaker_id))
+            item = Text()
+            item.append(label, style=f"bold {color}")
+            item.append(f" {Clock.duration(seconds)}")
+            items.append(item)
+        if not items:
+            items.append(Text("no speakers yet", style="#8b93a1"))
         failed = getattr(session, "failed_phrase_count", 0) if session is not None else 0
         if failed:
             noun = "phrase" if failed == 1 else "phrases"
-            card.append(f"\n! {failed} {noun} failed", style="#ffaf5f")
+            items.append(Text(f"! {failed} {noun} failed", style="#ffaf5f"))
         unsaved = getattr(session, "audio_failed_sources", ()) if session is not None else ()
         if unsaved:
-            card.append(f"\n! {', '.join(unsaved)} audio not saved", style="#ffaf5f")
+            items.append(Text(f"! {', '.join(unsaved)} audio not saved", style="#ffaf5f"))
         if self._rename_busy(session):
-            card.append("\n\nrename busy", style="#8b93a1")
-        return card
+            items.append(Text("rename busy", style="#8b93a1"))
+        return tuple(items)
 
     def _rename_busy(self, session) -> bool:
         saved = self.record_state() == "saved" and session is not None
@@ -650,7 +637,7 @@ class RecordScreen(HubScreen):
             return
         speakers = tuple(
             (speaker_id, label)
-            for speaker_id, label, _seconds in self._speaker_rows(None, self._lines(saved))
+            for speaker_id, label, _seconds in self._speaker_rows(self._lines(saved))
         )
         if not speakers:
             app.notify("No speakers are available to rename.")
@@ -666,7 +653,7 @@ class RecordScreen(HubScreen):
         speaker_id, name = value
         try:
             session.rename(speaker_id, name)
-        except ValueError as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             self.app.notify(str(exc))
             return
         self.app.refresh_view()

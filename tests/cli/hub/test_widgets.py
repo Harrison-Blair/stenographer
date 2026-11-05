@@ -236,9 +236,9 @@ def test_field_wraps_long_control_values():
     from stenographer.cli.hub.widgets.field import Field
 
     field = Field("Device", "abcdefghijklmnopqrstuvwxyz0123456789")
-    rendered = "".join(segment.text for segment in Console(width=100).render(field.row()))
-    assert "abcdefghijklmnopqrstuvwxyz0123" in rendered
-    assert "456789" in rendered
+    rendered = "".join(segment.text for segment in Console(width=40).render(field.row()))
+    assert rendered.count("\n") >= 2, "the value takes more than one row"
+    assert "abcdefghijklmnopqrstuvwxyz0123456789" in "".join(rendered.split())
     assert "…" not in rendered
 
 

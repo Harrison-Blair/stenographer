@@ -19,7 +19,7 @@ class KeyHints(Static):
     KeyHints {
         width: 1fr;
         height: 1;
-        padding: 0 2;
+        padding: 0 1;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
