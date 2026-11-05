@@ -37,12 +37,10 @@ from stenographer.lib.transcribe.errors import (
     WorkerCrashedError,
     WorkerError,
     WorkerModelError,
-    WorkerProtocolError,
     WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import WorkerTimings
 from stenographer.lib.transcribe.worker_policy import (
-    MODEL_READY,
     decode_timeout_seconds,
     interpret_response,
     should_arm_idle_timer,
@@ -167,8 +165,6 @@ class Worker:
                     "transcribe",
                     deadline=time.monotonic() + decode_timeout_seconds(samples.shape[0]),
                 )
-                if interpreted is MODEL_READY:
-                    raise WorkerProtocolError("unexpected model-ready event during transcription")
             except WorkerError as exc:
                 self.last_timings = WorkerTimings(
                     lock_wait_ms,
@@ -202,11 +198,9 @@ class Worker:
         self._notify(self._on_model_loading)
         try:
             self._process.send(("load", utterance))
-            interpreted = self._wait_for_response(
+            self._wait_for_response(
                 "model_load", deadline=time.monotonic() + _MODEL_LOAD_TIMEOUT_SECONDS
             )
-            if interpreted is not MODEL_READY:
-                raise WorkerProtocolError("worker result arrived before model-ready event")
             self._model_ready.set()
             return True
         finally:
@@ -214,7 +208,7 @@ class Worker:
             # metadata.  It must clear the border after both ready and error.
             self._notify(self._on_model_loading_finished)
 
-    def _wait_for_response(self, phase: str, *, deadline: float) -> TranscriptionResult | str:
+    def _wait_for_response(self, phase: str, *, deadline: float) -> TranscriptionResult | None:
         while True:
             self._abort_if_shutdown_requested(phase)
             if not self._process.is_running():
@@ -237,8 +231,8 @@ class Worker:
             return interpret_response(message)
 
     def _finish_response_error(self, exc: WorkerError) -> None:
-        # A malformed or timed-out exchange poisons the channel.
-        if isinstance(exc, (WorkerProtocolError, WorkerTimeoutError)):
+        # A child that missed its deadline may still answer: never reuse its channel.
+        if isinstance(exc, WorkerTimeoutError):
             self._teardown()
         else:
             self._restart_idle_timer()

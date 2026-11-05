@@ -24,20 +24,18 @@ from stenographer.lib.transcribe.errors import (
     WorkerError,
     WorkerModelError,
     WorkerPathologicalError,
-    WorkerProtocolError,
     WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker import Worker
 from stenographer.lib.transcribe.worker_policy import (
-    MODEL_READY,
     classify_error,
     decode_timeout_seconds,
     error_is_safe_to_render,
     interpret_response,
     should_arm_idle_timer,
 )
-from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport, _reply_normally, _result
+from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport, _reply_normally
 
 _WORKER_LOGGER = "stenographer.lib.transcribe.worker"
 
@@ -47,8 +45,8 @@ def test_interpret_response_returns_ok_result():
     assert interpret_response(("ok", result)) is result
 
 
-def test_interpret_response_returns_metadata_only_model_ready_event():
-    assert interpret_response(("model_ready",)) is MODEL_READY
+def test_interpret_response_returns_nothing_for_the_model_ready_reply():
+    assert interpret_response(("model_ready",)) is None
 
 
 def test_interpret_response_pathological_raises():
@@ -65,33 +63,11 @@ def test_interpret_response_inference_raises():
     assert str(exc.value) == "RuntimeError: boom"
 
 
-def test_interpret_response_malformed_raises_worker_error():
-    # Unknown tag, wrong arity, and an unknown error kind must all raise
-    # WorkerError without echoing any payload value into the message.
+def test_an_unknown_response_tag_raises_without_echoing_the_message():
     secret = "the dictated transcript text"
-    for message in (
-        ("bogus",),
-        ("ok",),
-        ("ok", secret),
-        ("ok", secret, "extra"),
-        ("error", "mystery", secret),
-        ("error", "inference", object()),
-        ("model_ready", secret),
-    ):
-        with pytest.raises(WorkerProtocolError) as exc:
-            interpret_response(message)
-        assert secret not in str(exc.value)
-        assert "shape" in str(exc.value)
-
-
-def test_legitimate_worker_errors_do_not_become_protocol_errors():
-    for message in (
-        ("error", "inference", "RuntimeError: boom"),
-        ("error", "pathological", "decoder density exceeded"),
-    ):
-        with pytest.raises(WorkerError) as exc:
-            interpret_response(message)
-        assert not isinstance(exc.value, WorkerProtocolError)
+    with pytest.raises(WorkerError) as exc:
+        interpret_response(("bogus", secret))
+    assert secret not in str(exc.value)
 
 
 def test_decode_timeout_has_sixty_second_floor():
@@ -186,15 +162,6 @@ def test_failure_measurement_classification(kind, expected):
     from stenographer.lib.transcribe.worker_policy import classify_worker_failure
 
     assert classify_worker_failure(getattr(errors, kind)("private")) == expected
-
-
-def test_malformed_non_tuple_responses_are_described_by_type_only():
-    secret = "the dictated transcript text"
-    with pytest.raises(WorkerProtocolError) as exc:
-        interpret_response(secret)
-
-    assert secret not in str(exc.value)
-    assert str(exc.value) == "malformed worker response of shape str"
 
 
 def _worker(transport, *, idle_seconds: float = 0.0, **observers) -> Worker:
@@ -330,19 +297,18 @@ def test_a_transport_that_cannot_spawn_fails_the_request_without_a_child(caplog)
         assert worker.process_ids == ()
 
 
-def test_a_malformed_response_poisons_the_channel_and_tears_the_child_down():
+def test_a_failed_model_load_still_announces_that_loading_ended():
     events, observers = _observed()
-    transport = FakeAsrTransport(FakeAsrProcess(reply=lambda process, message: ("gibberish",)))
+    transport = FakeAsrTransport(
+        FakeAsrProcess(reply=lambda process, message: ("error", "inference", "RuntimeError: x"))
+    )
 
     with _worker(transport, **observers) as worker:
-        with pytest.raises(WorkerProtocolError):
+        with pytest.raises(WorkerError):
             worker.warmup()
 
-        # The observer must still be told loading ended, or the overlay keeps
-        # its loading border forever.
+        # Or the overlay keeps its loading border forever.
         assert events == ["model_loading", "model_loading_finished"]
-        assert transport.spawned[0].closes == [False]
-        assert worker.is_alive() is False
 
 
 def test_a_model_load_failure_keeps_the_child_and_is_typed_by_the_caller():
@@ -616,32 +582,6 @@ def test_a_child_that_dies_during_the_model_load_is_reported_as_crashed():
 
         assert worker.last_timings.load_ms is not None
         assert worker.last_timings.decode_ms is None
-
-
-def test_a_result_before_the_ready_event_is_a_protocol_error():
-    transport = FakeAsrTransport(FakeAsrProcess(reply=lambda process, message: ("ok", _result())))
-
-    with _worker(transport) as worker:
-        with pytest.raises(WorkerProtocolError, match="before model-ready event"):
-            worker.warmup()
-
-        assert transport.spawned[0].closes == [False]
-
-
-def test_a_ready_event_answering_a_decode_is_a_protocol_error():
-    def ready_instead_of_result(process, message):
-        return ("model_ready",)
-
-    transport = FakeAsrTransport(FakeAsrProcess(reply=ready_instead_of_result))
-
-    with _worker(transport) as worker:
-        worker.warmup()
-
-        with pytest.raises(WorkerProtocolError, match="during transcription"):
-            worker.transcribe(np.zeros(16000, dtype=np.float32))
-
-        # A poisoned channel is torn down rather than reused.
-        assert worker.is_alive() is False
 
 
 def test_idle_unload_deadline_follows_the_armed_idle_timer():

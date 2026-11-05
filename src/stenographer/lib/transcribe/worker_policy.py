@@ -10,14 +10,9 @@ from stenographer.lib.transcribe.errors import (
     WorkerError,
     WorkerModelError,
     WorkerPathologicalError,
-    WorkerProtocolError,
     WorkerTimeoutError,
 )
 from stenographer.lib.transcribe.results import TranscriptionResult
-
-MODEL_READY = "model_ready"
-"""What ``interpret_response`` returns for the child's metadata-only ready reply."""
-
 
 _DECODE_MIN_TIMEOUT_SECONDS = 60.0
 
@@ -75,24 +70,19 @@ def error_is_safe_to_render(exc: Exception) -> bool:
     return isinstance(exc, PathologicalOutputError)
 
 
-def interpret_response(message: object) -> TranscriptionResult | str:
-    """Parent-side: turn a child response tuple into a result or a typed raise.
-    Malformed messages are described by SHAPE only, never by echoed payload."""
-    if isinstance(message, tuple) and message:
-        tag = message[0]
-        if tag == "model_ready" and len(message) == 1:
-            return MODEL_READY
-        if tag == "ok" and len(message) == 2 and isinstance(message[1], TranscriptionResult):
-            return message[1]
-        if tag == "error" and len(message) == 3:
-            if message[1] == "pathological" and isinstance(message[2], str):
-                raise WorkerPathologicalError(message[2])
-            if message[1] == "inference" and isinstance(message[2], str):
-                raise WorkerError(message[2])
-    raise WorkerProtocolError(f"malformed worker response of shape {_describe_shape(message)}")
+def interpret_response(message: tuple) -> TranscriptionResult | None:
+    """Parent-side: turn one ``_child_main`` response into a result or a typed raise.
 
-
-def _describe_shape(message: object) -> str:
-    if not isinstance(message, tuple):
-        return type(message).__name__
-    return f"({', '.join(type(el).__name__ for el in message)})"
+    The metadata-only ready reply returns ``None``. An unknown tag raises without
+    echoing the message."""
+    tag = message[0]
+    if tag == "model_ready":
+        return None
+    if tag == "ok":
+        return message[1]
+    if tag == "error":
+        _, kind, detail = message
+        if kind == "pathological":
+            raise WorkerPathologicalError(detail)
+        raise WorkerError(detail)
+    raise WorkerError("unknown worker response")

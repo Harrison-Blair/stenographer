@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Typed model, worker, and protocol failures."""
+"""Typed model and worker failures."""
 
 from __future__ import annotations
 
@@ -17,10 +17,6 @@ class WorkerPathologicalError(WorkerError):
     """The child rejected a degenerate decode. Surfaced distinctly so
     the daemon can discard rather than deliver; carries only the serialised
     detail string, since the original instance cannot cross the boundary."""
-
-
-class WorkerProtocolError(WorkerError):
-    """The child sent a malformed or out-of-order protocol response."""
 
 
 class WorkerCrashedError(WorkerError):
