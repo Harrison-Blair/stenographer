@@ -387,6 +387,7 @@ class HubApp(App[None]):
             self.exit()
             return
         names = ",".join(name for name, _line in work)
+        failed_before = len(getattr(self.services, "failed_stops", ()))
         log.info(fmt_event("hub", "quit_prompted", work=names))
         lines = "\n".join(f"· {line}" for _name, line in work)
         self.push_screen(
@@ -396,20 +397,22 @@ class HubApp(App[None]):
                 cancel="Keep recording" if recording else "Cancel",
                 quit_keys=True,
             ),
-            lambda confirmed: self._confirm_quit(names, confirmed),
+            lambda confirmed: self._confirm_quit(names, failed_before, confirmed),
         )
 
-    def _confirm_quit(self, work: str, confirmed: bool | None) -> None:
+    def _confirm_quit(self, work: str, failed_before: int, confirmed: bool | None) -> None:
         log.info(fmt_event("hub", "quit_confirmed", work=work, confirmed=bool(confirmed)))
         if confirmed:
             self._switch("record")
-            self.run_worker(self._finish_work_and_quit(), name="quit-work", group="hub-work")
+            self.run_worker(
+                self._finish_work_and_quit(failed_before), name="quit-work", group="hub-work"
+            )
 
     def _show_quit_status(self, status: str) -> None:
         self.activity_status = status
         self.refresh_view()
 
-    async def _finish_work_and_quit(self) -> None:
+    async def _finish_work_and_quit(self, failed_before: int) -> None:
         services = self.services
         if services.recording:
             self._show_quit_status("Saving recording...")
@@ -424,6 +427,10 @@ class HubApp(App[None]):
             self._show_quit_status("Saving recordings...")
             await asyncio.to_thread(services.skip_relabels)
             await asyncio.to_thread(services.wait_for_stops)
+        # A stop that failed after the question opened: Record must show it before the hub leaves.
+        if len(getattr(services, "failed_stops", ())) > failed_before:
+            self._quit_step_failed("A recording could not save, so the hub stays open.")
+            return
         if self.library_screen.files_running:
             self._show_quit_status("Canceling the file job...")
             try:

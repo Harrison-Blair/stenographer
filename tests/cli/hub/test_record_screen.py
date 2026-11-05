@@ -393,6 +393,52 @@ async def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
     assert services.stopping_sessions == ()
 
 
+@pytest.mark.parametrize("fails_during", ["prompt", "wait"])
+async def test_record_quit_stays_open_when_a_running_stop_fails(tmp_path, fails_during):
+    services, created = _services(tmp_path)
+    app = _app(services)
+    release = threading.Event()
+
+    def slow_failing_stop():
+        assert release.wait(5)
+        raise OSError("no space left on device")
+
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[0].stop = slow_failing_stop
+        await pilot.press("enter")
+        await _until(pilot, lambda: not services.recording)
+
+        await pilot.press("q")
+        await pilot.pause()
+        if fails_during == "prompt":
+            release.set()
+            await _until(pilot, lambda: services.stopping_sessions == ())
+            await pilot.press("y")
+        else:
+            await pilot.press("y")
+            await _until(pilot, lambda: app.activity_status is not None)
+            release.set()
+        await _until(pilot, lambda: services.failed_stops != [])
+        for _ in range(30):
+            app.refresh_view()
+            await pilot.pause(0.02)
+
+        assert app.is_running, "the quit must not hide a save that failed"
+        assert app.activity_status is None
+        text = _screen_text(app)
+        assert "! SAVE FAILED" in text
+        assert created[0].path.name in text
+        await pilot.press("o")
+        await pilot.pause()
+        assert app.library_screen.selected_id == created[0].path.name
+
+        # The failure is on screen now, so the next quit leaves.
+        await pilot.press("q")
+        await _until(pilot, lambda: not app.is_running, "the hub did not quit")
+
+
 async def test_record_quit_while_recording_asks_then_saves(tmp_path):
     services, created = _services(tmp_path)
     app = _app(services)

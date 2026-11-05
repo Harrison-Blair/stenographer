@@ -67,7 +67,7 @@ Press `q` or `ctrl+c` to quit. When work is active, the hub asks one question
 that lists each action: stop and save the recording, skip the running relabel,
 and cancel the running file job. Press `y`, `q`, or `ctrl+c` (or click the
 confirm button) to run the actions in order and quit; press `n` or `escape` (or
-click the cancel button) to keep working. If the recording cannot save or the
+click the cancel button) to keep working. If a recording cannot save or the
 file job cannot cancel, a notice shows the error and the hub stays open. A
 cancelled file job does not leave a partial output file. If a start, stop, or
 save operation is still in progress, wait for its status to finish before you
