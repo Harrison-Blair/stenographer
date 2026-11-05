@@ -339,7 +339,7 @@ def test_setup_requires_an_interactive_terminal():
 
 
 def test_setup_applies_loaded_then_reviewed_log_levels_before_followup_work(monkeypatch, tmp_path):
-    from stenographer.lib.config.save_result import SaveResult
+    from stenographer.lib.config.document import SaveResult
     from stenographer.lib.logging import pipeline as logging_setup
 
     events: list[str] = []
@@ -1449,7 +1449,7 @@ def test_offer_refine_pull_reports_an_unreachable_ollama_without_prompting(monke
 
 
 def _document_double(tmp_path, *, save=None):
-    from stenographer.lib.config.save_result import SaveResult
+    from stenographer.lib.config.document import SaveResult
 
     path = tmp_path / "config.toml"
 

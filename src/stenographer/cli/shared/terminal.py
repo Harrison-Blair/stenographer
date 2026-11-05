@@ -17,7 +17,7 @@ from typing import TextIO
 from stenographer.cli.shared.console import Console
 from stenographer.lib.config.document import ConfigDocument
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
-from stenographer.lib.config.save_result import SaveResult
+from stenographer.lib.config.document import SaveResult
 
 #: Exit code for a command that needs a terminal and did not get one.
 NOT_A_TERMINAL = 2
