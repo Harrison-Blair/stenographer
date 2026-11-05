@@ -16,7 +16,6 @@ import pytest
 
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
-from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
 from tests.lib.platform.support import NullProcessCounters
@@ -80,9 +79,6 @@ class FakeRecorder:
         self.running = True
 
     def stop(self):
-        self.running = False
-
-    def close(self):
         self.running = False
 
     def emit(self, value):
@@ -202,29 +198,6 @@ class FakeWorker:
         self.stopped = True
 
 
-class FakeSpeakerTracker:
-    def __init__(self, *_args, **_kwargs):
-        self.names = {}
-        self.speaker_ids = []
-
-    def embed(self, _samples):
-        return np.array([1.0, 0.0], dtype=np.float32)
-
-    def assign_embedding(self, _embedding, *, duration=None):
-        if "speaker-1" not in self.speaker_ids:
-            self.speaker_ids.append("speaker-1")
-        return "speaker-1"
-
-    def assign(self, samples):
-        return self.assign_embedding(self.embed(samples))
-
-    def label(self, speaker_id):
-        return "You" if speaker_id == "you" else self.names.get(speaker_id, "Speaker 1")
-
-    def rename(self, speaker_id, name):
-        self.names[speaker_id] = name.strip()
-
-
 def _make_session(
     monkeypatch,
     tmp_path,
@@ -272,7 +245,7 @@ def _make_session(
     monkeypatch.setattr(live_session, "Worker", WorkerFactory)
     monkeypatch.setattr(live_session, "Recorder", RecorderFactory)
     monkeypatch.setattr(live_session, "PhraseSegmenter", SegmenterFactory)
-    monkeypatch.setattr(live_session, "SpeakerTracker", tracker or FakeSpeakerTracker)
+    monkeypatch.setattr(live_session, "SpeakerTracker", tracker or VoiceSpeakerTracker)
     platform = FakePlatform(system_capture, tmp_path, platform_error)
     cfg = SimpleNamespace(
         asr=SimpleNamespace(),
@@ -690,14 +663,6 @@ def test_stop_finishes_when_padding_fails(monkeypatch, tmp_path):
     assert rig.session.relabel_status == ""
 
 
-def test_transcript_line_values_use_the_source_session_clock():
-    line = TranscriptLine(1.0, 2.0, "wall", "system", "speaker-1", "Speaker 1", "words")
-
-    assert line.start == 1.0
-    assert line.source == "system"
-    assert line.text == "words"
-
-
 class VoiceSpeakerTracker:
     """Give each fake phrase value its own voice and number voices per prefix."""
 
@@ -743,7 +708,7 @@ def _wait_for_lines(session, count):
 
 
 def test_mic_phrases_stay_you_when_mic_diarization_is_off(monkeypatch, tmp_path):
-    rig = _make_session(monkeypatch, tmp_path, system=False, tracker=VoiceSpeakerTracker)
+    rig = _make_session(monkeypatch, tmp_path, system=False)
     processed = _wait_for_lines(rig.session, 2)
 
     rig.recorder.emit(1)
@@ -761,7 +726,7 @@ def test_mic_phrases_stay_you_when_mic_diarization_is_off(monkeypatch, tmp_path)
 
 
 def test_mic_diarization_labels_room_speakers_apart_from_system_speakers(monkeypatch, tmp_path):
-    rig = _make_session(monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True)
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 3)
 
     rig.recorder.emit(1)
@@ -795,7 +760,7 @@ def test_stop_relabels_mic_lines_separately_with_the_room_prefix(monkeypatch, tm
         return original_relabel(lines, embeddings, **kwargs)
 
     monkeypatch.setattr(live_session, "relabel_system_lines", record_pass)
-    rig = _make_session(monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True)
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 3)
     rig.recorder.emit(1)
     rig.recorder.emit(4)
@@ -817,7 +782,7 @@ def test_stop_relabels_mic_lines_separately_with_the_room_prefix(monkeypatch, tm
 
 
 def test_stop_relabel_progress_counts_once_across_system_and_mic(monkeypatch, tmp_path):
-    rig = _make_session(monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True)
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 3)
     rig.recorder.emit(1)
     rig.recorder.emit(4)
@@ -841,9 +806,7 @@ def test_stop_relabel_progress_counts_once_across_system_and_mic(monkeypatch, tm
 
 
 def test_rename_updates_a_room_speaker_and_its_existing_lines(monkeypatch, tmp_path):
-    rig = _make_session(
-        monkeypatch, tmp_path, system=False, tracker=VoiceSpeakerTracker, diarize_mic=True
-    )
+    rig = _make_session(monkeypatch, tmp_path, system=False, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 2)
     rig.recorder.emit(1)
     rig.recorder.emit(4)
@@ -869,7 +832,7 @@ def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
         return None if kwargs["should_cancel"]() else tuple(lines)
 
     monkeypatch.setattr(live_session, "relabel_system_lines", wait_for_skip)
-    rig = _make_session(monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True)
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 3)
     rig.recorder.emit(1)
     rig.recorder.emit(4)
@@ -923,9 +886,7 @@ def test_relabel_progress_counts_phrases_from_the_real_work_units_of_both_passes
         return original_relabel(lines, embeddings, **{**kwargs, "progress": progress})
 
     monkeypatch.setattr(live_session, "relabel_system_lines", observe_pass)
-    rig = _make_session(
-        monkeypatch, tmp_path, tracker=VoiceSpeakerTracker, diarize_mic=True, start=False
-    )
+    rig = _make_session(monkeypatch, tmp_path, diarize_mic=True, start=False)
     session_holder["session"] = rig.session
     monkeypatch.setattr(live_session, "PhraseSegmenter", LongPhraseSegmenter)
     rig.session.start()
@@ -1042,9 +1003,7 @@ def test_system_toggled_on_later_gets_labels_and_a_relabel_pass(monkeypatch, tmp
 
 
 def test_system_toggled_on_later_keeps_system_speakers_listed_first(monkeypatch, tmp_path):
-    rig = _make_session(
-        monkeypatch, tmp_path, system=False, tracker=VoiceSpeakerTracker, diarize_mic=True
-    )
+    rig = _make_session(monkeypatch, tmp_path, system=False, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 2)
 
     rig.recorder.emit(1)

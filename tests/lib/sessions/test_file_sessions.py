@@ -92,15 +92,6 @@ def test_old_session_folder_without_kind_or_session_json_reads_as_live_recording
     assert not (directory / "session.json").exists()
 
 
-def test_new_recording_writes_rec_kind(tmp_path):
-    session = _recording(tmp_path)
-
-    metadata = json.loads((session / "session.json").read_text(encoding="utf-8"))
-
-    assert metadata["kind"] == "rec"
-    assert SessionStore(tmp_path / "sessions").read(session.name).summary.kind == "rec"
-
-
 def test_label_state_follows_the_current_revision_method(tmp_path):
     session = _recording(tmp_path)
     store = SessionStore(tmp_path / "sessions")

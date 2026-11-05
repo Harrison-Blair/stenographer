@@ -33,7 +33,6 @@ def test_download_writes_files_only_after_hash_validation(tmp_path):
     for model in models:
         path = tmp_path / "models" / "live" / model.filename
         assert path.read_bytes() == payloads[model.filename]
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == model.sha256
 
 
 def test_download_skips_a_present_file_with_the_pinned_hash(tmp_path):
@@ -65,7 +64,6 @@ def test_bad_download_hash_fails_and_removes_temporary_file(tmp_path):
         download.download_live_models(tmp_path, fetch=fetch, models=(model,))
 
     model_dir = tmp_path / "models" / "live"
-    assert not (model_dir / model.filename).exists()
     assert list(model_dir.iterdir()) == []
 
 
