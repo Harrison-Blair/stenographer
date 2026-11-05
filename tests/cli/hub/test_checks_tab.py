@@ -599,7 +599,7 @@ def test_checks_open_log_calls_the_opener_with_the_log_path():
             await _open_checks(pilot)
             await pilot.press("l")
             await pilot.click("#checks-log")
-            await pilot.pause()
+            await _settle(pilot, lambda: len(opened) == 2)
 
     asyncio.run(exercise())
     assert opened == [log_paths()[0], log_paths()[0]]
@@ -1127,3 +1127,40 @@ def test_model_status_marks_corrupt_voice_model_missing(tmp_path, monkeypatch):
     (tmp_path / VAD_MODEL.filename).write_bytes(b"corrupt")
     entries = doctor_view.default_model_status()
     assert next(entry for entry in entries if entry.model_id == "vad").present is False
+
+
+def test_checks_open_log_leaves_the_interface_running_while_the_opener_blocks():
+    release = threading.Event()
+    released = []
+
+    def slow_opener(_path):
+        released.append(release.wait(2))
+        return True
+
+    async def exercise():
+        app = _app(open_log=slow_opener)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_checks(pilot)
+            await pilot.press("l")
+            release.set()
+            await _settle(pilot, lambda: released)
+
+    asyncio.run(exercise())
+    assert released == [True]
+
+
+def test_checks_open_log_warns_when_the_opener_returns_false_or_raises():
+    def raises(_path):
+        raise OSError("alpha")
+
+    async def exercise(opener):
+        app = _app(open_log=opener)
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_checks(pilot)
+            await pilot.press("l")
+            await _settle(pilot, lambda: app._notifications)
+            return [notice.message for notice in app._notifications]
+
+    expected = ["The application log is not available."]
+    assert asyncio.run(exercise(lambda _path: False)) == expected
+    assert asyncio.run(exercise(raises)) == expected

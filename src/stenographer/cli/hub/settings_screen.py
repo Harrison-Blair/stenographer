@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 from typing import TYPE_CHECKING, ClassVar
 
@@ -501,7 +502,9 @@ class SettingsScreen(HubScreen):
         elif kind == "choice":
             self._open_choice(editor, key)
         elif kind == "device":
-            self._open_devices(editor, key)
+            self.app.run_worker(
+                self._open_devices(editor, key), group="settings-devices", exclusive=True
+            )
         elif kind == "list":
             self.app.push_screen(
                 VocabularyDialog(editor.value(key), editor.check_vocabulary),
@@ -524,8 +527,11 @@ class SettingsScreen(HubScreen):
             lambda index: index is not None and self._apply(key, values[index]),
         )
 
-    def _open_devices(self, editor: ConfigEditor, key: str) -> None:
-        devices = list(self.list_devices(key))
+    async def _open_devices(self, editor: ConfigEditor, key: str) -> None:
+        devices = list(await asyncio.to_thread(self.list_devices, key))
+        # The user may have moved on during the enumeration; a late dialog would edit a hidden row.
+        if self.app.screen is not self or editor.selected_key != key:
+            return
         self._device_labels[key] = dict(devices)
         options: list[tuple[str | None, str]] = [(None, _DEFAULT_DEVICE[key]), *devices]
         current = editor.value(key)
