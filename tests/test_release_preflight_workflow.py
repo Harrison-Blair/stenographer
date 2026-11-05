@@ -15,7 +15,7 @@ _SHA = "c" * 40
 def _guard_step_script() -> str:
     workflow = _WORKFLOW.read_text(encoding="utf-8")
     step = workflow[workflow.index("- name: Check release versions") :]
-    step = step[: step.index("- name:", 1)]
+    step = step[: step.index("\n\n")]
     body = step[step.index("run: |") + len("run: |") :]
     return textwrap.dedent(body).replace("${{ inputs.bump || 'patch' }}", "patch")
 
@@ -53,7 +53,7 @@ def _guard_arguments(tmp_path: Path, event: str, ref: str) -> list[str]:
     [
         ("pull_request", "refs/pull/7/merge", ["--skip-draft-checks"], "--target-commit"),
         ("workflow_dispatch", "refs/heads/main", ["--target-commit", _SHA], "--skip-"),
-        ("workflow_dispatch", "refs/heads/dev", ["--skip-target-check"], "--target-commit"),
+        ("workflow_dispatch", "refs/heads/feat/x", ["--skip-target-check"], "--target-commit"),
     ],
     ids=["pull-request", "dispatch-main", "dispatch-non-main"],
 )

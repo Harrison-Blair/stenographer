@@ -67,4 +67,4 @@ Before accepting a pack, select it and test its start cue through real microphon
 A silent press and release must still end quietly: no transcription, paste, or
 error cue. Run the full integration smoke suite, including the real player check
 for all four bundled packs and a filesystem custom pack, then perform real hold
-and toggle dictation on the target machine before merging to `main`.
+and toggle dictation on the target machine before starting a release.

@@ -4,7 +4,6 @@ name: build
 # This validates both native bundles but deliberately does not publish them.
 on:
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

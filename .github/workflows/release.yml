@@ -35,7 +35,7 @@ jobs:
       - name: Require main branch
         run: |
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "error: draft releases must target main, not ${GITHUB_REF}" >&2
+            echo "error: releases must target main, not ${GITHUB_REF}" >&2
             exit 1
           fi
       - uses: actions/checkout@v7
@@ -60,10 +60,6 @@ jobs:
             "${RUNNER_TEMP}/releases.json" "${{ inputs.bump }}" \
             --target-commit "${GITHUB_SHA}" \
             --github-output "${GITHUB_OUTPUT}"
-      - name: Check authored release notes
-        env:
-          VERSION: ${{ steps.guard.outputs.version }}
-        run: .venv/bin/python scripts/release_notes.py check "${VERSION}" CHANGELOG.md
 
   lint:
     name: release lint
@@ -236,6 +232,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
+      actions: write
       attestations: write
       contents: write
       id-token: write
@@ -275,6 +272,8 @@ jobs:
             release-x86_64.SHA256SUMS release-aarch64.SHA256SUMS
           sha256sum "${artifacts[@]}" > SHA256SUMS
           sha256sum --check SHA256SUMS
+      - name: Add the install script
+        run: cp scripts/quick-install.sh release/quick-install.sh
       - name: Recheck release guard before attesting
         env:
           GH_TOKEN: ${{ github.token }}
@@ -303,7 +302,7 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: release/*
-      - name: Final guard, extract authored notes, and create or refresh draft
+      - name: Final guard, create or refresh draft, upload assets, and publish
         env:
           EXPECTED_TAG: ${{ needs.preflight.outputs.tag }}
           EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
@@ -329,14 +328,11 @@ jobs:
           TAG="${tag}"
           VERSION="${version}"
           DRAFT_ID="${draft_id}"
-          .venv/bin/python scripts/release_notes.py check "${VERSION}" CHANGELOG.md
           printf 'v%s\n' "${VERSION}" > "${RUNNER_TEMP}/release-name.txt"
-          .venv/bin/python scripts/release_notes.py extract "${VERSION}" CHANGELOG.md \
-            > "${RUNNER_TEMP}/release-body.md"
 
           request=(
+            -f "tag_name=${TAG}"
             -F "name=@${RUNNER_TEMP}/release-name.txt"
-            -F "body=@${RUNNER_TEMP}/release-body.md"
             -F draft=true
             -F prerelease=false
           )
@@ -352,8 +348,8 @@ jobs:
           else
             release_id=$(gh api -X POST \
               "repos/${GITHUB_REPOSITORY}/releases" \
-              -f "tag_name=${TAG}" \
               -f "target_commitish=${GITHUB_SHA}" \
+              -F generate_release_notes=true \
               "${request[@]}" --jq .id)
           fi
           gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
@@ -368,6 +364,7 @@ jobs:
             "stenographer-${VERSION}-py3-none-any.whl"
             "stenographer-${VERSION}.tar.gz"
             SHA256SUMS
+            quick-install.sh
           )
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
@@ -386,3 +383,18 @@ jobs:
             asset_paths+=("release/${asset}")
           done
           gh release upload "${TAG}" "${asset_paths[@]}"
+
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            -f "tag_name=${TAG}" -F draft=false > /dev/null
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            > "${RUNNER_TEMP}/release-published.json"
+          jq -e --arg tag "${TAG}" \
+            '.draft == false and .tag_name == $tag
+              and ([.assets[].name] | sort) == ($ARGS.positional | sort)' \
+            "${RUNNER_TEMP}/release-published.json" --args "${assets[@]}" > /dev/null
+      # A release published with the workflow token does not trigger other workflows.
+      - name: Start the site deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: gh workflow run pages.yml --ref main -f ref="${TAG}"

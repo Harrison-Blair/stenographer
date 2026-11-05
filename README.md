@@ -13,7 +13,7 @@
 
 [![release](https://img.shields.io/github/v/release/Harrison-Blair/stenographer?color=brightgreen)](https://github.com/Harrison-Blair/stenographer/releases)
 
-[Release notes](CHANGELOG.md)
+[Release notes](https://github.com/Harrison-Blair/stenographer/releases)
 
 Local, offline, Wayland push-to-talk, toggle, or hybrid dictation daemon.
 Press a configurable hotkey, speak, get the text at your cursor and in your
@@ -43,13 +43,16 @@ content. To change the project description, edit above this line.
 On Linux x86_64 or AArch64 with Wayland and a systemd user manager:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Harrison-Blair/stenographer/main/scripts/quick-install.sh | bash -s -- --no-start
+curl -fsSL https://harrison-blair.github.io/stenographer/install.sh | bash
 ```
 
-This verifies and installs the latest prebuilt bundle and user service. It
-leaves the service stopped so you can configure it and build the model. The
-install needs no Python or build tools; the later model build needs the system
-`python3-venv` package. For another architecture or a local build,
+The same command installs and updates. It verifies and installs the latest
+prebuilt bundle and user service. A new install leaves the service stopped and
+prints the setup step, so you can configure it and build the model. An update
+keeps the service state: a running service restarts on the new version, and a
+stopped service stays stopped. The install needs no Python or build tools; the
+later model build needs the system `python3-venv` package. For another
+architecture or a local build,
 see [docs/building.md](docs/building.md).
 
 ## Requirements
@@ -115,7 +118,7 @@ free disk and about 10.2 GiB of RAM while it converts. On the test machine it
 took about 2 minutes. The installed model uses about 653 MiB. A machine with
 less RAM can run out of memory during the conversion. Speech-model settings
 from earlier releases stay in your config file and are ignored; see the
-[changelog](CHANGELOG.md).
+[release notes](https://github.com/Harrison-Blair/stenographer/releases).
 
 For clearer recognition, first run `stenographer devices` and select the
 intended microphone. Keep it about 10–20 cm from your mouth, aim it slightly

@@ -2,8 +2,6 @@
 name: pages
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
     paths:
@@ -12,6 +10,12 @@ on:
       - "src/stenographer/assets/fonts/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or branch to build; empty builds main
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -28,6 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - name: Assemble static site
         run: |
@@ -37,6 +42,17 @@ jobs:
           cp src/stenographer/assets/icons/stenographer.png _site/assets/stenographer.png
           cp src/stenographer/assets/fonts/Caveat-wght.ttf _site/assets/Caveat-wght.ttf
           cp src/stenographer/assets/fonts/Caveat-OFL.txt _site/assets/Caveat-OFL.txt
+      # A deploy serves the latest release's script, so a manual site fix cannot
+      # publish one that disagrees with it. A PR build does not deploy, and no
+      # published release carries the script yet.
+      - name: Add the install script
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            curl -fsSL -o _site/install.sh \
+              "https://github.com/Harrison-Blair/stenographer/releases/latest/download/quick-install.sh"
+          else
+            cp scripts/quick-install.sh _site/install.sh
+          fi
       - name: Stamp the latest published release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -6,39 +6,16 @@ This is contributor and release documentation. For installation and everyday
 use, see the [README](../README.md) and [user guide](usage.md).
 
 A local PyInstaller onedir build for machines without a Python setup, plus a
-limited draft-release channel for Linux x86_64 and AArch64. Scope remains
+limited release channel for Linux x86_64 and AArch64. Scope remains
 deliberately narrow: no multi-distro installer or self-update. The included
 installer targets one machine and one user only.
 
 ## Release notes
 
-[`CHANGELOG.md`](../CHANGELOG.md) is the canonical authored history for every
-published release. Stable `vX.Y.Z` Git tags are the sole release-version
-authority. The release workflow derives the next version from the highest
-stable tag and the selected patch, minor, or major bump, validates the matching
-changelog entry, and uses that entry as the GitHub release body. Add the
-release note before dispatching a release; there is no source version to bump.
-
-Every entry, including `## [Unreleased]`, has the same shape: a synopsis of one
-to three sentences of plain prose, then `### Added`, `### Removed`, and
-`### Fixed` in that order. Omit a section that has nothing in it rather than
-writing "None", and give each present section a single bullet list with no
-prose, no sub-bullets, and no blank lines between bullets. Wrap bullets at 79
-columns with a two-space continuation indent.
-
-A changed default or renamed option belongs under `### Added`, phrased as the
-new behavior ("Uses Underdog Bark 3.0 Pro for dictation, Record, and
-file jobs").
-Internal-only work — refactoring, test coverage, packaging with no observable
-effect — is folded into the synopsis or left out, never listed as a fix. An
-`[Unreleased]` section may be empty while nothing is pending, and otherwise
-follows the same structure.
-
-`.venv/bin/python scripts/release_notes.py check X.Y.Z CHANGELOG.md` validates
-the structure for the requested release and `[Unreleased]`; it does not enforce
-the 79-column wrapping convention. It runs in a manually dispatched release
-rehearsal and again in the draft-release
-workflow, so a missing or malformed entry fails before the draft is written.
+Stable `vX.Y.Z` Git tags are the sole release-version authority; there is no
+source version to bump. GitHub generates each release's notes from the titles of
+the pull requests merged since the previous release, so a clear PR title is the
+release note. The notes of earlier releases stay on GitHub.
 
 ## Quick start
 
@@ -82,33 +59,59 @@ prompt's MIT attribution is packaged at
 `titanet-small-NOTICE.txt`) sit in the same folder, as do the Bark Pro
 converter and its venv lock under `stenographer/assets/convert/`.
 
-## Draft releases
+## Releases
 
-A manual `draft release` workflow dispatch targeting `main` asks for a patch,
-minor, or major bump. It calculates `X.Y.Z` from the highest stable `vX.Y.Z`
-tag and creates or refreshes that version's unpublished GitHub draft only
-after lint, non-integration tests, and both native standalone builds pass. The
-draft contains:
+Test on a real machine first; see
+[native acceptance requirements](../packaging/NATIVE-ACCEPTANCE.md). One manual
+workflow run on `main` then publishes the release directly:
+
+```sh
+gh workflow run release.yml --ref main -f bump=minor
+```
+
+The `bump` input is `patch`, `minor`, or `major`. The workflow calculates `X.Y.Z`
+from the highest stable `vX.Y.Z` tag. After lint, non-integration tests, and both
+native standalone builds pass, it creates a GitHub draft with generated notes,
+uploads every asset, publishes the draft, and checks that the published release
+has these six assets:
 
 - `stenographer-X.Y.Z-linux-x86_64.tar.gz`
 - `stenographer-X.Y.Z-linux-aarch64.tar.gz`
 - `stenographer-X.Y.Z-py3-none-any.whl`
 - `stenographer-X.Y.Z.tar.gz`
 - `SHA256SUMS`
+- `quick-install.sh`
 
 Each standalone archive contains the complete onedir bundle and `LICENSE`.
 The workflow checks every SHA-256 entry and records signed provenance for all
-five files. It never publishes a release: publishing the reviewed draft
-manually creates the stable `vX.Y.Z` release.
+six files. `SHA256SUMS` lists the four archives, not `quick-install.sh`. The
+draft stage exists so that a user never sees a release with missing files, and
+so that a failed run can retry.
+
+Publishing then starts the `pages` workflow, because a release published with
+the workflow token does not trigger other workflows. It builds the site from the
+new tag and serves the release's `quick-install.sh` as `install.sh`. If only that
+step fails, start the deploy again:
+
+```sh
+gh workflow run pages.yml --ref main -f ref=vX.Y.Z
+```
+
+A manual `pages` run with no `ref` builds `main`. Either way it downloads
+`install.sh` from the latest release, and fails if the download fails.
 
 The planner reads the complete Git tag history, rejects malformed `v` tags,
 requires every published GitHub release to retain its stable tag, refuses an
 existing candidate tag, and rechecks the chosen predecessor tag and commit
 before attestation and before changing the draft. A single matching draft is
 refreshed only when it already targets the dispatch commit, making same-commit
-retries safe; unrelated, foreign-commit, or duplicate drafts fail closed.
-Configure the repository to prevent deletion or force-updates of release tags,
-and never move a published `vX.Y.Z` tag.
+retries safe with the same bump; a refresh leaves the draft's notes alone.
+Unrelated, foreign-commit, or duplicate drafts fail closed. A draft left by a
+failed run therefore blocks a release from a newer commit until the draft is
+deleted.
+
+A published bad release is fixed by a new patch release. Tags never move:
+configure the repository to prevent deletion or force-updates of release tags.
 
 `src/stenographer/_version.py` is generated build metadata rather than a
 release input. In an ordinary source or editable checkout it reports the
@@ -117,28 +120,30 @@ tag-derived version before installing, freezing, or packaging the application,
 so wheel, source distribution, standalone bundle, and `--version` agree. The
 manual `release preflight` workflow can rehearse a selected bump without
 creating a tag or release; pull-request runs use a patch candidate only to
-exercise packaging and do not require that candidate's release-note entry.
+exercise packaging.
 The guard requires either `--target-commit` or an explicit opt-out, so a
 dropped flag fails instead of silently skipping a check:
 
-- The `draft release` workflow passes `--target-commit` on every guard call.
+- The release workflow passes `--target-commit` on every guard call.
 - A manual rehearsal on `main` passes `--target-commit` too.
 - A manual rehearsal on another branch passes `--skip-target-check`: it still
   rejects unrelated or duplicate drafts, but a draft targeting `main` cannot
   match that branch's commit.
 - A pull-request run passes `--skip-draft-checks`: it runs on a temporary merge
-  commit and would plan a patch even while a minor or major draft awaits
-  publication, so it ignores drafts and plans its version from tags only.
+  commit and would plan a patch even while a failed run's minor or major draft
+  remains, so it ignores drafts and plans its version from tags only.
 
 The README's one-line installer, `scripts/quick-install.sh`, consumes that
 published release: it downloads the native standalone archive, the source
 distribution, and `SHA256SUMS`, verifies both archives, and runs the source
 distribution's `scripts/install.sh` on the prebuilt bundle. Renaming any of
-those assets breaks it.
+those assets breaks it. It installs, updates, and repairs with the same command,
+always reinstalling, and keeps the service state: a running service restarts on
+the new version, and a stopped service or a new install stays stopped.
 
 The native ARM runner validates packaging, executable architecture, `--version`,
 and `--help`; it cannot validate Wayland, microphone, or uinput behavior. Before
-publishing the first AArch64 release, run `doctor` and real dictation on an
+starting the first AArch64 release, run `doctor` and real dictation on an
 AArch64 Wayland machine.
 
 PyWayland 0.4.18 normally installs from a wheel. If no wheel exists for the
@@ -185,7 +190,7 @@ public `--help` output.
 
 `scripts/build.sh` rejects a source or frozen tree unless it contains exactly
 those four pack directories and exactly the four lifecycle cues in each. The
-draft-release workflow applies the same fail-closed guard to the wheel, source
+release workflow applies the same fail-closed guard to the wheel, source
 distribution, frozen bundle, and final standalone archives. The three new packs
 are original deterministic procedural renders from the checked-in
 `scripts/cue_audition.py`; verify their packaged bytes with:
