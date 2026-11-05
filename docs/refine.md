@@ -24,9 +24,10 @@ model residency lifecycle.
   rephrase, reorder, group related ideas, remove repetitions, and collapse
   explicit self-corrections. It must preserve every distinct fact, reason,
   request, uncertainty, condition, and authorization limit. It never performs
-  or answers the request. When Agent changes the text, the unrefined
-  transcript is copied to the clipboard just before the rewrite, so a clipboard
-  history keeps both; see
+  or answers the request. After Agent changes the text, if
+  `stenographer.delivery.copy_original` is enabled, the app attempts to copy
+  the unrefined transcript before delivering the rewrite. This copy is best
+  effort; a clipboard history can keep both. See
   [Keep your clipboard](usage.md#keep-your-clipboard).
 - **General** (Right Alt) is the original cleanup behavior described below.
 
@@ -97,10 +98,11 @@ yourself half a word in. Refine removes that without changing what you said:
   as the numbering. No `- ` and no `1.` is added; see [What you will
   see](#what-you-will-see) for how to say a list so it lands as one.
 
-And what it must never do, which the General prompt states and output guard
-enforces: it never summarizes, never answers or responds to what you said,
-never adds a fact, and never adds headers, bold, digit-numbered lists, or any
-other markdown. Names, numbers, and quoted phrases come through verbatim.
+The General prompt instructs the model not to summarize, answer or respond,
+add facts, or add headers, bold, digit-numbered lists, or other markdown. It
+also instructs the model to preserve names, numbers, and quoted phrases. The
+output guard checks formatting, length, and numerals; it does not enforce
+semantic fidelity.
 
 ## Privacy
 
@@ -175,7 +177,7 @@ All of these live under `[stenographer.refine]`.
 | `model` | `"gemma4:e2b"` | The Ollama model tag to use. |
 | `min_words` | `10` | Shorter utterances are delivered without a refine. |
 | `structured_output` | `false` | Constrain the reply to a JSON object with one text field. |
-| `vocabulary` | `[]` | Terms that refine spells exactly as written. |
+| `vocabulary` | `[]` | Terms the model is instructed to spell as written. |
 
 ### `model`
 
@@ -229,8 +231,9 @@ entire token budget deliberating and then return nothing at all.
 
 ### `vocabulary`
 
-A list of names and terms that refine spells exactly as you wrote them, for
-example product names or your colleagues' names:
+A list of names and terms that the model is instructed to spell as you wrote
+them, for example product names or your colleagues' names. Model compliance is
+not guaranteed:
 
 ```toml
 [stenographer.refine]
@@ -240,9 +243,8 @@ vocabulary = ["PipeWire", "Kubernetes", "Siobhan"]
 Every refine request carries the list: dictation, hub file jobs, and
 `stenographer transcribe --refine`. It adds one instruction after the built-in
 prompt and names each term. An empty list, the default, sends the same request
-as before the setting existed. The list changes only how refine spells a term
-that the speech model already heard; it does not change what the speech model
-hears.
+as before the setting existed. The list guides how refine spells a term that the speech model already heard;
+it does not change what the speech model hears.
 
 Each term is trimmed, must not be empty, must not hold a line break, and may
 have at most 64 characters. The list holds at most 200 terms, and no two terms

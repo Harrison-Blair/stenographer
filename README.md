@@ -156,9 +156,10 @@ behavior. Both bindings share the configured mode:
 
 Otherwise the transcript is pasted at your cursor. About half a second later
 your previous clipboard item is back on the clipboard, unless you copied
-something newer in that time. When Agent rewrites the
-text, the unrefined transcript is copied just before the rewrite, so a
-clipboard history keeps both. See
+something newer in that time. When Agent changes the text and
+`stenographer.delivery.copy_original` is enabled, the app attempts to copy the
+unrefined transcript before delivering the rewrite. This copy is best effort;
+a clipboard history can keep both. See
 [Keep your clipboard](docs/usage.md#keep-your-clipboard).
 Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
 Set `binding` (Agent) or `general_binding` to any `KEY_*` chord to rebind it.
