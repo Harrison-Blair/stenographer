@@ -71,11 +71,14 @@ class LiveSession:
             self._writer.mark_mic_diarized()
         model_dir = live_model_dir(data_dir)
         vad_model = model_dir / VAD_MODEL.filename
-        speaker_model = model_dir / SPEAKER_MODEL.filename
+        self._speaker_model = model_dir / SPEAKER_MODEL.filename
         self._worker = Worker(cfg.asr, transport=self._platform.asr_transport())
-        self._trackers = {"system": SpeakerTracker(speaker_model)}
+        # A mic-only session loads the system tracker when system audio first starts.
+        self._trackers: dict[str, SpeakerTracker] = {}
+        if system:
+            self._trackers["system"] = SpeakerTracker(self._speaker_model)
         if diarize_mic:
-            self._trackers["mic"] = SpeakerTracker(speaker_model, label_prefix="Room")
+            self._trackers["mic"] = SpeakerTracker(self._speaker_model, label_prefix="Room")
         self._speaker_embeddings: dict[str, list[np.ndarray]] = {
             source: [] for source in self._trackers
         }
@@ -491,6 +494,8 @@ class LiveSession:
                 log.warning(fmt_event("live", "system_source_unavailable", reason=reason))
                 return
         try:
+            if source == "system" and source not in self._trackers:
+                self._add_system_tracker()
             self._pad_source(source, self.elapsed_seconds)
             segmenter = PhraseSegmenter(source, self._vad_model)
             with self._lock:
@@ -512,6 +517,14 @@ class LiveSession:
             log_failure(
                 log, logging.WARNING, "live: source_start_failed", exc, safe=True, source=source
             )
+
+    def _add_system_tracker(self) -> None:
+        tracker = SpeakerTracker(self._speaker_model)
+        with self._lock:
+            self._speaker_embeddings["system"] = []
+            self._speaker_line_indices["system"] = []
+            # System speakers stay listed before room speakers.
+            self._trackers = {"system": tracker, **self._trackers}
 
     def _stop_source(self, source: str) -> None:
         with self._lock:
@@ -663,8 +676,9 @@ class LiveSession:
             speaker_id = "you"
             label = "You"
         else:
+            # The capture callback needs this lock, so the embedding runs outside it.
+            embedding = tracker.embed(phrase.samples)
             with self._lock:
-                embedding = tracker.embed(phrase.samples)
                 speaker_id = tracker.assign_embedding(
                     embedding,
                     duration=phrase.end - phrase.start,
