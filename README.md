@@ -164,7 +164,9 @@ original immediately before the rewritten text. This copy is best effort; a
 clipboard history can keep both. See
 [Keep your clipboard](docs/usage.md#keep-your-clipboard).
 Use `mode = "hold"` for push-to-talk only or `mode = "toggle"` for press/press.
-Set `binding` (Agent) or `general_binding` to any `KEY_*` chord to rebind it.
+The formatter capitalizes the pronoun `i`, including when surrounded by punctuation.
+
+Set `binding` (Agent) or `general_binding` to any `KEY_*` chord to rebind it. Binding errors identify the setting that contains the invalid chord.
 Agent, General, and cancel chords may not be equal or subsets of one another.
 
 ## Common commands

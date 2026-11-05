@@ -10,6 +10,7 @@ paragraph-pause breaks, the normalize/capitalize toggles, and raw passthrough.
 from __future__ import annotations
 
 import logging
+import unicodedata
 
 from stenographer.lib.logging.pipeline import fmt_event
 
@@ -31,7 +32,11 @@ def format_transcript(text: str, *, trailing_space: bool = False) -> str:
     out: list[str] = []
     capitalize_next = True
     for token in text.split():
-        word = "I" if token == "i" else token
+        letters = [i for i, ch in enumerate(token) if not unicodedata.category(ch).startswith("P")]
+        word = token
+        if len(letters) == 1 and token[letters[0]] == "i":
+            index = letters[0]
+            word = token[:index] + "I" + token[index + 1 :]
         if capitalize_next:
             word = _capitalize(word)
         sep = "" if not out or word[0] in _NO_SPACE_BEFORE else " "

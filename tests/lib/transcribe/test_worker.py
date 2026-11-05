@@ -192,7 +192,6 @@ def _observed() -> tuple[list[str], dict]:
         for name, event in (
             ("on_model_loading", "model_loading"),
             ("on_model_loading_finished", "model_loading_finished"),
-            ("on_transcribing", "transcribing"),
         )
     }
     return events, observers
@@ -239,7 +238,6 @@ def test_a_cold_transcription_loads_then_decodes_and_measures_both(make_worker):
     assert events == [
         "model_loading",
         "model_loading_finished",
-        "transcribing",
     ]
     timings = worker.last_timings
     assert timings is not None

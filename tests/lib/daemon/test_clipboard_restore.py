@@ -191,7 +191,7 @@ def test_the_restore_runs_after_a_raising_delivery():
 def test_the_restore_runs_after_a_cancel_that_withheld_the_chord():
     events: list[str] = []
     deliverer = _Deliverer(events, result=False)
-    calls = iter([False, False, False, True])
+    calls = iter([False, False, False, False, True])
     pipeline, _failures = _pipeline(
         events=events, deliverer=deliverer, refined=None, cancelled=lambda: next(calls, True)
     )

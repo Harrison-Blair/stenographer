@@ -33,6 +33,11 @@ def test_standalone_i_becomes_capital():
     assert format_transcript("i think") == "I think"
 
 
+def test_punctuated_i_becomes_capital_without_changing_punctuation():
+    assert format_transcript("then (i), and “i” spoke") == "Then (I), and “I” spoke"
+    assert format_transcript("then i.e. and i2") == "Then i.e. And i2"
+
+
 def test_in_is_not_rewritten():
     assert format_transcript("put it in there") == "Put it in there"
 
