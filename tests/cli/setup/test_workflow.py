@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import pathlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -930,22 +931,35 @@ def test_choose_floor_automatic_arm_runs_the_calibration(calibrator):
 
 @pytest.fixture
 def binding_capture(monkeypatch):
-    """Supply captured chords at the platform delegator, never opening a device."""
+    """Supply captured chords at the platform seam, never opening a device."""
 
-    from stenographer.cli.setup import binding_capture as capture_module
+    from stenographer.lib import platform as platform_module
 
     def install(*results):
         pending = list(results)
+        calls: list[tuple] = []
 
         def capture(stdin, device, *, timeout):
+            calls.append((stdin, device, timeout))
             outcome = pending.pop(0)
             if isinstance(outcome, Exception):
                 raise outcome
             return outcome
 
-        monkeypatch.setattr(capture_module, "capture_binding", capture)
+        host = SimpleNamespace(capture_binding=capture, keys=_Keys)
+        monkeypatch.setattr(platform_module, "current_platform", lambda: host)
+        return calls
 
     return install
+
+
+def test_setup_captures_from_its_stdin_and_device_with_the_15_second_timeout(binding_capture):
+    calls = binding_capture("KEY_F9")
+    console = _console("capture\ny\n")
+
+    setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", "/dev/input/event3", new_config=True)
+
+    assert calls == [(console.stdin, "/dev/input/event3", 15.0)]
 
 
 def test_a_captured_binding_is_offered_for_confirmation(binding_capture):

@@ -784,15 +784,15 @@ def _capture_or_choose_binding(
     if action == "type":
         return _prompt_typed_binding(console, current)
 
-    from stenographer.cli.setup.binding_capture import capture_binding
     from stenographer.lib.hotkey.errors import BindingCaptureError
+    from stenographer.lib.platform import current_platform
 
     while True:
         console.write(
             "Press and release one key or a held chord now (15-second timeout; Ctrl-C cancels)."
         )
         try:
-            captured = capture_binding(console.stdin, device, timeout=15.0)
+            captured = current_platform().capture_binding(console.stdin, device, timeout=15.0)
         except BindingCaptureError as exc:
             console.error(f"binding capture failed: {exc}")
         else:

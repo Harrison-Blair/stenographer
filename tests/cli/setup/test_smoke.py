@@ -20,13 +20,13 @@ import evdev
 import pytest
 
 from stenographer.cli.setup import workflow as setup
-from stenographer.cli.setup.binding_capture import capture_binding
 from stenographer.cli.shared.capability_probe import probe
 from stenographer.cli.shared.console import Console
 from stenographer.cli.shared.terminal import restart_service
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.diagnostics.capabilities import missing_required
+from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.linux.probe import service_status
 from stenographer.lib.transcribe import bark_download
 from stenographer.overlay.spectrum.calibration import calibrate_spectrum_profile
@@ -64,7 +64,7 @@ def test_live_binding_capture_uses_real_uinput_and_restores_pty():
 
     def run_capture() -> None:
         try:
-            result.append(capture_binding(stdin, node, timeout=3.0))
+            result.append(current_platform().capture_binding(stdin, node, timeout=3.0))
         except BaseException as exc:
             errors.append(exc)
 
