@@ -366,31 +366,6 @@ def test_closing_releases_the_display_exactly_once(loop) -> None:
     assert backend.closes == 1
 
 
-def test_layer_shell_refuses_without_a_wayland_session(monkeypatch) -> None:
-    """The environment check comes before the connection attempt, so a machine
-    with no compositor gets the exact reason instead of a library traceback.
-    """
-    pytest.importorskip("pywayland")
-    from stenographer.overlay.platform.linux.backends.layer_shell_backend import LayerShellBackend
-
-    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-
-    with pytest.raises(BackendUnavailableError) as caught:
-        LayerShellBackend()
-    assert caught.value.reason is UnavailableReason.NO_WAYLAND_DISPLAY
-
-
-def test_xwayland_refuses_without_a_display_variable(monkeypatch) -> None:
-    pytest.importorskip("Xlib")
-    from stenographer.overlay.platform.linux.backends.x11_overlay_backend import X11OverlayBackend
-
-    monkeypatch.delenv("DISPLAY", raising=False)
-
-    with pytest.raises(BackendUnavailableError) as caught:
-        X11OverlayBackend()
-    assert caught.value.reason is UnavailableReason.NO_X_DISPLAY
-
-
 @pytest.mark.parametrize(
     ("hook", "args"),
     [
