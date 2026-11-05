@@ -5,10 +5,9 @@ from __future__ import annotations
 
 import argparse
 import functools
+import sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING
-
-from stenographer.cli.shared.errors import _fatal
 
 if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
@@ -35,7 +34,8 @@ def with_config(
         try:
             cfg = load_or_default()
         except ConfigError as exc:
-            return _fatal(str(exc))
+            print(f"stenographer: {exc}", file=sys.stderr)
+            return 78
         apply_stderr_level(cfg.feedback.log_level)
         return handler(args, cfg)
 

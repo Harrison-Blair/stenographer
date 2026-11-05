@@ -45,6 +45,20 @@ def parse_binding(spec: str, keys: KeyTable) -> frozenset[int]:
     return frozenset(codes)
 
 
+def validate_binding(text: str) -> str:
+    """Validate a binding against the current platform and return its trimmed value."""
+    from stenographer.lib.platform import current_platform
+
+    value = text.strip()
+    if not value:
+        raise ValueError("binding must be non-empty")
+    try:
+        parse_binding(value, current_platform().keys())
+    except BindingError as exc:
+        raise ValueError(str(exc)) from exc
+    return value
+
+
 def chord_active(held: set[int], chord: frozenset[int]) -> bool:
     """True iff the full (non-empty) chord is a subset of the held keys. PURE."""
     return bool(chord) and chord <= held

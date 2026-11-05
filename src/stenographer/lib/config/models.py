@@ -11,7 +11,6 @@ from itertools import combinations
 from stenographer.lib.config.constants import (
     ALLOWED_HOTKEY_MODES,
     ALLOWED_LOG_LEVELS,
-    ALLOWED_REFINE_SCHEMES,
     DEFAULT_SOUND_PACK,
     MAX_REFINE_WORDS,
     MAX_RESTORE_DELAY_MS,
@@ -26,7 +25,7 @@ from stenographer.lib.config.constants import (
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.hotkey.keycodes import CODE_NAMES, KEY_CODES
-from stenographer.lib.refine.endpoints import host_name, normalize_host, userinfo
+from stenographer.lib.refine.endpoints import validated_host
 from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUTPUT
 
 
@@ -388,21 +387,14 @@ def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
 
 def _build_refine(table: dict, path: pathlib.Path) -> RefineConfig:
     r = _Reader(table, path, "refine")
-    host = normalize_host(r.str("host"))
-    scheme = host.partition("://")[0]
-    if scheme not in ALLOWED_REFINE_SCHEMES:
-        raise ConfigError(
-            path,
-            "refine.host",
-            f"must be an http:// or https:// URL, got {r.str('host')!r}",
-        )
-    if not host_name(host):
-        raise ConfigError(path, "refine.host", "must name a host")
-    if userinfo(host):
-        # Ollama has no authentication to use these for, and the daemon reports
-        # its configured host at start; a secret in the URL would be a secret
-        # in the log. The message never echoes the value.
-        raise ConfigError(path, "refine.host", "must not embed credentials")
+    raw_host = r.str("host")
+    try:
+        host = validated_host(raw_host)
+    except ValueError as exc:
+        message = str(exc)
+        if message == "must be an http:// or https:// URL":
+            message += f", got {raw_host!r}"
+        raise ConfigError(path, "refine.host", message) from exc
     model = r.str("model").strip()
     if not model:
         raise ConfigError(path, "refine.model", "must be non-empty")

@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 
 def test_step(step_id: str, config: Config, config_dir: pathlib.Path) -> str:
     """Run the selected setup test without opening a microphone or downloading."""
-    from stenographer.cli.setup import workflow
     from stenographer.lib.platform import current_platform
 
     if step_id == "input_access":
@@ -33,7 +32,9 @@ def test_step(step_id: str, config: Config, config_dir: pathlib.Path) -> str:
         noun = "device" if len(devices) == 1 else "devices"
         return f"{len(devices)} input {noun}: {names}; no audio was captured"
     if step_id == "hotkey":
-        workflow._parse_binding(config.hotkey.binding)
+        from stenographer.lib.hotkey.binding import validate_binding
+
+        validate_binding(config.hotkey.binding)
         host = current_platform().probe_host()
         access = "available" if host.hotkey_access_ok else "unavailable"
         return f"{config.hotkey.binding} is valid; hotkey access {access}"

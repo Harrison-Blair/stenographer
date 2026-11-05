@@ -23,6 +23,8 @@ from urllib.request import urlopen
 from stenographer.lib.transcribe.bark_pins import BARK_PRO_PINS, BarkPins
 from stenographer.lib.transcribe.errors import BarkDownloadError
 
+ASR_SIZE_TEXT = "about 1.6 GB download, 10 GiB free disk while it converts"
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 

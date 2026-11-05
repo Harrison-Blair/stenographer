@@ -14,10 +14,10 @@ from stenographer.cli.shared.terminal import (
     ask_yes_no,
     load_document,
     parse_bool,
+    report_save,
     require_interactive,
-    save_report_lines,
-    streams_interactive,
 )
+from stenographer.lib.config.document import SaveResult
 
 
 class _Terminal(io.StringIO):
@@ -35,7 +35,7 @@ def test_both_stream_ends_must_be_a_terminal(stdin_tty, stdout_tty, expected):
     stdin = _Terminal() if stdin_tty else io.StringIO()
     stdout = _Terminal() if stdout_tty else io.StringIO()
 
-    assert streams_interactive(stdin, stdout) is expected
+    assert Console(stdin, stdout, io.StringIO()).interactive is expected
 
 
 def test_gate_reports_and_exits_two_without_a_terminal():
@@ -65,39 +65,51 @@ def test_inapplicable_gate_never_reports_or_exits():
 
 
 def test_save_report_states_the_saved_path_and_backup():
-    lines = save_report_lines(
-        changed=True,
-        path=pathlib.PurePosixPath("/cfg/config.toml"),
-        backup_path=pathlib.PurePosixPath("/cfg/config.toml.bak-1"),
+    console = Console(io.StringIO(), io.StringIO(), io.StringIO())
+    report_save(
+        console,
+        SaveResult(
+            changed=True,
+            path=pathlib.PurePosixPath("/cfg/config.toml"),
+            backup_path=pathlib.PurePosixPath("/cfg/config.toml.bak-1"),
+        ),
         saved_prefix="Saved",
         unchanged_message="Configuration is unchanged; no file was written.",
     )
 
-    assert lines == ["Saved /cfg/config.toml", "Backup: /cfg/config.toml.bak-1"]
+    assert console.stdout.getvalue() == "Saved /cfg/config.toml\nBackup: /cfg/config.toml.bak-1\n"
 
 
 def test_save_report_omits_a_missing_backup():
-    lines = save_report_lines(
-        changed=True,
-        path=pathlib.PurePosixPath("/cfg/config.toml"),
-        backup_path=None,
+    console = Console(io.StringIO(), io.StringIO(), io.StringIO())
+    report_save(
+        console,
+        SaveResult(
+            changed=True,
+            path=pathlib.PurePosixPath("/cfg/config.toml"),
+            backup_path=None,
+        ),
         saved_prefix="Selected sound pack legacy; saved",
         unchanged_message="Sound pack legacy is already selected; no file was written.",
     )
 
-    assert lines == ["Selected sound pack legacy; saved /cfg/config.toml"]
+    assert console.stdout.getvalue() == "Selected sound pack legacy; saved /cfg/config.toml\n"
 
 
 def test_unchanged_save_reports_only_the_unchanged_sentence():
-    lines = save_report_lines(
-        changed=False,
-        path=pathlib.PurePosixPath("/cfg/config.toml"),
-        backup_path=pathlib.PurePosixPath("/cfg/config.toml.bak-1"),
+    console = Console(io.StringIO(), io.StringIO(), io.StringIO())
+    report_save(
+        console,
+        SaveResult(
+            changed=False,
+            path=pathlib.PurePosixPath("/cfg/config.toml"),
+            backup_path=pathlib.PurePosixPath("/cfg/config.toml.bak-1"),
+        ),
         saved_prefix="Saved",
         unchanged_message="Configuration is unchanged; no file was written.",
     )
 
-    assert lines == ["Configuration is unchanged; no file was written."]
+    assert console.stdout.getvalue() == "Configuration is unchanged; no file was written.\n"
 
 
 @pytest.mark.parametrize(("default", "marker"), [(True, "[Y/n]"), (False, "[y/N]")])

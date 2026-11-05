@@ -10,22 +10,12 @@ itself only owns the three streams it was handed.
 from __future__ import annotations
 
 import os
-import pathlib
 import sys
 from typing import TextIO
 
 from stenographer.cli.shared.console import Console
 from stenographer.lib.config.document import ConfigDocument, SaveResult
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
-
-#: Exit code for a command that needs a terminal and did not get one.
-NOT_A_TERMINAL = 2
-#: Exit code for a rejected configuration.
-CONFIG_REJECTED = 78
-#: Exit code for an operational failure.
-FAILED = 1
-#: Exit code for an interrupted interactive session.
-INTERRUPTED = 130
 
 
 def open_console(
@@ -42,19 +32,13 @@ def open_console(
     )
 
 
-def streams_interactive(stdin: TextIO, stdout: TextIO) -> bool:
-    """Both ends must be a terminal before a command may prompt."""
-
-    return bool(stdin.isatty() and stdout.isatty())
-
-
 def require_interactive(console: Console, message: str, *, when: bool = True) -> int | None:
     """Report *message* and return the exit code when the gate applies and fails."""
 
     if not when or console.interactive:
         return None
     console.error(message)
-    return NOT_A_TERMINAL
+    return 2
 
 
 def custom_config_selected() -> bool:
@@ -78,33 +62,15 @@ def load_document(
         return ConfigDocument.load(path)
     except ConfigError as exc:
         console.error(str(exc))
-        return CONFIG_REJECTED
+        return 78
     except ConfigPersistenceError as exc:
         console.error(str(exc))
-        return FAILED
+        return 1
     except KeyboardInterrupt:
         if blank_line_before_interrupt:
             console.write()
         console.error(interrupt_message)
-        return INTERRUPTED
-
-
-def save_report_lines(
-    *,
-    changed: bool,
-    path: pathlib.PurePath,
-    backup_path: pathlib.PurePath | None,
-    saved_prefix: str,
-    unchanged_message: str,
-) -> list[str]:
-    """Render what a save attempt did: the saved path, any backup, or no write."""
-
-    if not changed:
-        return [unchanged_message]
-    lines = [f"{saved_prefix} {path}"]
-    if backup_path is not None:
-        lines.append(f"Backup: {backup_path}")
-    return lines
+        return 130
 
 
 def report_save(
@@ -116,14 +82,12 @@ def report_save(
 ) -> None:
     """Write the save report for *result*."""
 
-    for line in save_report_lines(
-        changed=result.changed,
-        path=result.path,
-        backup_path=result.backup_path,
-        saved_prefix=saved_prefix,
-        unchanged_message=unchanged_message,
-    ):
-        console.write(line)
+    if not result.changed:
+        console.write(unchanged_message)
+        return
+    console.write(f"{saved_prefix} {result.path}")
+    if result.backup_path is not None:
+        console.write(f"Backup: {result.backup_path}")
 
 
 def parse_bool(text: str, current: bool) -> bool:
