@@ -22,9 +22,9 @@ failure — and the classification (:func:`tail_errors`) and the tolerant decode
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from stenographer.cli.doctor.log_status import LogStatus
 from stenographer.cli.shared.capabilities import Capabilities
 from stenographer.cli.shared.capability_probe import probe
 from stenographer.lib.diagnostics import additional_checks
@@ -41,6 +41,23 @@ if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.host_guidance import HostGuidance
     from stenographer.overlay.platform.guidance import OverlayGuidance
+
+@dataclass(frozen=True, slots=True)
+class LogStatus:
+    """One log file as the report sees it.
+
+    The three states a report must tell apart: ``size is None`` means the file
+    does not exist, ``readable=False`` means it exists but this user may not
+    open it (a daemon once started under another account leaves exactly that),
+    and otherwise ``tail`` holds its recent complaints.
+    """
+
+    name: str
+    path: pathlib.Path
+    size: int | None
+    tail: tuple[str, ...] = ()
+    readable: bool = True
+
 
 #: Levels worth replaying in the report; DEBUG and INFO are the healthy path.
 _TAIL_LEVELS = frozenset({"WARNING", "ERROR", "CRITICAL"})
