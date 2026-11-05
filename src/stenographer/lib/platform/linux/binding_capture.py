@@ -66,7 +66,7 @@ def capture_binding(stdin: TextIO, device_path: str | None, *, timeout: float) -
 
 def _capture_paths(stdin: TextIO, paths: Sequence[str], *, timeout: float) -> str:
     devices: list[evdev.InputDevice] = []
-    for path in dict.fromkeys(paths):
+    for path in paths:
         try:
             devices.append(evdev.InputDevice(path))
         except OSError as exc:
