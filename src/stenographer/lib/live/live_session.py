@@ -23,6 +23,7 @@ from stenographer.lib.live.relabel import relabel_system_lines, relabel_work_uni
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.live.voice_split import group_and_split, read_saved_audio
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.errors import SystemAudioCaptureError, UnsupportedPlatformError
@@ -32,7 +33,7 @@ from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
@@ -451,35 +452,53 @@ class LiveSession:
 
     def _save_end_pass(self, passes: list, total: int) -> bool:
         """Save the batch pass as a revision. Return ``False`` if a skip ended it."""
-        # Progress counts phrases: each pass reports work units, and every pass
-        # total is known up front, so the phrase count never falls or overshoots.
+        # Progress counts phrases: each pass gives a fraction of its own work, and the
+        # weight of every pass is known up front, so the count never falls or overshoots.
         units = [relabel_work_units(lines) for _, _, lines, _ in passes]
         total_units = sum(units)
-        revised_lines = list(self.lines)
+        replacements: dict[int, list[TranscriptLine]] = {}
         offset = 0
         for (source, indices, lines, embeddings), pass_units in zip(passes, units, strict=True):
-            relabeled = relabel_system_lines(
+            grouped = group_and_split(
                 lines,
                 embeddings,
-                progress=lambda done, _total, offset=offset, pass_units=pass_units: (
+                # A source whose audio stopped saving has a short file, so no phrase can split.
+                read_audio=None if source in self.audio_failed_sources else self._saved_audio,
+                embed=self._trackers[source].embed,
+                decode=lambda samples: self._worker.transcribe(samples).text,
+                progress=lambda fraction, offset=offset, pass_units=pass_units: (
                     self._set_relabel_progress(
-                        total * (offset + min(done, pass_units)) // total_units, total
+                        int(total * (offset + fraction * pass_units) / total_units), total
                     )
                 ),
                 should_cancel=self._skip_relabel.is_set,
                 label_prefix=_LABEL_PREFIXES[source],
             )
-            if relabeled is None or self._skip_relabel.is_set():
+            if grouped is None or self._skip_relabel.is_set():
                 return False
+            # A part keeps the speaker of its phrase, so a given name can follow its speech.
+            shown = tuple(
+                replace(line, speaker_id=lines[parent].speaker_id, label=lines[parent].label)
+                for line, parent in zip(grouped.lines, grouped.parents, strict=True)
+            )
             with self._lock:
                 numbered = self._numbered_lines(
-                    source, lines, [line.speaker_id for line in relabeled]
+                    source, shown, [line.speaker_id for line in grouped.lines], grouped.parents
                 )
-            for index, line in zip(indices, numbered, strict=True):
-                revised_lines[index] = line
+            for parent, line in zip(grouped.parents, numbered, strict=True):
+                replacements.setdefault(indices[parent], []).append(line)
             offset += pass_units
+        revised_lines = [
+            revised
+            for index, line in enumerate(self.lines)
+            for revised in replacements.get(index, (line,))
+        ]
         self._write_revision(revised_lines, method="diarization")
         return True
+
+    def _saved_audio(self, lines: tuple[TranscriptLine, ...]) -> Iterator[np.ndarray]:
+        for line in lines:
+            yield read_saved_audio(self._writer.path / f"{line.source}.flac", line.start, line.end)
 
     def _save_shown_lines(self) -> None:
         """Save the speakers on screen. transcript.jsonl has only first-written speakers.
@@ -499,10 +518,14 @@ class LiveSession:
         self._write_revision(revised_lines, method="live")
 
     def _numbered_lines(
-        self, source: str, lines: tuple[TranscriptLine, ...], cluster_ids: list[str]
+        self,
+        source: str,
+        lines: tuple[TranscriptLine, ...],
+        cluster_ids: list[str],
+        parents: tuple[int, ...] | None = None,
     ) -> tuple[TranscriptLine, ...]:
         speakers = self._trackers[source].saved_speakers(
-            [line.speaker_id for line in lines], cluster_ids, _durations(lines)
+            [line.speaker_id for line in lines], cluster_ids, _durations(lines), parents
         )
         return tuple(
             replace(line, speaker_id=speaker_id, label=label)

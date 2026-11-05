@@ -149,7 +149,7 @@ class SpeakerTracker:
         with no known speaker gets a new number. A known speaker with no cluster
         stops, and its number is not used again.
         """
-        by_speech = self._shared_speech(current_ids, cluster_ids, durations)
+        by_speech = self._shared_speech(current_ids, cluster_ids, durations, self._grouped_phrases)
         ids_by_cluster = self._match_clusters(by_speech)
         for cluster in dict.fromkeys(cluster_ids):
             if cluster not in ids_by_cluster:
@@ -176,13 +176,20 @@ class SpeakerTracker:
         current_ids: Sequence[str],
         cluster_ids: Sequence[str],
         durations: Sequence[float],
+        parents: Sequence[int] | None = None,
     ) -> tuple[tuple[str, str], ...]:
-        """Return ``(speaker_id, label)`` of each phrase for a saved revision.
+        """Return ``(speaker_id, label)`` of each line for a saved revision.
 
         Speakers get numbers 1..N in order of first appearance. A given name stays
         with the cluster that its speaker chooses, by the rule of ``regroup``.
+        ``parents[i]`` is the recorded phrase that holds line ``i``, if lines were split.
         """
-        matches = self._match_clusters(self._shared_speech(current_ids, cluster_ids, durations))
+        grouped = self._grouped_phrases
+        if parents is not None:
+            grouped = sum(parent < grouped for parent in parents)
+        matches = self._match_clusters(
+            self._shared_speech(current_ids, cluster_ids, durations, grouped)
+        )
         speakers = {
             cluster: (
                 f"{self._id_prefix}{number}",
@@ -193,11 +200,14 @@ class SpeakerTracker:
         return tuple(speakers[cluster] for cluster in cluster_ids)
 
     def _shared_speech(
-        self, current_ids: Sequence[str], cluster_ids: Sequence[str], durations: Sequence[float]
+        self,
+        current_ids: Sequence[str],
+        cluster_ids: Sequence[str],
+        durations: Sequence[float],
+        grouped: int,
     ) -> list[tuple[tuple[str, str], float]]:
         """Return the grouped speech each speaker shares with each cluster, largest first."""
         shared: dict[tuple[str, str], float] = {}
-        grouped = self._grouped_phrases
         for current, cluster, duration in zip(
             current_ids[:grouped], cluster_ids[:grouped], durations[:grouped], strict=True
         ):

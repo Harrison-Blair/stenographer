@@ -22,15 +22,17 @@ from stenographer.lib.files.models import FileJobOptions
 from stenographer.lib.live.errors import InvalidVadModelError
 from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
-from stenographer.lib.live.relabel import relabel_system_lines
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.live.voice_split import group_and_split, source_segments
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.sessions.errors import SessionWriteCancelledError, StaleRevisionError
 from stenographer.lib.sessions.store import SessionStore
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
     from stenographer.lib.refine.ollama_refiner import OllamaRefiner
@@ -183,12 +185,15 @@ class FilesEngine:
                 return
             started_at = self._clock()
             target = self._store.revision_target(job.options.path)
-            lines, embeddings = self._transcribe(job, media)
+            segmenter = self._segmenter_factory()
+            tracker = self._speaker_tracker_factory() if job.options.diarize else None
+            refiner = self._make_refiner() if job.options.refine else None
+            lines, embeddings = self._transcribe(job, media, segmenter, tracker, refiner)
             if job.cancel_requested:
                 job._cancelled(tuple(lines))
                 return
             if job.options.diarize:
-                lines = self._diarize(job, lines, embeddings)
+                lines = self._diarize(job, media, lines, embeddings, tracker, refiner)
                 if job.cancel_requested:
                     job._cancelled(tuple(lines))
                     return
@@ -222,11 +227,13 @@ class FilesEngine:
             log_failure(log, logging.ERROR, "files: job_failed", exc, safe=False, job_id=job.id)
 
     def _transcribe(
-        self, job: FileJob, media: MediaInfo
+        self,
+        job: FileJob,
+        media: MediaInfo,
+        segmenter,
+        tracker,
+        refiner: OllamaRefiner | None,
     ) -> tuple[list[TranscriptLine], list[np.ndarray]]:
-        segmenter = self._segmenter_factory()
-        tracker = self._speaker_tracker_factory() if job.options.diarize else None
-        refiner = self._make_refiner() if job.options.refine else None
         lines: list[TranscriptLine] = []
         embeddings: list[np.ndarray] = []
         duration = media.duration_seconds or 0.0
@@ -299,24 +306,44 @@ class FilesEngine:
     def _diarize(
         self,
         job: FileJob,
+        media: MediaInfo,
         lines: list[TranscriptLine],
         embeddings: list[np.ndarray],
+        tracker,
+        refiner: OllamaRefiner | None,
     ) -> list[TranscriptLine]:
 
-        def report(done: int, total: int) -> None:
-            fraction = done / total
+        def report(fraction: float) -> None:
             job._update("diarize", 80 + round(15 * fraction), tuple(lines))
 
-        relabeled = relabel_system_lines(
+        def read_audio(long_lines: tuple[TranscriptLine, ...]) -> Iterator[np.ndarray]:
+            # The phrases of a long file do not stay in memory, so this decodes it again.
+            blocks = iter_media_audio(job.options.path, media, self._decoder)
+            try:
+                for _, samples in source_segments(blocks, long_lines):
+                    yield samples
+            finally:
+                blocks.close()
+
+        def decode(samples: np.ndarray) -> str:
+            text = self._worker.transcribe(samples).text.strip()
+            if refiner is not None and refiner.will_refine(text):
+                text = refiner.refine(text, cancelled=lambda: job.cancel_requested)
+            return text
+
+        grouped = group_and_split(
             lines,
             embeddings,
+            read_audio=read_audio,
+            embed=tracker.embed,
+            decode=decode,
             progress=report,
             should_cancel=lambda: job.cancel_requested,
             speaker_count=job.options.speaker_count,
         )
-        if relabeled is None:
+        if grouped is None:
             return lines
-        result = list(relabeled)
+        result = list(grouped.lines)
         job._update("diarize", 95, tuple(result))
         return result
 

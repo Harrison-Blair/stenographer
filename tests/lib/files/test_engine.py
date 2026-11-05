@@ -811,3 +811,144 @@ def test_missing_vad_model_reports_download_command(tmp_path):
         assert "stenographer model download --live" in job.error
     finally:
         engine.close()
+
+
+class VoiceChangeSegmenter:
+    """Cut 64 s of audio into two 20 s turns and one 24 s phrase with a voice change."""
+
+    def accept(self, _samples):
+        return []
+
+    def flush(self):
+        audio = _voice_change_samples()
+        edges = ((0, 20), (20, 40), (40, 64))
+        return [_phrase(a, b, audio[a * 16000 : b * 16000]) for a, b in edges]
+
+
+def _voice_change_samples():
+    return np.concatenate(
+        (
+            np.full(20 * 16000, 0.1, np.float32),
+            np.full(20 * 16000, 0.4, np.float32),
+            np.full(204000, 0.1, np.float32),
+            np.full(180000, 0.4, np.float32),
+        )
+    )
+
+
+class LevelTracker:
+    def embed(self, samples):
+        low = abs(float(np.median(samples)) - 0.1) < 0.05
+        return np.array([1.0, 0.0] if low else [0.0, 1.0], dtype=np.float32)
+
+    def assign_embedding(self, _embedding, *, duration):
+        assert duration > 0
+        return "speaker-1"
+
+    def label(self, _speaker_id):
+        return "Speaker 1"
+
+
+def _voice_change_job(tmp_path, process=None, **options):
+    process = process or _file_asr_process()
+    engine = _engine(
+        tmp_path,
+        process,
+        speaker_tracker_factory=LevelTracker,
+        **options.pop("engine", {}),
+    )
+    engine._segmenter_factory = VoiceChangeSegmenter
+    source = tmp_path / "meeting.wav"
+    soundfile.write(source, _voice_change_samples(), 16000)
+    return engine, engine.submit(source, **options)
+
+
+def test_a_file_job_splits_a_voice_change_at_the_end_of_the_job(tmp_path):
+    process = _file_asr_process()
+    engine, job = _voice_change_job(tmp_path, process, diarize=True)
+    percents = []
+    job.subscribe(lambda progress: percents.append(progress.percent))
+    try:
+        _wait_for(job, "completed")
+        lines = job.progress.completed_lines
+        assert [line.speaker_id for line in lines] == [
+            "speaker-1",
+            "speaker-2",
+            "speaker-1",
+            "speaker-2",
+        ]
+        assert [line.text for line in lines] == [
+            "recognized phrase 1",
+            "recognized phrase 2",
+            "recognized phrase 4",
+            "recognized phrase 5",
+        ]
+        assert (lines[2].start, lines[3].end) == (40.0, 64.0)
+        assert lines[2].end == lines[3].start
+        assert 52.0 <= lines[3].start <= 53.5
+        assert {line.wall for line in lines} == {""}
+        assert percents == sorted(percents)
+        rows = _transcript_rows(_sessions(tmp_path) / job.session_id)
+        assert len(rows) == 4
+    finally:
+        engine.close()
+
+
+def test_a_file_job_respects_a_set_speaker_count_through_a_split(tmp_path):
+    engine, job = _voice_change_job(tmp_path, diarize=True, speaker_count=1)
+    try:
+        _wait_for(job, "completed")
+        # With one speaker set, the phrase has no second voice to split at.
+        assert len(job.progress.completed_lines) == 3
+        assert {line.speaker_id for line in job.progress.completed_lines} == {"speaker-1"}
+    finally:
+        engine.close()
+
+
+def test_a_file_job_keeps_two_set_speakers_after_a_split(tmp_path):
+    engine, job = _voice_change_job(tmp_path, diarize=True, speaker_count=2)
+    try:
+        _wait_for(job, "completed")
+        lines = job.progress.completed_lines
+        assert len(lines) == 4
+        assert {line.speaker_id for line in lines} == {"speaker-1", "speaker-2"}
+    finally:
+        engine.close()
+
+
+def test_a_file_job_refines_split_parts(tmp_path):
+    class Refiner:
+        def will_refine(self, _text):
+            return True
+
+        def refine(self, text, *, cancelled):
+            assert not cancelled()
+            return text.upper()
+
+    engine, job = _voice_change_job(
+        tmp_path,
+        diarize=True,
+        refine=True,
+        engine={"refiner_factory": lambda _config: Refiner()},
+    )
+    try:
+        _wait_for(job, "completed")
+        assert [line.text for line in job.progress.completed_lines] == [
+            "RECOGNIZED PHRASE 1",
+            "RECOGNIZED PHRASE 2",
+            "RECOGNIZED PHRASE 4",
+            "RECOGNIZED PHRASE 5",
+        ]
+    finally:
+        engine.close()
+
+
+def test_a_file_job_without_diarization_does_not_split(tmp_path):
+    process = _file_asr_process()
+    engine, job = _voice_change_job(tmp_path, process, diarize=False)
+    try:
+        _wait_for(job, "completed")
+        assert len(job.progress.completed_lines) == 3
+        assert process.decode_count == 3
+    finally:
+        engine.close()

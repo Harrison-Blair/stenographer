@@ -15,6 +15,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from stenographer.lib.live import voice_split
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
@@ -248,6 +249,12 @@ def _make_session(
     monkeypatch.setattr(live_session, "Recorder", RecorderFactory)
     monkeypatch.setattr(live_session, "PhraseSegmenter", SegmenterFactory)
     monkeypatch.setattr(live_session, "SpeakerTracker", tracker or VoiceSpeakerTracker)
+    saved_audio = {}
+    monkeypatch.setattr(
+        live_session,
+        "read_saved_audio",
+        lambda path, start, end: saved_audio[path.stem, start, end],
+    )
     platform = FakePlatform(system_capture, tmp_path, platform_error)
     cfg = SimpleNamespace(
         asr=SimpleNamespace(),
@@ -271,6 +278,7 @@ def _make_session(
         system=system_capture,
         recorder=recorder_holder["recorder"],
         segmenters=segmenters,
+        saved_audio=saved_audio,
     )
 
 
@@ -356,7 +364,7 @@ def test_second_stop_request_skips_relabel_and_keeps_the_live_revision(monkeypat
             return None
         return original_relabel(lines, embeddings, **kwargs)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", wait_for_skip)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", wait_for_skip)
     rig = _make_session(monkeypatch, tmp_path, mic=False)
     processed = Event()
     rig.session.subscribe(lambda _line: processed.set())
@@ -387,12 +395,11 @@ def test_second_stop_request_skips_relabel_and_keeps_the_live_revision(monkeypat
 
 
 def test_relabel_failure_keeps_live_labels_and_exposes_the_reason(monkeypatch, tmp_path):
-    import stenographer.lib.live.live_session as live_session
 
     def fail_relabel(*_args, **_kwargs):
         raise RuntimeError("batch clustering unavailable")
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", fail_relabel)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", fail_relabel)
     rig = _make_session(monkeypatch, tmp_path, mic=False)
     processed = Event()
     rig.session.subscribe(lambda _line: processed.set())
@@ -419,7 +426,7 @@ def test_relabel_stale_revision_keeps_a_rename_saved_during_the_pass(monkeypatch
         SessionStore(writer.path.parent).rename_speaker(writer.path.name, "speaker-1", "Alice")
         return original_relabel(lines, embeddings, **kwargs)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", rename_during_pass)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", rename_during_pass)
     rig = _make_session(monkeypatch, tmp_path, mic=False)
     writer = rig.writer
     holder["writer"] = writer
@@ -743,7 +750,7 @@ def test_stop_relabels_mic_lines_separately_with_the_room_prefix(monkeypatch, tm
         passes.append(({line.source for line in lines}, kwargs.get("label_prefix", "Speaker")))
         return original_relabel(lines, embeddings, **kwargs)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", record_pass)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", record_pass)
     rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 3)
     rig.recorder.emit(1)
@@ -805,7 +812,6 @@ def test_rename_updates_a_room_speaker_and_its_existing_lines(monkeypatch, tmp_p
 
 
 def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
-    import stenographer.lib.live.live_session as live_session
 
     started = Event()
     release = Event()
@@ -815,7 +821,7 @@ def test_skip_during_mic_relabel_keeps_live_room_labels(monkeypatch, tmp_path):
         release.wait(timeout=1)
         return None if kwargs["should_cancel"]() else tuple(lines)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", wait_for_skip)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", wait_for_skip)
     rig = _make_session(monkeypatch, tmp_path, diarize_mic=True)
     processed = _wait_for_lines(rig.session, 3)
     rig.recorder.emit(1)
@@ -856,22 +862,15 @@ def test_relabel_progress_counts_phrases_from_the_real_work_units_of_both_passes
 ):
     import stenographer.lib.live.live_session as live_session
 
-    original_relabel = live_session.relabel_system_lines
     observed = []
-    session_holder = {}
-
-    def observe_pass(lines, embeddings, **kwargs):
-        report = kwargs["progress"]
-
-        def progress(done, total):
-            report(done, total)
-            observed.append(session_holder["session"].relabel_progress)
-
-        return original_relabel(lines, embeddings, **{**kwargs, "progress": progress})
-
-    monkeypatch.setattr(live_session, "relabel_system_lines", observe_pass)
     rig = _make_session(monkeypatch, tmp_path, diarize_mic=True, start=False)
-    session_holder["session"] = rig.session
+    set_progress = rig.session._set_relabel_progress
+
+    def observe_progress(done, total):
+        set_progress(done, total)
+        observed.append(rig.session.relabel_progress)
+
+    rig.session._set_relabel_progress = observe_progress
     monkeypatch.setattr(live_session, "PhraseSegmenter", LongPhraseSegmenter)
     rig.session.start()
     processed = _wait_for_lines(rig.session, 7)
@@ -1021,6 +1020,7 @@ VOICE_A, VOICE_B, VOICE_C = 1, 4, 2
 def _say(rig, voice, start, end, *, source="mic"):
     """Send one phrase through the queue that the capture callback fills."""
     samples = np.asarray([voice], dtype=np.float32)
+    rig.saved_audio[source, start, end] = np.full(round((end - start) * 16000), voice, np.float32)
     rig.session._queue.put(Phrase(source=source, start=start, end=end, samples=samples))
     rig.session._queue.join()
 
@@ -1299,7 +1299,7 @@ def test_a_skip_during_the_end_pass_saves_the_names_on_screen(monkeypatch, tmp_p
             return None
         return original_relabel(lines, embeddings, **kwargs)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", skip_in_end_pass)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", skip_in_end_pass)
     rig = _room_session(monkeypatch, tmp_path)
     holder["session"] = rig.session
     _say_ann_and_bob(rig)
@@ -1354,7 +1354,7 @@ def test_a_failed_end_pass_saves_the_names_on_screen(monkeypatch, tmp_path):
             raise RuntimeError("batch clustering unavailable")
         return original_relabel(lines, embeddings, **kwargs)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", fail_in_end_pass)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", fail_in_end_pass)
     rig = _room_session(monkeypatch, tmp_path)
     _say_ann_and_bob(rig)
 
@@ -1607,7 +1607,7 @@ def test_a_failed_end_pass_saves_as_live_labels(monkeypatch, tmp_path):
             raise RuntimeError("batch clustering unavailable")
         return original_relabel(lines, embeddings, **kwargs)
 
-    monkeypatch.setattr(live_session, "relabel_system_lines", fail_in_end_pass)
+    monkeypatch.setattr(voice_split, "relabel_system_lines", fail_in_end_pass)
     rig = _room_session(monkeypatch, tmp_path)
     _say_ann_and_bob(rig)
 
@@ -1659,3 +1659,137 @@ def test_a_rename_write_stores_the_trimmed_name(monkeypatch, tmp_path):
     assert rig.writer.renames == [{"room-1": "Dana"}]
     assert rig.session.speakers == (("room-1", "Dana"),)
     rig.session.stop()
+
+
+class MainVoiceTracker(VoiceSpeakerTracker):
+    """Take the voice of a slice of saved audio from most of its samples."""
+
+    def embed(self, samples):
+        return super().embed(np.asarray([np.median(samples)]))
+
+
+def _split_session(monkeypatch, tmp_path):
+    rig = _make_session(
+        monkeypatch, tmp_path, system=False, diarize_mic=True, tracker=MainVoiceTracker
+    )
+    transcribe = rig.worker.transcribe
+    rig.worker.transcribe = lambda samples: transcribe(np.asarray([np.median(samples)]))
+    return rig
+
+
+def _say_with_a_voice_change(rig, voice, other, start):
+    """Send a 24 s phrase that changes from *voice* to *other* after 12.75 s."""
+    _say(rig, voice, start, start + 24.0)
+    rig.saved_audio["mic", start, start + 24.0] = np.concatenate(
+        (np.full(204000, voice, np.float32), np.full(180000, other, np.float32))
+    )
+
+
+def _saved_detail(rig):
+    return SessionStore(rig.writer.path.parent).read(rig.writer.path.name)
+
+
+def test_the_end_pass_splits_a_voice_change_and_saves_each_part_with_its_speaker(
+    monkeypatch, tmp_path
+):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 40.0)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 40.0)
+
+    rig.session.stop()
+
+    detail = _saved_detail(rig)
+    assert _saved_state(rig) == ("diarization", "relabeled")
+    assert [line.speaker_id for line in detail.lines] == ["room-1", "room-2", "room-1", "room-2"]
+    assert [line.label for line in detail.lines] == ["Room 1", "Room 2", "Room 1", "Room 2"]
+    assert [line.text for line in detail.lines] == [
+        "spoken words",
+        "a phrase",
+        "spoken words",
+        "a phrase",
+    ]
+    first, second = detail.lines[2:]
+    assert (first.start, second.end) == (40.0, 64.0)
+    assert first.end == second.start
+    assert 52.0 <= second.start <= 53.5
+    assert first.wall < second.wall
+    assert rig.session.lines == tuple(detail.lines)
+    assert rig.session.speakers == (("room-1", "Room 1"), ("room-2", "Room 2"))
+    assert "release" in rig.worker.events
+
+
+def test_a_skip_while_a_part_decodes_saves_the_whole_phrase_as_live(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 40.0)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 40.0)
+    transcribe = rig.worker.transcribe
+
+    def skip_during_decode(samples):
+        rig.session.skip_relabel()
+        return transcribe(samples)
+
+    rig.worker.transcribe = skip_during_decode
+
+    rig.session.stop()
+
+    detail = _saved_detail(rig)
+    assert rig.session.relabel_status == "Relabeling skipped"
+    assert _saved_state(rig) == ("live", "live")
+    assert len(detail.lines) == 3
+    assert (detail.lines[2].start, detail.lines[2].end) == (40.0, 64.0)
+
+
+def test_a_source_whose_audio_failed_is_grouped_but_not_split(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 40.0)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 40.0)
+    rig.saved_audio.clear()
+    rig.session._mark_audio_failed("mic", OSError("disk full"))
+
+    rig.session.stop()
+
+    detail = _saved_detail(rig)
+    assert _saved_state(rig) == ("diarization", "relabeled")
+    assert [line.speaker_id for line in detail.lines] == ["room-1", "room-2", "room-1"]
+
+
+def test_a_given_name_stays_with_its_speech_when_an_earlier_phrase_split(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 0.0)
+    _say(rig, VOICE_A, 24.0, 29.0)
+    # This phrase passes 30 s, so a pass groups the three phrases and Bob's speaker appears.
+    _say(rig, VOICE_B, 29.0, 59.0)
+    bob = rig.session.lines[2].speaker_id
+    rig.session.rename(bob, "Bob")
+
+    rig.session.stop()
+
+    detail = _saved_detail(rig)
+    assert [(line.start, line.label) for line in detail.lines][-1] == (29.0, "Bob")
+    assert len(detail.lines) == 4
+    assert detail.lines[1].label == "Bob"
+
+
+def test_end_pass_progress_stays_within_its_total_through_a_split(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 40.0)
+    _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 40.0)
+    observed = []
+    set_progress = rig.session._set_relabel_progress
+
+    def observe(done, total):
+        set_progress(done, total)
+        observed.append(rig.session.relabel_progress)
+
+    rig.session._set_relabel_progress = observe
+
+    rig.session.stop()
+
+    done = [value for value, _total in observed]
+    assert done == sorted(done)
+    assert {total for _done, total in observed} == {3}
+    assert observed[-1] == (3, 3)
