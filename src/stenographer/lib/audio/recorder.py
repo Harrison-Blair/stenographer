@@ -134,7 +134,7 @@ class Recorder:
             self._select_default_device(module)
             self._negotiate(module)
         except Exception:
-            self._invalidate(reselect_default=True)
+            self._invalidate()
             raise
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         logger.info(
@@ -208,10 +208,6 @@ class Recorder:
         retained = self._state is RecorderState.PREPARED
         if not retained:
             self.prepare()
-        self._blocks = []
-        self._frames = 0
-        self._capped = False
-        self._overflow = False
         try:
             self._activate(recovery="none")
         except Exception as exc:
@@ -223,7 +219,7 @@ class Recorder:
                 safe=True,
                 retained=int(retained),
             )
-            self._invalidate(reselect_default=True)
+            self._invalidate()
             if not retained:
                 raise
             try:
@@ -238,7 +234,7 @@ class Recorder:
                     safe=True,
                     phase="activate",
                 )
-                self._invalidate(reselect_default=True)
+                self._invalidate()
                 raise
 
     def _activate(self, *, recovery: str) -> None:
@@ -363,9 +359,6 @@ class Recorder:
                 audio = audio.astype(np.float32, copy=False)
             output_frames = self._output_frames if self._streaming else int(audio.size)
         except Exception as exc:
-            failed_frames = self._frames
-            failed_overflow = self._overflow
-            failed_capped = self._capped
             log_failure(
                 logger,
                 logging.WARNING,
@@ -373,11 +366,11 @@ class Recorder:
                 exc,
                 safe=True,
                 phase=phase,
-                input_frames=failed_frames,
-                overflow=int(failed_overflow),
-                capped=int(failed_capped),
+                input_frames=self._frames,
+                overflow=int(self._overflow),
+                capped=int(self._capped),
             )
-            self._invalidate(reselect_default=True)
+            self._invalidate()
             raise
         self._discard_samples()
         elapsed = 0.0 if capture_started_at is None else time.perf_counter() - capture_started_at
@@ -439,15 +432,15 @@ class Recorder:
 
         Safe to call repeatedly. A later ``prepare`` may create a fresh stream.
         """
-        self._invalidate(reselect_default=True)
+        self._invalidate()
 
-    def _invalidate(self, *, reselect_default: bool) -> None:
+    def _invalidate(self) -> None:
         stream, self._stream = self._stream, None
         self._state = RecorderState.UNPREPARED
         # Clear immediately for privacy, then clear again after PortAudio has
         # terminated callbacks in case an already-running callback appended.
         self._discard_samples()
-        if reselect_default and self._configured_device is None:
+        if self._configured_device is None:
             self._selected_device = None
         try:
             if stream is not None:
