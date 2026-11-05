@@ -208,7 +208,7 @@ def basic_format(original: str, candidate: str) -> str:
     stripped, _ = _strip_one_wrapper(candidate)
     _, still_wrapped = _strip_one_wrapper(stripped)
     if still_wrapped:
-        raise RefineRejectedError("output was wrapped")
+        raise RefineRejectedError("output remained wrapped after one wrapper was removed")
     if not stripped:
         raise RefineRejectedError("output was empty")
     return stripped
@@ -235,8 +235,10 @@ def guard(original: str, candidate: str) -> str:
     stripped = basic_format(original, candidate)
     reference = original.strip()
     ratio = len(stripped) / len(reference)
-    if not MIN_LENGTH_RATIO <= ratio <= MAX_LENGTH_RATIO:
-        raise RefineRejectedError("output length was out of range")
+    if ratio < MIN_LENGTH_RATIO:
+        raise RefineRejectedError("output length was below the minimum ratio")
+    if ratio > MAX_LENGTH_RATIO:
+        raise RefineRejectedError("output length was above the maximum ratio")
     source = _numerals(reference)
     produced = _numerals(stripped)
     if produced - source:

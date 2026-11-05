@@ -91,14 +91,14 @@ def test_the_floor_admits_a_correctly_collapsed_retracted_enumeration():
 def test_output_far_shorter_than_the_input_is_refused_as_a_summary():
     summary = "x" * (math.ceil(len(ORIGINAL) * MIN_LENGTH_RATIO) - 1)
 
-    with pytest.raises(RefineRejectedError):
+    with pytest.raises(RefineRejectedError, match=r"^output length was below the minimum ratio$"):
         guard(ORIGINAL, summary)
 
 
 def test_output_far_longer_than_the_input_is_refused_as_an_answer():
     answered = "x" * (math.floor(len(ORIGINAL) * MAX_LENGTH_RATIO) + 1)
 
-    with pytest.raises(RefineRejectedError):
+    with pytest.raises(RefineRejectedError, match=r"^output length was above the maximum ratio$"):
         guard(ORIGINAL, answered)
 
 
@@ -131,7 +131,9 @@ def test_a_second_wrapping_pair_is_a_refusal_not_another_strip():
     hide that the model ignored the instruction not to add markdown."""
     body = "I think we should ship it on Friday, the notes are not done."
 
-    with pytest.raises(RefineRejectedError):
+    with pytest.raises(
+        RefineRejectedError, match=r"^output remained wrapped after one wrapper was removed$"
+    ):
         guard(ORIGINAL, f'```\n"{body}"\n```')
 
 
