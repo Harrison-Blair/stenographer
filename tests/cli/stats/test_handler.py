@@ -165,3 +165,26 @@ def test_an_unusable_state_directory_reports_only_the_failure_category(
     assert captured.out == "Records selected for deletion: 0\n"
     assert "analytics unavailable (FileExistsError)" in captured.err
     assert str(analytics_home) not in captured.err
+
+
+def test_reset_rejects_explicit_filters_without_deleting(stats_args, seed, capsys):
+    seed(checkpoint("one", source="file", recognized_words=7))
+    assert cmd_stats(stats_args("reset", "--source", "file", "--yes")) == 2
+    assert "stats delete" in capsys.readouterr().err
+    assert cmd_stats(stats_args("--source", "all")) == 0
+    assert "Recognized words: 7" in capsys.readouterr().out
+
+
+def test_export_options_require_export(stats_args, capsys):
+    assert cmd_stats(stats_args("summary", "--format", "json")) == 2
+    assert "stats export" in capsys.readouterr().err
+    assert cmd_stats(stats_args("delete", "--output", "out.json")) == 2
+    assert "stats export" in capsys.readouterr().err
+
+
+def test_file_export_confirms_destination(stats_args, seed, tmp_path, capsys):
+    seed(checkpoint())
+    destination = tmp_path / "stats.json"
+    assert cmd_stats(stats_args("export", "--output", str(destination))) == 0
+    assert json.loads(destination.read_text())["records"]
+    assert str(destination) in capsys.readouterr().out

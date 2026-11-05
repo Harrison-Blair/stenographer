@@ -457,3 +457,34 @@ def test_command_surface():
         assert all(parsed[key] == value for key, value in expected.items())
     with pytest.raises(SystemExit):
         parser.parse_args(["model"])
+
+
+def test_information_commands_do_not_initialize_logging(monkeypatch, capsys):
+    import pytest
+
+    from stenographer.cli.entry import main
+    from stenographer.lib.logging import pipeline
+
+    def unexpected():
+        raise AssertionError("logging started")
+
+    monkeypatch.setattr(pipeline, "setup_logging", unexpected)
+    for option in ("--help", "-h", "--version"):
+        with pytest.raises(SystemExit) as exit_info:
+            main([option])
+        assert exit_info.value.code == 0
+        assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "description"),
+    [
+        ("run", "Run the dictation daemon."),
+        ("doctor", "Probe required capabilities."),
+        ("devices", "List audio input devices."),
+    ],
+)
+def test_leaf_help_includes_description(command, description, capsys):
+    with pytest.raises(SystemExit):
+        dispatch([command, "--help"])
+    assert description in capsys.readouterr().out

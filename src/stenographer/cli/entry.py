@@ -63,6 +63,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Doctor reports the daemon log as an existing-or-absent host fact. Opening
     # the logging pipeline here would create that file before it can inspect it.
+    if arguments and arguments[0] in ("--help", "-h", "--version"):
+        return dispatch(arguments)
     if arguments and arguments[0] == "doctor":
         return dispatch(arguments)
 

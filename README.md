@@ -194,11 +194,11 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics.
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file.
-- `stenographer model download [--asr|--refine|--live]` — fetch models explicitly.
+- `stenographer model download [--asr] [--refine] [--live]` — fetch selected models explicitly; flags combine.
 - `stenographer run` — run the daemon in the foreground.
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
-for sound packs, statistics, and configuration examples.
+for sound packs, statistics, and configuration examples. Stats reset deletes all records; use stats delete for filtered deletion.
 
 ## Troubleshooting
 
