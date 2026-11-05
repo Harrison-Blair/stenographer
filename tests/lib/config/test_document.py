@@ -35,8 +35,15 @@ binding = "KEY_F8"
 """
 
 
-def test_render_preserves_comments_order_and_unknown_content():
-    source = ConfigDocument.loads(PRESERVATION_FIXTURE)
+
+def _load_document(tmp_path, content):
+    path = tmp_path / "config.toml"
+    path.write_text(content, encoding="utf-8")
+    return ConfigDocument.load(path)
+
+
+def test_render_preserves_comments_order_and_unknown_content(tmp_path):
+    source = _load_document(tmp_path, PRESERVATION_FIXTURE)
     reviewed = replace(source.config, asr=replace(source.config.asr, cpu_threads=5))
 
     rendered = source.render(reviewed)
@@ -51,8 +58,8 @@ def test_render_preserves_comments_order_and_unknown_content():
     assert Config.loads(rendered) == reviewed
 
 
-def test_render_materializes_every_known_key():
-    rendered = ConfigDocument.loads("").render(Config.defaults())
+def test_render_materializes_every_known_key(tmp_path):
+    rendered = _load_document(tmp_path, "").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
 
     assert list(root["hotkey"]) == [
@@ -77,8 +84,8 @@ def test_render_materializes_every_known_key():
     assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 18
 
 
-def test_render_encodes_optional_strings_as_empty_strings():
-    rendered = ConfigDocument.loads("").render(Config.defaults())
+def test_render_encodes_optional_strings_as_empty_strings(tmp_path):
+    rendered = _load_document(tmp_path, "").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
 
     assert root["hotkey"]["device"] == ""
@@ -86,7 +93,7 @@ def test_render_encodes_optional_strings_as_empty_strings():
     assert root["audio"]["input_device"] == ""
 
 
-def test_render_round_trips_nondefault_production_config():
+def test_render_round_trips_nondefault_production_config(tmp_path):
     defaults = Config.defaults()
     reviewed = replace(
         defaults,
@@ -118,14 +125,14 @@ def test_render_round_trips_nondefault_production_config():
         ),
     )
 
-    rendered = ConfigDocument.loads(PRESERVATION_FIXTURE).render(reviewed)
+    rendered = _load_document(tmp_path, PRESERVATION_FIXTURE).render(reviewed)
 
     assert Config.loads(rendered) == reviewed
     assert 'cancel_binding = ""' in rendered
 
 
-def test_render_round_trips_calibrated_spectrum_profile_as_toml_array():
-    source = ConfigDocument.loads("")
+def test_render_round_trips_calibrated_spectrum_profile_as_toml_array(tmp_path):
+    source = _load_document(tmp_path, "")
     profile = tuple(float(-80 + index) for index in range(18))
     reviewed = replace(
         source.config,
@@ -301,7 +308,7 @@ def test_save_materializes_a_config_whose_directory_does_not_exist_yet(tmp_path)
     assert path.read_text(encoding="utf-8").startswith("# stenographer configuration.")
 
 
-def test_render_round_trips_delivery_settings_through_the_preservation_layer():
+def test_render_round_trips_delivery_settings_through_the_preservation_layer(tmp_path):
     defaults = Config.defaults()
     reviewed = replace(
         defaults,
@@ -310,18 +317,18 @@ def test_render_round_trips_delivery_settings_through_the_preservation_layer():
         ),
     )
 
-    rendered = ConfigDocument.loads(PRESERVATION_FIXTURE).render(reviewed)
+    rendered = _load_document(tmp_path, PRESERVATION_FIXTURE).render(reviewed)
 
     assert "# hand-written preface" in rendered
     assert "restore_delay_ms = 250" in rendered
     assert Config.loads(rendered) == reviewed
 
 
-def test_render_round_trips_live_settings_through_the_preservation_layer():
+def test_render_round_trips_live_settings_through_the_preservation_layer(tmp_path):
     defaults = Config.defaults()
     reviewed = replace(defaults, live=replace(defaults.live, diarize_mic=True))
 
-    rendered = ConfigDocument.loads(PRESERVATION_FIXTURE).render(reviewed)
+    rendered = _load_document(tmp_path, PRESERVATION_FIXTURE).render(reviewed)
 
     assert "# hand-written preface" in rendered
     assert "# keep this inline comment" in rendered

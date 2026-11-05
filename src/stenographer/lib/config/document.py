@@ -38,7 +38,6 @@ class ConfigDocument:
     def load(cls, path: pathlib.Path) -> ConfigDocument:
         """Load an existing config, or annotated defaults when it is absent."""
 
-        path = pathlib.Path(path)
         target = _resolve_target(path)
         try:
             source = path.read_bytes()
@@ -56,17 +55,6 @@ class ConfigDocument:
         return cls._from_content(path, content, source, target)
 
     @classmethod
-    def loads(
-        cls,
-        content: str,
-        path: pathlib.Path = pathlib.Path("<memory>"),
-    ) -> ConfigDocument:
-        """Build a round-trip document entirely in memory."""
-
-        path = pathlib.Path(path)
-        return cls._from_content(path, content, content.encode("utf-8"), _resolve_target(path))
-
-    @classmethod
     def defaults(cls, path: pathlib.Path) -> ConfigDocument:
         """Stage the annotated default template over whatever *path* holds now.
 
@@ -77,7 +65,6 @@ class ConfigDocument:
         broken to load.
         """
 
-        path = pathlib.Path(path)
         return cls._from_content(path, default_toml(), _read_current(path), _resolve_target(path))
 
     @classmethod

@@ -1807,7 +1807,7 @@ def test_refine_host_prompt_rejects_credentials_and_a_hostless_url_then_retries(
     assert "must name a host" in console.stderr.getvalue()
 
 
-def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypatch):
+def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypatch, tmp_path):
     """Ties the coverage to the actual failure mode (``ConfigDocument.render``'s
     round-trip check) rather than to a hand-written expected string. A change
     to ``normalize_host`` that still satisfied the string-equality tests above
@@ -1819,7 +1819,9 @@ def test_a_host_entered_at_the_wizard_survives_the_real_save_round_trip(monkeypa
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
 
-    document = ConfigDocument.loads(default_toml())
+    path = tmp_path / "render-config.toml"
+    path.write_text(default_toml(), encoding="utf-8")
+    document = ConfigDocument.load(path)
     document.render(config)  # must not raise ConfigPersistenceError
 
 
