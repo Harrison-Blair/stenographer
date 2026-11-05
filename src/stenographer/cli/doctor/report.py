@@ -15,8 +15,7 @@ The report also names both log files and replays both log files' recent
 complaints, so a report can be pasted from one command. Reading a log is the
 only I/O this module does on its own: :func:`run` turns each file into a
 :class:`LogStatus` — a missing or unreadable log is a fact to print, never a
-failure — and the classification (:func:`tail_errors`) and the tolerant decode
-(:func:`decode_tail`) stay pure.
+failure — and the classification (:func:`tail_errors`) stays pure.
 """
 
 from __future__ import annotations
@@ -41,6 +40,7 @@ if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.host_guidance import HostGuidance
     from stenographer.overlay.platform.guidance import OverlayGuidance
+
 
 @dataclass(frozen=True, slots=True)
 class LogStatus:
@@ -72,8 +72,8 @@ _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _TAIL_WINDOW_BYTES = 256 * 1024
 
 
-def tail_errors(text: str, n: int = 10) -> list[str]:
-    """The last *n* WARNING-or-worse lines of *text*, in file order. PURE.
+def tail_errors(text: str) -> list[str]:
+    """The last ten WARNING-or-worse lines of *text*, in file order. PURE.
 
     The level is read from its column, not searched for: a line reporting a
     handled error at INFO is not a complaint, and a WARNING whose message
@@ -82,17 +82,7 @@ def tail_errors(text: str, n: int = 10) -> list[str]:
     the fragment left at the head of a tail window — and is dropped.
     """
     lines = [line for line in text.splitlines() if _level_of(line) in _TAIL_LEVELS]
-    return lines[-n:]
-
-
-def decode_tail(data: bytes) -> str:
-    """Decode a tail window that may begin mid-character. PURE.
-
-    The window is cut at a byte offset, so its first bytes can be the tail of a
-    multi-byte character. Replacing them keeps the whole log readable at the
-    cost of one glyph in a line that is dropped as a fragment anyway.
-    """
-    return data.decode("utf-8", errors="replace")
+    return lines[-10:]
 
 
 def _log_state(log: LogStatus) -> str:
@@ -195,7 +185,7 @@ def render(
                 "live_models_cached": "live models cached",
                 "ffmpeg": "ffmpeg",
                 "python_venv": "python3 venv",
-            }.get(check.check_id, check.check_id)
+            }[check.check_id]
             status = "ok" if check.status == "ok" else "WARN"
             line = f"  {label}: {status} — {check.detail}"
             if check.fix:
@@ -209,7 +199,7 @@ def render(
             lines.extend(f"    {line}" for line in log.tail)
     lines.append("")
     missing = missing_required(caps)
-    labels = [guidance.capability_labels.get(name, name) for name in missing]
+    labels = [guidance.capability_labels[name] for name in missing]
     if missing:
         lines.append(f"missing required capabilities: {', '.join(labels)}")
     else:
@@ -259,4 +249,6 @@ def _log_status(name: str, path: pathlib.Path) -> LogStatus:
             window = handle.read()
     except OSError:
         return LogStatus(name, path, size, readable=False)
-    return LogStatus(name, path, size, tuple(tail_errors(decode_tail(window))))
+    # A byte window can start in the middle of a UTF-8 character.
+    text = window.decode("utf-8", errors="replace")
+    return LogStatus(name, path, size, tuple(tail_errors(text)))

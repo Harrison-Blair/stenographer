@@ -5,8 +5,8 @@ rendering only.
 The gate (``stenographer.lib.diagnostics.capabilities``) and its rendering (``cli/doctor.py``)
 are exercised together here because the report is driven by ``REQUIRED``. The
 "Logs" section is split the same way: ``run`` reads the files, and only its
-pure half — ``tail_errors`` and ``decode_tail`` — is asserted here, over log
-text written in the file sink's own format.
+classification — ``tail_errors`` — is asserted here, over log text written in
+the file sink's own format.
 
 The environment probe itself is exercised by test_doctor_smoke.py (integration,
 non-mocked) per the testing policy in AGENTS.md — nothing here stubs the
@@ -462,9 +462,6 @@ def test_tail_errors_keeps_the_last_n_only():
     assert len(tail) == 10
     assert tail[0] == _log_line("ERROR", "daemon: failed seq=15")
     assert tail[-1] == _log_line("ERROR", "daemon: failed seq=24")
-    assert doctor.tail_errors(text, 3) == [
-        _log_line("ERROR", f"daemon: failed seq={index}") for index in (22, 23, 24)
-    ]
 
 
 def test_tail_errors_ignores_lines_that_are_not_records():
@@ -501,15 +498,16 @@ def test_tail_errors_reads_the_level_column_not_the_message():
     assert doctor.tail_errors("\n".join([recovered, complained])) == [complained]
 
 
-def test_decode_tail_survives_a_character_split_by_the_window_edge():
+def test_log_status_survives_a_character_split_by_the_window_edge(tmp_path, monkeypatch):
     """The window can open mid-character; a replaced byte beats an exception."""
 
     complaint = _log_line("ERROR", "config: invalid key=asr.model detail=missing")
     half_a_character = "café".encode()[-1:]
     window = half_a_character + b" fragment\n" + complaint.encode()
-    text = doctor.decode_tail(window)
-    assert text.endswith(complaint)
-    assert doctor.tail_errors(text) == [complaint]
+    path = tmp_path / "daemon.log"
+    path.write_bytes(b"caf" + window)
+    monkeypatch.setattr(doctor, "_TAIL_WINDOW_BYTES", len(window))
+    assert doctor._log_status("daemon", path).tail == (complaint,)
 
 
 def test_render_names_each_log_with_its_size_absence_or_refusal():
