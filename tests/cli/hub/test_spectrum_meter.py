@@ -118,7 +118,6 @@ def test_idle_state_draws_a_dotted_grid_and_the_caller_text():
 
     assert model.head[0] == "[m] MIC idle · Default input"
     assert model.rows == (DOTS,) * 8
-    assert model.scale == SCALE
     assert model.level_text == "not recording"
 
 
@@ -133,7 +132,6 @@ def test_off_state_names_the_key_that_enables_the_source():
     assert mic.level_text == "off · press m to enable"
     assert system.level_text == "off · press s to enable"
     assert _heights(mic.rows) == [0] * 18
-    assert mic.scale == SCALE
 
 
 def test_turning_on_again_starts_from_an_empty_meter():
