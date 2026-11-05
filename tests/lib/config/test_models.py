@@ -79,7 +79,7 @@ def test_an_old_whisper_config_loads_without_error_or_warning(tmp_path, caplog):
 
 def test_write_default_round_trips(tmp_path):
     p = tmp_path / "config.toml"
-    Config.write_default(p)
+    p.write_bytes(default_toml().encode("utf-8"))
     assert Config.load(p) == Config.defaults()
 
 
@@ -440,7 +440,7 @@ def test_a_scalar_delivery_section_raises():
 
 def test_default_template_documents_the_delivery_section(tmp_path):
     p = tmp_path / "config.toml"
-    Config.write_default(p)
+    p.write_bytes(default_toml().encode("utf-8"))
     text = p.read_text()
 
     assert "[stenographer.delivery]" in text
@@ -481,7 +481,7 @@ def test_a_scalar_live_section_raises():
 
 def test_default_template_documents_the_live_section(tmp_path):
     p = tmp_path / "config.toml"
-    Config.write_default(p)
+    p.write_bytes(default_toml().encode("utf-8"))
     text = p.read_text()
 
     assert "[stenographer.live]" in text

@@ -225,7 +225,7 @@ def test_save_keeps_removed_whisper_keys_byte_for_byte(tmp_path):
 
 def test_save_of_unchanged_bytes_writes_nothing_at_all(tmp_path):
     path = tmp_path / "config.toml"
-    Config.write_default(path)
+    path.write_bytes(default_toml().encode("utf-8"))
     document = ConfigDocument.load(path)
     before = path.read_bytes()
 

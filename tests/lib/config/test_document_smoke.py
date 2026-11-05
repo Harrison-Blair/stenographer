@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from stenographer.lib.config.defaults import default_toml
+
 import datetime
 from dataclasses import replace
 
@@ -124,7 +126,7 @@ def test_save_refuses_concurrent_content_change(tmp_path):
 
 def test_unchanged_bytes_skip_write_and_backup(tmp_path):
     path = tmp_path / "config.toml"
-    Config.write_default(path)
+    path.write_bytes(default_toml().encode("utf-8"))
     document = ConfigDocument.load(path)
     before = path.stat().st_ino
 

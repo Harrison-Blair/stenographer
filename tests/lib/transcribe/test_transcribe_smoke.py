@@ -20,6 +20,8 @@ the network or the ASR stack.
 
 from __future__ import annotations
 
+from stenographer.lib.config.defaults import default_toml
+
 import pathlib
 
 import numpy as np
@@ -53,7 +55,7 @@ def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
 
     samples = _read(_CLIP)
     config_path = tmp_path / "config.toml"
-    config.Config.write_default(config_path)
+    config_path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
     cfg = config.Config.load(config_path)
 
@@ -74,7 +76,7 @@ def test_cli_transcribe_48k_stereo_matches_16k_mono(tmp_path, monkeypatch, capsy
     from stenographer.cli import main
 
     config_path = tmp_path / "config.toml"
-    config.Config.write_default(config_path)
+    config_path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
 
     assert main(["transcribe", str(_CLIP)]) == 0
@@ -100,7 +102,7 @@ def test_cli_transcribe_read_failure_is_concise(input_kind, tmp_path, monkeypatc
     from stenographer.cli import main
 
     config_path = tmp_path / "config.toml"
-    config.Config.write_default(config_path)
+    config_path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
 
     input_path = tmp_path / input_kind

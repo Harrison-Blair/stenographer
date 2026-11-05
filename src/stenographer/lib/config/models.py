@@ -5,10 +5,9 @@ from __future__ import annotations
 
 import pathlib
 import tomllib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 
 from stenographer.lib.config.constants import DEFAULT_SOUND_PACK, SpectrumFloor
-from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.reader import _Reader
 from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUTPUT
@@ -23,8 +22,8 @@ class HotkeyConfig:
     universal default profile without a migration.
     """
 
-    binding: str
-    device: str | None
+    binding: str = "KEY_RIGHTCTRL"
+    device: str | None = None
     cancel_binding: str | None = "KEY_ESC"
     mode: str = "hybrid"
     hybrid_threshold_seconds: float = 0.5
@@ -33,21 +32,21 @@ class HotkeyConfig:
 
 @dataclass(frozen=True)
 class AudioConfig:
-    input_device: str | None
-    min_speech_rms: float
-    max_recording_seconds: int
+    input_device: str | None = None
+    min_speech_rms: float = 0.0005
+    max_recording_seconds: int = 600
 
 
 @dataclass(frozen=True)
 class AsrConfig:
-    idle_unload_seconds: int
-    cpu_threads: int
+    idle_unload_seconds: int = 900
+    cpu_threads: int = 0
 
 
 @dataclass(frozen=True)
 class FeedbackConfig:
-    volume: float
-    mute: bool
+    volume: float = 0.6
+    mute: bool = False
     overlay: bool = True
     update_check: bool = True
     spectrum_floor_dbfs: SpectrumFloor = -45.0
@@ -91,10 +90,10 @@ class AnalyticsConfig:
 
 @dataclass(frozen=True)
 class Config:
-    hotkey: HotkeyConfig
-    audio: AudioConfig
-    asr: AsrConfig
-    feedback: FeedbackConfig
+    hotkey: HotkeyConfig = HotkeyConfig()
+    audio: AudioConfig = AudioConfig()
+    asr: AsrConfig = AsrConfig()
+    feedback: FeedbackConfig = FeedbackConfig()
     refine: RefineConfig = RefineConfig()
     analytics: AnalyticsConfig = AnalyticsConfig()
     delivery: DeliveryConfig = DeliveryConfig()
@@ -102,29 +101,7 @@ class Config:
 
     @classmethod
     def defaults(cls) -> Config:
-        # Agent is universal across hosts so partial old configs migrate to
-        # the Agent profile without changing their existing binding.
-        return cls(
-            hotkey=HotkeyConfig(
-                binding="KEY_RIGHTCTRL",
-                device=None,
-                cancel_binding="KEY_ESC",
-                mode="hybrid",
-                hybrid_threshold_seconds=0.5,
-                general_binding="KEY_RIGHTALT",
-            ),
-            audio=AudioConfig(input_device=None, min_speech_rms=0.0005, max_recording_seconds=600),
-            asr=AsrConfig(idle_unload_seconds=900, cpu_threads=0),
-            feedback=FeedbackConfig(
-                volume=0.6,
-                mute=False,
-                overlay=True,
-                update_check=True,
-                spectrum_floor_dbfs=-45.0,
-                sound_pack=DEFAULT_SOUND_PACK,
-                log_level="info",
-            ),
-        )
+        return cls()
 
     @classmethod
     def load(cls, path: pathlib.Path) -> Config:
@@ -154,23 +131,13 @@ class Config:
             raw = tomllib.loads(content)
         except tomllib.TOMLDecodeError as e:
             raise ConfigError(path, "<toml>", f"malformed TOML: {e}") from e
-        if not isinstance(raw, dict):
-            raise ConfigError(path, "<file>", "top-level value must be a table")
         table = raw.get("stenographer", {})
         if not isinstance(table, dict):
             raise ConfigError(path, "stenographer", f"must be a table, got {type(table).__name__}")
         merged = _merge(asdict(cls.defaults()), table)
         _migrate_hotkey_defaults(merged, table, path)
-        for name in (
-            "hotkey",
-            "audio",
-            "asr",
-            "feedback",
-            "refine",
-            "analytics",
-            "delivery",
-            "live",
-        ):
+        for field in fields(cls):
+            name = field.name
             if not isinstance(merged[name], dict):
                 raise ConfigError(path, name, f"must be a table, got {type(merged[name]).__name__}")
         return cls(
@@ -191,8 +158,3 @@ class Config:
             ),
         )
 
-    @classmethod
-    def write_default(cls, path: pathlib.Path) -> None:
-        # Bytes, not text mode: setup writes LF bytes and preserves the exact
-        # default bytes for the first setup save.
-        path.write_bytes(default_toml().encode("utf-8"))
