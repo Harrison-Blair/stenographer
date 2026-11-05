@@ -190,8 +190,6 @@ async def test_shell_show_screen_and_set_context_card_follow_the_screen():
         app.set_context_card("library", "library card", title="storage")
         card = app.screen.query_one("#sidebar-card", Static)
         assert "library card" not in str(card.render())
-        with pytest.raises(ValueError):
-            app.show_screen("files")
 
 
 async def test_shell_show_library_selects_listed_unloaded_and_unknown_sessions(tmp_path):

@@ -168,8 +168,6 @@ class HubApp(App[None]):
 
     def show_screen(self, name: str) -> None:
         """Show ``record``, ``library`` or ``settings``; guard unsaved settings."""
-        if name not in self.hub_screens:
-            raise ValueError(f"unknown hub screen: {name}")
         if name == "settings":
             self._switch(name)
         else:
@@ -187,11 +185,6 @@ class HubApp(App[None]):
 
     def open_setting(self, key: str) -> None:
         """Show Settings with the tab and row of a dotted key; unsaved changes stay."""
-        try:
-            SettingsScreen.tab_of(key)
-        except KeyError:
-            self.notify(f"Unknown setting {key}.", severity="warning")
-            return
         self._switch("settings")
         self.settings_screen.open_setting(key)
 
@@ -200,7 +193,7 @@ class HubApp(App[None]):
         screen: str,
         content: RenderableType,
         *,
-        title: str | None = None,
+        title: str,
         buttons: CardButtons = (),
         disabled: frozenset[str] = frozenset(),
     ) -> None:
@@ -210,8 +203,6 @@ class HubApp(App[None]):
         button under the text; a click calls ``run``. A button whose key is in
         ``disabled`` shows as disabled.
         """
-        if title is None:
-            title = self._context_cards.get(screen, ("",))[0]
         self._context_cards[screen] = (title, content, buttons, disabled)
         hub_screen = self.hub_screens[screen]
         if screen == self.current_mode and hub_screen.ready:

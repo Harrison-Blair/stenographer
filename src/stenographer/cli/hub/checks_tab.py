@@ -370,16 +370,6 @@ class ChecksTab(Vertical):
         self.checking = False
         app.set_check_summary(report.ok_count, report.warn_count, report.fail_count, self.ran_at)
 
-    def select_check(self, check_id: str) -> None:
-        """Select the check with ``check_id``."""
-        report = self.report
-        if report is None:
-            return
-        for index, check in enumerate(report.checks):
-            if check.check_id == check_id:
-                self._select(index)
-                return
-
     def _select(self, index: int) -> None:
         self.index = index
         self.details = False
