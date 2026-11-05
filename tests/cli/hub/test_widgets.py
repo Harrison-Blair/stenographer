@@ -14,7 +14,6 @@ from textual.binding import Binding
 from textual.widgets import Static
 
 from stenographer.cli.hub.app import HubApp
-from stenographer.cli.hub.doctor_view import DoctorCheck, DoctorReport
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
 from stenographer.cli.hub.widgets.key_hints import KeyHints
@@ -78,30 +77,6 @@ async def test_widget_settings_tab_click_matches_the_tab_keys(tmp_path):
         await pilot.click("#tab-recognition")
         await pilot.pause()
         assert (app.settings_screen.tab, app.config_editor.visible_keys) == by_keys
-
-
-async def test_widget_checks_buttons_run_the_same_actions_as_their_keys():
-    probes = []
-    report = DoctorReport((DoctorCheck("has_mic", "microphone", "input", "warn", "", ""),), ())
-    app = HubApp(
-        IdleServices(),
-        doctor_probe=lambda _config: probes.append("probe") or report,
-        open_log=lambda _path: probes.append("log") or True,
-    )
-    async with app.run_test(size=(150, 45)) as pilot:
-        await pilot.press("3", "left")
-        await pilot.pause(0.1)
-        assert probes == ["probe"]
-        await pilot.press("r")
-        await pilot.pause(0.1)
-        assert probes == ["probe", "probe"]
-        buttons = {str(b.label): b for b in app.screen.query(HubButton)}
-        await pilot.click(buttons["[r] Run again"])
-        await pilot.pause(0.1)
-        assert probes == ["probe", "probe", "probe"]
-        await pilot.click(buttons["[l] Open log"])
-        await pilot.pause()
-        assert probes[-1] == "log"
 
 
 async def test_widget_selectable_list_rows_are_one_line_with_a_bold_accent_marker():

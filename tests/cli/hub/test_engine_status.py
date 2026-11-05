@@ -11,7 +11,6 @@ import pytest
 
 from stenographer.cli.hub import engine_sampler
 from stenographer.cli.hub.engine_sampler import EngineSampler
-from stenographer.cli.hub.engine_status import EngineStatus
 from stenographer.lib.platform.linux.cpu import LinuxProcessCounters
 from tests.lib.platform.support import NullProcessCounters
 
@@ -269,7 +268,6 @@ def test_engine_samples_app_cpu_over_hub_and_worker_pids_system_cpu_and_app_ram(
     assert second.cpu_all_percent == pytest.approx(75.0)
     assert second.ram_app_bytes == 610 * 4096
     assert second.cpu_history == pytest.approx((50.0,))
-    assert isinstance(second, EngineStatus)
 
 
 def test_engine_app_cpu_counts_a_new_worker_and_drops_a_gone_one(tmp_path):

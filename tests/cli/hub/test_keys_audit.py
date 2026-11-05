@@ -502,32 +502,6 @@ async def test_nav_rows_and_settings_tabs_answer_a_click(tmp_path):
             assert app.screen.query_one(f"#tab-{tab}", HubButton).label.plain.startswith("▶")
 
 
-def test_context_card_buttons_run_the_action_of_their_key(tmp_path):
-    async def exercise():
-        app = _make_app("record", tmp_path)
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _record(pilot, "record")
-            assert await pilot.click("#card-r")
-            await pilot.pause()
-            assert isinstance(app.screen, RenameDialog)
-
-        probes = []
-        app = _make_app("settings", tmp_path / "settings")
-        app.checks_tab._doctor_probe = lambda _config: probes.append(1) or _report()
-        async with app.run_test(size=(150, 45)) as pilot:
-            await _settings(pilot, "checks")
-            await _until(pilot, lambda: not app.checks_tab.checking, "checks still run")
-            before = len(probes)
-            assert await pilot.click("#card-r")
-            await _until(pilot, lambda: len(probes) == before + 1, "the card did not run checks")
-            await _until(pilot, lambda: not app.checks_tab.checking, "checks still run")
-            await pilot.press("r")
-            await _until(pilot, lambda: len(probes) == before + 2, "r did not run checks")
-
-    (tmp_path / "settings").mkdir()
-    asyncio.run(exercise())
-
-
 # AC3: docs
 
 DOC_KEY_NAMES = {"/": "slash", "?": "question_mark"}

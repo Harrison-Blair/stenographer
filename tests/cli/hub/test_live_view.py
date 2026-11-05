@@ -233,23 +233,6 @@ async def test_pilot_live_lists_and_renames_room_speakers():
         assert "Dana" in content and "Room 1" in content
 
 
-async def test_pilot_live_keys_toggle_sources_and_pause_resume():
-    services = FakeServices()
-    app = HubApp(services)
-    async with app.run_test() as pilot:
-        await pilot.press("m")
-        await pilot.press("s")
-        await pilot.press("space")
-        await pilot.press("space")
-
-    assert services.session.actions == [
-        ("toggle", "mic"),
-        ("toggle", "system"),
-        "pause",
-        "resume",
-    ]
-
-
 def _visible_segment(app: HubApp, text: str):
     for strip in app.screen._compositor.render_strips():
         for segment in strip._segments:

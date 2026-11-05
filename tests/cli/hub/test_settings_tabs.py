@@ -290,6 +290,8 @@ def test_settings_save_keeps_a_backup_and_a_comment(tmp_path):
             await pilot.press("ctrl+s")
             await pilot.pause()
             assert Config.load(path).asr.cpu_threads == 3
+            assert app.services.config == Config.load(path)
+            assert not app.config_editor.dirty
             assert path.read_text(encoding="utf-8").startswith("# my note about threads\n")
             backups = list(tmp_path.glob("config.toml.bak-*"))
             assert len(backups) == 1

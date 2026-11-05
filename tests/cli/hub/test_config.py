@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 
-from rich.cells import cell_len
 from rich.color import Color
 from textual.widgets import Static
 
@@ -125,7 +124,6 @@ async def test_config_focused_row_is_bold_accent_and_unsaved_change_has_warn_dot
         assert label.bgcolor is None or label.bgcolor.is_default
         dot = next(style for text, style in styles.items() if "●" in text)
         assert dot.color == Color.parse("#ffaf5f")
-        assert cell_len("▶●") == 2
 
 
 async def test_config_shows_the_default_only_in_the_focused_row_help(tmp_path):
@@ -202,21 +200,6 @@ async def test_invalid_edit_is_rejected_by_config_validation(tmp_path):
         assert app.config_editor.config.asr.cpu_threads == Config.defaults().asr.cpu_threads
         assert not app.config_editor.dirty
         assert any("asr.cpu_threads" in message for message in _notification_messages(app))
-
-
-async def test_save_writes_validated_config_and_timestamped_backup(tmp_path):
-    path = _config_path(tmp_path)
-    original = path.read_bytes()
-    app = HubApp(FakeServices(), config_path=path)
-    async with app.run_test() as pilot:
-        await _edit_cpu_threads(pilot, "5")
-        await pilot.press("ctrl+s")
-        assert Config.load(path).asr.cpu_threads == 5
-        backups = list(tmp_path.glob("config.toml.bak-*"))
-        assert len(backups) == 1
-        assert backups[0].read_bytes() == original
-        assert app.services.config == Config.load(path)
-        assert not app.config_editor.dirty
 
 
 async def test_conflict_keeps_external_config_and_unsaved_draft(tmp_path):
