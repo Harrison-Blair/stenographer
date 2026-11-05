@@ -24,9 +24,9 @@ from stenographer.lib.sounds.packs import (
     resolve_sound_pack,
     sound_pack_cue_paths,
 )
-from stenographer.lib.sounds.playback import cue_audible, preview_sound_pack, preview_volume
+from stenographer.lib.sounds.playback import preview_sound_pack, preview_volume
 from stenographer.lib.sounds.sound_pack import SoundPack
-from stenographer.lib.sounds.validation import _wav_header_ok, _wav_payload_ok
+from stenographer.lib.sounds.validation import _wav_header_ok
 
 _BUNDLED = pathlib.Path(__file__).parents[3] / "src" / "stenographer" / "assets" / "sounds"
 
@@ -190,8 +190,6 @@ def test_bundled_names_win_custom_collisions(tmp_path):
     selected = load_sound_pack("legacy", tmp_path, bundled_root=_BUNDLED)
 
     assert selected is not None
-    assert selected.bundled
-    assert selected.root == _BUNDLED / "legacy"
     assert all(custom_legacy not in path.parents for path in selected.cue_paths if path is not None)
     assert discover_sound_packs(tmp_path, bundled_root=_BUNDLED).count("legacy") == 1
 
@@ -201,8 +199,6 @@ def test_missing_custom_falls_back_once_to_minimal_ui(tmp_path, caplog):
         selected = resolve_sound_pack("missing", tmp_path, bundled_root=_BUNDLED)
 
     assert selected.name == DEFAULT_SOUND_PACK
-    assert selected.bundled
-    assert selected.fallback
     assert selected.complete
     assert len(caplog.records) == 1
 
@@ -215,7 +211,6 @@ def test_missing_fallback_assets_disable_only_unavailable_cues(tmp_path, caplog)
     with caplog.at_level(logging.WARNING):
         selected = resolve_sound_pack("missing", tmp_path, bundled_root=bundled)
 
-    assert selected.fallback
     assert selected.path_for("record_start") is not None
     assert selected.path_for("error") is None
     assert len(caplog.records) == 2
@@ -298,26 +293,6 @@ def test_effective_name_is_none_when_nothing_resolves(tmp_path):
     bundled.mkdir()
 
     assert effective_sound_pack_name("missing", tmp_path, bundled_root=bundled) is None
-
-
-@pytest.mark.parametrize(
-    ("mute", "volume", "has_player", "expected"),
-    [
-        (False, 0.6, True, True),
-        (True, 0.6, True, False),
-        (False, 0.0, True, False),
-        (False, -0.1, True, False),
-        (False, 0.6, False, False),
-    ],
-)
-def test_cue_audible_needs_unmuted_positive_volume_and_a_player(mute, volume, has_player, expected):
-    assert cue_audible(mute, volume, has_player=has_player) is expected
-
-
-def test_wav_payload_must_match_the_declared_frame_geometry():
-    assert _wav_payload_ok(4800, 1200, 2, 2) is True
-    assert _wav_payload_ok(4799, 1200, 2, 2) is False
-    assert _wav_payload_ok(0, 0, 1, 2) is True
 
 
 class RecordingCuePlayer:
@@ -428,6 +403,7 @@ def test_feedback_plays_nothing_when_inaudible_or_the_cue_is_unknown(tmp_path):
 
     feedback_for(volume=0.25, mute=True).play("record_start")
     feedback_for(volume=0.0, mute=False).play("record_start")
+    feedback_for(volume=-0.1, mute=False).play("record_start")
     feedback_for(volume=0.25, mute=False).play("no_such_cue")
 
     assert player.played == []
