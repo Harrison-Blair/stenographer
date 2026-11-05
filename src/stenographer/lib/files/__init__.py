@@ -10,16 +10,14 @@
 
 from stenographer.lib.files.engine import FilesEngine
 from stenographer.lib.files.job import FileJob
-from stenographer.lib.files.media import DecodedAudio, MediaInfo, decode_media, inspect_media
+from stenographer.lib.files.media import MediaInfo, inspect_media
 from stenographer.lib.files.models import FileJobOptions, FileJobProgress
 
 __all__ = [
-    "DecodedAudio",
     "FileJob",
     "FileJobOptions",
     "FileJobProgress",
     "FilesEngine",
     "MediaInfo",
-    "decode_media",
     "inspect_media",
 ]

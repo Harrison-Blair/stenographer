@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import warnings
+import weakref
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +28,6 @@ from stenographer.cli.hub.services import HubServices
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.sparkline import Sparkline
 from stenographer.lib.config.models import Config
-from stenographer.lib.files.media import DecodedAudio
 from stenographer.lib.files.models import FileJobProgress
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -928,15 +928,15 @@ class _Decoder:
 
     def __call__(self, path):
         self.paths.append(Path(path))
-        return DecodedAudio(np.full(8_000, 0.25, dtype=np.float32), 16_000, 0.5)
+        yield np.full(8_000, 0.25, dtype=np.float32)
 
 
-def _play_services(tmp_path, monkeypatch, player_factory):
+def _play_services(tmp_path, monkeypatch, player_factory, decoder=None):
     monkeypatch.setattr(tempfile, "tempdir", str(_private_tmp(tmp_path)))
     root = tmp_path / "sessions"
     session_id = _write_file_session(root, tmp_path)
     store = SessionStore(root)
-    decoder = _Decoder()
+    decoder = _Decoder() if decoder is None else decoder
     services = HubServices(
         Config.defaults(),
         FakePlatform(tmp_path),
@@ -992,6 +992,66 @@ def test_library_play_of_a_file_session_removes_its_temp_file_after_a_play_failu
     with pytest.raises(OSError):
         services.toggle_session_playback(session_id)
     assert decoder.paths
+    assert list(_private_tmp(tmp_path).iterdir()) == []
+
+
+def test_library_play_of_a_file_session_writes_clipped_blocks_in_order(tmp_path, monkeypatch):
+    commands = []
+
+    def start_player(command):
+        commands.append(command)
+        return FakePlayer()
+
+    def decoder(_path):
+        yield np.array([-2.0, -0.5], dtype=np.float32)
+        yield np.array([0.25], dtype=np.float32)
+        yield np.array([0.5, 3.0], dtype=np.float32)
+
+    services, _store, session_id, _decoder = _play_services(
+        tmp_path, monkeypatch, start_player, decoder
+    )
+    services.toggle_session_playback(session_id)
+
+    samples, rate = sf.read(commands[0][1], dtype="float32")
+    assert rate == 16_000
+    np.testing.assert_allclose(samples, [-1.0, -0.5, 0.25, 0.5, 1.0], atol=0.001)
+    services.toggle_session_playback(session_id)
+
+
+def test_library_play_of_a_file_session_keeps_no_earlier_blocks(tmp_path, monkeypatch):
+    live_counts = []
+
+    def decoder(_path):
+        blocks = []
+        for _ in range(8):
+            block = np.zeros(4_000, dtype=np.float32)
+            blocks.append(weakref.ref(block))
+            live_counts.append(sum(ref() is not None for ref in blocks))
+            yield block
+            del block
+
+    services, _store, session_id, _decoder = _play_services(
+        tmp_path, monkeypatch, lambda command: FakePlayer(), decoder
+    )
+    services.toggle_session_playback(session_id)
+    services.toggle_session_playback(session_id)
+
+    assert len(live_counts) == 8
+    assert max(live_counts) <= 2
+
+
+def test_library_play_of_a_file_session_removes_its_temp_file_after_a_decode_failure(
+    tmp_path, monkeypatch
+):
+    def decoder(_path):
+        yield np.zeros(4_000, dtype=np.float32)
+        raise RuntimeError("ffmpeg exited with status 1")
+
+    services, _store, session_id, _decoder = _play_services(
+        tmp_path, monkeypatch, lambda command: FakePlayer(), decoder
+    )
+    with pytest.raises(RuntimeError, match="status 1"):
+        services.toggle_session_playback(session_id)
     assert list(_private_tmp(tmp_path).iterdir()) == []
 
 

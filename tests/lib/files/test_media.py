@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import soundfile
 
-from stenographer.lib.files.media import decode_media, inspect_media
+from stenographer.lib.files.media import inspect_media, iter_media_audio
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
 
 
@@ -23,16 +23,15 @@ def test_soundfile_media_is_downmixed_and_resampled(tmp_path):
     decoder = SubprocessFfmpegDecoder()
 
     info = inspect_media(path, decoder)
-    decoded = decode_media(path, info, decoder)
+    decoded = np.concatenate(tuple(iter_media_audio(path, info, decoder)))
 
     assert info.duration_seconds == 0.1
     assert info.sample_rate == 48000
     assert info.channels == 2
     assert not info.uses_ffmpeg
-    assert decoded.sample_rate == 16000
-    assert abs(decoded.samples.size - 1600) <= 40
-    assert decoded.samples.dtype == np.float32
-    assert np.max(np.abs(decoded.samples)) > 0.2
+    assert abs(decoded.size - 1600) <= 40
+    assert decoded.dtype == np.float32
+    assert np.max(np.abs(decoded)) > 0.2
 
 
 def test_m4a_uses_ffmpeg_even_if_soundfile_reports_support(tmp_path, monkeypatch):
@@ -80,12 +79,11 @@ def test_unsupported_media_uses_ffmpeg_float32_output(tmp_path, monkeypatch):
     decoder = SubprocessFfmpegDecoder()
 
     info = inspect_media(path, decoder)
-    decoded = decode_media(path, info, decoder)
+    decoded = np.concatenate(tuple(iter_media_audio(path, info, decoder)))
 
     assert info.uses_ffmpeg
     assert not info.needs_ffmpeg
-    assert decoded.sample_rate == 16000
-    np.testing.assert_array_equal(decoded.samples, [-0.25, 0.125, 0.75])
+    np.testing.assert_array_equal(decoded, [-0.25, 0.125, 0.75])
 
 
 def test_unsupported_media_reports_needs_ffmpeg_when_binary_is_missing(tmp_path, monkeypatch):

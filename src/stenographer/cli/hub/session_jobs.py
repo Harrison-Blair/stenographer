@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import soundfile as sf
 
-from stenographer.lib.files.media import DecodedAudio, decode_media, inspect_media
+from stenographer.lib.files.media import inspect_media, iter_media_audio
 from stenographer.lib.live.models import SPEAKER_MODEL, live_model_dir
 from stenographer.lib.live.relabel import relabel_system_lines
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
@@ -20,7 +20,7 @@ from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator, Iterator, Sequence
 
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
@@ -39,7 +39,7 @@ class SessionJobs:
         *,
         speaker_tracker_factory: Callable[..., SpeakerTracker] = SpeakerTracker,
         worker_factory: Callable[..., Worker] = Worker,
-        media_decoder: Callable[[Path], DecodedAudio] | None = None,
+        media_decoder: Callable[[Path], Generator[np.ndarray]] | None = None,
     ) -> None:
         self._store = store
         self._config = config
@@ -94,44 +94,64 @@ class SessionJobs:
 
     def retranscribe(self, session_id: str) -> str:
         detail = self._store.read(session_id)
-        source_audio = None
+        lines = list(detail.lines)
+        chunks = None
         if detail.summary.kind == "file":
-            source_audio = self._decode_source(self._store.source_audio(session_id))
+            chunks = self._decode_source(self._store.source_audio(session_id))
+            segments = self._source_segments(chunks, lines)
+        else:
+            segments = (
+                (index, self._audio_segment(session_id, line))
+                for index, line in enumerate(lines)
+                if line.end > line.start
+            )
         worker = self._worker_factory(
             self._config.asr,
             transport=self._platform.asr_transport(),
         )
         try:
-            lines = []
-            for line in detail.lines:
-                if line.end <= line.start:
-                    lines.append(line)
-                    continue
-                samples = (
-                    self._audio_segment(session_id, line)
-                    if source_audio is None
-                    else self._source_segment(source_audio, line)
-                )
-                lines.append(replace(line, text=worker.transcribe(samples).text))
+            for index, samples in segments:
+                lines[index] = replace(lines[index], text=worker.transcribe(samples).text)
         finally:
             worker.shutdown()
+            if chunks is not None:
+                chunks.close()
         return self._store.write_revision(
             session_id, lines, method="re-transcribe", expected_revision=detail.revision
         )
 
-    def _decode_source(self, path: Path) -> DecodedAudio:
+    def _decode_source(self, path: Path) -> Generator[np.ndarray]:
         if self._media_decoder is not None:
             return self._media_decoder(path)
         decoder = self._platform.ffmpeg_decoder()
-        return decode_media(path, inspect_media(path, decoder), decoder)
+        return iter_media_audio(path, inspect_media(path, decoder), decoder)
 
     @staticmethod
-    def _source_segment(audio: DecodedAudio, line: TranscriptLine) -> np.ndarray:
-        start = min(audio.samples.size, max(0, int(line.start * audio.sample_rate)))
-        end = min(audio.samples.size, max(start, int(line.end * audio.sample_rate)))
-        if end == start:
-            raise ValueError("file session phrase has no audio")
-        return np.ascontiguousarray(audio.samples[start:end], dtype=np.float32)
+    def _source_segments(
+        chunks: Iterator[np.ndarray], lines: Sequence[TranscriptLine]
+    ) -> Iterator[tuple[int, np.ndarray]]:
+        """Yield the index and samples of each timed line in one pass over the decoded chunks.
+
+        The session reader orders lines by start, so a later line never needs a dropped sample.
+        """
+        buffer = np.empty(0, dtype=np.float32)
+        buffer_start = 0
+        for index, line in enumerate(lines):
+            if line.end <= line.start:
+                continue
+            start = max(0, int(line.start * _SAMPLE_RATE))
+            end = max(start, int(line.end * _SAMPLE_RATE))
+            while buffer_start + buffer.size < end and (chunk := next(chunks, None)) is not None:
+                dropped = min(buffer.size, start - buffer_start)
+                buffer = np.concatenate((buffer[dropped:], chunk))
+                buffer_start += dropped
+            samples = buffer[start - buffer_start : end - buffer_start]
+            if samples.size == 0:
+                raise ValueError("file session phrase has no audio")
+            yield index, samples
+        # A decode error after the last line still fails the job.
+        for _ in chunks:
+            pass
 
     def _audio_segment(self, session_id: str, line: TranscriptLine) -> np.ndarray:
         if line.source not in {"mic", "system"}:

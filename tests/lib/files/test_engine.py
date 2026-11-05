@@ -400,10 +400,8 @@ class RecordingDecoder:
         self.paths = []
 
     def __call__(self, path):
-        from stenographer.lib.files.media import DecodedAudio
-
         self.paths.append(path)
-        return DecodedAudio(np.full(32000, 0.1, dtype=np.float32), 16000, 2.0)
+        yield np.full(32000, 0.1, dtype=np.float32)
 
 
 class FakeHubPlatform:

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,15 +25,6 @@ class MediaInfo:
     channels: int | None
     uses_ffmpeg: bool
     needs_ffmpeg: bool
-
-
-@dataclass(frozen=True)
-class DecodedAudio:
-    """Mono float32 audio at the rate consumed by the live VAD."""
-
-    samples: np.ndarray
-    sample_rate: int
-    duration_seconds: float
 
 
 def inspect_media(path: str | Path, decoder: FfmpegDecoder) -> MediaInfo:
@@ -75,7 +66,7 @@ def iter_media_audio(
     decoder: FfmpegDecoder,
     *,
     block_frames: int = 65536,
-) -> Iterator[np.ndarray]:
+) -> Generator[np.ndarray]:
     """Yield mono float32 chunks at 16 kHz without buffering the whole file."""
     if info.needs_ffmpeg:
         raise RuntimeError("needs ffmpeg")
@@ -98,13 +89,3 @@ def iter_media_audio(
         remaining = resampler.flush()
         if remaining.size:
             yield remaining
-
-
-def decode_media(path: str | Path, info: MediaInfo, decoder: FfmpegDecoder) -> DecodedAudio:
-    """Decode one file as mono float32 samples at 16 kHz."""
-    chunks = tuple(iter_media_audio(path, info, decoder))
-    samples = np.concatenate(chunks) if chunks else np.empty(0, dtype=np.float32)
-    duration = info.duration_seconds
-    if duration is None:
-        duration = samples.size / SAMPLE_RATE
-    return DecodedAudio(samples, SAMPLE_RATE, duration)
