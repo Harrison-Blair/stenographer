@@ -187,35 +187,23 @@ def test_capture_reports_player_exit_before_link(tmp_path, monkeypatch):
         LinuxSystemAudioCapture().start(lambda block: None)
 
 
-def test_capture_reports_wrong_monitor_link_and_stops_without_emitting_audio(tmp_path, monkeypatch):
-    _install_tools(
-        tmp_path,
-        monkeypatch,
-        link_output=(
+@pytest.mark.parametrize(
+    "link_output",
+    [
+        pytest.param(
             "microphone:capture_FL\n"
             "  |-> stenographer-system-capture:input_FL\n"
             "microphone:capture_FR\n"
-            "  |-> stenographer-system-capture:input_FR\n"
+            "  |-> stenographer-system-capture:input_FR\n",
+            id="wrong_monitor",
         ),
-    )
-    capture = LinuxSystemAudioCapture()
-    blocks: list[np.ndarray | SystemAudioCaptureError] = []
-
-    try:
-        with pytest.raises(SystemAudioCaptureError, match="not linked to the sink monitor"):
-            capture.start(blocks.append)
-    finally:
-        capture.stop()
-
-    assert blocks == []
-    assert capture._process is None
-    process_id = int((tmp_path / "pid.txt").read_text())
-    with pytest.raises(ProcessLookupError):
-        os.kill(process_id, 0)
-
-
-def test_capture_reports_missing_links_after_bounded_wait(tmp_path, monkeypatch):
-    _install_tools(tmp_path, monkeypatch, link_output="")
+        pytest.param("", id="no_links"),
+    ],
+)
+def test_capture_without_a_monitor_link_stops_after_a_bounded_wait_and_emits_no_audio(
+    tmp_path, monkeypatch, link_output
+):
+    _install_tools(tmp_path, monkeypatch, link_output=link_output)
     capture = LinuxSystemAudioCapture()
     blocks: list[np.ndarray | SystemAudioCaptureError] = []
 
@@ -229,6 +217,7 @@ def test_capture_reports_missing_links_after_bounded_wait(tmp_path, monkeypatch)
 
     assert 1.5 <= elapsed < 3
     assert blocks == []
+    assert capture._process is None
     process_id = int((tmp_path / "pid.txt").read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(process_id, 0)

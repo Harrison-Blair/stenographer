@@ -12,6 +12,8 @@ import logging
 import shlex
 import time
 
+import pytest
+
 from stenographer.lib.platform.linux import notify
 from stenographer.lib.platform.linux.notify import (
     NotifySendNotifier,
@@ -42,59 +44,58 @@ def _wait_for_argv(record, message, timeout=10.0):
     raise AssertionError(f"notify-send never recorded {message!r}")
 
 
-def test_build_notify_command_exact_argv():
-    assert build_notify_command("copy failed") == [
-        "notify-send",
-        "-a",
-        "Stenographer",
-        "-u",
-        "critical",
-        "Stenographer",
-        "copy failed",
-    ]
-
-
-def test_build_notify_command_exact_argv_at_normal_urgency():
-    # The update notice is advisory, so it must not borrow the error urgency.
-    assert build_notify_command("a newer release is available", "normal") == [
-        "notify-send",
-        "-a",
-        "Stenographer",
-        "-u",
-        "normal",
-        "Stenographer",
-        "a newer release is available",
-    ]
-
-
-def test_build_notify_command_preserves_message_verbatim():
-    message = "unusual: spaces, punctuation! and 'quotes'"
-    argv = build_notify_command(message)
-    # The message is the last argument, passed through unchanged (never shell-joined).
-    assert argv[-1] == message
-    # It is a critical, app-named notification.
-    assert argv[:2] == ["notify-send", "-a"]
-    assert "critical" in argv
-
-
-def test_build_notify_command_places_the_icon_before_the_summary():
-    # Options precede the positional pair, per notify-send's documented usage:
-    # "notify-send [OPTION...] <SUMMARY> [BODY]".
-    assert build_notify_command("update available", "normal", "/opt/steno/icon.png") == [
-        "notify-send",
-        "-a",
-        "Stenographer",
-        "-u",
-        "normal",
-        "-i",
-        "/opt/steno/icon.png",
-        "Stenographer",
-        "update available",
-    ]
-
-
-def test_build_notify_command_omits_the_icon_flag_when_there_is_no_icon():
-    assert "-i" not in build_notify_command("copy failed", "critical", None)
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        # The message is the last argument, passed through unchanged (never shell-joined).
+        pytest.param(
+            ("unusual: spaces, punctuation! and 'quotes'",),
+            [
+                "notify-send",
+                "-a",
+                "Stenographer",
+                "-u",
+                "critical",
+                "Stenographer",
+                "unusual: spaces, punctuation! and 'quotes'",
+            ],
+            id="default_critical_no_icon",
+        ),
+        # The update notice is advisory, so it must not borrow the error urgency.
+        pytest.param(
+            ("a newer release is available", "normal"),
+            [
+                "notify-send",
+                "-a",
+                "Stenographer",
+                "-u",
+                "normal",
+                "Stenographer",
+                "a newer release is available",
+            ],
+            id="normal_no_icon",
+        ),
+        # Options precede the positional pair, per notify-send's documented usage:
+        # "notify-send [OPTION...] <SUMMARY> [BODY]".
+        pytest.param(
+            ("update available", "normal", "/opt/steno/icon.png"),
+            [
+                "notify-send",
+                "-a",
+                "Stenographer",
+                "-u",
+                "normal",
+                "-i",
+                "/opt/steno/icon.png",
+                "Stenographer",
+                "update available",
+            ],
+            id="normal_with_icon",
+        ),
+    ],
+)
+def test_build_notify_command_exact_argv(args, expected):
+    assert build_notify_command(*args) == expected
 
 
 def test_bundled_icon_is_actually_present_in_the_package():

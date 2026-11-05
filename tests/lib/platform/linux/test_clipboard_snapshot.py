@@ -98,32 +98,33 @@ def tools(tmp_path, monkeypatch) -> Tools:
 # --- type choice (pure) -----------------------------------------------------
 
 
-def test_utf8_plain_text_is_preferred_over_everything_else():
-    offered = ["text/html", "text/plain", "text/plain;charset=utf-8", "UTF8_STRING"]
-    assert pick_snapshot_type(offered) == "text/plain;charset=utf-8"
-
-
-def test_plain_text_is_preferred_over_the_first_offered_type():
-    assert pick_snapshot_type(["image/png", "text/plain"]) == "text/plain"
-
-
-def test_otherwise_the_first_offered_type_is_kept():
-    assert pick_snapshot_type(["image/png", "text/html"]) == "image/png"
-
-
-def test_x_selection_atoms_are_never_chosen():
-    offered = ["TARGETS", "TIMESTAMP", "MULTIPLE", "SAVE_TARGETS", "image/png"]
-    assert pick_snapshot_type(offered) == "image/png"
-
-
-def test_x_text_atoms_are_only_a_fallback():
-    assert pick_snapshot_type(["TARGETS", "UTF8_STRING", "text/html"]) == "text/html"
-    assert pick_snapshot_type(["TARGETS", "STRING", "UTF8_STRING"]) == "UTF8_STRING"
-
-
-def test_nothing_offered_is_no_type():
-    assert pick_snapshot_type([]) is None
-    assert pick_snapshot_type(["TARGETS", "TIMESTAMP", ""]) is None
+@pytest.mark.parametrize(
+    ("offered", "expected"),
+    [
+        pytest.param(
+            ["text/html", "text/plain", "text/plain;charset=utf-8", "UTF8_STRING"],
+            "text/plain;charset=utf-8",
+            id="utf8_plain_text_beats_everything",
+        ),
+        pytest.param(["image/png", "text/plain"], "text/plain", id="plain_text_beats_first"),
+        pytest.param(["image/png", "text/html"], "image/png", id="otherwise_first_offered"),
+        pytest.param(
+            ["TARGETS", "TIMESTAMP", "MULTIPLE", "SAVE_TARGETS", "image/png"],
+            "image/png",
+            id="selection_atoms_never_chosen",
+        ),
+        pytest.param(
+            ["TARGETS", "UTF8_STRING", "text/html"], "text/html", id="text_atom_loses_to_real_type"
+        ),
+        pytest.param(
+            ["TARGETS", "STRING", "UTF8_STRING"], "UTF8_STRING", id="text_atom_as_fallback"
+        ),
+        pytest.param([], None, id="nothing_offered"),
+        pytest.param(["TARGETS", "TIMESTAMP", ""], None, id="only_atoms_and_blank_offered"),
+    ],
+)
+def test_pick_snapshot_type(offered, expected):
+    assert pick_snapshot_type(offered) == expected
 
 
 # --- exact argv (R7a) ------------------------------------------------------

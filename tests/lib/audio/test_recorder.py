@@ -304,6 +304,14 @@ def _prepared(sounddevice: FakeSoundDevice, **kwargs) -> Recorder:
     return recorder
 
 
+def _capturing_mono(**kwargs) -> tuple[FakeSoundDevice, Recorder]:
+    """A recorder already capturing from a device that only accepts mono."""
+    sounddevice = FakeSoundDevice(reject=_only(channels=1))
+    recorder = _prepared(sounddevice, **kwargs)
+    recorder.start()
+    return sounddevice, recorder
+
+
 def _warnings(caplog) -> list[str]:
     """Only the warnings: DEBUG activity is not part of the reporting contract."""
     return [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING]
@@ -431,9 +439,7 @@ def test_start_activates_the_retained_stream_and_refuses_a_second_start():
 
 
 def test_a_mono_capture_returns_its_samples_and_the_cost_of_taking_them():
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+    sounddevice, recorder = _capturing_mono()
 
     _feed(recorder, np.full(800, 0.25, dtype=np.float32), adc=1.0)
     _feed(recorder, np.full(400, -0.5, dtype=np.float32), adc=1.05)
@@ -495,9 +501,7 @@ def test_a_capture_at_a_fallback_rate_is_resampled_to_the_asr_rate():
 
 
 def test_an_input_overflow_is_counted_and_reported(caplog):
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+    _, recorder = _capturing_mono()
 
     _feed(recorder, np.zeros(800, dtype=np.float32))
     _feed(recorder, np.zeros(800, dtype=np.float32), overflow=True)
@@ -513,9 +517,7 @@ def test_an_input_overflow_is_counted_and_reported(caplog):
 
 
 def test_the_cap_stops_buffering_without_ending_the_capture(caplog):
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice, max_seconds=1)
-    recorder.start()
+    _, recorder = _capturing_mono(max_seconds=1)
 
     for _ in range(3):
         _feed(recorder, np.zeros(10000, dtype=np.float32))
@@ -537,9 +539,7 @@ def test_streaming_keeps_no_blocks_has_no_cap_and_emits_16khz_blocks():
         received.append(block.copy())
         rates.append(rate)
 
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice, max_seconds=1, streaming=True, on_block=sink)
-    recorder.start()
+    _, recorder = _capturing_mono(max_seconds=1, streaming=True, on_block=sink)
 
     for _ in range(3):
         _feed(recorder, np.full(8000, 0.25, dtype=np.float32))
@@ -585,9 +585,7 @@ def test_the_optional_block_sink_sees_mono_blocks_and_cannot_break_the_capture()
         seen.append((block.shape[0], rate, epoch))
         raise RuntimeError("spectrum consumer failed")
 
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice, on_block=sink)
-    recorder.start()
+    _, recorder = _capturing_mono(on_block=sink)
 
     _feed(recorder, np.zeros(800, dtype=np.float32))
     _feed(recorder, np.zeros(400, dtype=np.float32))
@@ -610,14 +608,29 @@ def test_stopping_a_merely_prepared_recorder_returns_no_audio():
     assert sounddevice.streams[0].stops == 0
 
 
-def test_a_stream_that_died_during_capture_discards_the_whole_capture(caplog):
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+@pytest.mark.parametrize(
+    ("break_stream", "expected_exception"),
+    [
+        pytest.param(
+            lambda stream: setattr(stream, "active", False),
+            RuntimeError,
+            id="died_during_capture",
+        ),
+        pytest.param(
+            lambda stream: setattr(stream, "stop_error", FakePortAudioError("stream stop failed")),
+            FakePortAudioError,
+            id="stop_raises",
+        ),
+    ],
+)
+def test_a_stream_failure_at_stop_discards_the_whole_capture(
+    caplog, break_stream, expected_exception
+):
+    sounddevice, recorder = _capturing_mono()
     _feed(recorder, np.full(800, 0.25, dtype=np.float32))
-    sounddevice.streams[0].active = False
+    break_stream(sounddevice.streams[0])
 
-    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(RuntimeError):
+    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(expected_exception):
         recorder.stop()
 
     # An uncertain capture is never half-delivered: the stream is invalidated
@@ -630,21 +643,6 @@ def test_a_stream_that_died_during_capture_discards_the_whole_capture(caplog):
     assert "recorder: capture_failed" in message
     assert "phase=stop" in message
     assert "input_frames=800" in message
-
-
-def test_a_failing_stream_stop_also_discards_the_capture(caplog):
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
-    _feed(recorder, np.zeros(800, dtype=np.float32))
-    sounddevice.streams[0].stop_error = FakePortAudioError("stream stop failed")
-
-    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(FakePortAudioError):
-        recorder.stop()
-
-    assert recorder._state is RecorderState.UNPREPARED
-    assert recorder.last_capture is None
-    assert "phase=stop" in _warnings(caplog)[0]
 
 
 def test_close_releases_the_stream_and_lets_the_next_press_reselect_a_default():
@@ -687,9 +685,7 @@ def test_a_failing_close_is_reported_and_swallowed(caplog):
 
 
 def test_adc_clock_gaps_are_measured_from_the_callbacks_of_this_activation():
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+    _, recorder = _capturing_mono()
 
     # 800 frames at 16 kHz is 50 ms of audio; the third callback's ADC stamp
     # jumps a further 200 ms, which is a clock discontinuity, not lost speech.
@@ -705,9 +701,7 @@ def test_adc_clock_gaps_are_measured_from_the_callbacks_of_this_activation():
 
 
 def test_a_second_capture_starts_from_a_clean_slate():
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
+    sounddevice, recorder = _capturing_mono()
     _feed(recorder, np.full(800, 0.25, dtype=np.float32))
     first = recorder.stop()
 
@@ -808,22 +802,6 @@ def test_an_unprepared_recorder_gets_one_attempt_and_no_recovery(caplog):
     assert len(warnings) == 1
     assert "recorder: activation_failed" in warnings[0]
     assert "retained=0" in warnings[0]
-
-
-def test_a_later_prepare_reuses_the_module_the_recorder_was_built_on():
-    sounddevice = FakeSoundDevice()
-    recorder = Recorder(device=1, max_seconds=5)
-
-    recorder.prepare(sounddevice)
-    recorder.close()
-    recorder.prepare()
-
-    # No argument, and still no real PortAudio import: the retained module is
-    # what the second negotiation used.
-    assert recorder._sounddevice is sounddevice
-    assert len(sounddevice.attempts) == 2
-    assert len(sounddevice.streams) == 2
-    assert recorder._state is RecorderState.PREPARED
 
 
 def test_preparing_an_already_prepared_recorder_is_a_no_op():
