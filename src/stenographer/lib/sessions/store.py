@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import stat
+import threading
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
@@ -34,10 +35,16 @@ from stenographer.lib.sessions.reader import (
     session_started_at,
     source_file_path,
 )
-from stenographer.lib.sessions.session_locks import SessionLocks
 
 _SOURCE_SUFFIX = re.compile(r"[A-Za-z0-9]{1,8}\Z")
 _RECORDED_SOURCES = ("mic.flac", "system.flac")
+_LOCKS: dict[Path, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _session_lock(directory: Path) -> threading.RLock:
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(directory, threading.RLock())
 
 
 class SessionStore:
@@ -106,7 +113,7 @@ class SessionStore:
         revised = tuple(lines)
         if any(not isinstance(line, TranscriptLine) for line in revised):
             raise TypeError("revision lines must be TranscriptLine values")
-        with SessionLocks.lock(self.root, session_id):
+        with _session_lock(self.root / session_id):
             original = directory / "transcript.jsonl"
             if not original.is_file():
                 raise FileNotFoundError(f"original transcript is missing: {original}")
@@ -169,7 +176,7 @@ class SessionStore:
         directory = session_directory(self.root, session_id)
         if directory is None:
             raise SessionNotFoundError(f"session not found: {session_id}")
-        with SessionLocks.lock(self.root, session_id):
+        with _session_lock(self.root / session_id):
             return self._next_revision_name(directory)
 
     def create_file_session(
@@ -200,7 +207,7 @@ class SessionStore:
             except FileExistsError:
                 started_at += timedelta(seconds=1)
         try:
-            with SessionLocks.lock(self.root, session_id):
+            with _session_lock(self.root / session_id):
                 directory.chmod(0o700)
                 suffix = source.suffix[1:]
                 extension = suffix.lower() if _SOURCE_SUFFIX.fullmatch(suffix) else "bin"
@@ -287,7 +294,7 @@ class SessionStore:
         directory = session_directory(self.root, session_id)
         if directory is None:
             raise SessionNotFoundError(f"session not found: {session_id}")
-        with SessionLocks.lock(self.root, session_id):
+        with _session_lock(self.root / session_id):
             shutil.rmtree(directory)
 
     def rename_speaker(self, session_id: str, speaker_id: str, name: str) -> str:
@@ -295,7 +302,7 @@ class SessionStore:
         cleaned_name = name.strip()
         if not cleaned_name:
             raise ValueError("speaker name must not be empty")
-        with SessionLocks.lock(self.root, session_id):
+        with _session_lock(self.root / session_id):
             detail = self.read(session_id)
             if not any(line.speaker_id == speaker_id for line in detail.lines):
                 raise ValueError(f"speaker not found: {speaker_id}")
