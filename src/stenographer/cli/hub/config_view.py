@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import pathlib
-from dataclasses import asdict, replace
+from dataclasses import fields, replace
 
 from stenographer.lib.config.document import ConfigDocument, SaveResult
 from stenographer.lib.config.errors import ConfigError
@@ -103,6 +103,7 @@ class ConfigEditor:
         self.error: ConfigError | None = None
         self.config: Config | None = None
         self._saved: Config | None = None
+        self._defaults = Config.defaults()
         self._undo: list[Config] = []
         self.shown_keys: tuple[str, ...] | None = None
         self.key_index = 0
@@ -133,7 +134,9 @@ class ConfigEditor:
         if self.config is None:
             return ()
         return tuple(
-            f"{group}.{key}" for group, section in asdict(self.config).items() for key in section
+            f"{group.name}.{key.name}"
+            for group in fields(self.config)
+            for key in fields(getattr(self.config, group.name))
         )
 
     @property
@@ -198,7 +201,7 @@ class ConfigEditor:
         return self._get(self.config, dotted_key)
 
     def default(self, dotted_key: str) -> object:
-        return self._get(Config.defaults(), dotted_key)
+        return self._get(self._defaults, dotted_key)
 
     def is_changed(self, dotted_key: str) -> bool:
         """Return whether the draft value differs from the saved file."""
