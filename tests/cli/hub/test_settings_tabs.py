@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 from textual.widgets import Input
 
 from stenographer.cli.hub.app import HubApp
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.widgets.field import Field
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
@@ -436,3 +438,62 @@ async def test_settings_choice_row_shows_a_rejected_value_on_screen(tmp_path, mo
         await pilot.press("enter", "up", "enter")
         await pilot.pause()
         assert FAIL not in _screen_text(app)
+
+
+def test_settings_device_row_stays_responsive_and_opens_one_list_for_a_slow_enumeration(tmp_path):
+    release = threading.Event()
+    released = []
+
+    def slow_devices(_key):
+        released.append(release.wait(2))
+        return [("3", "3: USB microphone")]
+
+    async def exercise():
+        app = _app(tmp_path)
+        app.settings_screen.list_devices = slow_devices
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open(pilot)
+            app.settings_screen.select_tab("audio")
+            await pilot.pause()
+            await pilot.press("enter", "enter")
+            await pilot.pause()
+            assert not isinstance(app.screen, ChoiceDialog)
+            release.set()
+            for _ in range(200):
+                if isinstance(app.screen, ChoiceDialog):
+                    break
+                await pilot.pause(0.01)
+            assert isinstance(app.screen, ChoiceDialog)
+            assert "3: USB microphone" in _screen_text(app)
+            assert sum(isinstance(screen, ChoiceDialog) for screen in app.screen_stack) == 1
+
+    asyncio.run(exercise())
+    assert released[0] is True
+
+
+@pytest.mark.parametrize("leave_with", ["2", "down"])
+def test_settings_device_list_does_not_open_after_the_user_leaves_the_row(tmp_path, leave_with):
+    release = threading.Event()
+
+    def slow_devices(_key):
+        release.wait(5)
+        return [("3", "3: USB microphone")]
+
+    async def exercise():
+        app = _app(tmp_path)
+        app.settings_screen.list_devices = slow_devices
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open(pilot, "audio")
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press(leave_with)
+            await pilot.pause()
+            release.set()
+            for _ in range(200):
+                if not any(worker.group == "settings-devices" for worker in app.workers):
+                    break
+                await pilot.pause(0.01)
+            await pilot.pause()
+            assert not any(isinstance(screen, ChoiceDialog) for screen in app.screen_stack)
+
+    asyncio.run(exercise())
