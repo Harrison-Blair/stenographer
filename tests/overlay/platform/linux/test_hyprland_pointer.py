@@ -88,9 +88,19 @@ def test_placement_on_the_real_monitor_layout(pointer, expected) -> None:
         pytest.param(
             _raw_monitor("A", 0, 0, 3840, 2160, 2), (1900, 1070), (1032, 1725), id="scale-2"
         ),
-        # 2560 x 1600 at scale 1.5 is 1706.67 x 1066.67 logical: the size rounds down.
+        # 2560 x 1440 at scale 1.3333334 is 1920 x 1080 logical. The last column
+        # and the last row belong to the monitor, and the pill slides to its edges.
         pytest.param(
-            _raw_monitor("A", 100, 50, 2560, 1600, 1.5), (1800, 1110), (1018, 1511), id="scale-1.5"
+            _raw_monitor("A", 0, 0, 2560, 1440, 1.3333334),
+            (1919, 1079),
+            (1032, 1725),
+            id="scale-4/3-last-pixel",
+        ),
+        pytest.param(
+            _raw_monitor("A", 0, 0, 2560, 1440, 1.3333334),
+            (1000, 1060),
+            (1032, 899),
+            id="scale-4/3-bottom-edge",
         ),
         # Transform 1 also turns the mode: 3840 x 2160 at scale 2 is 1080 x 1920.
         pytest.param(

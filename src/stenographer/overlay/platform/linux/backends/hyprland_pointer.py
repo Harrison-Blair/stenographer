@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import socket
 from dataclasses import dataclass
@@ -69,10 +68,7 @@ def place_under_pointer(
         max(pointer_x - pill_width // 2, monitor.x),
         monitor.x + monitor.width - pill_width,
     )
-    visible_top = min(
-        max(pointer_y + POINTER_GAP, monitor.y),
-        monitor.y + monitor.height - pill_height,
-    )
+    visible_top = min(pointer_y + POINTER_GAP, monitor.y + monitor.height - pill_height)
     return PointerPlacement(
         output_name=monitor.name,
         margin_top=visible_top - monitor.y - pill_top,
@@ -118,10 +114,9 @@ def _parse_monitor(obj: object) -> HyprlandMonitor:
     if transform % 2:
         # wl_output transforms 1, 3, 5, and 7 turn the mode by 90 degrees.
         mode_width, mode_height = mode_height, mode_width
-    # A fractional logical size rounds down, so the pill stays fully on the output.
-    return HyprlandMonitor(
-        name, x, y, math.floor(mode_width / scale), math.floor(mode_height / scale)
-    )
+    # The reply rounds the scale (1.3333334 for 4/3), so the division can fall just
+    # below the true whole size.
+    return HyprlandMonitor(name, x, y, round(mode_width / scale), round(mode_height / scale))
 
 
 def parse_monitors(reply: bytes) -> tuple[HyprlandMonitor, ...]:
