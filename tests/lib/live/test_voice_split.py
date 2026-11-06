@@ -75,7 +75,7 @@ def test_another_voice_in_one_slice_is_no_change():
     vectors = {"speaker-1": UNIT[ANN], "speaker-2": UNIT[BOB]}
 
     cuts = voice_change_cuts(
-        speech((ANN, 9.0)), "speaker-1", vectors, lambda _s: vectors[next(leaders)]
+        speech((ANN, 6.0)), "speaker-1", vectors, lambda _s: vectors[next(leaders)]
     )
 
     assert cuts == ()
@@ -86,7 +86,7 @@ def test_another_voice_in_only_the_first_slice_is_no_change():
     vectors = {"speaker-1": UNIT[ANN], "speaker-2": UNIT[BOB]}
 
     cuts = voice_change_cuts(
-        speech((ANN, 9.0)), "speaker-1", vectors, lambda _s: vectors[next(leaders)]
+        speech((ANN, 6.0)), "speaker-1", vectors, lambda _s: vectors[next(leaders)]
     )
 
     assert cuts == ()
@@ -98,7 +98,7 @@ def test_two_slices_with_a_lead_below_the_minimum_are_no_change():
     close = np.array([0.6, 0.67, 0.0])
     vectors = iter([own, own, own, close, close, close, close])
 
-    cuts = voice_change_cuts(speech((ANN, 12.0)), "speaker-1", VOICES, lambda _s: next(vectors))
+    cuts = voice_change_cuts(speech((ANN, 7.5)), "speaker-1", VOICES, lambda _s: next(vectors))
 
     assert cuts == ()
 
@@ -109,7 +109,7 @@ def test_a_lead_above_the_minimum_for_two_slices_is_a_change():
     own = np.array([1.0, 0.0, 0.0])
     vectors = iter([own, own, other, other, other, other, other])
 
-    cuts = voice_change_cuts(speech((ANN, 12.0)), "speaker-1", VOICES, lambda _s: next(vectors))
+    cuts = voice_change_cuts(speech((ANN, 7.5)), "speaker-1", VOICES, lambda _s: next(vectors))
 
     assert len(cuts) == 1
 
@@ -145,14 +145,56 @@ def test_the_cut_falls_in_the_quietest_part_near_the_change_at_low_level():
     assert 10.0 <= cuts[0] / RATE <= 10.4
 
 
-def test_each_part_is_long_enough_for_the_speaker_model():
+def test_each_part_of_many_short_voices_has_at_least_one_hop():
     samples = speech((BOB, 6.0), (ANN, 4.5), (BOB, 4.5), (CAT, 9.0))
 
     cuts = voice_change_cuts(samples, "speaker-1", VOICES, embed)
 
     edges = [0, *cuts, samples.size]
     assert len(cuts) >= 2
-    assert all(right - left >= 1.5 * RATE for left, right in itertools.pairwise(edges))
+    assert all(right - left >= 0.75 * RATE for left, right in itertools.pairwise(edges))
+
+
+def embed_only_a_clear_voice(samples):
+    """Name a voice only for a slice that holds nothing else, as a strict model would."""
+    for voice, unit in UNIT.items():
+        if np.all(np.isclose(samples, voice, atol=1e-5)):
+            return unit
+    return np.ones(3)
+
+
+@pytest.mark.parametrize(("held", "second_cut"), ((3.75, 9.85), (4.0, 10.1)), ids=("3.75 s", "4 s"))
+def test_a_voice_of_about_four_seconds_cuts_only_with_the_shorter_spacing(
+    monkeypatch, held, second_cut
+):
+    # Bob starts at 6 s, on a slice start at both spacings. A 0.2 s pause sits at each change.
+    pause = 0.0002
+    samples = speech((ANN, 5.8), (pause, 0.2), (BOB, held), (pause, 0.2), (ANN, 6.0))
+
+    cuts = voice_change_cuts(samples, "speaker-1", VOICES, embed_only_a_clear_voice)
+
+    assert seconds(cuts) == pytest.approx([5.9, second_cut], abs=0.02)
+
+    # At 1.5 s only the slice at 6 s fits inside Bob, and one slice is no change.
+    monkeypatch.setattr(voice_split, "_HOP_SAMPLES", 3 * RATE // 2)
+    assert voice_change_cuts(samples, "speaker-1", VOICES, embed_only_a_clear_voice) == ()
+
+
+def test_the_shortest_part_between_two_cuts_is_one_hop():
+    # Bob leads slices 2 and 3, with centers at 3 s and 3.75 s. The first cut can fall up
+    # to the first center and the second from the second center, and a 0.2 s pause on
+    # each center pulls the cuts there.
+    leaders = ("speaker-1",) * 2 + ("speaker-2",) * 2 + ("speaker-1",) * 2
+    vectors = iter(VOICES[name] for name in leaders)
+    samples = speech((ANN, 6.75))
+    samples[int(2.9 * RATE) : int(3.1 * RATE)] = 0.00001
+    samples[int(3.65 * RATE) : int(3.85 * RATE)] = 0.00001
+
+    cuts = voice_change_cuts(samples, "speaker-1", VOICES, lambda _slice: next(vectors))
+
+    assert len(cuts) == 2
+    assert cuts[1] - cuts[0] >= 0.75 * RATE
+    assert (cuts[1] - cuts[0]) / RATE == pytest.approx(0.75, abs=0.01)
 
 
 OWN, OTHER, THIRD = "speaker-1", "speaker-2", "speaker-3"
@@ -161,13 +203,13 @@ OWN, OTHER, THIRD = "speaker-1", "speaker-2", "speaker-3"
 def scripted_cuts(*leaders, own=OWN):
     """Return the cuts, in seconds, when each slice is led as given; ``None`` is unclear."""
     vectors = iter(np.ones(3) if leader is None else VOICES[leader] for leader in leaders)
-    samples = speech((ANN, 3.0 + 1.5 * (len(leaders) - 1)))
+    samples = speech((ANN, 3.0 + 0.75 * (len(leaders) - 1)))
     return seconds(voice_change_cuts(samples, own, VOICES, lambda _slice: next(vectors)))
 
 
 def center(index):
     """Return the center, in seconds, of one slice."""
-    return 1.5 + 1.5 * index
+    return 1.5 + 0.75 * index
 
 
 @pytest.mark.parametrize(

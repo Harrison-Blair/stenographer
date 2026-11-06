@@ -22,10 +22,11 @@ from stenographer.lib.logging.pipeline import fmt_event
 
 log = logging.getLogger(__name__)
 
-# The user tested these four settings by ear on saved sessions.
+# The user tested these settings by ear on saved sessions. Five cuts that the 0.75 s
+# spacing adds were all heard to hold a second voice: limited evidence.
 _MINIMUM_PHRASE_SECONDS = 6.0
 _SLICE_SAMPLES = 3 * SAMPLE_RATE
-_HOP_SAMPLES = 3 * SAMPLE_RATE // 2
+_HOP_SAMPLES = 3 * SAMPLE_RATE // 4
 _MINIMUM_LEAD = 0.15
 _RUN_SLICES = 2
 # A window this long finds a pause between speakers, not a stop consonant inside a word.
