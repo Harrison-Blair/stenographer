@@ -56,9 +56,9 @@ acceptance and human review are needed to assess fidelity. General retains its
 original length and numeral checks. A detected format, parsing, or transport
 failure delivers the original formatted transcript instead.
 
-The overlay includes Agent or General throughout Recording, Transcribing,
-Refining, and Delivering, then briefly reports Applied, Skipped, or Fallback.
-It never displays transcript content.
+The overlay shows Transcribing, Refining, and Delivering, then briefly reports
+Applied, Skipped, or Fallback. It does not name the profile, and it never
+displays transcript content.
 
 ## Agent real-model acceptance
 

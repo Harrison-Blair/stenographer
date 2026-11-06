@@ -77,6 +77,11 @@ cancel_binding = "KEY_ESC"  # "" disables cancellation
 overlay = false
 ```
 
+On Hyprland, the pill opens centered 32 px below the mouse pointer, on the
+monitor under the pointer. It slides as needed to stay fully on that monitor, and
+it stays still until it hides. On X11 and other Wayland compositors, or if the
+pointer position is not available, it opens at the bottom center of the screen.
+
 Hybrid mode is the default for both profile bindings. Right Ctrl selects Agent;
 Right Alt selects General. Tap either to latch a recording, or hold it while
 speaking and release to stop. In hold mode only the held press records; in
