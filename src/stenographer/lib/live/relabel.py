@@ -277,12 +277,13 @@ def relabel_system_lines(
                 has_sustained_speech = True
                 break
             sustained_window_speech -= phrase_duration
-        # Merge a minor cluster as a whole only when it clears the live threshold.
-        if scores[best_candidate] >= threshold:
-            core_clusters[candidate_indices[best_candidate]].extend(members)
-        elif has_sustained_speech:
+        # Sustained speech keeps a minor cluster separate at any similarity. Without it,
+        # merge the cluster as a whole only when it clears the live threshold.
+        if has_sustained_speech:
             core_clusters[index] = list(members)
             core_vectors[index] = centroid(members)
+        elif scores[best_candidate] >= threshold:
+            core_clusters[candidate_indices[best_candidate]].extend(members)
         else:
             # Unsupported phrases vote individually and cannot seed a speaker label.
             unassigned_indices.extend(members)

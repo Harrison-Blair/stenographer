@@ -118,6 +118,46 @@ def test_batch_relabel_keeps_sustained_minor_voice_at_realistic_similarity():
     assert [line.label for line in relabeled] == ["Speaker 1"] + ["Speaker 2"] * 5
 
 
+def _core_voice_with_a_minor_voice(
+    minor_starts: tuple[float, ...],
+) -> tuple[tuple[TranscriptLine, ...], tuple[np.ndarray, ...]]:
+    """Build a 100 s core voice and a 15 s minor voice, under its 20% rule of 20 s.
+
+    The core voice's two phrases score 0.6, so they group. Each minor phrase scores
+    only about 0.465 against them, so it does not group with them, but it scores 0.52
+    against their centroid (1, 0, 0), which clears the 0.50 threshold.
+    """
+    core_a = np.array([np.sqrt(0.8), np.sqrt(0.2), 0.0], dtype=np.float32)
+    core_b = np.array([np.sqrt(0.8), -np.sqrt(0.2), 0.0], dtype=np.float32)
+    minor = np.array([0.52, 0.0, np.sqrt(1 - 0.52**2)], dtype=np.float32)
+    lines = (
+        _line(0.0, 50.0, "speaker-1", "Speaker 1"),
+        _line(50.0, 50.0, "speaker-1", "Speaker 1"),
+        *(_line(start, 3.0, "speaker-2", "Speaker 2") for start in minor_starts),
+    )
+    return lines, (core_a, core_b) + (minor,) * len(minor_starts)
+
+
+def test_batch_relabel_keeps_sustained_minor_voice_above_the_merge_threshold():
+    lines, embeddings = _core_voice_with_a_minor_voice(
+        minor_starts=(101.0, 105.0, 109.0, 113.0, 117.0)
+    )
+
+    relabeled = relabel_system_lines(lines, embeddings, threshold=0.5)
+
+    assert [line.speaker_id for line in relabeled] == ["speaker-1"] * 2 + ["speaker-2"] * 5
+
+
+def test_batch_relabel_merges_sparse_minor_voice_above_the_merge_threshold():
+    lines, embeddings = _core_voice_with_a_minor_voice(
+        minor_starts=(101.0, 161.0, 221.0, 281.0, 341.0)
+    )
+
+    relabeled = relabel_system_lines(lines, embeddings, threshold=0.5)
+
+    assert [line.speaker_id for line in relabeled] == ["speaker-1"] * 7
+
+
 def test_batch_relabel_short_residue_does_not_create_speakers():
     lines = tuple(
         _line(index * 2.0, 0.8, f"speaker-{index + 1}", f"Speaker {index + 1}")
