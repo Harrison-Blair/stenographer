@@ -116,6 +116,88 @@ def test_placement_uses_the_logical_monitor_size(monitor, pointer, expected) -> 
     assert place_under_pointer(pointer, monitors, _PILL_BOUNDS) == PointerPlacement("A", *expected)
 
 
+@pytest.mark.parametrize(
+    ("width", "height", "scale", "transform", "logical"),
+    [
+        # Hyprland before v0.56.2 writes two decimals; v0.56.2 writes the full float.
+        pytest.param(2560, 1440, 1.33, 0, (1920, 1080), id="two-decimals-4/3"),
+        pytest.param(2560, 1440, 1.3333334, 0, (1920, 1080), id="full-float-4/3"),
+        pytest.param(3840, 2160, 1.67, 0, (2304, 1296), id="two-decimals-5/3"),
+        pytest.param(3840, 2160, 1.6666666, 0, (2304, 1296), id="full-float-5/3"),
+        pytest.param(2560, 1440, 1.33, 3, (1080, 1920), id="turned-two-decimals-4/3"),
+        pytest.param(3840, 2160, 1.67, 1, (1296, 2304), id="turned-two-decimals-5/3"),
+        pytest.param(2880, 1800, 1.25, 0, (2304, 1440), id="exact-5/4"),
+        pytest.param(2560, 1440, 1, 0, (2560, 1440), id="scale-1"),
+        pytest.param(1366, 768, 1, 0, (1366, 768), id="odd-mode-scale-1"),
+    ],
+)
+def test_logical_size_recovers_the_true_scale(width, height, scale, transform, logical) -> None:
+    raw = _raw_monitor("A", 0, 0, width, height, scale, transform)
+
+    monitor = parse_monitors(json.dumps([raw]).encode())[0]
+
+    assert (monitor.width, monitor.height) == logical
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        (1366, 768),
+        (1920, 1080),
+        (1920, 1200),
+        (2560, 1440),
+        (2880, 1800),
+        (3440, 1440),
+        (3840, 2160),
+    ],
+)
+def test_every_valid_scale_comes_back_from_both_reply_formats(mode: tuple[int, int]) -> None:
+    width, height = mode
+    # Scales from 1 to 3, the ones that Hyprland accepts for this mode.
+    for numerator in range(120, 361):
+        if (width * 120) % numerator or (height * 120) % numerator:
+            continue
+        logical = (width * 120 // numerator, height * 120 // numerator)
+        for scale in (round(numerator / 120, 2), numerator / 120):
+            raw = _raw_monitor("A", 0, 0, width, height, scale)
+            monitor = parse_monitors(json.dumps([raw]).encode())[0]
+            assert (monitor.width, monitor.height) == logical, (numerator, scale)
+
+
+def test_a_rounded_scale_does_not_give_the_left_monitor_the_right_monitors_pixels() -> None:
+    monitors = parse_monitors(
+        json.dumps(
+            [
+                _raw_monitor("LEFT", 0, 0, 2560, 1440, 1.33),
+                _raw_monitor("RIGHT", 1920, 0, 1920, 1080),
+            ]
+        ).encode()
+    )
+
+    # LEFT ends at x 1920. The pill slides to the left edge of RIGHT: margin -8.
+    assert place_under_pointer((1922, 700), monitors, _PILL_BOUNDS) == PointerPlacement(
+        "RIGHT", 727, -8
+    )
+
+
+def test_the_last_columns_of_a_rounded_scale_monitor_still_match_it() -> None:
+    monitors = parse_monitors(json.dumps([_raw_monitor("A", 0, 0, 3840, 2160, 1.67)]).encode())
+
+    # The true size is 2304 x 1296, so the pill slides to 2304 - 187 and 1296 - 43.
+    assert place_under_pointer((2303, 1295), monitors, _PILL_BOUNDS) == PointerPlacement(
+        "A", 1248, 2109
+    )
+
+
+def test_a_rounded_scale_slides_the_pill_to_the_true_right_edge() -> None:
+    monitors = parse_monitors(json.dumps([_raw_monitor("A", 0, 0, 2560, 1440, 1.33)]).encode())
+
+    # The true right edge is 1920: visible left 1733, canvas left 1725.
+    assert place_under_pointer((1919, 500), monitors, _PILL_BOUNDS) == PointerPlacement(
+        "A", 527, 1725
+    )
+
+
 def test_a_pointer_outside_every_monitor_has_no_placement() -> None:
     # DP-2 and DP-3 begin at y 0, and HDMI-A-1 begins at x 2560.
     assert place_under_pointer((100, -10), _monitors(), _PILL_BOUNDS) is None

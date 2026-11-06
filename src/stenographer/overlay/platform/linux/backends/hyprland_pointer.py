@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 
 POINTER_GAP = 32
 _SOCKET_TIMEOUT_SECONDS = 0.25
+_MAX_SCALE_NUMERATOR = 16 * 120
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +95,25 @@ def parse_cursor(reply: bytes) -> tuple[int, int]:
         raise ValueError(f"Hyprland cursor reply has no field {exc}") from None
 
 
+def _logical_size(mode_width: int, mode_height: int, scale: float) -> tuple[int, int]:
+    """Divide by the true scale, which the reply gives only approximately.
+
+    Hyprland keeps a scale of N/120 that gives a whole logical size, but its reply
+    has two decimals before v0.56.2 (1.33 for 4/3) and a float after (1.3333334).
+    The nearest such N recovers the true scale. N = 1 always qualifies, so a scale
+    that ``debug:disable_scale_checks`` allows gets the nearest valid size.
+    """
+    numerator = min(
+        (
+            n
+            for n in range(1, _MAX_SCALE_NUMERATOR + 1)
+            if mode_width * 120 % n == 0 and mode_height * 120 % n == 0
+        ),
+        key=lambda n: abs(n - scale * 120),
+    )
+    return mode_width * 120 // numerator, mode_height * 120 // numerator
+
+
 def _parse_monitor(obj: object) -> HyprlandMonitor:
     if not isinstance(obj, dict):
         raise ValueError("Hyprland monitor is not an object")
@@ -114,9 +134,8 @@ def _parse_monitor(obj: object) -> HyprlandMonitor:
     if transform % 2:
         # wl_output transforms 1, 3, 5, and 7 turn the mode by 90 degrees.
         mode_width, mode_height = mode_height, mode_width
-    # The reply rounds the scale (1.3333334 for 4/3), so the division can fall just
-    # below the true whole size.
-    return HyprlandMonitor(name, x, y, round(mode_width / scale), round(mode_height / scale))
+    width, height = _logical_size(mode_width, mode_height, scale)
+    return HyprlandMonitor(name, x, y, width, height)
 
 
 def parse_monitors(reply: bytes) -> tuple[HyprlandMonitor, ...]:
