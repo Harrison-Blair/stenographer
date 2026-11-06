@@ -118,6 +118,69 @@ def test_batch_relabel_keeps_sustained_minor_voice_at_realistic_similarity():
     assert [line.label for line in relabeled] == ["Speaker 1"] + ["Speaker 2"] * 5
 
 
+def test_batch_relabel_keeps_sustained_minor_voice_above_the_merge_threshold():
+    # A 100 s core voice and a 15 s minor voice, under the 20% rule of 20 s. The core
+    # phrases score 0.6, so they group. Each minor phrase scores about 0.465 against
+    # them, so it does not group with them, but it scores 0.52 against their centroid
+    # (1, 0, 0), which clears the 0.50 threshold.
+    core_a = np.array([np.sqrt(0.8), np.sqrt(0.2), 0.0], dtype=np.float32)
+    core_b = np.array([np.sqrt(0.8), -np.sqrt(0.2), 0.0], dtype=np.float32)
+    minor = np.array([0.52, 0.0, np.sqrt(1 - 0.52**2)], dtype=np.float32)
+    lines = (
+        _line(0.0, 50.0, "speaker-1", "Speaker 1"),
+        _line(50.0, 50.0, "speaker-1", "Speaker 1"),
+        *(
+            _line(start, 3.0, "speaker-2", "Speaker 2")
+            for start in (101.0, 105.0, 109.0, 113.0, 117.0)
+        ),
+    )
+
+    relabeled = relabel_system_lines(lines, (core_a, core_b) + (minor,) * 5, threshold=0.5)
+
+    assert [line.speaker_id for line in relabeled] == ["speaker-1"] * 2 + ["speaker-2"] * 5
+
+
+def test_batch_relabel_merges_sparse_minor_voice_whole_into_its_nearest_core_voice():
+    # Axes: voice A's centroid, voice A's spread, voice B's centroid, voice B's spread,
+    # and the minor voice's own direction.
+    def embedding(a: float, a_spread: float, b: float, b_spread: float) -> np.ndarray:
+        own = np.sqrt(1 - a**2 - a_spread**2 - b**2 - b_spread**2)
+        return np.array([a, a_spread, b, b_spread, own], dtype=np.float32)
+
+    spread = np.sqrt(0.2)
+    centre = np.sqrt(0.8)
+    # Three phrases lean to voice A and two lean to voice B, so a phrase-by-phrase vote
+    # would split them. As a cluster they score 0.53 against A and 0.512 against B, both
+    # at or above 0.50, and A is nearer. They score under 0.50 against every core phrase,
+    # so they do not group with a core voice. Sixty-second gaps leave no sustained speech.
+    nearer_a = embedding(0.55, 0.0, 0.50, 0.0)
+    nearer_b = embedding(0.50, 0.0, 0.53, 0.0)
+    lines = (
+        _line(0.0, 150.0, "speaker-1", "Speaker 1"),
+        _line(150.0, 150.0, "speaker-1", "Speaker 1"),
+        _line(300.0, 150.0, "speaker-2", "Speaker 2"),
+        _line(450.0, 150.0, "speaker-2", "Speaker 2"),
+        *(_line(600.0 + index * 60.0, 3.0, "speaker-3", "Speaker 3") for index in range(5)),
+    )
+    embeddings = (
+        embedding(centre, spread, 0.0, 0.0),
+        embedding(centre, -spread, 0.0, 0.0),
+        embedding(0.0, 0.0, centre, spread),
+        embedding(0.0, 0.0, centre, -spread),
+        nearer_a,
+        nearer_b,
+        nearer_a,
+        nearer_b,
+        nearer_a,
+    )
+
+    relabeled = relabel_system_lines(lines, embeddings, threshold=0.5)
+
+    assert [line.speaker_id for line in relabeled] == ["speaker-1"] * 2 + ["speaker-2"] * 2 + [
+        "speaker-1"
+    ] * 5
+
+
 def test_batch_relabel_short_residue_does_not_create_speakers():
     lines = tuple(
         _line(index * 2.0, 0.8, f"speaker-{index + 1}", f"Speaker {index + 1}")
