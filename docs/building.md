@@ -191,7 +191,8 @@ layer-shell/fractional-scale/viewporter Python bindings, Pillow, python-xlib,
 and the completed PyWayland CFFI extension with its collected shared-library
 requirements. Protocol bindings are generated in the source tree before
 building; neither installed source packages nor frozen helpers run a protocol
-scanner. The private helper re-exec entry remains intentionally absent from
+scanner. The xdg-output binding comes from PyWayland itself and is not generated
+in the source tree. The private helper re-exec entry remains intentionally absent from
 public `--help` output.
 
 `scripts/build.sh` rejects a source or frozen tree unless it contains exactly

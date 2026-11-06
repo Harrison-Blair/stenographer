@@ -12,7 +12,8 @@ cap, and the pill's appearance, spectrum, loading animation, and disappearance.
 On Hyprland, verify that the pill opens 32 px below the pointer on the monitor
 under the pointer, including a rotated monitor, stays on that monitor at each
 edge, and stays still until it hides. On X11 and other compositors, verify that
-it opens at bottom center.
+it opens at bottom center. On Hyprland, also verify the first pill show after a
+daemon start: it opens under the pointer, not at bottom center.
 Inspect daemon and helper logs for numeric diagnostics without transcript or
 audio content. CI and sandbox checks never access the microphone; real-machine
 microphone checks require explicit consent.
