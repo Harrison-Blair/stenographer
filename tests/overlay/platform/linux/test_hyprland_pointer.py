@@ -1,59 +1,41 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pointer placement from Hyprland data. Expected numbers are hand calculated."""
+"""Pointer placement from xdg-output geometry. Expected numbers are hand calculated."""
 
 from __future__ import annotations
 
-import json
 import logging
 import socket
 import threading
 from pathlib import Path
 
 import pytest
+from pywayland.protocol.xdg_output_unstable_v1 import ZxdgOutputManagerV1
 
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.overlay.platform.linux.backends.hyprland_pointer import (
-    HyprlandMonitor,
+    OutputGeometry,
     PointerPlacement,
     parse_cursor,
-    parse_monitors,
     place_under_pointer,
-    query_pointer_placement,
+    query_pointer,
 )
 from stenographer.overlay.platform.linux.backends.layer_shell_backend import LayerShellBackend
 from stenographer.overlay.platform.linux.backends.protocols.wlr_layer_shell_unstable_v1 import (
     ZwlrLayerSurfaceV1,
 )
+from stenographer.overlay.platform.linux.backends.registry_inventory import RegistryInventory
 from stenographer.overlay.protocol.messages import StateMessage
 from stenographer.overlay.rendering.render import render_overlay
 
 # The rendered canvas at scale 1: 8 transparent px left of the pill, 5 above it.
 _PILL_BOUNDS = (8, 5, 195, 48)
 
-
-def _raw_monitor(name, x, y, width=2560, height=1440, scale=1, transform=0) -> dict:
-    return {
-        "id": 1,
-        "name": name,
-        "width": width,
-        "height": height,
-        "x": x,
-        "y": y,
-        "scale": scale,
-        "transform": transform,
-        "focused": False,
-    }
-
-
-_REAL_LAYOUT = [
-    _raw_monitor("DP-3", 0, 0),
-    _raw_monitor("HDMI-A-1", 2560, -890, transform=3),
-    _raw_monitor("DP-2", -2560, 0),
-]
-
-
-def _monitors() -> tuple[HyprlandMonitor, ...]:
-    return parse_monitors(json.dumps(_REAL_LAYOUT).encode())
+# The real layout, as xdg-output reports it on the development machine.
+_REAL_LAYOUT = (
+    OutputGeometry("DP-3", 0, 0, 2560, 1440),
+    OutputGeometry("HDMI-A-1", 2560, -890, 1440, 2560),
+    OutputGeometry("DP-2", -2560, 0, 2560, 1440),
+)
 
 
 @pytest.mark.parametrize(
@@ -70,7 +52,6 @@ def _monitors() -> tuple[HyprlandMonitor, ...]:
         pytest.param((3300, -889), ("HDMI-A-1", 28, 639), id="top-edge-is-below-the-gap"),
         pytest.param((800, 1435), ("DP-3", 1392, 699), id="bottom-edge"),
         pytest.param((2555, 1435), ("DP-3", 1392, 2365), id="bottom-right-corner"),
-        # The rotated logical size is 1440 x 2560: x ends at 4000, y ends at 1670.
         pytest.param((3995, 1665), ("HDMI-A-1", 2512, 1245), id="rotated-corner"),
         # The first and the last column of a monitor belong to it.
         pytest.param((2560, 0), ("HDMI-A-1", 917, -8), id="first-column-of-hdmi"),
@@ -78,135 +59,57 @@ def _monitors() -> tuple[HyprlandMonitor, ...]:
     ],
 )
 def test_placement_on_the_real_monitor_layout(pointer, expected) -> None:
-    assert place_under_pointer(pointer, _monitors(), _PILL_BOUNDS) == PointerPlacement(*expected)
+    assert place_under_pointer(pointer, _REAL_LAYOUT, _PILL_BOUNDS) == PointerPlacement(*expected)
 
 
 @pytest.mark.parametrize(
-    ("monitor", "pointer", "expected"),
+    ("size", "pointer", "expected"),
     [
-        # 3840 x 2160 at scale 2 is 1920 x 1080 logical.
-        pytest.param(
-            _raw_monitor("A", 0, 0, 3840, 2160, 2), (1900, 1070), (1032, 1725), id="scale-2"
-        ),
-        # 2560 x 1440 at scale 1.3333334 is 1920 x 1080 logical. The last column
-        # and the last row belong to the monitor, and the pill slides to its edges.
-        pytest.param(
-            _raw_monitor("A", 0, 0, 2560, 1440, 1.3333334),
-            (1919, 1079),
-            (1032, 1725),
-            id="scale-4/3-last-pixel",
-        ),
-        pytest.param(
-            _raw_monitor("A", 0, 0, 2560, 1440, 1.3333334),
-            (1000, 1060),
-            (1032, 899),
-            id="scale-4/3-bottom-edge",
-        ),
-        # Transform 1 also turns the mode: 3840 x 2160 at scale 2 is 1080 x 1920.
-        pytest.param(
-            _raw_monitor("A", 0, 0, 3840, 2160, 2, 1),
-            (1075, 1900),
-            (1872, 885),
-            id="turned-scale-2",
-        ),
+        # 3000 x 2000 at scale 1.5625: scale math gave 1875 x 1250 for this monitor.
+        pytest.param((1920, 1280), (1900, 1000), (1027, 1725), id="1.5625-right-edge"),
+        pytest.param((1920, 1280), (1800, 600), (627, 1699), id="1.5625-centered"),
+        pytest.param((1920, 1280), (1000, 1200), (1227, 899), id="1.5625-keeps-the-gap"),
+        # 2560 x 1440 at scale 4/3: scale math gave 1919 x 1079 and 1925 x 1083.
+        pytest.param((1920, 1080), (1919, 1079), (1032, 1725), id="4/3-last-pixel"),
+        pytest.param((1920, 1080), (1000, 1060), (1032, 899), id="4/3-bottom-edge"),
+        # 3840 x 2160 at scale 5/3, turned by 90 degrees.
+        pytest.param((1296, 2304), (1290, 2300), (2256, 1101), id="5/3-turned-corner"),
     ],
 )
-def test_placement_uses_the_logical_monitor_size(monitor, pointer, expected) -> None:
-    monitors = parse_monitors(json.dumps([monitor]).encode())
+def test_placement_uses_the_reported_logical_size_directly(size, pointer, expected) -> None:
+    monitors = (OutputGeometry("A", 0, 0, *size),)
+
     assert place_under_pointer(pointer, monitors, _PILL_BOUNDS) == PointerPlacement("A", *expected)
 
 
-@pytest.mark.parametrize(
-    ("width", "height", "scale", "transform", "logical"),
-    [
-        # Hyprland before v0.56.2 writes two decimals; v0.56.2 writes the full float.
-        pytest.param(2560, 1440, 1.33, 0, (1920, 1080), id="two-decimals-4/3"),
-        pytest.param(2560, 1440, 1.3333334, 0, (1920, 1080), id="full-float-4/3"),
-        pytest.param(3840, 2160, 1.67, 0, (2304, 1296), id="two-decimals-5/3"),
-        pytest.param(3840, 2160, 1.6666666, 0, (2304, 1296), id="full-float-5/3"),
-        pytest.param(2560, 1440, 1.33, 3, (1080, 1920), id="turned-two-decimals-4/3"),
-        pytest.param(3840, 2160, 1.67, 1, (1296, 2304), id="turned-two-decimals-5/3"),
-        pytest.param(2880, 1800, 1.25, 0, (2304, 1440), id="exact-5/4"),
-        pytest.param(2560, 1440, 1, 0, (2560, 1440), id="scale-1"),
-        pytest.param(1366, 768, 1, 0, (1366, 768), id="odd-mode-scale-1"),
-    ],
-)
-def test_logical_size_recovers_the_true_scale(width, height, scale, transform, logical) -> None:
-    raw = _raw_monitor("A", 0, 0, width, height, scale, transform)
-
-    monitor = parse_monitors(json.dumps([raw]).encode())[0]
-
-    assert (monitor.width, monitor.height) == logical
-
-
-@pytest.mark.parametrize(
-    "mode",
-    [
-        (1366, 768),
-        (1920, 1080),
-        (1920, 1200),
-        (2560, 1440),
-        (2880, 1800),
-        (3440, 1440),
-        (3840, 2160),
-    ],
-)
-def test_every_valid_scale_comes_back_from_both_reply_formats(mode: tuple[int, int]) -> None:
-    width, height = mode
-    # Scales from 1 to 3, the ones that Hyprland accepts for this mode.
-    for numerator in range(120, 361):
-        if (width * 120) % numerator or (height * 120) % numerator:
-            continue
-        logical = (width * 120 // numerator, height * 120 // numerator)
-        for scale in (round(numerator / 120, 2), numerator / 120):
-            raw = _raw_monitor("A", 0, 0, width, height, scale)
-            monitor = parse_monitors(json.dumps([raw]).encode())[0]
-            assert (monitor.width, monitor.height) == logical, (numerator, scale)
-
-
-def test_a_rounded_scale_does_not_give_the_left_monitor_the_right_monitors_pixels() -> None:
-    monitors = parse_monitors(
-        json.dumps(
-            [
-                _raw_monitor("LEFT", 0, 0, 2560, 1440, 1.33),
-                _raw_monitor("RIGHT", 1920, 0, 1920, 1080),
-            ]
-        ).encode()
+def test_the_border_at_x_1920_belongs_to_the_right_monitor() -> None:
+    monitors = (
+        OutputGeometry("LEFT", 0, 0, 1920, 1080),
+        OutputGeometry("RIGHT", 1920, 0, 1920, 1080),
     )
 
-    # LEFT ends at x 1920. The pill slides to the left edge of RIGHT: margin -8.
+    # The pill slides to the left edge of RIGHT: canvas margin -8.
     assert place_under_pointer((1922, 700), monitors, _PILL_BOUNDS) == PointerPlacement(
         "RIGHT", 727, -8
     )
-
-
-def test_the_last_columns_of_a_rounded_scale_monitor_still_match_it() -> None:
-    monitors = parse_monitors(json.dumps([_raw_monitor("A", 0, 0, 3840, 2160, 1.67)]).encode())
-
-    # The true size is 2304 x 1296, so the pill slides to 2304 - 187 and 1296 - 43.
-    assert place_under_pointer((2303, 1295), monitors, _PILL_BOUNDS) == PointerPlacement(
-        "A", 1248, 2109
-    )
-
-
-def test_a_rounded_scale_slides_the_pill_to_the_true_right_edge() -> None:
-    monitors = parse_monitors(json.dumps([_raw_monitor("A", 0, 0, 2560, 1440, 1.33)]).encode())
-
-    # The true right edge is 1920: visible left 1733, canvas left 1725.
-    assert place_under_pointer((1919, 500), monitors, _PILL_BOUNDS) == PointerPlacement(
-        "A", 527, 1725
+    assert place_under_pointer((1919, 700), monitors, _PILL_BOUNDS) == PointerPlacement(
+        "LEFT", 727, 1725
     )
 
 
 def test_a_pointer_outside_every_monitor_has_no_placement() -> None:
     # DP-2 and DP-3 begin at y 0, and HDMI-A-1 begins at x 2560.
-    assert place_under_pointer((100, -10), _monitors(), _PILL_BOUNDS) is None
+    assert place_under_pointer((100, -10), _REAL_LAYOUT, _PILL_BOUNDS) is None
+
+
+def test_no_monitors_has_no_placement() -> None:
+    assert place_under_pointer((100, 100), (), _PILL_BOUNDS) is None
 
 
 def test_visible_pill_top_of_a_real_frame_is_32_below_the_pointer() -> None:
     frame = render_overlay(OverlayState.TRANSCRIBING)
 
-    placement = place_under_pointer((3300, -500), _monitors(), frame.pill_bounds)
+    placement = place_under_pointer((3300, -500), _REAL_LAYOUT, frame.pill_bounds)
 
     assert placement is not None
     assert -890 + placement.margin_top + frame.pill_bounds[1] == -500 + 32
@@ -234,31 +137,13 @@ def test_malformed_cursor_reply_is_rejected(reply: bytes) -> None:
         parse_cursor(reply)
 
 
-@pytest.mark.parametrize(
-    "reply",
-    [
-        b"",
-        b"{}",
-        b"[1]",
-        b'[{"name": "A"}]',
-        json.dumps([_raw_monitor("A", 0, 0, scale=0)]).encode(),
-        json.dumps([_raw_monitor("A", 0, 0, scale="1")]).encode(),
-        json.dumps([_raw_monitor(7, 0, 0)]).encode(),
-        json.dumps([_raw_monitor("A", 0.5, 0)]).encode(),
-    ],
-)
-def test_malformed_monitors_reply_is_rejected(reply: bytes) -> None:
-    with pytest.raises(ValueError):
-        parse_monitors(reply)
-
-
 class _FakeHyprland:
     """A real Unix socket with Hyprland's one-request-per-connection behavior."""
 
-    def __init__(self, path: Path, replies: dict[bytes, bytes | None]) -> None:
+    def __init__(self, path: Path, reply: bytes | None) -> None:
         path.parent.mkdir(parents=True)
         self.requests: list[bytes] = []
-        self._replies = replies
+        self._reply = reply
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._server.bind(str(path))
         self._server.listen()
@@ -273,13 +158,11 @@ class _FakeHyprland:
             except OSError:
                 return
             with connection:
-                request = connection.recv(1024)
-                self.requests.append(request)
-                reply = self._replies[request]
-                if reply is None:
+                self.requests.append(connection.recv(1024))
+                if self._reply is None:
                     self._release.wait(5)
                 else:
-                    connection.sendall(reply)
+                    connection.sendall(self._reply)
 
     def close(self) -> None:
         self._release.set()
@@ -288,21 +171,18 @@ class _FakeHyprland:
         self._thread.join(5)
 
 
-_GOOD_REPLIES = {
-    b"j/cursorpos": b'{"x": 800, "y": 700}',
-    b"j/monitors": json.dumps(_REAL_LAYOUT).encode(),
-}
+_POINTER_REPLY = b'{"x": 800, "y": 700}'
 
 
 @pytest.fixture
 def hyprland(tmp_path, monkeypatch):
-    """Start a fake server for the replies that the test gives, on the expected path."""
+    """Start a fake server with the reply that the test gives, on the expected path."""
     servers = []
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "sig")
 
-    def start(replies):
-        server = _FakeHyprland(tmp_path / "hypr" / "sig" / ".socket.sock", replies)
+    def start(reply=_POINTER_REPLY):
+        server = _FakeHyprland(tmp_path / "hypr" / "sig" / ".socket.sock", reply)
         servers.append(server)
         return server
 
@@ -311,22 +191,22 @@ def hyprland(tmp_path, monkeypatch):
         server.close()
 
 
-def test_query_reads_both_replies_from_the_socket(hyprland) -> None:
-    server = hyprland(_GOOD_REPLIES)
+def test_query_asks_the_socket_for_the_pointer_only(hyprland) -> None:
+    server = hyprland()
 
-    assert query_pointer_placement(_PILL_BOUNDS) == PointerPlacement("DP-3", 727, 699)
-    assert server.requests == [b"j/cursorpos", b"j/monitors"]
+    assert query_pointer() == (800, 700)
+    assert server.requests == [b"j/cursorpos"]
 
 
 @pytest.mark.parametrize("variable", ["HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR"])
 def test_outside_hyprland_there_is_no_query_and_no_log_line(
     hyprland, monkeypatch, caplog, variable: str
 ) -> None:
-    server = hyprland(_GOOD_REPLIES)
+    server = hyprland()
     monkeypatch.delenv(variable)
 
     with caplog.at_level(logging.DEBUG):
-        assert query_pointer_placement(_PILL_BOUNDS) is None
+        assert query_pointer() is None
 
     assert server.requests == []
     assert "hyprland_query_failed" not in caplog.text
@@ -334,7 +214,7 @@ def test_outside_hyprland_there_is_no_query_and_no_log_line(
 
 def _assert_query_fails_with_a_log_line(caplog) -> None:
     with caplog.at_level(logging.WARNING):
-        assert query_pointer_placement(_PILL_BOUNDS) is None
+        assert query_pointer() is None
     assert "hyprland_query_failed" in caplog.text
 
 
@@ -343,29 +223,22 @@ def test_a_missing_socket_fails_with_a_log_line(caplog) -> None:
     _assert_query_fails_with_a_log_line(caplog)
 
 
-@pytest.mark.parametrize(
-    "replies",
-    [
-        pytest.param({**_GOOD_REPLIES, b"j/cursorpos": b"unknown request"}, id="cursor-text"),
-        pytest.param({**_GOOD_REPLIES, b"j/monitors": b'[{"name": "A"}]'}, id="monitor-fields"),
-        pytest.param({**_GOOD_REPLIES, b"j/monitors": b""}, id="empty-reply"),
-    ],
-)
-def test_a_malformed_reply_fails_with_a_log_line(hyprland, caplog, replies) -> None:
-    hyprland(replies)
+@pytest.mark.parametrize("reply", [b"unknown request", b'{"x": 1}', b""])
+def test_a_malformed_reply_fails_with_a_log_line(hyprland, caplog, reply: bytes) -> None:
+    hyprland(reply)
     _assert_query_fails_with_a_log_line(caplog)
 
 
 def test_a_silent_compositor_fails_with_a_log_line(hyprland, caplog) -> None:
-    hyprland({**_GOOD_REPLIES, b"j/cursorpos": None})
+    hyprland(None)
     _assert_query_fails_with_a_log_line(caplog)
 
 
 class _Fake:
     """A Wayland proxy that records the requests of the backend."""
 
-    def __init__(self, calls: dict[str, object]) -> None:
-        self.calls = calls
+    def __init__(self, calls: dict[str, object] | None = None) -> None:
+        self.calls = {} if calls is None else calls
         self.dispatcher: dict[str, object] = {}
 
     def __getattr__(self, name: str):
@@ -376,7 +249,30 @@ class _Fake:
         return request
 
 
-def _backend(names: dict[object, str]) -> tuple[LayerShellBackend, dict[str, object]]:
+class _FakeXdgOutputManager(_Fake):
+    """Gives one new xdg-output proxy for each output, as the protocol does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.xdg_outputs: dict[object, _Fake] = {}
+
+    def get_xdg_output(self, output):
+        self.xdg_outputs[output] = _Fake()
+        return self.xdg_outputs[output]
+
+
+class _FakeRegistry:
+    def __init__(self, calls: dict[str, object]) -> None:
+        self.calls = calls
+        self.binds: list[tuple[int, object, int]] = []
+        self.manager = _FakeXdgOutputManager()
+
+    def bind(self, name, interface, version):
+        self.binds.append((name, interface, version))
+        return self.manager if interface is ZxdgOutputManagerV1 else _Fake(self.calls)
+
+
+def _backend() -> tuple[LayerShellBackend, dict[str, object]]:
     """A backend with its display replaced, which is the only external part here."""
     calls: dict[str, object] = {}
     backend = LayerShellBackend.__new__(LayerShellBackend)
@@ -389,7 +285,14 @@ def _backend(names: dict[object, str]) -> tuple[LayerShellBackend, dict[str, obj
     backend._viewport = None
     backend._surface = None
     backend._layer_surface = None
-    backend._output_names = names
+    backend._registry = _FakeRegistry(calls)
+    backend._inventory = RegistryInventory()
+    backend._initialized = False
+    backend._lost = False
+    backend._outputs = {}
+    backend._output_scales = {}
+    backend._xdg_output_manager = None
+    backend._xdg_outputs = {}
     backend._entered_outputs = set()
     backend._buffers = {}
     backend._configured = False
@@ -398,14 +301,103 @@ def _backend(names: dict[object, str]) -> tuple[LayerShellBackend, dict[str, obj
     return backend, calls
 
 
+def _advertise_and_bind_globals(backend: LayerShellBackend, *extra: tuple[str, int]) -> None:
+    required = (("wl_compositor", 4), ("wl_shm", 1), ("zwlr_layer_shell_v1", 4))
+    for name, (interface, version) in enumerate((*required, *extra), start=1):
+        backend._inventory.add(name, interface, version)
+    backend._bind_globals()
+    backend._initialized = True
+
+
+def _report(backend, wl_name, x, y, width, height) -> object:
+    """Send the logical geometry events of one bound output; return its wl_output."""
+    output = backend._outputs[wl_name][0]
+    xdg_output = backend._registry.manager.xdg_outputs[output]
+    xdg_output.dispatcher["logical_position"](xdg_output, x, y)
+    xdg_output.dispatcher["logical_size"](xdg_output, width, height)
+    return output
+
+
+def _backend_with_dp3_and_dp2() -> tuple[LayerShellBackend, dict[str, object], object, object]:
+    backend, calls = _backend()
+    _advertise_and_bind_globals(
+        backend, ("wl_output", 3), ("wl_output", 3), ("zxdg_output_manager_v1", 3)
+    )
+    dp3 = _report(backend, 4, 0, 0, 2560, 1440)
+    dp2 = _report(backend, 5, -2560, 0, 2560, 1440)
+    return backend, calls, dp3, dp2
+
+
 def _show(backend: LayerShellBackend, generation: int, state: OverlayState) -> None:
     backend._dispatch(StateMessage(generation, state))
 
 
-def test_surface_opens_at_the_pointer_on_the_named_output(hyprland) -> None:
-    hyprland(_GOOD_REPLIES)
-    other, dp3 = object(), object()
-    backend, calls = _backend({other: "DP-2", dp3: "DP-3"})
+@pytest.mark.parametrize(("advertised", "bound"), [(1, 1), (3, 3), (7, 3)])
+def test_the_manager_binds_up_to_version_3(advertised: int, bound: int) -> None:
+    backend, _calls = _backend()
+
+    _advertise_and_bind_globals(backend, ("zxdg_output_manager_v1", advertised))
+
+    assert (4, ZxdgOutputManagerV1, bound) in backend._registry.binds
+    assert backend._xdg_output_manager is backend._registry.manager
+
+
+def test_an_output_advertised_before_the_manager_gets_an_xdg_output() -> None:
+    backend, _calls = _backend()
+
+    _advertise_and_bind_globals(backend, ("wl_output", 3), ("zxdg_output_manager_v1", 3))
+
+    output = backend._outputs[4][0]
+    assert list(backend._registry.manager.xdg_outputs) == [output]
+
+
+def test_an_output_added_later_gets_an_xdg_output(hyprland) -> None:
+    hyprland(b'{"x": 5000, "y": 100}')
+    backend, calls = _backend()
+    _advertise_and_bind_globals(backend, ("wl_output", 3), ("zxdg_output_manager_v1", 3))
+    _report(backend, 4, 0, 0, 2560, 1440)
+
+    backend._on_global(None, 9, "wl_output", 3)
+    added = _report(backend, 9, 4000, 0, 1920, 1080)
+    _show(backend, 1, OverlayState.RECORDING)
+
+    # Canvas left = 5000 - 93 - 8 - 4000; canvas top = 100 + 32 - 5.
+    assert calls["get_layer_surface"][1] is added
+    assert calls["set_margin"] == (127, 0, 0, 899)
+
+
+def test_a_removed_output_destroys_its_xdg_output_and_leaves_the_layout(hyprland) -> None:
+    hyprland()
+    backend, calls, dp3, dp2 = _backend_with_dp3_and_dp2()
+    xdg_output = backend._registry.manager.xdg_outputs[dp3]
+
+    backend._on_global_remove(None, 4)
+
+    assert "destroy" in xdg_output.calls
+    assert dp3 not in backend._xdg_outputs
+    # The pointer at (800, 700) was on the removed DP-3 and is now on no monitor.
+    _show(backend, 1, OverlayState.RECORDING)
+    assert calls["get_layer_surface"][1] is None
+    assert dp2 in backend._xdg_outputs
+
+
+def test_close_destroys_each_xdg_output_and_the_manager() -> None:
+    backend, _calls, dp3, _dp2 = _backend_with_dp3_and_dp2()
+    backend._shm = None
+    backend._display = _Fake()
+    manager = backend._registry.manager
+    xdg_output = manager.xdg_outputs[dp3]
+
+    backend._close()
+
+    assert "destroy" in xdg_output.calls
+    assert "destroy" in manager.calls
+    assert backend._xdg_outputs == {}
+
+
+def test_surface_opens_at_the_pointer_on_its_output(hyprland) -> None:
+    hyprland()
+    backend, calls, dp3, _dp2 = _backend_with_dp3_and_dp2()
 
     _show(backend, 1, OverlayState.RECORDING)
 
@@ -417,18 +409,30 @@ def test_surface_opens_at_the_pointer_on_the_named_output(hyprland) -> None:
 
 
 def test_placement_happens_once_for_each_hidden_to_visible_change(hyprland) -> None:
-    server = hyprland(_GOOD_REPLIES)
-    backend, _calls = _backend({object(): "DP-3"})
+    server = hyprland()
+    backend, _calls, _dp3, _dp2 = _backend_with_dp3_and_dp2()
 
     _show(backend, 1, OverlayState.RECORDING)
     _show(backend, 2, OverlayState.TRANSCRIBING)
     _show(backend, 3, OverlayState.APPLIED)
-    assert server.requests == [b"j/cursorpos", b"j/monitors"]
+    assert server.requests == [b"j/cursorpos"]
 
     _show(backend, 4, OverlayState.HIDDEN)
-    assert len(server.requests) == 2
+    assert len(server.requests) == 1
     _show(backend, 5, OverlayState.RECORDING)
-    assert len(server.requests) == 4
+    assert len(server.requests) == 2
+
+
+def test_the_next_show_uses_the_geometry_reported_since_the_last_one(hyprland) -> None:
+    hyprland()
+    backend, calls, dp3, _dp2 = _backend_with_dp3_and_dp2()
+
+    _report(backend, 4, 100, 50, 2560, 1440)
+    _show(backend, 1, OverlayState.RECORDING)
+
+    # Canvas left = 800 - 93 - 8 - 100; canvas top = 700 + 32 - 5 - 50.
+    assert calls["get_layer_surface"][1] is dp3
+    assert calls["set_margin"] == (677, 0, 0, 599)
 
 
 def _assert_bottom_center(calls: dict[str, object]) -> None:
@@ -441,7 +445,7 @@ def _assert_bottom_center(calls: dict[str, object]) -> None:
 
 def test_without_hyprland_the_surface_uses_bottom_center(monkeypatch) -> None:
     monkeypatch.delenv("HYPRLAND_INSTANCE_SIGNATURE", raising=False)
-    backend, calls = _backend({object(): "DP-3"})
+    backend, calls, _dp3, _dp2 = _backend_with_dp3_and_dp2()
 
     _show(backend, 1, OverlayState.RECORDING)
 
@@ -449,8 +453,8 @@ def test_without_hyprland_the_surface_uses_bottom_center(monkeypatch) -> None:
 
 
 def test_a_failed_query_uses_bottom_center(hyprland, caplog) -> None:
-    hyprland({**_GOOD_REPLIES, b"j/monitors": b"not json"})
-    backend, calls = _backend({object(): "DP-3"})
+    hyprland(b"not json")
+    backend, calls, _dp3, _dp2 = _backend_with_dp3_and_dp2()
 
     with caplog.at_level(logging.WARNING):
         _show(backend, 1, OverlayState.RECORDING)
@@ -459,34 +463,26 @@ def test_a_failed_query_uses_bottom_center(hyprland, caplog) -> None:
     assert "hyprland_query_failed" in caplog.text
 
 
-def test_no_output_with_the_monitor_name_uses_bottom_center(hyprland, caplog) -> None:
-    hyprland(_GOOD_REPLIES)
-    backend, calls = _backend({object(): "DP-2"})
+def test_a_compositor_without_the_manager_uses_bottom_center(hyprland) -> None:
+    hyprland()
+    backend, calls = _backend()
+    _advertise_and_bind_globals(backend, ("wl_output", 3))
 
-    with caplog.at_level(logging.INFO):
-        _show(backend, 1, OverlayState.RECORDING)
+    assert backend._xdg_output_manager is None
+    _show(backend, 1, OverlayState.RECORDING)
 
     _assert_bottom_center(calls)
-    assert "pointer_output_unmatched" in caplog.text
 
 
-@pytest.mark.parametrize(("advertised", "bound"), [(3, 3), (4, 4), (7, 4)])
-def test_outputs_bind_the_version_that_has_the_name_event(advertised: int, bound: int) -> None:
-    binds = []
+@pytest.mark.parametrize("event", ["logical_position", "logical_size"])
+def test_an_output_with_incomplete_geometry_is_not_used(hyprland, event: str) -> None:
+    hyprland()
+    backend, calls = _backend()
+    _advertise_and_bind_globals(backend, ("wl_output", 3), ("zxdg_output_manager_v1", 3))
+    output = backend._outputs[4][0]
+    xdg_output = backend._registry.manager.xdg_outputs[output]
 
-    class Registry:
-        def bind(self, name, _interface, version):
-            binds.append((name, version))
-            return _Fake({})
+    xdg_output.dispatcher[event](xdg_output, 0, 2560)
+    _show(backend, 1, OverlayState.RECORDING)
 
-    backend, _calls = _backend({})
-    backend._registry = Registry()
-    backend._outputs = {}
-    backend._output_scales = {}
-
-    backend._bind_output(9, advertised)
-
-    assert binds == [(9, bound)]
-    output = backend._outputs[9][0]
-    output.dispatcher["name"](output, "DP-3")
-    assert backend._output_named("DP-3") is output
+    _assert_bottom_center(calls)

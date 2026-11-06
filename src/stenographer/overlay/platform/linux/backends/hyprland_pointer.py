@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Place the pill under the pointer from Hyprland's request socket."""
+"""Place the pill under the pointer: position from Hyprland, geometry from the caller."""
 
 from __future__ import annotations
 
@@ -16,14 +16,13 @@ log = logging.getLogger(__name__)
 
 POINTER_GAP = 32
 _SOCKET_TIMEOUT_SECONDS = 0.25
-_MAX_SCALE_NUMERATOR = 16 * 120
 
 
 @dataclass(frozen=True, slots=True)
-class HyprlandMonitor:
-    """One output in global logical coordinates, after scale and transform."""
+class OutputGeometry:
+    """One output in global logical coordinates, as the compositor reports them."""
 
-    name: str
+    output: object
     x: int
     y: int
     width: int
@@ -32,16 +31,16 @@ class HyprlandMonitor:
 
 @dataclass(frozen=True, slots=True)
 class PointerPlacement:
-    """Layer-surface margins from the top-left corner of one named output."""
+    """Layer-surface margins from the top-left corner of one output."""
 
-    output_name: str
+    output: object
     margin_top: int
     margin_left: int
 
 
 def place_under_pointer(
     pointer: tuple[int, int],
-    monitors: tuple[HyprlandMonitor, ...],
+    monitors: tuple[OutputGeometry, ...],
     pill_bounds: tuple[int, int, int, int],
 ) -> PointerPlacement | None:
     """Center the pill below the pointer and slide it fully onto the monitor. PURE.
@@ -71,7 +70,7 @@ def place_under_pointer(
     )
     visible_top = min(pointer_y + POINTER_GAP, monitor.y + monitor.height - pill_height)
     return PointerPlacement(
-        output_name=monitor.name,
+        output=monitor.output,
         margin_top=visible_top - monitor.y - pill_top,
         margin_left=visible_left - monitor.x - pill_left,
     )
@@ -95,57 +94,6 @@ def parse_cursor(reply: bytes) -> tuple[int, int]:
         raise ValueError(f"Hyprland cursor reply has no field {exc}") from None
 
 
-def _logical_size(mode_width: int, mode_height: int, scale: float) -> tuple[int, int]:
-    """Divide by the true scale, which the reply gives only approximately.
-
-    Hyprland keeps a scale of N/120 that gives a whole logical size, but its reply
-    has two decimals before v0.56.2 (1.33 for 4/3) and a float after (1.3333334).
-    The nearest such N recovers the true scale. N = 1 always qualifies, so a scale
-    that ``debug:disable_scale_checks`` allows gets the nearest valid size.
-    """
-    numerator = min(
-        (
-            n
-            for n in range(1, _MAX_SCALE_NUMERATOR + 1)
-            if mode_width * 120 % n == 0 and mode_height * 120 % n == 0
-        ),
-        key=lambda n: abs(n - scale * 120),
-    )
-    return mode_width * 120 // numerator, mode_height * 120 // numerator
-
-
-def _parse_monitor(obj: object) -> HyprlandMonitor:
-    if not isinstance(obj, dict):
-        raise ValueError("Hyprland monitor is not an object")
-    try:
-        name = obj["name"]
-        scale = obj["scale"]
-        mode_width = _whole_number(obj, "width")
-        mode_height = _whole_number(obj, "height")
-        transform = _whole_number(obj, "transform")
-        x = _whole_number(obj, "x")
-        y = _whole_number(obj, "y")
-    except KeyError as exc:
-        raise ValueError(f"Hyprland monitor has no field {exc}") from None
-    if not isinstance(name, str):
-        raise ValueError("Hyprland monitor name is not text")
-    if isinstance(scale, bool) or not isinstance(scale, int | float) or scale <= 0:
-        raise ValueError("Hyprland monitor scale is not a positive number")
-    if transform % 2:
-        # wl_output transforms 1, 3, 5, and 7 turn the mode by 90 degrees.
-        mode_width, mode_height = mode_height, mode_width
-    width, height = _logical_size(mode_width, mode_height, scale)
-    return HyprlandMonitor(name, x, y, width, height)
-
-
-def parse_monitors(reply: bytes) -> tuple[HyprlandMonitor, ...]:
-    """Read a ``j/monitors`` reply; malformed data raises ``ValueError``."""
-    obj = json.loads(reply)
-    if not isinstance(obj, list):
-        raise ValueError("Hyprland monitors reply is not a list")
-    return tuple(_parse_monitor(item) for item in obj)
-
-
 def _request(path: Path, command: bytes) -> bytes:
     """Send one request; Hyprland closes the connection after its reply."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
@@ -158,8 +106,8 @@ def _request(path: Path, command: bytes) -> bytes:
     return b"".join(chunks)
 
 
-def query_pointer_placement(pill_bounds: tuple[int, int, int, int]) -> PointerPlacement | None:
-    """Return the placement for this show, or ``None`` to use bottom center.
+def query_pointer() -> tuple[int, int] | None:
+    """Return the pointer for this show, or ``None`` to use bottom center.
 
     Outside Hyprland the variables are absent, which is no failure and has no
     log line. A failed query has a log line. The helper is the only caller, and
@@ -171,9 +119,7 @@ def query_pointer_placement(pill_bounds: tuple[int, int, int, int]) -> PointerPl
         return None
     path = Path(runtime_dir) / "hypr" / signature / ".socket.sock"
     try:
-        pointer = parse_cursor(_request(path, b"j/cursorpos"))
-        monitors = parse_monitors(_request(path, b"j/monitors"))
+        return parse_cursor(_request(path, b"j/cursorpos"))
     except (OSError, ValueError) as exc:
         log_failure(log, logging.WARNING, "overlay_helper: hyprland_query_failed", exc, safe=True)
         return None
-    return place_under_pointer(pointer, monitors, pill_bounds)

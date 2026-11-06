@@ -7,17 +7,24 @@ import mmap
 import os
 import selectors
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from pywayland import ffi
 from pywayland.client import Display
 from pywayland.protocol.wayland import WlCompositor, WlOutput, WlShm
+from pywayland.protocol.xdg_output_unstable_v1 import ZxdgOutputManagerV1
 
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.overlay.platform.linux.backends.base import DISPLAY_KEY
 from stenographer.overlay.platform.linux.backends.global_removal import GlobalRemoval
 from stenographer.overlay.platform.linux.backends.helper_backend import HelperBackend
-from stenographer.overlay.platform.linux.backends.hyprland_pointer import query_pointer_placement
+from stenographer.overlay.platform.linux.backends.hyprland_pointer import (
+    OutputGeometry,
+    PointerPlacement,
+    place_under_pointer,
+    query_pointer,
+)
 from stenographer.overlay.platform.linux.backends.protocols.fractional_scale_v1 import (
     WpFractionalScaleManagerV1,
 )
@@ -38,6 +45,7 @@ from stenographer.overlay.platform.linux.backends.wayland_constants import (
     _MAX_IN_FLIGHT_BUFFERS,
     _OPTIONAL_GLOBALS,
     _OUTPUT_INTERFACE,
+    _XDG_OUTPUT_MANAGER_INTERFACE,
     log,
 )
 from stenographer.overlay.protocol.backend import Backend
@@ -45,6 +53,21 @@ from stenographer.overlay.protocol.errors import BackendUnavailableError
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 from stenographer.overlay.rendering.constants import CANVAS_HEIGHT, CANVAS_WIDTH
 from stenographer.overlay.rendering.render import layer_margin_bottom, premultiplied_argb32
+
+
+@dataclass(slots=True)
+class _XdgOutput:
+    """The latest logical geometry that the compositor reported for one output."""
+
+    proxy: object
+    position: tuple[int, int] | None = None
+    size: tuple[int, int] | None = None
+
+    def on_position(self, _proxy, x: int, y: int) -> None:
+        self.position = x, y
+
+    def on_size(self, _proxy, width: int, height: int) -> None:
+        self.size = width, height
 
 
 class LayerShellBackend(HelperBackend):
@@ -81,7 +104,8 @@ class LayerShellBackend(HelperBackend):
         self._viewporter = None
         self._outputs: dict[int, tuple[object, int]] = {}
         self._output_scales: dict[object, int] = {}
-        self._output_names: dict[object, str] = {}
+        self._xdg_output_manager = None
+        self._xdg_outputs: dict[object, _XdgOutput] = {}
         self._entered_outputs: set[object] = set()
 
         self._surface = None
@@ -136,7 +160,7 @@ class LayerShellBackend(HelperBackend):
         was_entered = output in self._entered_outputs
         self._entered_outputs.discard(output)
         self._output_scales.pop(output, None)
-        self._output_names.pop(output, None)
+        self._destroy_xdg_output(output)
         self._release_output(output, bound_version)
         if was_entered and self._visible:
             try:
@@ -169,6 +193,12 @@ class LayerShellBackend(HelperBackend):
             )
             self._viewporter = self._registry.bind(viewporter.name, WpViewporter, 1)
 
+        xdg_output_manager = self._inventory.get(_XDG_OUTPUT_MANAGER_INTERFACE)
+        if xdg_output_manager is not None:
+            self._xdg_output_manager = self._registry.bind(
+                xdg_output_manager.name, ZxdgOutputManagerV1, min(xdg_output_manager.version, 3)
+            )
+
         for item in self._inventory.values():
             if item.interface == _OUTPUT_INTERFACE:
                 self._bind_output(item.name, item.version)
@@ -176,12 +206,16 @@ class LayerShellBackend(HelperBackend):
     def _bind_output(self, name: int, advertised_version: int) -> None:
         if name in self._outputs:
             return
-        bound_version = min(advertised_version, 4)
+        bound_version = min(advertised_version, 3)
         output = self._registry.bind(name, WlOutput, bound_version)
         output.dispatcher["scale"] = self._on_output_scale
-        output.dispatcher["name"] = self._on_output_name
         self._outputs[name] = output, bound_version
         self._output_scales[output] = 1
+        if self._xdg_output_manager is not None:
+            xdg_output = _XdgOutput(self._xdg_output_manager.get_xdg_output(output))
+            xdg_output.proxy.dispatcher["logical_position"] = xdg_output.on_position
+            xdg_output.proxy.dispatcher["logical_size"] = xdg_output.on_size
+            self._xdg_outputs[output] = xdg_output
 
     def _roundtrip(self) -> None:
         if self._display.roundtrip() < 0:
@@ -195,15 +229,6 @@ class LayerShellBackend(HelperBackend):
             self._output_scales[output] = max(1, factor)
 
         self._rescale_after(mutate, "output_scale")
-
-    def _on_output_name(self, output, name: str) -> None:
-        self._output_names[output] = name
-
-    def _output_named(self, name: str) -> object | None:
-        return next(
-            (output for output, known in self._output_names.items() if known == name),
-            None,
-        )
 
     def _on_surface_enter(self, _surface, output) -> None:
         if not callback_is_current(_surface, self._surface) or output not in self._output_scales:
@@ -279,13 +304,21 @@ class LayerShellBackend(HelperBackend):
     def _teardown(self) -> None:
         self._destroy_surface()
 
+    def _pointer_placement(self, pill_bounds: tuple[int, int, int, int]) -> PointerPlacement | None:
+        pointer = query_pointer()
+        if pointer is None:
+            return None
+        monitors = tuple(
+            OutputGeometry(output, *known.position, *known.size)
+            for output, known in self._xdg_outputs.items()
+            if known.position is not None and known.size is not None
+        )
+        return place_under_pointer(pointer, monitors, pill_bounds)
+
     def _create_surface(self, state: OverlayState) -> None:
         assert self._compositor is not None and self._layer_shell is not None
         logical_frame = self._frame(state)
-        placement = query_pointer_placement(logical_frame.pill_bounds)
-        output = None if placement is None else self._output_named(placement.output_name)
-        if placement is not None and output is None:
-            log.info(fmt_event("overlay_helper", "pointer_output_unmatched"))
+        placement = self._pointer_placement(logical_frame.pill_bounds)
         surface = self._compositor.create_surface()
         surface.dispatcher["enter"] = self._on_surface_enter
         surface.dispatcher["leave"] = self._on_surface_leave
@@ -295,7 +328,7 @@ class LayerShellBackend(HelperBackend):
 
         layer_surface = self._layer_shell.get_layer_surface(
             surface,
-            output,
+            None if placement is None else placement.output,
             ZwlrLayerShellV1.layer.overlay,
             "stenographer-lifecycle",
         )
@@ -303,7 +336,7 @@ class LayerShellBackend(HelperBackend):
         layer_surface.dispatcher["closed"] = self._on_layer_closed
         layer_surface.set_size(logical_frame.width, logical_frame.height)
         layer_surface.set_keyboard_interactivity(ZwlrLayerSurfaceV1.keyboard_interactivity.none)
-        if output is None:
+        if placement is None:
             # NULL output lets the compositor pick the recently interacted
             # output at each hidden-to-visible transition.
             margin_bottom = layer_margin_bottom(
@@ -449,6 +482,12 @@ class LayerShellBackend(HelperBackend):
     def _flush_display(self) -> bool:
         return flush_wants_write(self._display.flush(), ffi.errno)
 
+    def _destroy_xdg_output(self, output: object) -> None:
+        xdg_output = self._xdg_outputs.pop(output, None)
+        if xdg_output is not None:
+            with contextlib.suppress(Exception):
+                xdg_output.proxy.destroy()
+
     @staticmethod
     def _release_output(output, bound_version: int) -> None:
         with contextlib.suppress(Exception):
@@ -460,9 +499,11 @@ class LayerShellBackend(HelperBackend):
     def _close(self) -> None:
         self._destroy_surface()
         for output, bound_version in tuple(self._outputs.values()):
+            self._destroy_xdg_output(output)
             self._release_output(output, bound_version)
         self._outputs.clear()
         for proxy in (
+            self._xdg_output_manager,
             self._fractional_manager,
             self._viewporter,
             self._shm,

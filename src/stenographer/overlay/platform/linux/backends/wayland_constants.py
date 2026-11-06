@@ -19,3 +19,6 @@ _MAX_IN_FLIGHT_BUFFERS = 3
 
 
 _OUTPUT_INTERFACE = "wl_output"
+
+
+_XDG_OUTPUT_MANAGER_INTERFACE = "zxdg_output_manager_v1"
