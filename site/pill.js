@@ -21,9 +21,9 @@
     { s: "transcribing", ms: 1500, cap: "Bark Pro, on your CPU" },
     { s: "refining", ms: 1100, cap: "on by default · a local model tidies what you said" },
     { s: "delivering", ms: 900, cap: "your clipboard, then Shift+Insert at your cursor" },
-    { s: "applied", ms: 1200, cap: "profile applied · no transcript content shown" }
+    { s: "applied", ms: 1200, cap: "cleanup applied · no transcript content shown" }
   ];
-  var labels = { recording: "Recording", transcribing: "Transcribing", refining: "Refining", delivering: "Delivering", applied: "Applied" };
+  var labels = { transcribing: "Transcribing", refining: "Refining", delivering: "Delivering", applied: "Applied" };
   var loadingCaptions = { asr: " · your speech model is loading", refine: " · your cleanup model is loading" };
   var index = 0;
   var pass = 0;
@@ -36,8 +36,8 @@
   }
 
   function height(level) {
-    // _SPECTRUM_MIN_HEIGHT 4 … _SPECTRUM_MAX_HEIGHT 44, level 0–255
-    return (4 + 40 * level / 255).toFixed(1) + "px";
+    // _SPECTRUM_MIN_HEIGHT 3 … _SPECTRUM_MAX_HEIGHT 29, level 0–255
+    return (3 + 26 * level / 255).toFixed(1) + "px";
   }
 
   function animateBars() {
@@ -56,12 +56,11 @@
 
   function step() {
     var cur = script[index];
-    var profile = pass % 2 === 0 ? "Agent" : "General";
     var loading = pass === 0 && cur.s === "recording" ? "asr" : pass === 0 && cur.s === "refining" ? "refine" : "0";
     stage.setAttribute("data-state", cur.s);
     stage.setAttribute("data-loading", loading);
     cap.textContent = cur.cap + (loadingCaptions[loading] || "");
-    lbl.textContent = labels[cur.s] ? profile + (cur.s === "recording" ? "" : " · " + labels[cur.s]) : "";
+    lbl.textContent = labels[cur.s] || "";
     for (var t = 0; t < tiles.length; t++) {
       var tile = tiles[t].getAttribute("data-for");
       tiles[t].classList.toggle("on", tile === cur.s || (tile === "loading" && loading !== "0"));

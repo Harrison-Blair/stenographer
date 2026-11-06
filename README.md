@@ -262,6 +262,9 @@ loads, the lifecycle pill's border breathes: in the amber Loading colour for
 the speech model and in the Refining colour for the cleanup model, taking
 turns one breath each when both are loading.
 
+On Hyprland, the pill opens under the mouse pointer; elsewhere it opens at the
+bottom center of the screen.
+
 Read the [user guide](docs/usage.md) for privacy settings and more examples,
 and the [hub guide](docs/hub.md#record) for live capture and saved sessions.
 

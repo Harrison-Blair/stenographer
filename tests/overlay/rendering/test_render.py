@@ -8,7 +8,7 @@ from itertools import pairwise
 from types import MappingProxyType
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops
 
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.contracts.loading_model import LoadingModel
@@ -32,6 +32,7 @@ from stenographer.overlay.rendering.constants import (
 )
 from stenographer.overlay.rendering.render import (
     _crop_transparent,
+    _font,
     layer_margin_bottom,
     loading_border_opacity,
     overlay_position,
@@ -45,7 +46,7 @@ from stenographer.overlay.rendering.render import (
 
 def spectrum_bar_bounds(levels, *, scale=1.0):
     return _spectrum_bar_bounds(
-        levels, pill_bounds=(12, 8, 12 + PILL_WIDTH, 8 + PILL_HEIGHT), scale=scale
+        levels, pill_bounds=(8, 5, 8 + PILL_WIDTH, 5 + PILL_HEIGHT), scale=scale
     )
 
 
@@ -109,19 +110,95 @@ def test_rendered_pill_geometry_palette_and_determinism(
     assert frame.image.mode == "RGBA"
     assert frame.image.size == (CANVAS_WIDTH, CANVAS_HEIGHT)
     expected_left = (CANVAS_WIDTH - PILL_WIDTH) // 2
-    assert frame.pill_bounds == (expected_left, 8, expected_left + PILL_WIDTH, 72)
-    assert frame.pill_bounds[2] - frame.pill_bounds[0] == PILL_WIDTH == 340
-    assert frame.pill_bounds[3] - frame.pill_bounds[1] == PILL_HEIGHT == 64
-    assert frame.image.getpixel((frame.pill_bounds[0] + 110, frame.pill_bounds[1] + 12)) == (
+    assert frame.pill_bounds == (expected_left, 5, expected_left + PILL_WIDTH, 48)
+    assert frame.pill_bounds[2] - frame.pill_bounds[0] == PILL_WIDTH == 187
+    assert frame.pill_bounds[3] - frame.pill_bounds[1] == PILL_HEIGHT == 43
+    assert frame.image.getpixel((frame.pill_bounds[0] + 73, frame.pill_bounds[1] + 3)) == (
         0x18,
         0x18,
         0x1B,
         230,
     )
-    assert frame.image.getpixel((frame.pill_bounds[2] - 18, frame.pill_bounds[1] + 32)) == (
-        dot_color
-    )
+    # The resize to the 5 px dot leaves the center pixel a few levels off the color.
+    dot_center = frame.image.getpixel((frame.pill_bounds[2] - 12, frame.pill_bounds[1] + 21))
+    assert dot_center == pytest.approx(dot_color, abs=10)
     assert frame.image.tobytes() == same_frame.image.tobytes()
+
+
+def _ink_runs(frame) -> tuple[list[tuple[int, int]], tuple[int, int]]:
+    """Return the runs of ink columns and the row extent of the ink inside the pill.
+
+    A pixel is ink when it visibly differs from the pill fill. The pill edge
+    is left out, where the rounded corners blend with the canvas.
+    """
+    left, top, right, bottom = frame.pill_bounds
+    inner = frame.image.crop((left, top + 2, right, bottom - 2))
+    fill = Image.new("RGBA", inner.size, (0x18, 0x18, 0x1B, 230))
+    difference = ImageChops.difference(inner, fill).convert("RGB").convert("L")
+    ink = difference.point(lambda value: 255 if value > 40 else 0)
+    ink.paste(0, (0, 0, 4, inner.height))
+    ink.paste(0, (inner.width - 4, 0, inner.width, inner.height))
+    columns = [any(ink.getpixel((x, y)) for y in range(inner.height)) for x in range(inner.width)]
+    runs: list[tuple[int, int]] = []
+    for x, has_ink in enumerate(columns):
+        if not has_ink:
+            continue
+        if runs and runs[-1][1] == x:
+            runs[-1] = (runs[-1][0], x + 1)
+        else:
+            runs.append((x, x + 1))
+    bounds = ink.getbbox()
+    assert bounds is not None
+    return runs, (bounds[1] + 2, bounds[3] + 2)
+
+
+@pytest.mark.parametrize("state", list(STATE_LABELS))
+def test_each_label_fits_between_the_logo_and_the_dot_with_no_profile_text(
+    state: OverlayState,
+) -> None:
+    frame = render_overlay(state)
+    left, top, right, bottom = frame.pill_bounds
+    assert (right - left, bottom - top) == (187, 43)
+
+    runs, (ink_top, ink_bottom) = _ink_runs(frame)
+    logo, *label, dot = runs
+
+    # The logo stays left of the text start at 40, and the dot is 5 px centered
+    # 12 from the right. A label that touched either one merges with its run.
+    assert logo[1] <= 38
+    assert dot[0] >= 187 - 12 - 4
+    assert dot[1] <= 187 - 12 + 4
+    assert label, "the state must draw its label"
+    assert logo[1] < label[0][0]
+    assert label[-1][1] < dot[0]
+    assert ink_top >= 0 and ink_bottom <= 43
+
+    # A profile prefix would add about 30 px to the inked width of the label.
+    label_width = label[-1][1] - label[0][0]
+    assert label_width <= _font(18).getlength(STATE_LABELS[state]) + 3
+
+
+@pytest.mark.parametrize("scale", [1.0, 1.25, 1.5, 2.0])
+def test_maximum_bars_stay_clear_of_the_logo_and_the_dot(scale: float) -> None:
+    levels = (255,) * SPECTRUM_BANDS
+    frame = render_overlay(OverlayState.RECORDING, scale=scale, levels=levels)
+    left, top, right, bottom = frame.pill_bounds
+    bars = _spectrum_bar_bounds(levels, pill_bounds=frame.pill_bounds, scale=scale)
+
+    assert bars[0][0] >= left + round(40 * scale)
+    assert bars[-1][2] < right - round(15 * scale)
+    assert all(top < bar[1] and bar[3] < bottom for bar in bars)
+
+
+def test_recording_draws_only_the_logo_the_bars_and_the_dot() -> None:
+    frame = render_overlay(OverlayState.RECORDING, levels=(255,) * SPECTRUM_BANDS)
+    runs, _rows = _ink_runs(frame)
+
+    assert len(runs) == 1 + 18 + 1
+    assert runs[0][1] <= 38
+    assert runs[1][0] == 44
+    assert runs[18][1] == 44 + 105
+    assert runs[-1][0] >= 187 - 12 - 4
 
 
 def test_recording_bar_geometry_is_exactly_eighteen_rounded_white_baselines() -> None:
@@ -130,9 +207,9 @@ def test_recording_bar_geometry_is_exactly_eighteen_rounded_white_baselines() ->
 
     assert SPECTRUM_BANDS == 18
     assert len(bounds) == len(full_bounds) == 18
-    assert all(right - left == 5 and bottom - top == 4 for left, top, right, bottom in bounds)
-    assert all(bottom - top == 44 for _left, top, _right, bottom in full_bounds)
-    assert all(next_bounds[0] - current[2] == 4 for current, next_bounds in pairwise(bounds))
+    assert all(right - left == 3 and bottom - top == 3 for left, top, right, bottom in bounds)
+    assert all(bottom - top == 29 for _left, top, _right, bottom in full_bounds)
+    assert all(next_bounds[0] - current[2] == 3 for current, next_bounds in pairwise(bounds))
 
     frame = render_overlay(OverlayState.RECORDING, levels=(255,) * SPECTRUM_BANDS)
     for left, top, right, bottom in full_bounds:
@@ -152,7 +229,7 @@ def test_spectrum_levels_change_only_the_recording_frame() -> None:
 
 def test_loading_border_contract_and_sinusoidal_timing_are_exact() -> None:
     assert LOADING_BORDER_COLOR == (0xF5, 0x9E, 0x0B)
-    assert LOADING_BORDER_WIDTH == 4
+    assert LOADING_BORDER_WIDTH == 3
     assert LOADING_BORDER_INSET == 1
     assert LOADING_PULSE_SECONDS == 2.0
     assert LOADING_ANIMATION_FPS == 60
@@ -213,10 +290,10 @@ def test_hidden_is_not_a_renderable_surface() -> None:
 @pytest.mark.parametrize(
     ("scale", "canvas_size", "pill_bounds"),
     [
-        (1.0, (364, 88), (12, 8, 352, 72)),
-        (1.25, (455, 110), (15, 10, 440, 90)),
-        (1.5, (546, 132), (18, 12, 528, 108)),
-        (2.0, (728, 176), (24, 16, 704, 144)),
+        (1.0, (204, 60), (8, 5, 195, 48)),
+        (1.25, (255, 75), (10, 6, 244, 60)),
+        (1.5, (306, 90), (12, 8, 292, 72)),
+        (2.0, (408, 120), (16, 10, 390, 96)),
     ],
 )
 @pytest.mark.parametrize("state", list(OverlayState)[1:])
@@ -332,37 +409,37 @@ def test_layer_margin_rejects_a_shadow_canvas_deeper_than_the_offset() -> None:
 # Two of those coordinates land on label glyphs in the states that draw one
 # (RECORDING draws no label, so all six are geometry there).  Glyph positions
 # come from Pillow's bundled shaping/FreeType build, not from anything here:
-# "Transcribing" advances 95.58px through raqm and 98.0px through the BASIC
-# layout engine on the same font file, and a ~2px shift changes whether x=86
-# and x=140 sit on ink or on a gap.  So the text samples are pinned only on the
+# "Transcribing" advances 78.2px through raqm and 80.0px through the BASIC
+# layout engine on the same font file, and a ~2px shift changes whether x=53
+# and x=89 sit on ink or on a gap.  So the text samples are pinned only on the
 # stack they were sampled from, and every geometry sample is pinned everywhere
 # — the compositing order, supersample/downscale path, and render cache stay
 # covered on every platform.
 _GOLDEN_COORDINATES = {
-    "border_top": (150, 11),
-    "bar_interior": (86, 40),
-    "dot_center": (334, 40),
-    "shadow_below": (150, 76),
-    "pill_interior": (122, 20),
-    "label_region": (140, 40),
+    "border_top": (100, 7),
+    "bar_interior": (53, 26),
+    "dot_center": (183, 26),
+    "shadow_below": (100, 51),
+    "pill_interior": (80, 10),
+    "label_region": (89, 26),
 }
 
 _GOLDEN_RECORDING = {
-    "border_top": (197, 129, 14, 249),
-    "bar_interior": (253, 253, 253, 255),
-    "dot_center": (239, 68, 68, 255),
-    "shadow_below": (0, 0, 0, 33),
+    "border_top": (200, 131, 13, 249),
+    "bar_interior": (255, 255, 255, 255),
+    "dot_center": (231, 66, 66, 255),
+    "shadow_below": (0, 0, 0, 30),
     "pill_interior": (24, 24, 27, 230),
-    "label_region": (253, 253, 253, 255),
+    "label_region": (255, 255, 255, 255),
 }
 
 _GOLDEN_TRANSCRIBING = {
-    "border_top": (197, 129, 14, 249),
-    "bar_interior": (99, 99, 101, 238),
-    "dot_center": (59, 130, 246, 255),
-    "shadow_below": (0, 0, 0, 33),
+    "border_top": (200, 131, 13, 249),
+    "bar_interior": (244, 244, 244, 254),
+    "dot_center": (57, 126, 238, 255),
+    "shadow_below": (0, 0, 0, 30),
     "pill_interior": (24, 24, 27, 230),
-    "label_region": (253, 253, 253, 255),
+    "label_region": (254, 254, 254, 255),
 }
 
 
@@ -426,7 +503,7 @@ def test_loading_border_colours_follow_the_model() -> None:
 
 # Sampled from the reference renderer the same way as ``_GOLDEN_TRANSCRIBING``,
 # but with the REFINE model breathing instead of ASR.
-_GOLDEN_TRANSCRIBING_REFINE = (20, 150, 136, 249)
+_GOLDEN_TRANSCRIBING_REFINE = (21, 152, 137, 249)
 
 
 def test_the_refine_border_pixel_is_the_refining_colour_over_the_pill() -> None:
