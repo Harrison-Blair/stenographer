@@ -17,6 +17,7 @@ from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.overlay.platform.linux.backends.base import DISPLAY_KEY
 from stenographer.overlay.platform.linux.backends.global_removal import GlobalRemoval
 from stenographer.overlay.platform.linux.backends.helper_backend import HelperBackend
+from stenographer.overlay.platform.linux.backends.hyprland_pointer import query_pointer_placement
 from stenographer.overlay.platform.linux.backends.protocols.fractional_scale_v1 import (
     WpFractionalScaleManagerV1,
 )
@@ -80,6 +81,7 @@ class LayerShellBackend(HelperBackend):
         self._viewporter = None
         self._outputs: dict[int, tuple[object, int]] = {}
         self._output_scales: dict[object, int] = {}
+        self._output_names: dict[object, str] = {}
         self._entered_outputs: set[object] = set()
 
         self._surface = None
@@ -134,6 +136,7 @@ class LayerShellBackend(HelperBackend):
         was_entered = output in self._entered_outputs
         self._entered_outputs.discard(output)
         self._output_scales.pop(output, None)
+        self._output_names.pop(output, None)
         self._release_output(output, bound_version)
         if was_entered and self._visible:
             try:
@@ -173,9 +176,10 @@ class LayerShellBackend(HelperBackend):
     def _bind_output(self, name: int, advertised_version: int) -> None:
         if name in self._outputs:
             return
-        bound_version = min(advertised_version, 3)
+        bound_version = min(advertised_version, 4)
         output = self._registry.bind(name, WlOutput, bound_version)
         output.dispatcher["scale"] = self._on_output_scale
+        output.dispatcher["name"] = self._on_output_name
         self._outputs[name] = output, bound_version
         self._output_scales[output] = 1
 
@@ -191,6 +195,15 @@ class LayerShellBackend(HelperBackend):
             self._output_scales[output] = max(1, factor)
 
         self._rescale_after(mutate, "output_scale")
+
+    def _on_output_name(self, output, name: str) -> None:
+        self._output_names[output] = name
+
+    def _output_named(self, name: str) -> object | None:
+        return next(
+            (output for output, known in self._output_names.items() if known == name),
+            None,
+        )
 
     def _on_surface_enter(self, _surface, output) -> None:
         if not callback_is_current(_surface, self._surface) or output not in self._output_scales:
@@ -256,8 +269,6 @@ class LayerShellBackend(HelperBackend):
 
     def _draw(self) -> None:
         if self._surface is None:
-            # NULL output deliberately lets the compositor pick the recently
-            # interacted output at each hidden-to-visible transition.
             self._create_surface(self._state)
         else:
             self._present_if_configured()
@@ -271,10 +282,10 @@ class LayerShellBackend(HelperBackend):
     def _create_surface(self, state: OverlayState) -> None:
         assert self._compositor is not None and self._layer_shell is not None
         logical_frame = self._frame(state)
-        margin_bottom = layer_margin_bottom(
-            canvas_height=logical_frame.height,
-            pill_bottom=logical_frame.pill_bounds[3],
-        )
+        placement = query_pointer_placement(logical_frame.pill_bounds)
+        output = None if placement is None else self._output_named(placement.output_name)
+        if placement is not None and output is None:
+            log.info(fmt_event("overlay_helper", "pointer_output_unmatched"))
         surface = self._compositor.create_surface()
         surface.dispatcher["enter"] = self._on_surface_enter
         surface.dispatcher["leave"] = self._on_surface_leave
@@ -284,17 +295,30 @@ class LayerShellBackend(HelperBackend):
 
         layer_surface = self._layer_shell.get_layer_surface(
             surface,
-            None,
+            output,
             ZwlrLayerShellV1.layer.overlay,
             "stenographer-lifecycle",
         )
         layer_surface.dispatcher["configure"] = self._on_configure
         layer_surface.dispatcher["closed"] = self._on_layer_closed
         layer_surface.set_size(logical_frame.width, logical_frame.height)
-        layer_surface.set_anchor(ZwlrLayerSurfaceV1.anchor.bottom)
-        layer_surface.set_exclusive_zone(0)
         layer_surface.set_keyboard_interactivity(ZwlrLayerSurfaceV1.keyboard_interactivity.none)
-        layer_surface.set_margin(0, 0, margin_bottom, 0)
+        if output is None:
+            # NULL output lets the compositor pick the recently interacted
+            # output at each hidden-to-visible transition.
+            margin_bottom = layer_margin_bottom(
+                canvas_height=logical_frame.height,
+                pill_bottom=logical_frame.pill_bounds[3],
+            )
+            layer_surface.set_anchor(ZwlrLayerSurfaceV1.anchor.bottom)
+            layer_surface.set_exclusive_zone(0)
+            layer_surface.set_margin(0, 0, margin_bottom, 0)
+        else:
+            # Zone -1 measures the margins from the output edge, not from the
+            # area that remains after a panel reserves its part of the output.
+            layer_surface.set_anchor(ZwlrLayerSurfaceV1.anchor.top | ZwlrLayerSurfaceV1.anchor.left)
+            layer_surface.set_exclusive_zone(-1)
+            layer_surface.set_margin(placement.margin_top, 0, 0, placement.margin_left)
 
         self._surface = surface
         self._layer_surface = layer_surface
