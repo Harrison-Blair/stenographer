@@ -11,7 +11,6 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
-from stenographer.lib.refine.profiles import RefineProfile
 from stenographer.overlay.rendering.constants import (
     _CANVAS_MARGIN_TOP,
     _CONTENT_INSET_LEFT,
@@ -28,7 +27,6 @@ from stenographer.overlay.rendering.constants import (
     _LABEL_GAP,
     _LABEL_WEIGHT,
     _PILL_FILL,
-    _PROFILE_LABEL_EXTRA,
     _SHADOW_ALPHA,
     _SHADOW_BLUR,
     _SHADOW_OFFSET_Y,
@@ -126,14 +124,13 @@ def spectrum_bar_bounds(
     *,
     pill_bounds: tuple[int, int, int, int],
     scale: float,
-    left_offset: int = 0,
 ) -> tuple[tuple[int, int, int, int], ...]:
     """Return deterministic exclusive pixel bounds for exactly 18 bars."""
     values = _validated_levels(levels)
     if not math.isfinite(scale) or scale <= 0:
         raise ValueError("scale must be finite and positive")
     center_y = (pill_bounds[1] + pill_bounds[3]) // 2
-    left = pill_bounds[0] + _scaled(_SPECTRUM_LEFT + left_offset, scale)
+    left = pill_bounds[0] + _scaled(_SPECTRUM_LEFT, scale)
     width = max(1, _scaled(_SPECTRUM_BAR_WIDTH, scale))
     step = width + _scaled(_SPECTRUM_BAR_GAP, scale)
     bounds = []
@@ -165,7 +162,6 @@ def _render_static_high_resolution(
     target_size: tuple[int, int],
     pill_bounds: tuple[int, int, int, int],
     scale: float,
-    profile: RefineProfile | None,
 ) -> Image.Image:
     factor = _SUPERSAMPLE
     high_size = tuple(value * factor for value in target_size)
@@ -209,20 +205,12 @@ def _render_static_high_resolution(
     high.alpha_composite(icon, (icon_x, icon_y))
 
     label_center_y = (pill_top + pill_bottom) // 2
-    if state is not OverlayState.RECORDING or profile is not None:
+    if state is not OverlayState.RECORDING:
         label_x = icon_slot_left + icon_slot_width + _scaled(_LABEL_GAP, scale) * factor
         label_font = _font(max(1, round(_LABEL_FONT_SIZE * scale * factor)))
         draw.text(
             (label_x, label_center_y),
-            (
-                (
-                    profile.value.title()
-                    if state is OverlayState.RECORDING
-                    else f"{profile.value.title()} · {STATE_LABELS[state]}"
-                )
-                if profile is not None
-                else STATE_LABELS[state]
-            ),
+            STATE_LABELS[state],
             font=label_font,
             fill=_TEXT_FILL,
             anchor="lm",
@@ -248,7 +236,6 @@ def _render_static_high_resolution(
 def _cached_static_render(
     state: OverlayState,
     scale: float,
-    profile: RefineProfile | None,
 ) -> tuple[Image.Image, tuple[int, int, int, int]]:
     """Cache the fully static frame (shadow, pill, icon, label, dot) per state.
 
@@ -256,7 +243,7 @@ def _cached_static_render(
     instance.  Copy it before compositing anything dynamic on top.
     """
     target_size, pill_bounds = _frame_geometry(scale)
-    image = _render_static_high_resolution(state, target_size, pill_bounds, scale, profile)
+    image = _render_static_high_resolution(state, target_size, pill_bounds, scale)
     return image, pill_bounds
 
 
@@ -266,7 +253,6 @@ def _render_dynamic_layer(
     scale: float,
     loading_alpha: int | None,
     loading_color: tuple[int, int, int] | None,
-    profile: RefineProfile | None,
 ) -> Image.Image:
     factor = _DYNAMIC_SUPERSAMPLE
     pill_size = (pill_bounds[2] - pill_bounds[0], pill_bounds[3] - pill_bounds[1])
@@ -295,7 +281,6 @@ def _render_dynamic_layer(
             levels,
             pill_bounds=high_pill,
             scale=scale * factor,
-            left_offset=_PROFILE_LABEL_EXTRA if profile is not None else 0,
         ):
             draw.rounded_rectangle(
                 _exclusive_box(bounds),
@@ -313,7 +298,6 @@ def render_overlay(
     levels: object | None = None,
     loading_elapsed: object | None = None,
     loading_model: LoadingModel | None = None,
-    profile: RefineProfile | None = None,
 ) -> OverlayFrame:
     """Render a visible lifecycle state into a scale-aware RGBA canvas.
 
@@ -323,8 +307,6 @@ def render_overlay(
     """
     if not isinstance(state, OverlayState):
         raise TypeError("state must be an OverlayState")
-    if profile is not None and not isinstance(profile, RefineProfile):
-        raise TypeError("profile must be a RefineProfile")
     if state is OverlayState.HIDDEN:
         raise ValueError("hidden overlay state has no rendered surface")
     if isinstance(scale, bool) or not isinstance(scale, int | float):
@@ -341,7 +323,7 @@ def render_overlay(
         None if loading_elapsed is None else round(loading_border_opacity(loading_elapsed) * 255)
     )
     loading_color = None if loading_model is None else LOADING_BORDER_COLORS[loading_model]
-    static, pill_bounds = _cached_static_render(state, scale, profile)
+    static, pill_bounds = _cached_static_render(state, scale)
     if normalized_levels or loading_alpha is not None:
         dynamic = _render_dynamic_layer(
             normalized_levels,
@@ -349,7 +331,6 @@ def render_overlay(
             scale,
             loading_alpha,
             loading_color,
-            profile,
         )
         image = static.copy()
         image.alpha_composite(dynamic, (pill_bounds[0], pill_bounds[1]))

@@ -9,20 +9,10 @@ from types import MappingProxyType
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
 
-_BASE_PILL_WIDTH = 280
+PILL_WIDTH = 187
 
 
-# The bar rail, the profile label, and the status dot must all fit between the
-# pill's insets.  The profile label is only drawn while recording, so the pill
-# is widened by exactly the room the label needs and the rail shifts right by
-# the same amount, keeping the right-hand margins identical.
-_PROFILE_LABEL_EXTRA = 60
-
-
-PILL_WIDTH = _BASE_PILL_WIDTH + _PROFILE_LABEL_EXTRA
-
-
-PILL_HEIGHT = 64
+PILL_HEIGHT = 43
 
 
 EDGE_OFFSET = 32
@@ -31,7 +21,7 @@ EDGE_OFFSET = 32
 LOADING_BORDER_COLOR = (0xF5, 0x9E, 0x0B)
 
 
-LOADING_BORDER_WIDTH = 4
+LOADING_BORDER_WIDTH = 3
 
 
 LOADING_BORDER_INSET = 1
@@ -52,67 +42,69 @@ LOADING_ANIMATION_FPS = 60
 LOADING_FRAME_INTERVAL = 1.0 / LOADING_ANIMATION_FPS
 
 
-_CANVAS_MARGIN_LEFT = 12
+_CANVAS_MARGIN_LEFT = 8
 
 
-_CANVAS_MARGIN_TOP = 8
+_CANVAS_MARGIN_TOP = 5
 
 
-_CANVAS_MARGIN_RIGHT = 12
+_CANVAS_MARGIN_RIGHT = 9
 
 
-_CANVAS_MARGIN_BOTTOM = 16
+_CANVAS_MARGIN_BOTTOM = 12
 
 
+# The canvas sizes are multiples of 4, so that scales 1.25, 1.5, and 1.75 give
+# whole buffer pixels and the compositor does not resample the pill.
 CANVAS_WIDTH = _CANVAS_MARGIN_LEFT + PILL_WIDTH + _CANVAS_MARGIN_RIGHT
 
 
 CANVAS_HEIGHT = _CANVAS_MARGIN_TOP + PILL_HEIGHT + _CANVAS_MARGIN_BOTTOM
 
 
-_CORNER_RADIUS = 32
+_CORNER_RADIUS = 21
 
 
-_ICON_SLOT_WIDTH = 44
+_ICON_SLOT_WIDTH = 29
 
 
-_ICON_MAX_WIDTH = 38
+_ICON_MAX_WIDTH = 25
 
 
-_ICON_MAX_HEIGHT = 42
+_ICON_MAX_HEIGHT = 28
 
 
-_CONTENT_INSET_LEFT = 12
+_CONTENT_INSET_LEFT = 8
 
 
-_LABEL_GAP = 4
+_LABEL_GAP = 3
 
 
-_DOT_DIAMETER = 8
+_DOT_DIAMETER = 5
 
 
-_DOT_RIGHT_INSET = 18
+_DOT_RIGHT_INSET = 12
 
 
-_LABEL_FONT_SIZE = 22
+_LABEL_FONT_SIZE = 18
 
 
 _LABEL_WEIGHT = 600
 
 
-_SPECTRUM_LEFT = 72
+_SPECTRUM_LEFT = 44
 
 
-_SPECTRUM_BAR_WIDTH = 5
+_SPECTRUM_BAR_WIDTH = 3
 
 
-_SPECTRUM_BAR_GAP = 4
+_SPECTRUM_BAR_GAP = 3
 
 
-_SPECTRUM_MIN_HEIGHT = 4
+_SPECTRUM_MIN_HEIGHT = 3
 
 
-_SPECTRUM_MAX_HEIGHT = 44
+_SPECTRUM_MAX_HEIGHT = 29
 
 
 _SUPERSAMPLE = 4
@@ -130,10 +122,10 @@ _TEXT_FILL = (0xFF, 0xFF, 0xFF, 0xFF)
 _SHADOW_ALPHA = 82
 
 
-_SHADOW_BLUR = 6
+_SHADOW_BLUR = 4
 
 
-_SHADOW_OFFSET_Y = 3
+_SHADOW_OFFSET_Y = 2
 
 
 _ASSETS = Path(str(files("stenographer"))) / "assets"

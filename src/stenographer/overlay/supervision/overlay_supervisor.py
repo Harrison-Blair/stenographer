@@ -61,7 +61,8 @@ class OverlaySupervisor:
         self._thread.start()
 
     def publish(self, state: OverlayState, profile: RefineProfile | None = None) -> None:
-        self._mailbox.publish(state, profile)
+        # The pill shows no profile. The parameter satisfies the StatusSink port.
+        self._mailbox.publish(state)
 
     def loading_activity(self, model: LoadingModel, active: bool) -> None:
         self._mailbox.loading_activity(model, active)
