@@ -181,6 +181,53 @@ def test_batch_relabel_merges_sparse_minor_voice_whole_into_its_nearest_core_voi
     ] * 5
 
 
+def test_batch_relabel_votes_sparse_minor_voice_by_phrase_when_under_the_merge_threshold():
+    # Axes: voice A's centroid, voice A's spread, voice B's centroid, voice B's spread,
+    # and the minor voice's own direction. As a cluster the minor phrases score 0.41
+    # against A and 0.39 against B, both under 0.50, so each phrase votes for itself.
+    # Sixty-second gaps leave no sustained speech.
+    def embedding(a: float, a_spread: float, b: float, b_spread: float) -> np.ndarray:
+        own = np.sqrt(1 - a**2 - a_spread**2 - b**2 - b_spread**2)
+        return np.array([a, a_spread, b, b_spread, own], dtype=np.float32)
+
+    spread = np.sqrt(0.2)
+    centre = np.sqrt(0.8)
+    nearer_a = embedding(0.45, 0.0, 0.35, 0.0)
+    nearer_b = embedding(0.35, 0.0, 0.45, 0.0)
+    lines = (
+        _line(0.0, 150.0, "speaker-1", "Speaker 1"),
+        _line(150.0, 150.0, "speaker-1", "Speaker 1"),
+        _line(300.0, 150.0, "speaker-2", "Speaker 2"),
+        _line(450.0, 150.0, "speaker-2", "Speaker 2"),
+        *(_line(600.0 + index * 60.0, 3.0, "speaker-3", "Speaker 3") for index in range(5)),
+    )
+    embeddings = (
+        embedding(centre, spread, 0.0, 0.0),
+        embedding(centre, -spread, 0.0, 0.0),
+        embedding(0.0, 0.0, centre, spread),
+        embedding(0.0, 0.0, centre, -spread),
+        nearer_a,
+        nearer_b,
+        nearer_a,
+        nearer_b,
+        nearer_a,
+    )
+
+    relabeled = relabel_system_lines(lines, embeddings, threshold=0.5)
+
+    assert [line.speaker_id for line in relabeled] == [
+        "speaker-1",
+        "speaker-1",
+        "speaker-2",
+        "speaker-2",
+        "speaker-1",
+        "speaker-2",
+        "speaker-1",
+        "speaker-2",
+        "speaker-1",
+    ]
+
+
 def test_batch_relabel_short_residue_does_not_create_speakers():
     lines = tuple(
         _line(index * 2.0, 0.8, f"speaker-{index + 1}", f"Speaker {index + 1}")
