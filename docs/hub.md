@@ -240,8 +240,8 @@ whole. Where two voices overlap, the voice that started last holds the time. A l
 with no piece stays and gets the closest voice. A source with no saved audio, or one
 where the model finds no speech, groups whole lines. File jobs, Re-diarize, and
 Re-transcribe use the same method; an older recording changes only when you press
-`d` or `t`. This pass holds the whole source in memory, about 2 GB per hour of the
-longest source.
+`d` or `t`. This pass holds the whole source in memory and can use up to about 2 GB
+per hour of audio.
 
 When a pass merges speakers, the merged speaker keeps the number of the speaker with the most speech that an earlier pass grouped, and a renamed speaker chooses before an unnamed one. If two renamed speakers merge, only one name can stay on the merged speaker. When the session saves, speakers are numbered from 1 in order of first appearance, with no gaps, so a number can change once at save, for example `Room 3` becomes `Room 2`. Given names stay. If you skip the end pass, or it fails, stenographer saves the speakers and names shown on screen, numbered the same way, and a failure shows the reason on the saved Record screen. If that save fails, the stop shows as a failed save. File jobs and re-diarize number clusters by first appearance and keep each renamed label on one cluster, the one with the most shared speech time. Rename several speakers to the same name
 to merge their displayed labels; this does not change their speaker IDs. The
