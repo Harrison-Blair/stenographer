@@ -110,9 +110,9 @@ def test_many_short_overlaps_of_a_speaker_count_together(run):
     samples = speech((ANN, 5.0), (BOB, 5.0), (ANN, 20.0), (BOB, 20.0))
     pieces = [(0.0, 5.0), (5.0, 5.9), (5.9, 6.6), (6.6, 7.5), (10.0, 30.0), (30.0, 50.0)]
 
-    # Bob holds 2.5 s in small pieces, Ann 0.5 s. No piece of Bob reaches 1 s in the line.
+    # Bob holds 2.5 s in pieces of under 1 s. Ann holds 1.0 s: more than any one piece of Bob.
     result = run(
-        [line(10.0, 30.0), line(30.0, 50.0), line(4.5, 7.5)],
+        [line(10.0, 30.0), line(30.0, 50.0), line(4.0, 7.5)],
         samples,
         pieces,
         vectors=[UNIT[ANN], UNIT[BOB], UNIT[BOB]],
@@ -459,6 +459,24 @@ def test_a_cancel_in_the_pass_ends_the_method(monkeypatch):
         [line(0.0, 20.0)],
         [UNIT[ANN]],
         read_source=lambda: samples,
+        speaker_model="speaker.onnx",
+        embed=embed,
+        decode=Words(),
+    )
+
+    assert result is None
+
+
+def test_a_cancel_while_the_source_is_read_ends_the_method_and_runs_no_pass(monkeypatch):
+    def no_pass(*_args, **_options):
+        raise AssertionError("a cancelled read runs no pass")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", no_pass)
+
+    result = group_and_split(
+        [line(0.0, 20.0)],
+        [UNIT[ANN]],
+        read_source=lambda: None,
         speaker_model="speaker.onnx",
         embed=embed,
         decode=Words(),

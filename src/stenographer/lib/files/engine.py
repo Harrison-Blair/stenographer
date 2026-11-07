@@ -327,9 +327,18 @@ class FilesEngine:
         def report(fraction: float) -> None:
             job._update("diarize", 80 + round(15 * fraction), tuple(lines))
 
-        def read_source() -> np.ndarray:
+        def read_source() -> np.ndarray | None:
             # The phrases of a long file do not stay in memory, so this decodes it again.
-            return np.concatenate(list(iter_media_audio(job.options.path, media, self._decoder)))
+            blocks = iter_media_audio(job.options.path, media, self._decoder)
+            kept = []
+            try:
+                for block in blocks:
+                    if job.cancel_requested:
+                        return None
+                    kept.append(block)
+            finally:
+                blocks.close()
+            return np.concatenate(kept)
 
         def decode(samples: np.ndarray) -> str:
             text = self._worker.transcribe(samples).text.strip()

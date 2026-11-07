@@ -15,6 +15,7 @@ import pytest
 import soundfile
 
 from stenographer.lib.config.models import Config
+from stenographer.lib.files import engine as engine_module
 from stenographer.lib.files.engine import FilesEngine
 from stenographer.lib.live import voice_split
 from stenographer.lib.live.errors import SpeechPassError
@@ -1153,6 +1154,36 @@ def test_a_cancel_while_a_part_decodes_ends_the_split_with_the_lines_before_it(t
         assert not _sessions(tmp_path).exists() or not list(_sessions(tmp_path).iterdir())
     finally:
         engine.close()
+
+
+def test_a_cancel_stops_the_second_decode_between_its_blocks(tmp_path, monkeypatch):
+    real = engine_module.iter_media_audio
+    decodes = []
+    holder = {}
+
+    def counted(*args, **options):
+        decodes.append(0)
+        for block in real(*args, **options):
+            decodes[-1] += 1
+            # The second decode is the one of the speech pass.
+            if len(decodes) == 2 and decodes[-1] == 2:
+                holder["job"].cancel()
+            yield block
+
+    def no_pass(*_args, **_options):
+        raise AssertionError("a cancelled read runs no pass")
+
+    monkeypatch.setattr(engine_module, "iter_media_audio", counted)
+    monkeypatch.setattr(voice_split, "find_speech_pieces", no_pass)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    holder["job"] = job
+    try:
+        _wait_for(job, "cancelled")
+    finally:
+        engine.close()
+    assert len(decodes) == 2
+    assert decodes[1] == 2 < decodes[0]
+    assert not _sessions(tmp_path).exists() or not list(_sessions(tmp_path).iterdir())
 
 
 def test_a_file_job_without_diarization_does_not_split(tmp_path):

@@ -157,6 +157,23 @@ def _child_reports_a_failure(_audio, results, _speaker_model):
     results.send(("failed", "RuntimeError"))
 
 
+def _real_child_with_a_failing_pass(audio, results, speaker_model):
+    def failing_pass(_samples, _speaker_model, _progress):
+        raise ValueError("corrupt model")
+
+    speech_pieces.run_pass = failing_pass
+    speech_pieces._child_main(audio, results, speaker_model)
+
+
+def _real_child_with_a_good_pass(audio, results, speaker_model):
+    def good_pass(samples, speaker, progress):
+        progress(0.25)
+        return ((float(samples.size), float(samples[-1])), (0.0, float(len(speaker))))
+
+    speech_pieces.run_pass = good_pass
+    speech_pieces._child_main(audio, results, speaker_model)
+
+
 def _use_child(monkeypatch, child):
     monkeypatch.setattr(speech_pieces, "_child_main", child)
 
@@ -200,6 +217,35 @@ def test_a_cancel_kills_the_child_at_once_and_leaves_no_child(monkeypatch, child
     assert result is None
     assert time.monotonic() - cancelled_at[0] < 1.0
     assert _children() == []
+
+
+def test_a_failing_pass_in_the_real_child_is_a_failed_pass_and_not_no_speech(monkeypatch):
+    _use_child(monkeypatch, _real_child_with_a_failing_pass)
+
+    with pytest.raises(SpeechPassError, match="ValueError"):
+        find_speech_pieces(
+            np.zeros(1000, np.float32),
+            Path("speaker.onnx"),
+            progress=lambda _fraction: None,
+            should_cancel=lambda: False,
+        )
+
+    assert _children() == []
+
+
+def test_the_real_child_gives_all_samples_to_the_pass_and_returns_its_result(monkeypatch):
+    _use_child(monkeypatch, _real_child_with_a_good_pass)
+    seen = []
+
+    pieces = find_speech_pieces(
+        np.linspace(0.0, 1.0, 200_000, dtype=np.float32),
+        Path("speaker.onnx"),
+        progress=seen.append,
+        should_cancel=lambda: False,
+    )
+
+    assert pieces == ((200_000.0, 1.0), (0.0, 12.0))
+    assert seen == [0.25]
 
 
 def test_a_child_that_is_killed_is_a_failed_pass(monkeypatch):

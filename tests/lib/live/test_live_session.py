@@ -23,6 +23,7 @@ from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
 from tests.lib.live.speech_support import level_pieces
 from tests.lib.platform.support import NullProcessCounters
+from tests.support import wait_until
 
 
 class FakeClock:
@@ -1726,6 +1727,26 @@ def test_the_end_pass_splits_a_voice_change_and_saves_each_part_with_its_speaker
     assert rig.session.lines == tuple(detail.lines)
     assert rig.session.speakers == (("room-1", "Room 1"), ("room-2", "Room 2"))
     assert "release" in rig.worker.events
+
+
+def test_a_skip_reaches_the_speech_pass_of_a_recording(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    saw_the_skip = []
+
+    def pass_until_the_skip(_samples, _model, *, progress, should_cancel):
+        progress(0.1)
+        rig.session.skip_relabel()
+        saw_the_skip.append(wait_until(should_cancel, timeout=2))
+        return None
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", pass_until_the_skip)
+
+    rig.session.stop()
+
+    assert saw_the_skip == [True]
+    assert rig.session.relabel_status == "Relabeling skipped"
+    assert len(_saved_detail(rig).lines) == 1
 
 
 def test_a_skip_while_a_part_decodes_saves_the_whole_phrase_as_live(monkeypatch, tmp_path):

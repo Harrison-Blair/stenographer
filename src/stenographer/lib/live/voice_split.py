@@ -213,7 +213,7 @@ def group_and_split(
     lines: Sequence[TranscriptLine],
     embeddings: Sequence[np.ndarray],
     *,
-    read_source: Callable[[], np.ndarray] | None,
+    read_source: Callable[[], np.ndarray | None] | None,
     speaker_model: Path,
     embed: Callable[[np.ndarray], np.ndarray],
     decode: Callable[[np.ndarray], str],
@@ -228,9 +228,9 @@ def group_and_split(
     closest voice if no piece overlaps it. A line where another voice holds a run of at least
     1 s splits, and each part gets the speaker of its run.
 
-    *read_source* returns all samples of the source; ``None`` means the source has no saved
-    audio. A source with no audio or no speech groups whole lines. *progress* gets a fraction
-    that never falls. Return ``None`` on a cancel.
+    *read_source* returns all samples of the source, or ``None`` on a cancel. A *read_source*
+    of ``None`` means the source has no saved audio. A source with no audio or no speech groups
+    whole lines. *progress* gets a fraction that never falls. Return ``None`` on a cancel.
     """
     original = tuple(lines)
     vectors = tuple(embeddings)
@@ -256,6 +256,8 @@ def group_and_split(
     if read_source is None:
         return whole_lines(0.0)
     samples = read_source()
+    if samples is None:
+        return None
     pieces = find_speech_pieces(
         samples,
         speaker_model,
