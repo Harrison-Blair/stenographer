@@ -923,6 +923,40 @@ def test_a_failed_speaker_pass_saves_the_lines_with_their_tracker_labels(tmp_pat
         engine.close()
 
 
+def test_a_file_job_percent_never_falls_when_the_pass_finds_no_speech(tmp_path, monkeypatch):
+    def no_speech(_samples, _model, *, progress, should_cancel):
+        assert not should_cancel()
+        progress(1.0)
+        return ()
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", no_speech)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    percents = []
+    job.subscribe(lambda progress: percents.append(progress.percent))
+    try:
+        _wait_for(job, "completed")
+        assert percents == sorted(percents)
+    finally:
+        engine.close()
+
+
+def test_a_file_job_percent_never_falls_when_the_pass_fails(tmp_path, monkeypatch):
+    def fail(_samples, _model, *, progress, should_cancel):
+        assert not should_cancel()
+        progress(1.0)
+        raise SpeechPassError("speech pass ended with exit code -9")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", fail)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    percents = []
+    job.subscribe(lambda progress: percents.append(progress.percent))
+    try:
+        _wait_for(job, "completed")
+        assert percents == sorted(percents)
+    finally:
+        engine.close()
+
+
 def test_a_speaker_model_error_on_a_piece_saves_the_lines_of_the_job(tmp_path):
     class FailsOnPieces(LevelTracker):
         calls = 0

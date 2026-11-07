@@ -224,6 +224,30 @@ def test_a_voice_inside_a_longer_piece_gets_a_run_and_the_longer_voice_continues
     ]
 
 
+def test_the_piece_that_started_last_holds_the_time_when_both_start_before_the_line(run):
+    samples = speech(*TWO_VOICES, (ANN, 3.0), (BOB, 4.0), (ANN, 3.0))
+    # Bob starts after Ann, and both start before the line at 45 s.
+    pieces = [*PIECES, (40.0, 50.0), (43.0, 47.0)]
+
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(45.0, 49.0)], samples, pieces)
+
+    assert [item.text for item in result.lines[2:]] == ["bob", "ann"]
+    assert [(item.start, item.end) for item in result.lines[2:]] == [(45.0, 47.0), (47.0, 49.0)]
+    assert speakers(result)[2:] == [result.lines[1].speaker_id, result.lines[0].speaker_id]
+
+
+def test_a_voice_cut_short_by_overlaps_on_both_sides_joins_its_neighbours_with_no_cut(run):
+    samples = speech(*TWO_VOICES, (ANN, 1.6), (BOB, 0.9), (ANN, 2.5))
+    # Bob overlaps the line for 1.2 s but holds only 0.9 s, so one run of Ann remains.
+    pieces = [*PIECES, (40.0, 42.0), (41.6, 42.8), (42.5, 45.0)]
+
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(40.0, 45.0)], samples, pieces)
+
+    assert [item.text for item in result.lines] == ["whole phrase"] * 3
+    assert result.parents == (0, 1, 2)
+    assert result.lines[2].speaker_id == result.lines[0].speaker_id
+
+
 def test_a_voice_that_loses_its_time_to_an_overlap_makes_no_cut(run):
     samples = speech(*TWO_VOICES, (ANN, 1.5), (BOB, 7.0))
     # Ann overlaps the line for 2 s, but Bob starts after 0.5 s and holds the rest.
@@ -493,6 +517,58 @@ def test_progress_rises_to_one_and_never_falls_through_the_method(monkeypatch):
     assert seen == sorted(seen)
     assert seen[-1] == 1.0
     assert len(set(seen)) > 3
+
+
+@pytest.mark.parametrize("speaker_count", [None, 2])
+def test_progress_never_falls_when_the_pass_finds_no_speech(monkeypatch, speaker_count):
+    def find(_samples, _model, *, progress, should_cancel):
+        assert not should_cancel()
+        progress(1.0)
+        return ()
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", find)
+    seen = []
+
+    group_and_split(
+        [line(0.0, 20.0), line(20.0, 40.0)],
+        [UNIT[ANN], UNIT[BOB]],
+        read_source=lambda: speech((0.0, 40.0)),
+        speaker_model="speaker.onnx",
+        embed=embed,
+        decode=Words(),
+        progress=seen.append,
+        speaker_count=speaker_count,
+    )
+
+    assert seen == sorted(seen)
+    assert seen[-1] == 1.0
+
+
+@pytest.mark.parametrize("speaker_count", [None, 2])
+def test_progress_never_falls_with_pieces_and_any_speaker_count(run, speaker_count):
+    samples = speech(*TWO_VOICES, (ANN, 12.0), (BOB, 12.0))
+    seen = []
+
+    run(
+        [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 64.0)],
+        samples,
+        [*PIECES, (40.0, 52.0), (52.0, 64.0)],
+        progress=seen.append,
+        speaker_count=speaker_count,
+    )
+
+    assert seen == sorted(seen)
+    assert seen[-1] == 1.0
+
+
+def test_progress_never_falls_with_only_short_pieces(run):
+    samples = speech((ANN, 1.0), (0.0, 1.0))
+    seen = []
+
+    run([line(0.0, 1.0)], samples, [(0.0, 1.0)], progress=seen.append)
+
+    assert seen == sorted(seen)
+    assert seen[-1] == 1.0
 
 
 def test_progress_never_falls_when_grouping_counts_past_its_total(monkeypatch, run):

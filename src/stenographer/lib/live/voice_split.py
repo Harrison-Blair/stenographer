@@ -123,16 +123,21 @@ def _joined_runs(runs: Iterable[tuple[str, float, float]]) -> list[tuple[str, fl
     return joined
 
 
-def _voice_runs(spans: Sequence[tuple[float, float, str]]) -> list[tuple[str, float, float]]:
+def _voice_runs(
+    spans: Sequence[tuple[float, float, str]], line_start: float, line_end: float
+) -> list[tuple[str, float, float]]:
     """Return ``(speaker, start, end)`` of each run of one voice in a line, in time order.
 
-    *spans* are the pieces in the line, by start. Where pieces overlap, the voice that
-    started last holds the time, so a voice that speaks over another gets its own run and
-    the other voice continues after it.
+    *spans* are the whole pieces that the line overlaps, by start. Where pieces overlap, the
+    voice whose piece started last holds the time, also if it started before the line, so a
+    voice that speaks over another gets its own run and the other voice continues after it.
     """
-    edges = sorted({edge for start, end, _ in spans for edge in (start, end)})
+    edges = {line_start, line_end}
+    edges.update(
+        edge for start, end, _ in spans for edge in (start, end) if line_start < edge < line_end
+    )
     held: list[tuple[str, float, float]] = []
-    for left, right in itertools.pairwise(edges):
+    for left, right in itertools.pairwise(sorted(edges)):
         holders = [span for span in spans if span[0] <= left and right <= span[1]]
         if holders:
             held.append((max(holders, key=lambda span: span[0])[2], left, right))
@@ -153,8 +158,8 @@ def _line_speech(
         piece = pieces[index]
         shares[piece.speaker_id] = shares.get(piece.speaker_id, 0.0) + float(overlaps[index])
         if overlaps[index] >= _MINIMUM_RUN_SECONDS:
-            spans.append((max(piece.start, line.start), min(piece.end, line.end), piece.speaker_id))
-    return shares, _voice_runs(spans)
+            spans.append((piece.start, piece.end, piece.speaker_id))
+    return shares, _voice_runs(spans, line.start, line.end)
 
 
 def _cuts(line: TranscriptLine, runs: Sequence[tuple[str, float, float]]) -> list[int]:
@@ -236,11 +241,11 @@ def group_and_split(
         # The grouping count can pass its total near the end of a pass.
         return lambda done, total: progress(start + (end - start) * min(done, total) / total)
 
-    def whole_lines() -> GroupedLines | None:
+    def whole_lines(first_progress: float) -> GroupedLines | None:
         grouped = relabel_system_lines(
             original,
             vectors,
-            progress=stage(0.0, 1.0),
+            progress=stage(first_progress, 1.0),
             should_cancel=should_cancel,
             speaker_count=speaker_count,
             label_prefix=label_prefix,
@@ -248,7 +253,7 @@ def group_and_split(
         return None if grouped is None else GroupedLines(grouped, tuple(range(len(grouped))))
 
     if read_source is None:
-        return whole_lines()
+        return whole_lines(0.0)
     samples = read_source()
     pieces = find_speech_pieces(
         samples,
@@ -259,7 +264,8 @@ def group_and_split(
     if pieces is None:
         return None
     if not pieces:
-        return whole_lines()
+        # The pass has reported progress up to this share.
+        return whole_lines(_FOUND_SHARE)
 
     id_prefix = label_prefix.lower()
     piece_lines = tuple(
