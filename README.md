@@ -186,9 +186,10 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   On Record, press `space` to start and `enter` to stop and save; the hub stays
   open while the speaker relabel pass runs; a skipped or failed
   pass saves the speakers and names shown on screen, numbered from 1, and a failure
-  shows the reason. Long lines that hold a clear change of speaker are split into
-  separate lines when a recording stops, when a file job ends, and on Re-diarize and
-  Re-transcribe. Overlapping speech stays on one line.
+  shows the reason. When a recording stops, when a file job ends, and on Re-diarize
+  and Re-transcribe, a bundled model finds the speech in the saved audio and the
+  speakers come from it. A line where another voice holds at least 1 second is split
+  into separate lines. The live view does not change.
   `o` opens the saved session in
   Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,
@@ -279,8 +280,8 @@ GPL-3.0-or-later.
 
 ### Third-party models
 
-Stenographer ships no model weights. You download each model explicitly. The
-attribution files are in
+Stenographer ships one model, pyannote segmentation 3.0. You download each other
+model explicitly. The attribution files are in
 [`src/stenographer/assets/licenses/`](src/stenographer/assets/licenses/).
 
 | Model | Authors | License | Use |
@@ -289,6 +290,7 @@ attribution files are in
 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | NVIDIA | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) | Moondream | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. |
+| [pyannote segmentation 3.0](https://huggingface.co/pyannote/segmentation-3.0) | CNRS | [MIT](src/stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt) | Finds speech when a recording or file is saved. Bundled in the app as the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) ONNX export. |
 | [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | NVIDIA | NeMo Toolkit license ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) | Speaker labels in Record and file jobs. |
 
 Voice model downloads replace corrupt files only after verifying the new download.

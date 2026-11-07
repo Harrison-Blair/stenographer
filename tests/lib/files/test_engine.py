@@ -15,16 +15,25 @@ import pytest
 import soundfile
 
 from stenographer.lib.config.models import Config
+from stenographer.lib.files import engine as engine_module
 from stenographer.lib.files.engine import FilesEngine
+from stenographer.lib.live import voice_split
+from stenographer.lib.live.errors import SpeechPassError
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import TranscriptionResult
+from tests.lib.live.speech_support import level_pieces
 from tests.lib.platform.support import NullProcessCounters
 from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport
 from tests.support import wait_until
+
+
+@pytest.fixture(autouse=True)
+def _level_pieces(monkeypatch):
+    monkeypatch.setattr(voice_split, "find_speech_pieces", level_pieces)
 
 
 def _file_asr_process(*, started=None, release=None):
@@ -602,9 +611,10 @@ class TwoVoiceTracker:
     ),
 )
 def test_diarized_source_job_numbers_new_speakers_and_keeps_the_other_source(
-    tmp_path, source, kept, new_labels
+    tmp_path, monkeypatch, source, kept, new_labels
 ):
-
+    # No speech found, so the two whole lines group as two speakers.
+    monkeypatch.setattr(voice_split, "find_speech_pieces", lambda *_args, **_options: ())
     session = _recording(tmp_path)
     store = SessionStore(_sessions(tmp_path))
     engine = _engine(tmp_path, _file_asr_process(), speaker_tracker_factory=TwoVoiceTracker)
@@ -894,6 +904,189 @@ def test_a_file_job_splits_a_voice_change_at_the_end_of_the_job(tmp_path):
         engine.close()
 
 
+def test_a_failed_speaker_pass_saves_the_lines_with_their_tracker_labels(tmp_path, monkeypatch):
+    def fail(*_args, **_options):
+        raise SpeechPassError("speech pass ended with exit code -9")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", fail)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "completed")
+        lines = job.progress.completed_lines
+        assert [(line.speaker_id, line.label) for line in lines] == [("speaker-1", "Speaker 1")] * 3
+        assert [line.text for line in lines] == [
+            "recognized phrase 1",
+            "recognized phrase 2",
+            "recognized phrase 3",
+        ]
+        assert len(_transcript_rows(_sessions(tmp_path) / job.session_id)) == 3
+    finally:
+        engine.close()
+
+
+def test_a_file_job_percent_never_falls_when_the_pass_finds_no_speech(tmp_path, monkeypatch):
+    def no_speech(_samples, _model, *, progress, should_cancel):
+        assert not should_cancel()
+        progress(1.0)
+        return ()
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", no_speech)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    percents = []
+    job.subscribe(lambda progress: percents.append(progress.percent))
+    try:
+        _wait_for(job, "completed")
+        assert percents == sorted(percents)
+    finally:
+        engine.close()
+
+
+def test_a_file_job_percent_never_falls_when_the_pass_fails(tmp_path, monkeypatch):
+    def fail(_samples, _model, *, progress, should_cancel):
+        assert not should_cancel()
+        progress(1.0)
+        raise SpeechPassError("speech pass ended with exit code -9")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", fail)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    percents = []
+    job.subscribe(lambda progress: percents.append(progress.percent))
+    try:
+        _wait_for(job, "completed")
+        assert percents == sorted(percents)
+    finally:
+        engine.close()
+
+
+def _failing_pass(*_args, **_options):
+    raise SpeechPassError("speech pass ended with exit code -9")
+
+
+def _session_json(tmp_path, session_id):
+    return json.loads((_sessions(tmp_path) / session_id / "session.json").read_text())
+
+
+def test_a_new_file_with_a_failed_pass_is_marked_in_its_session_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(voice_split, "find_speech_pieces", _failing_pass)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    assert _session_json(tmp_path, job.session_id)["speaker_pass_failed"] is True
+    summary = SessionStore(_sessions(tmp_path)).read(job.session_id).summary
+    assert (summary.kind, summary.speaker_pass_failed) == ("file", True)
+
+
+def test_a_new_file_with_a_passing_pass_has_no_mark(tmp_path):
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    assert "speaker_pass_failed" not in _session_json(tmp_path, job.session_id)
+    assert not SessionStore(_sessions(tmp_path)).read(job.session_id).summary.speaker_pass_failed
+
+
+def test_a_new_file_without_speaker_separation_has_no_mark(tmp_path):
+    engine, job = _voice_change_job(tmp_path, diarize=False)
+    try:
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    assert "speaker_pass_failed" not in _session_json(tmp_path, job.session_id)
+
+
+@pytest.mark.parametrize(("fails", "state"), ((True, "live"), (False, "file-transcribe")))
+def test_a_job_on_a_recording_file_shows_live_only_after_a_failed_pass(
+    tmp_path, monkeypatch, fails, state
+):
+    monkeypatch.setattr(
+        voice_split,
+        "find_speech_pieces",
+        _failing_pass if fails else lambda *_args, **_options: (),
+    )
+    session = _recording(tmp_path)
+    engine = _engine(tmp_path, _file_asr_process(), speaker_tracker_factory=TwoVoiceTracker)
+    try:
+        job = engine.submit(session / "system.flac", diarize=True)
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    summary = SessionStore(_sessions(tmp_path)).read(session.name).summary
+    assert (summary.kind, summary.label_state) == ("rec", state)
+    # A recording shows its state in the list, so it needs no separate mark.
+    assert not summary.speaker_pass_failed
+
+
+def test_a_job_on_the_source_of_a_file_session_is_marked_after_a_failed_pass(tmp_path, monkeypatch):
+    first_engine, first = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(first, "completed")
+        session = _sessions(tmp_path) / first.session_id
+        monkeypatch.setattr(voice_split, "find_speech_pieces", _failing_pass)
+        again = first_engine.submit(session / "source.wav", diarize=True)
+        _wait_for(again, "completed")
+    finally:
+        first_engine.close()
+    summary = SessionStore(_sessions(tmp_path)).read(first.session_id).summary
+    assert (summary.kind, summary.label_state) == ("file", "live")
+    assert summary.speaker_pass_failed
+
+
+def test_a_file_job_gives_the_pass_the_downloaded_speaker_model(tmp_path, monkeypatch):
+    models = []
+
+    def record(samples, model, **options):
+        models.append(model)
+        return level_pieces(samples, model, **options)
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", record)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    assert models == [tmp_path / "data" / "models" / "live" / "nemo_en_titanet_small.onnx"]
+
+
+def test_a_speaker_model_error_on_a_piece_saves_the_lines_of_the_job(tmp_path):
+    class FailsOnPieces(LevelTracker):
+        calls = 0
+
+        def embed(self, samples):
+            # The first three embeddings are the phrases of the job.
+            type(self).calls += 1
+            if self.calls > 3:
+                raise RuntimeError("Where node failed")
+            return super().embed(samples)
+
+    engine = _engine(tmp_path, _file_asr_process(), speaker_tracker_factory=FailsOnPieces)
+    engine._segmenter_factory = VoiceChangeSegmenter
+    source = tmp_path / "meeting.wav"
+    soundfile.write(source, _voice_change_samples(), 16000)
+    job = engine.submit(source, diarize=True)
+    try:
+        _wait_for(job, "completed")
+        assert len(job.progress.completed_lines) == 3
+    finally:
+        engine.close()
+
+
+def test_a_cancel_during_a_failed_speaker_pass_stays_a_cancel(tmp_path, monkeypatch):
+    def cancel_and_fail(*_args, **_options):
+        job.cancel()
+        raise SpeechPassError("speech pass ended with exit code -9")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", cancel_and_fail)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "cancelled")
+        assert not _sessions(tmp_path).exists() or not list(_sessions(tmp_path).iterdir())
+    finally:
+        engine.close()
+
+
 def test_a_file_job_respects_a_set_speaker_count_through_a_split(tmp_path):
     engine, job = _voice_change_job(tmp_path, diarize=True, speaker_count=1)
     try:
@@ -977,6 +1170,36 @@ def test_a_cancel_while_a_part_decodes_ends_the_split_with_the_lines_before_it(t
         assert not _sessions(tmp_path).exists() or not list(_sessions(tmp_path).iterdir())
     finally:
         engine.close()
+
+
+def test_a_cancel_stops_the_second_decode_between_its_blocks(tmp_path, monkeypatch):
+    real = engine_module.iter_media_audio
+    decodes = []
+    holder = {}
+
+    def counted(*args, **options):
+        decodes.append(0)
+        for block in real(*args, **options):
+            decodes[-1] += 1
+            # The second decode is the one of the speech pass.
+            if len(decodes) == 2 and decodes[-1] == 2:
+                holder["job"].cancel()
+            yield block
+
+    def no_pass(*_args, **_options):
+        raise AssertionError("a cancelled read runs no pass")
+
+    monkeypatch.setattr(engine_module, "iter_media_audio", counted)
+    monkeypatch.setattr(voice_split, "find_speech_pieces", no_pass)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    holder["job"] = job
+    try:
+        _wait_for(job, "cancelled")
+    finally:
+        engine.close()
+    assert len(decodes) == 2
+    assert decodes[1] == 2 < decodes[0]
+    assert not _sessions(tmp_path).exists() or not list(_sessions(tmp_path).iterdir())
 
 
 def test_a_file_job_without_diarization_does_not_split(tmp_path):

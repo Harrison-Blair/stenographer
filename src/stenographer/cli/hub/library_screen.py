@@ -372,7 +372,8 @@ class LibraryScreen(HubScreen):
         elif summary.interrupted:
             state = StatusToken.text("!", "interrupted", "danger")
         elif summary.label_state == "live":
-            state = Text("" if summary.kind == "file" else "live labels", style=_DIM)
+            shown = summary.kind != "file" or summary.speaker_pass_failed
+            state = Text("live labels" if shown else "", style=_DIM)
         else:
             state = Text(summary.label_state, style=StatusToken.TONES["ok"])
         return title, state

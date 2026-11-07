@@ -21,7 +21,9 @@ from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
+from tests.lib.live.speech_support import level_pieces
 from tests.lib.platform.support import NullProcessCounters
+from tests.support import wait_until
 
 
 class FakeClock:
@@ -250,11 +252,18 @@ def _make_session(
     monkeypatch.setattr(live_session, "PhraseSegmenter", SegmenterFactory)
     monkeypatch.setattr(live_session, "SpeakerTracker", tracker or VoiceSpeakerTracker)
     saved_audio = {}
-    monkeypatch.setattr(
-        live_session,
-        "read_saved_audio",
-        lambda path, start, end: saved_audio[path.stem, start, end],
-    )
+
+    def read_saved_source(path):
+        said = {key: value for key, value in saved_audio.items() if key[0] == path.stem}
+        whole = np.zeros(1 + max((round(key[2] * 16000) for key in said), default=0), np.float32)
+        for (_source, start, _end), samples in said.items():
+            first = round(start * 16000)
+            whole[first : first + samples.size] = samples
+        return whole
+
+    monkeypatch.setattr(live_session, "read_saved_source", read_saved_source)
+    # Most tests are about the groups of whole lines, so the pass finds no speech.
+    monkeypatch.setattr(voice_split, "find_speech_pieces", lambda *_args, **_options: ())
     platform = FakePlatform(system_capture, tmp_path, platform_error)
     cfg = SimpleNamespace(
         asr=SimpleNamespace(),
@@ -1672,6 +1681,7 @@ def _split_session(monkeypatch, tmp_path):
     rig = _make_session(
         monkeypatch, tmp_path, system=False, diarize_mic=True, tracker=MainVoiceTracker
     )
+    monkeypatch.setattr(voice_split, "find_speech_pieces", level_pieces)
     transcribe = rig.worker.transcribe
     rig.worker.transcribe = lambda samples: transcribe(np.asarray([np.median(samples)]))
     return rig
@@ -1719,6 +1729,42 @@ def test_the_end_pass_splits_a_voice_change_and_saves_each_part_with_its_speaker
     assert "release" in rig.worker.events
 
 
+def test_a_skip_reaches_the_speech_pass_of_a_recording(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    saw_the_skip = []
+
+    def pass_until_the_skip(_samples, _model, *, progress, should_cancel):
+        progress(0.1)
+        rig.session.skip_relabel()
+        saw_the_skip.append(wait_until(should_cancel, timeout=2))
+        return None
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", pass_until_the_skip)
+
+    rig.session.stop()
+
+    assert saw_the_skip == [True]
+    assert rig.session.relabel_status == "Relabeling skipped"
+    assert len(_saved_detail(rig).lines) == 1
+
+
+def test_the_end_pass_gives_the_pass_the_downloaded_speaker_model(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    models = []
+
+    def record(samples, model, **options):
+        models.append(model)
+        return level_pieces(samples, model, **options)
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", record)
+
+    rig.session.stop()
+
+    assert models == [tmp_path / "models" / "live" / "nemo_en_titanet_small.onnx"]
+
+
 def test_a_skip_while_a_part_decodes_saves_the_whole_phrase_as_live(monkeypatch, tmp_path):
     rig = _split_session(monkeypatch, tmp_path)
     _say(rig, VOICE_A, 0.0, 20.0)
@@ -1746,7 +1792,11 @@ def test_a_source_whose_audio_failed_is_grouped_but_not_split(monkeypatch, tmp_p
     _say(rig, VOICE_A, 0.0, 20.0)
     _say(rig, VOICE_B, 20.0, 40.0)
     _say_with_a_voice_change(rig, VOICE_A, VOICE_B, 40.0)
-    rig.saved_audio.clear()
+
+    def no_pass(*_args, **_options):
+        raise AssertionError("a source whose audio failed runs no pass")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", no_pass)
     rig.session._mark_audio_failed("mic", OSError("disk full"))
 
     rig.session.stop()
@@ -1793,3 +1843,21 @@ def test_end_pass_progress_stays_within_its_total_through_a_split(monkeypatch, t
     assert done == sorted(done)
     assert {total for _done, total in observed} == {3}
     assert observed[-1] == (3, 3)
+
+
+def test_a_speaker_model_error_on_a_piece_saves_the_names_on_screen(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    _say(rig, VOICE_B, 20.0, 40.0)
+
+    def fail(_samples):
+        raise RuntimeError("Where node failed")
+
+    rig.session._trackers["mic"].embed = fail
+
+    rig.session.stop()
+
+    detail = _saved_detail(rig)
+    assert _saved_state(rig) == ("live", "live")
+    assert rig.session.relabel_status.startswith("Relabel")
+    assert len(detail.lines) == 2

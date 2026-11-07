@@ -25,6 +25,7 @@ from stenographer.lib.sessions.errors import (
 from stenographer.lib.sessions.exporter import export_transcript, render_transcript
 from stenographer.lib.sessions.models import SessionDetail, SessionSummary
 from stenographer.lib.sessions.persistence import (
+    SPEAKER_PASS_FAILED_KEY,
     atomic_write_private,
     write_private_temporary,
     write_session_json,
@@ -224,6 +225,7 @@ class SessionStore:
         duration_seconds: float,
         lines: Iterable[TranscriptLine],
         should_cancel: Callable[[], bool] | None = None,
+        speaker_pass_failed: bool = False,
     ) -> str:
         """Make a file session folder with a private copy of the source and its transcript.
 
@@ -272,6 +274,8 @@ class SessionStore:
                     "source_file": source_file,
                     "source_name": source.name,
                 }
+                if speaker_pass_failed:
+                    metadata[SPEAKER_PASS_FAILED_KEY] = True
                 write_session_json(directory, metadata)
         except BaseException:
             shutil.rmtree(directory, ignore_errors=True)

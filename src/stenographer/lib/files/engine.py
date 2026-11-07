@@ -24,15 +24,13 @@ from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_di
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.live.voice_split import group_and_split, source_segments
+from stenographer.lib.live.voice_split import group_and_split
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.sessions.errors import SessionWriteCancelledError, StaleRevisionError
 from stenographer.lib.sessions.store import SessionStore
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
     from stenographer.lib.refine.ollama_refiner import OllamaRefiner
@@ -64,6 +62,7 @@ class FilesEngine:
         model_dir = live_model_dir(self._data_dir)
         vad_path = model_dir / VAD_MODEL.filename
         speaker_path = model_dir / SPEAKER_MODEL.filename
+        self._speaker_model = speaker_path
         self._segmenter_factory = segmenter_factory or (lambda: PhraseSegmenter("system", vad_path))
         self._speaker_tracker_factory = speaker_tracker_factory or (
             lambda: SpeakerTracker(speaker_path)
@@ -192,8 +191,11 @@ class FilesEngine:
             if job.cancel_requested:
                 job._cancelled(tuple(lines))
                 return
+            speaker_pass_failed = False
             if job.options.diarize:
-                lines = self._diarize(job, media, lines, embeddings, tracker, refiner)
+                lines, speaker_pass_failed = self._diarize(
+                    job, media, lines, embeddings, tracker, refiner
+                )
                 if job.cancel_requested:
                     job._cancelled(tuple(lines))
                     return
@@ -206,10 +208,18 @@ class FilesEngine:
                     or max((line.end for line in lines), default=0.0),
                     lines=lines,
                     should_cancel=lambda: job.cancel_requested,
+                    speaker_pass_failed=speaker_pass_failed,
                 )
             else:
                 session_id, source = target
-                lines = self._write_revision(job, session_id, source, lines)
+                lines = self._write_revision(
+                    job,
+                    session_id,
+                    source,
+                    lines,
+                    # A failed pass reads as a recording does after a failed end pass.
+                    method="live" if speaker_pass_failed else "file-transcribe",
+                )
             job._complete(session_id, tuple(lines))
         except SessionWriteCancelledError:
             job._cancelled(job.progress.completed_lines)
@@ -311,19 +321,24 @@ class FilesEngine:
         embeddings: list[np.ndarray],
         tracker,
         refiner: OllamaRefiner | None,
-    ) -> list[TranscriptLine]:
+    ) -> tuple[list[TranscriptLine], bool]:
+        """Return the lines of the job, and whether they keep tracker labels after a failure."""
 
         def report(fraction: float) -> None:
             job._update("diarize", 80 + round(15 * fraction), tuple(lines))
 
-        def read_audio(long_lines: tuple[TranscriptLine, ...]) -> Iterator[np.ndarray]:
+        def read_source() -> np.ndarray | None:
             # The phrases of a long file do not stay in memory, so this decodes it again.
             blocks = iter_media_audio(job.options.path, media, self._decoder)
+            kept = []
             try:
-                for _, samples in source_segments(blocks, long_lines):
-                    yield samples
+                for block in blocks:
+                    if job.cancel_requested:
+                        return None
+                    kept.append(block)
             finally:
                 blocks.close()
+            return np.concatenate(kept)
 
         def decode(samples: np.ndarray) -> str:
             text = self._worker.transcribe(samples).text.strip()
@@ -331,21 +346,27 @@ class FilesEngine:
                 text = refiner.refine(text, cancelled=lambda: job.cancel_requested)
             return text
 
-        grouped = group_and_split(
-            lines,
-            embeddings,
-            read_audio=read_audio,
-            embed=tracker.embed,
-            decode=decode,
-            progress=report,
-            should_cancel=lambda: job.cancel_requested,
-            speaker_count=job.options.speaker_count,
-        )
+        try:
+            grouped = group_and_split(
+                lines,
+                embeddings,
+                read_source=read_source,
+                speaker_model=self._speaker_model,
+                embed=tracker.embed,
+                decode=decode,
+                progress=report,
+                should_cancel=lambda: job.cancel_requested,
+                speaker_count=job.options.speaker_count,
+            )
+        except Exception as exc:
+            # The transcription is the long part of a job, so it stays with its tracker labels.
+            log_failure(log, logging.WARNING, "files: speaker_pass_failed", exc, safe=True)
+            return lines, True
         if grouped is None:
-            return lines
+            return lines, False
         result = list(grouped.lines)
         job._update("diarize", 95, tuple(result))
-        return result
+        return result, False
 
     def _make_refiner(self) -> OllamaRefiner | None:
         if self._refiner_factory is not None:
@@ -359,7 +380,13 @@ class FilesEngine:
         )
 
     def _write_revision(
-        self, job: FileJob, session_id: str, source: str, lines: list[TranscriptLine]
+        self,
+        job: FileJob,
+        session_id: str,
+        source: str,
+        lines: list[TranscriptLine],
+        *,
+        method: str,
     ) -> list[TranscriptLine]:
         """Save new lines of one source as a revision of the session that holds it."""
         detail = self._store.read(session_id)
@@ -394,7 +421,7 @@ class FilesEngine:
         self._store.write_revision(
             session_id,
             revised,
-            method="file-transcribe",
+            method=method,
             expected_revision=detail.revision,
             revision_name=revision_name,
             should_cancel=lambda: job.cancel_requested,

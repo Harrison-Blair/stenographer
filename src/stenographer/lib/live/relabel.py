@@ -346,7 +346,7 @@ def relabel_system_lines(
 
     progress(total, total)
     ranked_clusters = sorted(clusters.values(), key=lambda members: min(members))
-    return _apply_cluster_labels(original, ranked_clusters, durations, label_prefix)
+    return apply_cluster_labels(original, ranked_clusters, durations, label_prefix)
 
 
 def _relabel_fixed(
@@ -458,10 +458,10 @@ def _relabel_fixed(
         ranked_clusters.append(members)
     ranked_clusters.sort(key=min)
     progress(total, total)
-    return _apply_cluster_labels(lines, ranked_clusters, durations, label_prefix)
+    return apply_cluster_labels(lines, ranked_clusters, durations, label_prefix)
 
 
-def _apply_cluster_labels(
+def apply_cluster_labels(
     lines: tuple[TranscriptLine, ...],
     ranked_clusters: list[list[int]],
     durations: np.ndarray,

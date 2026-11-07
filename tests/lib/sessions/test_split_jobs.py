@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -11,12 +12,14 @@ import pytest
 import soundfile as sf
 
 from stenographer.lib.config.models import Config
+from stenographer.lib.live import voice_split
 from stenographer.lib.live.models import SPEAKER_MODEL
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
+from tests.lib.live.speech_support import level_pieces
 from tests.lib.platform.support import NullProcessCounters
 
 RATE = 16000
@@ -96,7 +99,8 @@ def recorded(root, source="system", speaker=("speaker-1", "Speaker 1"), *, diari
 
 
 @pytest.fixture
-def rig(tmp_path):
+def rig(tmp_path, monkeypatch):
+    monkeypatch.setattr(voice_split, "find_speech_pieces", level_pieces)
     model = tmp_path / "models" / "live" / SPEAKER_MODEL.filename
     model.parent.mkdir(parents=True)
     model.touch()
@@ -306,6 +310,73 @@ def test_retranscribe_of_a_one_speaker_file_session_only_replaces_text(rig):
     assert [line.text.split()[0] for line in detail.lines] == ["ann", "bob", "ann"]
     assert {line.speaker_id for line in detail.lines} == {"speaker-1"}
     assert len(rig.decoded) == 1
+
+
+def _failed_file_session(rig):
+    source = rig.root / "Interview.wav"
+    sf.write(source, audio(), RATE)
+    return rig.store.create_file_session(
+        source,
+        started_at=datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC),
+        duration_seconds=64.0,
+        lines=[
+            TranscriptLine(0.0, 20.0, "", "file", "speaker-1", "Speaker 1", "old text"),
+            TranscriptLine(20.0, 40.0, "", "file", "speaker-2", "Speaker 2", "old text"),
+        ],
+        speaker_pass_failed=True,
+    )
+
+
+def test_a_later_retranscribe_clears_the_mark_of_a_failed_pass(rig):
+    session = _failed_file_session(rig)
+    assert rig.store.read(session).summary.speaker_pass_failed
+
+    rig.jobs.retranscribe(session)
+
+    summary = rig.store.read(session).summary
+    assert summary.label_state == "re-transcribe"
+    assert not summary.speaker_pass_failed
+
+
+def test_a_rename_keeps_the_key_and_shows_as_a_rename(rig):
+    session = _failed_file_session(rig)
+
+    rig.store.rename_speaker(session, "speaker-2", "Bea")
+
+    metadata = json.loads((rig.root / "sessions" / session / "session.json").read_text())
+    assert metadata["speaker_pass_failed"] is True
+    assert metadata["source_name"] == "Interview.wav"
+    summary = rig.store.read(session).summary
+    assert summary.label_state == "rename"
+    assert not summary.speaker_pass_failed
+    assert rig.store.read(session).lines[1].label == "Bea"
+
+
+def test_an_older_file_session_without_the_key_has_no_mark(rig):
+    session = file_session(rig, ("speaker-1", "speaker-2"))
+
+    metadata = json.loads((rig.root / "sessions" / session / "session.json").read_text())
+    assert "speaker_pass_failed" not in metadata
+    assert not rig.store.read(session).summary.speaker_pass_failed
+
+
+def _record_the_model(monkeypatch):
+    models = []
+
+    def record(samples, model, **options):
+        models.append(model)
+        return level_pieces(samples, model, **options)
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", record)
+    return models
+
+
+def test_rediarize_gives_the_pass_the_downloaded_speaker_model(rig, monkeypatch):
+    models = _record_the_model(monkeypatch)
+
+    rig.jobs.rediarize(recorded(rig.root))
+
+    assert models == [rig.root / "models" / "live" / "nemo_en_titanet_small.onnx"]
 
 
 def test_an_older_session_without_metadata_still_splits(rig):

@@ -14,10 +14,12 @@ from sound_asset_guard import check_sound_assets
 COMPLETIONS = ("stenographer.bash", "_stenographer", "stenographer.fish")
 KEYCODES = "keycodes.toml"
 CONFIG_TEMPLATE = "default_config.toml.in"
+SEGMENTATION_MODEL = "models/pyannote-segmentation-3-0.onnx"
+SEGMENTATION_LICENSE = "licenses/pyannote-segmentation-3.0-MIT.txt"
 
 
 def verify_distributions(dist_dir: Path, version: str) -> None:
-    """Require the archives and their completions, key table, config template, license, sounds."""
+    """Require the archives and their completions, key table, config template, model, sounds."""
     wheel = dist_dir / f"stenographer-{version}-py3-none-any.whl"
     sdist = dist_dir / f"stenographer-{version}.tar.gz"
     wheel_metadata = f"stenographer-{version}.dist-info/METADATA"
@@ -29,6 +31,8 @@ def verify_distributions(dist_dir: Path, version: str) -> None:
             | {
                 f"stenographer/assets/{KEYCODES}",
                 f"stenographer/assets/{CONFIG_TEMPLATE}",
+                f"stenographer/assets/{SEGMENTATION_MODEL}",
+                f"stenographer/assets/{SEGMENTATION_LICENSE}",
                 "stenographer/_version.py",
                 wheel_metadata,
             },
@@ -47,6 +51,8 @@ def verify_distributions(dist_dir: Path, version: str) -> None:
                 f"{root}/LICENSE",
                 f"{root}/src/stenographer/assets/{KEYCODES}",
                 f"{root}/src/stenographer/assets/{CONFIG_TEMPLATE}",
+                f"{root}/src/stenographer/assets/{SEGMENTATION_MODEL}",
+                f"{root}/src/stenographer/assets/{SEGMENTATION_LICENSE}",
                 version_module,
                 package_metadata,
             }
