@@ -17,6 +17,7 @@ import soundfile as sf
 
 from stenographer.cli.hub.services import HubServices
 from stenographer.lib.config.models import Config
+from stenographer.lib.live import voice_split
 from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -25,6 +26,12 @@ from stenographer.lib.sessions.errors import SessionSourceError, StaleRevisionEr
 from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
 from tests.lib.platform.support import NullProcessCounters
+
+
+@pytest.fixture(autouse=True)
+def _no_speech_found(monkeypatch):
+    """These jobs group whole lines. Splits have their own tests."""
+    monkeypatch.setattr(voice_split, "find_speech_pieces", lambda *_args, **_options: ())
 
 
 class FakePlatform:
@@ -440,7 +447,8 @@ def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_p
 
     detail = store.read(session_id)
     assert revision == "transcript.r2.jsonl"
-    assert decoder.paths == [sessions_root / session_id / "source.wav"]
+    # One decode for the new text and one for the pass over the whole source.
+    assert decoder.paths == [sessions_root / session_id / "source.wav"] * 2
     # Both 1 s phrases are too short to tell voices apart, so grouping gives them one speaker.
     assert [(line.source, line.label, line.text) for line in detail.lines] == [
         ("file", "Speaker 1", "new phrase 1"),

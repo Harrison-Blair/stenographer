@@ -24,15 +24,13 @@ from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_di
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.live.voice_split import group_and_split, source_segments
+from stenographer.lib.live.voice_split import group_and_split
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.sessions.errors import SessionWriteCancelledError, StaleRevisionError
 from stenographer.lib.sessions.store import SessionStore
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
     from stenographer.lib.refine.ollama_refiner import OllamaRefiner
@@ -64,6 +62,7 @@ class FilesEngine:
         model_dir = live_model_dir(self._data_dir)
         vad_path = model_dir / VAD_MODEL.filename
         speaker_path = model_dir / SPEAKER_MODEL.filename
+        self._speaker_model = speaker_path
         self._segmenter_factory = segmenter_factory or (lambda: PhraseSegmenter("system", vad_path))
         self._speaker_tracker_factory = speaker_tracker_factory or (
             lambda: SpeakerTracker(speaker_path)
@@ -316,14 +315,9 @@ class FilesEngine:
         def report(fraction: float) -> None:
             job._update("diarize", 80 + round(15 * fraction), tuple(lines))
 
-        def read_audio(long_lines: tuple[TranscriptLine, ...]) -> Iterator[np.ndarray]:
+        def read_source() -> np.ndarray:
             # The phrases of a long file do not stay in memory, so this decodes it again.
-            blocks = iter_media_audio(job.options.path, media, self._decoder)
-            try:
-                for _, samples in source_segments(blocks, long_lines):
-                    yield samples
-            finally:
-                blocks.close()
+            return np.concatenate(list(iter_media_audio(job.options.path, media, self._decoder)))
 
         def decode(samples: np.ndarray) -> str:
             text = self._worker.transcribe(samples).text.strip()
@@ -334,7 +328,8 @@ class FilesEngine:
         grouped = group_and_split(
             lines,
             embeddings,
-            read_audio=read_audio,
+            read_source=read_source,
+            speaker_model=self._speaker_model,
             embed=tracker.embed,
             decode=decode,
             progress=report,

@@ -16,15 +16,22 @@ import soundfile
 
 from stenographer.lib.config.models import Config
 from stenographer.lib.files.engine import FilesEngine
+from stenographer.lib.live import voice_split
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import TranscriptionResult
+from tests.lib.live.speech_support import level_pieces
 from tests.lib.platform.support import NullProcessCounters
 from tests.lib.transcribe.support import FakeAsrProcess, FakeAsrTransport
 from tests.support import wait_until
+
+
+@pytest.fixture(autouse=True)
+def _level_pieces(monkeypatch):
+    monkeypatch.setattr(voice_split, "find_speech_pieces", level_pieces)
 
 
 def _file_asr_process(*, started=None, release=None):
@@ -602,9 +609,10 @@ class TwoVoiceTracker:
     ),
 )
 def test_diarized_source_job_numbers_new_speakers_and_keeps_the_other_source(
-    tmp_path, source, kept, new_labels
+    tmp_path, monkeypatch, source, kept, new_labels
 ):
-
+    # No speech found, so the two whole lines group as two speakers.
+    monkeypatch.setattr(voice_split, "find_speech_pieces", lambda *_args, **_options: ())
     session = _recording(tmp_path)
     store = SessionStore(_sessions(tmp_path))
     engine = _engine(tmp_path, _file_asr_process(), speaker_tracker_factory=TwoVoiceTracker)

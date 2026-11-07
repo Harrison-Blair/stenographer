@@ -192,8 +192,9 @@ toggle for it. With the setting off, microphone lines are `You`.
 
 Limits:
 
-- Labels are per phrase. Voice-activity detection splits phrases at pauses, so
-  a speaker change without a pause stays in one phrase under one label.
+- During a recording, labels are per phrase. Voice-activity detection splits
+  phrases at pauses, so a speaker change without a pause stays in one phrase under
+  one label until the recording is saved.
 - Room labels are similarity estimates, like system labels. They can split one
   person or merge several people.
 - System audio that leaks into the microphone can appear as a room speaker. Use
@@ -228,6 +229,19 @@ least 15 seconds of phrases that are each at least 2 seconds long within a
 phrases, or if it has at least 20% of the top speaker's speech time.
 Otherwise, stenographer merges that voice into the most similar voice. Short or
 sparse phrases can therefore remain under another speaker's label.
+
+The saved speakers come from the saved audio. For each source with lines,
+stenographer runs the bundled pyannote segmentation model on the whole source,
+keeps the pieces of speech of 0.5 seconds or more, and groups the pieces with the
+rules above. A line gets the speaker with the most overlap in seconds. A line where
+another voice holds a run of at least 1 second is cut, each part is decoded again,
+and each part gets the speaker of its run. If a part has no text, the line stays
+whole. Where two voices overlap, the voice that started last holds the time. A line
+with no piece stays and gets the closest voice. A source with no saved audio, or one
+where the model finds no speech, groups whole lines. File jobs, Re-diarize, and
+Re-transcribe use the same method; an older recording changes only when you press
+`d` or `t`. This pass holds the whole source in memory, about 2 GB per hour of the
+longest source.
 
 When a pass merges speakers, the merged speaker keeps the number of the speaker with the most speech that an earlier pass grouped, and a renamed speaker chooses before an unnamed one. If two renamed speakers merge, only one name can stay on the merged speaker. When the session saves, speakers are numbered from 1 in order of first appearance, with no gaps, so a number can change once at save, for example `Room 3` becomes `Room 2`. Given names stay. If you skip the end pass, or it fails, stenographer saves the speakers and names shown on screen, numbered the same way, and a failure shows the reason on the saved Record screen. If that save fails, the stop shows as a failed save. File jobs and re-diarize number clusters by first appearance and keep each renamed label on one cluster, the one with the most shared speech time. Rename several speakers to the same name
 to merge their displayed labels; this does not change their speaker IDs. The

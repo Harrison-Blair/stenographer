@@ -11,12 +11,14 @@ import pytest
 import soundfile as sf
 
 from stenographer.lib.config.models import Config
+from stenographer.lib.live import voice_split
 from stenographer.lib.live.models import SPEAKER_MODEL
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
+from tests.lib.live.speech_support import level_pieces
 from tests.lib.platform.support import NullProcessCounters
 
 RATE = 16000
@@ -96,7 +98,8 @@ def recorded(root, source="system", speaker=("speaker-1", "Speaker 1"), *, diari
 
 
 @pytest.fixture
-def rig(tmp_path):
+def rig(tmp_path, monkeypatch):
+    monkeypatch.setattr(voice_split, "find_speech_pieces", level_pieces)
     model = tmp_path / "models" / "live" / SPEAKER_MODEL.filename
     model.parent.mkdir(parents=True)
     model.touch()

@@ -1,275 +1,521 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Voice-change detection and splitting, with sample values that stand for voices."""
+"""Speakers and splits of saved lines from pieces of speech, with values that stand for voices."""
 
 from __future__ import annotations
 
-import itertools
-
 import numpy as np
 import pytest
+import soundfile as sf
 
 from stenographer.lib.live import voice_split
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.live.voice_split import (
     average_voices,
     group_and_split,
+    read_saved_source,
     source_segments,
-    voice_change_cuts,
 )
 
 RATE = 16000
-ANN, BOB, CAT = 0.004, 0.006, 0.008
+ANN, BOB, CAT = 0.1, 0.4, 0.7
 UNIT = {
     ANN: np.array([1.0, 0.0, 0.0]),
     BOB: np.array([0.0, 1.0, 0.0]),
     CAT: np.array([0.0, 0.0, 1.0]),
 }
-VOICES = {"speaker-1": UNIT[ANN], "speaker-2": UNIT[BOB], "speaker-3": UNIT[CAT]}
 
 
 def speech(*turns):
-    """Join ``(voice, seconds)`` turns. All levels are below RMS 0.01, as quiet speech can be."""
+    """Join ``(voice, seconds)`` turns. A voice of 0 is silence."""
     return np.concatenate(
         [np.full(round(seconds * RATE), voice, np.float32) for voice, seconds in turns]
     )
 
 
 def embed(samples):
-    """Mix the voices by share of samples, as an embedding of two talkers does in effect."""
-    mix = np.zeros(3)
-    for voice, unit in UNIT.items():
-        mix += unit * np.mean(np.isclose(samples, voice, atol=1e-5))
-    return mix
+    """Return the unit vector of the most common voice."""
+    level = float(np.median(samples))
+    return UNIT[min(UNIT, key=lambda voice: abs(voice - level))]
 
 
-def line(start, end, speaker_id="speaker-1", wall="", text="whole phrase"):
+def line(start, end, speaker_id="speaker-1", wall="", text="whole phrase", label=None):
     number = speaker_id.removeprefix("speaker-")
-    return TranscriptLine(start, end, wall, "system", speaker_id, f"Speaker {number}", text)
-
-
-def seconds(cuts):
-    return [cut / RATE for cut in cuts]
-
-
-def test_one_clear_change_gives_one_cut_near_it():
-    samples = speech((ANN, 12.0), (BOB, 12.0))
-
-    cuts = voice_change_cuts(samples, "speaker-1", VOICES, embed)
-
-    assert len(cuts) == 1
-    assert 10.5 <= cuts[0] / RATE <= 13.5
-
-
-def test_one_voice_has_no_cut():
-    assert voice_change_cuts(speech((ANN, 25.0)), "speaker-1", VOICES, embed) == ()
-
-
-def test_a_session_with_one_voice_has_no_cut():
-    samples = speech((ANN, 12.0), (BOB, 12.0))
-
-    assert voice_change_cuts(samples, "speaker-1", {"speaker-1": UNIT[ANN]}, embed) == ()
-
-
-def test_another_voice_in_one_slice_is_no_change():
-    leaders = iter(["speaker-1", "speaker-1", "speaker-2", "speaker-1", "speaker-1"])
-    vectors = {"speaker-1": UNIT[ANN], "speaker-2": UNIT[BOB]}
-
-    cuts = voice_change_cuts(
-        speech((ANN, 6.0)), "speaker-1", vectors, lambda _s: vectors[next(leaders)]
+    return TranscriptLine(
+        start, end, wall, "system", speaker_id, label or f"Speaker {number}", text
     )
 
-    assert cuts == ()
+
+class Words:
+    """Decode a part as the names of its voices, in order, or as nothing."""
+
+    def __init__(self, *silent):
+        self.parts = []
+        self.silent = silent
+
+    def __call__(self, samples):
+        self.parts.append(samples.copy())
+        names = [
+            name
+            for name, voice in (("ann", ANN), ("bob", BOB), ("cat", CAT))
+            if np.mean(np.isclose(samples, voice, atol=1e-5)) > 0.2
+        ]
+        if any(name in self.silent for name in names):
+            return " \n"
+        return " ".join(names)
 
 
-def test_another_voice_in_only_the_first_slice_is_no_change():
-    leaders = iter(["speaker-2", "speaker-1", "speaker-1", "speaker-1", "speaker-1"])
-    vectors = {"speaker-1": UNIT[ANN], "speaker-2": UNIT[BOB]}
+@pytest.fixture
+def run(monkeypatch):
+    """Run the method on *samples*, with *pieces* as the result of the pass."""
 
-    cuts = voice_change_cuts(
-        speech((ANN, 6.0)), "speaker-1", vectors, lambda _s: vectors[next(leaders)]
+    def go(lines, samples, pieces, *, vectors=None, decode=None, **options):
+        monkeypatch.setattr(
+            voice_split, "find_speech_pieces", lambda *_args, **_keys: tuple(pieces)
+        )
+        return group_and_split(
+            lines,
+            [embed(samples[int(i.start * RATE) : int(i.end * RATE)]) for i in lines]
+            if vectors is None
+            else vectors,
+            read_source=lambda: samples,
+            speaker_model="speaker.onnx",
+            embed=options.pop("embed", embed),
+            decode=decode or Words(),
+            **options,
+        )
+
+    return go
+
+
+# 20 s of Ann and 20 s of Bob: a clear pair of speakers for every test below.
+TWO_VOICES = ((ANN, 20.0), (BOB, 20.0))
+PIECES = [(0.0, 20.0), (20.0, 40.0)]
+
+
+def speakers(result):
+    return [item.speaker_id for item in result.lines]
+
+
+def test_a_line_gets_the_speaker_with_the_most_overlap(run):
+    samples = speech(*TWO_VOICES)
+
+    # The line holds 0.5 s of Ann and 3 s of Bob, and neither run counts for a cut with one voice.
+    result = run([line(0.0, 20.0), line(19.5, 23.0), line(30.0, 40.0)], samples, PIECES)
+
+    assert speakers(result) == ["speaker-1", "speaker-2", "speaker-2"]
+    assert result.parents == (0, 1, 2)
+
+
+def test_many_short_overlaps_of_a_speaker_count_together(run):
+    samples = speech((ANN, 5.0), (BOB, 5.0), (ANN, 20.0), (BOB, 20.0))
+    pieces = [(0.0, 5.0), (5.0, 5.9), (5.9, 6.6), (6.6, 7.5), (10.0, 30.0), (30.0, 50.0)]
+
+    # Bob holds 2.5 s in small pieces, Ann 0.5 s. No piece of Bob reaches 1 s in the line.
+    result = run(
+        [line(10.0, 30.0), line(30.0, 50.0), line(4.5, 7.5)],
+        samples,
+        pieces,
+        vectors=[UNIT[ANN], UNIT[BOB], UNIT[BOB]],
+        embed=lambda piece: (
+            UNIT[ANN] if float(np.median(piece)) == pytest.approx(ANN) else UNIT[BOB]
+        ),
     )
 
-    assert cuts == ()
+    assert result.parents == (0, 1, 2)
+    assert result.lines[2].speaker_id == result.lines[1].speaker_id
 
 
-def test_two_slices_with_a_lead_below_the_minimum_are_no_change():
-    # After unit length the other voice leads by about 0.08 on the last slices.
-    own = np.array([1.0, 0.0, 0.0])
-    close = np.array([0.6, 0.67, 0.0])
-    vectors = iter([own, own, own, close, close, close, close])
+def test_a_cut_makes_a_line_per_voice_with_its_times_and_speaker(run):
+    samples = speech(*TWO_VOICES, (ANN, 12.0), (BOB, 12.0))
+    pieces = [*PIECES, (40.0, 52.0), (52.0, 64.0)]
+    decode = Words()
 
-    cuts = voice_change_cuts(speech((ANN, 7.5)), "speaker-1", VOICES, lambda _s: next(vectors))
+    result = run(
+        [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 64.0)], samples, pieces, decode=decode
+    )
 
-    assert cuts == ()
-
-
-def test_a_lead_above_the_minimum_for_two_slices_is_a_change():
-    # After unit length the other voice leads by about 0.16.
-    other = np.array([0.5, 0.7, 0.0])
-    own = np.array([1.0, 0.0, 0.0])
-    vectors = iter([own, own, other, other, other, other, other])
-
-    cuts = voice_change_cuts(speech((ANN, 7.5)), "speaker-1", VOICES, lambda _s: next(vectors))
-
-    assert len(cuts) == 1
+    assert [item.text for item in result.lines] == ["whole phrase", "whole phrase", "ann", "bob"]
+    assert result.parents == (0, 1, 2, 2)
+    assert speakers(result) == ["speaker-1", "speaker-2", "speaker-1", "speaker-2"]
+    ann_part, bob_part = result.lines[2:]
+    assert (ann_part.start, ann_part.end) == (40.0, 52.0)
+    assert (bob_part.start, bob_part.end) == (52.0, 64.0)
+    assert [part.size for part in decode.parts] == [12 * RATE, 12 * RATE]
+    assert np.array_equal(decode.parts[0], samples[40 * RATE : 52 * RATE])
+    assert np.array_equal(decode.parts[1], samples[52 * RATE : 64 * RATE])
 
 
-def test_several_changes_in_one_phrase_give_each_cut_in_time_order():
-    samples = speech((ANN, 8.0), (BOB, 8.0), (ANN, 9.0))
+def test_a_short_line_cuts_because_a_line_has_no_minimum_length(run):
+    samples = speech(*TWO_VOICES, (ANN, 1.25), (BOB, 1.25))
+    pieces = [*PIECES, (40.0, 41.25), (41.25, 42.5)]
 
-    cuts = voice_change_cuts(samples, "speaker-1", VOICES, embed)
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(40.0, 42.5)], samples, pieces)
 
-    assert len(cuts) == 2
-    assert 6.5 <= cuts[0] / RATE <= 9.5
-    assert 14.5 <= cuts[1] / RATE <= 17.5
-
-
-def test_a_phrase_grouped_under_the_second_voice_cuts_at_the_same_change():
-    samples = speech((ANN, 12.0), (BOB, 13.0))
-
-    assert len(voice_change_cuts(samples, "speaker-2", VOICES, embed)) == 1
+    assert [item.text for item in result.lines[2:]] == ["ann", "bob"]
 
 
-def test_a_phrase_that_is_all_another_voice_has_no_cut_inside():
-    assert voice_change_cuts(speech((BOB, 12.0)), "speaker-1", VOICES, embed) == ()
-
-
-def test_the_cut_falls_in_the_quietest_part_near_the_change_at_low_level():
-    samples = speech((ANN, 10.0), (0.0002, 0.4), (BOB, 11.6))
-    # A quieter stretch away from the change must not take the cut.
-    samples[2 * RATE : int(2.5 * RATE)] = 0.00001
-
-    cuts = voice_change_cuts(samples, "speaker-1", VOICES, embed)
-
-    assert len(cuts) == 1
-    assert 10.0 <= cuts[0] / RATE <= 10.4
-
-
-def test_each_part_of_many_short_voices_has_at_least_one_hop():
-    samples = speech((BOB, 6.0), (ANN, 4.5), (BOB, 4.5), (CAT, 9.0))
-
-    cuts = voice_change_cuts(samples, "speaker-1", VOICES, embed)
-
-    edges = [0, *cuts, samples.size]
-    assert len(cuts) >= 2
-    assert all(right - left >= 0.75 * RATE for left, right in itertools.pairwise(edges))
-
-
-def embed_only_a_clear_voice(samples):
-    """Name a voice only for a slice that holds nothing else, as a strict model would."""
-    for voice, unit in UNIT.items():
-        if np.all(np.isclose(samples, voice, atol=1e-5)):
-            return unit
-    return np.ones(3)
-
-
-@pytest.mark.parametrize(("held", "second_cut"), ((3.75, 9.85), (4.0, 10.1)), ids=("3.75 s", "4 s"))
-def test_a_voice_of_about_four_seconds_cuts_only_with_the_shorter_spacing(
-    monkeypatch, held, second_cut
-):
-    # Bob starts at 6 s, on a slice start at both spacings. A 0.2 s pause sits at each change.
-    pause = 0.0002
-    samples = speech((ANN, 5.8), (pause, 0.2), (BOB, held), (pause, 0.2), (ANN, 6.0))
-
-    cuts = voice_change_cuts(samples, "speaker-1", VOICES, embed_only_a_clear_voice)
-
-    assert seconds(cuts) == pytest.approx([5.9, second_cut], abs=0.02)
-
-    # At 1.5 s only the slice at 6 s fits inside Bob, and one slice is no change.
-    monkeypatch.setattr(voice_split, "_HOP_SAMPLES", 3 * RATE // 2)
-    assert voice_change_cuts(samples, "speaker-1", VOICES, embed_only_a_clear_voice) == ()
-
-
-def test_the_shortest_part_between_two_cuts_is_one_hop():
-    # Bob leads slices 2 and 3, with centers at 3 s and 3.75 s. The first cut can fall up
-    # to the first center and the second from the second center, and a 0.2 s pause on
-    # each center pulls the cuts there.
-    leaders = ("speaker-1",) * 2 + ("speaker-2",) * 2 + ("speaker-1",) * 2
-    vectors = iter(VOICES[name] for name in leaders)
-    samples = speech((ANN, 6.75))
-    samples[int(2.9 * RATE) : int(3.1 * RATE)] = 0.00001
-    samples[int(3.65 * RATE) : int(3.85 * RATE)] = 0.00001
-
-    cuts = voice_change_cuts(samples, "speaker-1", VOICES, lambda _slice: next(vectors))
-
-    assert len(cuts) == 2
-    assert cuts[1] - cuts[0] >= 0.75 * RATE
-    assert (cuts[1] - cuts[0]) / RATE == pytest.approx(0.75, abs=0.01)
-
-
-OWN, OTHER, THIRD = "speaker-1", "speaker-2", "speaker-3"
-
-
-def scripted_cuts(*leaders, own=OWN):
-    """Return the cuts, in seconds, when each slice is led as given; ``None`` is unclear."""
-    vectors = iter(np.ones(3) if leader is None else VOICES[leader] for leader in leaders)
-    samples = speech((ANN, 3.0 + 0.75 * (len(leaders) - 1)))
-    return seconds(voice_change_cuts(samples, own, VOICES, lambda _slice: next(vectors)))
-
-
-def center(index):
-    """Return the center, in seconds, of one slice."""
-    return 1.5 + 0.75 * index
-
-
-@pytest.mark.parametrize(
-    "leaders",
-    ((OWN, OTHER, OTHER), (THIRD, OTHER, OTHER)),
-    ids=("own then other", "third then other"),
-)
-def test_one_clear_slice_before_a_run_of_another_voice_cuts_there(leaders):
-    cuts = scripted_cuts(*leaders)
-
-    assert len(cuts) == 1
-    assert center(0) <= cuts[0] <= center(1)
-
-
-@pytest.mark.parametrize(
-    "leaders",
-    ((OTHER, OTHER, OWN), (OTHER, OTHER, THIRD)),
-    ids=("other then own", "other then third"),
-)
-def test_one_clear_slice_after_a_run_of_another_voice_cuts_there(leaders):
-    cuts = scripted_cuts(*leaders)
-
-    assert len(cuts) == 1
-    assert center(1) <= cuts[0] <= center(2)
-
-
-def test_unclear_slices_at_the_ends_of_a_run_make_no_cut():
-    assert scripted_cuts(None, OTHER, OTHER, None) == []
-
-
-def test_one_slice_of_a_third_voice_before_a_run_of_the_own_voice_makes_no_cut():
-    cuts = scripted_cuts(THIRD, OWN, OWN, OTHER, OTHER)
-
-    assert len(cuts) == 1
-    assert center(2) <= cuts[0] <= center(3)
-
-
-def test_one_slice_of_a_third_voice_after_a_run_of_the_own_voice_makes_no_cut():
-    cuts = scripted_cuts(OTHER, OTHER, OWN, OWN, THIRD)
-
-    assert len(cuts) == 1
-    assert center(1) <= cuts[0] <= center(2)
-
-
-def test_one_slice_of_a_third_voice_after_a_run_of_another_voice_cuts_there():
-    cuts = scripted_cuts(OWN, OWN, OTHER, OTHER, THIRD)
-
-    assert len(cuts) == 2
-    assert center(1) <= cuts[0] <= center(2)
-    assert center(3) <= cuts[1] <= center(4)
-
-
-def test_average_voices_weigh_by_duration_and_skip_short_phrases():
-    lines = [line(0, 3), line(3, 4.5), line(4.5, 5.5), line(5.5, 7, "speaker-2")]
-    embeddings = [
-        np.array([3.0, 0.0]),  # the length of an embedding does not count
-        np.array([0.0, 2.0]),
-        np.array([1.0, 0.0]),  # 1 s is below the limit, so this phrase does not count
-        np.array([5.0, 5.0]),
+def test_a_voice_of_exactly_one_second_cuts_and_one_just_under_it_does_not(run):
+    samples = speech(*TWO_VOICES, (ANN, 5.0), (BOB, 1.0), (ANN, 5.0), (BOB, 0.99), (ANN, 5.0))
+    pieces = [
+        *PIECES,
+        (40.0, 45.0),
+        (45.0, 46.0),
+        (46.0, 51.0),
+        (51.0, 51.99),
+        (51.99, 56.99),
     ]
+    lines = [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 51.0), line(51.0, 56.99)]
+
+    result = run(lines, samples, pieces)
+
+    assert [item.text for item in result.lines[2:]] == ["ann", "bob", "ann", "whole phrase"]
+    assert result.parents == (0, 1, 2, 2, 2, 3)
+    assert result.lines[-1].speaker_id == "speaker-1"
+
+
+def test_a_long_piece_counts_only_for_its_time_inside_the_line(run):
+    samples = speech(*TWO_VOICES)
+
+    # Bob's piece is 20 s long, but only 0.5 s of it is inside the line.
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(15.0, 20.5)], samples, PIECES)
+
+    assert result.parents == (0, 1, 2)
+    assert result.lines[2].speaker_id == "speaker-1"
+
+
+def test_two_runs_of_one_speaker_with_a_short_other_voice_between_them_make_no_cut(run):
+    samples = speech(*TWO_VOICES, (ANN, 5.0), (BOB, 0.6), (ANN, 5.0))
+    pieces = [*PIECES, (40.0, 45.0), (45.0, 45.6), (45.6, 50.6)]
+
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(40.0, 50.6)], samples, pieces)
+
+    assert [item.text for item in result.lines] == ["whole phrase"] * 3
+
+
+def test_the_cut_falls_in_the_middle_of_a_gap_between_two_voices(run):
+    samples = speech(*TWO_VOICES, (ANN, 5.0), (0.0, 2.0), (BOB, 5.0))
+    pieces = [*PIECES, (40.0, 45.0), (47.0, 52.0)]
+
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(40.0, 52.0)], samples, pieces)
+
+    assert result.lines[2].end == result.lines[3].start == 46.0
+
+
+def test_the_cut_falls_where_the_later_voice_starts_when_two_voices_overlap(run):
+    samples = speech(*TWO_VOICES, (ANN, 6.0), (BOB, 6.0))
+    pieces = [*PIECES, (40.0, 47.0), (45.0, 52.0)]
+
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(40.0, 52.0)], samples, pieces)
+
+    assert result.lines[2].end == result.lines[3].start == 45.0
+
+
+def test_a_voice_inside_a_longer_piece_gets_a_run_and_the_longer_voice_continues(run):
+    samples = speech(*TWO_VOICES, (ANN, 3.0), (BOB, 2.0), (ANN, 5.0))
+    pieces = [*PIECES, (40.0, 50.0), (43.0, 45.0)]
+
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(40.0, 50.0)], samples, pieces)
+
+    assert [item.text for item in result.lines[2:]] == ["ann", "bob", "ann"]
+    assert [(item.start, item.end) for item in result.lines[2:]] == [
+        (40.0, 43.0),
+        (43.0, 45.0),
+        (45.0, 50.0),
+    ]
+
+
+def test_a_voice_that_loses_its_time_to_an_overlap_makes_no_cut(run):
+    samples = speech(*TWO_VOICES, (ANN, 1.5), (BOB, 7.0))
+    # Ann overlaps the line for 2 s, but Bob starts after 0.5 s and holds the rest.
+    pieces = [*PIECES, (40.0, 42.0), (40.5, 48.5)]
+
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(40.0, 48.5)], samples, pieces)
+
+    assert result.parents == (0, 1, 2)
+    assert result.lines[2].speaker_id == "speaker-2"
+
+
+def test_a_line_with_no_piece_gets_the_closest_voice_and_stays(run):
+    samples = speech(*TWO_VOICES, (0.0, 10.0))
+
+    result = run(
+        [line(0.0, 20.0), line(20.0, 40.0), line(41.0, 43.0)],
+        samples,
+        PIECES,
+        vectors=[UNIT[ANN], UNIT[BOB], np.array([0.1, 0.9, 0.0])],
+    )
+
+    assert speakers(result) == ["speaker-1", "speaker-2", "speaker-2"]
+    assert result.parents == (0, 1, 2)
+
+
+def test_a_line_with_no_piece_has_a_voice_when_every_piece_is_short(run):
+    samples = speech((ANN, 1.0), (0.0, 9.0))
+
+    result = run(
+        [line(0.0, 1.0), line(5.0, 6.0)],
+        samples,
+        [(0.0, 1.0)],
+        vectors=[UNIT[ANN], UNIT[BOB]],
+    )
+
+    assert speakers(result) == ["speaker-1", "speaker-1"]
+
+
+def test_speakers_number_from_one_by_their_first_line(run):
+    samples = speech(*TWO_VOICES, (CAT, 20.0))
+
+    # Ann has pieces but no line, so Bob and Cat are the only speakers with lines.
+    result = run([line(20.0, 40.0), line(40.0, 60.0)], samples, [*PIECES, (40.0, 60.0)])
+
+    assert speakers(result) == ["speaker-1", "speaker-2"]
+    assert [item.label for item in result.lines] == ["Speaker 1", "Speaker 2"]
+
+
+def test_a_name_on_a_split_line_follows_the_voice_with_the_most_of_its_speech(run):
+    samples = speech(*TWO_VOICES, (ANN, 12.0), (BOB, 12.0))
+    lines = [line(0.0, 20.0), line(20.0, 40.0, label="Bea"), line(40.0, 64.0)]
+
+    result = run(lines, samples, [*PIECES, (40.0, 52.0), (52.0, 64.0)])
+
+    assert [(item.text, item.label) for item in result.lines[2:]] == [
+        ("ann", "Speaker 1"),
+        ("bob", "Bea"),
+    ]
+
+
+def test_each_piece_embeds_only_its_own_audio(run):
+    samples = speech(*TWO_VOICES)
+    embedded = []
+
+    def record(piece):
+        embedded.append(piece.copy())
+        return embed(piece)
+
+    run([line(0.0, 20.0), line(20.0, 40.0)], samples, [(1.0, 3.0), (25.0, 30.5)], embed=record)
+
+    assert [piece.size for piece in embedded] == [2 * RATE, round(5.5 * RATE)]
+    assert np.array_equal(embedded[0], samples[RATE : 3 * RATE])
+    assert np.array_equal(embedded[1], samples[25 * RATE : round(30.5 * RATE)])
+
+
+def test_pieces_group_at_the_limit_of_one_half(run):
+    samples = speech((ANN, 20.0), (BOB, 20.0))
+    other = {
+        0.51: np.array([0.51, np.sqrt(1 - 0.51**2)]),
+        0.49: np.array([0.49, np.sqrt(1 - 0.49**2)]),
+    }
+
+    def count(score):
+        vectors = iter([np.array([1.0, 0.0]), other[score]])
+        result = run(
+            [line(0.0, 20.0), line(20.0, 40.0)],
+            samples,
+            PIECES,
+            vectors=[np.array([1.0, 0.0]), other[score]],
+            embed=lambda _piece: next(vectors),
+        )
+        return len(set(speakers(result)))
+
+    assert count(0.51) == 1
+    assert count(0.49) == 2
+
+
+def test_a_set_speaker_count_applies_to_the_pieces(run):
+    samples = speech((ANN, 20.0), (BOB, 20.0), (CAT, 20.0))
+    pieces = [*PIECES, (40.0, 60.0)]
+    lines = [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 60.0)]
+
+    assert len(set(speakers(run(lines, samples, pieces)))) == 3
+    assert len(set(speakers(run(lines, samples, pieces, speaker_count=2)))) == 2
+
+
+def test_a_part_with_no_text_keeps_the_line_whole_with_its_words(run):
+    samples = speech(*TWO_VOICES, (ANN, 9.0), (BOB, 15.0))
+    pieces = [*PIECES, (40.0, 49.0), (49.0, 64.0)]
+
+    result = run(
+        [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 64.0)],
+        samples,
+        pieces,
+        decode=Words("ann"),
+    )
+
+    assert [item.text for item in result.lines] == ["whole phrase"] * 3
+    assert result.parents == (0, 1, 2)
+    assert (result.lines[2].start, result.lines[2].end) == (40.0, 64.0)
+    assert result.lines[2].speaker_id == result.lines[1].speaker_id
+
+
+def test_a_part_gets_its_wall_time_from_the_line(run):
+    samples = speech(*TWO_VOICES, (ANN, 12.0), (BOB, 12.0))
+    lines = [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 64.0, wall="2026-11-05T10:00:40+00:00")]
+
+    result = run(lines, samples, [*PIECES, (40.0, 52.0), (52.0, 64.0)])
+
+    assert [item.wall for item in result.lines[2:]] == [
+        "2026-11-05T10:00:40+00:00",
+        "2026-11-05T10:00:52+00:00",
+    ]
+
+
+def test_a_part_of_a_line_without_a_wall_time_stays_without_one(run):
+    samples = speech(*TWO_VOICES, (ANN, 12.0), (BOB, 12.0))
+    lines = [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 64.0)]
+
+    result = run(lines, samples, [*PIECES, (40.0, 52.0), (52.0, 64.0)])
+
+    assert [item.wall for item in result.lines[2:]] == ["", ""]
+
+
+def test_a_source_without_audio_groups_whole_lines_and_runs_no_pass(monkeypatch):
+    def no_pass(*_args, **_options):
+        raise AssertionError("a source without audio runs no pass")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", no_pass)
+
+    result = group_and_split(
+        [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 64.0)],
+        [UNIT[ANN], UNIT[BOB], UNIT[ANN]],
+        read_source=None,
+        speaker_model="speaker.onnx",
+        embed=embed,
+        decode=Words(),
+    )
+
+    assert speakers(result) == ["speaker-1", "speaker-2", "speaker-1"]
+    assert result.parents == (0, 1, 2)
+
+
+def test_no_speech_groups_whole_lines(run):
+    samples = speech((0.0, 40.0))
+
+    result = run([line(0.0, 20.0), line(20.0, 40.0)], samples, [], vectors=[UNIT[ANN], UNIT[BOB]])
+
+    assert speakers(result) == ["speaker-1", "speaker-2"]
+
+
+def test_a_source_with_no_lines_reads_no_audio_and_runs_no_pass(monkeypatch):
+    def no_pass(*_args, **_options):
+        raise AssertionError("a source with no lines runs no pass")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", no_pass)
+    seen = []
+
+    result = group_and_split(
+        [],
+        [],
+        read_source=no_pass,
+        speaker_model="speaker.onnx",
+        embed=embed,
+        decode=Words(),
+        progress=seen.append,
+    )
+
+    assert (result.lines, result.parents) == ((), ())
+    assert seen == [1.0]
+
+
+def test_a_cancel_in_the_pass_ends_the_method(monkeypatch):
+    monkeypatch.setattr(voice_split, "find_speech_pieces", lambda *_args, **_options: None)
+    samples = speech(*TWO_VOICES)
+
+    result = group_and_split(
+        [line(0.0, 20.0)],
+        [UNIT[ANN]],
+        read_source=lambda: samples,
+        speaker_model="speaker.onnx",
+        embed=embed,
+        decode=Words(),
+    )
+
+    assert result is None
+
+
+def test_a_cancel_between_piece_embeddings_ends_the_method(run):
+    samples = speech(*TWO_VOICES)
+    embedded = []
+
+    def record(piece):
+        embedded.append(piece.size)
+        return embed(piece)
+
+    result = run(
+        [line(0.0, 20.0), line(20.0, 40.0)],
+        samples,
+        PIECES,
+        embed=record,
+        should_cancel=lambda: len(embedded) >= 1,
+    )
+
+    assert result is None
+    assert len(embedded) == 1
+
+
+def test_a_cancel_during_the_decode_of_a_part_ends_the_method(run):
+    samples = speech(*TWO_VOICES, (ANN, 12.0), (BOB, 12.0))
+    decode = Words()
+
+    result = run(
+        [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 64.0)],
+        samples,
+        [*PIECES, (40.0, 52.0), (52.0, 64.0)],
+        decode=decode,
+        should_cancel=lambda: len(decode.parts) >= 1,
+    )
+
+    assert result is None
+    assert len(decode.parts) == 1
+
+
+def test_progress_rises_to_one_and_never_falls_through_the_method(monkeypatch):
+    samples = speech(*TWO_VOICES, (ANN, 12.0), (BOB, 12.0))
+
+    def find(_samples, _model, *, progress, should_cancel):
+        assert not should_cancel()
+        progress(0.5)
+        progress(1.0)
+        return (*PIECES, (40.0, 52.0), (52.0, 64.0))
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", find)
+    seen = []
+
+    group_and_split(
+        [line(0.0, 20.0), line(20.0, 40.0), line(40.0, 64.0)],
+        [UNIT[ANN], UNIT[BOB], UNIT[ANN]],
+        read_source=lambda: samples,
+        speaker_model="speaker.onnx",
+        embed=embed,
+        decode=Words(),
+        progress=seen.append,
+    )
+
+    assert seen == sorted(seen)
+    assert seen[-1] == 1.0
+    assert len(set(seen)) > 3
+
+
+def test_progress_never_falls_when_grouping_counts_past_its_total(monkeypatch, run):
+    samples = speech(*TWO_VOICES)
+    real = voice_split.relabel_system_lines
+
+    def overshoot(items, vectors, **options):
+        result = real(items, vectors, **options)
+        options["progress"](9, 5)
+        return result
+
+    monkeypatch.setattr(voice_split, "relabel_system_lines", overshoot)
+    seen = []
+
+    run([line(0.0, 20.0), line(20.0, 40.0)], samples, PIECES, progress=seen.append)
+
+    assert seen == sorted(seen)
+    assert seen[-1] == 1.0
+
+
+def test_average_voices_weigh_by_duration_and_ignore_vector_length():
+    lines = [line(0, 3), line(3, 4.5), line(5.5, 7, "speaker-2")]
+    embeddings = [np.array([3.0, 0.0]), np.array([0.0, 2.0]), np.array([5.0, 5.0])]
 
     voices = average_voices(lines, embeddings)
 
@@ -278,342 +524,30 @@ def test_average_voices_weigh_by_duration_and_skip_short_phrases():
     assert voices["speaker-2"] == pytest.approx(np.array([1.0, 1.0]) / np.sqrt(2.0))
 
 
-class Words:
-    """Decode a part as the names of its voices, in order, or as nothing."""
+def test_read_saved_source_returns_every_sample_of_a_mono_file(tmp_path):
+    path = tmp_path / "mic.flac"
+    samples = np.linspace(-0.5, 0.5, 40001, dtype=np.float32)
+    sf.write(path, samples, RATE, format="FLAC", subtype="PCM_24")
 
-    def __init__(self, *silent):
-        self.calls = []
-        self.silent = silent
+    read = read_saved_source(path)
 
-    def __call__(self, samples):
-        self.calls.append(samples.size)
-        names = []
-        for name, voice in (("ann", ANN), ("bob", BOB), ("cat", CAT)):
-            if np.mean(np.isclose(samples, voice, atol=1e-5)) > 0.3:
-                names.append(name)
-        if any(name in self.silent for name in names):
-            return " \n"
-        return " ".join(names)
+    assert read.size == samples.size
+    assert read == pytest.approx(samples, abs=1e-5)
 
 
-def two_voice_session(mixed):
-    """Enough speech of Ann and Bob to group them, then one *mixed* phrase of 24 s."""
-    lines = [line(0.0, 20.0), line(20.0, 40.0, "speaker-2"), line(40.0, 64.0)]
-    embeddings = [UNIT[ANN], UNIT[BOB], embed(mixed)]
-    return lines, embeddings
+def test_read_saved_source_mixes_two_channels(tmp_path):
+    path = tmp_path / "mic.flac"
+    sf.write(path, np.full((RATE, 2), (0.2, 0.4), np.float32), RATE, format="FLAC")
 
+    assert read_saved_source(path) == pytest.approx(np.full(RATE, 0.3), abs=1e-4)
 
-def reader(samples_by_start):
-    def read(lines):
-        for item in lines:
-            yield samples_by_start[item.start]
 
-    return read
+def test_read_saved_source_rejects_another_rate(tmp_path):
+    path = tmp_path / "mic.flac"
+    sf.write(path, np.zeros(8000, np.float32), 8000, format="FLAC")
 
-
-def split(lines, embeddings, samples_by_start, decode, **options):
-    return group_and_split(
-        lines,
-        embeddings,
-        read_audio=reader(samples_by_start),
-        embed=embed,
-        decode=decode,
-        **options,
-    )
-
-
-def audio_for(mixed):
-    return {0.0: speech((ANN, 20.0)), 20.0: speech((BOB, 20.0)), 40.0: mixed}
-
-
-def test_a_split_makes_a_line_per_voice_with_its_times_and_speaker():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-
-    result = split(lines, embeddings, audio_for(mixed), Words())
-
-    assert [item.text for item in result.lines] == ["whole phrase", "whole phrase", "ann", "bob"]
-    assert result.parents == (0, 1, 2, 2)
-    ann_part, bob_part = result.lines[2:]
-    assert ann_part.speaker_id == result.lines[0].speaker_id
-    assert bob_part.speaker_id == result.lines[1].speaker_id
-    assert ann_part.start == 40.0
-    assert bob_part.end == 64.0
-    assert ann_part.end == bob_part.start
-    assert 50.5 <= ann_part.end <= 53.5
-
-
-def test_a_split_line_gets_its_wall_time_from_the_phrase():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-    lines[2] = line(40.0, 64.0, wall="2026-11-05T10:00:40+00:00")
-
-    result = split(lines, embeddings, audio_for(mixed), Words())
-
-    first, second = result.lines[2:]
-    assert first.wall == "2026-11-05T10:00:40+00:00"
-    offset = second.start - 40.0
-    whole_seconds = int(offset)
-    assert second.wall.startswith(f"2026-11-05T10:00:{40 + whole_seconds:02d}")
-
-
-def test_a_line_without_a_wall_time_stays_without_one():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-
-    result = split(lines, embeddings, audio_for(mixed), Words())
-
-    assert [item.wall for item in result.lines[2:]] == ["", ""]
-
-
-def test_a_phrase_splits_more_than_once():
-    mixed = speech((ANN, 8.0), (BOB, 8.0), (ANN, 8.0))
-    lines, embeddings = two_voice_session(mixed)
-
-    result = split(lines, embeddings, audio_for(mixed), Words())
-
-    assert [item.text for item in result.lines[2:]] == ["ann", "bob", "ann"]
-    assert result.parents == (0, 1, 2, 2, 2)
-
-
-def test_a_part_with_no_text_keeps_the_phrase_whole_with_its_words():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-
-    result = split(lines, embeddings, audio_for(mixed), Words("bob"))
-
-    assert [item.text for item in result.lines] == ["whole phrase"] * 3
-    assert result.parents == (0, 1, 2)
-    assert (result.lines[2].start, result.lines[2].end) == (40.0, 64.0)
-
-
-def test_a_short_phrase_is_not_read_or_checked():
-    lines = [line(0.0, 20.0), line(20.0, 40.0, "speaker-2"), line(40.0, 45.9)]
-    embeddings = [UNIT[ANN], UNIT[BOB], UNIT[ANN]]
-    read = []
-
-    def read_audio(long_lines):
-        read.extend(item.start for item in long_lines)
-        return reader({0.0: speech((ANN, 20.0)), 20.0: speech((BOB, 20.0))})(long_lines)
-
-    result = group_and_split(lines, embeddings, read_audio=read_audio, embed=embed, decode=Words())
-
-    assert read == [0.0, 20.0]
-    assert result.parents == (0, 1, 2)
-
-
-def test_a_phrase_of_exactly_the_limit_is_read_and_one_just_under_it_is_not():
-    lines = [line(0.0, 20.0), line(20.0, 40.0, "speaker-2"), line(40.0, 46.0), line(50.0, 55.99)]
-    embeddings = [UNIT[ANN], UNIT[BOB], UNIT[ANN], UNIT[ANN]]
-    audio = {0.0: speech((ANN, 20.0)), 20.0: speech((BOB, 20.0)), 40.0: speech((ANN, 6.0))}
-    read = []
-
-    def read_audio(long_lines):
-        read.extend(item.start for item in long_lines)
-        return reader(audio)(long_lines)
-
-    group_and_split(lines, embeddings, read_audio=read_audio, embed=embed, decode=Words())
-
-    assert read == [0.0, 20.0, 40.0]
-
-
-def test_a_phrase_between_six_and_seven_seconds_splits():
-    mixed = speech((ANN, 2.0), (BOB, 4.5))
-    lines = [line(0.0, 20.0), line(20.0, 40.0, "speaker-2"), line(40.0, 46.5)]
-    embeddings = [UNIT[ANN], UNIT[BOB], UNIT[ANN]]
-    audio = {0.0: speech((ANN, 20.0)), 20.0: speech((BOB, 20.0)), 40.0: mixed}
-
-    result = split(lines, embeddings, audio, Words())
-
-    assert [item.text for item in result.lines[2:]] == ["ann", "bob"]
-
-
-def test_each_part_gets_an_embedding_of_only_its_own_audio():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-    embedded = []
-
-    def recording_embed(samples):
-        embedded.append(samples.copy())
-        return embed(samples)
-
-    result = group_and_split(
-        lines,
-        embeddings,
-        read_audio=reader(audio_for(mixed)),
-        embed=recording_embed,
-        decode=Words(),
-    )
-
-    first, _second = result.lines[2:]
-    cut = round((first.end - first.start) * RATE)
-    # A slice has 3 s of audio, so the last two calls are the parts of the phrase.
-    assert [part.size for part in embedded[-2:]] == [cut, mixed.size - cut]
-    assert np.array_equal(embedded[-2], mixed[:cut])
-    assert np.array_equal(embedded[-1], mixed[cut:])
-
-
-def test_a_set_speaker_count_holds_where_automatic_grouping_gives_another_count():
-    # Ann and Cat score 0.45: below the automatic limit of 0.5, but the closest pair.
-    near_ann = np.array([0.45, 0.0, np.sqrt(1 - 0.45**2)])
-
-    def near_embed(samples):
-        return near_ann if np.isclose(np.median(samples), CAT, atol=1e-5) else embed(samples)
-
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines = [
-        line(0.0, 20.0),
-        line(20.0, 40.0, "speaker-2"),
-        line(40.0, 60.0, "speaker-3"),
-        line(60.0, 84.0),
-    ]
-    embeddings = [UNIT[ANN], UNIT[BOB], near_ann, UNIT[ANN]]
-    audio = {
-        0.0: speech((ANN, 20.0)),
-        20.0: speech((BOB, 20.0)),
-        40.0: speech((CAT, 20.0)),
-        60.0: mixed,
-    }
-
-    def grouped(count):
-        return group_and_split(
-            lines,
-            embeddings,
-            read_audio=reader(audio),
-            embed=near_embed,
-            decode=Words(),
-            speaker_count=count,
-        )
-
-    assert len({item.speaker_id for item in grouped(None).lines}) == 3
-    result = grouped(2)
-    assert len(result.lines) == 5
-    assert len({item.speaker_id for item in result.lines}) == 2
-
-
-def test_a_source_with_one_voice_reads_no_audio():
-    lines = [line(0.0, 20.0), line(20.0, 40.0)]
-
-    def read_audio(_long_lines):
-        raise AssertionError("no audio is needed for one voice")
-
-    result = group_and_split(
-        lines, [UNIT[ANN], UNIT[ANN]], read_audio=read_audio, embed=embed, decode=Words()
-    )
-
-    assert result.parents == (0, 1)
-
-
-def test_a_source_without_audio_is_grouped_and_not_split():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-
-    result = group_and_split(lines, embeddings, read_audio=None, embed=embed, decode=Words())
-
-    assert result.parents == (0, 1, 2)
-    assert result.lines[0].speaker_id != result.lines[1].speaker_id
-
-
-def test_a_set_speaker_count_holds_after_the_split():
-    mixed = speech((ANN, 12.0), (CAT, 12.0))
-    lines = [line(0.0, 20.0), line(20.0, 40.0, "speaker-2"), line(40.0, 64.0)]
-    embeddings = [UNIT[ANN], UNIT[CAT], embed(mixed)]
-    audio = {0.0: speech((ANN, 20.0)), 20.0: speech((CAT, 20.0)), 40.0: mixed}
-
-    result = split(lines, embeddings, audio, Words(), speaker_count=2)
-
-    assert len(result.lines) == 4
-    assert len({item.speaker_id for item in result.lines}) == 2
-
-
-def test_a_given_name_stays_with_its_voice_after_the_split():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-    lines[1] = TranscriptLine(20.0, 40.0, "", "system", "speaker-2", "Bea", "whole phrase")
-
-    result = split(lines, embeddings, audio_for(mixed), Words())
-
-    assert [(item.text, item.label) for item in result.lines[2:]] == [
-        ("ann", "Speaker 1"),
-        ("bob", "Bea"),
-    ]
-
-
-def test_progress_rises_to_one_and_never_falls_through_a_split():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-    seen = []
-
-    split(lines, embeddings, audio_for(mixed), Words(), progress=seen.append)
-
-    assert seen == sorted(seen)
-    assert seen[0] == 0.0
-    assert seen[-1] == 1.0
-
-
-def test_progress_reaches_one_without_a_split():
-    lines = [line(0.0, 20.0), line(20.0, 40.0, "speaker-2")]
-    seen = []
-
-    group_and_split(
-        lines,
-        [UNIT[ANN], UNIT[BOB]],
-        read_audio=reader({0.0: speech((ANN, 20.0)), 20.0: speech((BOB, 20.0))}),
-        embed=embed,
-        decode=Words(),
-        progress=seen.append,
-    )
-
-    assert seen == sorted(seen)
-    assert seen[-1] == 1.0
-
-
-def test_a_cancel_during_the_decode_of_a_part_ends_the_pass():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-    decode = Words()
-
-    result = split(
-        lines, embeddings, audio_for(mixed), decode, should_cancel=lambda: len(decode.calls) >= 1
-    )
-
-    assert result is None
-    assert len(decode.calls) == 1
-
-
-def test_a_cancel_closes_the_audio_reader():
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-    closed = []
-
-    def read_audio(long_lines):
-        try:
-            yield from reader(audio_for(mixed))(long_lines)
-        finally:
-            closed.append(True)
-
-    checks = iter([False, False, False, True])
-    # Relabel checks the cancel flag many times; let it pass, then cancel in the audio loop.
-    calls = {"reader": False}
-
-    def should_cancel():
-        return calls["reader"] and next(checks, True)
-
-    def start_reader(long_lines):
-        calls["reader"] = True
-        return read_audio(long_lines)
-
-    result = group_and_split(
-        lines,
-        embeddings,
-        read_audio=start_reader,
-        embed=embed,
-        decode=Words(),
-        should_cancel=should_cancel,
-    )
-
-    assert result is None
-    assert closed == [True]
+    with pytest.raises(ValueError, match="16000 Hz"):
+        read_saved_source(path)
 
 
 def test_source_segments_gives_each_interval_across_chunks():
@@ -628,22 +562,3 @@ def test_source_segments_gives_each_interval_across_chunks():
     assert found[0][1].size == 16000
     assert found[1][1][0] == 32000
     assert found[1][1].size == 8000
-
-
-def test_progress_never_falls_when_grouping_counts_past_its_total(monkeypatch):
-    mixed = speech((ANN, 12.0), (BOB, 12.0))
-    lines, embeddings = two_voice_session(mixed)
-    real = voice_split.relabel_system_lines
-
-    def overshoot(items, vectors, **options):
-        result = real(items, vectors, **options)
-        options["progress"](9, 5)
-        return result
-
-    monkeypatch.setattr(voice_split, "relabel_system_lines", overshoot)
-    seen = []
-
-    split(lines, embeddings, audio_for(mixed), Words(), progress=seen.append)
-
-    assert seen == sorted(seen)
-    assert seen[-1] == 1.0

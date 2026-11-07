@@ -55,9 +55,12 @@ installer scripts and all required package resources. The Agent rewrite
 prompt's MIT attribution is packaged at
 `stenographer/assets/licenses/asd-ste100-MIT.txt` in wheels and retained under
 `src/` in source distributions. The model attribution files
-(`underdog-bark-3.0-pro-NOTICE.txt`, `silero-vad-MIT.txt`, and
-`titanet-small-NOTICE.txt`) sit in the same folder, as do the Bark Pro
-converter and its venv lock under `stenographer/assets/convert/`.
+(`underdog-bark-3.0-pro-NOTICE.txt`, `silero-vad-MIT.txt`,
+`titanet-small-NOTICE.txt`, and `pyannote-segmentation-3.0-MIT.txt`) sit in the
+same folder, as do the Bark Pro converter and its venv lock under
+`stenographer/assets/convert/`. One model ships with the app and is committed to
+Git: `stenographer/assets/models/pyannote-segmentation-3-0.onnx`, about 6 MB.
+All other models are explicit downloads.
 
 ## Releases
 
