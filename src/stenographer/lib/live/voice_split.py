@@ -157,6 +157,7 @@ def _line_speech(
     for index in np.flatnonzero(overlaps > 0):
         piece = pieces[index]
         shares[piece.speaker_id] = shares.get(piece.speaker_id, 0.0) + float(overlaps[index])
+        # A voice with less overlap neither cuts the line nor takes time from a longer voice.
         if overlaps[index] >= _MINIMUM_RUN_SECONDS:
             spans.append((piece.start, piece.end, piece.speaker_id))
     return shares, _voice_runs(spans, line.start, line.end)

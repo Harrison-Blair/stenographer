@@ -248,6 +248,17 @@ def test_a_voice_cut_short_by_overlaps_on_both_sides_joins_its_neighbours_with_n
     assert result.lines[2].speaker_id == result.lines[0].speaker_id
 
 
+def test_a_voice_under_one_second_in_a_line_does_not_break_the_run_of_a_longer_voice(run):
+    samples = speech(*TWO_VOICES, (ANN, 0.8), (CAT, 0.4), (ANN, 0.4), (BOB, 2.4), (CAT, 20.0))
+    # Cat has 20 s of its own elsewhere, so its 0.4 s inside Ann's piece is a separate voice.
+    pieces = [*PIECES, (40.0, 41.6), (40.8, 41.2), (41.6, 44.0), (44.0, 64.0)]
+
+    result = run([line(0.0, 20.0), line(20.0, 40.0), line(40.0, 44.0)], samples, pieces)
+
+    assert [(item.start, item.end) for item in result.lines[2:]] == [(40.0, 41.6), (41.6, 44.0)]
+    assert speakers(result)[2:] == [result.lines[0].speaker_id, result.lines[1].speaker_id]
+
+
 def test_a_voice_that_loses_its_time_to_an_overlap_makes_no_cut(run):
     samples = speech(*TWO_VOICES, (ANN, 1.5), (BOB, 7.0))
     # Ann overlaps the line for 2 s, but Bob starts after 0.5 s and holds the rest.

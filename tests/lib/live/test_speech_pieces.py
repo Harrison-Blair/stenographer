@@ -18,11 +18,13 @@ import pytest
 
 from stenographer.lib.live import speech_pieces
 from stenographer.lib.live.errors import SpeechPassError
+from stenographer.lib.live.models import SPEAKER_MODEL, live_model_dir
 from stenographer.lib.live.speech_pieces import (
     find_speech_pieces,
     run_pass,
     segmentation_model_path,
 )
+from stenographer.lib.platform import current_platform
 from tests.support import wait_until
 
 SAMPLES = np.zeros(16000, np.float32)
@@ -290,3 +292,68 @@ def test_a_child_ends_itself_when_its_parent_is_killed():
     finally:
         if not gone():
             os.kill(pid, signal.SIGKILL)
+
+
+_VOWEL_FORMANTS = (
+    (730, 1090, 2440),
+    (270, 2290, 3010),
+    (300, 870, 2240),
+    (530, 1840, 2480),
+    (660, 1720, 2410),
+)
+
+
+def _generated_syllables(seconds):
+    """Return vowels made of harmonics at formant frequencies. The model takes them as speech."""
+    random = np.random.default_rng(0)
+    rate = 16000
+    samples = np.zeros(seconds * rate, np.float32)
+    position = 0.5
+    while position < seconds - 0.5:
+        length = random.uniform(0.15, 0.35)
+        first = int(position * rate)
+        last = int((position + length) * rate)
+        time_axis = np.arange(first, last) / rate
+        pitch = 120.0 * (1 + 0.08 * np.sin(2 * np.pi * 3 * time_axis) + random.uniform(-0.1, 0.1))
+        phase = 2 * np.pi * np.cumsum(pitch) / rate
+        formants = _VOWEL_FORMANTS[random.integers(len(_VOWEL_FORMANTS))]
+        vowel = np.zeros(last - first)
+        for harmonic in range(1, 40):
+            gain = sum(1 / (1 + ((harmonic * pitch - item) / 90) ** 2) for item in formants)
+            vowel += gain / harmonic**0.5 * np.sin(harmonic * phase)
+        samples[first:last] = 0.3 * vowel * np.hanning(last - first) ** 0.5 / np.max(np.abs(vowel))
+        pause = random.uniform(0.6, 1.2) if random.random() < 0.08 else random.uniform(0.02, 0.12)
+        position += length + pause
+    return samples
+
+
+@pytest.mark.integration
+def test_the_real_library_finds_pieces_in_generated_audio_through_the_real_child():
+    pytest.importorskip("sherpa_onnx", reason="sherpa-onnx is not installed")
+    data_dir = current_platform().data_dir(os.environ, Path.home())
+    model = live_model_dir(data_dir) / SPEAKER_MODEL.filename
+    if not model.is_file():
+        pytest.skip(f"live speaker model is absent: {model}")
+    seen = []
+
+    pieces = find_speech_pieces(
+        _generated_syllables(20), model, progress=seen.append, should_cancel=lambda: False
+    )
+
+    # A result that came through the real config, callback, and segment attributes.
+    assert pieces
+    assert all(isinstance(edge, float) for piece in pieces for edge in piece)
+    assert all(0.0 <= start < end <= 20.0 and end - start >= 0.5 for start, end in pieces)
+    assert [start for start, _ in pieces] == sorted(start for start, _ in pieces)
+    assert seen
+    assert seen == sorted(seen)
+    assert seen[-1] == 1.0
+    assert (
+        find_speech_pieces(
+            np.zeros(20 * 16000, np.float32),
+            model,
+            progress=lambda _fraction: None,
+            should_cancel=lambda: False,
+        )
+        == ()
+    )
