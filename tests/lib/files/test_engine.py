@@ -957,6 +957,82 @@ def test_a_file_job_percent_never_falls_when_the_pass_fails(tmp_path, monkeypatc
         engine.close()
 
 
+def _failing_pass(*_args, **_options):
+    raise SpeechPassError("speech pass ended with exit code -9")
+
+
+def _session_json(tmp_path, session_id):
+    return json.loads((_sessions(tmp_path) / session_id / "session.json").read_text())
+
+
+def test_a_new_file_with_a_failed_pass_is_marked_in_its_session_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(voice_split, "find_speech_pieces", _failing_pass)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    assert _session_json(tmp_path, job.session_id)["speaker_pass_failed"] is True
+    summary = SessionStore(_sessions(tmp_path)).read(job.session_id).summary
+    assert (summary.kind, summary.speaker_pass_failed) == ("file", True)
+
+
+def test_a_new_file_with_a_passing_pass_has_no_mark(tmp_path):
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    assert "speaker_pass_failed" not in _session_json(tmp_path, job.session_id)
+    assert not SessionStore(_sessions(tmp_path)).read(job.session_id).summary.speaker_pass_failed
+
+
+def test_a_new_file_without_speaker_separation_has_no_mark(tmp_path):
+    engine, job = _voice_change_job(tmp_path, diarize=False)
+    try:
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    assert "speaker_pass_failed" not in _session_json(tmp_path, job.session_id)
+
+
+@pytest.mark.parametrize(("fails", "state"), ((True, "live"), (False, "file-transcribe")))
+def test_a_job_on_a_recording_file_shows_live_only_after_a_failed_pass(
+    tmp_path, monkeypatch, fails, state
+):
+    monkeypatch.setattr(
+        voice_split,
+        "find_speech_pieces",
+        _failing_pass if fails else lambda *_args, **_options: (),
+    )
+    session = _recording(tmp_path)
+    engine = _engine(tmp_path, _file_asr_process(), speaker_tracker_factory=TwoVoiceTracker)
+    try:
+        job = engine.submit(session / "system.flac", diarize=True)
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    summary = SessionStore(_sessions(tmp_path)).read(session.name).summary
+    assert (summary.kind, summary.label_state) == ("rec", state)
+    # A recording shows its state in the list, so it needs no separate mark.
+    assert not summary.speaker_pass_failed
+
+
+def test_a_job_on_the_source_of_a_file_session_is_marked_after_a_failed_pass(tmp_path, monkeypatch):
+    first_engine, first = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(first, "completed")
+        session = _sessions(tmp_path) / first.session_id
+        monkeypatch.setattr(voice_split, "find_speech_pieces", _failing_pass)
+        again = first_engine.submit(session / "source.wav", diarize=True)
+        _wait_for(again, "completed")
+    finally:
+        first_engine.close()
+    summary = SessionStore(_sessions(tmp_path)).read(first.session_id).summary
+    assert (summary.kind, summary.label_state) == ("file", "live")
+    assert summary.speaker_pass_failed
+
+
 def test_a_speaker_model_error_on_a_piece_saves_the_lines_of_the_job(tmp_path):
     class FailsOnPieces(LevelTracker):
         calls = 0

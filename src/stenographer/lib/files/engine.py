@@ -191,8 +191,11 @@ class FilesEngine:
             if job.cancel_requested:
                 job._cancelled(tuple(lines))
                 return
+            speaker_pass_failed = False
             if job.options.diarize:
-                lines = self._diarize(job, media, lines, embeddings, tracker, refiner)
+                lines, speaker_pass_failed = self._diarize(
+                    job, media, lines, embeddings, tracker, refiner
+                )
                 if job.cancel_requested:
                     job._cancelled(tuple(lines))
                     return
@@ -205,10 +208,18 @@ class FilesEngine:
                     or max((line.end for line in lines), default=0.0),
                     lines=lines,
                     should_cancel=lambda: job.cancel_requested,
+                    speaker_pass_failed=speaker_pass_failed,
                 )
             else:
                 session_id, source = target
-                lines = self._write_revision(job, session_id, source, lines)
+                lines = self._write_revision(
+                    job,
+                    session_id,
+                    source,
+                    lines,
+                    # A failed pass reads as a recording does after a failed end pass.
+                    method="live" if speaker_pass_failed else "file-transcribe",
+                )
             job._complete(session_id, tuple(lines))
         except SessionWriteCancelledError:
             job._cancelled(job.progress.completed_lines)
@@ -310,7 +321,8 @@ class FilesEngine:
         embeddings: list[np.ndarray],
         tracker,
         refiner: OllamaRefiner | None,
-    ) -> list[TranscriptLine]:
+    ) -> tuple[list[TranscriptLine], bool]:
+        """Return the lines of the job, and whether they keep tracker labels after a failure."""
 
         def report(fraction: float) -> None:
             job._update("diarize", 80 + round(15 * fraction), tuple(lines))
@@ -340,12 +352,12 @@ class FilesEngine:
         except Exception as exc:
             # The transcription is the long part of a job, so it stays with its tracker labels.
             log_failure(log, logging.WARNING, "files: speaker_pass_failed", exc, safe=True)
-            return lines
+            return lines, True
         if grouped is None:
-            return lines
+            return lines, False
         result = list(grouped.lines)
         job._update("diarize", 95, tuple(result))
-        return result
+        return result, False
 
     def _make_refiner(self) -> OllamaRefiner | None:
         if self._refiner_factory is not None:
@@ -359,7 +371,13 @@ class FilesEngine:
         )
 
     def _write_revision(
-        self, job: FileJob, session_id: str, source: str, lines: list[TranscriptLine]
+        self,
+        job: FileJob,
+        session_id: str,
+        source: str,
+        lines: list[TranscriptLine],
+        *,
+        method: str,
     ) -> list[TranscriptLine]:
         """Save new lines of one source as a revision of the session that holds it."""
         detail = self._store.read(session_id)
@@ -394,7 +412,7 @@ class FilesEngine:
         self._store.write_revision(
             session_id,
             revised,
-            method="file-transcribe",
+            method=method,
             expected_revision=detail.revision,
             revision_name=revision_name,
             should_cancel=lambda: job.cancel_requested,

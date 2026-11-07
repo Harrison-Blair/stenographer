@@ -40,6 +40,10 @@ def write_private_temporary(directory: Path, name: str, content: bytes) -> Path:
     return temporary
 
 
+# In session.json of a new file session whose speaker pass failed.
+SPEAKER_PASS_FAILED_KEY = "speaker_pass_failed"
+
+
 def write_session_json(directory: Path, metadata: dict) -> None:
     atomic_write_private(
         directory / "session.json",

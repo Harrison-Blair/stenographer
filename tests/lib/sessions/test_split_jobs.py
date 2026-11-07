@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -309,6 +310,54 @@ def test_retranscribe_of_a_one_speaker_file_session_only_replaces_text(rig):
     assert [line.text.split()[0] for line in detail.lines] == ["ann", "bob", "ann"]
     assert {line.speaker_id for line in detail.lines} == {"speaker-1"}
     assert len(rig.decoded) == 1
+
+
+def _failed_file_session(rig):
+    source = rig.root / "Interview.wav"
+    sf.write(source, audio(), RATE)
+    return rig.store.create_file_session(
+        source,
+        started_at=datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC),
+        duration_seconds=64.0,
+        lines=[
+            TranscriptLine(0.0, 20.0, "", "file", "speaker-1", "Speaker 1", "old text"),
+            TranscriptLine(20.0, 40.0, "", "file", "speaker-2", "Speaker 2", "old text"),
+        ],
+        speaker_pass_failed=True,
+    )
+
+
+def test_a_later_retranscribe_clears_the_mark_of_a_failed_pass(rig):
+    session = _failed_file_session(rig)
+    assert rig.store.read(session).summary.speaker_pass_failed
+
+    rig.jobs.retranscribe(session)
+
+    summary = rig.store.read(session).summary
+    assert summary.label_state == "re-transcribe"
+    assert not summary.speaker_pass_failed
+
+
+def test_a_rename_keeps_the_key_and_shows_as_a_rename(rig):
+    session = _failed_file_session(rig)
+
+    rig.store.rename_speaker(session, "speaker-2", "Bea")
+
+    metadata = json.loads((rig.root / "sessions" / session / "session.json").read_text())
+    assert metadata["speaker_pass_failed"] is True
+    assert metadata["source_name"] == "Interview.wav"
+    summary = rig.store.read(session).summary
+    assert summary.label_state == "rename"
+    assert not summary.speaker_pass_failed
+    assert rig.store.read(session).lines[1].label == "Bea"
+
+
+def test_an_older_file_session_without_the_key_has_no_mark(rig):
+    session = file_session(rig, ("speaker-1", "speaker-2"))
+
+    metadata = json.loads((rig.root / "sessions" / session / "session.json").read_text())
+    assert "speaker_pass_failed" not in metadata
+    assert not rig.store.read(session).summary.speaker_pass_failed
 
 
 def test_an_older_session_without_metadata_still_splits(rig):

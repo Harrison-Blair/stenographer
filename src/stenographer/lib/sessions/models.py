@@ -20,6 +20,8 @@ class SessionSummary:
     kind: str = "rec"
     source_name: str | None = None
     label_state: str = "live"
+    # A file job kept its tracker labels because its speaker pass failed.
+    speaker_pass_failed: bool = False
 
 
 @dataclass(frozen=True)
