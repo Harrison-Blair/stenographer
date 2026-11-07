@@ -325,17 +325,22 @@ class FilesEngine:
                 text = refiner.refine(text, cancelled=lambda: job.cancel_requested)
             return text
 
-        grouped = group_and_split(
-            lines,
-            embeddings,
-            read_source=read_source,
-            speaker_model=self._speaker_model,
-            embed=tracker.embed,
-            decode=decode,
-            progress=report,
-            should_cancel=lambda: job.cancel_requested,
-            speaker_count=job.options.speaker_count,
-        )
+        try:
+            grouped = group_and_split(
+                lines,
+                embeddings,
+                read_source=read_source,
+                speaker_model=self._speaker_model,
+                embed=tracker.embed,
+                decode=decode,
+                progress=report,
+                should_cancel=lambda: job.cancel_requested,
+                speaker_count=job.options.speaker_count,
+            )
+        except Exception as exc:
+            # The transcription is the long part of a job, so it stays with its tracker labels.
+            log_failure(log, logging.WARNING, "files: speaker_pass_failed", exc, safe=True)
+            return lines
         if grouped is None:
             return lines
         result = list(grouped.lines)

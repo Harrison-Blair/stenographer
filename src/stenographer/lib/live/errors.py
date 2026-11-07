@@ -10,5 +10,5 @@ class InvalidVadModelError(ValueError):
     """The VAD model configuration is invalid."""
 
 
-class PassCancelledError(Exception):
-    """A skip stops the speech pass: only an exception from its callback ends the library."""
+class SpeechPassError(RuntimeError):
+    """The child process of the speech pass failed or died."""

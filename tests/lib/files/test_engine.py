@@ -17,6 +17,7 @@ import soundfile
 from stenographer.lib.config.models import Config
 from stenographer.lib.files.engine import FilesEngine
 from stenographer.lib.live import voice_split
+from stenographer.lib.live.errors import SpeechPassError
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -898,6 +899,63 @@ def test_a_file_job_splits_a_voice_change_at_the_end_of_the_job(tmp_path):
         assert percents == sorted(percents)
         rows = _transcript_rows(_sessions(tmp_path) / job.session_id)
         assert len(rows) == 4
+    finally:
+        engine.close()
+
+
+def test_a_failed_speaker_pass_saves_the_lines_with_their_tracker_labels(tmp_path, monkeypatch):
+    def fail(*_args, **_options):
+        raise SpeechPassError("speech pass ended with exit code -9")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", fail)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "completed")
+        lines = job.progress.completed_lines
+        assert [(line.speaker_id, line.label) for line in lines] == [("speaker-1", "Speaker 1")] * 3
+        assert [line.text for line in lines] == [
+            "recognized phrase 1",
+            "recognized phrase 2",
+            "recognized phrase 3",
+        ]
+        assert len(_transcript_rows(_sessions(tmp_path) / job.session_id)) == 3
+    finally:
+        engine.close()
+
+
+def test_a_speaker_model_error_on_a_piece_saves_the_lines_of_the_job(tmp_path):
+    class FailsOnPieces(LevelTracker):
+        calls = 0
+
+        def embed(self, samples):
+            # The first three embeddings are the phrases of the job.
+            type(self).calls += 1
+            if self.calls > 3:
+                raise RuntimeError("Where node failed")
+            return super().embed(samples)
+
+    engine = _engine(tmp_path, _file_asr_process(), speaker_tracker_factory=FailsOnPieces)
+    engine._segmenter_factory = VoiceChangeSegmenter
+    source = tmp_path / "meeting.wav"
+    soundfile.write(source, _voice_change_samples(), 16000)
+    job = engine.submit(source, diarize=True)
+    try:
+        _wait_for(job, "completed")
+        assert len(job.progress.completed_lines) == 3
+    finally:
+        engine.close()
+
+
+def test_a_cancel_during_a_failed_speaker_pass_stays_a_cancel(tmp_path, monkeypatch):
+    def cancel_and_fail(*_args, **_options):
+        job.cancel()
+        raise SpeechPassError("speech pass ended with exit code -9")
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", cancel_and_fail)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "cancelled")
+        assert not _sessions(tmp_path).exists() or not list(_sessions(tmp_path).iterdir())
     finally:
         engine.close()
 
