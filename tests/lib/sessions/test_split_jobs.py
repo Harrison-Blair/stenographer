@@ -360,6 +360,25 @@ def test_an_older_file_session_without_the_key_has_no_mark(rig):
     assert not rig.store.read(session).summary.speaker_pass_failed
 
 
+def _record_the_model(monkeypatch):
+    models = []
+
+    def record(samples, model, **options):
+        models.append(model)
+        return level_pieces(samples, model, **options)
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", record)
+    return models
+
+
+def test_rediarize_gives_the_pass_the_downloaded_speaker_model(rig, monkeypatch):
+    models = _record_the_model(monkeypatch)
+
+    rig.jobs.rediarize(recorded(rig.root))
+
+    assert models == [rig.root / "models" / "live" / "nemo_en_titanet_small.onnx"]
+
+
 def test_an_older_session_without_metadata_still_splits(rig):
     session = recorded(rig.root)
     (rig.root / "sessions" / session / "session.json").unlink()

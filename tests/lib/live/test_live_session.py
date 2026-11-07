@@ -1749,6 +1749,22 @@ def test_a_skip_reaches_the_speech_pass_of_a_recording(monkeypatch, tmp_path):
     assert len(_saved_detail(rig).lines) == 1
 
 
+def test_the_end_pass_gives_the_pass_the_downloaded_speaker_model(monkeypatch, tmp_path):
+    rig = _split_session(monkeypatch, tmp_path)
+    _say(rig, VOICE_A, 0.0, 20.0)
+    models = []
+
+    def record(samples, model, **options):
+        models.append(model)
+        return level_pieces(samples, model, **options)
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", record)
+
+    rig.session.stop()
+
+    assert models == [tmp_path / "models" / "live" / "nemo_en_titanet_small.onnx"]
+
+
 def test_a_skip_while_a_part_decodes_saves_the_whole_phrase_as_live(monkeypatch, tmp_path):
     rig = _split_session(monkeypatch, tmp_path)
     _say(rig, VOICE_A, 0.0, 20.0)

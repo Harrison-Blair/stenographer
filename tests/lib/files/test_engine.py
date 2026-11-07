@@ -1034,6 +1034,22 @@ def test_a_job_on_the_source_of_a_file_session_is_marked_after_a_failed_pass(tmp
     assert summary.speaker_pass_failed
 
 
+def test_a_file_job_gives_the_pass_the_downloaded_speaker_model(tmp_path, monkeypatch):
+    models = []
+
+    def record(samples, model, **options):
+        models.append(model)
+        return level_pieces(samples, model, **options)
+
+    monkeypatch.setattr(voice_split, "find_speech_pieces", record)
+    engine, job = _voice_change_job(tmp_path, diarize=True)
+    try:
+        _wait_for(job, "completed")
+    finally:
+        engine.close()
+    assert models == [tmp_path / "data" / "models" / "live" / "nemo_en_titanet_small.onnx"]
+
+
 def test_a_speaker_model_error_on_a_piece_saves_the_lines_of_the_job(tmp_path):
     class FailsOnPieces(LevelTracker):
         calls = 0
