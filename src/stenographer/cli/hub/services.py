@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from stenographer.lib.live.live_session import LiveSession
-from stenographer.lib.live.models import LIVE_MODELS, live_model_dir
 from stenographer.lib.logging.pipeline import fmt_event
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.jobs import SessionJobs
@@ -161,15 +160,6 @@ class HubServices:
     def start_recording(self) -> None:
         if self._session is not None:
             return
-        model_dir = live_model_dir(self._platform.data_dir(os.environ, Path.home()))
-        missing = [
-            model.filename for model in LIVE_MODELS if not (model_dir / model.filename).is_file()
-        ]
-        if missing:
-            raise RuntimeError(
-                "live voice models are missing; run `stenographer model download --live` "
-                f"(missing: {', '.join(missing)})"
-            )
         session = self._session_factory(
             self._config,
             diarize_mic=self._config.live.diarize_mic,

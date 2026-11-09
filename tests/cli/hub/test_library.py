@@ -388,6 +388,35 @@ def test_library_does_not_list_the_active_recording(tmp_path):
 # V2: detail and actions
 
 
+def test_a_file_session_with_a_failed_speaker_pass_shows_live_labels_in_its_detail(tmp_path):
+    root = tmp_path / "sessions"
+    source = tmp_path / "sources" / "meeting.wav"
+    source.parent.mkdir(parents=True)
+    sf.write(source, np.full(16_000, 0.1, dtype=np.float32), 16_000)
+    SessionStore(root).create_file_session(
+        source,
+        started_at=FILE_STARTED,
+        duration_seconds=1.0,
+        lines=(TranscriptLine(0.0, 1.0, "", "file", "speaker-1", "Speaker 1", "golf hotel india"),),
+        speaker_pass_failed=True,
+    )
+    app = make_app(tmp_path, FakeServices(root))
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 1)
+            await _until(pilot, lambda: app.library_screen.detail is not None)
+            app.refresh_view()
+            await pilot.pause()
+            state = app.screen.query_one("#library-detail-state", Static).render()
+            assert "live labels" in str(state)
+            # The list row stays the name of the source file.
+            assert "meeting.wav" in _rows(app)[0]
+            assert "live" not in _rows(app)[0]
+
+    asyncio.run(exercise())
+
+
 def test_library_detail_of_a_recording_and_of_a_file_session(tmp_path):
     root, sessions = _library(tmp_path)
     app = make_app(tmp_path, FakeServices(root))

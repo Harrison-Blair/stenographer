@@ -94,7 +94,7 @@ systemctl --user start stenographer.service
 ```
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
-offers the separate ASR and voice-activity model download. Use plain `setup` to
+offers the separate ASR model download. Use plain `setup` to
 review the hotkey, audio, ASR, feedback, and refine settings. Use hub Settings
 or the configuration file for the remaining settings. If room noise changes
 during spectrum calibration, keep the room quiet and retry. If overlay backend
@@ -113,7 +113,7 @@ stenographer model download --asr
 
 The command downloads the pinned source weights and converter packages (about
 1.6 GB), checks their sha256, and converts the model to int8 ONNX on your
-machine. It also downloads the Silero voice-activity model. It needs 10 GiB of
+machine. It needs 10 GiB of
 free disk and about 10.2 GiB of RAM while it converts. On the test machine it
 took about 2 minutes. The installed model uses about 653 MiB. A machine with
 less RAM can run out of memory during the conversion. Speech-model settings
@@ -186,9 +186,10 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   On Record, press `space` to start and `enter` to stop and save; the hub stays
   open while the speaker relabel pass runs; a skipped or failed
   pass saves the speakers and names shown on screen, numbered from 1, and a failure
-  shows the reason. Long lines that hold a clear change of speaker are split into
-  separate lines when a recording stops, when a file job ends, and on Re-diarize and
-  Re-transcribe. Overlapping speech stays on one line.
+  shows the reason. When a recording stops, when a file job ends, and on Re-diarize
+  and Re-transcribe, a bundled model finds the speech in the saved audio and the
+  speakers come from it. A line where another voice holds at least 1 second is split
+  into separate lines. The live view does not change.
   `o` opens the saved session in
   Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,
@@ -212,7 +213,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics; the summary defaults to hotkey dictations (`--source all` includes file transcriptions).
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file; `--raw` skips refinement even when `--refine` is supplied.
-- `stenographer model download [--asr] [--refine] [--live]` — fetch selected models explicitly; flags combine.
+- `stenographer model download [--asr] [--refine]` — fetch selected models explicitly; flags combine.
+  The voice-activity and speaker models ship with the app and need no download.
 - `stenographer run` — run the daemon in the foreground.
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
@@ -279,8 +281,8 @@ GPL-3.0-or-later.
 
 ### Third-party models
 
-Stenographer ships no model weights. You download each model explicitly. The
-attribution files are in
+Stenographer ships one model, pyannote segmentation 3.0. You download each other
+model explicitly. The attribution files are in
 [`src/stenographer/assets/licenses/`](src/stenographer/assets/licenses/).
 
 | Model | Authors | License | Use |
@@ -288,7 +290,6 @@ attribution files are in
 | [Underdog Bark 3.0 Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro) | Conway Research | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Speech recognition. Converted to ONNX and quantized to int8 (weight-only) on your machine by stenographer. |
 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | NVIDIA | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) | Moondream | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
-| [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. |
-| [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | NVIDIA | NeMo Toolkit license ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) | Speaker labels in Record and file jobs. |
-
-Voice model downloads replace corrupt files only after verifying the new download.
+| [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. Bundled in the app ([MIT text](src/stenographer/assets/licenses/silero-vad-MIT.txt)). |
+| [pyannote segmentation 3.0](https://huggingface.co/pyannote/segmentation-3.0) | CNRS | [MIT](src/stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt) | Finds speech when a recording or file is saved. Bundled in the app as the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) ONNX export. |
+| [WeSpeaker ResNet34-LM](https://github.com/wenet-e2e/wespeaker/blob/master/docs/pretrained.md) | WeSpeaker team (wenet-e2e) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); trained on VoxCeleb, which is offered for research purposes ([NOTICE](src/stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt)) | Speaker labels in Record and file jobs. Bundled in the app, with mean subtraction added to the ONNX graph by stenographer. |

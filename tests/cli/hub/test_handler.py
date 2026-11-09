@@ -135,12 +135,6 @@ def test_hub_opens_invalid_config_read_only_without_starting_worker(monkeypatch,
 
 def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
     from stenographer.cli.hub.services import HubServices
-    from stenographer.lib.live.models import LIVE_MODELS
-
-    model_dir = tmp_path / "models" / "live"
-    model_dir.mkdir(parents=True)
-    for model in LIVE_MODELS:
-        (model_dir / model.filename).touch()
 
     created = []
 
@@ -208,12 +202,7 @@ def test_hub_services_start_sessions_with_the_configured_mic_diarization(tmp_pat
 
     from stenographer.cli.hub.services import HubServices
     from stenographer.lib.config.models import Config
-    from stenographer.lib.live.models import LIVE_MODELS
 
-    model_dir = tmp_path / "models" / "live"
-    model_dir.mkdir(parents=True)
-    for model in LIVE_MODELS:
-        (model_dir / model.filename).touch()
     choices = []
 
     class Session:

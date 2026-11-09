@@ -7,6 +7,7 @@ import os
 import tempfile
 from contextlib import ExitStack
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,10 +16,15 @@ import soundfile as sf
 
 from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.media import decode_media
-from stenographer.lib.live.models import SPEAKER_MODEL, live_model_dir
+from stenographer.lib.live.models import speaker_model_path
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.live.voice_split import group_and_split, read_saved_audio, source_segments
+from stenographer.lib.live.voice_split import (
+    group_and_split,
+    read_saved_audio,
+    read_saved_source,
+    source_segments,
+)
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionNotFoundError
 from stenographer.lib.sessions.models import SessionDetail
@@ -26,7 +32,7 @@ from stenographer.lib.sessions.reader import session_directory, session_metadata
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Generator
 
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
@@ -155,11 +161,14 @@ class SessionJobs:
             grouped = group_and_split(
                 [detail.lines[index] for index in source_indices],
                 [embeddings[index] for index in source_indices],
-                read_audio=(
-                    self._file_audio(session_id)
+                read_source=(
+                    partial(self._file_source, session_id)
                     if detail.summary.kind == "file"
-                    else self._recorded_audio(session_id)
+                    else partial(
+                        read_saved_source, self._store.root / session_id / f"{source}.flac"
+                    )
                 ),
+                speaker_model=speaker_model_path(),
                 embed=tracker.embed,
                 decode=lambda samples: worker.transcribe(samples).text,
                 label_prefix=_LABEL_PREFIXES[source],
@@ -173,13 +182,7 @@ class SessionJobs:
         ]
 
     def _make_speaker_tracker(self) -> SpeakerTracker:
-        model_path = (
-            live_model_dir(self._platform.data_dir(os.environ, Path.home()))
-            / SPEAKER_MODEL.filename
-        )
-        if not model_path.is_file():
-            raise FileNotFoundError(f"speaker model is missing: {model_path}")
-        return self._speaker_tracker_factory(model_path)
+        return self._speaker_tracker_factory(speaker_model_path())
 
     def _make_worker(self) -> Worker:
         return self._worker_factory(
@@ -187,27 +190,8 @@ class SessionJobs:
             transport=self._platform.asr_transport(),
         )
 
-    def _recorded_audio(
-        self, session_id: str
-    ) -> Callable[[tuple[TranscriptLine, ...]], Iterator[np.ndarray]]:
-        def read(lines: tuple[TranscriptLine, ...]) -> Iterator[np.ndarray]:
-            for line in lines:
-                yield self._audio_segment(session_id, line)
-
-        return read
-
-    def _file_audio(
-        self, session_id: str
-    ) -> Callable[[tuple[TranscriptLine, ...]], Iterator[np.ndarray]]:
-        def read(lines: tuple[TranscriptLine, ...]) -> Iterator[np.ndarray]:
-            chunks = self._decode_source(self._store.source_audio(session_id))
-            try:
-                for _, samples in source_segments(chunks, lines):
-                    yield samples
-            finally:
-                chunks.close()
-
-        return read
+    def _file_source(self, session_id: str) -> np.ndarray:
+        return np.concatenate(list(self._decode_source(self._store.source_audio(session_id))))
 
     def _decode_source(self, path: Path) -> Generator[np.ndarray]:
         if self._media_decoder is not None:

@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING
@@ -17,13 +18,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stenographer.lib.audio.recorder import Recorder
-from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
+from stenographer.lib.live.models import speaker_model_path, vad_model_path
 from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
 from stenographer.lib.live.relabel import relabel_system_lines, relabel_work_units
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.live.voice_split import group_and_split, read_saved_audio
+from stenographer.lib.live.voice_split import group_and_split, read_saved_source
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.errors import SystemAudioCaptureError, UnsupportedPlatformError
@@ -33,7 +34,7 @@ from stenographer.lib.transcribe.results import TranscriptionResult
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
@@ -75,9 +76,8 @@ class LiveSession:
         self._writer = SessionWriter.open(data_dir, self._started_at)
         if diarize_mic:
             self._writer.mark_mic_diarized()
-        model_dir = live_model_dir(data_dir)
-        vad_model = model_dir / VAD_MODEL.filename
-        self._speaker_model = model_dir / SPEAKER_MODEL.filename
+        vad_model = vad_model_path()
+        self._speaker_model = speaker_model_path()
         self._worker = Worker(cfg.asr, transport=self._platform.asr_transport())
         # A mic-only session loads the system tracker when system audio first starts.
         self._trackers: dict[str, SpeakerTracker] = {}
@@ -462,8 +462,13 @@ class LiveSession:
             grouped = group_and_split(
                 lines,
                 embeddings,
-                # A source whose audio stopped saving has a short file, so no phrase can split.
-                read_audio=None if source in self.audio_failed_sources else self._saved_audio,
+                # A source whose audio stopped saving has a short file, so whole lines group.
+                read_source=(
+                    None
+                    if source in self.audio_failed_sources
+                    else partial(read_saved_source, self._writer.path / f"{source}.flac")
+                ),
+                speaker_model=self._speaker_model,
                 embed=self._trackers[source].embed,
                 decode=lambda samples: self._worker.transcribe(samples).text,
                 progress=lambda fraction, offset=offset, pass_units=pass_units: (
@@ -495,10 +500,6 @@ class LiveSession:
         ]
         self._write_revision(revised_lines, method="diarization")
         return True
-
-    def _saved_audio(self, lines: tuple[TranscriptLine, ...]) -> Iterator[np.ndarray]:
-        for line in lines:
-            yield read_saved_audio(self._writer.path / f"{line.source}.flac", line.start, line.end)
 
     def _save_shown_lines(self) -> None:
         """Save the speakers on screen. transcript.jsonl has only first-written speakers.

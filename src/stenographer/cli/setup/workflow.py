@@ -812,7 +812,6 @@ def _guided_setup(
 ) -> int:
     from stenographer.cli.doctor import report as doctor
     from stenographer.cli.shared.capabilities import missing_required, probe
-    from stenographer.lib.live.models import VAD_MODEL, live_model_dir
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay.platform import current_platform as overlay_platform
@@ -830,16 +829,9 @@ def _guided_setup(
     if not cached:
         console.write(
             "\nThe ASR model Underdog Bark 3.0 Pro is not installed. stenographer builds it on "
-            "this machine (download is approximately 1.6 GB; needs 10 GiB free disk). "
-            "It also downloads the Silero voice-activity model."
+            "this machine (download is approximately 1.6 GB; needs 10 GiB free disk)."
         )
         offer = "Download and convert it now?"
-    elif not (live_model_dir(data_dir) / VAD_MODEL.filename).is_file():
-        console.write(
-            "\nThe Silero voice-activity model that dictation needs is not installed "
-            "(download is about 0.6 MB)."
-        )
-        offer = "Download it now?"
     if offer is not None and ask_yes_no(console, offer, default=quick):
         try:
             bark_download.install_dictation_models(data_dir, on_step=console.write)

@@ -193,7 +193,6 @@ def render(
         for check in optional_checks:
             label = {
                 "system_capture": "system capture",
-                "live_models_cached": "live models cached",
                 "ffmpeg": "ffmpeg",
                 "python_venv": "python3 venv",
             }[check.check_id]

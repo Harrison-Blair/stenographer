@@ -16,6 +16,7 @@ import soundfile as sf
 
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions.models import SessionDetail, SessionSummary
+from stenographer.lib.sessions.persistence import SPEAKER_PASS_FAILED_KEY
 
 _SESSION_ID = re.compile(r"(?P<start>\d{8}T\d{6}Z)(?:-\d+)?\Z")
 _REVISION = re.compile(r"transcript\.r(?P<number>[2-9]|[1-9]\d+)\.jsonl\Z")
@@ -102,6 +103,16 @@ def _label_state(revision: str, metadata: dict) -> str:
     if method == "diarization":
         return "relabeled"
     return method if isinstance(method, str) and method else "revised"
+
+
+def _speaker_pass_failed(label_state: str, metadata: dict) -> bool:
+    """Return whether the current lines of a file session hold the tracker labels of a failure.
+
+    A later revision by another method has other labels, so only a ``live`` state counts.
+    """
+    return label_state == "live" and (
+        metadata.get(SPEAKER_PASS_FAILED_KEY) is True or metadata.get("method") == "live"
+    )
 
 
 def current_revision(directory: Path) -> tuple[str, Path, bool]:
@@ -304,6 +315,7 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
     talk_time: dict[str, float] = {}
     for line in lines:
         talk_time[line.label] = talk_time.get(line.label, 0.0) + line.end - line.start
+    label_state = _label_state(revision, metadata)
     summary = SessionSummary(
         session_id=session_id,
         started_at=started_at,
@@ -317,7 +329,8 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
             if kind == "file" and isinstance(metadata.get("source_name"), str)
             else None
         ),
-        label_state=_label_state(revision, metadata),
+        label_state=label_state,
+        speaker_pass_failed=kind == "file" and _speaker_pass_failed(label_state, metadata),
     )
     return SessionDetail(
         summary,

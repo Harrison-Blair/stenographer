@@ -17,7 +17,7 @@ import soundfile as sf
 
 from stenographer.cli.hub.services import HubServices
 from stenographer.lib.config.models import Config
-from stenographer.lib.live.models import LIVE_MODELS
+from stenographer.lib.live import voice_split
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
@@ -25,6 +25,12 @@ from stenographer.lib.sessions.errors import SessionSourceError, StaleRevisionEr
 from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
 from tests.lib.platform.support import NullProcessCounters
+
+
+@pytest.fixture(autouse=True)
+def _no_speech_found(monkeypatch):
+    """These jobs group whole lines. Splits have their own tests."""
+    monkeypatch.setattr(voice_split, "find_speech_pieces", lambda *_args, **_options: ())
 
 
 class FakePlatform:
@@ -98,9 +104,6 @@ def test_rediarize_uses_task_pass_and_saves_a_renamed_revision(tmp_path):
     session = _write_session(sessions_root)
     store = SessionStore(sessions_root)
     store.rename_speaker(session.name, "speaker-1", "Alex")
-    model_path = tmp_path / "models" / "live" / LIVE_MODELS[1].filename
-    model_path.parent.mkdir(parents=True)
-    model_path.touch()
     jobs = SessionJobs(
         store,
         Config.defaults(),
@@ -150,9 +153,6 @@ def _write_room_session(root: Path, *, diarized: bool) -> Path:
 
 
 def _jobs(tmp_path, store, tracker):
-    model_path = tmp_path / "models" / "live" / LIVE_MODELS[1].filename
-    model_path.parent.mkdir(parents=True)
-    model_path.touch()
     return SessionJobs(
         store, Config.defaults(), FakePlatform(tmp_path), speaker_tracker_factory=tracker
     )
@@ -213,9 +213,6 @@ def test_retranscribe_uses_current_asr_and_saves_new_text_revision(tmp_path):
         workers.append(worker)
         return worker
 
-    model_path = tmp_path / "models" / "live" / LIVE_MODELS[1].filename
-    model_path.parent.mkdir(parents=True)
-    model_path.touch()
     jobs = SessionJobs(
         store,
         config,
@@ -424,9 +421,6 @@ def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_p
         def embed(self, _samples):
             return np.array(next(self.vectors), dtype=np.float32)
 
-    model_path = tmp_path / "models" / "live" / LIVE_MODELS[1].filename
-    model_path.parent.mkdir(parents=True)
-    model_path.touch()
     jobs = SessionJobs(
         store,
         Config.defaults(),
@@ -440,7 +434,8 @@ def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_p
 
     detail = store.read(session_id)
     assert revision == "transcript.r2.jsonl"
-    assert decoder.paths == [sessions_root / session_id / "source.wav"]
+    # One decode for the new text and one for the pass over the whole source.
+    assert decoder.paths == [sessions_root / session_id / "source.wav"] * 2
     # Both 1 s phrases are too short to tell voices apart, so grouping gives them one speaker.
     assert [(line.source, line.label, line.text) for line in detail.lines] == [
         ("file", "Speaker 1", "new phrase 1"),
@@ -656,9 +651,6 @@ def test_stale_revision_keeps_a_rename_saved_during_the_job(tmp_path, operation)
     sessions_root = tmp_path / "sessions"
     session = _write_session(sessions_root)
     store = RenameAfterRead(sessions_root)
-    model_path = tmp_path / "models" / "live" / LIVE_MODELS[1].filename
-    model_path.parent.mkdir(parents=True)
-    model_path.touch()
     jobs = SessionJobs(
         store,
         Config.defaults(),

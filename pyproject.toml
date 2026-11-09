@@ -80,9 +80,13 @@ exclude = [
     "!/src/stenographer/assets/icons/stenographer.png",
     "!/src/stenographer/assets/keycodes.toml",
     "!/src/stenographer/assets/licenses/asd-ste100-MIT.txt",
+    "!/src/stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt",
     "!/src/stenographer/assets/licenses/silero-vad-MIT.txt",
-    "!/src/stenographer/assets/licenses/titanet-small-NOTICE.txt",
     "!/src/stenographer/assets/licenses/underdog-bark-3.0-pro-NOTICE.txt",
+    "!/src/stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt",
+    "!/src/stenographer/assets/models/pyannote-segmentation-3-0.onnx",
+    "!/src/stenographer/assets/models/silero_vad.onnx",
+    "!/src/stenographer/assets/models/wespeaker_en_voxceleb_resnet34_LM_mean.onnx",
     "!/src/stenographer/assets/sounds/legacy/delivered.wav",
     "!/src/stenographer/assets/sounds/legacy/error.wav",
     "!/src/stenographer/assets/sounds/legacy/record_start.wav",
@@ -196,6 +200,7 @@ include = [
     "src/stenographer/assets/convert/constraints.txt",
     "src/stenographer/assets/keycodes.toml",
     "src/stenographer/assets/default_config.toml.in",
+    "src/stenographer/assets/models/*.onnx",
     "src/stenographer/overlay/platform/linux/backends/protocols/**/*.py",
 ]
 

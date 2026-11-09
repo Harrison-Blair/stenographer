@@ -13,7 +13,8 @@ import numpy as np
 MINIMUM_SPEECH_DURATION_SECONDS = 1.2
 # Below this score, continuity is a safer assignment for a short phrase.
 _SHORT_PHRASE_FALLBACK_SIMILARITY = 0.25
-_THRESHOLD = 0.50
+# The WeSpeaker score at which a phrase joins a known speaker; calibrated on named lines.
+_THRESHOLD = 0.40
 _NUM_THREADS = 2
 
 

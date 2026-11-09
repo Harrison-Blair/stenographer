@@ -325,8 +325,8 @@ def test_command_surface():
             {"file": "clip.wav", "raw": True, "refine": True},
         ),
         (
-            ["model", "download", "--asr", "--refine", "--live"],
-            {"model_command": "download", "asr": True, "refine": True, "live": True},
+            ["model", "download", "--asr", "--refine"],
+            {"model_command": "download", "asr": True, "refine": True},
         ),
         (["doctor"], {"command": "doctor"}),
         (["devices"], {"command": "devices"}),

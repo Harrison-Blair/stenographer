@@ -11,9 +11,8 @@ import numpy as np
 import pytest
 import soundfile
 
-from stenographer.lib.live.models import LIVE_MODELS
+from stenographer.lib.live.models import speaker_model_path
 from stenographer.lib.live.speaker_tracker import Speaker, SpeakerClustering, SpeakerTracker
-from stenographer.lib.platform import current_platform
 
 
 def test_clustering_creates_a_speaker_when_no_match_reaches_threshold():
@@ -197,12 +196,7 @@ def test_public_speaker_clips_cluster_with_the_real_model():
     if missing_clips:
         pytest.skip(f"public speaker clips are absent from tmp/live_audio: {missing_clips}")
 
-    data_dir = current_platform().data_dir(
-        {"XDG_DATA_HOME": str(worktree / "tmp" / "xdg-data")}, Path.home()
-    )
-    model_path = data_dir / "models" / "live" / LIVE_MODELS[1].filename
-    if not model_path.is_file():
-        pytest.skip(f"live speaker model is absent: {model_path}")
+    model_path = speaker_model_path()
     pytest.importorskip("sherpa_onnx", reason="sherpa-onnx is not installed")
 
     recordings = []
@@ -264,6 +258,16 @@ def test_assign_nearest_picks_the_closest_speaker_below_the_threshold():
     clustering.speakers.append(Speaker("room-2", B.copy()))
 
     assert clustering.assign_nearest(np.array([0.2, 0.3, 0.9], dtype=np.float32)) == "room-2"
+
+
+@pytest.mark.parametrize(("score", "expected"), [(0.42, "speaker-1"), (0.38, "speaker-2")])
+def test_a_default_tracker_joins_a_known_speaker_from_a_score_of_0_40(monkeypatch, score, expected):
+    tracker, _, _ = _tracker(monkeypatch, [])
+    tracker.assign_embedding(np.array([1.0, 0.0], dtype=np.float32), duration=2.0)
+
+    phrase = np.array([score, np.sqrt(1 - score**2)], dtype=np.float32)
+
+    assert tracker.assign_embedding(phrase, duration=2.0) == expected
 
 
 def test_a_file_job_tracker_still_creates_speakers_as_phrases_arrive(monkeypatch):
@@ -382,3 +386,23 @@ def test_saved_speakers_count_only_phrases_that_a_pass_grouped(monkeypatch):
     saved = tracker.saved_speakers(("room-1", "room-1"), ("x", "y"), (1.0, 99.0))
 
     assert saved == (("room-1", "Dana"), ("room-2", "Room 2"))
+
+
+def test_the_real_speaker_model_ignores_the_loudness_of_a_phrase():
+    # The model expects features with their mean over time subtracted. A louder phrase adds
+    # the same amount to every log feature, so with that step the voice does not change.
+    model_path = speaker_model_path()
+    pytest.importorskip("sherpa_onnx", reason="sherpa-onnx is not installed")
+    rate = 16000
+    time = np.arange(3 * rate) / rate
+    pitch = 120 + 30 * np.sin(2 * np.pi * 0.7 * time)
+    phase = 2 * np.pi * np.cumsum(pitch) / rate
+    voiced = sum(np.sin(k * phase) / k for k in range(1, 20)) * (1.5 + np.sin(6 * np.pi * time))
+    noise = np.random.default_rng(0).standard_normal(time.size)
+    samples = (0.04 * voiced + 0.01 * noise).astype(np.float32)
+
+    tracker = SpeakerTracker(model_path)
+    loud = tracker.embed(samples)
+    quiet = tracker.embed(samples * np.float32(0.1))
+
+    assert loud @ quiet / (np.linalg.norm(loud) * np.linalg.norm(quiet)) > 0.9999

@@ -11,8 +11,10 @@ import numpy as np
 from stenographer.lib.live.speaker_tracker import MINIMUM_SPEECH_DURATION_SECONDS
 from stenographer.lib.live.transcript_line import TranscriptLine
 
-# A cluster with at least one fifth of the largest cluster's speech is a core voice.
+# A cluster with at least one fifth of the largest cluster's speech, or with half a minute
+# of speech, is a core voice.
 _MINIMUM_CLUSTER_SPEECH_FRACTION = 0.20
+_MINIMUM_CLUSTER_SPEECH_SECONDS = 30.0
 # Two-second phrases provide sustained turns rather than brief vocal residue.
 _MINIMUM_SUSTAINED_PHRASE_SECONDS = 2.0
 # Fifteen seconds of sustained phrases provides meaningful minor-voice support.
@@ -63,7 +65,7 @@ def relabel_system_lines(
     lines: Iterable[TranscriptLine],
     embeddings: Iterable[np.ndarray],
     *,
-    threshold: float = 0.5,
+    threshold: float = 0.4,
     progress: Callable[[int, int], None] = lambda _done, _total: None,
     should_cancel: Callable[[], bool] | None = None,
     speaker_count: int | None = None,
@@ -218,7 +220,9 @@ def relabel_system_lines(
 
     ordered_clusters = sorted(clusters.values(), key=min)
     cluster_times = [sum(durations[index] for index in members) for members in ordered_clusters]
-    minimum_cluster_time = max(cluster_times) * _MINIMUM_CLUSTER_SPEECH_FRACTION
+    minimum_cluster_time = min(
+        _MINIMUM_CLUSTER_SPEECH_SECONDS, max(cluster_times) * _MINIMUM_CLUSTER_SPEECH_FRACTION
+    )
     core_indices = [
         index for index, duration in enumerate(cluster_times) if duration >= minimum_cluster_time
     ]
@@ -346,7 +350,7 @@ def relabel_system_lines(
 
     progress(total, total)
     ranked_clusters = sorted(clusters.values(), key=lambda members: min(members))
-    return _apply_cluster_labels(original, ranked_clusters, durations, label_prefix)
+    return apply_cluster_labels(original, ranked_clusters, durations, label_prefix)
 
 
 def _relabel_fixed(
@@ -458,10 +462,10 @@ def _relabel_fixed(
         ranked_clusters.append(members)
     ranked_clusters.sort(key=min)
     progress(total, total)
-    return _apply_cluster_labels(lines, ranked_clusters, durations, label_prefix)
+    return apply_cluster_labels(lines, ranked_clusters, durations, label_prefix)
 
 
-def _apply_cluster_labels(
+def apply_cluster_labels(
     lines: tuple[TranscriptLine, ...],
     ranked_clusters: list[list[int]],
     durations: np.ndarray,

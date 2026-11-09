@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,9 +11,8 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from stenographer.lib.live.models import LIVE_MODELS
+from stenographer.lib.live.models import vad_model_path
 from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
-from stenographer.lib.platform import current_platform
 
 
 class FakeSegment:
@@ -125,13 +123,10 @@ def test_phrase_segmenter_reports_the_detector_speech_state(monkeypatch):
 
 @pytest.mark.integration
 def test_phrase_segmenter_with_real_vad_finds_task_one_turns_when_assets_are_present():
-    data_dir = current_platform().data_dir(os.environ, Path.home())
-    model_path = data_dir / "models" / "live" / LIVE_MODELS[0].filename
+    model_path = vad_model_path()
     audio_path = (
         Path(__file__).resolve().parents[3] / "tmp" / "live_audio" / "1-two-speakers-en.wav"
     )
-    if not model_path.is_file():
-        pytest.skip(f"Silero VAD model is absent: {model_path}")
     if not audio_path.is_file():
         pytest.skip(f"Task 1 public VAD sample is absent: {audio_path}")
 

@@ -9,8 +9,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
-
 if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
 
@@ -300,17 +298,6 @@ def build_report(config: Config) -> DoctorReport:
         path=str(bark_download.model_dir(data_dir)),
     )
     extra = {check.check_id: check for check in additional_checks.collect_additional_checks()}
-    live = extra.pop("live_models_cached")
-    add(
-        "live_models_cached",
-        "voice models",
-        "engine",
-        live.status == "ok",
-        live.detail,
-        live.fix,
-        failed="warn",
-        path=str(live_model_dir(data_dir)),
-    )
     checks.append(_refine_check(config))
     capture = extra.pop("system_capture")
     add(
@@ -383,55 +370,26 @@ def default_log_opener(path: pathlib.Path) -> bool:
 
 
 def default_model_status() -> tuple[ModelEntry, ...]:
-    """Return the speech model and each live model, present or missing on disk."""
-    import os
-
-    from stenographer.lib.live.download import _sha256
-    from stenographer.lib.live.models import LIVE_MODELS
-    from stenographer.lib.platform import current_platform
+    """Return the speech model, present or missing on disk."""
     from stenographer.lib.transcribe import bark_download
     from stenographer.lib.transcribe.bark_download import ASR_SIZE_TEXT
 
-    live_dir = live_model_dir(current_platform().data_dir(os.environ, pathlib.Path.home()))
-    names = {VAD_MODEL.filename: "vad", SPEAKER_MODEL.filename: "speaker"}
-    labels = {"vad": "voice activity", "speaker": "speaker model"}
-    sizes = {"vad": "about 0.6 MB", "speaker": "about 40 MB"}
-    entries = [
+    return (
         ModelEntry(
             "asr",
             "speech model",
             bark_download.MODEL_NAME,
             bark_download.is_model_cached(),
             ASR_SIZE_TEXT,
-        )
-    ]
-    for model in LIVE_MODELS:
-        model_id = names[model.filename]
-        entries.append(
-            ModelEntry(
-                model_id,
-                labels[model_id],
-                model.filename,
-                (live_dir / model.filename).is_file()
-                and _sha256(live_dir / model.filename) == model.sha256,
-                sizes[model_id],
-            )
-        )
-    return tuple(entries)
+        ),
+    )
 
 
 def default_model_download(model_id: str) -> None:
-    """Fetch one model, as ``stenographer model download`` does for it."""
+    """Build the speech model, the only model entry, as ``stenographer model download`` does."""
     import os
 
-    from stenographer.lib.live.download import download_live_models
-    from stenographer.lib.live.models import LIVE_MODELS
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe.bark_download import download_bark_pro
 
-    data_dir = current_platform().data_dir(os.environ, pathlib.Path.home())
-    if model_id == "asr":
-        download_bark_pro(data_dir)
-        return
-    filename = {"vad": VAD_MODEL.filename, "speaker": SPEAKER_MODEL.filename}[model_id]
-    download_live_models(data_dir, models=tuple(m for m in LIVE_MODELS if m.filename == filename))
+    download_bark_pro(current_platform().data_dir(os.environ, pathlib.Path.home()))

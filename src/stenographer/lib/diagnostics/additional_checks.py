@@ -3,13 +3,9 @@
 
 from __future__ import annotations
 
-import os
-import pathlib
 import shutil
 import subprocess
 from dataclasses import dataclass
-
-from stenographer.lib.live.models import LIVE_MODELS, live_model_dir
 
 
 @dataclass(frozen=True)
@@ -71,30 +67,6 @@ def system_capture_check() -> DiagnosticCheck:
     )
 
 
-def live_models_check(model_dir: pathlib.Path | None = None) -> DiagnosticCheck:
-    """Check that both pinned live models are present in the local cache."""
-    if model_dir is None:
-        from stenographer.lib.platform import current_platform
-
-        model_dir = live_model_dir(current_platform().data_dir(os.environ, pathlib.Path.home()))
-    missing = [
-        model.filename for model in LIVE_MODELS if not (model_dir / model.filename).is_file()
-    ]
-    if missing:
-        return DiagnosticCheck(
-            "live_models_cached",
-            "warn",
-            f"missing: {', '.join(missing)}",
-            "Run `stenographer model download --live`.",
-        )
-    return DiagnosticCheck(
-        "live_models_cached",
-        "ok",
-        "VAD and speaker models are cached",
-        "",
-    )
-
-
 def ffmpeg_check() -> DiagnosticCheck:
     """Check for the system FFmpeg executable used to read M4A and AAC files."""
     if shutil.which("ffmpeg") is None:
@@ -126,7 +98,6 @@ def collect_additional_checks() -> tuple[DiagnosticCheck, ...]:
     """Collect optional checks that never change the required capability gate."""
     return (
         system_capture_check(),
-        live_models_check(),
         ffmpeg_check(),
         python_venv_check(),
     )

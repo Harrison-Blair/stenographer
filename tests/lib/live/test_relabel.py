@@ -39,9 +39,11 @@ def test_default_relabel_does_not_merge_when_float64_score_is_below_threshold():
         _line(4.0, 3.0, "speaker-2", "L1"),
         _line(8.0, 6.0, "speaker-3", "L2"),
     )
+    # The first score against (1, 0, 0) is the float32 just under the default threshold 0.4.
+    below = float(np.nextafter(np.float32(0.4), np.float32(0.0)))
     embeddings = (
-        np.array([0.4999999403953552, 0.8660253882408142, 0.0], dtype=np.float32),
-        np.array([0.5, 0.8659821152687073, 0.008660109713673592], dtype=np.float32),
+        np.array([below, np.sqrt(1 - below**2), 0.0], dtype=np.float32),
+        np.array([0.4, np.sqrt(1 - 0.4**2 - 0.01**2), 0.01], dtype=np.float32),
         np.array([1.0, 0.0, 0.0], dtype=np.float32),
     )
 
@@ -49,6 +51,22 @@ def test_default_relabel_does_not_merge_when_float64_score_is_below_threshold():
 
     assert [line.speaker_id for line in relabeled] == ["speaker-1", "speaker-1", "speaker-2"]
     assert [line.label for line in relabeled] == ["L0", "L0", "L2"]
+
+
+def test_default_relabel_merges_two_voices_at_a_score_between_0_40_and_0_50():
+    # Two voices, each with a minute of speech, score 0.42: the default limit 0.40 merges them.
+    score = 0.42
+    voices = (
+        np.array([1.0, 0.0], dtype=np.float32),
+        np.array([score, np.sqrt(1 - score**2)], dtype=np.float32),
+    )
+    lines = tuple(
+        _line(index * 7.0, 6.0, f"speaker-{index % 2 + 1}", f"L{index % 2}") for index in range(20)
+    )
+
+    relabeled = relabel_system_lines(lines, [voices[index % 2] for index in range(20)])
+
+    assert {line.speaker_id for line in relabeled} == {"speaker-1"}
 
 
 def test_batch_relabel_merges_split_voices_and_keeps_the_dominant_renamed_label():
@@ -314,3 +332,19 @@ def test_room_prefix_applies_to_a_fixed_speaker_count():
 
     assert [line.speaker_id for line in relabeled] == ["room-1", "room-2", "room-1"]
     assert [line.label for line in relabeled] == ["Room 1", "Room 2", "Room 1"]
+
+
+def test_batch_relabel_keeps_a_half_minute_minor_voice_beside_a_long_top_voice():
+    # A 66 min top voice and 32 s of a minor voice in 1.6 s phrases a minute apart, so the
+    # sustained-speech rule does not keep it. One fifth of the top voice is 13.2 min, but
+    # 30 s of speech is enough to keep a voice.
+    top = np.array([1.0, 0.0], dtype=np.float32)
+    minor = np.array([0.0, 1.0], dtype=np.float32)
+    lines = (
+        *(_line(index * 60.0, 60.0, "speaker-1", "Speaker 1") for index in range(66)),
+        *(_line(3960.0 + index * 60.0, 1.6, "speaker-2", "Speaker 2") for index in range(20)),
+    )
+
+    relabeled = relabel_system_lines(lines, (top,) * 66 + (minor,) * 20, threshold=0.5)
+
+    assert [line.speaker_id for line in relabeled] == ["speaker-1"] * 66 + ["speaker-2"] * 20

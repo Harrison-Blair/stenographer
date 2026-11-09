@@ -165,19 +165,16 @@ transcript revision of that session.
 ### Prepare the models
 
 Record uses the same speech model as dictation and file jobs: Underdog Bark 3.0
-Pro, int8 ONNX on the CPU. It also uses separate voice-activity and speaker
-models. Download each model only when you choose to:
+Pro, int8 ONNX on the CPU. Build it once when you choose to:
 
 ```sh
 stenographer model download --asr
-stenographer model download --live
 ```
 
-`--asr` builds the speech model on your machine and downloads the Silero
-voice-activity model. It needs `python3-venv`, 10 GiB of free disk, and about
-10.2 GiB of RAM; see [build the speech model](usage.md#build-the-speech-model).
-`--live` downloads the Silero voice-activity model and the English speaker
-model. Record does not download models for you.
+It needs `python3-venv`, 10 GiB of free disk, and about 10.2 GiB of RAM; see
+[build the speech model](usage.md#build-the-speech-model). Record also uses the
+Silero voice-activity model and the English speaker model, WeSpeaker
+ResNet34-LM. Both ship with the app, so there is nothing else to download.
 
 ### Separate the speakers in a room
 
@@ -192,8 +189,9 @@ toggle for it. With the setting off, microphone lines are `You`.
 
 Limits:
 
-- Labels are per phrase. Voice-activity detection splits phrases at pauses, so
-  a speaker change without a pause stays in one phrase under one label.
+- During a recording, labels are per phrase. Voice-activity detection splits
+  phrases at pauses, so a speaker change without a pause stays in one phrase under
+  one label until the recording is saved.
 - Room labels are similarity estimates, like system labels. They can split one
   person or merge several people.
 - System audio that leaks into the microphone can appear as a room speaker. Use
@@ -225,14 +223,31 @@ revision. This pass also runs when you confirm quit during a recording. Speaker
 labels are similarity estimates, not reliable identity checks. A minor voice gets its own label only if it has at
 least 15 seconds of phrases that are each at least 2 seconds long within a
 30-second window and at least two-thirds of its speech in those sustained
-phrases, or if it has at least 20% of the top speaker's speech time.
-Otherwise, stenographer merges that voice into the most similar voice. Short or
+phrases, or if it has at least 30 seconds of speech or 20% of the top speaker's
+speech time, whichever is less. Otherwise, stenographer merges that voice into the most similar voice. Short or
 sparse phrases can therefore remain under another speaker's label.
+
+The saved speakers come from the saved audio. For each source with lines,
+stenographer runs the bundled pyannote segmentation model on the whole source,
+keeps the pieces of speech of 0.5 seconds or more, and groups the pieces with the
+rules above. A line gets the speaker with the most overlap in seconds. A line with
+no piece stays and gets the closest voice. A source with no saved audio, or one
+where the model finds no speech, groups whole lines. An older recording changes
+only when you press `d` or `t`.
+
+The model runs in a separate process, so the hub stays live and `q` stops the pass
+at once. A long pass uses much memory: on the recordings measured, 82 minutes of
+audio took about 1.7 GB in that process, and 287 minutes took about 7.4 GB. The app
+itself held about 1.1 GB and 1.7 GB for the same recordings with the earlier speaker
+model. If the process dies for any reason, including when the
+system runs out of memory, the pass counts as failed.
 
 When a pass merges speakers, the merged speaker keeps the number of the speaker with the most speech that an earlier pass grouped, and a renamed speaker chooses before an unnamed one. If two renamed speakers merge, only one name can stay on the merged speaker. When the session saves, speakers are numbered from 1 in order of first appearance, with no gaps, so a number can change once at save, for example `Room 3` becomes `Room 2`. Given names stay. If you skip the end pass, or it fails, stenographer saves the speakers and names shown on screen, numbered the same way, and a failure shows the reason on the saved Record screen. If that save fails, the stop shows as a failed save. File jobs and re-diarize number clusters by first appearance and keep each renamed label on one cluster, the one with the most shared speech time. Rename several speakers to the same name
 to merge their displayed labels; this does not change their speaker IDs. The
-clustering threshold is 0.50; it was tested on only three clips, so labels are
-not reliable identification.
+speaker model is WeSpeaker ResNet34-LM. Pieces of saved audio group at a
+similarity limit of 0.45; whole lines, and the regroups during a recording, at
+0.40. These limits were tested on six sources of five recordings, so labels are not reliable
+identification.
 
 ### Saved session files and privacy
 
@@ -273,7 +288,9 @@ not finished, newest first. Its columns are `date`, `dur`, `kind` (`rec` or
   ran, a revision method such as `rename` or
   `re-transcribe`, or `! interrupted` when the recording stopped without a
   clean save.
-- **File session:** `labels` is the name of the source file.
+- **File session:** `labels` is the name of the source file. If the speaker pass
+  failed at the end of the job, the detail above the transcript shows `live labels`
+  until a later revision, such as a rename or Re-transcribe.
 - **File job:** `dur` shows `queued` or the percent done, and `labels` shows the
   source file name. A failed job shows `× failed`; press `delete` to remove its
   row. When a job finishes, its row becomes the session row and stays
@@ -332,9 +349,9 @@ for a session recorded with microphone diarization (`"diarize_mic": true` in its
 `session.json`). For other sessions, including older ones, it relabels system
 lines only and microphone lines stay `You`. `r` can rename room speakers.
 
-A long phrase can hold more than one speaker. For phrases of 6 s or more on a source with speaker separation, Stenographer compares overlapping 3 s slices, one every 0.75 s, with the voices of the grouped speakers. When another speaker clearly leads for two slices in a row, it cuts the phrase at the quietest point near the change, decodes each part again, and groups the speakers again, so one line becomes several, each under its own speaker. If any part decodes to no text, the phrase stays whole, so no words are lost. Overlapping speech stays on one line. A microphone without diarization stays `You`.
+A long phrase can hold more than one speaker. On a source with speaker separation, a line where another voice holds a run of at least 1 second is cut, each part is decoded again, and each part gets the speaker of its run. A line has no minimum length. Where two voices overlap, the voice that started last holds the time, and a voice that speaks over a longer one gets its own run before the longer voice continues. If any part decodes to no text, the line stays whole, so no words are lost. A microphone without diarization stays `You`.
 
-This runs at four points: during the relabel pass when a recording stops (`q` skips it with that pass); on Re-diarize, which therefore also needs the speech model; on Re-transcribe, which also needs the speaker model when a source has speaker separation; and at the end of a file job, which keeps a speaker count you set. Re-transcribe now groups speakers again, so speaker labels can change; given names carry over. On an imported file it groups automatically and ignores a count set at import, so it can change the speaker count. A file session with one speaker keeps its labels and is not split. If all phrases of a file session are shorter than 1.2 s, Re-transcribe gives it one speaker. Stopping a long recording takes a little longer: about 1% of its length on the sessions measured.
+This runs at four points: during the relabel pass when a recording stops (`q` skips it with that pass); on Re-diarize, which therefore also needs the speech model; on Re-transcribe, which also needs the speaker model when a source has speaker separation; and at the end of a file job, which keeps a speaker count you set. The count applies to the pieces of speech, so fewer speakers than the number set can have lines. If the pass fails at the end of a file job, the job still saves its lines with the speakers from transcription and marks them `live labels`. If it fails on Re-diarize or Re-transcribe, the Library shows the failure and the previous revision stays. Re-transcribe now groups speakers again, so speaker labels can change; given names carry over. On an imported file it groups automatically and ignores a count set at import, so it can change the speaker count. A file session with one speaker keeps its labels and is not split. If the model finds no speech in a file session and all its phrases are shorter than 1.2 s, Re-transcribe gives it one speaker. Stopping a long recording takes longer: about 4% of its length on an 82-minute recording with much speech, before the parts are decoded.
 
 ### Transcribe a file
 
@@ -505,7 +522,7 @@ former Doctor and Setup sections. The checks are grouped:
 | Group | Checks |
 | --- | --- |
 | input | input access, microphone, hotkey, sounds |
-| engine | speech model, voice models, refine service, system audio, system service |
+| engine | speech model, refine service, system audio, system service |
 | other | each other doctor check, such as ffmpeg, the clipboard, and the overlay |
 
 Each row shows a state glyph, the check name, and a short detail that is cut
@@ -551,11 +568,9 @@ The dialogs:
 - **Quick setup** shows input access, microphone, and hotkey with their state
   and current value. Press `t` to test the selected step and `e` to open its
   setting.
-- **Models** shows the speech model and the two voice models with their size,
-  as present or missing or corrupt. Press `enter` on a missing or corrupt model
-  to download it; a corrupt file is replaced only after the download is
-  verified. One download runs at a time; a notice shows when another one is
-  running.
+- **Models** shows the speech model with its size, as present or missing.
+  Press `enter` on a missing model to build it. One download runs at a time; a
+  notice shows when another one is running.
 - **Defaults** writes the default configuration after a confirmation and
   keeps the current file as a timestamped backup.
 

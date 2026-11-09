@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Group the phrases of one source and split long phrases at clear voice changes."""
+"""Give the saved lines of one source their speakers from pieces of speech and split lines."""
 
 from __future__ import annotations
 
-import contextlib
 import itertools
 import logging
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -15,25 +14,21 @@ import numpy as np
 import soundfile as sf
 
 from stenographer.lib.audio.constants import SAMPLE_RATE
-from stenographer.lib.live.relabel import relabel_system_lines
-from stenographer.lib.live.speaker_tracker import MINIMUM_SPEECH_DURATION_SECONDS
+from stenographer.lib.live.relabel import apply_cluster_labels, relabel_system_lines
+from stenographer.lib.live.speech_pieces import find_speech_pieces
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event
 
 log = logging.getLogger(__name__)
 
-# The user tested these settings by ear on saved sessions. Five cuts that the 0.75 s
-# spacing adds were all heard to hold a second voice: limited evidence.
-_MINIMUM_PHRASE_SECONDS = 6.0
-_SLICE_SAMPLES = 3 * SAMPLE_RATE
-_HOP_SAMPLES = 3 * SAMPLE_RATE // 4
-_MINIMUM_LEAD = 0.15
-_RUN_SLICES = 2
-# A window this long finds a pause between speakers, not a stop consonant inside a word.
-_QUIET_WINDOW_SAMPLES = SAMPLE_RATE // 5
-# Shares of the progress of one pass. Decoding is the slow part of the pass.
-_GROUPED_SHARE = 0.1
-_CHECKED_SHARE = 0.95
+# The user tested this limit on the pieces of saved sessions with the WeSpeaker model.
+_GROUPING_THRESHOLD = 0.45
+# A shorter hold of another voice does not cut a line.
+_MINIMUM_RUN_SECONDS = 1.0
+# Shares of the progress of one pass. The pass over the source is the slow part.
+_FOUND_SHARE = 0.6
+_EMBEDDED_SHARE = 0.8
+_GROUPED_SHARE = 0.85
 
 
 @dataclass(frozen=True)
@@ -55,7 +50,14 @@ def read_saved_audio(path: Path, start: float, end: float) -> np.ndarray:
         samples = audio.read(last - first, dtype="float32", always_2d=True)
     if len(samples) == 0:
         raise ValueError(f"session phrase has no audio: {path}")
-    return np.ascontiguousarray(np.mean(samples, axis=1, dtype=np.float32))
+    # A long source is about 1 GB, so mono audio is not copied.
+    mono = samples[:, 0] if samples.shape[1] == 1 else np.mean(samples, axis=1, dtype=np.float32)
+    return np.ascontiguousarray(mono)
+
+
+def read_saved_source(path: Path) -> np.ndarray:
+    """Return mono samples of a whole saved 16 kHz session audio file."""
+    return read_saved_audio(path, 0.0, sf.info(path).duration)
 
 
 def source_segments(
@@ -91,12 +93,10 @@ def average_voices(
     """Return the unit-length, duration-weighted mean voice of each grouped speaker."""
     members: dict[str, list[tuple[np.ndarray, float]]] = {}
     for line, embedding in zip(lines, embeddings, strict=True):
-        duration = line.end - line.start
-        if duration >= MINIMUM_SPEECH_DURATION_SECONDS:
-            vector = np.asarray(embedding, dtype=np.float64)
-            members.setdefault(line.speaker_id, []).append(
-                (vector / np.linalg.norm(vector), duration)
-            )
+        vector = np.asarray(embedding, dtype=np.float64)
+        members.setdefault(line.speaker_id, []).append(
+            (vector / np.linalg.norm(vector), line.end - line.start)
+        )
     voices = {}
     for speaker_id, weighted in members.items():
         mean = np.average(
@@ -108,91 +108,67 @@ def average_voices(
     return voices
 
 
-def voice_change_cuts(
-    samples: np.ndarray,
-    speaker_id: str,
-    voices: Mapping[str, np.ndarray],
-    embed: Callable[[np.ndarray], np.ndarray],
-) -> tuple[int, ...]:
-    """Return the sample index of each cut of a phrase grouped under *speaker_id*.
+def _closest_voice(vector: np.ndarray, voices: dict[str, np.ndarray]) -> str:
+    unit = np.asarray(vector, dtype=np.float64) / np.linalg.norm(vector)
+    return max(voices, key=lambda speaker_id: float(voices[speaker_id] @ unit))
 
-    Each slice names the speaker that leads the runner-up by the minimum lead, or nobody.
-    The phrase has a voice change when another speaker leads two slices in a row. Each
-    cut falls between the centers of two slices, so each part has at least one hop.
+
+def _joined_runs(runs: Iterable[tuple[str, float, float]]) -> list[tuple[str, float, float]]:
+    joined: list[tuple[str, float, float]] = []
+    for speaker_id, start, end in runs:
+        if joined and joined[-1][0] == speaker_id:
+            joined[-1] = (speaker_id, joined[-1][1], end)
+        else:
+            joined.append((speaker_id, start, end))
+    return joined
+
+
+def _voice_runs(
+    spans: Sequence[tuple[float, float, str]], line_start: float, line_end: float
+) -> list[tuple[str, float, float]]:
+    """Return ``(speaker, start, end)`` of each run of one voice in a line, in time order.
+
+    *spans* are the whole pieces that the line overlaps, by start. Where pieces overlap, the
+    voice whose piece started last holds the time, also if it started before the line, so a
+    voice that speaks over another gets its own run and the other voice continues after it.
     """
-    if len(voices) < 2:
-        return ()
-    names = tuple(voices)
-    matrix = np.stack([voices[name] for name in names])
-    leaders: list[str | None] = []
-    for start in range(0, samples.size - _SLICE_SAMPLES + 1, _HOP_SAMPLES):
-        vector = np.asarray(embed(samples[start : start + _SLICE_SAMPLES]), dtype=np.float64)
-        scores = matrix @ (vector / np.linalg.norm(vector))
-        runner_up, leader = np.argsort(scores)[-2:]
-        leaders.append(
-            names[leader] if scores[leader] - scores[runner_up] >= _MINIMUM_LEAD else None
-        )
-
-    runs = _voice_runs(leaders)
-    if not any(speaker != speaker_id for speaker, _, _ in runs):
-        return ()
-    changes = _change_slices(leaders, runs, speaker_id)
-    return tuple(_quietest_sample(samples, *between) for between in changes)
-
-
-def _voice_runs(leaders: Sequence[str | None]) -> list[tuple[str, int, int]]:
-    """Return ``(speaker, first, last)`` of each stretch of one speaker, in slices.
-
-    A stretch starts with a run of two slices. Later runs of the same speaker join it.
-    """
-    runs: list[tuple[str, int, int]] = []
-    index = 0
-    while index < len(leaders):
-        speaker = leaders[index]
-        last = index
-        while last + 1 < len(leaders) and leaders[last + 1] == speaker:
-            last += 1
-        if speaker is not None and last - index + 1 >= _RUN_SLICES:
-            if runs and runs[-1][0] == speaker:
-                runs[-1] = (speaker, runs[-1][1], last)
-            else:
-                runs.append((speaker, index, last))
-        index = last + 1
-    return runs
-
-
-def _change_slices(
-    leaders: Sequence[str | None], runs: Sequence[tuple[str, int, int]], speaker_id: str
-) -> list[tuple[int, int]]:
-    """Return the two slices that hold each voice change.
-
-    Unclear slices at the ends of a phrase show no change. One clear slice of another
-    speaker there ends a run of another voice, but it is no change next to a run of the
-    phrase's own speaker, because a change needs two slices in a row.
-    """
-    changes = []
-    speaker, first, _ = runs[0]
-    before = [i for i in range(first) if leaders[i] not in (None, speaker)]
-    if before and speaker != speaker_id:
-        changes.append((before[-1], first))
-    changes.extend((left[2], right[1]) for left, right in itertools.pairwise(runs))
-    speaker, _, last = runs[-1]
-    after = [i for i in range(last + 1, len(leaders)) if leaders[i] not in (None, speaker)]
-    if after and speaker != speaker_id:
-        changes.append((last, after[0]))
-    return changes
-
-
-def _quietest_sample(samples: np.ndarray, left_slice: int, right_slice: int) -> int:
-    """Return the center of the quietest window between the centers of two slices."""
-    start = left_slice * _HOP_SAMPLES + _SLICE_SAMPLES // 2
-    end = right_slice * _HOP_SAMPLES + _SLICE_SAMPLES // 2
-    window_start = start - _QUIET_WINDOW_SAMPLES // 2
-    power = np.cumsum(
-        np.square(samples[window_start : end + _QUIET_WINDOW_SAMPLES // 2], dtype=np.float64)
+    edges = {line_start, line_end}
+    edges.update(
+        edge for start, end, _ in spans for edge in (start, end) if line_start < edge < line_end
     )
-    energy = power[_QUIET_WINDOW_SAMPLES:] - power[:-_QUIET_WINDOW_SAMPLES]
-    return start + int(np.argmin(energy))
+    held: list[tuple[str, float, float]] = []
+    for left, right in itertools.pairwise(sorted(edges)):
+        holders = [span for span in spans if span[0] <= left and right <= span[1]]
+        if holders:
+            held.append((max(holders, key=lambda span: span[0])[2], left, right))
+    long_runs = (run for run in _joined_runs(held) if run[2] - run[1] >= _MINIMUM_RUN_SECONDS)
+    return _joined_runs(long_runs)
+
+
+def _line_speech(
+    line: TranscriptLine, pieces: Sequence[TranscriptLine]
+) -> tuple[dict[str, float], list[tuple[str, float, float]]]:
+    """Return the seconds of each speaker that overlap a line, and the voice runs of the line."""
+    starts = np.array([piece.start for piece in pieces])
+    ends = np.array([piece.end for piece in pieces])
+    overlaps = np.minimum(ends, line.end) - np.maximum(starts, line.start)
+    shares: dict[str, float] = {}
+    spans = []
+    for index in np.flatnonzero(overlaps > 0):
+        piece = pieces[index]
+        shares[piece.speaker_id] = shares.get(piece.speaker_id, 0.0) + float(overlaps[index])
+        # A voice with less overlap neither cuts the line nor takes time from a longer voice.
+        if overlaps[index] >= _MINIMUM_RUN_SECONDS:
+            spans.append((piece.start, piece.end, piece.speaker_id))
+    return shares, _voice_runs(spans, line.start, line.end)
+
+
+def _cuts(line: TranscriptLine, runs: Sequence[tuple[str, float, float]]) -> list[int]:
+    """Return the sample index in the line of the middle of the gap between each two runs."""
+    return [
+        round(((left[2] + right[1]) / 2 - line.start) * SAMPLE_RATE)
+        for left, right in itertools.pairwise(runs)
+    ]
 
 
 def _shifted_wall(wall: str, seconds: float) -> str:
@@ -205,10 +181,10 @@ def _shifted_wall(wall: str, seconds: float) -> str:
 def _split_line(
     line: TranscriptLine,
     samples: np.ndarray,
-    cuts: tuple[int, ...],
+    cuts: Sequence[int],
     decode: Callable[[np.ndarray], str],
     should_cancel: Callable[[], bool],
-) -> list[tuple[TranscriptLine, np.ndarray]] | None:
+) -> list[TranscriptLine] | None:
     """Return the parts of a line, or an empty list if a part has no text and the line stays.
 
     Return ``None`` on a cancel.
@@ -221,17 +197,13 @@ def _split_line(
         text = decode(samples[first:last]).strip()
         if not text:
             return []
-        start = line.start + first / SAMPLE_RATE
         parts.append(
-            (
-                replace(
-                    line,
-                    start=start,
-                    end=line.end if last == samples.size else line.start + last / SAMPLE_RATE,
-                    wall=_shifted_wall(line.wall, first / SAMPLE_RATE),
-                    text=text,
-                ),
-                samples[first:last],
+            replace(
+                line,
+                start=line.start + first / SAMPLE_RATE,
+                end=line.end if last == samples.size else line.start + last / SAMPLE_RATE,
+                wall=_shifted_wall(line.wall, first / SAMPLE_RATE),
+                text=text,
             )
         )
     return parts
@@ -241,7 +213,8 @@ def group_and_split(
     lines: Sequence[TranscriptLine],
     embeddings: Sequence[np.ndarray],
     *,
-    read_audio: Callable[[tuple[TranscriptLine, ...]], Iterator[np.ndarray]] | None,
+    read_source: Callable[[], np.ndarray | None] | None,
+    speaker_model: Path,
     embed: Callable[[np.ndarray], np.ndarray],
     decode: Callable[[np.ndarray], str],
     progress: Callable[[float], None] = lambda _fraction: None,
@@ -249,91 +222,131 @@ def group_and_split(
     speaker_count: int | None = None,
     label_prefix: str = "Speaker",
 ) -> GroupedLines | None:
-    """Group one source, split the phrases with a voice change, and group the new lines.
+    """Give the lines of one source their speakers from pieces of its saved audio.
 
-    *read_audio* gets the long lines and yields their samples in that order; ``None`` means
-    the source has no saved audio, so no phrase can split. *progress* gets a fraction that
-    never falls. Return ``None`` on a cancel.
+    Group the pieces into speakers. Each line gets the speaker with the most overlap, or the
+    closest voice if no piece overlaps it. A line where another voice holds a run of at least
+    1 s splits, and each part gets the speaker of its run.
+
+    *read_source* returns all samples of the source, or ``None`` on a cancel. A *read_source*
+    of ``None`` means the source has no saved audio. A source with no audio or no speech groups
+    whole lines. *progress* gets a fraction that never falls. Return ``None`` on a cancel.
     """
     original = tuple(lines)
     vectors = tuple(embeddings)
+    if not original:
+        progress(1.0)
+        return GroupedLines((), ())
 
     def stage(start: float, end: float) -> Callable[[int, int], None]:
         # The grouping count can pass its total near the end of a pass.
         return lambda done, total: progress(start + (end - start) * min(done, total) / total)
 
-    grouped = relabel_system_lines(
-        original,
-        vectors,
-        progress=stage(0.0, _GROUPED_SHARE),
+    def whole_lines(first_progress: float) -> GroupedLines | None:
+        grouped = relabel_system_lines(
+            original,
+            vectors,
+            progress=stage(first_progress, 1.0),
+            should_cancel=should_cancel,
+            speaker_count=speaker_count,
+            label_prefix=label_prefix,
+        )
+        return None if grouped is None else GroupedLines(grouped, tuple(range(len(grouped))))
+
+    if read_source is None:
+        return whole_lines(0.0)
+    samples = read_source()
+    if samples is None:
+        return None
+    pieces = find_speech_pieces(
+        samples,
+        speaker_model,
+        progress=lambda fraction: progress(_FOUND_SHARE * fraction),
+        should_cancel=should_cancel,
+    )
+    if pieces is None:
+        return None
+    if not pieces:
+        # The pass has reported progress up to this share.
+        return whole_lines(_FOUND_SHARE)
+
+    id_prefix = label_prefix.lower()
+    piece_lines = tuple(
+        TranscriptLine(
+            start=start,
+            end=end,
+            wall="",
+            source=original[0].source,
+            speaker_id=f"{id_prefix}-1",
+            label=f"{label_prefix} 1",
+            text="",
+        )
+        for start, end in pieces
+    )
+    piece_vectors = []
+    for done, (start, end) in enumerate(pieces, 1):
+        if should_cancel():
+            return None
+        piece_vectors.append(embed(samples[int(start * SAMPLE_RATE) : int(end * SAMPLE_RATE)]))
+        progress(_FOUND_SHARE + (_EMBEDDED_SHARE - _FOUND_SHARE) * done / len(pieces))
+    grouped_pieces = relabel_system_lines(
+        piece_lines,
+        piece_vectors,
+        threshold=_GROUPING_THRESHOLD,
+        progress=stage(_EMBEDDED_SHARE, _GROUPED_SHARE),
         should_cancel=should_cancel,
         speaker_count=speaker_count,
         label_prefix=label_prefix,
     )
-    if grouped is None:
+    if grouped_pieces is None:
         return None
-    unchanged = GroupedLines(grouped, tuple(range(len(grouped))))
-    voices = average_voices(grouped, vectors)
-    long_indices = [
-        index
-        for index, line in enumerate(grouped)
-        if line.end - line.start >= _MINIMUM_PHRASE_SECONDS
-    ]
-    if read_audio is None or len(voices) < 2 or not long_indices:
-        progress(1.0)
-        return unchanged
 
-    long_lines = tuple(grouped[index] for index in long_indices)
-    total_seconds = sum(line.end - line.start for line in long_lines)
-    checked_seconds = 0.0
-    splits: dict[int, list[tuple[TranscriptLine, np.ndarray]]] = {}
-    with contextlib.closing(read_audio(long_lines)) as segments:
-        for index, line, samples in zip(long_indices, long_lines, segments, strict=False):
-            if should_cancel():
-                return None
-            cuts = voice_change_cuts(samples, line.speaker_id, voices, embed)
-            if cuts:
-                parts = _split_line(line, samples, cuts, decode, should_cancel)
-                if parts is None:
-                    return None
-                if parts:
-                    splits[index] = parts
-            checked_seconds += line.end - line.start
-            progress(
-                _GROUPED_SHARE + (_CHECKED_SHARE - _GROUPED_SHARE) * checked_seconds / total_seconds
-            )
-    if not splits:
-        progress(1.0)
-        return unchanged
-
+    voices = average_voices(grouped_pieces, piece_vectors)
     new_lines: list[TranscriptLine] = []
-    new_vectors: list[np.ndarray] = []
     parents: list[int] = []
-    for index, (line, vector) in enumerate(zip(grouped, vectors, strict=True)):
-        for part, samples in splits.get(index, ()):
+    # Speakers in order of their first line, each with the indices of its new lines.
+    members: dict[str, list[int]] = {}
+    split_count = 0
+    for index, (line, vector) in enumerate(zip(original, vectors, strict=True)):
+        shares, runs = _line_speech(line, grouped_pieces)
+        parts = None
+        if len(runs) > 1:
+            parts = _split_line(
+                line,
+                samples[int(line.start * SAMPLE_RATE) : int(line.end * SAMPLE_RATE)],
+                _cuts(line, runs),
+                decode,
+                should_cancel,
+            )
+            if parts is None:
+                return None
+        if parts:
+            split_count += 1
+            speakers = [run[0] for run in runs]
+        else:
+            parts = [line]
+            speakers = [
+                max(shares, key=shares.__getitem__) if shares else _closest_voice(vector, voices)
+            ]
+        for part, speaker_id in zip(parts, speakers, strict=True):
+            members.setdefault(speaker_id, []).append(len(new_lines))
             new_lines.append(part)
-            new_vectors.append(embed(samples))
             parents.append(index)
-        if index not in splits:
-            new_lines.append(line)
-            new_vectors.append(vector)
-            parents.append(index)
-    regrouped = relabel_system_lines(
-        new_lines,
-        new_vectors,
-        progress=stage(_CHECKED_SHARE, 1.0),
-        should_cancel=should_cancel,
-        speaker_count=speaker_count,
-        label_prefix=label_prefix,
+        progress(_GROUPED_SHARE + (1.0 - _GROUPED_SHARE) * (index + 1) / len(original))
+
+    labeled = apply_cluster_labels(
+        tuple(new_lines),
+        list(members.values()),
+        np.array([line.end - line.start for line in new_lines]),
+        label_prefix,
     )
-    if regrouped is None:
-        return None
     log.debug(
         fmt_event(
             "live",
-            "voice_changes_split",
-            phrase_count=len(splits),
-            line_count=len(regrouped),
+            "speakers_from_pieces",
+            piece_count=len(pieces),
+            phrase_count=split_count,
+            line_count=len(labeled),
         )
     )
-    return GroupedLines(regrouped, tuple(parents))
+    return GroupedLines(labeled, tuple(parents))
