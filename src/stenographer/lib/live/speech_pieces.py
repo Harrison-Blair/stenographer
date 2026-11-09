@@ -23,9 +23,9 @@ from stenographer.lib.live.errors import SpeechPassError
 
 _MINIMUM_PIECE_SECONDS = 0.5
 _NUM_THREADS = 2
-# The library's own clustering, tested with these settings. It decides how pieces merge.
-# It is not the limit that groups the pieces into speakers.
-_CLUSTERING_THRESHOLD = 0.9
+# The library's own clustering. It decides how pieces merge. It is not the limit that
+# groups the pieces into speakers. Calibrated for WeSpeaker on six sources of saved sessions.
+_CLUSTERING_THRESHOLD = 0.975
 _MINIMUM_DURATION_ON = 0.3
 _MINIMUM_DURATION_OFF = 0.5
 # A skip stops the child within this time.

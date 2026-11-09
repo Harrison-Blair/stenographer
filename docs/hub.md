@@ -241,8 +241,9 @@ only when you press `d` or `t`.
 
 The model runs in a separate process, so the hub stays live and `q` stops the pass
 at once. A long pass uses much memory: on the recordings measured, 82 minutes of
-audio took about 2.2 GB in that process and 1.1 GB in the app, and 287 minutes took
-about 9.5 GB and 1.7 GB. If the process dies for any reason, including when the
+audio took about 1.7 GB in that process, and 287 minutes took about 7.4 GB. The app
+itself held about 1.1 GB and 1.7 GB for the same recordings with the earlier speaker
+model. If the process dies for any reason, including when the
 system runs out of memory, the pass counts as failed.
 
 When a pass merges speakers, the merged speaker keeps the number of the speaker with the most speech that an earlier pass grouped, and a renamed speaker chooses before an unnamed one. If two renamed speakers merge, only one name can stay on the merged speaker. When the session saves, speakers are numbered from 1 in order of first appearance, with no gaps, so a number can change once at save, for example `Room 3` becomes `Room 2`. Given names stay. If you skip the end pass, or it fails, stenographer saves the speakers and names shown on screen, numbered the same way, and a failure shows the reason on the saved Record screen. If that save fails, the stop shows as a failed save. File jobs and re-diarize number clusters by first appearance and keep each renamed label on one cluster, the one with the most shared speech time. Rename several speakers to the same name

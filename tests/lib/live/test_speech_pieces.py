@@ -87,7 +87,7 @@ def test_the_pass_uses_the_tested_settings(monkeypatch):
     assert config["segmentation"]["pyannote"]["model"] == str(segmentation_model_path())
     assert config["segmentation"]["num_threads"] == 2
     assert config["embedding"] == {"model": "speaker.onnx", "num_threads": 2}
-    assert config["clustering"] == {"num_clusters": -1, "threshold": 0.9}
+    assert config["clustering"] == {"num_clusters": -1, "threshold": 0.975}
     assert (config["min_duration_on"], config["min_duration_off"]) == (0.3, 0.5)
 
 
