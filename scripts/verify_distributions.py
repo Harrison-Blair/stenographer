@@ -14,12 +14,18 @@ from sound_asset_guard import check_sound_assets
 COMPLETIONS = ("stenographer.bash", "_stenographer", "stenographer.fish")
 KEYCODES = "keycodes.toml"
 CONFIG_TEMPLATE = "default_config.toml.in"
-SEGMENTATION_MODEL = "models/pyannote-segmentation-3-0.onnx"
-SEGMENTATION_LICENSE = "licenses/pyannote-segmentation-3.0-MIT.txt"
+BUNDLED_MODELS = (
+    "models/pyannote-segmentation-3-0.onnx",
+    "models/silero_vad.onnx",
+    "models/wespeaker_en_voxceleb_resnet34_LM_mean.onnx",
+    "licenses/pyannote-segmentation-3.0-MIT.txt",
+    "licenses/silero-vad-MIT.txt",
+    "licenses/wespeaker-resnet34-LM-NOTICE.txt",
+)
 
 
 def verify_distributions(dist_dir: Path, version: str) -> None:
-    """Require the archives and their completions, key table, config template, model, sounds."""
+    """Require the archives and their completions, key table, config template, models, sounds."""
     wheel = dist_dir / f"stenographer-{version}-py3-none-any.whl"
     sdist = dist_dir / f"stenographer-{version}.tar.gz"
     wheel_metadata = f"stenographer-{version}.dist-info/METADATA"
@@ -31,11 +37,10 @@ def verify_distributions(dist_dir: Path, version: str) -> None:
             | {
                 f"stenographer/assets/{KEYCODES}",
                 f"stenographer/assets/{CONFIG_TEMPLATE}",
-                f"stenographer/assets/{SEGMENTATION_MODEL}",
-                f"stenographer/assets/{SEGMENTATION_LICENSE}",
                 "stenographer/_version.py",
                 wheel_metadata,
-            },
+            }
+            | {f"stenographer/assets/{name}" for name in BUNDLED_MODELS},
         )
         _require_metadata_version(archive.read(wheel_metadata), version, "wheel metadata")
         _require_module_version(archive.read("stenographer/_version.py"), version, "wheel")
@@ -51,12 +56,11 @@ def verify_distributions(dist_dir: Path, version: str) -> None:
                 f"{root}/LICENSE",
                 f"{root}/src/stenographer/assets/{KEYCODES}",
                 f"{root}/src/stenographer/assets/{CONFIG_TEMPLATE}",
-                f"{root}/src/stenographer/assets/{SEGMENTATION_MODEL}",
-                f"{root}/src/stenographer/assets/{SEGMENTATION_LICENSE}",
                 version_module,
                 package_metadata,
             }
-            | {f"{root}/src/stenographer/assets/completions/{name}" for name in COMPLETIONS},
+            | {f"{root}/src/stenographer/assets/completions/{name}" for name in COMPLETIONS}
+            | {f"{root}/src/stenographer/assets/{name}" for name in BUNDLED_MODELS},
         )
         metadata = archive.extractfile(package_metadata)
         module = archive.extractfile(version_module)

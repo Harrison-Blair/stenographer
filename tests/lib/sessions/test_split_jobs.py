@@ -5,15 +5,16 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import soundfile as sf
 
+import stenographer
 from stenographer.lib.config.models import Config
 from stenographer.lib.live import voice_split
-from stenographer.lib.live.models import SPEAKER_MODEL
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
@@ -101,9 +102,6 @@ def recorded(root, source="system", speaker=("speaker-1", "Speaker 1"), *, diari
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     monkeypatch.setattr(voice_split, "find_speech_pieces", level_pieces)
-    model = tmp_path / "models" / "live" / SPEAKER_MODEL.filename
-    model.parent.mkdir(parents=True)
-    model.touch()
     store = SessionStore(tmp_path / "sessions")
     decoded = []
 
@@ -122,7 +120,7 @@ def rig(tmp_path, monkeypatch):
         media_decoder=media_decoder,
     )
     Worker.instances = 0
-    return SimpleNamespace(store=store, jobs=jobs, root=tmp_path, decoded=decoded, model=model)
+    return SimpleNamespace(store=store, jobs=jobs, root=tmp_path, decoded=decoded)
 
 
 def rows(detail):
@@ -247,9 +245,8 @@ def test_retranscribe_carries_a_given_name_to_the_right_voice(rig):
     }
 
 
-def test_retranscribe_keeps_an_undiarized_mic_and_needs_no_speaker_model(rig):
+def test_retranscribe_keeps_an_undiarized_mic(rig):
     session = recorded(rig.root, "mic", ("you", "You"))
-    rig.model.unlink()
 
     rig.jobs.retranscribe(session)
 
@@ -259,14 +256,6 @@ def test_retranscribe_keeps_an_undiarized_mic_and_needs_no_speaker_model(rig):
         ("you", "bob"),
         ("you", "ann"),
     ]
-
-
-def test_retranscribe_of_separated_lines_reports_a_missing_speaker_model(rig):
-    session = recorded(rig.root)
-    rig.model.unlink()
-
-    with pytest.raises(FileNotFoundError, match="speaker model is missing"):
-        rig.jobs.retranscribe(session)
 
 
 def file_session(rig, speakers):
@@ -302,7 +291,6 @@ def test_retranscribe_of_a_file_session_splits_with_a_second_decode(rig):
 
 def test_retranscribe_of_a_one_speaker_file_session_only_replaces_text(rig):
     session = file_session(rig, ("speaker-1", "speaker-1"))
-    rig.model.unlink()
 
     rig.jobs.retranscribe(session)
 
@@ -371,12 +359,17 @@ def _record_the_model(monkeypatch):
     return models
 
 
-def test_rediarize_gives_the_pass_the_downloaded_speaker_model(rig, monkeypatch):
+def test_rediarize_gives_the_pass_the_bundled_speaker_model(rig, monkeypatch):
     models = _record_the_model(monkeypatch)
 
     rig.jobs.rediarize(recorded(rig.root))
 
-    assert models == [rig.root / "models" / "live" / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"]
+    assert models == [
+        Path(stenographer.__file__).parent
+        / "assets"
+        / "models"
+        / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"
+    ]
 
 
 def test_an_older_session_without_metadata_still_splits(rig):

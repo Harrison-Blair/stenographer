@@ -10,8 +10,8 @@
 #   - libportaudio / pipewire / pulse libs (excluded by hook-sounddevice.py;
 #     found at runtime via rthooks/py_rth_portaudio.py)
 #   - wl-copy, canberra-gtk-play / pw-play / paplay CLIs; /dev/uinput access + `input` group
-# The ASR and live voice models are never bundled; explicit `stenographer
-# model download` commands fetch them into local model directories. Certifi is
+# The ASR model is never bundled; `stenographer model download` builds it in the
+# local model directory. The voice models ship in assets/models. Certifi is
 # optional; the update notice uses it when installed, or the system trust store.
 
 # -*- mode: python ; coding: utf-8 -*-

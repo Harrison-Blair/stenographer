@@ -42,10 +42,7 @@ def test_step(step_id: str, config: Config, config_dir: pathlib.Path) -> str:
         from stenographer.lib.transcribe import bark_download
 
         cached = bark_download.is_model_cached()
-        from stenographer.lib.diagnostics.additional_checks import live_models_check
-
-        live = live_models_check()
-        return f"ASR model {'cached' if cached else 'not cached'}; live models {live.status}"
+        return f"ASR model {'cached' if cached else 'not cached'}"
     if step_id == "sounds":
         from stenographer.lib.sounds import packs, playback
 

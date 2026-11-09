@@ -15,6 +15,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+import stenographer
 from stenographer.lib.live import voice_split
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
@@ -1749,7 +1750,7 @@ def test_a_skip_reaches_the_speech_pass_of_a_recording(monkeypatch, tmp_path):
     assert len(_saved_detail(rig).lines) == 1
 
 
-def test_the_end_pass_gives_the_pass_the_downloaded_speaker_model(monkeypatch, tmp_path):
+def test_the_end_pass_gives_the_pass_the_bundled_speaker_model(monkeypatch, tmp_path):
     rig = _split_session(monkeypatch, tmp_path)
     _say(rig, VOICE_A, 0.0, 20.0)
     models = []
@@ -1762,7 +1763,12 @@ def test_the_end_pass_gives_the_pass_the_downloaded_speaker_model(monkeypatch, t
 
     rig.session.stop()
 
-    assert models == [tmp_path / "models" / "live" / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"]
+    assert models == [
+        Path(stenographer.__file__).parent
+        / "assets"
+        / "models"
+        / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"
+    ]
 
 
 def test_a_skip_while_a_part_decodes_saves_the_whole_phrase_as_live(monkeypatch, tmp_path):

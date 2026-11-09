@@ -16,7 +16,7 @@ import soundfile as sf
 
 from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.media import decode_media
-from stenographer.lib.live.models import SPEAKER_MODEL, live_model_dir, require_speaker_model
+from stenographer.lib.live.models import speaker_model_path
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.live.voice_split import (
@@ -168,7 +168,7 @@ class SessionJobs:
                         read_saved_source, self._store.root / session_id / f"{source}.flac"
                     )
                 ),
-                speaker_model=self._speaker_model_path(),
+                speaker_model=speaker_model_path(),
                 embed=tracker.embed,
                 decode=lambda samples: worker.transcribe(samples).text,
                 label_prefix=_LABEL_PREFIXES[source],
@@ -182,13 +182,7 @@ class SessionJobs:
         ]
 
     def _make_speaker_tracker(self) -> SpeakerTracker:
-        return self._speaker_tracker_factory(require_speaker_model(self._speaker_model_path()))
-
-    def _speaker_model_path(self) -> Path:
-        return (
-            live_model_dir(self._platform.data_dir(os.environ, Path.home()))
-            / SPEAKER_MODEL.filename
-        )
+        return self._speaker_tracker_factory(speaker_model_path())
 
     def _make_worker(self) -> Worker:
         return self._worker_factory(

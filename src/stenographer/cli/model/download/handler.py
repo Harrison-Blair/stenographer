@@ -57,7 +57,6 @@ def _download_asr() -> int:
     import os
     from pathlib import Path
 
-    from stenographer.lib.live.errors import LiveDownloadError
     from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe import bark_download
     from stenographer.lib.transcribe.errors import BarkDownloadError
@@ -70,32 +69,6 @@ def _download_asr() -> int:
     except BarkDownloadError as exc:
         print(f"stenographer: could not install the ASR model: {exc}", file=sys.stderr)
         return 1
-    except LiveDownloadError as exc:
-        print(f"stenographer: could not download the VAD model: {exc}", file=sys.stderr)
-        return 1
-    return 0
-
-
-def _download_live() -> int:
-    import os
-    from pathlib import Path
-
-    from stenographer.lib.live.download import download_live_models
-    from stenographer.lib.live.errors import LiveDownloadError
-    from stenographer.lib.live.models import LIVE_MODELS, live_model_dir
-    from stenographer.lib.platform import current_platform
-
-    data_dir = current_platform().data_dir(os.environ, Path.home())
-    model_dir = live_model_dir(data_dir)
-    print("stenographer: downloading live models...", flush=True)
-    for model in LIVE_MODELS:
-        try:
-            downloaded = download_live_models(data_dir, models=(model,))
-        except LiveDownloadError as exc:
-            print(f"stenographer: could not download live models: {exc}", file=sys.stderr)
-            return 1
-        status = "downloaded" if downloaded else "already present"
-        print(f"stenographer: live model {model.filename} {status} at {model_dir}", flush=True)
     return 0
 
 
@@ -120,10 +93,7 @@ def cmd_model_download(args: argparse.Namespace, cfg: Config) -> int:
     from stenographer.cli.shared.terminal import ask_yes_no, open_console
 
     console = open_console(None, None, None)
-    live = args.live
-    if live and _download_live():
-        return 1
-    explicit = live or args.asr or args.refine
+    explicit = args.asr or args.refine
     asr, refine = (
         (args.asr, args.refine) if explicit else (True, console.interactive and cfg.refine.enabled)
     )

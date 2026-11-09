@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stenographer.lib.audio.recorder import Recorder
-from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
+from stenographer.lib.live.models import speaker_model_path, vad_model_path
 from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
 from stenographer.lib.live.relabel import relabel_system_lines, relabel_work_units
 from stenographer.lib.live.session_writer import SessionWriter
@@ -76,9 +76,8 @@ class LiveSession:
         self._writer = SessionWriter.open(data_dir, self._started_at)
         if diarize_mic:
             self._writer.mark_mic_diarized()
-        model_dir = live_model_dir(data_dir)
-        vad_model = model_dir / VAD_MODEL.filename
-        self._speaker_model = model_dir / SPEAKER_MODEL.filename
+        vad_model = vad_model_path()
+        self._speaker_model = speaker_model_path()
         self._worker = Worker(cfg.asr, transport=self._platform.asr_transport())
         # A mic-only session loads the system tracker when system audio first starts.
         self._trackers: dict[str, SpeakerTracker] = {}

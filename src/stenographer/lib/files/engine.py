@@ -19,13 +19,7 @@ from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.job import FileJob
 from stenographer.lib.files.media import MediaInfo, inspect_media, iter_media_audio
 from stenographer.lib.files.models import FileJobOptions
-from stenographer.lib.live.errors import InvalidVadModelError, MissingSpeakerModelError
-from stenographer.lib.live.models import (
-    SPEAKER_MODEL,
-    VAD_MODEL,
-    live_model_dir,
-    require_speaker_model,
-)
+from stenographer.lib.live.models import speaker_model_path, vad_model_path
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -64,13 +58,12 @@ class FilesEngine:
         self._data_dir = platform.data_dir(os.environ, Path.home())
         self._decoder = platform.ffmpeg_decoder()
         self._worker = Worker(config.asr, transport=platform.asr_transport())
-        model_dir = live_model_dir(self._data_dir)
-        vad_path = model_dir / VAD_MODEL.filename
-        speaker_path = model_dir / SPEAKER_MODEL.filename
+        vad_path = vad_model_path()
+        speaker_path = speaker_model_path()
         self._speaker_model = speaker_path
         self._segmenter_factory = segmenter_factory or (lambda: PhraseSegmenter("system", vad_path))
         self._speaker_tracker_factory = speaker_tracker_factory or (
-            lambda: SpeakerTracker(require_speaker_model(speaker_path))
+            lambda: SpeakerTracker(speaker_path)
         )
         self._refiner_factory = refiner_factory
         self._store = (
@@ -228,12 +221,6 @@ class FilesEngine:
             job._complete(session_id, tuple(lines))
         except SessionWriteCancelledError:
             job._cancelled(job.progress.completed_lines)
-        except InvalidVadModelError:
-            job._fail(
-                "Invalid or missing voice activity model; run `stenographer model download --live`."
-            )
-        except MissingSpeakerModelError as exc:
-            job._fail(str(exc))
         except StaleRevisionError:
             job._fail("session changed during this job; nothing was saved")
         except Exception as exc:

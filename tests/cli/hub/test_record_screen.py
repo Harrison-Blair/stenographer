@@ -24,7 +24,6 @@ from stenographer.cli.hub.services import HubServices
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.models import Config
-from stenographer.lib.live.models import LIVE_MODELS
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from tests.cli.hub.support import _has_split_header, _screen_text, _speaker_bar, make_app
@@ -138,10 +137,6 @@ class FakePlatform:
 
 
 def _services(tmp_path: Path, devices=()):
-    model_dir = tmp_path / "models" / "live"
-    model_dir.mkdir(parents=True)
-    for model in LIVE_MODELS:
-        (model_dir / model.filename).touch()
     sessions_root = tmp_path / "sessions"
     created: list[FakeLiveSession] = []
 

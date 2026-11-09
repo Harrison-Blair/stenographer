@@ -6,7 +6,6 @@ import pathlib
 import pytest
 
 from stenographer.lib.diagnostics import additional_checks
-from stenographer.lib.live.models import LIVE_MODELS
 
 
 def _executable(directory: pathlib.Path, name: str, body: str) -> None:
@@ -38,20 +37,6 @@ def test_system_capture_check_requires_tools_and_a_default_sink(
     assert check.status == status
     assert detail_fragment in check.detail
     assert bool(check.fix) == (status == "warn")
-
-
-def test_live_models_check_uses_the_pinned_model_files(tmp_path):
-    model_dir = tmp_path / "models"
-    model_dir.mkdir()
-    for model in LIVE_MODELS:
-        (model_dir / model.filename).write_bytes(b"model")
-
-    assert additional_checks.live_models_check(model_dir).status == "ok"
-
-    (model_dir / LIVE_MODELS[0].filename).unlink()
-    missing = additional_checks.live_models_check(model_dir)
-    assert missing.status == "warn"
-    assert LIVE_MODELS[0].filename in missing.detail
 
 
 def test_ffmpeg_check_uses_the_executable_path(monkeypatch, tmp_path):

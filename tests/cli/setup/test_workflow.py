@@ -960,8 +960,6 @@ def guided(monkeypatch, tmp_path):
     from stenographer.cli.doctor import report as doctor
     from stenographer.cli.shared import capabilities as shared_capabilities
     from stenographer.lib import platform as platform_module
-    from stenographer.lib.live import download as live_download
-    from stenographer.lib.live.models import VAD_MODEL, live_model_dir
     from stenographer.lib.refine import client as refine_client
     from stenographer.lib.transcribe import bark_download
     from stenographer.overlay import platform as overlay_platform_module
@@ -975,8 +973,6 @@ def guided(monkeypatch, tmp_path):
         cached=True,
         cache_error=None,
         download_error=None,
-        vad_present=True,
-        vad_error=None,
         caps=None,
         probe_error=None,
         missing=(),
@@ -990,10 +986,6 @@ def guided(monkeypatch, tmp_path):
     ):
         probed = _caps() if caps is None else caps
         used_config = Config.defaults() if config is None else config
-        vad_dir = live_model_dir(data_root)
-        vad_dir.mkdir(parents=True)
-        if vad_present:
-            (vad_dir / VAD_MODEL.filename).touch()
 
         def is_model_cached(data_dir):
             events.append(f"cache:{data_dir.name}")
@@ -1006,12 +998,6 @@ def guided(monkeypatch, tmp_path):
             if download_error is not None:
                 raise download_error
             return not cached
-
-        def download_live_models(data_dir, *, models):
-            events.append(f"vad:{data_dir.name}:{models[0].filename}")
-            if vad_error is not None:
-                raise vad_error
-            return (models[0].filename,)
 
         def probe(cfg):
             events.append("probe")
@@ -1050,7 +1036,6 @@ def guided(monkeypatch, tmp_path):
 
         monkeypatch.setattr(bark_download, "is_model_cached", is_model_cached)
         monkeypatch.setattr(bark_download, "download_bark_pro", download_bark_pro)
-        monkeypatch.setattr(live_download, "download_live_models", download_live_models)
         monkeypatch.setattr(shared_capabilities, "probe", probe)
         monkeypatch.setattr(shared_capabilities, "missing_required", lambda caps: list(missing))
         monkeypatch.setattr(
@@ -1109,54 +1094,6 @@ def test_guided_quick_setup_defaults_the_download_offer_to_yes(guided):
     assert "Download and convert it now? [Y/n]: " in stdout
     assert "download:data" in events
     assert "Model download complete." in stdout
-
-
-def test_guided_download_also_fetches_the_dictation_vad_model(guided):
-    code, stdout, stderr, events = guided(
-        cached=False, vad_present=False, answers="\n", changed=False, quick=True
-    )
-
-    assert code == 0
-    assert stderr == ""
-    assert events.index("download:data") < events.index("vad:data:silero_vad.onnx")
-    assert "Silero voice-activity model" in stdout
-    assert "VAD model silero_vad.onnx downloaded" in stdout
-    assert "Model download complete." in stdout
-
-
-def test_guided_setup_offers_a_vad_model_missing_beside_an_installed_asr_model(guided):
-    code, stdout, stderr, events = guided(vad_present=False, answers="y\n", changed=False)
-
-    assert code == 0
-    assert stderr == ""
-    assert "is not installed. stenographer builds it" not in stdout
-    assert "voice-activity model that dictation needs is not installed" in stdout
-    assert "Download it now? [y/N]: " in stdout
-    assert "vad:data:silero_vad.onnx" in events
-    assert "ASR model already present" in stdout
-
-
-def test_guided_setup_takes_no_for_an_answer_on_a_missing_vad_model(guided):
-    code, stdout, _, events = guided(vad_present=False, answers="\n", changed=False)
-
-    assert code == 0
-    assert "Download it now? [y/N]: " in stdout
-    assert not [event for event in events if event.startswith(("download:", "vad:"))]
-
-
-def test_guided_setup_reports_a_failed_vad_download_as_an_operational_failure(guided):
-    from stenographer.lib.live.errors import LiveDownloadError
-
-    code, stdout, stderr, _ = guided(
-        vad_present=False,
-        answers="y\n",
-        vad_error=LiveDownloadError("checksum mismatch"),
-        changed=False,
-    )
-
-    assert code == 1
-    assert stderr == "stenographer: model download failed: checksum mismatch\n"
-    assert "Model download complete." not in stdout
 
 
 def test_guided_setup_reports_a_failed_download_as_an_operational_failure(guided):

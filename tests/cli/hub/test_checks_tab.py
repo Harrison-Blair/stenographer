@@ -67,7 +67,7 @@ def _board_report(warnings=()) -> DoctorReport:
                 path="/tmp/sounds/bravo",
             ),
             _check("model_cached", "speech model", "engine", detail="alpha model · pinned"),
-            _check("live_models_cached", "voice models", "engine", detail="alpha · bravo"),
+            _check("refine_service", "refine service", "engine", detail="alpha · bravo"),
             _check("system_service", "system service", "engine", detail="enabled · running"),
             _check("ffmpeg", "ffmpeg", "other", "fail", "ffmpeg is not installed", "Install it."),
         ),
@@ -132,7 +132,7 @@ async def test_checks_list_groups_rows_with_glyphs_in_the_board_order(tmp_path):
         engine = _plain(app, "#checks-engine").splitlines()
         assert [row[4:18].strip() for row in engine] == [
             "speech model",
-            "voice models",
+            "refine service",
             "system service",
         ]
         other = _plain(app, "#checks-other").splitlines()
@@ -234,7 +234,7 @@ async def test_checks_shows_the_fix_hint_and_keys_move_in_group_order(tmp_path):
             order.append(app.checks_tab.selected.label)
         assert order == [
             "speech model",
-            "voice models",
+            "refine service",
             "system service",
             "ffmpeg",
             "input access",
@@ -253,8 +253,8 @@ async def test_checks_click_on_a_row_selects_that_check(tmp_path):
         await _open_checks(pilot)
         await pilot.click("#checks-engine", offset=(4, 1))
         await pilot.pause()
-        assert app.checks_tab.selected.label == "voice models"
-        assert _plain(app, "#checks-detail-head") == "✓ voice models · pass"
+        assert app.checks_tab.selected.label == "refine service"
+        assert _plain(app, "#checks-detail-head") == "✓ refine service · pass"
         assert app.current_mode == "settings"
 
 
@@ -377,7 +377,6 @@ def test_checks_run_again_button_starts_a_new_run(tmp_path):
         ("hotkey_access_ok", ("general", "hotkey.binding")),
         ("cue_player", ("general", "feedback.sound_pack")),
         ("model_cached", ModelsDialog),
-        ("live_models_cached", ModelsDialog),
         ("refine_service", ("recognition", "refine.host")),
         ("overlay", ("general", "feedback.overlay")),
         ("clipboard_restore", ("general", "delivery.restore_clipboard")),
@@ -448,7 +447,6 @@ def test_checks_fix_without_a_target_shows_the_hint_in_a_notice(tmp_path):
         ("hotkey_access_ok", "hotkey", "check binding"),
         ("cue_player", "sounds", "play cues"),
         ("model_cached", "models", "model files"),
-        ("live_models_cached", "models", "model files"),
         ("system_service", "system_service", "service state"),
     ],
 )
@@ -847,30 +845,18 @@ def test_checks_models_dialog_allows_one_download_also_after_a_reopen(tmp_path):
     asyncio.run(exercise())
 
 
-def test_checks_default_model_download_fetches_only_the_chosen_model(monkeypatch):
+def test_checks_default_model_download_builds_the_speech_model_the_only_entry(monkeypatch):
     from stenographer.cli.hub import doctor_view
-    from stenographer.lib.live import download as live_download
     from stenographer.lib.transcribe import bark_download
 
     calls = []
     monkeypatch.setattr(bark_download, "download_bark_pro", lambda data_dir: calls.append("asr"))
-    monkeypatch.setattr(
-        live_download,
-        "download_live_models",
-        lambda data_dir, models: calls.append(tuple(m.filename for m in models)),
-    )
 
     doctor_view.default_model_download("asr")
-    doctor_view.default_model_download("vad")
-    doctor_view.default_model_download("speaker")
 
-    assert calls == ["asr", ("silero_vad.onnx",), ("wespeaker_en_voxceleb_resnet34_LM_mean.onnx",)]
+    assert calls == ["asr"]
     entries = doctor_view.default_model_status()
-    assert [(entry.model_id, entry.present) for entry in entries] == [
-        ("asr", False),
-        ("vad", False),
-        ("speaker", False),
-    ]
+    assert [(entry.model_id, entry.present) for entry in entries] == [("asr", False)]
 
 
 def test_checks_defaults_dialog_writes_defaults_with_a_backup_or_cancels(tmp_path):
@@ -1020,7 +1006,6 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
         "collect_additional_checks",
         lambda: (
             DiagnosticCheck("system_capture", "warn", "no default sink", "Select a sink."),
-            DiagnosticCheck("live_models_cached", "ok", "cached", ""),
             DiagnosticCheck("ffmpeg", "warn", "not installed", "Install ffmpeg."),
         ),
     )
@@ -1046,7 +1031,6 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
         ("input", "hotkey"),
         ("input", "sounds"),
         ("engine", "speech model"),
-        ("engine", "voice models"),
         ("engine", "refine service"),
         ("engine", "system audio"),
         ("engine", "system service"),
@@ -1059,7 +1043,6 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
     assert checks["hotkey_access_ok"].fix == "Join the input group."
     assert checks["model_cached"].detail == "Underdog Bark 3.0 Pro"
     assert checks["model_cached"].path.startswith(str(data_dir))
-    assert checks["live_models_cached"].path == str(data_dir / "models" / "live")
     assert checks["system_capture"].status == "warn"
     assert checks["overlay"].fix == "Enable XWayland."
     assert checks["clipboard_restore"].fix == "Enable clipboard reads."
@@ -1153,16 +1136,6 @@ async def test_checks_test_result_stays_with_originating_check(tmp_path):
             assert _plain(app, "#checks-test-status") == "test: sound test complete"
     finally:
         release.set()
-
-
-def test_model_status_marks_corrupt_voice_model_missing(tmp_path, monkeypatch):
-    from stenographer.cli.hub import doctor_view
-    from stenographer.lib.live.models import VAD_MODEL
-
-    monkeypatch.setattr(doctor_view, "live_model_dir", lambda data: tmp_path)
-    (tmp_path / VAD_MODEL.filename).write_bytes(b"corrupt")
-    entries = doctor_view.default_model_status()
-    assert next(entry for entry in entries if entry.model_id == "vad").present is False
 
 
 def test_checks_open_log_leaves_the_interface_running_while_the_opener_blocks(tmp_path):

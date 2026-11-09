@@ -11,9 +11,8 @@ import numpy as np
 import pytest
 import soundfile
 
-from stenographer.lib.live.models import LIVE_MODELS
+from stenographer.lib.live.models import speaker_model_path
 from stenographer.lib.live.speaker_tracker import Speaker, SpeakerClustering, SpeakerTracker
-from stenographer.lib.platform import current_platform
 
 
 def test_clustering_creates_a_speaker_when_no_match_reaches_threshold():
@@ -197,12 +196,7 @@ def test_public_speaker_clips_cluster_with_the_real_model():
     if missing_clips:
         pytest.skip(f"public speaker clips are absent from tmp/live_audio: {missing_clips}")
 
-    data_dir = current_platform().data_dir(
-        {"XDG_DATA_HOME": str(worktree / "tmp" / "xdg-data")}, Path.home()
-    )
-    model_path = data_dir / "models" / "live" / LIVE_MODELS[1].filename
-    if not model_path.is_file():
-        pytest.skip(f"live speaker model is absent: {model_path}")
+    model_path = speaker_model_path()
     pytest.importorskip("sherpa_onnx", reason="sherpa-onnx is not installed")
 
     recordings = []
@@ -397,13 +391,7 @@ def test_saved_speakers_count_only_phrases_that_a_pass_grouped(monkeypatch):
 def test_the_real_speaker_model_ignores_the_loudness_of_a_phrase():
     # The model expects features with their mean over time subtracted. A louder phrase adds
     # the same amount to every log feature, so with that step the voice does not change.
-    worktree = Path(__file__).resolve().parents[3]
-    data_dir = current_platform().data_dir(
-        {"XDG_DATA_HOME": str(worktree / "tmp" / "xdg-data")}, Path.home()
-    )
-    model_path = data_dir / "models" / "live" / LIVE_MODELS[1].filename
-    if not model_path.is_file():
-        pytest.skip(f"live speaker model is absent: {model_path}")
+    model_path = speaker_model_path()
     pytest.importorskip("sherpa_onnx", reason="sherpa-onnx is not installed")
     rate = 16000
     time = np.arange(3 * rate) / rate

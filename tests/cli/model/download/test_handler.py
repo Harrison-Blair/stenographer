@@ -18,35 +18,14 @@ from stenographer.lib.config.models import Config
 from tests.cli.support import Terminal as _Terminal
 
 
-def test_live_flag_does_not_select_the_asr_model(monkeypatch, capsys):
-    from stenographer.cli.model.download import handler
-    from stenographer.lib.transcribe import bark_download
-
-    asr_calls: list[object] = []
-    monkeypatch.setattr(handler, "_download_live", lambda: 0)
-    monkeypatch.setattr(bark_download, "download_bark_pro", lambda *a, **kw: asr_calls.append(a))
-
-    from stenographer.cli.parser import build_parser
-
-    parser = build_parser()
-    result = cmd_model_download.__wrapped__(
-        parser.parse_args(["model", "download", "--live"]), Config.defaults()
-    )
-
-    assert result == 0
-    assert asr_calls == []
-    assert capsys.readouterr().out == ""
-
-
 @pytest.fixture
 def asr_seams(monkeypatch, tmp_path):
-    """Fake the Bark build and the VAD fetch; record what each one was asked to do."""
-    from stenographer.lib.live import download as live_download
+    """Fake the Bark build; record what it was asked to do."""
     from stenographer.lib.transcribe import bark_download
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     calls: list[str] = []
-    state = {"built": True, "error": None, "vad": ("silero_vad.onnx",)}
+    state = {"built": True, "error": None}
 
     def build(data_dir, *, on_step):
         calls.append(f"bark:{data_dir}")
@@ -55,59 +34,52 @@ def asr_seams(monkeypatch, tmp_path):
             raise state["error"]
         return state["built"]
 
-    def live(data_dir, *, models):
-        calls.append(f"live:{','.join(m.filename for m in models)}")
-        return state["vad"]
-
     monkeypatch.setattr(bark_download, "download_bark_pro", build)
-    monkeypatch.setattr(live_download, "download_live_models", live)
     return calls, state, tmp_path / "stenographer"
 
 
-def test_asr_builds_bark_pro_prints_the_attribution_and_fetches_only_the_vad(asr_seams, capsys):
+def test_asr_builds_bark_pro_and_prints_the_attribution(asr_seams, capsys):
     calls, _, data_dir = asr_seams
 
     result = cmd_model_download.__wrapped__(
-        argparse.Namespace(asr=True, refine=False, live=False), Config.defaults()
+        argparse.Namespace(asr=True, refine=False), Config.defaults()
     )
 
     assert result == 0
-    assert calls == [f"bark:{data_dir}", "live:silero_vad.onnx"]
+    assert calls == [f"bark:{data_dir}"]
     out = capsys.readouterr().out
     assert out == (
         "stenographer: converting to int8 ONNX (several minutes)\n"
         f"stenographer: ASR model installed at {data_dir}/models/asr/bark-pro-int8\n"
         "stenographer: Underdog Bark 3.0 Pro by Conway Research (CC BY 4.0), "
         "converted to int8 ONNX on this machine\n"
-        "stenographer: VAD model silero_vad.onnx downloaded\n"
     )
 
 
 def test_asr_reports_a_present_model_without_rebuilding_claims(asr_seams, capsys):
     _, state, _ = asr_seams
-    state["built"], state["vad"] = False, ()
+    state["built"] = False
 
     assert (
         cmd_model_download.__wrapped__(
-            argparse.Namespace(asr=False, refine=False, live=False), Config.defaults()
+            argparse.Namespace(asr=False, refine=False), Config.defaults()
         )
         == 0
     )
 
     out = capsys.readouterr().out
     assert "ASR model already present at" in out
-    assert "VAD model silero_vad.onnx already present" in out
 
 
 def test_a_failed_asr_build_is_not_reported_as_a_success(asr_seams, capsys):
     from stenographer.lib.transcribe.errors import BarkDownloadError
 
-    calls, state, _ = asr_seams
+    _, state, _ = asr_seams
     state["error"] = BarkDownloadError("Free-space check failed: free some disk space")
 
     assert (
         cmd_model_download.__wrapped__(
-            argparse.Namespace(asr=False, refine=False, live=False), Config.defaults()
+            argparse.Namespace(asr=False, refine=False), Config.defaults()
         )
         == 1
     )
@@ -118,7 +90,6 @@ def test_a_failed_asr_build_is_not_reported_as_a_success(asr_seams, capsys):
         "Free-space check failed: free some disk space\n"
     )
     assert "installed at" not in captured.out
-    assert [call for call in calls if call.startswith("live")] == []
 
 
 @pytest.mark.parametrize(
@@ -146,10 +117,7 @@ def test_selection_at_command_level(monkeypatch, asr, refine, interactive, enabl
     monkeypatch.setattr(terminal, "open_console", lambda *_: Console(stream, stream, io.StringIO()))
     cfg = Config.defaults()
     cfg = dataclasses.replace(cfg, refine=dataclasses.replace(cfg.refine, enabled=enabled))
-    assert (
-        cmd_model_download.__wrapped__(argparse.Namespace(asr=asr, refine=refine, live=False), cfg)
-        == 0
-    )
+    assert cmd_model_download.__wrapped__(argparse.Namespace(asr=asr, refine=refine), cfg) == 0
     assert calls == expected
 
 
@@ -181,10 +149,7 @@ def test_confirmation_plan(monkeypatch, installed, expected):
     monkeypatch.setattr(terminal, "open_console", lambda *_: console)
     cfg = Config.defaults()
     cfg = dataclasses.replace(cfg, refine=dataclasses.replace(cfg.refine, model="some:tag"))
-    assert (
-        cmd_model_download.__wrapped__(argparse.Namespace(asr=False, refine=False, live=False), cfg)
-        == 0
-    )
+    assert cmd_model_download.__wrapped__(argparse.Namespace(asr=False, refine=False), cfg) == 0
     output = console.stdout.getvalue()
     assert (
         "download and convert the ASR model Underdog Bark 3.0 Pro "
@@ -204,7 +169,7 @@ def test_a_refine_pull_that_ollama_refuses_is_not_reported_as_a_success(monkeypa
 
     assert (
         cmd_model_download.__wrapped__(
-            argparse.Namespace(asr=False, refine=True, live=False), Config.defaults()
+            argparse.Namespace(asr=False, refine=True), Config.defaults()
         )
         == 1
     )
@@ -232,7 +197,7 @@ def test_a_stray_enter_declines_the_combined_offer_instead_of_starting_it(monkey
     monkeypatch.setattr(terminal, "open_console", lambda *_: console)
 
     result = cmd_model_download.__wrapped__(
-        argparse.Namespace(asr=False, refine=False, live=False), Config.defaults()
+        argparse.Namespace(asr=False, refine=False), Config.defaults()
     )
 
     assert result == 0
@@ -241,23 +206,3 @@ def test_a_stray_enter_declines_the_combined_offer_instead_of_starting_it(monkey
     assert "Nothing was downloaded." in console.stdout.getvalue()
     assert "--asr" in console.stdout.getvalue()
     assert "--refine" in console.stdout.getvalue()
-
-
-def test_live_download_reports_completed_model_before_later_failure(monkeypatch, capsys):
-    from stenographer.cli.model.download.handler import _download_live
-    from stenographer.lib.live import download
-    from stenographer.lib.live.errors import LiveDownloadError
-    from stenographer.lib.live.models import LIVE_MODELS
-
-    def fetch_one(data_dir, *, models):
-        model = models[0]
-        if model == LIVE_MODELS[1]:
-            raise LiveDownloadError("second failed")
-        return (model.filename,)
-
-    monkeypatch.setattr(download, "download_live_models", fetch_one)
-    assert _download_live() == 1
-    captured = capsys.readouterr()
-    assert "downloading live models" in captured.out
-    assert f"{LIVE_MODELS[0].filename} downloaded" in captured.out
-    assert "second failed" in captured.err

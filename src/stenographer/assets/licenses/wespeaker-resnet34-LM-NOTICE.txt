@@ -1,11 +1,9 @@
 WeSpeaker ResNet34-LM attribution
 
-stenographer uses the WeSpeaker ResNet34-LM speaker-embedding model, trained on
-VoxCeleb, for live and Files speaker labels. stenographer does not ship the
-model file. `stenographer model download --live` fetches
-`wespeaker_en_voxceleb_resnet34_LM_mean.onnx` at a pinned sha256 from the
-`speaker-models-1` release of stenographer:
-https://github.com/Harrison-Blair/stenographer/releases/tag/speaker-models-1
+stenographer ships the WeSpeaker ResNet34-LM speaker-embedding model, trained
+on VoxCeleb, as `assets/models/wespeaker_en_voxceleb_resnet34_LM_mean.onnx`
+(sha256 280d78ccc3a8a3ffdf4d9ef867e16faa68d2beb107ad1de7a844285d3522fcd6) and
+uses it for live and Files speaker labels.
 
 Modification: mean subtraction added to the ONNX graph by stenographer. The
 two added nodes subtract the mean over time of the input features, which the

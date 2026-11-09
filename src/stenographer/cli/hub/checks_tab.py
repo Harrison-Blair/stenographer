@@ -52,7 +52,6 @@ _FIXES = {
     "hotkey_access_ok": ("set the hotkey", "hotkey.binding"),
     "cue_player": ("choose a sound pack", "feedback.sound_pack"),
     "model_cached": ("download the model", "models"),
-    "live_models_cached": ("download the models", "models"),
     "refine_service": ("set the refine host", "refine.host"),
     "overlay": ("overlay setting", "feedback.overlay"),
     "clipboard_restore": ("clipboard restore setting", "delivery.restore_clipboard"),
@@ -64,7 +63,6 @@ _TESTS = {
     "hotkey_access_ok": ("check binding", "hotkey"),
     "cue_player": ("play cues", "sounds"),
     "model_cached": ("model files", "models"),
-    "live_models_cached": ("model files", "models"),
     "system_service": ("service state", "system_service"),
 }
 

@@ -18,13 +18,12 @@ import pytest
 
 from stenographer.lib.live import speech_pieces
 from stenographer.lib.live.errors import SpeechPassError
-from stenographer.lib.live.models import SPEAKER_MODEL, live_model_dir
+from stenographer.lib.live.models import speaker_model_path
 from stenographer.lib.live.speech_pieces import (
     find_speech_pieces,
     run_pass,
     segmentation_model_path,
 )
-from stenographer.lib.platform import current_platform
 from tests.support import wait_until
 
 SAMPLES = np.zeros(16000, np.float32)
@@ -376,10 +375,7 @@ def _generated_syllables(seconds):
 @pytest.mark.integration
 def test_the_real_library_finds_pieces_in_generated_audio_through_the_real_child():
     pytest.importorskip("sherpa_onnx", reason="sherpa-onnx is not installed")
-    data_dir = current_platform().data_dir(os.environ, Path.home())
-    model = live_model_dir(data_dir) / SPEAKER_MODEL.filename
-    if not model.is_file():
-        pytest.skip(f"live speaker model is absent: {model}")
+    model = speaker_model_path()
     seen = []
 
     pieces = find_speech_pieces(

@@ -128,7 +128,7 @@ def _stats(subparsers) -> None:
 
 
 def _model(subparsers) -> None:
-    model = subparsers.add_parser("model", help="Manage ASR, refine, and live voice models.")
+    model = subparsers.add_parser("model", help="Manage the ASR and refine models.")
     model_sub = model.add_subparsers(dest="model_command", required=True)
     _model_download(model_sub)
 
@@ -148,9 +148,4 @@ def _model_download(subparsers) -> None:
         "--refine",
         action="store_true",
         help="Add the refine model through the configured Ollama host.",
-    )
-    download.add_argument(
-        "--live",
-        action="store_true",
-        help="Download the live voice-activity and speaker models.",
     )

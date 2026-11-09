@@ -9,17 +9,18 @@ import os
 import shutil
 import threading
 from datetime import UTC, datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
 import soundfile
 
+import stenographer
 from stenographer.lib.config.models import Config
 from stenographer.lib.files import engine as engine_module
 from stenographer.lib.files.engine import FilesEngine
 from stenographer.lib.live import voice_split
 from stenographer.lib.live.errors import SpeechPassError
-from stenographer.lib.live.models import SPEAKER_MODEL
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -812,28 +813,17 @@ def test_engine_exposes_its_worker_pids_and_idle_unload_deadline(tmp_path):
     assert engine.idle_unload_deadline is None
 
 
-def test_missing_speaker_model_names_the_model_and_the_download_command(tmp_path):
-    # An install from before the WeSpeaker model has no file under the new name.
-    engine = _engine(tmp_path, _file_asr_process())
-    job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=True)
-    try:
-        _wait_for(job, "failed")
-        assert SPEAKER_MODEL.filename in job.error
-        assert "stenographer model download --live" in job.error
-    finally:
-        engine.close()
-
-
-def test_missing_vad_model_reports_download_command(tmp_path):
+def test_a_separated_import_in_an_empty_data_dir_loads_the_bundled_models(tmp_path):
+    # No model download: the voice activity and speaker models ship with the app.
     engine = FilesEngine(
         Config.defaults(), platform=FakeFilesPlatform(tmp_path / "data", _file_asr_process())
     )
-    job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=False)
+    job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=True)
     try:
-        _wait_for(job, "failed")
-        assert "stenographer model download --live" in job.error
+        _wait_for(job, "completed")
     finally:
         engine.close()
+    assert not (tmp_path / "data" / "models").exists()
 
 
 class VoiceChangeSegmenter:
@@ -1047,7 +1037,7 @@ def test_a_job_on_the_source_of_a_file_session_is_marked_after_a_failed_pass(tmp
     assert summary.speaker_pass_failed
 
 
-def test_a_file_job_gives_the_pass_the_downloaded_speaker_model(tmp_path, monkeypatch):
+def test_a_file_job_gives_the_pass_the_bundled_speaker_model(tmp_path, monkeypatch):
     models = []
 
     def record(samples, model, **options):
@@ -1061,7 +1051,10 @@ def test_a_file_job_gives_the_pass_the_downloaded_speaker_model(tmp_path, monkey
     finally:
         engine.close()
     assert models == [
-        tmp_path / "data" / "models" / "live" / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"
+        Path(stenographer.__file__).parent
+        / "assets"
+        / "models"
+        / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"
     ]
 
 

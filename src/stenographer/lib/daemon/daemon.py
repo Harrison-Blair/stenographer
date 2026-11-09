@@ -30,7 +30,7 @@ from stenographer.lib.daemon.policy import (
 )
 from stenographer.lib.daemon.telemetry import UtteranceTelemetry
 from stenographer.lib.delivery.deliverer import Deliverer
-from stenographer.lib.live.models import VAD_MODEL, live_model_dir
+from stenographer.lib.live.models import vad_model_path
 from stenographer.lib.logging.pipeline import fmt_event, log_failure, set_utterance
 from stenographer.lib.platform import current_platform
 from stenographer.lib.refine.factory import build_refiner
@@ -137,7 +137,6 @@ class Daemon:
         status: StatusSink | None = None,
         platform: Platform | None = None,
     ) -> Daemon:
-        from pathlib import Path
 
         from stenographer.lib.config.paths import resolve_config_path
         from stenographer.lib.hotkey.binding import parse_binding
@@ -243,7 +242,7 @@ class Daemon:
             deliverer,
             lambda samples: dictation_speech(
                 samples,
-                live_model_dir(plat.data_dir(os.environ, Path.home())) / VAD_MODEL.filename,
+                vad_model_path(),
             ),
         )
         return daemon
