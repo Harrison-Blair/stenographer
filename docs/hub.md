@@ -177,7 +177,8 @@ stenographer model download --live
 voice-activity model. It needs `python3-venv`, 10 GiB of free disk, and about
 10.2 GiB of RAM; see [build the speech model](usage.md#build-the-speech-model).
 `--live` downloads the Silero voice-activity model and the English speaker
-model. Record does not download models for you.
+model, WeSpeaker ResNet34-LM (about 27 MB). An install from before this model
+needs `--live` again. Record does not download models for you.
 
 ### Separate the speakers in a room
 
@@ -226,8 +227,8 @@ revision. This pass also runs when you confirm quit during a recording. Speaker
 labels are similarity estimates, not reliable identity checks. A minor voice gets its own label only if it has at
 least 15 seconds of phrases that are each at least 2 seconds long within a
 30-second window and at least two-thirds of its speech in those sustained
-phrases, or if it has at least 20% of the top speaker's speech time.
-Otherwise, stenographer merges that voice into the most similar voice. Short or
+phrases, or if it has at least 30 seconds of speech or 20% of the top speaker's
+speech time, whichever is less. Otherwise, stenographer merges that voice into the most similar voice. Short or
 sparse phrases can therefore remain under another speaker's label.
 
 The saved speakers come from the saved audio. For each source with lines,
@@ -246,8 +247,10 @@ system runs out of memory, the pass counts as failed.
 
 When a pass merges speakers, the merged speaker keeps the number of the speaker with the most speech that an earlier pass grouped, and a renamed speaker chooses before an unnamed one. If two renamed speakers merge, only one name can stay on the merged speaker. When the session saves, speakers are numbered from 1 in order of first appearance, with no gaps, so a number can change once at save, for example `Room 3` becomes `Room 2`. Given names stay. If you skip the end pass, or it fails, stenographer saves the speakers and names shown on screen, numbered the same way, and a failure shows the reason on the saved Record screen. If that save fails, the stop shows as a failed save. File jobs and re-diarize number clusters by first appearance and keep each renamed label on one cluster, the one with the most shared speech time. Rename several speakers to the same name
 to merge their displayed labels; this does not change their speaker IDs. The
-clustering threshold is 0.50; it was tested on only three clips, so labels are
-not reliable identification.
+speaker model is WeSpeaker ResNet34-LM. Pieces of saved audio group at a
+similarity limit of 0.45; whole lines, and the regroups during a recording, at
+0.40. These limits were tested on six sources of five recordings, so labels are not reliable
+identification.
 
 ### Saved session files and privacy
 
