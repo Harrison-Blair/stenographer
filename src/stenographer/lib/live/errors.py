@@ -10,5 +10,9 @@ class InvalidVadModelError(ValueError):
     """The VAD model configuration is invalid."""
 
 
+class MissingSpeakerModelError(FileNotFoundError):
+    """The speaker model file is absent, for example on an install from before this model."""
+
+
 class SpeechPassError(RuntimeError):
     """The child process of the speech pass failed or died."""

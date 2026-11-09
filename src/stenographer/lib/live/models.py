@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from stenographer.lib.live.errors import MissingSpeakerModelError
+
 
 @dataclass(frozen=True)
 class LiveModel:
@@ -31,3 +33,12 @@ LIVE_MODELS = (VAD_MODEL, SPEAKER_MODEL)
 def live_model_dir(data_dir: Path) -> Path:
     """Return the directory for the offline live models."""
     return data_dir / "models" / "live"
+
+
+def require_speaker_model(model_path: Path) -> Path:
+    """Return the speaker model path, or raise when the file is absent."""
+    if not model_path.is_file():
+        raise MissingSpeakerModelError(
+            f"speaker model is missing: {model_path}; run `stenographer model download --live`"
+        )
+    return model_path

@@ -19,6 +19,7 @@ from stenographer.lib.files import engine as engine_module
 from stenographer.lib.files.engine import FilesEngine
 from stenographer.lib.live import voice_split
 from stenographer.lib.live.errors import SpeechPassError
+from stenographer.lib.live.models import SPEAKER_MODEL
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -809,6 +810,18 @@ def test_engine_exposes_its_worker_pids_and_idle_unload_deadline(tmp_path):
         engine.close()
     assert engine.process_ids == ()
     assert engine.idle_unload_deadline is None
+
+
+def test_missing_speaker_model_names_the_model_and_the_download_command(tmp_path):
+    # An install from before the WeSpeaker model has no file under the new name.
+    engine = _engine(tmp_path, _file_asr_process())
+    job = engine.submit(_audio(tmp_path / "talk.wav"), diarize=True)
+    try:
+        _wait_for(job, "failed")
+        assert SPEAKER_MODEL.filename in job.error
+        assert "stenographer model download --live" in job.error
+    finally:
+        engine.close()
 
 
 def test_missing_vad_model_reports_download_command(tmp_path):

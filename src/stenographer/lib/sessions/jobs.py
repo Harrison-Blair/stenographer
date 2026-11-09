@@ -16,7 +16,7 @@ import soundfile as sf
 
 from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.media import decode_media
-from stenographer.lib.live.models import SPEAKER_MODEL, live_model_dir
+from stenographer.lib.live.models import SPEAKER_MODEL, live_model_dir, require_speaker_model
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.live.voice_split import (
@@ -182,10 +182,7 @@ class SessionJobs:
         ]
 
     def _make_speaker_tracker(self) -> SpeakerTracker:
-        model_path = self._speaker_model_path()
-        if not model_path.is_file():
-            raise FileNotFoundError(f"speaker model is missing: {model_path}")
-        return self._speaker_tracker_factory(model_path)
+        return self._speaker_tracker_factory(require_speaker_model(self._speaker_model_path()))
 
     def _speaker_model_path(self) -> Path:
         return (

@@ -19,8 +19,13 @@ from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.job import FileJob
 from stenographer.lib.files.media import MediaInfo, inspect_media, iter_media_audio
 from stenographer.lib.files.models import FileJobOptions
-from stenographer.lib.live.errors import InvalidVadModelError
-from stenographer.lib.live.models import SPEAKER_MODEL, VAD_MODEL, live_model_dir
+from stenographer.lib.live.errors import InvalidVadModelError, MissingSpeakerModelError
+from stenographer.lib.live.models import (
+    SPEAKER_MODEL,
+    VAD_MODEL,
+    live_model_dir,
+    require_speaker_model,
+)
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
 from stenographer.lib.live.speaker_tracker import SpeakerTracker
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -65,7 +70,7 @@ class FilesEngine:
         self._speaker_model = speaker_path
         self._segmenter_factory = segmenter_factory or (lambda: PhraseSegmenter("system", vad_path))
         self._speaker_tracker_factory = speaker_tracker_factory or (
-            lambda: SpeakerTracker(speaker_path)
+            lambda: SpeakerTracker(require_speaker_model(speaker_path))
         )
         self._refiner_factory = refiner_factory
         self._store = (
@@ -227,6 +232,8 @@ class FilesEngine:
             job._fail(
                 "Invalid or missing voice activity model; run `stenographer model download --live`."
             )
+        except MissingSpeakerModelError as exc:
+            job._fail(str(exc))
         except StaleRevisionError:
             job._fail("session changed during this job; nothing was saved")
         except Exception as exc:
