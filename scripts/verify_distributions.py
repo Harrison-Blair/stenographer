@@ -21,6 +21,12 @@ BUNDLED_MODELS = (
     "licenses/pyannote-segmentation-3.0-MIT.txt",
     "licenses/silero-vad-MIT.txt",
     "licenses/wespeaker-resnet34-LM-NOTICE.txt",
+    "licenses/nemotron-3-diarization-OpenMDW-1.1-NOTICE.txt",
+    "licenses/nemo-speech/LICENSE",
+    "licenses/nemo-speech/THIRD_PARTY_NOTICES.md",
+    "nemo_speech/SOURCES.txt",
+    "nemo_speech/linux-x86_64/libnemo_speech_asr_c.so.1",
+    "nemo_speech/linux-aarch64/libnemo_speech_asr_c.so.1",
 )
 
 

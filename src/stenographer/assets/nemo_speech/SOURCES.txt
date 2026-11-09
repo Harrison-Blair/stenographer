@@ -1,0 +1,40 @@
+NeMo-Speech.cpp v0.3.0 runtime, Linux CPU builds, minimal speaker-diarization set.
+Source: https://github.com/NVIDIA/NeMo-Speech.cpp/releases/tag/v0.3.0
+        (commit 20999cc921d2b14aa58708f61756a8b2e787ba20; license Apache-2.0)
+Fetch:  gh release download v0.3.0 -R NVIDIA/NeMo-Speech.cpp -p 'nemo-speech-0.3.0-linux-*-cpu.tar.gz'
+
+Tarball sha256:
+255f12b722ab15b2a38a51cf125d56e3fa97058b528f7e895b39d6a473deb06e  nemo-speech-0.3.0-linux-x86_64-cpu.tar.gz
+56858eaf50d19b05902c043f65d0057352bdc107ae380c41053bfbddfc204bf1  nemo-speech-0.3.0-linux-aarch64-cpu.tar.gz
+
+Each linux-<arch>/ folder holds the 12 files that the C library
+libnemo_speech_asr_c.so.1 loads, copied from the tarball's lib/ with symlinks
+resolved and saved under their SONAME. Every library has RPATH $ORIGIN, so the
+folder loads as a unit. The x86_64 build needs an AVX2 CPU (x86-64-v3).
+License notices: ../licenses/nemo-speech/ (the tarball's share/licenses/nemo-speech/).
+
+File sha256:
+489803ded8a4d803e2c792763a2767c12185f5764b7bba080742d14ef2452b27  linux-x86_64/libgcc_s.so.1
+97b9e379759c63e00d330fecd62931de28676afb298b18508617b8990d99e400  linux-x86_64/libggml-base.so.0
+115235afc38d751773695f8007ea48fc1ad7c405b28dc9dd13f4f1ad1eb3be30  linux-x86_64/libggml-cpu.so.0
+dc4a83f10816da67ccbf0b108d03e8da090bfa52f8da2feffb81d900672560d4  linux-x86_64/libggml.so.0
+98b21ff32bb07b53f1fb266d887d2db0086ea66c8ad03696a1db53f65321cd94  linux-x86_64/libgomp.so.1
+a196f3ffd1b7ba2e6178a057ca87440135b77c281ea790170aea2e61b76311e3  linux-x86_64/libllama-common.so.0
+9ee8fe715108a4e50e12842b78d8677e8d1a64168c4c8e9ced35c8569eb8723c  linux-x86_64/libllama.so.0
+97e2db60f35db2e11860e92a42936621379ba7a54c416a989b4b50b407c57788  linux-x86_64/libnemo_speech_asr_c.so.1
+1afa581f1238c6e9924d98460c66a3df93054e4d5967d19ef4ab08b6e22eba42  linux-x86_64/libnemo_speech_asr.so
+b27afa90cca8254ede1abcb50f66e141586cbb8d1b8eb811c2bd4e81c4bd6996  linux-x86_64/libnemo_speech_speechlm.so
+01f5e4f415c977f4933a31a8f6d75a7547b82d4df592743c6ff41dc6a84ededb  linux-x86_64/libnemo_speech_text_normalization.so
+26916e7389a561537a0510661fc75538cea236139346f3dbe21bc64ba65605bf  linux-x86_64/libstdc++.so.6
+42e40b1edf78999d41d763cb169c70b563e8b5dbc665e072380f96832ad4a407  linux-aarch64/libgcc_s.so.1
+4709ed74ef050eeada15253f20d0cc694f29a02028763d41314700d38c4c7891  linux-aarch64/libggml-base.so.0
+63419cf7beb5beabbe2231f9ff2004bbfddf68c9d951d5365c92fecaffa39fd3  linux-aarch64/libggml-cpu.so.0
+b80e54242c99b8792e423bc94f6e1ec6b4ba1e2324980b7ed2e58cc0d30ba920  linux-aarch64/libggml.so.0
+77ecc1d6ec640f5c148cc18cdc2dd399346dff100e6f0b3bb7673176e60e7771  linux-aarch64/libgomp.so.1
+bd9436daf27df41c51cfa883ddc08a4980eced712551b77ff0f9b4c6cf2da560  linux-aarch64/libllama-common.so.0
+5f633cd87616e445fbf2939d9306fe69cd7c88c9282d23770262ee414df1d050  linux-aarch64/libllama.so.0
+32e829a72f1d6768da11de21b22d426fcb79c429cc3b58c6235d4e8d95206d56  linux-aarch64/libnemo_speech_asr_c.so.1
+86138ce1b7f50484e8da182bcfb72a466adfb416ff0d74969aa850fa1253a849  linux-aarch64/libnemo_speech_asr.so
+f4966bf8e79262c1709685df697805eb64e8d6826dbec342fd3d4a60e37490dd  linux-aarch64/libnemo_speech_speechlm.so
+5eab5146dbdc956884735a55cc0425bc9b620ee55ad6d75f2188385ac857bab6  linux-aarch64/libnemo_speech_text_normalization.so
+d5106b70d2682294dee634486749ee06cf24ac830190996dcab95a246ebc152b  linux-aarch64/libstdc++.so.6

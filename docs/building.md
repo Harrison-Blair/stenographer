@@ -56,8 +56,9 @@ prompt's MIT attribution is packaged at
 `stenographer/assets/licenses/asd-ste100-MIT.txt` in wheels and retained under
 `src/` in source distributions. The model attribution files
 (`underdog-bark-3.0-pro-NOTICE.txt`, `silero-vad-MIT.txt`,
-`wespeaker-resnet34-LM-NOTICE.txt`, and `pyannote-segmentation-3.0-MIT.txt`) sit in the
-same folder, as do the Bark Pro converter and its venv lock under
+`wespeaker-resnet34-LM-NOTICE.txt`, `pyannote-segmentation-3.0-MIT.txt`, and
+`nemotron-3-diarization-OpenMDW-1.1-NOTICE.txt`) and the NeMo-Speech.cpp notices
+(`nemo-speech/`) sit in the same folder, as do the Bark Pro converter and its venv lock under
 `stenographer/assets/convert/`. Three models ship with the app and are committed
 to Git in `stenographer/assets/models/`:
 
@@ -70,6 +71,30 @@ to Git in `stenographer/assets/models/`:
 `silero_vad.onnx` is unchanged from the
 [sherpa-onnx release](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx).
 The ASR model is an explicit download.
+
+### Speaker separation runtime
+
+Speaker separation uses NVIDIA Nemotron-3-Diarization, run by the native
+NeMo-Speech.cpp 0.3.0 runtime through its C API in a helper process.
+
+- **Runtime libraries** are committed to Git in
+  `stenographer/assets/nemo_speech/linux-x86_64/` and `linux-aarch64/`: the 12
+  files that the C library loads, from the release's Linux CPU tarballs.
+  `nemo_speech/SOURCES.txt` records the tarball and file SHA-256 values. Every
+  library has RPATH `$ORIGIN`, so each folder loads as a unit. The x86_64 build
+  needs an AVX2 CPU; without one the app records and transcribes with no
+  speaker labels.
+- **The speaker model** (`Nemotron-3-Diarization.q8_0.gguf`, 107,012,128
+  bytes, SHA-256 `08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1`)
+  is larger than GitHub's file limit and is never committed. `scripts/build.sh`
+  runs `scripts/fetch_speaker_model.py`, which downloads it from the pinned
+  Hugging Face revision into `src/stenographer/assets/models/` (git-ignored).
+  A file with the pinned size and SHA-256 is kept, so a rebuild does not
+  download again; any mismatch fails the build. Run the script by hand to use
+  speaker separation from a source checkout.
+- **The bundle** ships the model and the libraries of the build architecture
+  only, once, under `_internal/stenographer/assets/`. The wheel and source
+  distribution carry the libraries of both architectures but not the model.
 
 ### Speaker model
 

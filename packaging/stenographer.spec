@@ -11,9 +11,14 @@
 #     found at runtime via rthooks/py_rth_portaudio.py)
 #   - wl-copy, canberra-gtk-play / pw-play / paplay CLIs; /dev/uinput access + `input` group
 # The ASR model is never bundled; `stenographer model download` builds it in the
-# local model directory. The voice models ship in assets/models.
+# local model directory. The voice models ship in assets/models; the speaker
+# model GGUF is fetched there by scripts/fetch_speaker_model.py before the build.
+# The NeMo-Speech runtime ships for the build architecture only, as data files
+# in one folder: its libraries load each other through RPATH $ORIGIN, and as
+# data PyInstaller does not copy them a second time into _internal/.
 
 # -*- mode: python ; coding: utf-8 -*-
+import platform
 import sys
 from importlib.util import find_spec
 from pathlib import Path
@@ -23,6 +28,21 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 ASSET_SRC = PROJECT_ROOT / "src" / "stenographer" / "assets"
+SPEAKER_MODEL = ASSET_SRC / "models" / "Nemotron-3-Diarization.q8_0.gguf"
+if not SPEAKER_MODEL.is_file():
+    raise RuntimeError(f"{SPEAKER_MODEL} is missing; run scripts/fetch_speaker_model.py")
+NEMO_RUNTIME = f"nemo_speech/linux-{platform.machine()}"
+if sys.platform == "linux" and not (ASSET_SRC / NEMO_RUNTIME).is_dir():
+    raise RuntimeError(f"no NeMo-Speech runtime for this architecture: {NEMO_RUNTIME}")
+ASSET_DATAS = [
+    (str(path), str(Path("stenographer/assets") / path.parent.relative_to(ASSET_SRC)))
+    for path in sorted(ASSET_SRC.rglob("*"))
+    if path.is_file()
+    and (
+        not path.relative_to(ASSET_SRC).as_posix().startswith("nemo_speech/linux-")
+        or path.parent.relative_to(ASSET_SRC).as_posix() == NEMO_RUNTIME
+    )
+]
 TEXTUAL_DATAS, TEXTUAL_BINARIES, TEXTUAL_IMPORTS = collect_all("textual")
 SHERPA_DATAS, SHERPA_BINARIES, SHERPA_IMPORTS = collect_all("sherpa_onnx")
 NATIVE_BINARIES = []
@@ -47,7 +67,7 @@ a = Analysis(
     datas=[
         # Sound cues, the overlay quill, Caveat variable font and OFL, and the
         # Bark Pro converter script and its venv lock (assets/convert/).
-        (str(ASSET_SRC), "stenographer/assets"),
+        *ASSET_DATAS,
         *TEXTUAL_DATAS,
         *SHERPA_DATAS,
     ],
@@ -68,6 +88,15 @@ a = Analysis(
     excludes=["PySide6", "stenographer_desktop"],
     noarchive=False,
 )
+
+# PyInstaller reclassifies the runtime's data files as binaries and copies the
+# libraries they need into _internal/ a second time. They load from their own
+# folder through RPATH, so drop those copies.
+NEMO_RUNTIME_SRC = ASSET_SRC / NEMO_RUNTIME
+a.binaries = [
+    entry for entry in a.binaries
+    if "/" in entry[0] or not Path(entry[1]).resolve().is_relative_to(NEMO_RUNTIME_SRC)
+]
 
 pyz = PYZ(a.pure, a.zipped_data)
 

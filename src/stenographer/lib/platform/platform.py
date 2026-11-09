@@ -23,6 +23,7 @@ from stenographer.lib.platform.key_table import KeyTable
 from stenographer.lib.platform.notifier import Notifier
 from stenographer.lib.platform.process_counters import ProcessCounters
 from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
+from stenographer.lib.platform.speaker_diarizer import SpeakerDiarizer
 from stenographer.lib.platform.system_audio import SystemAudioCapture
 from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer, ClipboardWriter
 
@@ -98,6 +99,11 @@ class Platform(Protocol):
     # --- process / lifecycle ---
     def asr_transport(self) -> AsrTransport:
         """The shared native ASR transport, resolved lazily by each provider."""
+        ...
+
+    def speaker_diarizer(self, threads: int) -> SpeakerDiarizer:
+        """A new speaker-separation helper capped at *threads* CPU threads; it starts
+        on first use. Each call gives an independent helper."""
         ...
 
     def single_instance_lock(self) -> SingleInstanceLock: ...

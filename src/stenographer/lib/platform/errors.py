@@ -12,3 +12,11 @@ class SingleInstanceLockError(OSError):
 
 class SystemAudioCaptureError(RuntimeError):
     """System audio capture could not start or stopped unexpectedly."""
+
+
+class SpeakerDiarizerError(RuntimeError):
+    """Speaker separation is unavailable, or its helper process failed."""
+
+
+class NemoSpeechError(RuntimeError):
+    """A NeMo-Speech C API call returned a status other than OK."""
