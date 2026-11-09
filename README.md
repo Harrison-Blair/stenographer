@@ -94,7 +94,7 @@ systemctl --user start stenographer.service
 ```
 
 The wizard checks your microphone, clipboard, model, and input permissions, and
-offers the separate ASR and voice-activity model download. Use plain `setup` to
+offers the separate ASR model download. Use plain `setup` to
 review the hotkey, audio, ASR, feedback, and refine settings. Use hub Settings
 or the configuration file for the remaining settings. If room noise changes
 during spectrum calibration, keep the room quiet and retry. If overlay backend

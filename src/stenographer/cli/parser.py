@@ -136,7 +136,7 @@ def _model(subparsers) -> None:
 def _model_download(subparsers) -> None:
     download = subparsers.add_parser(
         "download",
-        help="Download ASR, refine, or live models; flags can be combined.",
+        help="Download the ASR or refine model; flags can be combined.",
         description="Download models; selection flags can be combined.",
     )
     download.add_argument(
