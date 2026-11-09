@@ -17,10 +17,10 @@ Local, offline English dictation. Python ≥3.12; GPL-3.0-or-later.
   `lib/utils/errors.py`. Split by responsibility and navigability; no size
   limit. Keep resources in `assets/`.
 - Dictation stays offline; model downloads are explicit. The daemon's only
-  network calls are the metadata-only update notice and
-  loopback-by-default refine request (docs/refine.md). Never put transcript
-  text or audio in logs, history, or analytics. The hub Record screen may
-  write both only to the user-requested session folder (docs/hub.md).
+  network call is the loopback-by-default refine request (docs/refine.md).
+  Never put transcript text or audio in logs, history, or analytics. The hub
+  Record screen may write both only to the user-requested session folder
+  (docs/hub.md).
 - Preserve configuration compatibility; use the preservation layer for saves.
 - Unit-test pure logic; see new regression tests fail before fixing behavior.
   Test native behavior on real platforms, not mock OS calls. Never enable

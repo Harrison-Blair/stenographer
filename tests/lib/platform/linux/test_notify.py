@@ -61,7 +61,7 @@ def _wait_for_argv(record, message, timeout=10.0):
             ],
             id="default_critical_no_icon",
         ),
-        # The update notice is advisory, so it must not borrow the error urgency.
+        # An advisory notice must not borrow the error urgency.
         pytest.param(
             ("a newer release is available", "normal"),
             [

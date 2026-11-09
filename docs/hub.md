@@ -492,7 +492,6 @@ its current settings.
 | Mute sounds | `feedback.mute` | Mutes dictation feedback sounds. |
 | Overlay | `feedback.overlay` | Shows the best-effort status overlay of dictation. |
 | Sound pack | `feedback.sound_pack` | The name of the feedback sound pack. |
-| Update check | `feedback.update_check` | When the dictation daemon starts, checks release metadata and shows an update notice. |
 | Log level | `feedback.log_level` | The minimum level of console log messages. |
 | Copy original | `delivery.copy_original` | For the Agent key, and only when cleanup changed the text, copies the original transcript too. |
 | Restore clipboard | `delivery.restore_clipboard` | Restores the previous clipboard item after dictation delivers its text. |

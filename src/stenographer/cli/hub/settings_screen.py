@@ -46,7 +46,6 @@ SETTINGS_TABS = (
             "feedback.mute",
             "feedback.overlay",
             "feedback.sound_pack",
-            "feedback.update_check",
             "feedback.log_level",
             DIVIDER,
             "delivery.*",

@@ -12,7 +12,7 @@
 #   - wl-copy, canberra-gtk-play / pw-play / paplay CLIs; /dev/uinput access + `input` group
 # The ASR model is never bundled; `stenographer model download` builds it in the
 # local model directory. The voice models ship in assets/models. Certifi is
-# optional; the update notice uses it when installed, or the system trust store.
+# optional and bundled when the build environment has it.
 
 # -*- mode: python ; coding: utf-8 -*-
 import sys

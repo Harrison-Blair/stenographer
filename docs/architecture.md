@@ -29,8 +29,8 @@ their existing paths in `assets/`.
   sound-pack validation, preview, and feedback policy.
 - `daemon/`: recording lifecycle, locking, publication order, pipeline execution,
   telemetry, and exactly-once utterance completion. The CLI injects a status sink.
-- `analytics/`, `diagnostics/`, `logging/`, and `updates/`: numeric history,
-  core capability checks and collection, private logging, and update notices.
+- `analytics/`, `diagnostics/`, and `logging/`: numeric history, core
+  capability checks and collection, and private logging.
 - `platform/`: host service contracts and the lazy Linux provider.
 
 Small types and helpers may sit beside their single owner, and related records

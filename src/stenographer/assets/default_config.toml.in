@@ -24,7 +24,6 @@ diarize_mic = false            # label room voices on the mic as Room 1, Room 2,
 volume = 0.6
 mute = false
 overlay = true                 # best-effort lifecycle pill; dictation is independent
-update_check = true            # daily HTTPS check for a newer release; a notice, never self-update
 spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
 sound_pack = "minimal-ui"      # bundled pack name or valid pack under sounds/
 log_level = "info"             # debug | info | warning | error; the file keeps debug

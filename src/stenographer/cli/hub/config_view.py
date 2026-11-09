@@ -32,7 +32,6 @@ _LABELS = {
     "feedback.volume": "Volume",
     "feedback.mute": "Mute sounds",
     "feedback.overlay": "Overlay",
-    "feedback.update_check": "Update check",
     "feedback.spectrum_floor_dbfs": "Meter floor dBFS",
     "feedback.sound_pack": "Sound pack",
     "feedback.log_level": "Log level",

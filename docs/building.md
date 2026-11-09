@@ -256,8 +256,7 @@ The target system must provide:
   `dist/stenographer/stenographer model download --asr` (about 1.6 GB
   download, 10 GiB free disk, about 10.2 GiB RAM, CPU only). The build needs
   `python3-venv` (`sudo apt install python3-venv`) for its temporary
-  converter venv. `certifi` supplies HTTPS trust for explicit downloads and
-  the metadata-only update notice.
+  converter venv. `certifi` supplies HTTPS trust for explicit downloads.
 
 `dist/stenographer/stenographer doctor` reports exactly what is missing
 (exit 78 when a required capability is absent).

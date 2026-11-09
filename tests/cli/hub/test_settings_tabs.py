@@ -42,7 +42,6 @@ TAB_KEYS = {
         "feedback.mute",
         "feedback.overlay",
         "feedback.sound_pack",
-        "feedback.update_check",
         "feedback.log_level",
         "delivery.copy_original",
         "delivery.restore_clipboard",
