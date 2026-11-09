@@ -266,6 +266,16 @@ def test_assign_nearest_picks_the_closest_speaker_below_the_threshold():
     assert clustering.assign_nearest(np.array([0.2, 0.3, 0.9], dtype=np.float32)) == "room-2"
 
 
+@pytest.mark.parametrize(("score", "expected"), [(0.42, "speaker-1"), (0.38, "speaker-2")])
+def test_a_default_tracker_joins_a_known_speaker_from_a_score_of_0_40(monkeypatch, score, expected):
+    tracker, _, _ = _tracker(monkeypatch, [])
+    tracker.assign_embedding(np.array([1.0, 0.0], dtype=np.float32), duration=2.0)
+
+    phrase = np.array([score, np.sqrt(1 - score**2)], dtype=np.float32)
+
+    assert tracker.assign_embedding(phrase, duration=2.0) == expected
+
+
 def test_a_file_job_tracker_still_creates_speakers_as_phrases_arrive(monkeypatch):
     tracker, _, _ = _tracker(monkeypatch, [], label_prefix="Speaker")
 

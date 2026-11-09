@@ -53,6 +53,22 @@ def test_default_relabel_does_not_merge_when_float64_score_is_below_threshold():
     assert [line.label for line in relabeled] == ["L0", "L0", "L2"]
 
 
+def test_default_relabel_merges_two_voices_at_a_score_between_0_40_and_0_50():
+    # Two voices, each with a minute of speech, score 0.42: the default limit 0.40 merges them.
+    score = 0.42
+    voices = (
+        np.array([1.0, 0.0], dtype=np.float32),
+        np.array([score, np.sqrt(1 - score**2)], dtype=np.float32),
+    )
+    lines = tuple(
+        _line(index * 7.0, 6.0, f"speaker-{index % 2 + 1}", f"L{index % 2}") for index in range(20)
+    )
+
+    relabeled = relabel_system_lines(lines, [voices[index % 2] for index in range(20)])
+
+    assert {line.speaker_id for line in relabeled} == {"speaker-1"}
+
+
 def test_batch_relabel_merges_split_voices_and_keeps_the_dominant_renamed_label():
     lines = (
         _line(0.0, 1.0, "speaker-1", "Speaker 1"),
