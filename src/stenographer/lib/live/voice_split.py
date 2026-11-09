@@ -21,8 +21,8 @@ from stenographer.lib.logging.pipeline import fmt_event
 
 log = logging.getLogger(__name__)
 
-# The user tested this limit on the pieces of saved sessions.
-_GROUPING_THRESHOLD = 0.50
+# The user tested this limit on the pieces of saved sessions with the WeSpeaker model.
+_GROUPING_THRESHOLD = 0.45
 # A shorter hold of another voice does not cut a line.
 _MINIMUM_RUN_SECONDS = 1.0
 # Shares of the progress of one pass. The pass over the source is the slow part.

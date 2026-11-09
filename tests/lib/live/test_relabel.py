@@ -39,9 +39,11 @@ def test_default_relabel_does_not_merge_when_float64_score_is_below_threshold():
         _line(4.0, 3.0, "speaker-2", "L1"),
         _line(8.0, 6.0, "speaker-3", "L2"),
     )
+    # The first score against (1, 0, 0) is the float32 just under the default threshold 0.4.
+    below = float(np.nextafter(np.float32(0.4), np.float32(0.0)))
     embeddings = (
-        np.array([0.4999999403953552, 0.8660253882408142, 0.0], dtype=np.float32),
-        np.array([0.5, 0.8659821152687073, 0.008660109713673592], dtype=np.float32),
+        np.array([below, np.sqrt(1 - below**2), 0.0], dtype=np.float32),
+        np.array([0.4, np.sqrt(1 - 0.4**2 - 0.01**2), 0.01], dtype=np.float32),
         np.array([1.0, 0.0, 0.0], dtype=np.float32),
     )
 

@@ -334,11 +334,11 @@ def test_each_piece_embeds_only_its_own_audio(run):
     assert np.array_equal(embedded[1], samples[25 * RATE : round(30.5 * RATE)])
 
 
-def test_pieces_group_at_the_limit_of_one_half(run):
+def test_pieces_group_at_the_limit_of_0_45(run):
     samples = speech((ANN, 20.0), (BOB, 20.0))
     other = {
-        0.51: np.array([0.51, np.sqrt(1 - 0.51**2)]),
-        0.49: np.array([0.49, np.sqrt(1 - 0.49**2)]),
+        0.46: np.array([0.46, np.sqrt(1 - 0.46**2)]),
+        0.44: np.array([0.44, np.sqrt(1 - 0.44**2)]),
     }
 
     def count(score):
@@ -352,8 +352,8 @@ def test_pieces_group_at_the_limit_of_one_half(run):
         )
         return len(set(speakers(result)))
 
-    assert count(0.51) == 1
-    assert count(0.49) == 2
+    assert count(0.46) == 1
+    assert count(0.44) == 2
 
 
 def test_a_set_speaker_count_applies_to_the_pieces(run):

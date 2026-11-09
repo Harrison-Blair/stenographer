@@ -65,7 +65,7 @@ def relabel_system_lines(
     lines: Iterable[TranscriptLine],
     embeddings: Iterable[np.ndarray],
     *,
-    threshold: float = 0.5,
+    threshold: float = 0.4,
     progress: Callable[[int, int], None] = lambda _done, _total: None,
     should_cancel: Callable[[], bool] | None = None,
     speaker_count: int | None = None,
