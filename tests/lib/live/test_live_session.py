@@ -1762,7 +1762,7 @@ def test_the_end_pass_gives_the_pass_the_downloaded_speaker_model(monkeypatch, t
 
     rig.session.stop()
 
-    assert models == [tmp_path / "models" / "live" / "nemo_en_titanet_small.onnx"]
+    assert models == [tmp_path / "models" / "live" / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"]
 
 
 def test_a_skip_while_a_part_decodes_saves_the_whole_phrase_as_live(monkeypatch, tmp_path):

@@ -214,6 +214,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer stats` — view, export, or delete local numeric statistics; the summary defaults to hotkey dictations (`--source all` includes file transcriptions).
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file; `--raw` skips refinement even when `--refine` is supplied.
 - `stenographer model download [--asr] [--refine] [--live]` — fetch selected models explicitly; flags combine.
+  The speaker model is now WeSpeaker ResNet34-LM, so an earlier install needs
+  `--live` again.
 - `stenographer run` — run the daemon in the foreground.
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
@@ -291,6 +293,6 @@ model explicitly. The attribution files are in
 | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) | Moondream | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. |
 | [pyannote segmentation 3.0](https://huggingface.co/pyannote/segmentation-3.0) | CNRS | [MIT](src/stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt) | Finds speech when a recording or file is saved. Bundled in the app as the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) ONNX export. |
-| [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | NVIDIA | NeMo Toolkit license ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) | Speaker labels in Record and file jobs. |
+| [WeSpeaker ResNet34-LM](https://github.com/wenet-e2e/wespeaker/blob/master/docs/pretrained.md) | WeSpeaker team (wenet-e2e) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); trained on VoxCeleb, which is offered for research purposes ([NOTICE](src/stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt)) | Speaker labels in Record and file jobs. Mean subtraction added to the ONNX graph by stenographer. |
 
 Voice model downloads replace corrupt files only after verifying the new download.

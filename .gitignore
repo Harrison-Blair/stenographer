@@ -36,8 +36,8 @@
 !/src/stenographer/assets/licenses/asd-ste100-MIT.txt
 !/src/stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt
 !/src/stenographer/assets/licenses/silero-vad-MIT.txt
-!/src/stenographer/assets/licenses/titanet-small-NOTICE.txt
 !/src/stenographer/assets/licenses/underdog-bark-3.0-pro-NOTICE.txt
+!/src/stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt
 !/src/stenographer/assets/models/pyannote-segmentation-3-0.onnx
 !/src/stenographer/assets/sounds/legacy/delivered.wav
 !/src/stenographer/assets/sounds/legacy/error.wav

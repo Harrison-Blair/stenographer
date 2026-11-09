@@ -382,3 +382,29 @@ def test_saved_speakers_count_only_phrases_that_a_pass_grouped(monkeypatch):
     saved = tracker.saved_speakers(("room-1", "room-1"), ("x", "y"), (1.0, 99.0))
 
     assert saved == (("room-1", "Dana"), ("room-2", "Room 2"))
+
+
+def test_the_real_speaker_model_ignores_the_loudness_of_a_phrase():
+    # The model expects features with their mean over time subtracted. A louder phrase adds
+    # the same amount to every log feature, so with that step the voice does not change.
+    worktree = Path(__file__).resolve().parents[3]
+    data_dir = current_platform().data_dir(
+        {"XDG_DATA_HOME": str(worktree / "tmp" / "xdg-data")}, Path.home()
+    )
+    model_path = data_dir / "models" / "live" / LIVE_MODELS[1].filename
+    if not model_path.is_file():
+        pytest.skip(f"live speaker model is absent: {model_path}")
+    pytest.importorskip("sherpa_onnx", reason="sherpa-onnx is not installed")
+    rate = 16000
+    time = np.arange(3 * rate) / rate
+    pitch = 120 + 30 * np.sin(2 * np.pi * 0.7 * time)
+    phase = 2 * np.pi * np.cumsum(pitch) / rate
+    voiced = sum(np.sin(k * phase) / k for k in range(1, 20)) * (1.5 + np.sin(6 * np.pi * time))
+    noise = np.random.default_rng(0).standard_normal(time.size)
+    samples = (0.04 * voiced + 0.01 * noise).astype(np.float32)
+
+    tracker = SpeakerTracker(model_path)
+    loud = tracker.embed(samples)
+    quiet = tracker.embed(samples * np.float32(0.1))
+
+    assert loud @ quiet / (np.linalg.norm(loud) * np.linalg.norm(quiet)) > 0.9999

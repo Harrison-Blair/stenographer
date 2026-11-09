@@ -395,7 +395,7 @@ def default_model_status() -> tuple[ModelEntry, ...]:
     live_dir = live_model_dir(current_platform().data_dir(os.environ, pathlib.Path.home()))
     names = {VAD_MODEL.filename: "vad", SPEAKER_MODEL.filename: "speaker"}
     labels = {"vad": "voice activity", "speaker": "speaker model"}
-    sizes = {"vad": "about 0.6 MB", "speaker": "about 40 MB"}
+    sizes = {"vad": "about 0.6 MB", "speaker": "about 27 MB"}
     entries = [
         ModelEntry(
             "asr",

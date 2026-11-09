@@ -1047,7 +1047,9 @@ def test_a_file_job_gives_the_pass_the_downloaded_speaker_model(tmp_path, monkey
         _wait_for(job, "completed")
     finally:
         engine.close()
-    assert models == [tmp_path / "data" / "models" / "live" / "nemo_en_titanet_small.onnx"]
+    assert models == [
+        tmp_path / "data" / "models" / "live" / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"
+    ]
 
 
 def test_a_speaker_model_error_on_a_piece_saves_the_lines_of_the_job(tmp_path):

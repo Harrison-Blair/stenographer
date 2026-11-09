@@ -56,11 +56,33 @@ prompt's MIT attribution is packaged at
 `stenographer/assets/licenses/asd-ste100-MIT.txt` in wheels and retained under
 `src/` in source distributions. The model attribution files
 (`underdog-bark-3.0-pro-NOTICE.txt`, `silero-vad-MIT.txt`,
-`titanet-small-NOTICE.txt`, and `pyannote-segmentation-3.0-MIT.txt`) sit in the
+`wespeaker-resnet34-LM-NOTICE.txt`, and `pyannote-segmentation-3.0-MIT.txt`) sit in the
 same folder, as do the Bark Pro converter and its venv lock under
 `stenographer/assets/convert/`. One model ships with the app and is committed to
 Git: `stenographer/assets/models/pyannote-segmentation-3-0.onnx`, about 6 MB.
 All other models are explicit downloads.
+
+### Speaker model
+
+`stenographer model download --live` fetches the speaker model from the
+`speaker-models-1` release of this repository, which is separate from the app
+releases. The file is the sherpa-onnx export of WeSpeaker ResNet34-LM with mean
+subtraction added to the start of the ONNX graph: the model expects features
+with their mean over time subtracted, and sherpa-onnx does not do that step.
+`scripts/speaker_model_mean.py` makes the file. It needs the `onnx` package
+(tested with 1.23.2), which is not an app dependency:
+
+```sh
+python3 -m venv /tmp/onnx-venv && /tmp/onnx-venv/bin/pip install onnx==1.23.2
+curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx
+/tmp/onnx-venv/bin/python -I scripts/speaker_model_mean.py \
+  wespeaker_en_voxceleb_resnet34_LM.onnx wespeaker_en_voxceleb_resnet34_LM_mean.onnx
+```
+
+The script checks the sha256 of the source and prints the sha256 of the output,
+which must match `SPEAKER_MODEL` in `src/stenographer/lib/live/models.py`. The
+release holds the output file and
+`src/stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt`.
 
 ## Releases
 

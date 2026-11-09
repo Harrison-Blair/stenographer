@@ -376,7 +376,7 @@ def test_rediarize_gives_the_pass_the_downloaded_speaker_model(rig, monkeypatch)
 
     rig.jobs.rediarize(recorded(rig.root))
 
-    assert models == [rig.root / "models" / "live" / "nemo_en_titanet_small.onnx"]
+    assert models == [rig.root / "models" / "live" / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"]
 
 
 def test_an_older_session_without_metadata_still_splits(rig):

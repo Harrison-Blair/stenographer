@@ -1,0 +1,34 @@
+WeSpeaker ResNet34-LM attribution
+
+stenographer uses the WeSpeaker ResNet34-LM speaker-embedding model, trained on
+VoxCeleb, for live and Files speaker labels. stenographer does not ship the
+model file. `stenographer model download --live` fetches
+`wespeaker_en_voxceleb_resnet34_LM_mean.onnx` at a pinned sha256 from the
+`speaker-models-1` release of stenographer:
+https://github.com/Harrison-Blair/stenographer/releases/tag/speaker-models-1
+
+Modification: mean subtraction added to the ONNX graph by stenographer. The
+two added nodes subtract the mean over time of the input features, which the
+model expects and sherpa-onnx does not do. Nothing else in the model changed.
+The script `scripts/speaker_model_mean.py` in the stenographer source makes the
+file from the sherpa-onnx ONNX export:
+https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx
+sha256 e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012
+
+Model: voxceleb_resnet34_LM, by the WeSpeaker team (wenet-e2e).
+https://github.com/wenet-e2e/wespeaker
+https://github.com/wenet-e2e/wespeaker/blob/master/docs/pretrained.md
+
+Paper: Wespeaker: A Research and Production oriented Speaker Embedding Learning
+Toolkit. arXiv:2210.17016.
+https://arxiv.org/abs/2210.17016
+
+License: Creative Commons Attribution 4.0 International (CC BY 4.0). The
+WeSpeaker pretrained-model page says that a model trained on VoxCeleb follows
+the license of the VoxCeleb dataset, CC BY 4.0.
+https://creativecommons.org/licenses/by/4.0/
+
+VoxCeleb: "The VoxCeleb dataset is available to download for research
+purposes under a Creative Commons Attribution 4.0 International License. The
+copyright remains with the original owners of the video."
+https://mm.kaist.ac.kr/datasets/voxceleb/

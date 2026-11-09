@@ -19,10 +19,11 @@ VAD_MODEL = LiveModel(
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
     "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
 )
+# WeSpeaker ResNet34-LM with mean subtraction in the graph; scripts/speaker_model_mean.py makes it.
 SPEAKER_MODEL = LiveModel(
-    "nemo_en_titanet_small.onnx",
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx",
-    "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e",
+    "wespeaker_en_voxceleb_resnet34_LM_mean.onnx",
+    "https://github.com/Harrison-Blair/stenographer/releases/download/speaker-models-1/wespeaker_en_voxceleb_resnet34_LM_mean.onnx",
+    "280d78ccc3a8a3ffdf4d9ef867e16faa68d2beb107ad1de7a844285d3522fcd6",
 )
 LIVE_MODELS = (VAD_MODEL, SPEAKER_MODEL)
 

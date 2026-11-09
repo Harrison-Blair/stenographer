@@ -864,7 +864,7 @@ def test_checks_default_model_download_fetches_only_the_chosen_model(monkeypatch
     doctor_view.default_model_download("vad")
     doctor_view.default_model_download("speaker")
 
-    assert calls == ["asr", ("silero_vad.onnx",), ("nemo_en_titanet_small.onnx",)]
+    assert calls == ["asr", ("silero_vad.onnx",), ("wespeaker_en_voxceleb_resnet34_LM_mean.onnx",)]
     entries = doctor_view.default_model_status()
     assert [(entry.model_id, entry.present) for entry in entries] == [
         ("asr", False),
