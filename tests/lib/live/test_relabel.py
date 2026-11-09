@@ -314,3 +314,19 @@ def test_room_prefix_applies_to_a_fixed_speaker_count():
 
     assert [line.speaker_id for line in relabeled] == ["room-1", "room-2", "room-1"]
     assert [line.label for line in relabeled] == ["Room 1", "Room 2", "Room 1"]
+
+
+def test_batch_relabel_keeps_a_half_minute_minor_voice_beside_a_long_top_voice():
+    # A 66 min top voice and 32 s of a minor voice in 1.6 s phrases a minute apart, so the
+    # sustained-speech rule does not keep it. One fifth of the top voice is 13.2 min, but
+    # 30 s of speech is enough to keep a voice.
+    top = np.array([1.0, 0.0], dtype=np.float32)
+    minor = np.array([0.0, 1.0], dtype=np.float32)
+    lines = (
+        *(_line(index * 60.0, 60.0, "speaker-1", "Speaker 1") for index in range(66)),
+        *(_line(3960.0 + index * 60.0, 1.6, "speaker-2", "Speaker 2") for index in range(20)),
+    )
+
+    relabeled = relabel_system_lines(lines, (top,) * 66 + (minor,) * 20, threshold=0.5)
+
+    assert [line.speaker_id for line in relabeled] == ["speaker-1"] * 66 + ["speaker-2"] * 20
