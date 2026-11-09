@@ -39,7 +39,7 @@ free before it uses the network. It then makes a temporary venv, installs the
 pinned converter packages, downloads the pinned source weights (about 1.6 GB
 with the packages), and checks each sha256. It converts the model to int8 ONNX,
 checks the output sha256, installs it, and deletes the venv and the source
-weights. It also downloads the Silero voice-activity model. The conversion
+weights. The conversion
 needs about 10.2 GiB of RAM; a machine with less RAM can run out of memory.
 On the test machine the whole command took about 2 minutes. The installed
 model uses about 653 MiB. A model that is already installed is not built
@@ -264,10 +264,8 @@ Run `stenographer` with no arguments in a terminal to open the hub. If stdin
 or stdout is not a terminal, the command prints help. See the [hub guide](hub.md)
 for recording, transcribing files, and separating speakers.
 
-Download the voice and speaker models with `stenographer model download --live`;
-build the ASR model separately with `stenographer model download --asr`. Download flags
-can be combined; live models report progress and each completed model. A corrupt voice
-model is replaced only after the new download passes its hash check.
+The voice-activity and speaker models ship with the app. Build the ASR model with
+`stenographer model download --asr`.
 
 ## Troubleshoot a running service
 

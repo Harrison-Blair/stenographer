@@ -165,20 +165,16 @@ transcript revision of that session.
 ### Prepare the models
 
 Record uses the same speech model as dictation and file jobs: Underdog Bark 3.0
-Pro, int8 ONNX on the CPU. It also uses separate voice-activity and speaker
-models. Download each model only when you choose to:
+Pro, int8 ONNX on the CPU. Build it once when you choose to:
 
 ```sh
 stenographer model download --asr
-stenographer model download --live
 ```
 
-`--asr` builds the speech model on your machine and downloads the Silero
-voice-activity model. It needs `python3-venv`, 10 GiB of free disk, and about
-10.2 GiB of RAM; see [build the speech model](usage.md#build-the-speech-model).
-`--live` downloads the Silero voice-activity model and the English speaker
-model, WeSpeaker ResNet34-LM (about 27 MB). An install from before this model
-needs `--live` again. Record does not download models for you.
+It needs `python3-venv`, 10 GiB of free disk, and about 10.2 GiB of RAM; see
+[build the speech model](usage.md#build-the-speech-model). Record also uses the
+Silero voice-activity model and the English speaker model, WeSpeaker
+ResNet34-LM. Both ship with the app, so there is nothing else to download.
 
 ### Separate the speakers in a room
 
@@ -526,7 +522,7 @@ former Doctor and Setup sections. The checks are grouped:
 | Group | Checks |
 | --- | --- |
 | input | input access, microphone, hotkey, sounds |
-| engine | speech model, voice models, refine service, system audio, system service |
+| engine | speech model, refine service, system audio, system service |
 | other | each other doctor check, such as ffmpeg, the clipboard, and the overlay |
 
 Each row shows a state glyph, the check name, and a short detail that is cut
@@ -572,11 +568,9 @@ The dialogs:
 - **Quick setup** shows input access, microphone, and hotkey with their state
   and current value. Press `t` to test the selected step and `e` to open its
   setting.
-- **Models** shows the speech model and the two voice models with their size,
-  as present or missing or corrupt. Press `enter` on a missing or corrupt model
-  to download it; a corrupt file is replaced only after the download is
-  verified. One download runs at a time; a notice shows when another one is
-  running.
+- **Models** shows the speech model with its size, as present or missing.
+  Press `enter` on a missing model to build it. One download runs at a time; a
+  notice shows when another one is running.
 - **Defaults** writes the default configuration after a confirmation and
   keeps the current file as a timestamped backup.
 

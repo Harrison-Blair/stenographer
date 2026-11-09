@@ -113,7 +113,7 @@ stenographer model download --asr
 
 The command downloads the pinned source weights and converter packages (about
 1.6 GB), checks their sha256, and converts the model to int8 ONNX on your
-machine. It also downloads the Silero voice-activity model. It needs 10 GiB of
+machine. It needs 10 GiB of
 free disk and about 10.2 GiB of RAM while it converts. On the test machine it
 took about 2 minutes. The installed model uses about 653 MiB. A machine with
 less RAM can run out of memory during the conversion. Speech-model settings
@@ -213,9 +213,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics; the summary defaults to hotkey dictations (`--source all` includes file transcriptions).
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file; `--raw` skips refinement even when `--refine` is supplied.
-- `stenographer model download [--asr] [--refine] [--live]` — fetch selected models explicitly; flags combine.
-  The speaker model is now WeSpeaker ResNet34-LM, so an earlier install needs
-  `--live` again.
+- `stenographer model download [--asr] [--refine]` — fetch selected models explicitly; flags combine.
+  The voice-activity and speaker models ship with the app and need no download.
 - `stenographer run` — run the daemon in the foreground.
 
 Add `--help` to any command for full usage. See the [user guide](docs/usage.md)
@@ -291,8 +290,6 @@ model explicitly. The attribution files are in
 | [Underdog Bark 3.0 Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro) | Conway Research | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Speech recognition. Converted to ONNX and quantized to int8 (weight-only) on your machine by stenographer. |
 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | NVIDIA | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) | Moondream | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
-| [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. |
+| [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. Bundled in the app ([MIT text](src/stenographer/assets/licenses/silero-vad-MIT.txt)). |
 | [pyannote segmentation 3.0](https://huggingface.co/pyannote/segmentation-3.0) | CNRS | [MIT](src/stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt) | Finds speech when a recording or file is saved. Bundled in the app as the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) ONNX export. |
-| [WeSpeaker ResNet34-LM](https://github.com/wenet-e2e/wespeaker/blob/master/docs/pretrained.md) | WeSpeaker team (wenet-e2e) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); trained on VoxCeleb, which is offered for research purposes ([NOTICE](src/stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt)) | Speaker labels in Record and file jobs. Mean subtraction added to the ONNX graph by stenographer. |
-
-Voice model downloads replace corrupt files only after verifying the new download.
+| [WeSpeaker ResNet34-LM](https://github.com/wenet-e2e/wespeaker/blob/master/docs/pretrained.md) | WeSpeaker team (wenet-e2e) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); trained on VoxCeleb, which is offered for research purposes ([NOTICE](src/stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt)) | Speaker labels in Record and file jobs. Bundled in the app, with mean subtraction added to the ONNX graph by stenographer. |
