@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from stenographer.cli.run.banner import _log_banner
@@ -99,19 +97,6 @@ def run(cfg: Config) -> int:
                 safe=True,
                 recovery="next_keypress",
             )
-        if cfg.feedback.update_check:
-            try:
-                from stenographer._version import __version__
-                from stenographer.lib.updates.notice import start_background_check
-
-                log.debug("update_check: enabled")
-                start_background_check(
-                    __version__,
-                    plat.state_dir(os.environ, Path.home()),
-                    daemon.notifier,
-                )
-            except Exception as exc:
-                log_failure(log, logging.DEBUG, "update_check: not_started", exc, safe=True)
         daemon.run()
     except KeyboardInterrupt:
         pass

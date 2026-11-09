@@ -41,7 +41,6 @@ def test_defaults_match_spec():
     assert d.feedback.volume == 0.6
     assert d.feedback.mute is False
     assert d.feedback.overlay is True
-    assert d.feedback.update_check is True
     assert d.feedback.spectrum_floor_dbfs == -45.0
     assert d.feedback.sound_pack == "minimal-ui"
     assert d.feedback.log_level == "info"
@@ -138,8 +137,13 @@ def test_load_or_default_writes_missing_file(tmp_path, monkeypatch):
     assert cfg == Config.defaults()
 
 
-def test_default_template_documents_the_update_check_as_enabled():
-    assert Config.loads(default_toml()).feedback.update_check is True
+@pytest.mark.parametrize("value", ["false", "true", '"yes"'])
+def test_retired_update_check_key_loads_and_has_no_effect(value):
+    """Configs written before the update notice was removed keep the key."""
+
+    cfg = Config.loads(f"[stenographer.feedback]\nupdate_check = {value}\n")
+
+    assert cfg == Config.defaults()
 
 
 def test_default_template_leaves_no_placeholder_unfilled():
@@ -174,7 +178,6 @@ def test_empty_string_is_unset(tmp_path):
         ("[stenographer.asr]\ncpu_threads = 4", "asr", {"cpu_threads": 4}),
         ("[stenographer.asr]\ncpu_threads = 5", "asr", {"cpu_threads": 5}),
         ("[stenographer.feedback]\noverlay = false", "feedback", {"overlay": False}),
-        ("[stenographer.feedback]\nupdate_check = false", "feedback", {"update_check": False}),
         *[
             (f'[stenographer.feedback]\nsound_pack = "{name}"', "feedback", {"sound_pack": name})
             for name in ("legacy", "warm-desk", "a", "a" * 64, "0-quiet")
@@ -286,7 +289,6 @@ def test_old_config_inherits_defaults_without_rewriting(tmp_path):
         ("[stenographer.feedback]\nvolume = -1\n", "feedback.volume"),
         ('[stenographer.feedback]\nmute = "no"\n', "feedback.mute"),
         ('[stenographer.feedback]\noverlay = "yes"\n', "feedback.overlay"),
-        ('[stenographer.feedback]\nupdate_check = "yes"\n', "feedback.update_check"),
         ('[stenographer.feedback]\nlog_level = "verbose"\n', "feedback.log_level"),
         ("[stenographer.feedback]\nlog_level = 10\n", "feedback.log_level"),
         ('[stenographer.feedback]\nsound_pack = "Minimal UI"\n', "feedback.sound_pack"),

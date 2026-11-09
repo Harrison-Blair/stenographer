@@ -61,36 +61,22 @@ def _wait_for_argv(record, message, timeout=10.0):
             ],
             id="default_critical_no_icon",
         ),
-        # The update notice is advisory, so it must not borrow the error urgency.
-        pytest.param(
-            ("a newer release is available", "normal"),
-            [
-                "notify-send",
-                "-a",
-                "Stenographer",
-                "-u",
-                "normal",
-                "Stenographer",
-                "a newer release is available",
-            ],
-            id="normal_no_icon",
-        ),
         # Options precede the positional pair, per notify-send's documented usage:
         # "notify-send [OPTION...] <SUMMARY> [BODY]".
         pytest.param(
-            ("update available", "normal", "/opt/steno/icon.png"),
+            ("copy failed", "/opt/steno/icon.png"),
             [
                 "notify-send",
                 "-a",
                 "Stenographer",
                 "-u",
-                "normal",
+                "critical",
                 "-i",
                 "/opt/steno/icon.png",
                 "Stenographer",
-                "update available",
+                "copy failed",
             ],
-            id="normal_with_icon",
+            id="critical_with_icon",
         ),
     ],
 )
@@ -118,12 +104,11 @@ def test_notifier_stays_a_no_op_when_notify_send_is_absent(tmp_path, monkeypatch
     notifier = NotifySendNotifier()
     _stub_notify_send(tmp_path, record)
     notifier.error("boom")
-    notifier.info("fyi")
     time.sleep(0.2)
     assert not record.exists()
 
 
-def test_notifier_spawns_notify_send_with_the_urgency_of_each_level(tmp_path, monkeypatch):
+def test_notifier_spawns_notify_send_at_critical_urgency(tmp_path, monkeypatch):
     record = tmp_path / "argv"
     _stub_notify_send(tmp_path, record)
     monkeypatch.setenv("PATH", str(tmp_path))
@@ -135,11 +120,6 @@ def test_notifier_spawns_notify_send_with_the_urgency_of_each_level(tmp_path, mo
     assert argv[argv.index("-a") + 1] == "Stenographer"
     # The bundled icon is resolved once, at construction, and passed by path.
     assert argv[argv.index("-i") + 1].endswith("stenographer.png")
-
-    record.unlink()
-    notifier.info("a newer release is available")
-    argv = _wait_for_argv(record, "a newer release is available")
-    assert argv[argv.index("-u") + 1] == "normal"
 
 
 def test_notifier_drops_the_icon_when_the_bundled_asset_cannot_be_read(
@@ -191,7 +171,6 @@ def test_notifier_survives_a_notify_send_that_cannot_be_executed(tmp_path, monke
     notifier = NotifySendNotifier()
     with caplog.at_level(logging.DEBUG, logger=_NOTIFY_LOGGER):
         notifier.error("copy failed")
-        notifier.info("fyi")
     failures = [r for r in caplog.records if "send_failed" in r.message]
     assert failures
     assert any("OSError" in r.message for r in failures)

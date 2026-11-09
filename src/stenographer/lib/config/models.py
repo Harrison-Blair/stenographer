@@ -67,7 +67,6 @@ class FeedbackConfig:
     volume: float = 0.6
     mute: bool = False
     overlay: bool = True
-    update_check: bool = True
     spectrum_floor_dbfs: SpectrumFloor = -45.0
     sound_pack: str = DEFAULT_SOUND_PACK
     log_level: str = "info"
@@ -399,7 +398,6 @@ def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
         volume=r.ranged_number("volume", 0.0, 1.0),
         mute=r.bool("mute"),
         overlay=r.bool("overlay"),
-        update_check=r.bool("update_check"),
         spectrum_floor_dbfs=r.spectrum_floor("spectrum_floor_dbfs"),
         sound_pack=sound_pack,
         log_level=r.folded_choice("log_level", ALLOWED_LOG_LEVELS),

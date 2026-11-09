@@ -420,7 +420,7 @@ tab. The first four tabs edit
 
 | Tab | Settings |
 | --- | --- |
-| General | hotkey, sound and overlay feedback, update check, log level, delivery, and analytics |
+| General | hotkey, sound and overlay feedback, log level, delivery, and analytics |
 | Audio | input device, minimum speech level, maximum recording length, and spectrum floor |
 | Recognition | `asr.idle_unload_seconds`, `asr.cpu_threads`, and the refine settings |
 | Live | `live.diarize_mic` |
@@ -492,7 +492,6 @@ its current settings.
 | Mute sounds | `feedback.mute` | Mutes dictation feedback sounds. |
 | Overlay | `feedback.overlay` | Shows the best-effort status overlay of dictation. |
 | Sound pack | `feedback.sound_pack` | The name of the feedback sound pack. |
-| Update check | `feedback.update_check` | When the dictation daemon starts, checks release metadata and shows an update notice. |
 | Log level | `feedback.log_level` | The minimum level of console log messages. |
 | Copy original | `delivery.copy_original` | For the Agent key, and only when cleanup changed the text, copies the original transcript too. |
 | Restore clipboard | `delivery.restore_clipboard` | Restores the previous clipboard item after dictation delivers its text. |

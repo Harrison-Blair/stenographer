@@ -57,6 +57,17 @@ def test_render_preserves_comments_order_and_unknown_content(tmp_path):
     assert Config.loads(rendered) == reviewed
 
 
+def test_save_keeps_the_retired_update_check_key(tmp_path):
+    document = _load_document(tmp_path, "[stenographer.feedback]\nupdate_check = false\n")
+    reviewed = replace(document.config, asr=replace(document.config.asr, cpu_threads=5))
+
+    result = document.save(reviewed)
+
+    saved = result.path.read_text(encoding="utf-8")
+    assert tomlkit.parse(saved)["stenographer"]["feedback"]["update_check"] is False
+    assert Config.loads(saved) == reviewed
+
+
 def test_render_materializes_every_known_key(tmp_path):
     rendered = _load_document(tmp_path, "").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
@@ -75,12 +86,11 @@ def test_render_materializes_every_known_key(tmp_path):
         "volume",
         "mute",
         "overlay",
-        "update_check",
         "spectrum_floor_dbfs",
         "sound_pack",
         "log_level",
     ]
-    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 18
+    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 17
 
 
 def test_render_encodes_optional_strings_as_empty_strings(tmp_path):

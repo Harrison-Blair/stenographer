@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The only code in the project that talks to Ollama.
 
-Stdlib ``urllib`` with the import inside each function, exactly as
-``lib/updates/notice.py`` does it: no new runtime dependency, and nothing is
-imported at all on a machine that never enables the stage.
+Stdlib ``urllib`` with the import inside each function: no new runtime
+dependency, and nothing is imported at all on a machine that never enables the
+stage.
 
 Every request here is local by default (``http://127.0.0.1:11434``). The one
 request that carries transcript text is :func:`post_chat`; the rest move model

@@ -238,16 +238,8 @@ text. The hub Record screen saves the audio and transcript that you record only
 in a private session folder; see [saved session files and
 privacy](hub.md#saved-session-files-and-privacy).
 
-By default the only network access that leaves the machine is an optional
-metadata-only request for the latest GitHub release tag, at most once every
-24 hours. It never downloads a model or release. Disable the check with:
-
-```toml
-[stenographer.feedback]
-update_check = false
-```
-
-The [refine](refine.md) stage is the one setting that sends transcript text
+The dictation daemon makes one kind of network request: the
+[refine](refine.md) stage. It is the one setting that sends transcript text
 anywhere. It is on by default, and its default host is loopback, so the text
 stays on the machine; pointing `[stenographer.refine] host` at another machine
 sends transcripts to it over the network.

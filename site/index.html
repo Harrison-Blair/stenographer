@@ -92,11 +92,8 @@
           </ul>
         </div>
         <div>
-          <h3>The network exceptions</h3>
-          <p>At most once every 24 hours, stenographer asks GitHub for the latest release tag. Metadata only, never a download, and silent if it fails. You get a desktop notification when a newer version exists. If you would rather it never asked, turn it off in your config:</p>
-          <pre><code>[stenographer.feedback]
-update_check = false</code></pre>
-          <p>The cleanup pass is the other one, and it runs by default. Its default host is <code>127.0.0.1</code>, so your transcript goes to a model on your own machine and no further. Point it somewhere else and your transcripts travel there — your config says so, and so does every daemon start. Turn it off in your config if you would rather skip it.</p>
+          <h3>The network exception</h3>
+          <p>The cleanup pass is the one exception, and it runs by default. Its default host is <code>127.0.0.1</code>, so your transcript goes to a model on your own machine and no further. Point it somewhere else and your transcripts travel there — your config says so, and so does every daemon start. Turn it off in your config if you would rather skip it.</p>
         </div>
       </div>
     </section>

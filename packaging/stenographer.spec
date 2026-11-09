@@ -11,8 +11,7 @@
 #     found at runtime via rthooks/py_rth_portaudio.py)
 #   - wl-copy, canberra-gtk-play / pw-play / paplay CLIs; /dev/uinput access + `input` group
 # The ASR model is never bundled; `stenographer model download` builds it in the
-# local model directory. The voice models ship in assets/models. Certifi is
-# optional; the update notice uses it when installed, or the system trust store.
+# local model directory. The voice models ship in assets/models.
 
 # -*- mode: python ; coding: utf-8 -*-
 import sys
@@ -21,15 +20,6 @@ from pathlib import Path
 
 from PyInstaller.depend.bindepend import get_imports
 from PyInstaller.utils.hooks import collect_all, collect_submodules
-
-try:
-    import certifi
-except ImportError:
-    CERTIFI_DATAS = []
-    CERTIFI_IMPORTS = []
-else:
-    CERTIFI_DATAS = [(certifi.where(), "certifi")]
-    CERTIFI_IMPORTS = ["certifi"]
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 ASSET_SRC = PROJECT_ROOT / "src" / "stenographer" / "assets"
@@ -58,13 +48,11 @@ a = Analysis(
         # Sound cues, the overlay quill, Caveat variable font and OFL, and the
         # Bark Pro converter script and its venv lock (assets/convert/).
         (str(ASSET_SRC), "stenographer/assets"),
-        *CERTIFI_DATAS,
         *TEXTUAL_DATAS,
         *SHERPA_DATAS,
     ],
     hiddenimports=[
         "sounddevice",
-        *CERTIFI_IMPORTS,
         *NATIVE_IMPORTS,
         *TEXTUAL_IMPORTS,
         *SHERPA_IMPORTS,

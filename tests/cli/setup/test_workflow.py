@@ -225,7 +225,6 @@ def test_full_review_lists_every_section_and_field():
         "  volume = 0.6",
         "  mute = False",
         "  overlay = True",
-        "  update_check = True",
         "  spectrum_floor_dbfs = -45.0",
         "  sound_pack = minimal-ui",
         "  log_level = info",
@@ -261,7 +260,6 @@ def test_quick_review_lists_only_the_keys_the_quick_wizard_edits():
         "  feedback.volume = 0.6",
         "  feedback.mute = False",
         "  feedback.overlay = True",
-        "  feedback.update_check = True",
         "  feedback.sound_pack = minimal-ui",
         "  feedback.spectrum_floor_dbfs = -45.0",
         "  refine.enabled = True",
@@ -609,7 +607,7 @@ def test_manual_floor_offers_a_scalar_default_when_a_profile_is_current():
 
 
 def test_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_path):
-    console = _console("0.9\n\nno\n\n\n")
+    console = _console("0.9\n\nno\n\n")
 
     config = setup._edit_feedback_section(
         console,
@@ -637,7 +635,7 @@ def test_full_wizard_skips_calibration_and_keeps_the_floor_when_the_overlay_is_o
         feedback=dataclasses.replace(defaults.feedback, spectrum_floor_dbfs=floor),
     )
     # The trailing "keep" answers the question if it is asked, so no capture can start.
-    console = _console("\n\nno\n\n\n\nkeep\n")
+    console = _console("\n\nno\n\n\nkeep\n")
 
     config = setup._edit_feedback(console, initial, config_dir=tmp_path)
 
@@ -650,7 +648,7 @@ def test_full_wizard_skips_calibration_and_keeps_the_floor_when_the_overlay_is_o
 
 
 def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_path):
-    console = _console("\n\n\n\n\ndebug\nkeep\n")
+    console = _console("\n\n\n\ndebug\nkeep\n")
 
     config = setup._edit_feedback_section(
         console,
@@ -669,7 +667,7 @@ def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_
 #: Enter keeps every value; the wizard asks five sections then the review.
 #: The trailing answer is explicit "no" to "Enable transcript refinement",
 #: which now defaults to yes, so the wizard never reaches the Ollama probe.
-_KEEP_EVERYTHING = "\n" * 16 + "keep\n" + "no\n"
+_KEEP_EVERYTHING = "\n" * 15 + "keep\n" + "no\n"
 
 
 def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
@@ -681,7 +679,7 @@ def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
         "KEY_F9\n\n1\ntoggle\n\n"  # Agent, General, device, mode, threshold
         "auto\n\n120\n"  # audio
         "\n4\n"  # asr
-        "0.9\n\n\n\nlegacy\ndebug\nkeep\n"  # feedback
+        "0.9\n\n\nlegacy\ndebug\nkeep\n"  # feedback
         "no\n"  # refine: turn off
         "\n"  # review: save
     )
