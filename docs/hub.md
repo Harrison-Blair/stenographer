@@ -420,7 +420,7 @@ tab. The first four tabs edit
 
 | Tab | Settings |
 | --- | --- |
-| General | hotkey, sound and overlay feedback, update check, log level, delivery, and analytics |
+| General | hotkey, sound and overlay feedback, log level, delivery, and analytics |
 | Audio | input device, minimum speech level, maximum recording length, and spectrum floor |
 | Recognition | `asr.idle_unload_seconds`, `asr.cpu_threads`, and the refine settings |
 | Live | `live.diarize_mic` |

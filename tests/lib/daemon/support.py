@@ -92,8 +92,6 @@ class _Notifier:
     def error(self, message: str) -> None:
         self.errors.append(message)
 
-    def info(self, message: str) -> None: ...
-
 
 class _Recorder:
     def __init__(self, samples: np.ndarray) -> None:

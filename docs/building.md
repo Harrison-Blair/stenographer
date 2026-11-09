@@ -256,7 +256,11 @@ The target system must provide:
   `dist/stenographer/stenographer model download --asr` (about 1.6 GB
   download, 10 GiB free disk, about 10.2 GiB RAM, CPU only). The build needs
   `python3-venv` (`sudo apt install python3-venv`) for its temporary
-  converter venv. `certifi` supplies HTTPS trust for explicit downloads.
+  converter venv.
+- **HTTPS trust for a remote refine host** — the refine client uses the
+  default `urllib` SSL context, so it verifies an HTTPS host against the
+  system trust store. The bundle includes `certifi` when the build
+  environment has it, but no code reads that bundled copy.
 
 `dist/stenographer/stenographer doctor` reports exactly what is missing
 (exit 78 when a required capability is absent).

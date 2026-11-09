@@ -22,11 +22,9 @@ def bundled_icon_path() -> pathlib.Path:
     return pathlib.Path(str(files("stenographer"))) / "assets" / "icons" / "stenographer.png"
 
 
-def build_notify_command(
-    message: str, urgency: str = "critical", icon: str | None = None
-) -> list[str]:
-    """The ``notify-send`` argv for a notification at *urgency*. PURE."""
-    argv = ["notify-send", "-a", "Stenographer", "-u", urgency]
+def build_notify_command(message: str, icon: str | None = None) -> list[str]:
+    """The ``notify-send`` argv for a critical notification. PURE."""
+    argv = ["notify-send", "-a", "Stenographer", "-u", "critical"]
     if icon is not None:
         argv += ["-i", icon]
     return [*argv, "Stenographer", message]
@@ -50,20 +48,14 @@ class NotifySendNotifier:
             log_failure(log, logging.DEBUG, "notify: icon_unavailable", exc, safe=True)
             return None
 
-    def _send(self, message: str, urgency: str) -> None:
-        """No-op when unavailable; failures are swallowed to log.debug (a broken
+    def error(self, message: str) -> None:
+        """Show *message* as a critical notification, non-blocking.
+
+        No-op when unavailable; failures are swallowed to log.debug (a broken
         notifier must never take the daemon down)."""
         if not self._available:
             return
         try:
-            spawn_detached(build_notify_command(message, urgency, self._icon))
+            spawn_detached(build_notify_command(message, self._icon))
         except OSError as exc:
             log_failure(log, logging.DEBUG, "notify: send_failed", exc, safe=True)
-
-    def error(self, message: str) -> None:
-        """Show *message* as a critical notification, non-blocking."""
-        self._send(message, "critical")
-
-    def info(self, message: str) -> None:
-        """Show *message* as a normal-urgency notification, non-blocking."""
-        self._send(message, "normal")
