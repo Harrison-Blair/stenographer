@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Dictation silence: keep only the Silero VAD speech of a capture.
+"""Dictation silence: does the Silero VAD hear speech in a capture?
 
 Dictation runs the same VAD as live mode (``PhraseSegmenter``: same model file,
-same parameters) before the decode. Each speech region keeps 0.25 s of the audio
-before it. A capture with no speech yields an empty buffer, and the caller skips
-the decode."""
+same parameters, same running gain) over the channel-0 downmix of a capture.
+The VAD only decides: a capture with speech is decoded whole, and a capture
+with none is not decoded."""
 
 from __future__ import annotations
 
@@ -15,39 +15,19 @@ import numpy as np
 from stenographer.lib.audio.constants import SAMPLE_RATE
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
     from pathlib import Path
 
     from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
 
-PRE_PAD_SECONDS = 0.25
 
-
-def keep_speech(
-    samples: np.ndarray, regions: Sequence[tuple[int, int]], *, pad_frames: int
-) -> np.ndarray:
-    """Join each ``(start, end)`` frame region with up to *pad_frames* before it. PURE.
-
-    A pre-pad stops at the capture start and at the end of the previous region,
-    so no frame is kept twice.
-    """
-    pieces = []
-    floor = 0
-    for start, end in regions:
-        pieces.append(samples[max(floor, start - pad_frames) : end])
-        floor = end
-    if not pieces:
-        return np.empty(0, dtype=np.float32)
-    return np.concatenate(pieces).astype(np.float32, copy=False)
-
-
-def dictation_speech(
+def speech_seconds(
     samples: np.ndarray,
     vad_model_path: Path | str,
     *,
     segmenter_factory: Callable[[], PhraseSegmenter] | None = None,
-) -> np.ndarray:
-    """The padded speech of one capture, or an empty buffer when it holds none."""
+) -> float:
+    """The seconds of speech the VAD finds in one capture; 0.0 when it finds none."""
     from stenographer.lib.transcribe.pipeline import downmix
 
     if segmenter_factory is None:
@@ -59,8 +39,4 @@ def dictation_speech(
     mono = np.ascontiguousarray(downmix(samples), dtype=np.float32)
     segmenter = segmenter_factory()
     phrases = [*segmenter.accept(mono), *segmenter.flush()]
-    regions = []
-    for phrase in phrases:
-        start = round(phrase.start * SAMPLE_RATE)
-        regions.append((start, start + phrase.samples.size))
-    return keep_speech(mono, regions, pad_frames=round(PRE_PAD_SECONDS * SAMPLE_RATE))
+    return sum(phrase.samples.size for phrase in phrases) / SAMPLE_RATE

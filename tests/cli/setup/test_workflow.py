@@ -216,7 +216,6 @@ def test_full_review_lists_every_section_and_field():
         "  general_binding = KEY_RIGHTALT",
         "[audio]",
         "  input_device = automatic/unset",
-        "  min_speech_rms = 0.0005",
         "  max_recording_seconds = 600",
         "[asr]",
         "  idle_unload_seconds = 900",
@@ -264,7 +263,7 @@ def test_quick_review_lists_only_the_keys_the_quick_wizard_edits():
         "  feedback.spectrum_floor_dbfs = -45.0",
         "  refine.enabled = True",
         "  refine.model = gemma4:e2b",
-        "Audio-gate, recording-limit, and all ASR settings will be retained unchanged.",
+        "Recording-limit and all ASR settings will be retained unchanged.",
     ]
 
 
@@ -549,17 +548,13 @@ def test_edit_hotkey_asks_binding_device_mode_and_threshold(key_vocabulary, devi
     assert "  1. event3: Keyboard" in console.stdout.getvalue()
 
 
-def test_edit_audio_asks_the_device_gate_and_recording_limit(device_menus):
-    console = _console("1\n0.002\n120\n")
+def test_edit_audio_asks_the_device_and_recording_limit(device_menus):
+    console = _console("1\n120\n")
 
     audio = setup._edit_audio(console, Config.defaults()).audio
 
     assert audio.input_device == "1"
-    assert audio.min_speech_rms == 0.002
     assert audio.max_recording_seconds == 120
-    assert "min_speech_rms is the pre-decode energy gate; 0 disables it." in (
-        console.stdout.getvalue()
-    )
 
 
 def test_edit_asr_asks_only_the_two_recognition_keys_in_order():
@@ -667,7 +662,7 @@ def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_
 #: Enter keeps every value; the wizard asks five sections then the review.
 #: The trailing answer is explicit "no" to "Enable transcript refinement",
 #: which now defaults to yes, so the wizard never reaches the Ollama probe.
-_KEEP_EVERYTHING = "\n" * 15 + "keep\n" + "no\n"
+_KEEP_EVERYTHING = "\n" * 14 + "keep\n" + "no\n"
 
 
 def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
@@ -677,7 +672,7 @@ def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
 ):
     console = _console(
         "KEY_F9\n\n1\ntoggle\n\n"  # Agent, General, device, mode, threshold
-        "auto\n\n120\n"  # audio
+        "auto\n120\n"  # audio
         "\n4\n"  # asr
         "0.9\n\n\nlegacy\ndebug\nkeep\n"  # feedback
         "no\n"  # refine: turn off
@@ -702,7 +697,7 @@ def test_wizard_reopens_the_section_the_reviewer_names(key_vocabulary, device_me
     console = _console(
         _KEEP_EVERYTHING
         + "2\n"  # review: re-edit audio
-        + "1\n\n90\n"  # audio again
+        + "1\n90\n"  # audio again
         + "\n"  # review: save
     )
 

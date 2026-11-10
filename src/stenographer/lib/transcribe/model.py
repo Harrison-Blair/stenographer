@@ -109,11 +109,11 @@ class Model:
         started = time.monotonic()
         if self._is_silent_input(samples):
             log.info(
-                "asr: decode_complete elapsed_ms=%d audio_frames=0 vad_frames=0 "
+                "asr: decode_complete elapsed_ms=%d audio_frames=0 "
                 "segments=0 words=0 transcript_chars=0",
                 round((time.monotonic() - started) * 1000),
             )
-            return TranscriptionResult(text="", duration_seconds=0.0, segments=[], vad_seconds=0.0)
+            return TranscriptionResult(text="", duration_seconds=0.0, segments=[])
         samples = self._prepare_samples(samples)
         audio_seconds = samples.shape[0] / SAMPLE_RATE
         stream = self._impl.create_stream()
@@ -126,17 +126,14 @@ class Model:
             list(decoded.durations),
             offset=_PAD_SECONDS,
         )
-        # The input is already speech only (the dictation VAD or a live phrase),
-        # so the VAD duration is the whole input.
         result = _assemble(
             decode_segments(decoded.text, words),
             audio_seconds=audio_seconds,
         )
         log.info(
-            "asr: decode_complete elapsed_ms=%d audio_frames=%d vad_frames=%d "
+            "asr: decode_complete elapsed_ms=%d audio_frames=%d "
             "segments=%d words=%d transcript_chars=%d",
             round((time.monotonic() - started) * 1000),
-            samples.shape[0],
             samples.shape[0],
             len(result.segments),
             sum(len(s.words) for s in result.segments),

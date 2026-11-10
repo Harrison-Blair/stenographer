@@ -22,7 +22,7 @@ from stenographer.lib.daemon.policy import (
 
 
 def test_empty_transcript_is_silent():
-    # Gate passed but the decode was empty/all-gated: success-shaped, no error.
+    # An empty decode, or no VAD speech: success-shaped, no error.
     assert classify_pipeline(transcript_nonempty=False, deliver_result=None) == (
         Outcome.SILENT,
         None,

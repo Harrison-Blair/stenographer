@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure tests for the shared gate → decode → format core.
+"""Pure tests for the shared speech check → decode → format core.
 
 Covered here: the summary line's field order and its dropping of fields no
 early exit ever measured, the channel-0 downmix both capture paths use, and the
@@ -13,7 +13,7 @@ import logging
 import numpy as np
 import pytest
 
-from stenographer.lib.audio.records import CaptureStats, GateStats
+from stenographer.lib.audio.records import CaptureStats
 from stenographer.lib.delivery.timings import DeliveryTimings
 from stenographer.lib.logging.pipeline import fmt_event
 from stenographer.lib.transcribe.pipeline import (
@@ -21,11 +21,11 @@ from stenographer.lib.transcribe.pipeline import (
     apply_capture,
     apply_delivery,
     apply_formatting,
-    apply_gate,
+    apply_levels,
     apply_recognition,
+    apply_speech,
     apply_worker_timings,
     downmix,
-    log_gate,
     log_summary,
     summary_fields,
     transcript_text,
@@ -39,14 +39,14 @@ def _line(record: UtteranceRecord) -> str:
 
 
 def test_summary_omits_every_phase_the_utterance_never_reached():
-    # A capture that fails its gate never loads a model, decodes, or delivers.
+    # A capture with no VAD speech never loads a model, decodes, or delivers.
     # Seen to FAIL against a ``summary_fields`` that substituted 0 for None:
-    # a reported decode_ms=0 on a gate-rejected utterance is a lie about what
+    # a reported decode_ms=0 on a silent utterance is a lie about what
     # happened, not a missing measurement.
-    record = UtteranceRecord(utt=7, mode="hold", outcome="SILENT", gate="fail")
+    record = UtteranceRecord(utt=7, mode="hold", outcome="SILENT")
     line = _line(record)
 
-    assert line.startswith("pipeline: utterance utt=7 mode=hold outcome=SILENT ")
+    assert line == "pipeline: utterance utt=7 mode=hold outcome=SILENT"
     for absent in ("decode_ms=", "load_ms=", "chars_out=", "copy_ms=", "cold=", "source="):
         assert absent not in line
 
@@ -62,9 +62,7 @@ def test_summary_keeps_the_field_order_and_renders_flags_as_digits():
         out_frames=32000,
         overflow=False,
         capped=False,
-        gate="pass",
         peak_rms=0.0005123456,
-        frames_above=12,
         cold=True,
         load_ms=900.0,
         lock_wait_ms=0.0,
@@ -82,8 +80,8 @@ def test_summary_keeps_the_field_order_and_renders_flags_as_digits():
 
     assert _line(record) == (
         "pipeline: utterance utt=1 mode=toggle outcome=DELIVERED activate_ms=1.2 capture_s=2 "
-        "in_frames=32000 out_frames=32000 overflow=0 capped=0 gate=pass peak_rms=0.000512 "
-        "frames_above=12 cold=1 load_ms=900 lock_wait_ms=0 decode_ms=1500 vad_frames=16000 "
+        "in_frames=32000 out_frames=32000 overflow=0 capped=0 peak_rms=0.000512 "
+        "cold=1 load_ms=900 lock_wait_ms=0 decode_ms=1500 vad_frames=16000 "
         "segments=1 words=4 chars_raw=20 chars_out=21 copy_ms=8 release_wait_ms=30 "
         "release_timeout=0 total_ms=2500"
     )
@@ -100,9 +98,7 @@ def test_error_summary_keeps_attempt_metrics_and_omits_result_metrics():
         source="file",
         outcome="ERROR",
         out_frames=3200,
-        gate="pass",
         peak_rms=0.1,
-        frames_above=4,
         cold=True,
         load_ms=10.0,
         decode_ms=20.0,
@@ -111,8 +107,8 @@ def test_error_summary_keeps_attempt_metrics_and_omits_result_metrics():
     line = _line(record)
 
     assert line == (
-        "pipeline: utterance utt=0 source=file outcome=ERROR out_frames=3200 gate=pass "
-        "peak_rms=0.1 frames_above=4 cold=1 load_ms=10 decode_ms=20 total_ms=30"
+        "pipeline: utterance utt=0 source=file outcome=ERROR out_frames=3200 "
+        "peak_rms=0.1 cold=1 load_ms=10 decode_ms=20 total_ms=30"
     )
     for absent in ("vad_frames=", "segments=", "words=", "chars_raw=", "chars_out="):
         assert absent not in line
@@ -120,7 +116,7 @@ def test_error_summary_keeps_attempt_metrics_and_omits_result_metrics():
 
 def test_downmix_keeps_channel_zero_not_the_channel_mean():
     # Seen to FAIL against ``samples.mean(axis=1)``: averaging a stereo capture
-    # whose second channel is silent halves the speech the gate has to find,
+    # whose second channel is silent halves the speech the VAD has to find,
     # and one that is out of phase cancels it outright.
     stereo = np.array([[1.0, -1.0], [0.5, -0.5]], dtype=np.float32)
 
@@ -146,7 +142,7 @@ def test_measurement_phases_preserve_recognition_and_readiness(text):
         UtteranceRecord(utt=0, source=source, capture_s=2, stopped_at=10)
         for source in ("file", "hotkey")
     ]
-    result = TranscriptionResult(text=text, duration_seconds=2, vad_seconds=1)
+    result = TranscriptionResult(text=text, duration_seconds=2)
     for record in records:
         apply_worker_timings(record, WorkerTimings(2, None, None))
         assert record.load_ms is None and record.decode_ms is None
@@ -154,7 +150,7 @@ def test_measurement_phases_preserve_recognition_and_readiness(text):
         # This is also the retained snapshot when formatting raises.
         assert record.chars_raw == len(text)
         assert record.recognized_words == (2 if text else 0)
-        assert record.vad_frames == 16000 and record.asr_audio_s == 2
+        assert record.asr_audio_s == 2
         assert record.chars_out is None and record.stop_to_ready_ms is None
         apply_formatting(record, text, started_at=11, ready_at=12)
         assert record.format_ms == 1000 and record.stop_to_ready_ms == 2000
@@ -227,59 +223,55 @@ def test_capture_without_a_callback_leaves_press_latency_unknown():
     assert record.in_frames == 0
 
 
-def test_gate_verdict_and_clipping_come_from_the_same_samples():
+def test_levels_are_the_peak_and_mean_of_50_ms_frames_with_clipping():
     record = UtteranceRecord(utt=1)
-    stats = GateStats(
-        peak_rms=0.02,
-        mean_rms=0.01,
-        frames_total=10,
-        frames_above=4,
-        threshold=0.0005,
-        passed=True,
-    )
-    samples = np.array([1.0, 0.5, -1.0, 0.0], dtype=np.float32)
-
-    apply_gate(record, stats, samples)
-
-    assert record.gate == "pass"
-    assert record.peak_rms == 0.02
-    assert record.mean_rms == 0.01
-    assert record.frames_above == 4
-    assert record.clipping_fraction == pytest.approx(0.5)
-
-
-def test_gate_failure_and_empty_audio_report_no_clipping():
-    record = UtteranceRecord(utt=1)
-
-    apply_gate(
-        record,
-        GateStats(
-            peak_rms=0.0,
-            mean_rms=0.0,
-            frames_total=0,
-            frames_above=0,
-            threshold=0.0005,
-            passed=False,
-        ),
-        np.empty(0, dtype=np.float32),
+    # Four 50 ms frames at RMS 0.02, 0.0, 0.01 and 0.01, then a partial frame.
+    samples = np.concatenate(
+        [
+            np.full(800, 0.02, dtype=np.float32),
+            np.zeros(800, dtype=np.float32),
+            np.full(1600, -0.01, dtype=np.float32),
+            np.full(400, 1.0, dtype=np.float32),
+        ]
     )
 
-    assert record.gate == "fail"
+    apply_levels(record, samples)
+
+    assert record.peak_rms == pytest.approx(0.02)
+    assert record.mean_rms == pytest.approx(0.01)
+    assert record.clipping_fraction == pytest.approx(400 / 3600)
+
+
+def test_empty_audio_reports_zero_level_and_no_clipping():
+    record = UtteranceRecord(utt=1)
+
+    apply_levels(record, np.empty(0, dtype=np.float32))
+
+    assert record.peak_rms == 0.0
+    assert record.mean_rms == 0.0
     assert record.clipping_fraction == 0.0
+
+
+def test_vad_fields_carry_the_detected_speech_not_the_decoded_audio():
+    record = UtteranceRecord(utt=1, capture_s=2.0)
+
+    apply_speech(record, 0.75)
+    apply_recognition(record, TranscriptionResult(text="hi", duration_seconds=2.0))
+
+    assert record.vad_frames == 12000
+    assert record.vad_s == 0.75
+    assert record.asr_audio_s == 2.0
 
 
 def test_clipping_counts_threshold_values_across_blocks():
     record = UtteranceRecord(utt=1)
-    stats = GateStats(
-        peak_rms=0.0, mean_rms=0.0, frames_total=0, frames_above=0, threshold=0.0, passed=True
-    )
     samples = np.zeros(65_538, dtype=np.float32)
     samples[0] = 0.999
     samples[65_535] = -0.999
     samples[65_536] = 0.998
     samples[65_537] = 1.0
 
-    apply_gate(record, stats, samples)
+    apply_levels(record, samples)
 
     assert record.clipping_fraction == pytest.approx(3 / 65_538)
 
@@ -307,14 +299,12 @@ def test_every_phase_is_a_no_op_without_a_record():
         overflow=False,
         capped=False,
     )
-    gate = GateStats(
-        peak_rms=0.1, mean_rms=0.1, frames_total=1, frames_above=1, threshold=0.0005, passed=True
-    )
 
     # An unrecorded utterance (analytics disabled) runs the same phases.
     apply_capture(None, stats)
     apply_capture(UtteranceRecord(utt=1), None)
-    apply_gate(None, gate, np.zeros(4, dtype=np.float32))
+    apply_levels(None, np.zeros(4, dtype=np.float32))
+    apply_speech(None, 1.0)
     apply_recognition(None, TranscriptionResult(text="hi", duration_seconds=1.0))
     apply_formatting(None, "hi", started_at=0.0, ready_at=1.0)
     apply_worker_timings(None, WorkerTimings(1.0, None, None))
@@ -337,25 +327,6 @@ def test_one_utterance_logs_exactly_one_summary_line(caplog):
 
     assert [r.getMessage() for r in caplog.records] == [
         "pipeline: utterance utt=9 mode=hold outcome=DELIVERED total_ms=1234.5"
-    ]
-
-
-def test_the_gate_line_reports_the_numbers_behind_its_verdict(caplog):
-    with caplog.at_level(logging.INFO, logger="stenographer.lib.transcribe.pipeline"):
-        log_gate(
-            GateStats(
-                peak_rms=0.0012345678,
-                mean_rms=0.0009,
-                frames_total=10,
-                frames_above=0,
-                threshold=0.01,
-                passed=False,
-            )
-        )
-
-    assert [r.getMessage() for r in caplog.records] == [
-        "audio: speech_gate verdict=fail peak_rms=0.001235 mean_rms=0.0009 "
-        "frames_total=10 frames_above=0 threshold=0.01"
     ]
 
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The refine stage inside the real utterance pipeline.
 
-The whole daemon runs: gate, worker, formatter, delivery, summary, analytics
+The whole daemon runs: speech check, worker, formatter, delivery, summary, analytics
 projection. Only the refiner is a double, and it honours the same contract the
 shipping one does — so what is proved here is the *pipeline's* behaviour around
 an optional stage, not a mock's.
@@ -90,7 +90,7 @@ class _SlowRefiner:
 
 
 def _result(text: str) -> TranscriptionResult:
-    return TranscriptionResult(text=text, duration_seconds=1.0, vad_seconds=1.0)
+    return TranscriptionResult(text=text, duration_seconds=1.0)
 
 
 def test_profile_is_captured_at_recording_start_and_cannot_change_mid_utterance():

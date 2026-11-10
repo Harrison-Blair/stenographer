@@ -52,7 +52,6 @@ class HotkeyConfig:
 @dataclass(frozen=True)
 class AudioConfig:
     input_device: str | None = None
-    min_speech_rms: float = 0.0005
     max_recording_seconds: int = 600
 
 
@@ -372,7 +371,6 @@ def _build_audio(table: dict, path: pathlib.Path) -> AudioConfig:
     r = _Reader(table, path, "audio")
     return AudioConfig(
         r.optional_str("input_device"),
-        r.ranged_number("min_speech_rms", 0.0, 1.0),
         r.ranged_int("max_recording_seconds", 1, 86400),
     )
 

@@ -90,7 +90,7 @@ def _pipeline(
             play_cue(name)
 
     pipeline = UtterancePipeline(
-        min_speech_rms=daemon._cfg.audio.min_speech_rms,
+        speech_seconds=lambda _samples: 1.0,
         worker=daemon._worker,
         deliverer=deliverer,
         refiner=_Refiner(refined=refined),

@@ -94,7 +94,7 @@ def test_banner_reports_build_backends_and_every_configured_key(caplog):
     assert f"agent_binding={cfg.hotkey.binding}" in lines["config_hotkey"]
     assert f"general_binding={cfg.hotkey.general_binding}" in lines["config_hotkey"]
     assert f"mode={cfg.hotkey.mode}" in lines["config_hotkey"]
-    assert f"min_speech_rms={cfg.audio.min_speech_rms}" in lines["config_audio"]
+    assert f"max_recording_seconds={cfg.audio.max_recording_seconds}" in lines["config_audio"]
     assert "model=bark-pro-int8" in lines["config_asr"]
     assert f"idle_unload_seconds={cfg.asr.idle_unload_seconds}" in lines["config_asr"]
     assert f"sound_pack={cfg.feedback.sound_pack}" in lines["config_feedback"]

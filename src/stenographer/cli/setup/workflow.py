@@ -167,7 +167,7 @@ def quick_review_lines(config: Config) -> list[str]:
     for section_name, field_name in _QUICK_REVIEW_FIELDS:
         value = getattr(getattr(config, section_name), field_name)
         lines.append(f"  {section_name}.{field_name} = {field_display(value, field_name)}")
-    lines.append("Audio-gate, recording-limit, and all ASR settings will be retained unchanged.")
+    lines.append("Recording-limit and all ASR settings will be retained unchanged.")
     return lines
 
 
@@ -547,7 +547,6 @@ def _edit_hotkey(console: Console, config: Config) -> Config:
 
 def _edit_audio(console: Console, config: Config) -> Config:
     console.write("\nAudio")
-    console.write("min_speech_rms is the pre-decode energy gate; 0 disables it.")
     audio = dataclasses.replace(
         config.audio,
         input_device=_prompt_device(
@@ -556,9 +555,6 @@ def _edit_audio(console: Console, config: Config) -> Config:
     )
     audio = dataclasses.replace(
         audio,
-        min_speech_rms=float(
-            _prompt_number(console, "Minimum speech RMS", audio.min_speech_rms, 0.0, 1.0)
-        ),
         max_recording_seconds=int(
             _prompt_number(
                 console,
@@ -721,7 +717,7 @@ def _edit_feedback(console: Console, config: Config, *, config_dir: pathlib.Path
         config_dir,
         notice=(
             "IMPORTANT: spectrum calibration affects only the 18 visual bars.",
-            "It never changes capture, min_speech_rms, speech gating, or transcription.",
+            "It never changes capture, speech detection, or transcription.",
         ),
         ask_log_level=True,
     )

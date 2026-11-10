@@ -41,19 +41,6 @@ def test_transcription_failure_never_renders_the_worker_message(daemon_logs):
     assert "outcome=ERROR" in _summary(daemon_logs)
 
 
-def test_gate_rejection_is_silent_and_reports_only_the_phases_it_reached(daemon_logs):
-    daemon = _daemon(samples=_SILENCE)
-    _run_and_stop(daemon)
-
-    assert daemon._deliverer.delivered == []
-    line = _summary(daemon_logs)
-    assert "outcome=SILENT" in line
-    assert "gate=fail" in line
-    assert "decode_ms=" not in line
-    assert "chars_out=" not in line
-    assert "audio: speech_gate verdict=fail" in daemon_logs.text
-
-
 def test_a_pathological_decode_keeps_its_counts_only_reason(daemon_logs):
     # PathologicalOutputError's message is audited to carry counts only, and it
     # is the only thing that explains a decode the daemon silently discarded.
@@ -89,11 +76,12 @@ def test_the_pill_stays_up_from_release_until_the_paste_lands():
 
 
 def test_a_capture_without_vad_speech_is_never_decoded(daemon_logs):
-    # Dictation silence is the VAD's verdict now: no speech region means no
-    # decode at all, and the run ends silent with nothing delivered.
+    # Dictation silence is the VAD's verdict: no speech means no decode at
+    # all, and the run ends silent with nothing delivered. A loud capture does
+    # not change that: no level gate decides any more.
     daemon = _daemon(
         result=TranscriptionResult(text="must not appear", duration_seconds=1.0),
-        speech_filter=lambda _samples: np.empty(0, dtype=np.float32),
+        speech=0.0,
     )
     _run_and_stop(daemon)
 
@@ -101,26 +89,55 @@ def test_a_capture_without_vad_speech_is_never_decoded(daemon_logs):
     assert daemon._deliverer.delivered == []
     line = _summary(daemon_logs)
     assert "outcome=SILENT" in line
-    assert "gate=pass" in line
+    assert "peak_rms=0.02" in line
+    assert "vad_frames=0" in line
     assert "decode_ms=" not in line
+    assert "gate=" not in line
 
 
-def test_only_the_vad_speech_reaches_the_decoder():
-    kept = np.full(8000, 0.03, dtype=np.float32)
-    daemon = _daemon(
-        result=TranscriptionResult(text="one", duration_seconds=0.5, vad_seconds=0.5),
-        speech_filter=lambda _samples: kept,
+def test_no_vad_speech_ends_silent_with_the_empty_failure_label():
+    daemon = _daemon(result=TranscriptionResult(text="must not appear", duration_seconds=1.0))
+    heard: list[np.ndarray] = []
+
+    def no_speech(samples):
+        heard.append(samples)
+        return 0.0
+
+    pipeline, reported = _pipeline(daemon, speech_seconds=no_speech)
+    record = _record()
+
+    assert pipeline.run(_SPEECH, utterance=1, record=record, profile=RefineProfile.AGENT) == (
+        "SILENT"
     )
-    _run_and_stop(daemon)
+    [checked] = heard
+    assert checked is _SPEECH
+    assert daemon._worker.utterances == []
+    assert record.failure == "empty"
+    assert record.vad_frames == 0
+    assert reported.states == [OverlayState.HIDDEN]
 
+
+def test_vad_speech_sends_the_whole_capture_to_the_decoder():
+    # The VAD only decides. Speech found: the decoder hears the whole capture,
+    # channel 0 of a stereo one, and not only the speech the VAD marked.
+    ramp = np.linspace(-0.5, 0.5, 48000, dtype=np.float32)
+    stereo = np.stack([ramp, np.full(48000, 0.3, dtype=np.float32)], axis=1)
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=3.0))
+    pipeline, _reported = _pipeline(daemon, speech_seconds=lambda _samples: 0.5)
+    record = _record()
+
+    assert (
+        pipeline.run(stereo, utterance=1, record=record, profile=RefineProfile.AGENT) == "DELIVERED"
+    )
     [decoded] = daemon._worker.samples
-    assert decoded is kept
-    assert len(daemon._deliverer.delivered) == 1
+    assert np.array_equal(decoded, ramp)
+    assert record.vad_frames == 8000
+    assert record.vad_s == 0.5
 
 
-def test_a_gate_rejection_still_takes_the_pill_down():
+def test_a_silent_capture_still_takes_the_pill_down():
     # Silence is success-shaped: the pill goes away without an error state.
-    daemon, status = _daemon_with_status(samples=_SILENCE)
+    daemon, status = _daemon_with_status(samples=_SILENCE, speech=0.0)
     _run_and_stop(daemon)
 
     assert status.states[0] is OverlayState.RECORDING
@@ -148,7 +165,7 @@ def test_feedback_failures_preserve_the_already_delivered_outcome(daemon_logs):
         raise RuntimeError("failure reporting also failed")
 
     daemon._pipeline = UtterancePipeline(
-        min_speech_rms=daemon._cfg.audio.min_speech_rms,
+        speech_seconds=lambda _samples: 1.0,
         worker=daemon._worker,
         deliverer=daemon._deliverer,
         telemetry=daemon._telemetry,
@@ -236,10 +253,10 @@ class _CountingCancel:
         return self.calls > self.after
 
 
-def _pipeline(daemon, *, deliverer=None, cancelled=None):
+def _pipeline(daemon, *, deliverer=None, cancelled=None, speech_seconds=None):
     reported = _Recorded()
     pipeline = UtterancePipeline(
-        min_speech_rms=daemon._cfg.audio.min_speech_rms,
+        speech_seconds=(lambda _samples: 1.0) if speech_seconds is None else speech_seconds,
         worker=daemon._worker,
         deliverer=daemon._deliverer if deliverer is None else deliverer,
         telemetry=daemon._telemetry,
@@ -262,7 +279,7 @@ def _record() -> UtteranceRecord:
     )
 
 
-def test_a_cancel_before_the_gate_skips_every_later_stage():
+def test_a_cancel_before_the_speech_check_skips_every_later_stage():
     daemon = _daemon(result=TranscriptionResult(text="never", duration_seconds=1.0))
     pipeline, reported = _pipeline(daemon, cancelled=lambda: True)
     record = _record()
@@ -273,25 +290,25 @@ def test_a_cancel_before_the_gate_skips_every_later_stage():
     )
 
     assert record.outcome == "CANCELLED"
-    assert record.gate is None
+    assert record.peak_rms is None
+    assert record.vad_frames is None
     assert daemon._worker.utterances == []
     assert reported.states == [OverlayState.CANCELLED]
     assert reported.failures == []
 
 
-def test_cancel_during_rejected_gate_is_cancelled():
+def test_cancel_during_a_silent_speech_check_is_cancelled():
     daemon = _daemon(samples=_SILENCE)
     cancelled = False
-    pipeline, reported = _pipeline(daemon, cancelled=lambda: cancelled)
-    gate = pipeline._gate
 
-    def cancel_during_gate(samples, record):
+    def cancel_during_check(_samples):
         nonlocal cancelled
-        passed = gate(samples, record)
         cancelled = True
-        return passed
+        return 0.0
 
-    pipeline._gate = cancel_during_gate
+    pipeline, reported = _pipeline(
+        daemon, cancelled=lambda: cancelled, speech_seconds=cancel_during_check
+    )
     record = _record()
     assert (
         pipeline.run(_SILENCE, utterance=1, record=record, profile=RefineProfile.AGENT)

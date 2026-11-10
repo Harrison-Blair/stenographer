@@ -25,6 +25,14 @@ SPOKEN = "um i think we should ship it on thursday no wait friday"
 REFINED = "I think we should ship it on Friday."
 
 
+@pytest.fixture(autouse=True)
+def _vad_hears(monkeypatch):
+    """The Silero VAD is the external dependency: it hears 0.1 s of speech."""
+    from stenographer.lib.transcribe import dictation_vad
+
+    monkeypatch.setattr(dictation_vad, "speech_seconds", lambda samples, model_path: 0.1)
+
+
 def _wav(tmp_path):
     path = tmp_path / "clip.wav"
     soundfile.write(path, np.full(SAMPLE_RATE // 5, 0.1, dtype=np.float32), SAMPLE_RATE)
@@ -42,9 +50,7 @@ def _spoken_clip(monkeypatch, tmp_path, text: str):
             pass
 
         def transcribe(self, samples):
-            return TranscriptionResult(
-                text=text, duration_seconds=samples.size / SAMPLE_RATE, vad_seconds=0.1
-            )
+            return TranscriptionResult(text=text, duration_seconds=samples.size / SAMPLE_RATE)
 
         def close(self):
             pass
@@ -89,7 +95,6 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
                     else "sensitive transcript"
                 ),
                 duration_seconds=samples.size / SAMPLE_RATE,
-                vad_seconds=0.1,
             )
 
         def close(self):
@@ -120,7 +125,7 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
     summary = summaries[0]
     assert "utt=0 source=file" in summary
     assert "out_frames=3200" in summary
-    assert "gate=pass" in summary
+    assert "vad_frames=1600" in summary
     assert "cold=1" in summary
     assert "load_ms=" in summary
     assert "decode_ms=" in summary
@@ -133,20 +138,46 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
     if failure_phase:
         assert "outcome=ERROR" in summary
         for absent in (
-            ("vad_frames=", "segments=", "words=", "chars_raw=", "chars_out=")
+            ("segments=", "words=", "chars_raw=", "chars_out=")
             if failure_phase == "decode"
             else ("chars_out=",)
         ):
             assert absent not in summary
         if failure_phase == "format":
             assert "chars_raw=20" in summary
-            assert "vad_frames=1600" in summary
         assert capsys.readouterr().out == ""
     else:
         assert "outcome=OK" in summary
-        for present in ("vad_frames=1600", "segments=0", "words=0", "chars_raw=20", "chars_out=21"):
+        for present in ("segments=0", "words=0", "chars_raw=20", "chars_out=21"):
             assert present in summary
         assert capsys.readouterr().out == "Sensitive transcript \n"
+
+
+@pytest.mark.parametrize(("speech", "outcome"), [(0.0, "SILENT"), (0.4, "OK")])
+def test_the_outcome_follows_the_vad_and_the_file_is_decoded_either_way(
+    speech, outcome, monkeypatch, tmp_path, caplog, capsys
+):
+    from stenographer.lib.transcribe import dictation_vad
+
+    checked: list[np.ndarray] = []
+
+    def vad(samples, model_path):
+        checked.append(samples)
+        return speech
+
+    monkeypatch.setattr(dictation_vad, "speech_seconds", vad)
+    path = _spoken_clip(monkeypatch, tmp_path, "hello there")
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
+
+    with caplog.at_level(logging.INFO, logger="stenographer.lib.transcribe.pipeline"):
+        assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 0
+
+    [samples] = checked
+    assert samples.size == SAMPLE_RATE // 5
+    [summary] = [m for m in caplog.messages if m.startswith("pipeline: utterance ")]
+    assert f"outcome={outcome}" in summary
+    assert f"vad_frames={round(speech * SAMPLE_RATE)}" in summary
+    assert capsys.readouterr().out == "Hello there \n"
 
 
 def test_a_missing_file_gets_the_cannot_read_error_before_the_model_cache_is_consulted(
@@ -242,7 +273,6 @@ def test_a_close_failure_surfaces_when_the_run_itself_succeeded(monkeypatch, tmp
             return TranscriptionResult(
                 text="a clean transcript",
                 duration_seconds=samples.size / SAMPLE_RATE,
-                vad_seconds=0.1,
             )
 
         def close(self):

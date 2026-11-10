@@ -2,9 +2,9 @@ Silero VAD attribution
 
 stenographer ships the Silero VAD voice-activity model as
 `assets/models/silero_vad.onnx` and uses it for dictation, live and Files. The
-file is unchanged from the sherpa-onnx release assets, sha256
-9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6:
-https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+file is the unchanged official Silero VAD v6.2.3 release, sha256
+1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3:
+https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx
 
 Upstream: https://github.com/snakers4/silero-vad
 

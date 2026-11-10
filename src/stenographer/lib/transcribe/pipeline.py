@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The gate → decode → format core shared by the daemon and ``transcribe``.
+"""The speech check → decode → format core shared by the daemon and ``transcribe``.
 
 One utterance produces exactly one INFO summary line, whether it came from the
 hotkey or from ``stenographer transcribe <file>``. Both paths fill the same
@@ -26,7 +26,7 @@ from stenographer.lib.transcribe.text import count_words
 if TYPE_CHECKING:
     import numpy as np
 
-    from stenographer.lib.audio.records import CaptureStats, GateStats
+    from stenographer.lib.audio.records import CaptureStats
     from stenographer.lib.delivery.timings import DeliveryTimings
     from stenographer.lib.refine.results import RefineResult
     from stenographer.lib.transcribe.results import TranscriptionResult, WorkerTimings
@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 from stenographer.lib.transcribe.utterance_record import UtteranceRecord
 
 log = logging.getLogger(__name__)
+
+_LEVEL_FRAME_SECONDS = 0.050
 
 
 def apply_capture(record: UtteranceRecord | None, stats: CaptureStats | None) -> None:
@@ -62,16 +64,26 @@ def apply_capture(record: UtteranceRecord | None, stats: CaptureStats | None) ->
     record.capped = stats.capped
 
 
-def apply_gate(record: UtteranceRecord | None, stats: GateStats, samples: np.ndarray) -> None:
-    """Project one gate verdict and its diagnostic measurements. PURE."""
+def apply_levels(record: UtteranceRecord | None, samples: np.ndarray) -> None:
+    """Project the capture level and clipping, measured on 50 ms frames. PURE."""
     if record is None:
         return
     import numpy as np
 
-    record.gate = "pass" if stats.passed else "fail"
-    record.peak_rms = stats.peak_rms
-    record.frames_above = stats.frames_above
-    record.mean_rms = stats.mean_rms
+    audio = np.asarray(samples, dtype=np.float32).reshape(-1)
+    frame = round(SAMPLE_RATE * _LEVEL_FRAME_SECONDS)
+    n_frames = audio.size // frame
+    if n_frames:
+        trimmed = audio[: n_frames * frame].reshape(n_frames, frame)
+        rms = np.empty(n_frames, dtype=np.float32)
+        for start in range(0, n_frames, 100):
+            chunk = trimmed[start : start + 100]
+            rms[start : start + len(chunk)] = np.sqrt(np.mean(chunk * chunk, axis=1))
+        record.peak_rms = float(rms.max())
+        record.mean_rms = float(rms.mean())
+    else:
+        record.peak_rms = 0.0
+        record.mean_rms = 0.0
     clipped = sum(
         np.count_nonzero(np.abs(block) >= 0.999)
         for block in np.nditer(
@@ -85,13 +97,19 @@ def apply_recognition(record: UtteranceRecord | None, result: TranscriptionResul
     """Keep accepted recognition even when a subsequent phase fails. PURE."""
     if record is None:
         return
-    record.vad_frames = round(result.vad_seconds * SAMPLE_RATE)
     record.segments = len(result.segments)
     record.words = sum(len(segment.words) for segment in result.segments)
     record.chars_raw = len(result.text)
     record.recognized_words = count_words(result.text)
     record.asr_audio_s = record.capture_s
-    record.vad_s = result.vad_seconds
+
+
+def apply_speech(record: UtteranceRecord | None, speech_seconds: float) -> None:
+    """Record the speech duration that the VAD found in the capture. PURE."""
+    if record is None:
+        return
+    record.vad_frames = round(speech_seconds * SAMPLE_RATE)
+    record.vad_s = speech_seconds
 
 
 def apply_formatting(
@@ -219,9 +237,7 @@ def summary_fields(record: UtteranceRecord) -> dict[str, object]:
         "out_frames": record.out_frames,
         "overflow": _flag(record.overflow),
         "capped": _flag(record.capped),
-        "gate": record.gate,
         "peak_rms": None if record.peak_rms is None else round(record.peak_rms, 6),
-        "frames_above": record.frames_above,
         "cold": _flag(record.cold),
         "load_ms": _ms(record.load_ms),
         "lock_wait_ms": _ms(record.lock_wait_ms),
@@ -251,28 +267,12 @@ def log_summary(record: UtteranceRecord) -> None:
     log.info(fmt_event("pipeline", "utterance", **summary_fields(record)))
 
 
-def log_gate(stats: GateStats) -> None:
-    """Report the energy gate's numbers and its verdict from one computation."""
-    log.info(
-        fmt_event(
-            "audio",
-            "speech_gate",
-            verdict="pass" if stats.passed else "fail",
-            peak_rms=round(stats.peak_rms, 6),
-            mean_rms=round(stats.mean_rms, 6),
-            frames_total=stats.frames_total,
-            frames_above=stats.frames_above,
-            threshold=stats.threshold,
-        )
-    )
-
-
 def downmix(samples: np.ndarray) -> np.ndarray:
     """Reduce a 2-D capture to mono by keeping channel 0. PURE.
 
     Channel 0, not the channel mean: that is what the PortAudio callback keeps,
     and averaging a stereo mic whose second channel is silent or out of phase
-    halves or cancels the speech the gate then has to find.
+    halves or cancels the speech the VAD then has to find.
     """
     if samples.ndim != 2:
         return samples.reshape(-1)

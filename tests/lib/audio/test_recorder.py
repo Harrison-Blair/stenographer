@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Capture configuration, the RMS gate, resampling, and the stream lifecycle.
+"""Capture configuration, resampling, and the stream lifecycle.
 
 Constructing a ``Recorder`` is pure. ``prepare``, ``_select_default_device``
 and ``_negotiate`` all take the ``sounddevice`` module as a parameter, and
@@ -20,7 +20,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from stenographer.lib.audio.gate import speech_gate_stats
 from stenographer.lib.audio.recorder import (
     _ERR_BAD_CHANNELS,
     _ERR_BAD_SAMPLE_RATE,
@@ -33,12 +32,6 @@ from stenographer.lib.audio.streaming_resampler import StreamingResampler
 _LOGGER = "stenographer.lib.audio.recorder"
 
 _RATE = 16000
-_FRAME = int(_RATE * 0.050)  # 800 samples per 50 ms gate frame
-
-
-def _signal(frame_amplitudes: list[float]) -> np.ndarray:
-    """Build audio whose i-th 50 ms frame is a constant at the given amplitude."""
-    return np.concatenate([np.full(_FRAME, amp, dtype=np.float32) for amp in frame_amplitudes])
 
 
 @pytest.mark.parametrize(
@@ -64,23 +57,6 @@ def test_recorder_normalizes_only_exact_nonnegative_decimal_device_strings(confi
 
     assert recorder._configured_device == normalized
     assert recorder._selected_device == normalized
-
-
-@pytest.mark.parametrize(
-    ("audio", "min_rms", "passed"),
-    [
-        pytest.param(np.zeros(_RATE, dtype=np.float32), 0.0, True, id="disabled"),
-        pytest.param(np.zeros(_RATE, dtype=np.float32), -1.0, True, id="negative_threshold"),
-        pytest.param(np.zeros(_RATE, dtype=np.float32), 0.0005, False, id="silence"),
-        pytest.param(_signal([0.0, 0.0, 0.02, 0.0, 0.0]), 0.0005, False, id="isolated_click"),
-        pytest.param(_signal([0.0, 0.02, 0.02, 0.0]), 0.0005, True, id="two_loud_frames"),
-        pytest.param(_signal([0.001] * 10), 0.0005, True, id="quiet_mic_speech"),
-        pytest.param(_signal([0.001] * 10), 0.01, False, id="below_threshold"),
-        pytest.param(np.full(_FRAME, 0.02, dtype=np.float32), 0.0005, False, id="too_short"),
-    ],
-)
-def test_gate_verdict(audio, min_rms, passed):
-    assert speech_gate_stats(audio, _RATE, min_rms).passed is passed
 
 
 def test_resample_identity_when_rates_match():
@@ -161,43 +137,6 @@ def test_streaming_resampler_emits_only_outputs_with_complete_input():
     assert resampler.process(np.ones(30, dtype=np.float32)).size == 0
     assert resampler.process(np.ones(1, dtype=np.float32)).size == 1
     assert resampler.process(np.ones(3, dtype=np.float32)).size == 1
-
-
-def test_gate_stats_report_the_quiet_mic_rejection_it_decided():
-    # The quiet-mic case: speech at RMS 0.001 against a 0.01 threshold. The
-    # reported numbers have to be the ones the verdict was reached from, or the
-    # log cannot tell a mis-set threshold from a dead microphone. Seen to FAIL
-    # against a ``speech_gate_stats`` that counted frames above a hardcoded
-    # 0.0005 instead of the threshold it was given (frames_above became 10).
-    stats = speech_gate_stats(_signal([0.001] * 10), _RATE, 0.01)
-
-    assert stats.passed is False
-    assert stats.frames_above == 0
-    assert stats.frames_total == 10
-    assert stats.threshold == 0.01
-    assert stats.peak_rms == pytest.approx(0.001, abs=1e-6)
-    assert stats.mean_rms == pytest.approx(0.001, abs=1e-6)
-
-
-def test_gate_stats_count_every_loud_frame_not_just_the_consecutive_pair():
-    # Three loud frames, only the last two consecutive. The verdict comes from
-    # the consecutive rule; the count is of every frame over the threshold, so
-    # a near-miss capture is visible as "loud frames, but scattered".
-    stats = speech_gate_stats(_signal([0.02, 0.0, 0.02, 0.02, 0.0]), _RATE, 0.0005)
-
-    assert stats.passed is True
-    assert stats.frames_above == 3
-    assert stats.frames_total == 5
-    assert stats.peak_rms == pytest.approx(0.02, abs=1e-6)
-
-
-def test_gate_stats_on_audio_too_short_to_frame():
-    stats = speech_gate_stats(np.empty(0, dtype=np.float32), _RATE, 0.0005)
-
-    assert stats.frames_total == 0
-    assert stats.frames_above == 0
-    assert stats.peak_rms == 0.0
-    assert stats.passed is False
 
 
 class FakePortAudioError(Exception):
@@ -473,7 +412,7 @@ def test_a_mono_capture_returns_its_samples_and_the_cost_of_taking_them():
 
 def test_a_stereo_callback_keeps_channel_zero():
     # The second channel of a stereo microphone is routinely silent or out of
-    # phase; averaging it into the capture is what the gate then has to find.
+    # phase; averaging it into the capture is what the VAD then has to find.
     sounddevice = FakeSoundDevice()
     recorder = _prepared(sounddevice)
     recorder.start()

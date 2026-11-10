@@ -7,8 +7,6 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from stenographer.lib.audio.constants import SAMPLE_RATE
-from stenographer.lib.audio.gate import speech_gate_stats
 from stenographer.lib.contracts.overlay_state import OverlayState
 from stenographer.lib.daemon.outcome import Outcome
 from stenographer.lib.daemon.policy import classify_pipeline
@@ -19,12 +17,13 @@ from stenographer.lib.transcribe.errors import WorkerError, WorkerPathologicalEr
 from stenographer.lib.transcribe.pipeline import (
     apply_delivery,
     apply_formatting,
-    apply_gate,
+    apply_levels,
     apply_recognition,
     apply_refinement,
     apply_restore,
+    apply_speech,
     apply_worker_timings,
-    log_gate,
+    downmix,
     transcript_text,
 )
 from stenographer.lib.transcribe.results import TranscriptionResult
@@ -59,7 +58,7 @@ class UtterancePipeline:
     def __init__(
         self,
         *,
-        min_speech_rms: float,
+        speech_seconds: Callable[[np.ndarray], float],
         worker: Worker,
         deliverer: Deliverer,
         refiner: OllamaRefiner | None = None,
@@ -70,11 +69,9 @@ class UtterancePipeline:
         cancelled: Callable[[], bool],
         cancel_state: Callable[[], OverlayState],
         copy_original: bool = True,
-        speech_filter: Callable[[np.ndarray], np.ndarray] | None = None,
     ) -> None:
-        self._min_speech_rms = min_speech_rms
-        # The dictation VAD: the speech the decoder may see. None keeps it all.
-        self._speech_filter = speech_filter
+        # The dictation VAD: the seconds of speech in a capture. It only decides.
+        self._speech_seconds = speech_seconds
         self._worker = worker
         self._deliverer = deliverer
         self._refiner = refiner
@@ -110,24 +107,20 @@ class UtterancePipeline:
         try:
             if self._cancelled():
                 return cancelled_outcome()
-            gate_passed = self._gate(samples, record)
+            apply_levels(record, samples)
             if self._cancelled():
-                if record is not None:
-                    record.failure = None
                 return cancelled_outcome()
-            if not gate_passed:
-                outcome_name = Outcome.SILENT.name
-                self._publish_state(OverlayState.HIDDEN)
-                return outcome_name
             if record is not None:
                 record.cold = not self._worker.is_model_ready
-            speech = samples if self._speech_filter is None else self._speech_filter(samples)
-            if speech.size == 0:
+            speech_seconds = self._speech_seconds(samples)
+            apply_speech(record, speech_seconds)
+            if speech_seconds == 0:
                 # No VAD speech: no decode, and the empty result ends the run silent.
                 result = TranscriptionResult(text="", duration_seconds=0.0)
             else:
                 try:
-                    result = self._worker.transcribe(speech, utterance)
+                    # Speech found: the decoder hears the whole capture.
+                    result = self._worker.transcribe(downmix(samples), utterance)
                 except WorkerError as exc:
                     apply_worker_timings(record, self._worker.last_timings)
                     if self._cancelled():
@@ -219,15 +212,6 @@ class UtterancePipeline:
             if record is not None:
                 record.outcome = outcome_name
         return outcome_name
-
-    def _gate(self, samples: np.ndarray, record: UtteranceRecord | None) -> bool:
-        """Gate on the pipeline thread, outside callbacks and the state lock."""
-        stats = speech_gate_stats(samples, SAMPLE_RATE, self._min_speech_rms)
-        log_gate(stats)
-        apply_gate(record, stats, samples)
-        if not stats.passed and record is not None:
-            record.failure = "gate_rejected"
-        return stats.passed
 
     def _format(
         self, result: TranscriptionResult, record: UtteranceRecord | None

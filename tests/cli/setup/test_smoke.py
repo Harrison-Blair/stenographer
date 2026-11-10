@@ -159,7 +159,6 @@ def test_real_quick_setup_persists_and_runs_guided_checks(tmp_path, monkeypatch)
     saved = Config.load(config_path)
     output = b"".join(chunks).decode(errors="replace")
     assert exit_code == expected
-    assert saved.audio.min_speech_rms == defaults.audio.min_speech_rms
     assert saved.audio.max_recording_seconds == defaults.audio.max_recording_seconds
     assert saved.asr == defaults.asr
     assert isinstance(saved.feedback.spectrum_floor_dbfs, tuple)

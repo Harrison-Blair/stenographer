@@ -34,7 +34,6 @@ def test_defaults_match_spec():
     assert d.hotkey.mode == "hybrid"
     assert d.hotkey.hybrid_threshold_seconds == 0.5
     assert d.audio.input_device is None
-    assert d.audio.min_speech_rms == 0.0005
     assert d.audio.max_recording_seconds == 600
     assert d.asr.idle_unload_seconds == 900
     assert d.asr.cpu_threads == 0

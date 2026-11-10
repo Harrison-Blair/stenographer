@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """``stenographer transcribe``: transcribe an audio file.
 
-The same gate, the same downmix, the same formatter call and the same summary
+The same speech check, the same downmix, the same formatter call and the same summary
 line as the daemon's pipeline — via ``transcribe.pipeline`` — so a file run is
 a faithful rehearsal of a dictation instead of a second, subtly different one.
 
@@ -12,10 +12,10 @@ else about the stage — host, model, threshold, guard, fail-open — is shared
 with the daemon path. ``--raw`` wins over it, since raw means "exactly what the
 decoder produced".
 
-One deliberate difference: the gate here only *reports*. A file the user named
-explicitly is decoded whatever its energy, because the answer they asked for is
-the transcript, not a verdict. The summary therefore records ``SILENT`` when
-the gate would have rejected the audio and ``OK`` otherwise — never
+One deliberate difference: the speech check here only *reports*. A file the
+user named explicitly is decoded whatever the VAD finds, because the answer they
+asked for is the transcript, not a verdict. The summary therefore records
+``SILENT`` when the VAD finds no speech and ``OK`` otherwise — never
 ``DELIVERED``, which means a paste that this path never performs.
 """
 
@@ -69,13 +69,14 @@ def _refine(
 def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     import soundfile
 
-    from stenographer.lib.audio.gate import speech_gate_stats
+    from stenographer.lib.live.models import vad_model_path
+    from stenographer.lib.transcribe.dictation_vad import speech_seconds
     from stenographer.lib.transcribe.pipeline import (
         apply_formatting,
-        apply_gate,
+        apply_levels,
         apply_recognition,
+        apply_speech,
         downmix,
-        log_gate,
         log_summary,
         transcript_text,
     )
@@ -121,10 +122,10 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
         record.out_frames = int(samples.size)
         session.checkpoint(record.analytics_id, "secured_capture", analytics_metrics(record))
         record.stopped_at = time.perf_counter()
-        stats = speech_gate_stats(samples, SAMPLE_RATE, cfg.audio.min_speech_rms)
-        log_gate(stats)
-        apply_gate(record, stats, samples)
-        record.outcome = "OK" if stats.passed else "SILENT"
+        apply_levels(record, samples)
+        speech = speech_seconds(samples, vad_model_path())
+        apply_speech(record, speech)
+        record.outcome = "OK" if speech > 0 else "SILENT"
 
         load_started_at = time.perf_counter()
         record.cold = True

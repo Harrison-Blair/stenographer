@@ -51,7 +51,6 @@ TAB_KEYS = {
     ),
     "audio": (
         "audio.input_device",
-        "audio.min_speech_rms",
         "audio.max_recording_seconds",
         "feedback.spectrum_floor_dbfs",
     ),
@@ -339,7 +338,7 @@ async def test_settings_letters_go_to_a_focused_text_input(tmp_path):
     ("key", "tab", "label"),
     [
         ("hotkey.mode", "general", "Hotkey mode"),
-        ("audio.min_speech_rms", "audio", "Minimum speech level"),
+        ("audio.max_recording_seconds", "audio", "Longest recording"),
         ("refine.model", "recognition", "Model"),
         ("live.diarize_mic", "live", "Separate room speakers"),
     ],
