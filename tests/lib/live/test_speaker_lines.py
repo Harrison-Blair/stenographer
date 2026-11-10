@@ -10,6 +10,7 @@ from stenographer.lib.live.speaker_lines import (
     Piece,
     SpeakerNames,
     StreamClock,
+    decode_pieces,
     given_name,
     relabel_lines,
     speaker_pieces,
@@ -155,15 +156,17 @@ def test_relabel_keeps_the_text_of_a_one_speaker_line_and_cuts_a_changing_one():
     assert decoded == [RATE, 3 * RATE]
 
 
-def test_relabel_drops_an_empty_part_and_keeps_a_line_whose_parts_are_all_empty():
+def test_relabel_joins_an_empty_part_and_keeps_a_line_whose_parts_are_all_empty():
     segments = [S(0, 0.0, 1.0), S(1, 1.0, 3.0)]
 
-    one_empty, _ = _relabel([_line(0.0, 3.0)], segments, texts=("", "kept"))
+    one_empty, decoded = _relabel([_line(0.0, 3.0)], segments, texts=("", "kept", "whole"))
     all_empty, _ = _relabel([_line(0.0, 3.0)], segments, texts=("", " "))
 
-    assert [(line.start, line.label, line.text) for line in one_empty] == [
-        (1.0, "Speaker 1", "kept")
+    # The empty part joins its only neighbour: the whole line, decoded once more.
+    assert [(line.start, line.end, line.label, line.text) for line in one_empty] == [
+        (0.0, 3.0, "Speaker 1", "whole")
     ]
+    assert decoded == [RATE, 2 * RATE, 3 * RATE]
     assert [(line.start, line.end, line.label, line.text) for line in all_empty] == [
         (0.0, 3.0, "Speaker 1", "old")
     ]
@@ -225,3 +228,59 @@ def test_relabel_numbers_a_re_imported_source_by_first_appearance():
         ("room-1", "Room 1"),
         ("room-2", "Room 2"),
     ]
+
+
+def _decode_pieces(pieces, texts):
+    """Decode *pieces* of a line from 0 s; *texts* maps (start, seconds) to the text."""
+    samples = np.arange(round(pieces[-1].end * RATE), dtype=np.float32) / RATE
+    calls = []
+
+    def decode(part):
+        key = (round(float(part[0]), 2), round(part.size / RATE, 2))
+        calls.append(key)
+        return texts[key]
+
+    return decode_pieces(pieces, 0.0, samples, decode), calls
+
+
+@pytest.mark.parametrize(
+    ("pieces", "texts", "expected"),
+    [
+        pytest.param(
+            (Piece(0.0, 1.0, 0), Piece(1.0, 2.0, 1), Piece(2.0, 3.0, 2)),
+            {(0.0, 1.0): "a", (1.0, 1.0): " ", (2.0, 1.0): "c", (0.0, 2.0): "ab"},
+            [(Piece(0.0, 2.0, 0), "ab"), (Piece(2.0, 3.0, 2), "c")],
+            id="between-two-joins-the-one-before",
+        ),
+        pytest.param(
+            (Piece(0.0, 1.0, 0), Piece(1.0, 3.0, 1), Piece(3.0, 4.0, 2)),
+            {(0.0, 1.0): "", (1.0, 2.0): "b", (3.0, 1.0): "c", (0.0, 3.0): "ab"},
+            [(Piece(0.0, 3.0, 1), "ab"), (Piece(3.0, 4.0, 2), "c")],
+            id="first-joins-the-next",
+        ),
+        pytest.param(
+            (Piece(0.0, 1.0, 0), Piece(1.0, 3.0, 1)),
+            {(0.0, 1.0): "", (1.0, 2.0): "b", (0.0, 3.0): "whole"},
+            [(Piece(0.0, 3.0, 1), "whole")],
+            id="two-parts-make-the-whole-line",
+        ),
+        pytest.param(
+            (Piece(0.0, 1.0, 0), Piece(1.0, 2.0, 1), Piece(2.0, 3.0, 0)),
+            {(0.0, 1.0): "a", (1.0, 1.0): "", (2.0, 1.0): "c", (0.0, 3.0): "abc"},
+            [(Piece(0.0, 3.0, 0), "abc")],
+            id="same-speaker-both-sides-joins-all-three",
+        ),
+        pytest.param(
+            (Piece(0.0, 1.0, 0), Piece(1.0, 2.0, 1)),
+            {(0.0, 1.0): "", (1.0, 1.0): ""},
+            [],
+            id="all-empty",
+        ),
+    ],
+)
+def test_an_empty_part_joins_a_neighbour_and_is_decoded_again(pieces, texts, expected):
+    parts, calls = _decode_pieces(pieces, texts)
+
+    assert parts == expected
+    # Each part once, then one more decode for a join.
+    assert len(calls) == len(pieces) + (1 if expected else 0)

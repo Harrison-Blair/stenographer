@@ -183,6 +183,41 @@ def shifted_wall(wall: str, seconds: float) -> str:
     return (datetime.fromisoformat(wall) + timedelta(seconds=seconds)).isoformat()
 
 
+def decode_pieces(
+    pieces: Sequence[Piece],
+    start: float,
+    samples: np.ndarray,
+    decode: Callable[[np.ndarray], str],
+) -> list[tuple[Piece, str]]:
+    """Decode the *pieces* of one line (audio *samples* from *start*) by the line rule.
+
+    Each piece is decoded once. A piece with no text joins the piece before it, or its
+    only neighbour, under that neighbour's speaker; all three join when both neighbours
+    have the same speaker. The joined piece is decoded once more. Return the pieces
+    with text in order, or none when every piece has no text.
+    """
+
+    def audio(piece: Piece) -> np.ndarray:
+        first = round((piece.start - start) * SAMPLE_RATE)
+        last = round((piece.end - start) * SAMPLE_RATE)
+        return samples[first:last]
+
+    parts = [(piece, decode(audio(piece)).strip()) for piece in pieces if audio(piece).size]
+    while len(parts) > 1 and any(text for _, text in parts):
+        empty = next((i for i, (_, text) in enumerate(parts) if not text), None)
+        if empty is None:
+            break
+        if empty == 0:
+            first, last, speaker = 0, 1, parts[1][0].speaker
+        else:
+            first, last, speaker = empty - 1, empty, parts[empty - 1][0].speaker
+            if empty + 1 < len(parts) and parts[empty + 1][0].speaker == speaker:
+                last = empty + 1
+        joined = Piece(parts[first][0].start, parts[last][0].end, speaker)
+        parts[first : last + 1] = [(joined, decode(audio(joined)).strip())]
+    return [(piece, text) for piece, text in parts if text]
+
+
 def relabel_lines(
     lines: Sequence[TranscriptLine],
     segments: Sequence[SpeakerSegment],
@@ -197,8 +232,8 @@ def relabel_lines(
     """Give the saved lines of one source their speakers by the line rule.
 
     A line with one speaker keeps its text unless *decode_all*; a line with a speaker
-    change is cut there and each part is decoded once. A part with no text is dropped;
-    a line whose parts all have no text stays whole with its longest speaker.
+    change is cut there and decoded by ``decode_pieces``. A line whose parts all have
+    no text stays whole with its longest speaker.
     A new speaker keeps the name the user gave to most of its time. Return ``None``
     on a cancel.
     """
@@ -215,15 +250,7 @@ def relabel_lines(
             result.append(replace(line, speaker_id=speaker_id, label=label))
         else:
             samples = read_audio(line.start, line.end)
-            parts = []
-            for piece in pieces:
-                first = round((piece.start - line.start) * SAMPLE_RATE)
-                last = round((piece.end - line.start) * SAMPLE_RATE)
-                if last <= first:
-                    continue
-                text = decode(samples[first:last]).strip()
-                if text:
-                    parts.append((piece, text))
+            parts = decode_pieces(pieces, line.start, samples, decode)
             if not parts:
                 longest = max(pieces, key=lambda piece: piece.end - piece.start)
                 speaker_id, label = names.speaker(longest.speaker)

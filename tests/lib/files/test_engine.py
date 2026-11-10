@@ -936,6 +936,33 @@ def test_a_file_job_cuts_a_phrase_where_the_speaker_changes_and_decodes_each_par
         engine.close()
 
 
+def test_a_file_job_joins_a_part_with_no_text_to_its_neighbour(tmp_path):
+    process = _file_asr_process()
+
+    def reply(message):
+        if message[0] == "job" and process.decode_count == 3:
+            process.decode_count += 1
+            return ("ok", TranscriptionResult(text=" ", duration_seconds=1.0))
+        return default(process, message)
+
+    default = process._reply
+    process._reply = lambda _process, message: reply(message)
+    engine, job = _voice_change_job(tmp_path, process, FakeDiarizer(VOICE_TURNS), diarize=True)
+    try:
+        _wait_for(job, "completed")
+        lines = job.progress.completed_lines
+    finally:
+        engine.close()
+
+    # The second part of the cut phrase had no text: it joins the part before it.
+    assert [(line.start, line.end, line.speaker_id, line.text) for line in lines] == [
+        (0.0, 20.0, "speaker-1", "recognized phrase 1"),
+        (20.0, 40.0, "speaker-2", "recognized phrase 2"),
+        (40.0, 64.0, "speaker-1", "recognized phrase 5"),
+    ]
+    assert process.decode_count == 5
+
+
 @pytest.mark.parametrize(
     "diarizer",
     (
@@ -1100,7 +1127,8 @@ def test_a_cancel_while_a_part_decodes_ends_the_job_with_the_lines_before_it(tmp
     try:
         _wait_for(job, "cancelled")
         assert process.decode_count == 3
-        assert len(job.progress.completed_lines) == 3
+        # The cut phrase's lines come after all its parts: only the two before it.
+        assert len(job.progress.completed_lines) == 2
         assert not _sessions(tmp_path).exists() or not list(_sessions(tmp_path).iterdir())
     finally:
         engine.close()

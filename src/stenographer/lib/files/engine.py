@@ -16,12 +16,18 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stenographer.lib.audio.constants import SAMPLE_RATE
+from stenographer.lib.files.errors import FileJobCancelledError
 from stenographer.lib.files.job import FileJob
 from stenographer.lib.files.media import MediaInfo, inspect_media, iter_media_audio
 from stenographer.lib.files.models import FileJobOptions
 from stenographer.lib.live.models import vad_model_path
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
-from stenographer.lib.live.speaker_lines import NO_SPEAKER, SpeakerNames, speaker_pieces
+from stenographer.lib.live.speaker_lines import (
+    NO_SPEAKER,
+    SpeakerNames,
+    decode_pieces,
+    speaker_pieces,
+)
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.sessions.errors import SessionWriteCancelledError, StaleRevisionError
@@ -249,19 +255,21 @@ class FilesEngine:
             done = min(duration, furthest) / duration if duration > 0 else 0
             job._update("transcribe", first_percent + round(span * done), tuple(lines))
 
+        def decode(samples: np.ndarray) -> str:
+            if job.cancel_requested:
+                raise FileJobCancelledError
+            return self._worker.transcribe(samples).text
+
         def transcribe_phrases(phrases) -> bool:
             for phrase in phrases:
+                if job.cancel_requested:
+                    return False
                 pieces = speaker_pieces(phrase.start, phrase.end, segments or ())
-                for piece in pieces:
-                    if job.cancel_requested:
-                        return False
-                    first = round((piece.start - phrase.start) * SAMPLE_RATE)
-                    last = round((piece.end - phrase.start) * SAMPLE_RATE)
-                    if last <= first:
-                        continue
-                    text = self._worker.transcribe(phrase.samples[first:last]).text.strip()
-                    if not text:
-                        continue
+                try:
+                    parts = decode_pieces(pieces, phrase.start, phrase.samples, decode)
+                except FileJobCancelledError:
+                    return False
+                for piece, text in parts:
                     speaker_id, label = names.speaker(piece.speaker)
                     if refiner is not None and refiner.will_refine(text):
                         text = refiner.refine(text, cancelled=lambda: job.cancel_requested)

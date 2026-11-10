@@ -709,6 +709,23 @@ def test_a_speaker_change_cuts_a_phrase_into_one_line_per_speaker(monkeypatch, t
     rig.session.stop()
 
 
+def test_a_part_with_no_text_joins_its_neighbour_part(monkeypatch, tmp_path):
+    rig = _make_session(monkeypatch, tmp_path, mic=False)
+    rig.diarizer.streams["system"].finals = [
+        SpeakerSegment(0, 0.0, 1.0),
+        SpeakerSegment(1, 1.0, 2.0),
+    ]
+
+    # The second part decodes to no text; it joins the first and that is decoded again.
+    _speak(rig, "system", 0.0, 2.0, _halves(4, 3))
+
+    assert [(line.start, line.end, line.label, line.text) for line in rig.session.lines] == [
+        (0.0, 2.0, "Speaker 1", "a phrase"),
+    ]
+    assert rig.worker.calls == [4, 3, 4]
+    rig.session.stop()
+
+
 def test_a_speaker_who_still_talks_labels_the_final_part_of_a_phrase(monkeypatch, tmp_path):
     rig = _make_session(monkeypatch, tmp_path, mic=False)
     stream = rig.diarizer.streams["system"]

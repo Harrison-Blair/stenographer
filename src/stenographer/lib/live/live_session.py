@@ -22,8 +22,10 @@ from stenographer.lib.live.models import vad_model_path
 from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.speaker_lines import (
+    Piece,
     SpeakerNames,
     StreamClock,
+    decode_pieces,
     read_saved_audio,
     relabel_lines,
     speaker_pieces,
@@ -712,15 +714,7 @@ class LiveSession:
                 ),
             )
             for phrase in ready:
-                for piece in speaker_pieces(phrase.start, phrase.end, segments):
-                    first = round((piece.start - phrase.start) * _SAMPLE_RATE)
-                    last = round((piece.end - phrase.start) * _SAMPLE_RATE)
-                    if last <= first:
-                        continue
-                    part = replace(
-                        phrase, start=piece.start, end=piece.end, samples=phrase.samples[first:last]
-                    )
-                    self._queue.put((part, piece.speaker))
+                self._queue.put((phrase, speaker_pieces(phrase.start, phrase.end, segments)))
 
     def _add_segments(self, source: str, segments) -> None:
         self._segments[source].extend(self._session_segments(source, segments))
@@ -760,8 +754,8 @@ class LiveSession:
             try:
                 if item is _STOP:
                     return
-                phrase, speaker = item
-                self._transcribe_phrase(phrase, speaker)
+                phrase, pieces = item
+                self._transcribe_phrase(phrase, pieces)
             except Exception as exc:
                 with self._lock:
                     self._failed_phrase_count += 1
@@ -769,32 +763,42 @@ class LiveSession:
             finally:
                 self._queue.task_done()
 
-    def _transcribe_phrase(self, phrase: Phrase, speaker: int | None) -> None:
-        result: TranscriptionResult = self._worker.transcribe(phrase.samples)
-        text = result.text.strip()
-        if not text:
-            return
-        with self._lock:
-            # Numbers follow the first line of each speaker, so they are given here.
-            speaker_id, label = self._names[phrase.source].speaker(speaker)
-            wall = (self._writer.started_at + timedelta(seconds=phrase.start)).isoformat()
-            line = TranscriptLine(
-                start=phrase.start,
-                end=phrase.end,
-                wall=wall,
-                source=phrase.source,
-                speaker_id=speaker_id,
-                label=label,
-                text=text,
-            )
-            self._writer.append_line(line)
-            self._lines.append(line)
-            subscribers = tuple(self._subscribers)
-        for subscriber in subscribers:
-            try:
-                subscriber(line)
-            except Exception as exc:
-                log_failure(log, logging.WARNING, "live: subscriber_failed", exc, safe=False)
+    def _transcribe_phrase(self, phrase: Phrase, pieces: tuple[Piece, ...] | None) -> None:
+        """Decode *phrase* by the line rule: one line per piece with text.
+
+        ``None`` *pieces* means the phrase has no speaker labels.
+        """
+        if pieces is None:
+            pieces = (Piece(phrase.start, phrase.end, None),)
+        parts = decode_pieces(
+            pieces, phrase.start, phrase.samples, lambda samples: self._transcribe(samples)
+        )
+        for piece, text in parts:
+            with self._lock:
+                # Numbers follow the first line of each speaker, so they are given here.
+                speaker_id, label = self._names[phrase.source].speaker(piece.speaker)
+                wall = (self._writer.started_at + timedelta(seconds=piece.start)).isoformat()
+                line = TranscriptLine(
+                    start=piece.start,
+                    end=piece.end,
+                    wall=wall,
+                    source=phrase.source,
+                    speaker_id=speaker_id,
+                    label=label,
+                    text=text,
+                )
+                self._writer.append_line(line)
+                self._lines.append(line)
+                subscribers = tuple(self._subscribers)
+            for subscriber in subscribers:
+                try:
+                    subscriber(line)
+                except Exception as exc:
+                    log_failure(log, logging.WARNING, "live: subscriber_failed", exc, safe=False)
+
+    def _transcribe(self, samples: np.ndarray) -> str:
+        result: TranscriptionResult = self._worker.transcribe(samples)
+        return result.text
 
     def _write_audio(self, source: str, samples: np.ndarray) -> None:
         if source in self._audio_failed:
