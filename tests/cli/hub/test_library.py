@@ -48,7 +48,7 @@ class FakeJob:
 
     def __init__(self, job_id: str, path: Path, *, state: str = "running", percent: int = 43):
         self.id = job_id
-        self.options = SimpleNamespace(path=path, diarize=True, speaker_count=None, refine=False)
+        self.options = SimpleNamespace(path=path, diarize=True, refine=False)
         self.state = state
         self.progress = FileJobProgress("transcribe", percent, ())
         self.session_id: str | None = None

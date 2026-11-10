@@ -343,10 +343,6 @@ dialog. It has a file browser and the job options:
   the current folder; `escape` clears the search.
 - **Separate speakers** (`s`): identify and label speakers; a line also ends
   where the speaker changes. On by default.
-- **Speaker count** (`c`): `auto` (the default) or a whole number above 0. Any
-  other value shows `× Speaker count must be auto or a whole number above 0`
-  and the dialog stays open. Speaker separation does not use it: the speaker
-  model finds the count.
 - **Refine text** (`r`): apply the configured text-refinement service. Off by
   default.
 
@@ -560,7 +556,6 @@ The Record meters use the saved spectrum floor for each new recording. Returning
 to a saved recording refreshes its transcript; deleting that session clears Record.
 Library shows search progress and read errors, including alongside file jobs.
 Speaker rename waits for the session details to load. File transcription requires
-a valid configuration before the dialog opens; when speaker separation is off,
-the speaker count is disabled and ignored. Switching Settings tabs keeps a valid
+a valid configuration before the dialog opens. Switching Settings tabs keeps a valid
 inline edit and stays on the current tab if the value is invalid. Model status
 refreshes when the dialog opens and before or after a download.

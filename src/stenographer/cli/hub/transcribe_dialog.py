@@ -13,7 +13,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Input, Label, Static
 
-from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.dialog import Dialog
@@ -42,7 +41,6 @@ AUDIO_SUFFIXES = frozenset(
         ".wma",
     }
 )
-_COUNT_ERROR = f"{DOCTOR_STATE_GLYPHS['fail']} Speaker count must be auto or a whole number above 0"
 _DIM = StatusToken.TONES["dim"]
 
 
@@ -69,7 +67,6 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         ("down", "move(1)", "Next file"),
         ("slash", "search", "Search this folder"),
         ("s", "toggle_speakers", "Separate speakers"),
-        ("c", "edit_count", "Speaker count"),
         ("r", "toggle_refine", "Refine text"),
     ]
     # Letters are keys of the dialog until the user focuses an input.
@@ -82,12 +79,8 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
     TranscribeDialog #transcribe-search { width: 1fr; }
     TranscribeDialog #transcribe-list-scroll { height: auto; max-height: 12; }
     TranscribeDialog .transcribe-option { height: 1; }
-    TranscribeDialog #transcribe-speakers-row { height: 3; }
-    TranscribeDialog #transcribe-speakers-row Label { padding: 1 0 0 2; }
     TranscribeDialog .transcribe-option Label { width: 20; padding: 0 0 0 2; }
     TranscribeDialog #transcribe-speakers, TranscribeDialog #transcribe-refine { width: 14; }
-    TranscribeDialog #transcribe-count { width: 12; }
-    TranscribeDialog #transcribe-error { height: auto; margin-top: 1; }
     """
 
     def __init__(self, home: Path | None = None) -> None:
@@ -110,17 +103,12 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
                 yield HubButton("search", key="/", action="search", id="transcribe-search-button")
             with VerticalScroll(id="transcribe-list-scroll", can_focus=False):
                 yield SelectableList(id="transcribe-list")
-        with Horizontal(classes="transcribe-option", id="transcribe-speakers-row"):
+        with Horizontal(classes="transcribe-option"):
             yield Label("Separate speakers")
             yield HubButton("", key="s", action="toggle_speakers", id="transcribe-speakers")
-            yield HubButton(
-                "Speaker count", key="c", action="edit_count", id="transcribe-count-button"
-            )
-            yield Input("auto", id="transcribe-count")
         with Horizontal(classes="transcribe-option"):
             yield Label("Refine text")
             yield HubButton("", key="r", action="toggle_refine", id="transcribe-refine")
-        yield Static("", id="transcribe-error", markup=False)
 
     def buttons(self) -> tuple[tuple[str, str, str], ...]:
         return (("esc", "Cancel", "cancel"), ("enter", "Transcribe", "transcribe"))
@@ -131,10 +119,6 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         search.display = False
         # A focused scroll body would take the arrow keys of the list.
         self.body_widget().can_focus = False
-        # The app rules of HubButton outrank dialog CSS; line the buttons up with the input text.
-        for button in self.query("#transcribe-speakers-row HubButton"):
-            button.styles.margin = (1, 1, 0, 0)
-        self._show_error("")
         self._draw_options()
         self._open(self.directory)
 
@@ -249,18 +233,12 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         event.stop()
-        if event.input.id == "transcribe-search":
-            self.search_term = event.value.strip()
-            self._refresh_entries()
-        elif event.input.id == "transcribe-count":
-            self._show_error("")
+        self.search_term = event.value.strip()
+        self._refresh_entries()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
-        if event.input.id == "transcribe-search":
-            self.set_focus(None)
-        else:
-            self.action_transcribe()
+        self.set_focus(None)
 
     def action_cancel(self) -> None:
         if self.query_one("#transcribe-search", Input).display:
@@ -272,8 +250,6 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
     # Options
 
     def _draw_options(self) -> None:
-        self.query_one("#transcribe-count", Input).disabled = not self.diarize
-        self.query_one("#transcribe-count-button", HubButton).disabled = not self.diarize
         for button_id, value in (
             ("#transcribe-speakers", self.diarize),
             ("#transcribe-refine", self.refine),
@@ -288,24 +264,6 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         self.refine = not self.refine
         self._draw_options()
 
-    def action_edit_count(self) -> None:
-        if not self.diarize:
-            return
-        self.query_one("#transcribe-count", Input).focus()
-
-    def _show_error(self, message: str) -> None:
-        error = self.query_one("#transcribe-error", Static)
-        error.update(Text(message, style=StatusToken.TONES["danger"]))
-        error.display = bool(message)
-
-    def _speaker_count(self) -> tuple[bool, int | None]:
-        value = self.query_one("#transcribe-count", Input).value.strip().lower()
-        if value == "auto":
-            return True, None
-        if value.isdecimal() and int(value) > 0:
-            return True, int(value)
-        return False, None
-
     # Submit
 
     def action_transcribe(self) -> None:
@@ -316,11 +274,4 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
             self.set_focus(None)
             self._open(entry.path)
             return
-        valid, count = self._speaker_count() if self.diarize else (True, None)
-        if not valid:
-            self._show_error(_COUNT_ERROR)
-            self.query_one("#transcribe-count", Input).focus()
-            return
-        self.dismiss(
-            (entry.path, {"diarize": self.diarize, "speaker_count": count, "refine": self.refine})
-        )
+        self.dismiss((entry.path, {"diarize": self.diarize, "refine": self.refine}))

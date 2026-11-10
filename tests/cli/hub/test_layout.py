@@ -406,13 +406,6 @@ async def _open_transcribe_search(pilot, app):
     return "#transcribe-search"
 
 
-async def _open_transcribe_count(pilot, app):
-    await pilot.press("2", "n")
-    await pilot.pause()
-    app.screen.action_edit_count()
-    return "#transcribe-count"
-
-
 async def _open_settings_row(pilot, app):
     await pilot.press("3")
     await pilot.pause()
@@ -452,7 +445,6 @@ async def _open_library_export(pilot, app):
     [
         _open_library_search,
         _open_transcribe_search,
-        _open_transcribe_count,
         _open_settings_row,
         _open_settings_search,
         _open_vocabulary_add,
@@ -469,7 +461,6 @@ async def test_every_input_keeps_a_long_value_visible_on_its_text_row(tmp_path, 
         selector = await open_input(pilot, app)
         await pilot.pause()
         field = app.screen.query_one(selector, Input)
-        # All digits, so that the integer input of the speaker count takes it too.
         field.value = "1234567890" * 15
         field.cursor_position = len(field.value)
         await pilot.pause()

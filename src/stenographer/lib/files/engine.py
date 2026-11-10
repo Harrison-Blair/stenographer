@@ -108,14 +108,12 @@ class FilesEngine:
         path: str | Path,
         *,
         diarize: bool = True,
-        speaker_count: int | None = None,
         refine: bool = False,
     ) -> FileJob:
         """Queue one file without blocking on media inspection or inference."""
         options = FileJobOptions(
             path=Path(path),
             diarize=diarize,
-            speaker_count=speaker_count,
             refine=refine,
         )
         with self._lock:
