@@ -426,8 +426,10 @@ class LibraryScreen(HubScreen):
             for button_id in ("library-rename", "library-rediarize", "library-retranscribe"):
                 if busy:
                     labels[button_id] = (f"{labels[button_id][0]} · busy", True)
-            if entry.kind == "file" or self._rediarize_refusal(entry) is not None:
+            if entry.kind == "file":
                 labels["library-rediarize"] = ("Re-diarize", True)
+            elif self._rediarize_refusal(entry) is not None:
+                labels["library-rediarize"] = (labels["library-rediarize"][0], True)
             if entry.job_active:
                 labels["library-delete"] = ("Cancel job… · busy", False)
             elif busy:
