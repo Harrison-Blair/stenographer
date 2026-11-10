@@ -9,10 +9,10 @@ after the other.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import itertools
 import multiprocessing
-import queue
 import threading
 from typing import TYPE_CHECKING
 
@@ -26,7 +26,12 @@ from stenographer.lib.platform.linux.nemo_speech import (
     Geometry,
     host_unavailable_reason,
 )
-from stenographer.lib.platform.speaker_diarizer import SAMPLE_RATE, THREADS, SpeakerSegment
+from stenographer.lib.platform.speaker_diarizer import (
+    LIVE_QUEUE_SECONDS,
+    SAMPLE_RATE,
+    THREADS,
+    SpeakerSegment,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -66,7 +71,12 @@ def file_blocks(
 
 
 class _Stream:
-    """Parent-side state of one stream; the reader thread fills it."""
+    """Parent-side state of one stream; the reader thread fills it.
+
+    Audio the helper has not handled yet is bounded by ``LIVE_QUEUE_SECONDS``. A
+    push past the bound overflows the stream: its queued audio is released, the
+    helper closes it, and it gives no more labels.
+    """
 
     def __init__(self, owner: NemoSpeakerDiarizer, sid: int, source: str) -> None:
         self._owner = owner
@@ -76,8 +86,10 @@ class _Stream:
         self._opened = False
         self._final: list[SpeakerSegment] = []
         self._tail: tuple[SpeakerSegment, ...] = ()
-        self._sent = 0
-        self._replied = 0
+        # Seconds of each push the helper has not answered, oldest first.
+        self._unanswered: collections.deque[float] = collections.deque()
+        self._queued_seconds = 0.0
+        self._overflowed = False
         self._finished: tuple[SpeakerSegment, ...] | None = None
         self._error: str | None = None
 
@@ -85,14 +97,15 @@ class _Stream:
     def on_message(self, message: tuple) -> None:
         kind = message[0]
         with self._changed:
+            if self._overflowed:
+                return  # replies to audio sent before the overflow
             if kind == "opened":
                 self._opened = True
-            elif kind == "pushed":
-                self._replied += 1
-            elif kind == "update":
-                self._replied += 1
-                self._final.extend(message[2])
-                self._tail = message[3]
+            elif kind in ("pushed", "update"):
+                self._queued_seconds -= self._unanswered.popleft()
+                if kind == "update":
+                    self._final.extend(message[2])
+                    self._tail = message[3]
             elif kind == "finished":
                 self._final.extend(message[2])
                 self._tail = ()
@@ -103,11 +116,21 @@ class _Stream:
 
     def fail(self, reason: str) -> None:
         with self._changed:
-            if self._error is None:
+            if self._error is None and not self._overflowed:
                 self._error = reason
             self._changed.notify_all()
 
     # --- caller ---
+    @property
+    def queued_seconds(self) -> float:
+        """Seconds of pushed audio the helper has not handled yet."""
+        with self._changed:
+            return self._queued_seconds
+
+    def overflowed(self) -> bool:
+        with self._changed:
+            return self._overflowed
+
     def _wait(self, done: Callable[[], bool], timeout: float | None) -> None:
         with self._changed:
             if not self._changed.wait_for(lambda: done() or self._error is not None, timeout):
@@ -119,9 +142,22 @@ class _Stream:
         self._wait(lambda: self._opened, _OPEN_SECONDS)
 
     def push(self, samples: np.ndarray, rate: int = SAMPLE_RATE) -> None:
+        seconds = len(samples) / rate
         with self._changed:
-            self._sent += 1
-        self._owner.send(("push", self._sid, np.asarray(samples, np.float32).tobytes(), rate))
+            if self._overflowed:
+                return
+            if self._queued_seconds + seconds <= LIVE_QUEUE_SECONDS:
+                self._queued_seconds += seconds
+                self._unanswered.append(seconds)
+                self._owner.send(
+                    ("push", self._sid, np.asarray(samples, np.float32).tobytes(), rate)
+                )
+                return
+            self._overflowed = True
+            self._tail = ()
+            self._unanswered.clear()
+            self._queued_seconds = 0.0
+        self._owner.release(self._sid)
 
     def wait_replies(self, should_cancel: Callable[[], bool]) -> bool:
         """Wait until the helper has handled every push; False on a cancel."""
@@ -129,7 +165,7 @@ class _Stream:
             with self._changed:
                 if self._error is not None:
                     raise SpeakerDiarizerError(self._error)
-                if self._replied == self._sent:
+                if not self._unanswered:
                     return True
                 self._changed.wait(_POLL_SECONDS)
             if should_cancel():
@@ -144,6 +180,11 @@ class _Stream:
             return final, self._tail
 
     def finish(self, timeout: float) -> tuple[SpeakerSegment, ...]:
+        with self._changed:
+            if self._overflowed:
+                final = tuple(self._final)
+                self._final.clear()
+                return final
         self._owner.send(("finish", self._sid))
         self._wait(lambda: self._finished is not None, timeout)
         with self._changed:
@@ -155,17 +196,30 @@ class _Stream:
 
 
 class NemoSpeakerDiarizer:
-    """The ``SpeakerDiarizer`` of Linux. *threads* caps the helper's CPU threads."""
+    """The ``SpeakerDiarizer`` of Linux. *threads* caps the helper's CPU threads.
 
-    def __init__(self, threads: int = THREADS, live_geometry: Geometry = LIVE) -> None:
+    *child* is the helper's entry point; tests replace it.
+    """
+
+    def __init__(
+        self,
+        threads: int = THREADS,
+        live_geometry: Geometry = LIVE,
+        *,
+        child: Callable[..., None] = child_main,
+    ) -> None:
         self._threads = threads
         self._live_geometry = live_geometry
+        self._child = child
         self._lock = threading.Lock()
         self._streams: dict[int, _Stream] = {}
         self._ids = itertools.count()
         self._process = None
         self._commands: Connection | None = None
-        self._outbox: queue.Queue | None = None
+        # Messages for the helper, in order; the sender thread drains it.
+        self._outbox: collections.deque[tuple] = collections.deque()
+        self._outbox_ready = threading.Condition()
+        self._sending = False
         self._failure: str | None = None
 
     def unavailable_reason(self) -> str | None:
@@ -183,7 +237,7 @@ class NemoSpeakerDiarizer:
         commands_read, commands_write = context.Pipe(duplex=False)
         results_read, results_write = context.Pipe(duplex=False)
         process = context.Process(
-            target=child_main, args=(commands_read, results_write, self._threads), daemon=True
+            target=self._child, args=(commands_read, results_write, self._threads), daemon=True
         )
         process.start()
         # The parent holds no child end, so the death of the child shows end of file.
@@ -204,14 +258,18 @@ class NemoSpeakerDiarizer:
             raise SpeakerDiarizerError(message[2])
         self._process = process
         self._commands = commands_write
-        self._outbox = queue.Queue()
-        threading.Thread(
-            target=self._send_loop, args=(self._outbox, commands_write), daemon=True
-        ).start()
+        with self._outbox_ready:
+            self._sending = True
+        threading.Thread(target=self._send_loop, args=(commands_write,), daemon=True).start()
         threading.Thread(target=self._read_loop, args=(results_read, process), daemon=True).start()
 
-    def _send_loop(self, outbox: queue.Queue, commands: Connection) -> None:
-        while (message := outbox.get()) is not None:
+    def _send_loop(self, commands: Connection) -> None:
+        while True:
+            with self._outbox_ready:
+                self._outbox_ready.wait_for(lambda: self._outbox or not self._sending)
+                if not self._sending:
+                    return
+                message = self._outbox.popleft()
             try:
                 commands.send(message)
             except OSError:
@@ -239,9 +297,23 @@ class NemoSpeakerDiarizer:
             stream.fail(reason)
 
     def send(self, message: tuple) -> None:
-        outbox = self._outbox
-        if outbox is not None:
-            outbox.put(message)
+        with self._outbox_ready:
+            if self._sending:
+                self._outbox.append(message)
+                self._outbox_ready.notify()
+
+    def queued_pushes(self, sid: int) -> int:
+        """Pushes of stream *sid* still waiting in the outbox."""
+        with self._outbox_ready:
+            return sum(1 for m in self._outbox if m[0] == "push" and m[1] == sid)
+
+    def release(self, sid: int) -> None:
+        """Drop the queued audio of stream *sid* and close it in the helper."""
+        with self._outbox_ready:
+            self._outbox = collections.deque(
+                m for m in self._outbox if not (m[0] == "push" and m[1] == sid)
+            )
+        self.forget(sid)
 
     def forget(self, sid: int) -> None:
         with self._lock:
@@ -293,11 +365,12 @@ class NemoSpeakerDiarizer:
     def close(self) -> None:
         with self._lock:
             process, self._process = self._process, None
-            outbox, self._outbox = self._outbox, None
             if self._failure is None:
                 self._failure = "speaker separation was stopped"
-        if outbox is not None:
-            outbox.put(None)
+        with self._outbox_ready:
+            self._sending = False
+            self._outbox.clear()
+            self._outbox_ready.notify_all()
         if process is not None:
             process.kill()
             process.join()

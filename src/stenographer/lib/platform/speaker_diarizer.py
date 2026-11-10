@@ -22,6 +22,8 @@ SAMPLE_RATE = 16_000
 # CPU threads of one helper, shared by all its streams. Measured: the live preset
 # keeps up with a mic and a system stream at once at RTF 0.40 (about 1.6 cores busy).
 THREADS = 4
+# A live stream holds at most this much audio that the helper has not handled.
+LIVE_QUEUE_SECONDS = 60.0
 
 # A segment is final when it ends this far before the labelled edge. The library
 # changes only the segment open at the edge: its end can move by the gap fill
@@ -59,10 +61,20 @@ def finalize_all(
 
 
 class LiveDiarization(Protocol):
-    """One live stream of one audio source."""
+    """One live stream of one audio source.
+
+    When the helper falls behind by more than ``LIVE_QUEUE_SECONDS`` of audio,
+    the stream overflows: its queued audio is released and it gives no more
+    labels. ``overflowed()`` then stays true, ``push`` does nothing, ``poll``
+    returns only the finals received before, and ``finish`` returns at once.
+    """
 
     def push(self, samples: np.ndarray) -> None:
         """Queue mono float32 audio at ``SAMPLE_RATE``. Does not block."""
+        ...
+
+    def overflowed(self) -> bool:
+        """True once the stream fell too far behind and stopped labelling."""
         ...
 
     def poll(self) -> tuple[tuple[SpeakerSegment, ...], tuple[SpeakerSegment, ...]]:

@@ -51,9 +51,14 @@ def _run_live(diarizer, samples, *, poll: bool):
     try:
         for start in range(0, len(samples), PUSH):
             stream.push(samples[start : start + PUSH])
+            # Live audio arrives no faster than real time; wait as a slow helper would
+            # let the queue grow past its bound.
+            if start % (RATE * 10) == RATE * 10 - PUSH:
+                assert stream.wait_replies(lambda: False)
             if poll:
                 final, _ = stream.poll()
                 finals.extend(final)
+        assert not stream.overflowed()
         finals.extend(stream.finish(timeout=300))
     finally:
         stream.close()
