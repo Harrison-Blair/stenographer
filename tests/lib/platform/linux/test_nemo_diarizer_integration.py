@@ -56,8 +56,7 @@ def _run_live(diarizer, samples, *, poll: bool):
             if start % (RATE * 10) == RATE * 10 - PUSH:
                 assert stream.wait_replies(lambda: False)
             if poll:
-                final, _ = stream.poll()
-                finals.extend(final)
+                finals.extend(stream.poll().final)
         assert not stream.overflowed()
         finals.extend(stream.finish(timeout=300))
     finally:

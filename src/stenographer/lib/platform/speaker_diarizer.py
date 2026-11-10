@@ -38,6 +38,17 @@ class SpeakerSegment:
     end: float
 
 
+@dataclass(frozen=True)
+class LivePoll:
+    """One consistent view of a live stream: the segments that became final since
+    the last poll, the open segments at the live edge, and the stream seconds up to
+    which every segment is final (``-inf`` at first, ``inf`` after ``finish``)."""
+
+    final: tuple[SpeakerSegment, ...]
+    tail: tuple[SpeakerSegment, ...]
+    final_until: float
+
+
 def split_final(
     segments: Sequence[SpeakerSegment], edge: float, final_until: float
 ) -> tuple[tuple[SpeakerSegment, ...], tuple[SpeakerSegment, ...], float]:
@@ -77,15 +88,9 @@ class LiveDiarization(Protocol):
         """True once the stream fell too far behind and stopped labelling."""
         ...
 
-    @property
-    def final_until(self) -> float:
-        """Stream seconds up to which every segment is final: ``-inf`` at first,
-        ``inf`` after ``finish``. Stream seconds count the audio pushed."""
-        ...
-
-    def poll(self) -> tuple[tuple[SpeakerSegment, ...], tuple[SpeakerSegment, ...]]:
-        """Return ``(new_final, tail)``: the segments that became final since the
-        last poll, and the provisional segments at the live edge.
+    def poll(self) -> LivePoll:
+        """Return one consistent view of the stream; stream seconds count the audio
+        pushed.
 
         Raise ``SpeakerDiarizerError`` when the stream failed.
         """

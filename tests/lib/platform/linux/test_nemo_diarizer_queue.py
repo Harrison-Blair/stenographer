@@ -39,7 +39,8 @@ def test_slow_helper_overflows_both_live_streams_with_bounded_queue() -> None:
         for stream in streams.values():
             assert stream.overflowed()
             assert stream.queued_seconds == 0.0
-            assert stream.poll() == ((), ())
+            view = stream.poll()
+            assert (view.final, view.tail) == ((), ())
             assert stream.finish(timeout=1) == ()
         assert diarizer.queued_pushes(0) == 0
         assert diarizer.queued_pushes(1) == 0
@@ -121,3 +122,24 @@ def test_two_behind_streams_are_sent_in_turn(monkeypatch, tmp_path: Path) -> Non
         assert all(a != b for a, b in itertools.pairwise(both_queued))
     finally:
         diarizer.close()
+
+
+class _Owner:
+    def send(self, _message) -> None:
+        pass
+
+    def forget(self, _sid) -> None:
+        pass
+
+
+def test_poll_gives_the_finals_tail_and_final_edge_of_one_update() -> None:
+    from stenographer.lib.platform.linux.nemo_diarizer import _Stream
+    from stenographer.lib.platform.speaker_diarizer import LivePoll, SpeakerSegment
+
+    stream = _Stream(_Owner(), 0, "mic")
+    stream.push(BLOCK)
+    final, tail = (SpeakerSegment(0, 0.0, 1.0),), (SpeakerSegment(1, 1.0, 2.5),)
+    stream.on_message(("update", 0, final, tail, 1.7))
+
+    assert stream.poll() == LivePoll(final, tail, 1.7)
+    assert stream.poll() == LivePoll((), tail, 1.7)

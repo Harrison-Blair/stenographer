@@ -30,6 +30,7 @@ from stenographer.lib.platform.speaker_diarizer import (
     LIVE_QUEUE_SECONDS,
     SAMPLE_RATE,
     THREADS,
+    LivePoll,
     SpeakerSegment,
 )
 
@@ -130,11 +131,6 @@ class _Stream:
         with self._changed:
             return self._queued_seconds
 
-    @property
-    def final_until(self) -> float:
-        with self._changed:
-            return self._final_until
-
     def overflowed(self) -> bool:
         with self._changed:
             return self._overflowed
@@ -179,13 +175,14 @@ class _Stream:
             if should_cancel():
                 return False
 
-    def poll(self) -> tuple[tuple[SpeakerSegment, ...], tuple[SpeakerSegment, ...]]:
+    def poll(self) -> LivePoll:
+        # One lock: the reader thread changes finals, tail, and final edge together.
         with self._changed:
             if self._error is not None:
                 raise SpeakerDiarizerError(self._error)
             final = tuple(self._final)
             self._final.clear()
-            return final, self._tail
+            return LivePoll(final, self._tail, self._final_until)
 
     def finish(self, timeout: float) -> tuple[SpeakerSegment, ...]:
         with self._changed:

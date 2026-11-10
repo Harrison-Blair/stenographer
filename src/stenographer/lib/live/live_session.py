@@ -682,18 +682,18 @@ class LiveSession:
             stream = self._streams.get(source)
             if stream is not None:
                 try:
-                    final, tail = stream.poll()
+                    view = stream.poll()
                 except SpeakerDiarizerError as exc:
                     self._speakers_failed(source, exc)
                     return
-                self._add_segments(source, final)
-                self._tails[source] = self._session_segments(source, tail)
+                self._add_segments(source, view.final)
+                self._tails[source] = self._session_segments(source, view.tail)
                 if stream.overflowed():
                     self._stream_overflowed(source)
                     return
                 self._final_until[source] = max(
                     self._final_until[source],
-                    self._clocks[source].session_time(stream.final_until),
+                    self._clocks[source].session_time(view.final_until),
                 )
             waiting = self._waiting[source]
             limit = float("inf") if everything else self._final_until[source]

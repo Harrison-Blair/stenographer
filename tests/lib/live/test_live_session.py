@@ -17,7 +17,7 @@ import pytest
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.platform.errors import SpeakerDiarizerError
-from stenographer.lib.platform.speaker_diarizer import SpeakerSegment
+from stenographer.lib.platform.speaker_diarizer import LivePoll, SpeakerSegment
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.results import SegmentInfo, TranscriptionResult
 from tests.lib.platform.support import NullProcessCounters
@@ -121,6 +121,8 @@ class FakeStream:
         # Segments still open at the live edge: start and speaker are fixed.
         self.tail = []
         self.final_until = float("inf")
+        # Views that ``poll`` returns first, in order, as the reader thread made them.
+        self.views = []
         self.overflow = False
         self.poll_error = None
         self.closed = False
@@ -132,9 +134,11 @@ class FakeStream:
     def poll(self):
         if self.poll_error is not None:
             raise self.poll_error
+        if self.views:
+            return self.views.pop(0)
         final = tuple(self.finals)
         self.finals.clear()
-        return final, tuple(self.tail)
+        return LivePoll(final, tuple(self.tail), self.final_until)
 
     def overflowed(self):
         return self.overflow
@@ -714,6 +718,30 @@ def test_a_speaker_who_still_talks_labels_the_final_part_of_a_phrase(monkeypatch
     stream.final_until = 3.0
 
     _speak(rig, "system", 0.0, 2.0, _halves(1, 4))
+
+    assert [(line.start, line.end, line.label) for line in rig.session.lines] == [
+        (0.0, 1.0, "Speaker 1"),
+        (1.0, 2.0, "Speaker 2"),
+    ]
+    rig.session.stop()
+
+
+def test_a_phrase_is_cut_with_the_segments_of_the_same_view_as_its_final_edge(
+    monkeypatch, tmp_path
+):
+    rig = _make_session(monkeypatch, tmp_path, mic=False)
+    stream = rig.diarizer.streams["system"]
+    # The first view is from before speaker 1 started; by the time the stream is read
+    # again, the reader thread made speaker 1 final and moved the edge past the phrase.
+    stream.views = [
+        LivePoll((SpeakerSegment(0, 0.0, 1.0),), (), 1.0),
+        LivePoll((SpeakerSegment(1, 1.0, 2.0),), (), 3.0),
+    ]
+    stream.final_until = 3.0
+
+    _speak(rig, "system", 0.0, 2.0, _halves(1, 4))
+    rig.system.emit(3)
+    rig.session._queue.join()
 
     assert [(line.start, line.end, line.label) for line in rig.session.lines] == [
         (0.0, 1.0, "Speaker 1"),
