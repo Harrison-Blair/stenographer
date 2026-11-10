@@ -84,8 +84,9 @@ NeMo-Speech.cpp 0.3.0 runtime through its C API in a helper process.
 - **The speaker model** (`Nemotron-3-Diarization.q8_0.gguf`, 107,012,128
   bytes, SHA-256 `08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1`)
   is larger than GitHub's file limit and is never committed. `scripts/build.sh`
-  runs `scripts/fetch_speaker_model.py`, which downloads it from the pinned
-  Hugging Face revision into `src/stenographer/assets/models/` (git-ignored).
+  and the `native` workflow, which runs PyInstaller directly, run
+  `scripts/fetch_speaker_model.py` before the bundle is built. It downloads
+  the model from the pinned Hugging Face revision into `src/stenographer/assets/models/` (git-ignored).
   A file with the pinned size and SHA-256 is kept, so a rebuild does not
   download again; any mismatch fails the build. Run the script by hand to use
   speaker separation from a source checkout.
