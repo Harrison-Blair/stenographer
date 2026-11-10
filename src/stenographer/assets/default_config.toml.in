@@ -10,7 +10,6 @@ hybrid_threshold_seconds = 0.5 # hybrid only: a press held this long stops on re
 
 [stenographer.audio]
 input_device = ""              # PortAudio device name/index; "" = system default
-min_speech_rms = 0.0005        # pre-decode energy gate; 0 disables the gate
 max_recording_seconds = 600
 
 [stenographer.asr]

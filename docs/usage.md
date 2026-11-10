@@ -50,7 +50,10 @@ The ASR settings are `idle_unload_seconds` and `cpu_threads` in
 your config file. Stenographer ignores them and saves keep them unchanged; you
 can delete them by hand. The speech model keeps fillers such as "um" in every
 mode; [refine](refine.md) removes them from dictations of 10 or more words (the
-default `min_words`). For live capture,
+default `min_words`). Earlier releases had an energy gate,
+`audio.min_speech_rms`. It is ignored now, and saves keep the line. The voice
+detector decides whether a dictation holds speech: with speech, the whole
+recording is transcribed; without speech, nothing is. For live capture,
 see [Record live audio](hub.md#record).
 
 The default configuration file is:
@@ -322,6 +325,10 @@ the microphone never captured. It can also amplify background noise and expose
 clipping or distortion. In the project's public-audio evaluation it improved
 development clips but regressed the held-out clips, so it is not enabled by
 default. Fix microphone placement and capture level first.
+
+The voice detector raises the level of the audio that it hears, so it finds
+quiet speech. The recognizer, saved recordings and the meters get the original
+level.
 
 When startup cannot meet required capabilities, it shows their labels and fixes.
 Doctor distinguishes absent logs from logs it cannot inspect. If the sound-pack

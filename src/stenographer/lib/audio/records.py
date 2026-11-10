@@ -1,23 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Capture measurements and speech-gate verdicts."""
+"""Capture measurements."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from stenographer.lib.audio.constants import SAMPLE_RATE
-
-
-@dataclass(frozen=True)
-class GateStats:
-    """The energy gate's verdict and the numbers it was reached from."""
-
-    peak_rms: float
-    mean_rms: float
-    frames_total: int
-    frames_above: int
-    threshold: float
-    passed: bool
 
 
 @dataclass(frozen=True)

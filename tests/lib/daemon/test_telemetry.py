@@ -33,7 +33,6 @@ def test_delivered_utterance_logs_metrics_and_never_the_transcript(daemon_logs):
         text=f"{CANARY} rides again",
         duration_seconds=1.0,
         segments=[],
-        vad_seconds=0.9,
     )
     daemon = _daemon(result=result)
     _run_and_stop(daemon)
@@ -47,7 +46,7 @@ def test_delivered_utterance_logs_metrics_and_never_the_transcript(daemon_logs):
     assert f"chars_out={len(expected)}" in line
     assert f"chars_raw={len(result.text)}" in line
     assert "utt=1 source=hotkey mode=hold" in line
-    assert "gate=pass" in line
+    assert "vad_frames=16000" in line
     assert "decode_ms=1500" in line
     assert "copy_ms=8" in line
 

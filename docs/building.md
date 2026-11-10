@@ -63,10 +63,10 @@ prompt's MIT attribution is packaged at
 
 | File | Size | SHA-256 |
 | --- | --- | --- |
-| `silero_vad.onnx` | about 0.6 MB | `9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6` |
+| `silero_vad.onnx` | 2,327,524 bytes | `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3` |
 
-`silero_vad.onnx` is unchanged from the
-[sherpa-onnx release](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx).
+`silero_vad.onnx` is the unchanged official
+[Silero VAD v6.2.3 file](https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx).
 The ASR model is an explicit download.
 
 ### Speaker separation runtime

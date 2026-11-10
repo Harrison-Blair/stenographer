@@ -58,7 +58,6 @@ SETTINGS_TABS = (
         "Audio",
         (
             "audio.input_device",
-            "audio.min_speech_rms",
             "audio.max_recording_seconds",
             "feedback.spectrum_floor_dbfs",
         ),

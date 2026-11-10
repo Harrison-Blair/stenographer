@@ -18,7 +18,6 @@ _LABELS = {
     "hotkey.hybrid_threshold_seconds": "Hold threshold",
     "hotkey.general_binding": "General key",
     "audio.input_device": "Microphone",
-    "audio.min_speech_rms": "Minimum speech level",
     "audio.max_recording_seconds": "Longest recording",
     "asr.idle_unload_seconds": "Idle unload",
     "asr.cpu_threads": "CPU threads",

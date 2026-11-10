@@ -236,7 +236,7 @@ class _Deliverer:
 
 
 def _daemon(
-    *, result=None, error=None, samples=_SPEECH, mode="hold", refiner=None, speech_filter=None
+    *, result=None, error=None, samples=_SPEECH, mode="hold", refiner=None, speech=1.0
 ) -> Daemon:
     cfg = _no_network_cfg()
     cfg = dataclasses.replace(cfg, hotkey=dataclasses.replace(cfg.hotkey, mode=mode))
@@ -251,7 +251,8 @@ def _daemon(
     daemon._deliverer = _Deliverer()
     if refiner is not None:
         daemon._refiner = refiner
-    daemon._pipeline = daemon._build_pipeline(daemon._deliverer, speech_filter)
+    # The Silero VAD is the external dependency: *speech* is its answer in seconds.
+    daemon._pipeline = daemon._build_pipeline(daemon._deliverer, lambda _samples: speech)
     return daemon
 
 
@@ -304,9 +305,9 @@ class _Status:
 
 
 def _daemon_with_status(
-    *, result=None, samples=_SPEECH, warm=True, refiner=None
+    *, result=None, samples=_SPEECH, warm=True, refiner=None, speech=1.0
 ) -> tuple[Daemon, _Status]:
-    daemon = _daemon(result=result, samples=samples, refiner=refiner)
+    daemon = _daemon(result=result, samples=samples, refiner=refiner, speech=speech)
     daemon._worker.is_model_ready = warm
     status = _Status()
     daemon._status = status

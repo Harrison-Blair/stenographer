@@ -138,6 +138,4 @@ def _assemble(
         word_count=len(word_timestamps),
         audio_seconds=audio_seconds,
     )
-    return TranscriptionResult(
-        text=text, duration_seconds=audio_seconds, segments=segments, vad_seconds=audio_seconds
-    )
+    return TranscriptionResult(text=text, duration_seconds=audio_seconds, segments=segments)

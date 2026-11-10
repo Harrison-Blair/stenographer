@@ -80,7 +80,7 @@ def test_render_materializes_every_known_key(tmp_path):
         "hybrid_threshold_seconds",
         "general_binding",
     ]
-    assert list(root["audio"]) == ["input_device", "min_speech_rms", "max_recording_seconds"]
+    assert list(root["audio"]) == ["input_device", "max_recording_seconds"]
     assert list(root["asr"]) == ["idle_unload_seconds", "cpu_threads"]
     assert list(root["feedback"]) == [
         "volume",
@@ -90,7 +90,7 @@ def test_render_materializes_every_known_key(tmp_path):
         "sound_pack",
         "log_level",
     ]
-    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 17
+    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 16
 
 
 def test_render_encodes_optional_strings_as_empty_strings(tmp_path):
@@ -116,7 +116,6 @@ def test_render_round_trips_nondefault_production_config(tmp_path):
         audio=replace(
             defaults.audio,
             input_device="USB microphone",
-            min_speech_rms=0.0,
             max_recording_seconds=45,
         ),
         asr=replace(
@@ -209,6 +208,32 @@ def test_save_writes_the_reviewed_config_and_keeps_the_previous_bytes(tmp_path):
     assert Config.load(path) == reviewed
     assert "# exact original" in path.read_text(encoding="utf-8")
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_the_retired_min_speech_rms_key_loads_without_effect_and_survives_a_save(
+    tmp_path, caplog, recwarn
+):
+    old_audio = (
+        "[stenographer.audio]\n"
+        "min_speech_rms = 0.002        # pre-decode energy gate; 0 disables the gate\n"
+        "max_recording_seconds = 600\n"
+    )
+    path = tmp_path / "config.toml"
+    path.write_bytes(old_audio.encode("utf-8"))
+
+    with caplog.at_level("DEBUG"):
+        document = ConfigDocument.load(path)
+
+    assert document.config == Config.defaults()
+    assert [r for r in caplog.records if r.levelname not in ("DEBUG", "INFO")] == []
+    assert len(recwarn) == 0
+
+    reviewed = replace(document.config, asr=replace(document.config.asr, cpu_threads=4))
+    document.save(reviewed)
+
+    saved = path.read_text(encoding="utf-8")
+    assert saved.startswith(old_audio)
+    assert Config.load(path) == reviewed
 
 
 def test_save_keeps_removed_whisper_keys_byte_for_byte(tmp_path):

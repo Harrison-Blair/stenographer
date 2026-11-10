@@ -85,7 +85,6 @@ def test_assemble_keeps_every_segment_and_concatenates():
     result = _assemble(segments, audio_seconds=2.0)
     assert result.text == "hi there"
     assert result.duration_seconds == 2.0
-    assert result.vad_seconds == 2.0
     assert result.segments == segments
 
 
@@ -225,7 +224,6 @@ def test_model_decodes_padded_samples_and_shifts_timestamps_back():
     assert not accepted[:4000].any()
     assert result.text == "hi there"
     assert result.duration_seconds == pytest.approx(0.5)
-    assert result.vad_seconds == pytest.approx(0.5)
     [segment] = result.segments
     assert [(w.word, round(w.start, 2), round(w.end, 2)) for w in segment.words] == [
         ("hi", 0.08, 0.24),

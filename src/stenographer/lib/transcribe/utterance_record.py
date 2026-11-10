@@ -10,7 +10,7 @@ from dataclasses import dataclass
 class UtteranceRecord:
     """Everything measured about one utterance, in summary-line order.
 
-    Every field but ``utt`` is optional: an utterance that fails its gate never
+    Every field but ``utt`` is optional: an utterance with no VAD speech never
     reaches a decode, and a rendered ``None`` field is dropped rather than
     printed, so one record serves every early exit.
     """
@@ -34,9 +34,7 @@ class UtteranceRecord:
     out_frames: int | None = None
     overflow: bool | None = None
     capped: bool | None = None
-    gate: str | None = None
     peak_rms: float | None = None
-    frames_above: int | None = None
     cold: bool | None = None
     load_ms: float | None = None
     lock_wait_ms: float | None = None

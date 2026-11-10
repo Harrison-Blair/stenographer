@@ -140,7 +140,7 @@ class Daemon:
 
         from stenographer.lib.config.paths import resolve_config_path
         from stenographer.lib.hotkey.binding import parse_binding
-        from stenographer.lib.transcribe.dictation_vad import dictation_speech
+        from stenographer.lib.transcribe.dictation_vad import speech_seconds
 
         plat = platform if platform is not None else current_platform()
         feedback = Feedback(
@@ -240,16 +240,16 @@ class Daemon:
         daemon._deliverer = deliverer
         daemon._pipeline = daemon._build_pipeline(
             deliverer,
-            lambda samples: dictation_speech(
+            lambda samples: speech_seconds(
                 samples,
                 vad_model_path(),
             ),
         )
         return daemon
 
-    def _build_pipeline(self, deliverer, speech_filter):
+    def _build_pipeline(self, deliverer, speech_seconds):
         return UtterancePipeline(
-            min_speech_rms=self._cfg.audio.min_speech_rms,
+            speech_seconds=speech_seconds,
             worker=self._worker,
             deliverer=deliverer,
             refiner=self._refiner,
@@ -260,7 +260,6 @@ class Daemon:
             cancelled=self._cancel_pending,
             cancel_state=lambda: cancel_state(shutting_down=self._stop_event.is_set()),
             copy_original=self._cfg.delivery.copy_original,
-            speech_filter=speech_filter,
         )
 
     def _cue(self, name: str) -> None:

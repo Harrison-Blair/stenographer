@@ -48,8 +48,8 @@ def test_quick_wizard_asks_only_the_essentials_and_returns_them(device_menus, tm
     assert config.audio.input_device == "1"
     assert config.feedback.volume == 0.8
     assert config.feedback.sound_pack == "legacy"
-    # The quick wizard never touches the audio gate or any ASR key.
-    assert config.audio.min_speech_rms == Config.defaults().audio.min_speech_rms
+    # The quick wizard never touches the recording limit or any ASR key.
+    assert config.audio.max_recording_seconds == Config.defaults().audio.max_recording_seconds
     assert config.asr == Config.defaults().asr
 
     stdout = console.stdout.getvalue()

@@ -26,9 +26,6 @@ class TranscriptionResult:
     text: str
     duration_seconds: float
     segments: list[SegmentInfo] = field(default_factory=list)
-    #: Seconds of audio the VAD kept. Carried back to the parent so the
-    #: utterance summary can report it without a second decode-side log line.
-    vad_seconds: float = 0.0
     inference_ms: float | None = None
 
 

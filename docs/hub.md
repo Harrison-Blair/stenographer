@@ -401,7 +401,7 @@ tab. The first four tabs edit
 | Tab | Settings |
 | --- | --- |
 | General | hotkey, sound and overlay feedback, log level, delivery, and analytics |
-| Audio | input device, minimum speech level, maximum recording length, and spectrum floor |
+| Audio | input device, maximum recording length, and spectrum floor |
 | Recognition | `asr.idle_unload_seconds`, `asr.cpu_threads`, and the refine settings |
 | Live | `live.diarize_mic` |
 
@@ -479,7 +479,6 @@ its current settings.
 | Usage history | `analytics.enabled` | Stores local numeric usage history of dictation and `stenographer transcribe`. No audio or transcript text is stored. |
 | Resource profiling | `analytics.resource_profiling` | With Usage history on, measures local resource use during utterances. |
 | Microphone | `audio.input_device` | The audio input device name or index for dictation and Record. Blank uses the default. Record's `d` key can choose another device for its next recording. |
-| Minimum speech level | `audio.min_speech_rms` | Hotkey dictation ignores audio below this speech energy level. Zero disables the gate. `stenographer transcribe` only reports the result. Record and file jobs do not use it. |
 | Longest recording | `audio.max_recording_seconds` | The maximum length of one hotkey dictation. It does not limit Record. |
 | Meter floor dBFS | `feedback.spectrum_floor_dbfs` | The floor of the Record meters and the dictation overlay in dBFS: one fixed value, or one value per band. |
 | Idle unload | `asr.idle_unload_seconds` | The seconds before the idle speech worker unloads, and how long Ollama keeps the refine model loaded when idle. Zero never unloads either one. |

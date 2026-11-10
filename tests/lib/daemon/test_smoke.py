@@ -210,5 +210,5 @@ def test_dictation_log_reports_metrics_without_the_transcript():
 
     assert _CANARY not in text.lower()
     last = summaries[-1]
-    for field in ("utt=", "outcome=", "gate=", "peak_rms=", "total_ms="):
+    for field in ("utt=", "outcome=", "peak_rms=", "vad_frames=", "total_ms="):
         assert field in last, last
