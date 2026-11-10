@@ -40,7 +40,7 @@ def detector_gain(window: np.ndarray, peak: float) -> tuple[np.ndarray, float]:
     start). It follows a louder window at once and decays with a 10 s
     half-life. Return the scaled window, clipped to ±1, and the new peak.
     """
-    rms = float(np.sqrt(np.mean(np.square(window, dtype=np.float64)))) if window.size else 0.0
+    rms = float(np.sqrt(np.mean(np.square(window, dtype=np.float64))))
     peak = max(rms, peak * _GAIN_DECAY, _GAIN_FLOOR)
     scaled = np.clip(window * np.float32(_GAIN_TARGET / peak), -1.0, 1.0).astype(np.float32)
     return scaled, peak
@@ -101,10 +101,14 @@ class PhraseSegmenter:
             raise ValueError("audio block must be one-dimensional mono float32")
         pending = np.concatenate((self._pending, samples))
         whole = pending.size - pending.size % _VAD_WINDOW
+        phrases: list[Phrase] = []
         for offset in range(0, whole, _VAD_WINDOW):
             self._feed(pending[offset : offset + _VAD_WINDOW])
+            # Drain after each window: a queued segment is cut before the
+            # kept original audio moves past it, for a block of any length.
+            phrases += self._drain()
         self._pending = pending[whole:].copy()
-        return self._drain()
+        return phrases
 
     def flush(self) -> list[Phrase]:
         """Flush and return any speech phrase that remains open."""

@@ -196,6 +196,24 @@ def test_phrases_hold_the_original_samples_while_the_detector_hears_the_gain(mon
     assert np.array_equal(phrases[1].samples, audio[2048:3048])
 
 
+def test_a_block_longer_than_the_kept_audio_keeps_its_early_phrase(monkeypatch):
+    # One block of 130 s, longer than the 120 s of kept original audio, with
+    # speech at 1 s: the detector queues that segment early in the feed, as
+    # sherpa-onnx does, and the phrase must still hold the original samples.
+    # Seen to FAIL with "VAD segment 16000+32000 is outside the kept audio"
+    # while accept fed the whole block before it drained the detector.
+    vad = FakeVad(active=[(16000, 32000)], flushed=[])
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", FakeSherpa(vad))
+    segmenter = PhraseSegmenter("mic", Path("silero_vad.onnx"))
+    audio = (np.random.default_rng(4).standard_normal(130 * 16000) * 0.01).astype(np.float32)
+
+    [phrase] = segmenter.accept(audio)
+
+    assert phrase.start == pytest.approx(1.0)
+    assert np.array_equal(phrase.samples, audio[16000:48000])
+    assert segmenter.flush() == []
+
+
 def test_phrase_segmenter_reports_the_detector_speech_state(monkeypatch):
     vad = FakeVad(active=[], flushed=[])
     monkeypatch.setitem(sys.modules, "sherpa_onnx", FakeSherpa(vad))
