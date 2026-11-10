@@ -51,13 +51,9 @@
 !/src/stenographer/assets/licenses/nemo-speech/third_party/sentencepiece/protobuf-lite-LICENSE
 !/src/stenographer/assets/licenses/nemo-speech/third_party/sparrowhawk/LICENSE
 !/src/stenographer/assets/licenses/nemotron-3-diarization-OpenMDW-1.1-NOTICE.txt
-!/src/stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt
 !/src/stenographer/assets/licenses/silero-vad-MIT.txt
 !/src/stenographer/assets/licenses/underdog-bark-3.0-pro-NOTICE.txt
-!/src/stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt
-!/src/stenographer/assets/models/pyannote-segmentation-3-0.onnx
 !/src/stenographer/assets/models/silero_vad.onnx
-!/src/stenographer/assets/models/wespeaker_en_voxceleb_resnet34_LM_mean.onnx
 !/src/stenographer/assets/nemo_speech/SOURCES.txt
 !/src/stenographer/assets/nemo_speech/linux-aarch64/libgcc_s.so.1
 !/src/stenographer/assets/nemo_speech/linux-aarch64/libggml-base.so.0

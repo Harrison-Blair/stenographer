@@ -125,11 +125,8 @@ def test_wheel_guard_rejects_symlinked_expected_sound_entry(tmp_path: Path) -> N
         "sdist_completion",
         "license",
         "sound",
-        "model",
         "vad_model",
-        "speaker_model",
         "vad_license",
-        "speaker_notice",
         "diarization_notice",
         "runtime_license",
         "runtime_notices",
@@ -146,13 +143,9 @@ def test_distribution_contract(tmp_path: Path, missing: str | None) -> None:
     wheel_names = [f"stenographer/assets/completions/{name}" for name in COMPLETIONS]
     wheel_names.append("stenographer/assets/keycodes.toml")
     wheel_names.append("stenographer/assets/default_config.toml.in")
-    wheel_names.append("stenographer/assets/models/pyannote-segmentation-3-0.onnx")
-    wheel_names.append("stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt")
     bundled = {
         "vad_model": "stenographer/assets/models/silero_vad.onnx",
-        "speaker_model": "stenographer/assets/models/wespeaker_en_voxceleb_resnet34_LM_mean.onnx",
         "vad_license": "stenographer/assets/licenses/silero-vad-MIT.txt",
-        "speaker_notice": "stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt",
         "diarization_notice": (
             "stenographer/assets/licenses/nemotron-3-diarization-OpenMDW-1.1-NOTICE.txt"
         ),
@@ -177,8 +170,6 @@ def test_distribution_contract(tmp_path: Path, missing: str | None) -> None:
         sdist_names.pop()
     elif missing == "sound":
         wheel_names.pop()
-    elif missing == "model":
-        wheel_names.remove("stenographer/assets/models/pyannote-segmentation-3-0.onnx")
     elif missing in bundled:
         wheel_names.remove(bundled[missing])
     with zipfile.ZipFile(tmp_path / f"stenographer-{version}-py3-none-any.whl", "w") as archive:

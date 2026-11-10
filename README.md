@@ -183,13 +183,9 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   for Library, and `3` for Settings, and `?` for the keys of each screen. One
   top line on each screen shows navigation badges, the model state, and CPU and
   memory use. Transcripts use the full width, under a horizontal speaker bar.
-  On Record, press `space` to start and `enter` to stop and save; the hub stays
-  open while the speaker relabel pass runs; a skipped or failed
-  pass saves the speakers and names shown on screen, numbered from 1, and a failure
-  shows the reason. When a recording stops, when a file job ends, and on Re-diarize
-  and Re-transcribe, a bundled model finds the speech in the saved audio and the
-  speakers come from it. A line where another voice holds at least 1 second is split
-  into separate lines. The live view does not change.
+  On Record, press `space` to start and `enter` to stop and save; the session
+  keeps the speaker labels shown live. A line ends at a pause or where the
+  speaker changes, in Record, file jobs, Re-diarize, and Re-transcribe.
   `o` opens the saved session in
   Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,
@@ -200,8 +196,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
   a job; confirm with `y` or cancel with `n`. Press `n` there to transcribe a file: the dialog browses from your
   home folder, including hidden folders; search with a leading dot to find hidden audio. Folder read errors show their reason. The dialog sets Separate speakers, Speaker count, and Refine text, and
-  queues one job that shows in the list at once. Speaker count is ignored when
-  separation is off. Help and quit appear first in the footer. Settings values wrap when long. Settings has the General, Audio,
+  queues one job that shows in the list at once. Speaker separation does not
+  use Speaker count. Help and quit appear first in the footer. Settings values wrap when long. Settings has the General, Audio,
   Recognition, Live, and Checks tabs; `●` marks an unsaved change, `ctrl+s`
   saves it with a backup, and the Vocabulary row edits the refine terms.
   Checks shows fix guidance and per-check test results, groups the system checks,
@@ -278,8 +274,8 @@ GPL-3.0-or-later.
 
 ### Third-party models
 
-Stenographer ships one model, pyannote segmentation 3.0. You download each other
-model explicitly. The attribution files are in
+Stenographer ships the voice-activity and speaker models. You download each
+other model explicitly. The attribution files are in
 [`src/stenographer/assets/licenses/`](src/stenographer/assets/licenses/).
 
 | Model | Authors | License | Use |
@@ -288,7 +284,5 @@ model explicitly. The attribution files are in
 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | NVIDIA | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) | Moondream | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Base of Bark 3.0 Pro (named in its NOTICE). |
 | [Silero VAD](https://github.com/snakers4/silero-vad) | Silero Team | [MIT](https://github.com/snakers4/silero-vad/blob/master/LICENSE) | Voice activity in dictation, Record, and file jobs. Bundled in the app ([MIT text](src/stenographer/assets/licenses/silero-vad-MIT.txt)). |
-| [pyannote segmentation 3.0](https://huggingface.co/pyannote/segmentation-3.0) | CNRS | [MIT](src/stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt) | Finds speech when a recording or file is saved. Bundled in the app as the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) ONNX export. |
-| [WeSpeaker ResNet34-LM](https://github.com/wenet-e2e/wespeaker/blob/master/docs/pretrained.md) | WeSpeaker team (wenet-e2e) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); trained on VoxCeleb, which is offered for research purposes ([NOTICE](src/stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt)) | Speaker labels in Record and file jobs. Bundled in the app, with mean subtraction added to the ONNX graph by stenographer. |
 | [Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) | NVIDIA | [OpenMDW 1.1](src/stenographer/assets/licenses/nemotron-3-diarization-OpenMDW-1.1-NOTICE.txt) | Speaker separation. Bundled in the standalone app as the q8_0 GGUF file; needs an AVX2 CPU on x86_64. |
 | [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) 0.3.0 (runtime, not a model) | NVIDIA | [Apache 2.0](src/stenographer/assets/licenses/nemo-speech/LICENSE) with [third-party notices](src/stenographer/assets/licenses/nemo-speech/THIRD_PARTY_NOTICES.md) | Runs the speaker model. Its Linux libraries ship with the app. |

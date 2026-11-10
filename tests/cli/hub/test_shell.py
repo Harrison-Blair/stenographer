@@ -130,7 +130,7 @@ async def test_shell_nav_badges_show_recording_paused_entries_and_check_results(
 
 async def test_shell_top_line_fits_its_longest_navigation_and_engine_text_at_120_columns(tmp_path):
     services = RecordingServices()
-    status = EngineStatus("bark-pro-int8", "relabeling 12 of 120", 100.0, 100.0, 1_610_612_736)
+    status = EngineStatus("bark-pro-int8", "labelling speakers", 100.0, 100.0, 1_610_612_736)
     app = make_app(tmp_path, services, engine_sampler=FakeSampler(status))
     async with app.run_test(size=(120, 35)) as pilot:
         await pilot.pause()
@@ -144,7 +144,7 @@ async def test_shell_top_line_fits_its_longest_navigation_and_engine_text_at_120
         assert "2 Library 123" in top_line
         assert "3 Settings 2 F" in top_line
         assert top_line.rstrip().endswith(
-            "bark-pro-int8 relabeling 12 of 120  cpu 100% all 100%  ram 1.5G"
+            "bark-pro-int8 labelling speakers  cpu 100% all 100%  ram 1.5G"
         )
         assert top_line.index("2 F") < top_line.index("bark-pro-int8") - 1
 

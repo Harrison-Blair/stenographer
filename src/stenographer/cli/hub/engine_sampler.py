@@ -113,9 +113,8 @@ class EngineSampler:
 
     def _state(self) -> str:
         for session in self._sessions():
-            progress = session.relabel_progress
-            if progress is not None:
-                return f"relabeling {progress[0]} of {progress[1]}"
+            if session.labelling_speakers:
+                return "labelling speakers"
         engine = getattr(self._services, "files_engine", None)
         job = None if engine is None else engine.active_job
         if job is not None and job.state == "running":

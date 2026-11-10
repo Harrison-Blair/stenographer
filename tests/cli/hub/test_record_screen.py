@@ -58,8 +58,10 @@ class FakeLiveSession:
         self.idle_unload_deadline = None
         self.process_ids = ()
         self.model_name = "bark-pro-int8"
-        self.relabel_progress = None
-        self.relabel_total = 3 * number
+        self.labelling_speakers = False
+        # True: the stop labels speakers from saved audio, as after a stream fell behind.
+        self.labels_at_stop = False
+        self.speaker_notice = None
         self.lines = [
             TranscriptLine(1.0, 3.5, "wall", "mic", "you", "You", "alpha bravo charlie"),
             TranscriptLine(4.0, 5.0, "wall", "system", "speaker-1", "Speaker 1", "delta echo"),
@@ -69,7 +71,6 @@ class FakeLiveSession:
         self.actions = []
         self.stop_entered = threading.Event()
         self.release = threading.Event()
-        self.skipped = False
 
     def start(self):
         self.actions.append("start")
@@ -100,11 +101,8 @@ class FakeLiveSession:
             for line in self.lines
         ]
 
-    def skip_relabel(self):
-        self.skipped = True
-
     def stop(self):
-        """Save the audio and the transcript, then run a slow relabel pass."""
+        """Save the audio and the transcript; stay in the stop until the test releases it."""
         self.actions.append("stop")
         with open(self.path / "mic.flac", "wb") as audio:
             audio.truncate(MIC_BYTES)
@@ -113,13 +111,11 @@ class FakeLiveSession:
         (self.path / "transcript.jsonl").write_text(
             "".join(json.dumps(asdict(line)) + "\n" for line in self.lines), encoding="utf-8"
         )
-        self.relabel_progress = (self.relabel_total // 3, self.relabel_total)
+        self.labelling_speakers = self.labels_at_stop
         self.stop_entered.set()
         # Bounded, so a failed assertion ends the test instead of hanging its exit.
-        for _ in range(500):
-            if self.release.wait(0.01) or self.skipped:
-                break
-        self.relabel_progress = None
+        self.release.wait(5)
+        self.labelling_speakers = False
 
 
 class FakePlatform:
@@ -232,8 +228,7 @@ async def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(t
         assert "■ SAVED" in text and "saved " in text
         assert session.path.name in text
         assert "[space] ● Record again" in text and "[o] Open in Library" in text
-        assert "relabeling…" in text
-        assert _engine_state(app) == "relabeling 1 of 3"
+        assert "saving…" in text
         assert "busy" in _speaker_bar(app)
         assert _hints(app) == SAVED_HINTS
         # The app answers keys during the slow pass.
@@ -251,14 +246,9 @@ async def test_record_lifecycle_stops_without_quit_and_shows_the_saved_session(t
         app.refresh_view()
         await pilot.pause()
         text = _screen_text(app)
-        assert "relabeling…" not in text
-        session.relabel_error = "disk full"
-        app.refresh_view()
-        await pilot.pause()
-        assert "Relabeling failed: disk full. Live labels kept." in _screen_text(app)
+        assert "saving…" not in text
         assert "── saved · 2 phrases · mic.flac 88 MB · system.flac 0.2 MB ──" in text
         assert "busy" not in _speaker_bar(app)
-        assert not session.skipped
 
         await pilot.press("o")
         assert app.current_mode == "library"
@@ -332,6 +322,7 @@ async def test_record_overlapping_stops_keep_the_first_in_the_engine_status(tmp_
         for _ in range(2):
             await pilot.press("space")
             await _until(pilot, lambda: services.recording)
+            created[-1].labels_at_stop = True
             await pilot.press("enter")
             await _until(pilot, lambda: not services.recording)
         first, second = created
@@ -343,7 +334,7 @@ async def test_record_overlapping_stops_keep_the_first_in_the_engine_status(tmp_
         await pilot.press("1")
         app.refresh_view()
         await pilot.pause()
-        assert _engine_state(app) == "relabeling 1 of 3"
+        assert _engine_state(app) == "labelling speakers"
         assert second.path.name in _screen_text(app)
 
         first.release.set()
@@ -352,14 +343,14 @@ async def test_record_overlapping_stops_keep_the_first_in_the_engine_status(tmp_
         assert app.is_busy(second.path.name)
         app.refresh_view()
         await pilot.pause()
-        assert _engine_state(app) == "relabeling 2 of 6"
+        assert _engine_state(app) == "labelling speakers"
 
         second.release.set()
         await _until(pilot, lambda: not app.is_busy(second.path.name))
         assert services.stopping_sessions == ()
 
 
-async def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
+async def test_record_quit_during_two_stops_waits_for_both(tmp_path):
     services, created = _services(tmp_path)
     app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
@@ -374,19 +365,18 @@ async def test_record_quit_during_two_relabel_passes_skips_both(tmp_path):
         await pilot.press("q")
         await pilot.pause()
         prompt = str(app.screen.query_one("#quit-prompt", Static).render())
-        assert prompt == (
-            "Quit and do this first?\n"
-            "· Skip the running relabel; those sessions keep their live labels."
-        )
+        assert prompt == ("Quit and do this first?\n· Finish saving the stopped recordings.")
         await pilot.press("n")
         await pilot.pause()
         assert app.is_running
-        assert not any(session.skipped for session in created)
 
         await pilot.press("q")
         await pilot.press("y")
+        await pilot.pause()
+        assert app.is_running
+        for session in created:
+            session.release.set()
         await _until(pilot, lambda: not app.is_running, "the hub did not quit")
-    assert all(session.skipped for session in created)
     assert services.stopping_sessions == ()
 
 
@@ -897,25 +887,6 @@ def test_record_services_keep_a_failed_stop_until_the_next_recording_starts(tmp_
     services.stop_recording()
 
 
-def test_record_services_skip_each_pass_and_wait(tmp_path):
-    services, created = _services(tmp_path)
-    workers = []
-    for _ in range(2):
-        services.start_recording()
-        session = services.begin_stop()
-        worker = threading.Thread(target=services.finish_stop, args=(session,))
-        worker.start()
-        workers.append(worker)
-    for session in created:
-        assert session.stop_entered.wait(1)
-    assert not services.wait_for_stops(timeout=0.05)
-    services.skip_relabels()
-    assert services.wait_for_stops(timeout=2)
-    assert all(session.skipped for session in created)
-    for worker in workers:
-        worker.join(1)
-
-
 async def test_record_meter_head_clicks_match_their_keys(tmp_path):
     services, created = _services(tmp_path, devices=[(3, "USB mic")])
     app = _app(tmp_path, services)
@@ -1053,3 +1024,19 @@ async def test_record_transcript_data_follows_lines_and_speakers(tmp_path):
         await pilot.pause()
         assert "Renamed" in _speaker_bar(app)
         session.release.set()
+
+
+async def test_record_bar_shows_why_lines_get_no_speaker_label(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        app.refresh_view()
+        await pilot.pause()
+        assert "!" not in _speaker_bar(app)
+        created[-1].speaker_notice = "system speakers behind"
+        app.refresh_view()
+        await pilot.pause()
+        assert "! system speakers behind" in _speaker_bar(app)
+        created[-1].release.set()

@@ -210,21 +210,18 @@ async def test_pilot_quit_keys_confirm_recording_prompt(confirm_key, tmp_path):
 
 
 class WorkServices(FakeServices):
-    """Hold a recording, a relabel pass and a file job at the same time."""
+    """Hold a recording, a stop that still saves, and a file job at the same time."""
 
     def __init__(self):
         super().__init__()
         self.recording = True
         self.files_running = True
-        self.stopping = (SimpleNamespace(relabel_progress=(1, 3)),)
+        self.stopping = (SimpleNamespace(labelling_speakers=True),)
         self.stop_error = None
 
     @property
     def stopping_sessions(self):
         return self.stopping
-
-    def skip_relabels(self):
-        self.actions.append("skip-relabels")
 
     def wait_for_stops(self):
         self.actions.append("wait-for-stops")
@@ -247,7 +244,7 @@ async def test_pilot_quit_asks_once_for_all_active_work_and_runs_it_in_order(tmp
         assert prompt == (
             "Quit and do this first?\n"
             "· Stop and save the recording.\n"
-            "· Skip the running relabel; those sessions keep their live labels.\n"
+            "· Finish saving the stopped recordings.\n"
             "· Cancel the running file job."
         )
         await pilot.press("n")
@@ -266,7 +263,6 @@ async def test_pilot_quit_asks_once_for_all_active_work_and_runs_it_in_order(tmp
         assert not app.is_running
     assert services.actions == [
         "stop-recording",
-        "skip-relabels",
         "wait-for-stops",
         "cancel-files",
     ]
@@ -289,7 +285,7 @@ async def test_pilot_quit_keeps_the_hub_open_when_the_recording_cannot_save(tmp_
         assert app.activity_status is None
         assert services.files_running, "a failed save must not cancel the file job"
         assert "cancel-files" not in services.actions
-        assert "skip-relabels" not in services.actions, "a failed save must not skip a relabel"
+        assert "wait-for-stops" not in services.actions
         notices = [str(notice.message) for notice in app._notifications]
         assert "Could not save the recording: no space left on device" in notices
 

@@ -85,7 +85,7 @@ def child_main(commands: Connection, results: Connection, threads: int) -> None:
                     frames * stream.seconds_per_frame,
                     stream.final_until,
                 )
-                results.send(("update", sid, new_final, tail))
+                results.send(("update", sid, new_final, tail, stream.final_until))
             elif kind == "finish":
                 stream = streams[sid]
                 api.finish(stream.handle)

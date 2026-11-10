@@ -201,7 +201,7 @@ class HubServices:
         return session
 
     def finish_stop(self, session: LiveSession) -> None:
-        """Save the session and run its relabel pass; it leaves the stopping list at the end."""
+        """Save the session; it leaves the stopping list at the end."""
         try:
             session.stop()
         except Exception as exc:
@@ -217,11 +217,6 @@ class HubServices:
         """Bring the next failed stop forward on Record."""
         with self._stops_changed:
             self.failed_stops.insert(0, self.failed_stops.pop())
-
-    def skip_relabels(self) -> None:
-        """Skip the relabel pass of each stopping session; each keeps its live labels."""
-        for session in self.stopping_sessions:
-            session.skip_relabel()
 
     def wait_for_stops(self, timeout: float | None = None) -> bool:
         """Wait until no stop runs; return false when the timeout ends first."""

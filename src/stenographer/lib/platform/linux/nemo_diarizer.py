@@ -86,6 +86,7 @@ class _Stream:
         self._opened = False
         self._final: list[SpeakerSegment] = []
         self._tail: tuple[SpeakerSegment, ...] = ()
+        self._final_until = float("-inf")
         # Seconds of each push the helper has not answered, oldest first.
         self._unanswered: collections.deque[float] = collections.deque()
         self._queued_seconds = 0.0
@@ -106,9 +107,11 @@ class _Stream:
                 if kind == "update":
                     self._final.extend(message[2])
                     self._tail = message[3]
+                    self._final_until = message[4]
             elif kind == "finished":
                 self._final.extend(message[2])
                 self._tail = ()
+                self._final_until = float("inf")
                 self._finished = tuple(self._final)
             elif kind == "failed":
                 self._error = f"{self._source} speaker separation failed: {message[2]}"
@@ -126,6 +129,11 @@ class _Stream:
         """Seconds of pushed audio the helper has not handled yet."""
         with self._changed:
             return self._queued_seconds
+
+    @property
+    def final_until(self) -> float:
+        with self._changed:
+            return self._final_until
 
     def overflowed(self) -> bool:
         with self._changed:

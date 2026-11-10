@@ -77,6 +77,12 @@ class LiveDiarization(Protocol):
         """True once the stream fell too far behind and stopped labelling."""
         ...
 
+    @property
+    def final_until(self) -> float:
+        """Stream seconds up to which every segment is final: ``-inf`` at first,
+        ``inf`` after ``finish``. Stream seconds count the audio pushed."""
+        ...
+
     def poll(self) -> tuple[tuple[SpeakerSegment, ...], tuple[SpeakerSegment, ...]]:
         """Return ``(new_final, tail)``: the segments that became final since the
         last poll, and the provisional segments at the live edge.

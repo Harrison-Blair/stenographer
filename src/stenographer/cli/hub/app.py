@@ -336,9 +336,7 @@ class HubApp(App[None]):
         if recording:
             work.append(("recording", "Stop and save the recording."))
         if getattr(self.services, "stopping_sessions", ()):
-            work.append(
-                ("relabel", "Skip the running relabel; those sessions keep their live labels.")
-            )
+            work.append(("saving", "Finish saving the stopped recordings."))
         if self.library_screen.files_running:
             work.append(("files", "Cancel the running file job."))
         if not work:
@@ -381,9 +379,7 @@ class HubApp(App[None]):
                 self._quit_step_failed(f"Could not save the recording: {exc}")
                 return
         if getattr(services, "stopping_sessions", ()):
-            # Each stop still finishes writing its files; only the relabel passes end early.
             self._show_quit_status("Saving recordings...")
-            await asyncio.to_thread(services.skip_relabels)
             await asyncio.to_thread(services.wait_for_stops)
         # A stop that failed after the question opened: Record must show it before the hub leaves.
         if len(getattr(services, "failed_stops", ())) > failed_before:

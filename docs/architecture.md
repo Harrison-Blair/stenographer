@@ -15,8 +15,9 @@ their existing paths in `assets/`.
 - `audio/`, `hotkey/`, and `transcribe/`: recording and measurements, binding
   vocabulary, session/cancel chord tracking, ASR workers, formatting, and
   utterance records.
-- `live/`: live phrase segmentation, speaker labels, session coordination, and
-  private audio and transcript storage.
+- `live/`: live phrase segmentation, the speaker line rule shared by Record,
+  file jobs, and reprocessing, session coordination, and private audio and
+  transcript storage.
 - `files/` and `sessions/`: the serial file transcription queue and media
   decoding, and saved sessions with their revisions, search, reprocessing,
   export, and playback audio.
@@ -31,7 +32,8 @@ their existing paths in `assets/`.
   telemetry, and exactly-once utterance completion. The CLI injects a status sink.
 - `analytics/`, `diagnostics/`, and `logging/`: numeric history, core
   capability checks and collection, and private logging.
-- `platform/`: host service contracts and the lazy Linux provider.
+- `platform/`: host service contracts and the lazy Linux provider, including
+  speaker separation in a helper process.
 
 Small types and helpers may sit beside their single owner, and related records
 may share a file. Exceptions live in their domain's `errors.py`, and classes do

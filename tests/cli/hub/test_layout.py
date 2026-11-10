@@ -174,7 +174,7 @@ async def test_record_bar_leaves_out_a_speaker_with_no_lines(tmp_path):
 
 
 async def test_saved_record_bar_leaves_out_a_speaker_with_no_lines(tmp_path):
-    """A skipped end pass saves the lines while the session still lists the old speaker."""
+    """A saved session can still list a speaker that has no lines."""
     services, created = _services(tmp_path)
     app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
@@ -183,7 +183,7 @@ async def test_saved_record_bar_leaves_out_a_speaker_with_no_lines(tmp_path):
         session.lines.append(ROOM_LINES[0])
         await pilot.press("enter")
         await _until(pilot, session.stop_entered.is_set)
-        session.skip_relabel()
+        session.release.set()
         await _until(pilot, lambda: not services.stopping_sessions)
         app.refresh_view()
         await pilot.pause()

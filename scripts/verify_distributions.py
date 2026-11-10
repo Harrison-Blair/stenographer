@@ -15,12 +15,8 @@ COMPLETIONS = ("stenographer.bash", "_stenographer", "stenographer.fish")
 KEYCODES = "keycodes.toml"
 CONFIG_TEMPLATE = "default_config.toml.in"
 BUNDLED_MODELS = (
-    "models/pyannote-segmentation-3-0.onnx",
     "models/silero_vad.onnx",
-    "models/wespeaker_en_voxceleb_resnet34_LM_mean.onnx",
-    "licenses/pyannote-segmentation-3.0-MIT.txt",
     "licenses/silero-vad-MIT.txt",
-    "licenses/wespeaker-resnet34-LM-NOTICE.txt",
     "licenses/nemotron-3-diarization-OpenMDW-1.1-NOTICE.txt",
     "licenses/nemo-speech/LICENSE",
     "licenses/nemo-speech/THIRD_PARTY_NOTICES.md",

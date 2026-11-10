@@ -17,25 +17,43 @@ import soundfile as sf
 
 from stenographer.cli.hub.services import HubServices
 from stenographer.lib.config.models import Config
-from stenographer.lib.live import voice_split
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.platform.errors import SpeakerDiarizerError
+from stenographer.lib.platform.speaker_diarizer import SpeakerSegment
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionSourceError, StaleRevisionError
 from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
 from tests.lib.platform.support import NullProcessCounters
 
+ONE_SPEAKER = (SpeakerSegment(0, 0.0, 1e9),)
 
-@pytest.fixture(autouse=True)
-def _no_speech_found(monkeypatch):
-    """These jobs group whole lines. Splits have their own tests."""
-    monkeypatch.setattr(voice_split, "find_speech_pieces", lambda *_args, **_options: ())
+
+class FakeDiarizer:
+    """Give every file the same segments; ``reason`` makes it unavailable."""
+
+    def __init__(self, segments=ONE_SPEAKER, reason=None):
+        self.segments = tuple(segments)
+        self.reason = reason
+        self.files = []
+        self.closed = False
+
+    def unavailable_reason(self):
+        return self.reason
+
+    def diarize_file(self, source, **_options):
+        self.files.append(source)
+        return self.segments
+
+    def close(self):
+        self.closed = True
 
 
 class FakePlatform:
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, diarizer=None):
         self._data_dir = data_dir
+        self.diarizer = diarizer if diarizer is not None else FakeDiarizer()
 
     def data_dir(self, _env, _home):
         return self._data_dir
@@ -43,16 +61,11 @@ class FakePlatform:
     def asr_transport(self):
         return "fake-transport"
 
+    def speaker_diarizer(self):
+        return self.diarizer
+
     def process_counters(self):
         return NullProcessCounters()
-
-
-class FakeSpeakerTracker:
-    def __init__(self, _model_path):
-        self.embeddings = iter((np.array([1.0, 0.0], dtype=np.float32),))
-
-    def embed(self, _samples):
-        return next(self.embeddings)
 
 
 class FakeWorker:
@@ -99,16 +112,17 @@ def _write_session(root: Path) -> Path:
     return writer.path
 
 
-def test_rediarize_uses_task_pass_and_saves_a_renamed_revision(tmp_path):
+def test_rediarize_keeps_a_given_name_and_saves_a_revision(tmp_path):
     sessions_root = tmp_path / "sessions"
     session = _write_session(sessions_root)
     store = SessionStore(sessions_root)
     store.rename_speaker(session.name, "speaker-1", "Alex")
+    platform = FakePlatform(tmp_path)
     jobs = SessionJobs(
         store,
         Config.defaults(),
-        FakePlatform(tmp_path),
-        speaker_tracker_factory=FakeSpeakerTracker,
+        platform,
+        worker_factory=lambda *_args, **_kwargs: FakeWorker(),
     )
 
     revision = jobs.rediarize(session.name)
@@ -120,20 +134,9 @@ def test_rediarize_uses_task_pass_and_saves_a_renamed_revision(tmp_path):
         ("system", "Alex"),
         ("mic", "You"),
     ]
+    assert platform.diarizer.files == [session / "system.flac"]
+    assert platform.diarizer.closed
     assert (session / "transcript.jsonl").is_file()
-
-
-class VoiceSpeakerTracker:
-    """Embed each saved phrase from its start time: two voices alternate."""
-
-    def __init__(self, _model_path):
-        self.vectors = iter(
-            np.array(vector, dtype=np.float32)
-            for vector in ([1.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 1.0], [1.0, 0.0])
-        )
-
-    def embed(self, _samples):
-        return next(self.vectors)
 
 
 def _write_room_session(root: Path, *, diarized: bool) -> Path:
@@ -152,18 +155,25 @@ def _write_room_session(root: Path, *, diarized: bool) -> Path:
     return writer.path
 
 
-def _jobs(tmp_path, store, tracker):
+def _jobs(tmp_path, store, diarizer=None):
     return SessionJobs(
-        store, Config.defaults(), FakePlatform(tmp_path), speaker_tracker_factory=tracker
+        store,
+        Config.defaults(),
+        FakePlatform(tmp_path, diarizer),
+        worker_factory=lambda *_args, **_kwargs: FakeWorker(),
     )
 
 
-def test_rediarize_relabels_mic_lines_as_room_speakers_when_the_session_was_diarized(tmp_path):
+# Speaker 0 holds the first 4.5 s of each source, speaker 1 the rest.
+TWO_TURNS = (SpeakerSegment(0, 0.0, 4.5), SpeakerSegment(1, 4.5, 12.0))
+
+
+def test_rediarize_labels_mic_lines_as_room_speakers_when_the_session_was_diarized(tmp_path):
     sessions_root = tmp_path / "sessions"
     session = _write_room_session(sessions_root, diarized=True)
     store = SessionStore(sessions_root)
 
-    _jobs(tmp_path, store, VoiceSpeakerTracker).rediarize(session.name)
+    _jobs(tmp_path, store, FakeDiarizer(TWO_TURNS)).rediarize(session.name)
 
     detail = store.read(session.name)
     assert [(line.source, line.speaker_id, line.label) for line in detail.lines] == [
@@ -179,14 +189,9 @@ def test_rediarize_leaves_mic_lines_as_you_in_sessions_without_the_flag(tmp_path
     sessions_root = tmp_path / "sessions"
     session = _write_room_session(sessions_root, diarized=False)
     store = SessionStore(sessions_root)
-    embedded = []
+    diarizer = FakeDiarizer(TWO_TURNS)
 
-    class CountingTracker(VoiceSpeakerTracker):
-        def embed(self, samples):
-            embedded.append(len(samples))
-            return super().embed(samples)
-
-    _jobs(tmp_path, store, CountingTracker).rediarize(session.name)
+    _jobs(tmp_path, store, diarizer).rediarize(session.name)
 
     detail = store.read(session.name)
     assert [(line.source, line.label) for line in detail.lines] == [
@@ -195,7 +200,36 @@ def test_rediarize_leaves_mic_lines_as_you_in_sessions_without_the_flag(tmp_path
         ("mic", "You"),
         ("mic", "You"),
     ]
-    assert len(embedded) == 1
+    assert diarizer.files == [session / "system.flac"]
+
+
+def test_rediarize_cuts_a_line_where_the_speaker_changes_and_decodes_each_part(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=True)
+    store = SessionStore(sessions_root)
+    segments = (SpeakerSegment(0, 0.0, 3.0), SpeakerSegment(1, 3.0, 12.0))
+
+    _jobs(tmp_path, store, FakeDiarizer(segments)).rediarize(session.name)
+
+    mic = [line for line in store.read(session.name).lines if line.source == "mic"]
+    assert [(line.start, line.end, line.label, line.text) for line in mic] == [
+        (2.0, 3.0, "Room 1", "new phrase 1"),
+        (3.0, 4.5, "Room 2", "new phrase 2"),
+        (5.0, 7.5, "Room 2", "fixture line"),
+        (8.0, 10.5, "Room 2", "fixture line"),
+    ]
+
+
+def test_rediarize_without_speaker_separation_fails_and_saves_nothing(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_session(sessions_root)
+    store = SessionStore(sessions_root)
+    diarizer = FakeDiarizer(reason="speaker separation needs an AVX2 CPU")
+
+    with pytest.raises(SpeakerDiarizerError, match="AVX2"):
+        _jobs(tmp_path, store, diarizer).rediarize(session.name)
+
+    assert store.read(session.name).revision == "transcript.jsonl"
 
 
 def test_retranscribe_uses_current_asr_and_saves_new_text_revision(tmp_path):
@@ -213,24 +247,40 @@ def test_retranscribe_uses_current_asr_and_saves_new_text_revision(tmp_path):
         workers.append(worker)
         return worker
 
-    jobs = SessionJobs(
-        store,
-        config,
-        platform,
-        speaker_tracker_factory=FakeSpeakerTracker,
-        worker_factory=make_worker,
-    )
+    jobs = SessionJobs(store, config, platform, worker_factory=make_worker)
     jobs.update_config(config)
 
     revision = jobs.retranscribe(session.name)
 
     detail = store.read(session.name)
     assert revision == "transcript.r2.jsonl"
-    assert [line.text for line in detail.lines] == ["new phrase 1", "new phrase 2"]
+    # The mic line is decoded first; the system line is decoded with its speaker pass.
+    assert [(line.label, line.text) for line in detail.lines] == [
+        ("Speaker 1", "new phrase 2"),
+        ("You", "new phrase 1"),
+    ]
     assert worker_configs == [(config.asr, "fake-transport")]
     assert workers[0].calls == 2
     assert workers[0].closed
     assert (session / "transcript.jsonl").is_file()
+
+
+def test_retranscribe_without_speaker_separation_keeps_the_speakers(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=True)
+    store = SessionStore(sessions_root)
+    diarizer = FakeDiarizer(TWO_TURNS, reason="speaker separation needs an AVX2 CPU")
+
+    _jobs(tmp_path, store, diarizer).retranscribe(session.name)
+
+    detail = store.read(session.name)
+    assert [(line.speaker_id, line.text) for line in detail.lines] == [
+        ("speaker-1", "new phrase 1"),
+        ("room-1", "new phrase 2"),
+        ("room-1", "new phrase 3"),
+        ("room-1", "new phrase 4"),
+    ]
+    assert diarizer.files == []
 
 
 def test_playback_mixes_saved_sources_and_second_press_stops_own_player(tmp_path):
@@ -409,23 +459,16 @@ def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_p
     store = SessionStore(sessions_root)
     decoder = RecordingDecoder()
     workers = []
+    diarizer = FakeDiarizer((SpeakerSegment(0, 0.0, 1.2), SpeakerSegment(1, 1.2, 3.0)))
 
     def make_worker(_asr_config, *, transport):
         workers.append(FakeWorker())
         return workers[-1]
 
-    class TwoVoices:
-        def __init__(self, _model_path):
-            self.vectors = iter(([1.0, 0.0], [0.0, 1.0]))
-
-        def embed(self, _samples):
-            return np.array(next(self.vectors), dtype=np.float32)
-
     jobs = SessionJobs(
         store,
         Config.defaults(),
-        FakePlatform(tmp_path),
-        speaker_tracker_factory=TwoVoices,
+        FakePlatform(tmp_path, diarizer),
         worker_factory=make_worker,
         media_decoder=decoder,
     )
@@ -434,12 +477,12 @@ def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_p
 
     detail = store.read(session_id)
     assert revision == "transcript.r2.jsonl"
-    # One decode for the new text and one for the pass over the whole source.
-    assert decoder.paths == [sessions_root / session_id / "source.wav"] * 2
-    # Both 1 s phrases are too short to tell voices apart, so grouping gives them one speaker.
+    # One decode of the source feeds both the speaker pass and the new text.
+    assert decoder.paths == [sessions_root / session_id / "source.wav"]
+    assert len(diarizer.files) == 1
     assert [(line.source, line.label, line.text) for line in detail.lines] == [
         ("file", "Speaker 1", "new phrase 1"),
-        ("file", "Speaker 1", "new phrase 2"),
+        ("file", "Speaker 2", "new phrase 2"),
     ]
     assert detail.summary.kind == "file"
     assert workers[0].closed
@@ -626,7 +669,7 @@ def test_rediarize_file_session_raises_a_clear_error(tmp_path):
     store = SessionStore(sessions_root)
 
     with pytest.raises(ValueError, match="use Re-transcribe"):
-        _jobs(tmp_path, store, VoiceSpeakerTracker).rediarize(session_id)
+        _jobs(tmp_path, store).rediarize(session_id)
 
     assert store.read(session_id).revision == "transcript.jsonl"
 
@@ -655,7 +698,6 @@ def test_stale_revision_keeps_a_rename_saved_during_the_job(tmp_path, operation)
         store,
         Config.defaults(),
         FakePlatform(tmp_path),
-        speaker_tracker_factory=FakeSpeakerTracker,
         worker_factory=lambda *_args, **_kwargs: FakeWorker(),
     )
 

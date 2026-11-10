@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 _ACCENT_BOLD = "bold #5fd7ff"
 _DIM = StatusToken.TONES["dim"]
-_STATE_TONES = {"relabeling": "warn", "transcribing": "warn", "ready": "ok", "idle": "dim"}
+_STATE_TONES = {"labelling": "warn", "transcribing": "warn", "ready": "ok", "idle": "dim"}
 
 
 class TopBar(Horizontal):

@@ -1,26 +1,23 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Re-diarize and re-transcribe split saved phrases at voice changes."""
+"""Re-diarize and re-transcribe split saved phrases where the speaker changes."""
 
 from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import soundfile as sf
 
-import stenographer
 from stenographer.lib.config.models import Config
-from stenographer.lib.live import voice_split
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.platform.speaker_diarizer import SpeakerSegment
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
-from tests.lib.live.speech_support import level_pieces
 from tests.lib.platform.support import NullProcessCounters
 
 RATE = 16000
@@ -31,14 +28,24 @@ def voice_of(samples):
     return "ann" if abs(float(np.median(samples)) - ANN) < 0.05 else "bob"
 
 
-class Tracker:
-    """Give each stretch of audio the unit vector of its main level."""
+class Diarizer:
+    """Report Ann and Bob where ``audio()`` has them."""
 
-    def __init__(self, _model_path):
+    def unavailable_reason(self):
+        return None
+
+    segments = (
+        SpeakerSegment(0, 0.0, 20.0),
+        SpeakerSegment(1, 20.0, 40.0),
+        SpeakerSegment(0, 40.0, 52.75),
+        SpeakerSegment(1, 52.75, 64.0),
+    )
+
+    def diarize_file(self, _source, **_options):
+        return self.segments
+
+    def close(self):
         pass
-
-    def embed(self, samples):
-        return np.array([1.0, 0.0] if voice_of(samples) == "ann" else [0.0, 1.0], dtype=np.float32)
 
 
 class Worker:
@@ -67,6 +74,9 @@ class Platform:
 
     def asr_transport(self):
         return "transport"
+
+    def speaker_diarizer(self):
+        return Diarizer()
 
     def process_counters(self):
         return NullProcessCounters()
@@ -100,8 +110,7 @@ def recorded(root, source="system", speaker=("speaker-1", "Speaker 1"), *, diari
 
 
 @pytest.fixture
-def rig(tmp_path, monkeypatch):
-    monkeypatch.setattr(voice_split, "find_speech_pieces", level_pieces)
+def rig(tmp_path):
     store = SessionStore(tmp_path / "sessions")
     decoded = []
 
@@ -115,7 +124,6 @@ def rig(tmp_path, monkeypatch):
         store,
         Config.defaults(),
         Platform(tmp_path),
-        speaker_tracker_factory=Tracker,
         worker_factory=Worker,
         media_decoder=media_decoder,
     )
@@ -150,7 +158,10 @@ def test_rediarize_splits_the_changing_phrase_and_keeps_other_text(rig):
     assert detail.lines[3].wall.startswith(f"2026-10-20T01:12:{40 + cut:02d}")
 
 
-def test_rediarize_without_a_change_keeps_all_text(rig):
+def test_rediarize_without_a_change_keeps_all_text(rig, monkeypatch):
+    monkeypatch.setattr(
+        Diarizer, "segments", (SpeakerSegment(0, 0.0, 20.0), SpeakerSegment(1, 20.0, 64.0))
+    )
     session = recorded(rig.root)
     path = rig.root / "sessions" / session / "system.flac"
     samples = np.concatenate(
@@ -240,8 +251,7 @@ def test_retranscribe_carries_a_given_name_to_the_right_voice(rig):
     detail = rig.store.read(session)
     assert {(line.text.split()[0], line.label) for line in detail.lines} == {
         ("ann", "Ann"),
-        # The existing rule gives an unnamed speaker the lowest free number.
-        ("bob", "Speaker 1"),
+        ("bob", "Speaker 2"),
     }
 
 
@@ -273,7 +283,7 @@ def file_session(rig, speakers):
     )
 
 
-def test_retranscribe_of_a_file_session_splits_with_a_second_decode(rig):
+def test_retranscribe_of_a_file_session_splits_with_one_decode(rig):
     session = file_session(rig, ("speaker-1", "speaker-2"))
 
     rig.jobs.retranscribe(session)
@@ -286,7 +296,7 @@ def test_retranscribe_of_a_file_session_splits_with_a_second_decode(rig):
         "speaker-1",
         "speaker-2",
     ]
-    assert len(rig.decoded) == 2
+    assert len(rig.decoded) == 1
 
 
 def test_retranscribe_of_a_one_speaker_file_session_only_replaces_text(rig):
@@ -346,30 +356,6 @@ def test_an_older_file_session_without_the_key_has_no_mark(rig):
     metadata = json.loads((rig.root / "sessions" / session / "session.json").read_text())
     assert "speaker_pass_failed" not in metadata
     assert not rig.store.read(session).summary.speaker_pass_failed
-
-
-def _record_the_model(monkeypatch):
-    models = []
-
-    def record(samples, model, **options):
-        models.append(model)
-        return level_pieces(samples, model, **options)
-
-    monkeypatch.setattr(voice_split, "find_speech_pieces", record)
-    return models
-
-
-def test_rediarize_gives_the_pass_the_bundled_speaker_model(rig, monkeypatch):
-    models = _record_the_model(monkeypatch)
-
-    rig.jobs.rediarize(recorded(rig.root))
-
-    assert models == [
-        Path(stenographer.__file__).parent
-        / "assets"
-        / "models"
-        / "wespeaker_en_voxceleb_resnet34_LM_mean.onnx"
-    ]
 
 
 def test_an_older_session_without_metadata_still_splits(rig):

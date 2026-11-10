@@ -33,7 +33,8 @@ class FakeSession:
         self.failed_phrase_count = 1
         self.elapsed_seconds = 3.0
         self.queue_depth = 2
-        self.relabel_progress = None
+        self.labelling_speakers = False
+        self.speaker_notice = None
         self.idle_unload_deadline = None
         self.model_name = "medium.en"
         self.actions = []

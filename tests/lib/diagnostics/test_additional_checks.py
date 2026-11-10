@@ -78,3 +78,19 @@ def test_python_venv_check_is_collected_for_doctor():
     ids = [check.check_id for check in additional_checks.collect_additional_checks()]
 
     assert "python_venv" in ids
+
+
+def test_speaker_check_reports_why_speaker_labels_cannot_run():
+    reason = "speaker separation needs an AVX2 CPU"
+
+    assert additional_checks.speaker_check(None) == additional_checks.DiagnosticCheck(
+        "speakers", "ok", "available", ""
+    )
+    check = additional_checks.speaker_check(reason)
+    assert (check.check_id, check.status, check.detail) == ("speakers", "warn", reason)
+
+
+def test_collect_additional_checks_includes_the_speaker_check_of_this_host():
+    checks = {check.check_id: check for check in additional_checks.collect_additional_checks()}
+
+    assert "speakers" in checks

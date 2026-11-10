@@ -19,11 +19,10 @@ from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.job import FileJob
 from stenographer.lib.files.media import MediaInfo, inspect_media, iter_media_audio
 from stenographer.lib.files.models import FileJobOptions
-from stenographer.lib.live.models import speaker_model_path, vad_model_path
+from stenographer.lib.live.models import vad_model_path
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
-from stenographer.lib.live.speaker_tracker import SpeakerTracker
+from stenographer.lib.live.speaker_lines import SpeakerNames, speaker_pieces
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.live.voice_split import group_and_split
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.sessions.errors import SessionWriteCancelledError, StaleRevisionError
 from stenographer.lib.sessions.store import SessionStore
@@ -32,12 +31,16 @@ from stenographer.lib.transcribe.worker import Worker
 if TYPE_CHECKING:
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
+    from stenographer.lib.platform.speaker_diarizer import SpeakerSegment
     from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 
 log = logging.getLogger(__name__)
 _STOP = object()
 _VAD_WINDOW_FRAMES = 512
 _SOURCE_ORDER = {"mic": 0, "system": 1}
+# Shares of the progress of a job with speaker separation.
+_DIARIZE_SHARE = 20
+_TRANSCRIBED = 95
 
 
 class FilesEngine:
@@ -49,7 +52,6 @@ class FilesEngine:
         *,
         platform: Platform,
         segmenter_factory: Callable[[], object] | None = None,
-        speaker_tracker_factory: Callable[[], object] | None = None,
         refiner_factory: Callable[[Config], OllamaRefiner | None] | None = None,
         session_store: SessionStore | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -58,13 +60,9 @@ class FilesEngine:
         self._data_dir = platform.data_dir(os.environ, Path.home())
         self._decoder = platform.ffmpeg_decoder()
         self._worker = Worker(config.asr, transport=platform.asr_transport())
+        self._platform = platform
         vad_path = vad_model_path()
-        speaker_path = speaker_model_path()
-        self._speaker_model = speaker_path
         self._segmenter_factory = segmenter_factory or (lambda: PhraseSegmenter("system", vad_path))
-        self._speaker_tracker_factory = speaker_tracker_factory or (
-            lambda: SpeakerTracker(speaker_path)
-        )
         self._refiner_factory = refiner_factory
         self._store = (
             session_store
@@ -183,21 +181,18 @@ class FilesEngine:
             started_at = self._clock()
             target = self._store.revision_target(job.options.path)
             segmenter = self._segmenter_factory()
-            tracker = self._speaker_tracker_factory() if job.options.diarize else None
             refiner = self._make_refiner() if job.options.refine else None
-            lines, embeddings = self._transcribe(job, media, segmenter, tracker, refiner)
+            segments, speaker_pass_failed = None, False
+            if job.options.diarize:
+                segments, speaker_pass_failed = self._diarize(job, media)
+                if job.cancel_requested:
+                    job._cancelled(())
+                    return
+            lines = self._transcribe(job, media, segmenter, segments, refiner)
             if job.cancel_requested:
                 job._cancelled(tuple(lines))
                 return
-            speaker_pass_failed = False
-            if job.options.diarize:
-                lines, speaker_pass_failed = self._diarize(
-                    job, media, lines, embeddings, tracker, refiner
-                )
-                if job.cancel_requested:
-                    job._cancelled(tuple(lines))
-                    return
-            job._update("save", 95, tuple(lines))
+            job._update("save", _TRANSCRIBED, tuple(lines))
             if target is None:
                 session_id = self._store.create_file_session(
                     job.options.path,
@@ -235,44 +230,45 @@ class FilesEngine:
         job: FileJob,
         media: MediaInfo,
         segmenter,
-        tracker,
+        segments: tuple[SpeakerSegment, ...] | None,
         refiner: OllamaRefiner | None,
-    ) -> tuple[list[TranscriptLine], list[np.ndarray]]:
+    ) -> list[TranscriptLine]:
+        """Cut the file at pauses and, with *segments*, where the speaker changes, and
+        decode each part once."""
         lines: list[TranscriptLine] = []
-        embeddings: list[np.ndarray] = []
+        names = SpeakerNames("file")
         duration = media.duration_seconds or 0.0
         furthest = 0.0
+        first_percent = _DIARIZE_SHARE if segments is not None else 0
+        span = _TRANSCRIBED - first_percent
 
         def report_position(seconds: float) -> None:
             # A phrase can end behind the audio already read, so progress keeps its maximum.
             nonlocal furthest
             furthest = max(furthest, seconds)
-            percent = round(80 * min(duration, furthest) / duration) if duration > 0 else 0
-            job._update("transcribe", percent, tuple(lines))
+            done = min(duration, furthest) / duration if duration > 0 else 0
+            job._update("transcribe", first_percent + round(span * done), tuple(lines))
 
         def transcribe_phrases(phrases) -> bool:
             for phrase in phrases:
-                if job.cancel_requested:
-                    return False
-                result = self._worker.transcribe(phrase.samples)
-                text = result.text.strip()
-                if text:
-                    if tracker is not None:
-                        embedding = tracker.embed(phrase.samples)
-                        speaker_id = tracker.assign_embedding(
-                            embedding, duration=phrase.end - phrase.start
-                        )
-                        label = tracker.label(speaker_id)
-                        embeddings.append(np.asarray(embedding, dtype=np.float32).copy())
-                    else:
-                        speaker_id = "speaker-1"
-                        label = "Speaker 1"
+                pieces = speaker_pieces(phrase.start, phrase.end, segments or ())
+                for piece in pieces:
+                    if job.cancel_requested:
+                        return False
+                    first = round((piece.start - phrase.start) * SAMPLE_RATE)
+                    last = round((piece.end - phrase.start) * SAMPLE_RATE)
+                    if last <= first:
+                        continue
+                    text = self._worker.transcribe(phrase.samples[first:last]).text.strip()
+                    if not text:
+                        continue
+                    speaker_id, label = names.speaker(piece.speaker)
                     if refiner is not None and refiner.will_refine(text):
                         text = refiner.refine(text, cancelled=lambda: job.cancel_requested)
                     lines.append(
                         TranscriptLine(
-                            start=phrase.start,
-                            end=phrase.end,
+                            start=piece.start,
+                            end=piece.end,
                             wall="",
                             source="file",
                             speaker_id=speaker_id,
@@ -304,63 +300,40 @@ class FilesEngine:
                 transcribe_phrases(segmenter.flush())
         finally:
             blocks.close()
-        job._update("transcribe", 80, tuple(lines))
-        return lines, embeddings
+        job._update("transcribe", _TRANSCRIBED, tuple(lines))
+        return lines
 
     def _diarize(
-        self,
-        job: FileJob,
-        media: MediaInfo,
-        lines: list[TranscriptLine],
-        embeddings: list[np.ndarray],
-        tracker,
-        refiner: OllamaRefiner | None,
-    ) -> tuple[list[TranscriptLine], bool]:
-        """Return the lines of the job, and whether they keep tracker labels after a failure."""
+        self, job: FileJob, media: MediaInfo
+    ) -> tuple[tuple[SpeakerSegment, ...] | None, bool]:
+        """Return the speaker segments of the file, and whether the speaker pass failed.
 
-        def report(fraction: float) -> None:
-            job._update("diarize", 80 + round(15 * fraction), tuple(lines))
-
-        def read_source() -> np.ndarray | None:
-            # The phrases of a long file do not stay in memory, so this decodes it again.
+        A failed or unavailable pass gives no segments: the lines get one speaker.
+        """
+        diarizer = self._platform.speaker_diarizer()
+        try:
+            reason = diarizer.unavailable_reason()
+            if reason is not None:
+                log.warning(fmt_event("files", "speakers_unavailable", reason=reason))
+                return None, True
             blocks = iter_media_audio(job.options.path, media, self._decoder)
-            kept = []
             try:
-                for block in blocks:
-                    if job.cancel_requested:
-                        return None
-                    kept.append(block)
+                samples = np.concatenate(list(blocks))
             finally:
                 blocks.close()
-            return np.concatenate(kept)
-
-        def decode(samples: np.ndarray) -> str:
-            text = self._worker.transcribe(samples).text.strip()
-            if refiner is not None and refiner.will_refine(text):
-                text = refiner.refine(text, cancelled=lambda: job.cancel_requested)
-            return text
-
-        try:
-            grouped = group_and_split(
-                lines,
-                embeddings,
-                read_source=read_source,
-                speaker_model=self._speaker_model,
-                embed=tracker.embed,
-                decode=decode,
-                progress=report,
+            segments = diarizer.diarize_file(
+                samples,
+                progress=lambda done: job._update("diarize", round(_DIARIZE_SHARE * done), ()),
                 should_cancel=lambda: job.cancel_requested,
-                speaker_count=job.options.speaker_count,
             )
         except Exception as exc:
-            # The transcription is the long part of a job, so it stays with its tracker labels.
+            if job.cancel_requested:
+                return None, False
             log_failure(log, logging.WARNING, "files: speaker_pass_failed", exc, safe=True)
-            return lines, True
-        if grouped is None:
-            return lines, False
-        result = list(grouped.lines)
-        job._update("diarize", 95, tuple(result))
-        return result, False
+            return None, True
+        finally:
+            diarizer.close()
+        return segments, False
 
     def _make_refiner(self) -> OllamaRefiner | None:
         if self._refiner_factory is not None:
