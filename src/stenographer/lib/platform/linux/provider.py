@@ -168,10 +168,10 @@ class LinuxPlatform(DiagnosticsHostMixin):
 
         return MultiprocessingAsrTransport()
 
-    def speaker_diarizer(self, threads: int) -> SpeakerDiarizer:
+    def speaker_diarizer(self) -> SpeakerDiarizer:
         from stenographer.lib.platform.linux.nemo_diarizer import NemoSpeakerDiarizer
 
-        return NemoSpeakerDiarizer(threads)
+        return NemoSpeakerDiarizer()
 
     def single_instance_lock(self) -> SingleInstanceLock:
         from stenographer.lib.platform.linux.lock import (

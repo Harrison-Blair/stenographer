@@ -26,7 +26,7 @@ from stenographer.lib.platform.linux.nemo_speech import (
     Geometry,
     host_unavailable_reason,
 )
-from stenographer.lib.platform.speaker_diarizer import SAMPLE_RATE, SpeakerSegment
+from stenographer.lib.platform.speaker_diarizer import SAMPLE_RATE, THREADS, SpeakerSegment
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -157,7 +157,7 @@ class _Stream:
 class NemoSpeakerDiarizer:
     """The ``SpeakerDiarizer`` of Linux. *threads* caps the helper's CPU threads."""
 
-    def __init__(self, threads: int, live_geometry: Geometry = LIVE) -> None:
+    def __init__(self, threads: int = THREADS, live_geometry: Geometry = LIVE) -> None:
         self._threads = threads
         self._live_geometry = live_geometry
         self._lock = threading.Lock()

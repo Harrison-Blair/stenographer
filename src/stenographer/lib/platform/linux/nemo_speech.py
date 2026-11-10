@@ -38,6 +38,8 @@ class Geometry:
 
 
 OFFLINE = Geometry("v3-offline")
+# Chosen by measurement on four recordings: 99.4-100 % frame agreement with
+# OFFLINE at about half the CPU of the model card's 1.04 s setting.
 LIVE = Geometry("v3-streaming")
 
 

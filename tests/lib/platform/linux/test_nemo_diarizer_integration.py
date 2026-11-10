@@ -28,7 +28,7 @@ PUSH = RATE // 10
 @pytest.fixture
 def diarizer():
     assert model_path().is_file(), "run scripts/fetch_speaker_model.py first"
-    diarizer = NemoSpeakerDiarizer(threads=2)
+    diarizer = NemoSpeakerDiarizer()
     assert diarizer.unavailable_reason() is None
     yield diarizer
     diarizer.close()

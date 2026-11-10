@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 
 # Audio pushed into a live stream: mono float32 at this rate.
 SAMPLE_RATE = 16_000
+# CPU threads of one helper, shared by all its streams. Measured: the live preset
+# keeps up with a mic and a system stream at once at RTF 0.40 (about 1.6 cores busy).
+THREADS = 4
 
 # A segment is final when it ends this far before the labelled edge. The library
 # changes only the segment open at the edge: its end can move by the gap fill

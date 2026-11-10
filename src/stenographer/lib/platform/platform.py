@@ -101,9 +101,9 @@ class Platform(Protocol):
         """The shared native ASR transport, resolved lazily by each provider."""
         ...
 
-    def speaker_diarizer(self, threads: int) -> SpeakerDiarizer:
-        """A new speaker-separation helper capped at *threads* CPU threads; it starts
-        on first use. Each call gives an independent helper."""
+    def speaker_diarizer(self) -> SpeakerDiarizer:
+        """A new speaker-separation helper; it starts on first use. Each call gives
+        an independent helper, and its streams share its CPU threads."""
         ...
 
     def single_instance_lock(self) -> SingleInstanceLock: ...

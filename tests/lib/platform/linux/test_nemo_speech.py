@@ -61,7 +61,7 @@ def test_runtime_ships_for_both_linux_architectures(machine: str) -> None:
 
 def test_no_avx2_raises_before_any_helper_starts(monkeypatch) -> None:
     monkeypatch.setattr(nemo_diarizer, "host_unavailable_reason", lambda: NO_AVX2)
-    diarizer = NemoSpeakerDiarizer(threads=2)
+    diarizer = NemoSpeakerDiarizer()
 
     assert diarizer.unavailable_reason() == NO_AVX2
     with pytest.raises(SpeakerDiarizerError, match="AVX2"):
