@@ -33,9 +33,12 @@ ONE_SPEAKER = (SpeakerSegment(0, 0.0, 1e9),)
 class FakeDiarizer:
     """Give every file the same segments; ``reason`` makes it unavailable."""
 
-    def __init__(self, segments=ONE_SPEAKER, reason=None):
+    def __init__(self, segments=ONE_SPEAKER, reason=None, error=None):
         self.segments = tuple(segments)
         self.reason = reason
+        # Raised by ``diarize_file``, as when the helper does not start or load.
+        self.error = error
+        self.on_block = None
         self.files = []
         self.closed = False
 
@@ -44,6 +47,13 @@ class FakeDiarizer:
 
     def diarize_file(self, source, **_options):
         self.files.append(source)
+        if self.error is not None:
+            raise self.error
+        if not isinstance(source, Path):
+            # Blocks of a decoded source are consumed one at a time, as the real pass does.
+            for _block in source:
+                if self.on_block is not None:
+                    self.on_block()
         return self.segments
 
     def close(self):
@@ -477,8 +487,9 @@ def test_retranscribe_file_session_decodes_its_source_and_saves_a_revision(tmp_p
 
     detail = store.read(session_id)
     assert revision == "transcript.r2.jsonl"
-    # One decode of the source feeds both the speaker pass and the new text.
-    assert decoder.paths == [sessions_root / session_id / "source.wav"]
+    # One decode streams into the speaker pass, a second one gives the new text, so
+    # neither holds the whole source.
+    assert decoder.paths == [sessions_root / session_id / "source.wav"] * 2
     assert len(diarizer.files) == 1
     assert [(line.source, line.label, line.text) for line in detail.lines] == [
         ("file", "Speaker 1", "new phrase 1"),
@@ -769,3 +780,81 @@ def test_retranscribe_keeps_one_speaker_of_a_file_imported_without_separation(tm
 
     assert diarizer.files == []
     assert [line.label for line in store.read(session_id).lines] == ["Speaker 1", "Speaker 1"]
+
+
+HELPER_FAILED = SpeakerDiarizerError("speaker separation helper exited with code 1")
+
+
+def test_retranscribe_keeps_the_speakers_when_the_speaker_helper_fails(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=True)
+    store = SessionStore(sessions_root)
+    diarizer = FakeDiarizer(TWO_TURNS, error=HELPER_FAILED)
+
+    _jobs(tmp_path, store, diarizer).retranscribe(session.name)
+
+    detail = store.read(session.name)
+    assert detail.revision == "transcript.r2.jsonl"
+    assert [(line.speaker_id, line.text) for line in detail.lines] == [
+        ("speaker-1", "new phrase 1"),
+        ("room-1", "new phrase 2"),
+        ("room-1", "new phrase 3"),
+        ("room-1", "new phrase 4"),
+    ]
+    assert diarizer.closed
+
+
+def test_rediarize_fails_cleanly_when_the_speaker_helper_fails(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=True)
+    store = SessionStore(sessions_root)
+    diarizer = FakeDiarizer(TWO_TURNS, error=HELPER_FAILED)
+
+    with pytest.raises(SpeakerDiarizerError, match="exited"):
+        _jobs(tmp_path, store, diarizer).rediarize(session.name)
+
+    assert store.read(session.name).revision == "transcript.jsonl"
+    assert sorted(path.name for path in session.glob("transcript*")) == [
+        "transcript.jsonl",
+        "transcript.md",
+    ]
+    assert diarizer.closed
+
+
+def test_retranscribe_of_a_separated_file_session_holds_about_one_phrase_of_audio(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    source = tmp_path / "Interview.wav"
+    sf.write(source, np.zeros(16, dtype=np.float32), 16_000)
+    session_id = SessionStore(sessions_root).create_file_session(
+        source,
+        started_at=datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC),
+        duration_seconds=30.0,
+        lines=[
+            TranscriptLine(index * 0.25, index * 0.25 + 0.25, "", "file", "speaker-1", "S", "x")
+            for index in range(120)
+        ],
+        diarize=True,
+    )
+    held = []
+    diarizer = FakeDiarizer()
+    diarizer.on_block = lambda: held.append(tracemalloc.get_traced_memory()[0])
+    jobs = SessionJobs(
+        SessionStore(sessions_root),
+        Config.defaults(),
+        FakePlatform(tmp_path, diarizer),
+        worker_factory=lambda *_args, **_kwargs: RangeWorker(
+            on_transcribe=lambda: held.append(tracemalloc.get_traced_memory()[0])
+        ),
+        media_decoder=RampDecoder(total=480_000),
+    )
+
+    tracemalloc.start()
+    try:
+        before = tracemalloc.get_traced_memory()[0]
+        jobs.retranscribe(session_id)
+    finally:
+        tracemalloc.stop()
+
+    # All 480 000 samples take 1.9 MB; one phrase and one chunk take about 28 kB.
+    assert len(held) == 160 + 120
+    assert max(held) - before < 400_000

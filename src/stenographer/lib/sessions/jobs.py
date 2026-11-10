@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from contextlib import ExitStack
@@ -18,6 +19,7 @@ from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.media import decode_media
 from stenographer.lib.live.speaker_lines import SpeakerNames, read_saved_audio, relabel_lines
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.logging.pipeline import log_failure
 from stenographer.lib.platform.errors import SpeakerDiarizerError
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionNotFoundError
@@ -30,7 +32,9 @@ if TYPE_CHECKING:
 
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
-    from stenographer.lib.platform.speaker_diarizer import SpeakerDiarizer
+    from stenographer.lib.platform.speaker_diarizer import SpeakerDiarizer, SpeakerSegment
+
+log = logging.getLogger(__name__)
 
 
 class SessionJobs:
@@ -62,12 +66,15 @@ class SessionJobs:
         lines = list(detail.lines)
         if sources:
             diarizer = self._open_diarizer(required=True)
+            try:
+                found = self._speaker_segments(session_id, detail, sources, diarizer)
+            finally:
+                diarizer.close()
             worker = self._make_worker()
             try:
-                lines = self._relabel_sources(session_id, detail, sources, diarizer, worker)
+                lines = self._relabel_sources(session_id, detail, found, worker)
             finally:
                 worker.shutdown()
-                diarizer.close()
         return self._store.write_revision(
             session_id, lines, method="diarization", expected_revision=detail.revision
         )
@@ -77,8 +84,16 @@ class SessionJobs:
         the line rule. Without speaker separation, lines keep their speakers."""
         detail = self._store.read(session_id)
         sources = self._separated_sources(detail)
+        found: dict[str, tuple[SpeakerSegment, ...]] = {}
         diarizer = self._open_diarizer(required=False) if sources else None
-        relabel = sources if diarizer is not None else ()
+        if diarizer is not None:
+            try:
+                found = self._speaker_segments(session_id, detail, sources, diarizer)
+            except SpeakerDiarizerError as exc:
+                # The text is still decoded again; the lines keep their speakers.
+                log_failure(log, logging.WARNING, "sessions: speakers_failed", exc, safe=True)
+            finally:
+                diarizer.close()
         lines = list(detail.lines)
         worker = self._make_worker()
         chunks = None
@@ -87,26 +102,22 @@ class SessionJobs:
                 segments = (
                     (index, self._audio_segment(session_id, line))
                     for index, line in enumerate(lines)
-                    if line.end > line.start and line.source not in relabel
+                    if line.end > line.start and line.source not in found
                 )
-            elif not relabel:
+            elif not found:
                 chunks = self._decode_source(self._store.source_audio(session_id))
                 segments = source_segments(chunks, lines)
             else:
                 segments = iter(())
             for index, samples in segments:
                 lines[index] = replace(lines[index], text=worker.transcribe(samples).text)
-            if relabel:
+            if found:
                 detail = replace(detail, lines=tuple(lines))
-                lines = self._relabel_sources(
-                    session_id, detail, relabel, diarizer, worker, decode_all=True
-                )
+                lines = self._relabel_sources(session_id, detail, found, worker, decode_all=True)
         finally:
             worker.shutdown()
             if chunks is not None:
                 chunks.close()
-            if diarizer is not None:
-                diarizer.close()
         return self._store.write_revision(
             session_id, lines, method="re-transcribe", expected_revision=detail.revision
         )
@@ -146,39 +157,61 @@ class SessionJobs:
             raise SpeakerDiarizerError(reason)
         return None
 
-    def _relabel_sources(
+    def _speaker_segments(
         self,
         session_id: str,
         detail: SessionDetail,
         sources: tuple[str, ...],
         diarizer: SpeakerDiarizer,
+    ) -> dict[str, tuple[SpeakerSegment, ...]]:
+        """Return the speaker segments of each source, from its saved audio."""
+        found = {}
+        for source in sources:
+            if detail.summary.kind == "file":
+                chunks = self._decode_source(self._store.source_audio(session_id))
+                try:
+                    found[source] = diarizer.diarize_file(chunks)
+                finally:
+                    chunks.close()
+            else:
+                found[source] = diarizer.diarize_file(
+                    self._store.root / session_id / f"{source}.flac"
+                )
+        return found
+
+    def _relabel_sources(
+        self,
+        session_id: str,
+        detail: SessionDetail,
+        found: dict[str, tuple[SpeakerSegment, ...]],
         worker: Worker,
         *,
         decode_all: bool = False,
     ) -> list[TranscriptLine]:
-        """Return the session lines with each separated source labelled from its saved
-        audio by the line rule, in time order."""
+        """Return the session lines with each source of *found* labelled by the line
+        rule, in time order."""
         lines = list(detail.lines)
-        for source in sources:
-            if detail.summary.kind == "file":
-                samples = self._file_samples(session_id)
-                segments = diarizer.diarize_file(samples)
-
-                def read(start: float, end: float, samples=samples) -> np.ndarray:
-                    return samples[int(start * SAMPLE_RATE) : int(end * SAMPLE_RATE)]
-            else:
-                path = self._store.root / session_id / f"{source}.flac"
-                segments = diarizer.diarize_file(path)
-                read = partial(read_saved_audio, path)
+        for source, segments in found.items():
             own = [line for line in lines if line.source == source and line.end > line.start]
-            relabeled = relabel_lines(
-                own,
-                segments,
-                SpeakerNames(source),
-                read_audio=read,
-                decode=lambda samples: worker.transcribe(samples).text,
-                decode_all=decode_all,
-            )
+            chunks = None
+            if detail.summary.kind == "file":
+                chunks = self._decode_source(self._store.source_audio(session_id))
+                reader = ForwardReader(chunks)
+                read = reader.read
+            else:
+                read = partial(read_saved_audio, self._store.root / session_id / f"{source}.flac")
+            try:
+                relabeled = relabel_lines(
+                    own,
+                    segments,
+                    SpeakerNames(source),
+                    read_audio=read,
+                    decode=lambda samples: worker.transcribe(samples).text,
+                    decode_all=decode_all,
+                )
+            finally:
+                if chunks is not None:
+                    chunks.close()
             owned = {id(line) for line in own}
             others = [line for line in lines if id(line) not in owned]
             lines = sorted([*others, *relabeled], key=lambda line: line.start)
@@ -189,13 +222,6 @@ class SessionJobs:
             self._config.asr,
             transport=self._platform.asr_transport(),
         )
-
-    def _file_samples(self, session_id: str) -> np.ndarray:
-        chunks = self._decode_source(self._store.source_audio(session_id))
-        try:
-            return np.concatenate(list(chunks))
-        finally:
-            chunks.close()
 
     def _decode_source(self, path: Path) -> Generator[np.ndarray]:
         if self._media_decoder is not None:
@@ -272,6 +298,34 @@ class SessionJobs:
         return mixed_path
 
 
+class ForwardReader:
+    """Read intervals of decoded audio chunks in order of start.
+
+    It keeps only the audio from the last start on, so memory stays about one
+    interval and one chunk.
+    """
+
+    def __init__(self, chunks: Iterator[np.ndarray]) -> None:
+        self._chunks = chunks
+        self._buffer = np.empty(0, dtype=np.float32)
+        self._buffer_start = 0
+
+    def read(self, start: float, end: float) -> np.ndarray:
+        first = max(0, int(start * SAMPLE_RATE))
+        last = max(first, int(end * SAMPLE_RATE))
+        while (
+            self._buffer_start + self._buffer.size < last
+            and (chunk := next(self._chunks, None)) is not None
+        ):
+            dropped = min(self._buffer.size, first - self._buffer_start)
+            self._buffer = np.concatenate((self._buffer[dropped:], chunk))
+            self._buffer_start += dropped
+        samples = self._buffer[first - self._buffer_start : last - self._buffer_start]
+        if samples.size == 0:
+            raise ValueError("file session phrase has no audio")
+        return samples
+
+
 def source_segments(
     chunks: Iterator[np.ndarray], lines: Sequence[TranscriptLine]
 ) -> Iterator[tuple[int, np.ndarray]]:
@@ -279,21 +333,10 @@ def source_segments(
 
     The lines must be in order of start, so a later line never needs a dropped sample.
     """
-    buffer = np.empty(0, dtype=np.float32)
-    buffer_start = 0
+    reader = ForwardReader(chunks)
     for index, line in enumerate(lines):
-        if line.end <= line.start:
-            continue
-        start = max(0, int(line.start * SAMPLE_RATE))
-        end = max(start, int(line.end * SAMPLE_RATE))
-        while buffer_start + buffer.size < end and (chunk := next(chunks, None)) is not None:
-            dropped = min(buffer.size, start - buffer_start)
-            buffer = np.concatenate((buffer[dropped:], chunk))
-            buffer_start += dropped
-        samples = buffer[start - buffer_start : end - buffer_start]
-        if samples.size == 0:
-            raise ValueError("file session phrase has no audio")
-        yield index, samples
+        if line.end > line.start:
+            yield index, reader.read(line.start, line.end)
     # A decode error after the last line still fails the job.
     for _ in chunks:
         pass

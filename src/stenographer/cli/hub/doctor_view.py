@@ -30,6 +30,7 @@ WARNING_DESCRIPTIONS = {
     "feedback: cue_failed": "A sound cue did not play.",
     "files: job_failed": "A file job did not finish.",
     "files: speaker_pass_failed": "A file job got no speaker labels.",
+    "sessions: speakers_failed": "Re-transcribe kept the speakers: speaker labels did not run.",
     "files: speakers_unavailable": "A file job got no speaker labels.",
     "hotkey: enumerate_failed": "The keyboard devices could not be listed.",
     "hub: doctor_probe_failed": "The checks did not run.",
