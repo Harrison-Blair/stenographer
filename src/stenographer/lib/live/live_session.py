@@ -95,6 +95,8 @@ class LiveSession:
         self._clocks = {source: StreamClock() for source in ("mic", "system")}
         self._pushed_seconds = {"mic": 0.0, "system": 0.0}
         self._segments: dict[str, list[SpeakerSegment]] = {"mic": [], "system": []}
+        # Segments still open at the live edge, in session time.
+        self._tails: dict[str, tuple[SpeakerSegment, ...]] = {"mic": (), "system": ()}
         self._final_until = {"mic": float("-inf"), "system": float("-inf")}
         self._waiting: dict[str, list[Phrase]] = {"mic": [], "system": []}
         self._overflowed: list[str] = []
@@ -420,6 +422,7 @@ class LiveSession:
                 continue
             with self._lock:
                 self._add_segments(source, final)
+                self._tails[source] = ()
                 self._final_until[source] = float("inf")
         for source in ("mic", "system"):
             self._release_phrases(source, everything=True)
@@ -679,11 +682,12 @@ class LiveSession:
             stream = self._streams.get(source)
             if stream is not None:
                 try:
-                    final, _tail = stream.poll()
+                    final, tail = stream.poll()
                 except SpeakerDiarizerError as exc:
                     self._speakers_failed(source, exc)
                     return
                 self._add_segments(source, final)
+                self._tails[source] = self._session_segments(source, tail)
                 if stream.overflowed():
                     self._stream_overflowed(source)
                     return
@@ -697,7 +701,16 @@ class LiveSession:
             if not ready:
                 return
             self._waiting[source] = waiting[len(ready) :]
-            segments = tuple(self._segments[source])
+            # An open segment keeps its start and speaker; only its end can still move,
+            # and it holds at least the final time up to the final edge.
+            segments = (
+                *self._segments[source],
+                *(
+                    replace(s, end=min(s.end, limit))
+                    for s in self._tails[source]
+                    if s.start < limit
+                ),
+            )
             for phrase in ready:
                 for piece in speaker_pieces(phrase.start, phrase.end, segments):
                     first = round((piece.start - phrase.start) * _SAMPLE_RATE)
@@ -710,8 +723,11 @@ class LiveSession:
                     self._queue.put((part, piece.speaker))
 
     def _add_segments(self, source: str, segments) -> None:
+        self._segments[source].extend(self._session_segments(source, segments))
+
+    def _session_segments(self, source: str, segments) -> tuple[SpeakerSegment, ...]:
         clock = self._clocks[source]
-        self._segments[source].extend(
+        return tuple(
             SpeakerSegment(s.speaker, clock.session_time(s.start), clock.session_time(s.end))
             for s in segments
         )

@@ -118,6 +118,8 @@ class FakeStream:
         self.source = source
         self.pushed_seconds = 0.0
         self.finals = [ALL_ONE_SPEAKER]
+        # Segments still open at the live edge: start and speaker are fixed.
+        self.tail = []
         self.final_until = float("inf")
         self.overflow = False
         self.poll_error = None
@@ -132,7 +134,7 @@ class FakeStream:
             raise self.poll_error
         final = tuple(self.finals)
         self.finals.clear()
-        return final, ()
+        return final, tuple(self.tail)
 
     def overflowed(self):
         return self.overflow
@@ -700,6 +702,23 @@ def test_a_speaker_change_cuts_a_phrase_into_one_line_per_speaker(monkeypatch, t
     ]
     # Each part is decoded once.
     assert rig.worker.calls == [1, 4]
+    rig.session.stop()
+
+
+def test_a_speaker_who_still_talks_labels_the_final_part_of_a_phrase(monkeypatch, tmp_path):
+    rig = _make_session(monkeypatch, tmp_path, mic=False)
+    stream = rig.diarizer.streams["system"]
+    stream.finals = [SpeakerSegment(0, 0.0, 1.0)]
+    # Speaker 1 started at 1 s and still talks; frames up to 3 s are final.
+    stream.tail = [SpeakerSegment(1, 1.0, 5.0)]
+    stream.final_until = 3.0
+
+    _speak(rig, "system", 0.0, 2.0, _halves(1, 4))
+
+    assert [(line.start, line.end, line.label) for line in rig.session.lines] == [
+        (0.0, 1.0, "Speaker 1"),
+        (1.0, 2.0, "Speaker 2"),
+    ]
     rig.session.stop()
 
 
