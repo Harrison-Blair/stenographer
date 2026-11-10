@@ -195,6 +195,7 @@ def render(
                 "system_capture": "system capture",
                 "ffmpeg": "ffmpeg",
                 "python_venv": "python3 venv",
+                "speakers": "speaker labels",
             }[check.check_id]
             status = "ok" if check.status == "ok" else "WARN"
             line = f"  {label}: {status} — {check.detail}"

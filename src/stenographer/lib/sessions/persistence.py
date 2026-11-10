@@ -42,6 +42,8 @@ def write_private_temporary(directory: Path, name: str, content: bytes) -> Path:
 
 # In session.json of a new file session whose speaker pass failed.
 SPEAKER_PASS_FAILED_KEY = "speaker_pass_failed"
+# Whether a file session's job separated speakers; older file sessions have no key.
+DIARIZE_KEY = "diarize"
 
 
 def write_session_json(directory: Path, metadata: dict) -> None:

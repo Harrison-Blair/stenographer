@@ -18,16 +18,27 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stenographer.lib.audio.recorder import Recorder
-from stenographer.lib.live.models import speaker_model_path, vad_model_path
+from stenographer.lib.live.models import vad_model_path
 from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
-from stenographer.lib.live.relabel import relabel_system_lines, relabel_work_units
 from stenographer.lib.live.session_writer import SessionWriter
-from stenographer.lib.live.speaker_tracker import SpeakerTracker
+from stenographer.lib.live.speaker_lines import (
+    Piece,
+    SpeakerNames,
+    StreamClock,
+    decode_pieces,
+    read_saved_audio,
+    relabel_lines,
+    speaker_pieces,
+)
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.live.voice_split import group_and_split, read_saved_source
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.platform import current_platform
-from stenographer.lib.platform.errors import SystemAudioCaptureError, UnsupportedPlatformError
+from stenographer.lib.platform.errors import (
+    SpeakerDiarizerError,
+    SystemAudioCaptureError,
+    UnsupportedPlatformError,
+)
+from stenographer.lib.platform.speaker_diarizer import SpeakerSegment
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.transcribe.bark_download import MODEL_DIRNAME
 from stenographer.lib.transcribe.results import TranscriptionResult
@@ -38,19 +49,16 @@ if TYPE_CHECKING:
 
     from stenographer.lib.config.models import Config
     from stenographer.lib.platform.platform import Platform
+    from stenographer.lib.platform.speaker_diarizer import LiveDiarization
 
 log = logging.getLogger(__name__)
 _SAMPLE_RATE = 16000
 _STOP = object()
 _BLOCK_QUEUE_SIZE = 32
 _BLOCK_STOP_WAIT_SECONDS = 0.5
-# Mic and system voices are clustered apart, so their labels never share a number space.
-_LABEL_PREFIXES = {"system": "Speaker", "mic": "Room"}
-_REGROUP_INTERVAL_SECONDS = 30.0
-
-
-def _durations(lines: tuple[TranscriptLine, ...]) -> list[float]:
-    return [max(0.0, line.end - line.start) for line in lines]
+# At stop a stream labels the audio it still holds; it holds at most a minute.
+_FINISH_SECONDS = 120.0
+_SOURCE_ORDER = {"mic": 0, "system": 1}
 
 
 class LiveSession:
@@ -77,27 +85,25 @@ class LiveSession:
         if diarize_mic:
             self._writer.mark_mic_diarized()
         vad_model = vad_model_path()
-        self._speaker_model = speaker_model_path()
         self._worker = Worker(cfg.asr, transport=self._platform.asr_transport())
-        # A mic-only session loads the system tracker when system audio first starts.
-        self._trackers: dict[str, SpeakerTracker] = {}
-        if system:
-            self._trackers["system"] = SpeakerTracker(self._speaker_model)
-        if diarize_mic:
-            self._trackers["mic"] = SpeakerTracker(self._speaker_model, label_prefix="Room")
-        self._speaker_embeddings: dict[str, list[np.ndarray]] = {
-            source: [] for source in self._trackers
-        }
-        self._speaker_line_indices: dict[str, list[int]] = {source: [] for source in self._trackers}
-        self._next_regroup = dict.fromkeys(("mic", "system"), _REGROUP_INTERVAL_SECONDS)
-        self._regrouped = False
+        # System speakers are always separated; mic speakers only with diarize_mic.
+        self._separated = {"mic": diarize_mic, "system": True}
+        self._diarizer = self._platform.speaker_diarizer()
+        self._speaker_issue = self._diarizer.unavailable_reason()
+        if self._speaker_issue is not None:
+            log.warning(fmt_event("live", "speakers_unavailable", reason=self._speaker_issue))
+        self._names = {source: SpeakerNames(source) for source in ("mic", "system")}
+        self._streams: dict[str, LiveDiarization] = {}
+        self._clocks = {source: StreamClock() for source in ("mic", "system")}
+        self._pushed_seconds = {"mic": 0.0, "system": 0.0}
+        self._segments: dict[str, list[SpeakerSegment]] = {"mic": [], "system": []}
+        # Segments still open at the live edge, in session time.
+        self._tails: dict[str, tuple[SpeakerSegment, ...]] = {"mic": (), "system": ()}
+        self._final_until = {"mic": float("-inf"), "system": float("-inf")}
+        self._waiting: dict[str, list[Phrase]] = {"mic": [], "system": []}
+        self._overflowed: list[str] = []
+        self._labelling = False
         self._stop_started = False
-        self._stop_complete = False
-        self._skip_relabel = threading.Event()
-        self._relabeling = False
-        self._relabel_progress = (0, 0)
-        self._relabel_error: str | None = None
-        self._relabel_skipped = False
         try:
             self._system_capture = self._platform.system_audio_capture()
         except UnsupportedPlatformError as exc:
@@ -289,41 +295,34 @@ class LiveSession:
             return tuple(self._lines)
 
     @property
-    def relabel_error(self) -> str | None:
+    def speaker_notice(self) -> str | None:
+        """A short reason why some lines get no speaker label, or ``None``."""
         with self._lock:
-            return self._relabel_error
+            if self._speaker_issue is not None:
+                return "no speaker labels"
+            if self._overflowed:
+                return f"{' and '.join(self._overflowed)} speakers behind"
+            return None
 
     @property
-    def relabel_progress(self) -> tuple[int, int] | None:
-        """Return ``(done, total)`` phrases of the running relabel pass, or ``None``."""
+    def speaker_issue(self) -> str | None:
+        """Why speaker separation is off for this session, or ``None``."""
         with self._lock:
-            return self._relabel_progress if self._relabeling else None
+            return self._speaker_issue
 
     @property
-    def relabel_status(self) -> str:
+    def labelling_speakers(self) -> bool:
+        """True while the stop labels the speakers of a source whose stream fell behind."""
         with self._lock:
-            if self._relabeling:
-                done, total = self._relabel_progress
-                return f"Relabeling speakers {done}/{total} · q to skip"
-            if self._relabel_error:
-                return f"Relabeling failed: {self._relabel_error}"
-            if self._relabel_skipped:
-                return "Relabeling skipped"
-            if self._stop_started and not self._stop_complete:
-                return "Saving session audio · q to skip relabeling"
-            return ""
-
-    def skip_relabel(self) -> None:
-        """Skip the batch pass after the session audio is saved."""
-        self._skip_relabel.set()
+            return self._labelling
 
     @property
     def speakers(self) -> tuple[tuple[str, str], ...]:
-        """Return ``(speaker_id, label)`` of each diarized speaker that has lines."""
+        """Return ``(speaker_id, label)`` of each separated speaker that has lines."""
         with self._lock:
-            labels = {source: {} for source in self._trackers}
+            labels: dict[str, dict[str, str]] = {"system": {}, "mic": {}}
             for line in self._lines:
-                if line.source in labels:
+                if self._names[line.source].owns(line.speaker_id):
                     labels[line.source][line.speaker_id] = line.label
             return tuple(item for source in labels.values() for item in source.items())
 
@@ -369,15 +368,13 @@ class LiveSession:
 
     def rename(self, speaker_id: str, name: str) -> None:
         """Rename one system or room speaker and update its existing transcript lines."""
-        source = "mic" if "mic" in self._trackers and speaker_id.startswith("room-") else "system"
-        tracker = self._trackers[source]
         with self._lock:
-            # A pass can merge this speaker while the rename dialog is open.
-            speaker_id = tracker.current_id(speaker_id)
-            label = tracker.checked_name(speaker_id, name)
+            source = "mic" if self._names["mic"].owns(speaker_id) else "system"
+            names = self._names[source]
+            label = names.checked_label(speaker_id, name)
             # A failed write, or the closed writer after a save, must change nothing here.
             self._writer.relabel({speaker_id: label})
-            tracker.rename(speaker_id, label)
+            names.rename(speaker_id, label)
             self._lines = [
                 replace(line, label=label) if line.speaker_id == speaker_id else line
                 for line in self._lines
@@ -385,10 +382,9 @@ class LiveSession:
         log.info(fmt_event("live", "speaker_renamed", speaker_id=speaker_id))
 
     def stop(self) -> None:
-        """Stop capture, save the session, and batch-relabel its speaker phrases."""
+        """Stop capture and save the session with the speaker labels shown live."""
         with self._control_lock:
             if self._stop_started:
-                self._skip_relabel.set()
                 return
             self._stop_started = True
             self._close_block_delivery()
@@ -401,6 +397,7 @@ class LiveSession:
                 if self._source_seen[source]:
                     self._pad_source(source, duration)
             self._stopped = True
+            self._finish_streams()
             if self._transcriber is not None:
                 self._queue.put(_STOP)
         if self._transcriber is not None:
@@ -408,167 +405,70 @@ class LiveSession:
             self._transcriber.join()
         try:
             self._writer.close()
-            self._relabel_saved_session()
+            self._label_overflowed_sources()
         finally:
             self._worker.release_model()
             self._worker.shutdown()
-            with self._lock:
-                self._stop_complete = True
+            self._diarizer.close()
         log.info(fmt_event("live", "stopped", duration_seconds=round(duration, 3)))
 
-    def _relabel_saved_session(self) -> None:
-        with self._lock:
-            passes = [
-                (
-                    source,
-                    tuple(indices),
-                    tuple(self._lines[index] for index in indices),
-                    tuple(self._speaker_embeddings[source]),
-                )
-                for source, indices in self._speaker_line_indices.items()
-                if indices
-            ]
-            if not passes:
-                return
-            total = sum(len(lines) for _, _, lines, _ in passes)
-            self._relabeling = True
-            self._relabel_progress = (0, total)
-
-        saved = False
-        try:
-            saved = self._save_end_pass(passes, total)
-            if not saved:
-                with self._lock:
-                    self._relabel_skipped = True
-        except Exception as exc:
+    def _finish_streams(self) -> None:
+        """Label the audio each stream still holds and release every waiting phrase."""
+        for source, stream in tuple(self._streams.items()):
+            if source in self._overflowed:
+                continue
+            try:
+                final = stream.finish(_FINISH_SECONDS)
+            except SpeakerDiarizerError as exc:
+                self._speakers_failed(source, exc)
+                continue
             with self._lock:
-                self._relabel_error = str(exc)
-            log_failure(log, logging.WARNING, "live: relabel_failed", exc, safe=True)
+                self._add_segments(source, final)
+                self._tails[source] = ()
+                self._final_until[source] = float("inf")
+        for source in ("mic", "system"):
+            self._release_phrases(source, everything=True)
+
+    def _label_overflowed_sources(self) -> None:
+        """Label each source whose live stream fell behind from its saved audio, by the
+        line rule, and save the result as a revision."""
+        with self._lock:
+            sources = [s for s in self._overflowed if s not in self._audio_failed]
+            if not sources:
+                return
+            self._labelling = True
+        try:
+            lines = list(self.lines)
+            for source in sources:
+                path = self._writer.path / f"{source}.flac"
+                segments = self._diarizer.diarize_file(path)
+                own = [line for line in lines if line.source == source]
+                relabeled = relabel_lines(
+                    own,
+                    segments,
+                    SpeakerNames(source),
+                    read_audio=partial(read_saved_audio, path),
+                    decode=lambda samples: self._worker.transcribe(samples).text,
+                )
+                others = [line for line in lines if line.source != source]
+                lines = sorted(
+                    [*others, *relabeled],
+                    key=lambda line: (line.start, _SOURCE_ORDER.get(line.source, 2)),
+                )
+            SessionStore(self._writer.path.parent).write_revision(
+                self._writer.path.name,
+                lines,
+                method="diarization",
+                expected_revision="transcript.jsonl",
+            )
+            with self._lock:
+                self._lines = lines
+        except Exception as exc:
+            # The live lines are saved; only their labels stay as they were.
+            log_failure(log, logging.WARNING, "live: speaker_pass_failed", exc, safe=True)
         finally:
             with self._lock:
-                self._relabeling = False
-        if not saved:
-            self._save_shown_lines()
-
-    def _save_end_pass(self, passes: list, total: int) -> bool:
-        """Save the batch pass as a revision. Return ``False`` if a skip ended it."""
-        # Progress counts phrases: each pass gives a fraction of its own work, and the
-        # weight of every pass is known up front, so the count never falls or overshoots.
-        units = [relabel_work_units(lines) for _, _, lines, _ in passes]
-        total_units = sum(units)
-        replacements: dict[int, list[TranscriptLine]] = {}
-        offset = 0
-        for (source, indices, lines, embeddings), pass_units in zip(passes, units, strict=True):
-            grouped = group_and_split(
-                lines,
-                embeddings,
-                # A source whose audio stopped saving has a short file, so whole lines group.
-                read_source=(
-                    None
-                    if source in self.audio_failed_sources
-                    else partial(read_saved_source, self._writer.path / f"{source}.flac")
-                ),
-                speaker_model=self._speaker_model,
-                embed=self._trackers[source].embed,
-                decode=lambda samples: self._worker.transcribe(samples).text,
-                progress=lambda fraction, offset=offset, pass_units=pass_units: (
-                    self._set_relabel_progress(
-                        int(total * (offset + fraction * pass_units) / total_units), total
-                    )
-                ),
-                should_cancel=self._skip_relabel.is_set,
-                label_prefix=_LABEL_PREFIXES[source],
-            )
-            if grouped is None or self._skip_relabel.is_set():
-                return False
-            # A part keeps the speaker of its phrase, so a given name can follow its speech.
-            shown = tuple(
-                replace(line, speaker_id=lines[parent].speaker_id, label=lines[parent].label)
-                for line, parent in zip(grouped.lines, grouped.parents, strict=True)
-            )
-            with self._lock:
-                numbered = self._numbered_lines(
-                    source, shown, [line.speaker_id for line in grouped.lines], grouped.parents
-                )
-            for parent, line in zip(grouped.parents, numbered, strict=True):
-                replacements.setdefault(indices[parent], []).append(line)
-            offset += pass_units
-        revised_lines = [
-            revised
-            for index, line in enumerate(self.lines)
-            for revised in replacements.get(index, (line,))
-        ]
-        self._write_revision(revised_lines, method="diarization")
-        return True
-
-    def _save_shown_lines(self) -> None:
-        """Save the speakers on screen. transcript.jsonl has only first-written speakers.
-
-        A failed write raises, so the stop shows as a failed save.
-        """
-        with self._lock:
-            if not self._regrouped:
-                return
-            revised_lines = list(self._lines)
-            for source, indices in self._speaker_line_indices.items():
-                lines = tuple(revised_lines[index] for index in indices)
-                numbered = self._numbered_lines(source, lines, [line.speaker_id for line in lines])
-                for index, line in zip(indices, numbered, strict=True):
-                    revised_lines[index] = line
-        # The batch pass did not finish, so Library must not call these lines relabeled.
-        self._write_revision(revised_lines, method="live")
-
-    def _numbered_lines(
-        self,
-        source: str,
-        lines: tuple[TranscriptLine, ...],
-        cluster_ids: list[str],
-        parents: tuple[int, ...] | None = None,
-    ) -> tuple[TranscriptLine, ...]:
-        speakers = self._trackers[source].saved_speakers(
-            [line.speaker_id for line in lines], cluster_ids, _durations(lines), parents
-        )
-        return tuple(
-            replace(line, speaker_id=speaker_id, label=label)
-            for line, (speaker_id, label) in zip(lines, speakers, strict=True)
-        )
-
-    def _write_revision(self, lines: list[TranscriptLine], *, method: str) -> None:
-        SessionStore(self._writer.path.parent).write_revision(
-            self._writer.path.name,
-            lines,
-            method=method,
-            expected_revision="transcript.jsonl",
-        )
-        with self._lock:
-            self._lines = lines
-
-    def _regroup_recording(self, source: str) -> None:
-        """Group the phrases so far. Only this thread adds lines, so none arrive meanwhile."""
-        with self._lock:
-            indices = tuple(self._speaker_line_indices[source])
-            lines = tuple(self._lines[index] for index in indices)
-            embeddings = tuple(self._speaker_embeddings[source])
-        # The capture callback needs this lock, so the pass runs outside it.
-        relabeled = relabel_system_lines(lines, embeddings, label_prefix=_LABEL_PREFIXES[source])
-        tracker = self._trackers[source]
-        with self._lock:
-            speaker_ids = tracker.regroup(
-                [line.speaker_id for line in lines],
-                [line.speaker_id for line in relabeled],
-                _durations(lines),
-                embeddings,
-            )
-            for index, line, speaker_id in zip(indices, lines, speaker_ids, strict=True):
-                # Read the label here: a rename can arrive during the pass.
-                label = tracker.label(speaker_id)
-                self._lines[index] = replace(line, speaker_id=speaker_id, label=label)
-            self._regrouped = True
-        log.debug(fmt_event("live", "speakers_regrouped", source=source, line_count=len(indices)))
-
-    def _set_relabel_progress(self, done: int, total: int) -> None:
-        with self._lock:
-            self._relabel_progress = max(done, self._relabel_progress[0]), total
+                self._labelling = False
 
     def _check_system_availability(self) -> None:
         try:
@@ -596,13 +496,15 @@ class LiveSession:
                 log.warning(fmt_event("live", "system_source_unavailable", reason=reason))
                 return
         try:
-            if source == "system" and source not in self._trackers:
-                self._add_system_tracker()
+            self._open_stream(source)
             self._pad_source(source, self.elapsed_seconds)
             segmenter = PhraseSegmenter(source, self._vad_model)
             with self._lock:
                 self._segmenters[source] = segmenter
                 self._segment_offsets[source] = self.elapsed_seconds
+                self._clocks[source].start_run(
+                    self._pushed_seconds[source], self._segment_offsets[source]
+                )
                 self._active[source] = True
             if source == "mic":
                 self._recorder.start()
@@ -620,13 +522,21 @@ class LiveSession:
                 log, logging.WARNING, "live: source_start_failed", exc, safe=True, source=source
             )
 
-    def _add_system_tracker(self) -> None:
-        tracker = SpeakerTracker(self._speaker_model)
+    def _open_stream(self, source: str) -> None:
+        if not self._separated[source] or source in self._streams:
+            return
         with self._lock:
-            self._speaker_embeddings["system"] = []
-            self._speaker_line_indices["system"] = []
-            # System speakers stay listed before room speakers.
-            self._trackers = {"system": tracker, **self._trackers}
+            if self._speaker_issue is not None:
+                return
+        try:
+            stream = self._diarizer.open_live(source)
+        except SpeakerDiarizerError as exc:
+            with self._lock:
+                self._speaker_issue = str(exc)
+            log_failure(log, logging.WARNING, "live: speakers_unavailable", exc, safe=True)
+            return
+        with self._lock:
+            self._streams[source] = stream
 
     def _stop_source(self, source: str) -> None:
         with self._lock:
@@ -683,7 +593,13 @@ class LiveSession:
                 phrases = segmenter.accept(samples)
                 self._speech[source] = segmenter.speech_detected
                 offset = self._segment_offsets[source]
+                stream = self._streams.get(source)
+                if stream is not None and samples.size:
+                    stream.push(samples)
+                    self._pushed_seconds[source] += samples.size / _SAMPLE_RATE
                 self._enqueue_phrases(phrases, offset)
+            for each in ("mic", "system"):
+                self._release_phrases(each)
             self._offer_block(source, samples)
         except Exception as exc:
             log_failure(
@@ -739,8 +655,15 @@ class LiveSession:
                     )
 
     def _enqueue_phrases(self, phrases: list[Phrase], offset: float) -> None:
+        """Queue phrases for recognition; a source with a live stream holds them until
+        its speaker labels are final up to their end."""
         for phrase in phrases:
-            self._queue.put(replace(phrase, start=phrase.start + offset, end=phrase.end + offset))
+            phrase = replace(phrase, start=phrase.start + offset, end=phrase.end + offset)
+            with self._lock:
+                if phrase.source in self._streams:
+                    self._waiting[phrase.source].append(phrase)
+                    continue
+            self._queue.put((phrase, None))
         if phrases:
             log.debug(
                 fmt_event(
@@ -752,14 +675,87 @@ class LiveSession:
                 )
             )
 
+    def _release_phrases(self, source: str, *, everything: bool = False) -> None:
+        """Cut the held phrases whose speakers are final at each speaker change and
+        queue the parts for recognition."""
+        # Both capture threads call this; the lock keeps segments and their final
+        # time together, so no phrase is cut with segments that are still missing.
+        with self._lock:
+            stream = self._streams.get(source)
+            if stream is not None:
+                try:
+                    view = stream.poll()
+                except SpeakerDiarizerError as exc:
+                    self._speakers_failed(source, exc)
+                    return
+                self._add_segments(source, view.final)
+                self._tails[source] = self._session_segments(source, view.tail)
+                if stream.overflowed():
+                    self._stream_overflowed(source)
+                    return
+                self._final_until[source] = max(
+                    self._final_until[source],
+                    self._clocks[source].session_time(view.final_until),
+                )
+            waiting = self._waiting[source]
+            limit = float("inf") if everything else self._final_until[source]
+            ready = [phrase for phrase in waiting if phrase.end <= limit]
+            if not ready:
+                return
+            self._waiting[source] = waiting[len(ready) :]
+            # An open segment keeps its start and speaker; only its end can still move,
+            # and it holds at least the final time up to the final edge.
+            segments = (
+                *self._segments[source],
+                *(
+                    replace(s, end=min(s.end, limit))
+                    for s in self._tails[source]
+                    if s.start < limit
+                ),
+            )
+            for phrase in ready:
+                self._queue.put((phrase, speaker_pieces(phrase.start, phrase.end, segments)))
+
+    def _add_segments(self, source: str, segments) -> None:
+        self._segments[source].extend(self._session_segments(source, segments))
+
+    def _session_segments(self, source: str, segments) -> tuple[SpeakerSegment, ...]:
+        clock = self._clocks[source]
+        return tuple(
+            SpeakerSegment(s.speaker, clock.session_time(s.start), clock.session_time(s.end))
+            for s in segments
+        )
+
+    def _stream_overflowed(self, source: str) -> None:
+        """Stop live labels of *source*: its held phrases and new ones get no speaker."""
+        with self._lock:
+            stream = self._streams.pop(source)
+            self._overflowed.append(source)
+            waiting, self._waiting[source] = self._waiting[source], []
+        stream.close()
+        log.warning(fmt_event("live", "speakers_behind", source=source))
+        for phrase in waiting:
+            self._queue.put((phrase, None))
+
+    def _speakers_failed(self, source: str, exc: Exception) -> None:
+        with self._lock:
+            stream = self._streams.pop(source, None)
+            self._speaker_issue = str(exc)
+            waiting, self._waiting[source] = self._waiting[source], []
+        if stream is not None:
+            stream.close()
+        log_failure(log, logging.WARNING, "live: speakers_failed", exc, safe=True, source=source)
+        for phrase in waiting:
+            self._queue.put((phrase, None))
+
     def _transcribe_queue(self) -> None:
         while True:
             item = self._queue.get()
             try:
                 if item is _STOP:
                     return
-                assert isinstance(item, Phrase)
-                self._transcribe_phrase(item)
+                phrase, pieces = item
+                self._transcribe_phrase(phrase, pieces)
             except Exception as exc:
                 with self._lock:
                     self._failed_phrase_count += 1
@@ -767,48 +763,42 @@ class LiveSession:
             finally:
                 self._queue.task_done()
 
-    def _transcribe_phrase(self, phrase: Phrase) -> None:
-        result: TranscriptionResult = self._worker.transcribe(phrase.samples)
-        text = result.text.strip()
-        if not text:
-            return
-        embedding = None
-        tracker = self._trackers.get(phrase.source)
-        if tracker is None:
-            speaker_id = "you"
-            label = "You"
-        else:
-            # The capture callback needs this lock, so the embedding runs outside it.
-            embedding = tracker.embed(phrase.samples)
+    def _transcribe_phrase(self, phrase: Phrase, pieces: tuple[Piece, ...] | None) -> None:
+        """Decode *phrase* by the line rule: one line per piece with text.
+
+        ``None`` *pieces* means the phrase has no speaker labels.
+        """
+        if pieces is None:
+            pieces = (Piece(phrase.start, phrase.end, None),)
+        parts = decode_pieces(
+            pieces, phrase.start, phrase.samples, lambda samples: self._transcribe(samples)
+        )
+        for piece, text in parts:
             with self._lock:
-                speaker_id = tracker.assign_nearest(embedding)
-        with self._lock:
-            if tracker is not None:
-                label = tracker.label(speaker_id)
-            wall = (self._writer.started_at + timedelta(seconds=phrase.start)).isoformat()
-            line = TranscriptLine(
-                start=phrase.start,
-                end=phrase.end,
-                wall=wall,
-                source=phrase.source,
-                speaker_id=speaker_id,
-                label=label,
-                text=text,
-            )
-            self._writer.append_line(line)
-            self._lines.append(line)
-            if embedding is not None:
-                self._speaker_line_indices[phrase.source].append(len(self._lines) - 1)
-                self._speaker_embeddings[phrase.source].append(embedding.copy())
-            subscribers = tuple(self._subscribers)
-        for subscriber in subscribers:
-            try:
-                subscriber(line)
-            except Exception as exc:
-                log_failure(log, logging.WARNING, "live: subscriber_failed", exc, safe=False)
-        if tracker is not None and phrase.end >= self._next_regroup[phrase.source]:
-            self._next_regroup[phrase.source] = phrase.end + _REGROUP_INTERVAL_SECONDS
-            self._regroup_recording(phrase.source)
+                # Numbers follow the first line of each speaker, so they are given here.
+                speaker_id, label = self._names[phrase.source].speaker(piece.speaker)
+                wall = (self._writer.started_at + timedelta(seconds=piece.start)).isoformat()
+                line = TranscriptLine(
+                    start=piece.start,
+                    end=piece.end,
+                    wall=wall,
+                    source=phrase.source,
+                    speaker_id=speaker_id,
+                    label=label,
+                    text=text,
+                )
+                self._writer.append_line(line)
+                self._lines.append(line)
+                subscribers = tuple(self._subscribers)
+            for subscriber in subscribers:
+                try:
+                    subscriber(line)
+                except Exception as exc:
+                    log_failure(log, logging.WARNING, "live: subscriber_failed", exc, safe=False)
+
+    def _transcribe(self, samples: np.ndarray) -> str:
+        result: TranscriptionResult = self._worker.transcribe(samples)
+        return result.text
 
     def _write_audio(self, source: str, samples: np.ndarray) -> None:
         if source in self._audio_failed:

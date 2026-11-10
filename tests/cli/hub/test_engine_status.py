@@ -28,9 +28,9 @@ class FakeClock:
 
 
 class FakeSession:
-    def __init__(self, *, queue_depth=0, relabel_progress=None, pids=(), deadline=None):
+    def __init__(self, *, queue_depth=0, labelling=False, pids=(), deadline=None):
         self.queue_depth = queue_depth
-        self.relabel_progress = relabel_progress
+        self.labelling_speakers = labelling
         self.process_ids = pids
         self.idle_unload_deadline = deadline
 
@@ -79,38 +79,29 @@ def _sampler(services, tmp_path, clock=None, **options):
         (FakeServices(session=FakeSession(queue_depth=3)), "ready · 3 queued"),
         (FakeServices(files_engine=FakeEngine(active_job=FakeJob(percent=42))), "transcribing 42%"),
         (
-            FakeServices(session=FakeSession(relabel_progress=(3, 7))),
-            "relabeling 3 of 7",
+            FakeServices(session=FakeSession(labelling=True)),
+            "labelling speakers",
         ),
         # Overlaps: the first state in precedence order wins.
         (
             FakeServices(
-                session=FakeSession(relabel_progress=(1, 4)),
+                session=FakeSession(labelling=True),
                 files_engine=FakeEngine(active_job=FakeJob(percent=10)),
             ),
-            "relabeling 1 of 4",
+            "labelling speakers",
         ),
         (
             FakeServices(
-                stopping_sessions=(FakeSession(relabel_progress=(2, 5)),),
+                stopping_sessions=(FakeSession(labelling=True),),
                 session=FakeSession(queue_depth=1),
             ),
-            "relabeling 2 of 5",
+            "labelling speakers",
         ),
         (
             FakeServices(
-                stopping_sessions=(
-                    FakeSession(relabel_progress=(6, 9)),
-                    FakeSession(relabel_progress=(1, 2)),
-                ),
+                stopping_sessions=(FakeSession(), FakeSession(labelling=True)),
             ),
-            "relabeling 6 of 9",
-        ),
-        (
-            FakeServices(
-                stopping_sessions=(FakeSession(), FakeSession(relabel_progress=(1, 2))),
-            ),
-            "relabeling 1 of 2",
+            "labelling speakers",
         ),
         (
             FakeServices(
@@ -164,11 +155,9 @@ def test_engine_state_line_follows_one_recording_through_stop_file_job_and_unloa
     states.append(sampler.snapshot().state)
 
     stopping = services.session
-    stopping.relabel_progress = (0, 4)
+    stopping.labelling_speakers = True
     states.append(sampler.snapshot().state)
-    stopping.relabel_progress = (3, 4)
-    states.append(sampler.snapshot().state)
-    stopping.relabel_progress = None
+    stopping.labelling_speakers = False
     services.session = None
     states.append(sampler.snapshot().state)
 
@@ -187,8 +176,7 @@ def test_engine_state_line_follows_one_recording_through_stop_file_job_and_unloa
     assert states == [
         "ready",
         "ready · 2 queued",
-        "relabeling 0 of 4",
-        "relabeling 3 of 4",
+        "labelling speakers",
         "idle · unloaded",
         "transcribing 50%",
         "idle · unloads in 30 s",

@@ -15,17 +15,10 @@ class FileJobOptions:
 
     path: Path
     diarize: bool = True
-    speaker_count: int | None = None
     refine: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path).expanduser())
-        if self.speaker_count is not None and (
-            isinstance(self.speaker_count, bool)
-            or not isinstance(self.speaker_count, int)
-            or self.speaker_count < 1
-        ):
-            raise ValueError("speaker_count must be a positive integer")
 
 
 @dataclass(frozen=True)

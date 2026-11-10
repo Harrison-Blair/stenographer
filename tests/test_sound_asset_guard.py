@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from sound_asset_guard import EXPECTED_PATHS, SoundAssetGuardError, check_sound_assets
 from verify_distributions import COMPLETIONS, verify_distributions
 
+RUNTIME = "stenographer/assets/nemo_speech"
 _LEGACY_SHA256 = {
     "delivered.wav": "3cdd176f8914da7c3d9d298ea2c4793d4d43bf3ce3e7c6cdf1bbe749a0f2f5c9",
     "error.wav": "1e3694e12197380d2c61252dd9fb0e4c320b6c0a520cecad31560bea2042e24b",
@@ -124,11 +125,14 @@ def test_wheel_guard_rejects_symlinked_expected_sound_entry(tmp_path: Path) -> N
         "sdist_completion",
         "license",
         "sound",
-        "model",
         "vad_model",
-        "speaker_model",
         "vad_license",
-        "speaker_notice",
+        "diarization_notice",
+        "runtime_license",
+        "runtime_notices",
+        "runtime_sources",
+        "runtime_x86_64",
+        "runtime_aarch64",
         "archive",
         "wheel_metadata",
         "sdist_version",
@@ -139,13 +143,17 @@ def test_distribution_contract(tmp_path: Path, missing: str | None) -> None:
     wheel_names = [f"stenographer/assets/completions/{name}" for name in COMPLETIONS]
     wheel_names.append("stenographer/assets/keycodes.toml")
     wheel_names.append("stenographer/assets/default_config.toml.in")
-    wheel_names.append("stenographer/assets/models/pyannote-segmentation-3-0.onnx")
-    wheel_names.append("stenographer/assets/licenses/pyannote-segmentation-3.0-MIT.txt")
     bundled = {
         "vad_model": "stenographer/assets/models/silero_vad.onnx",
-        "speaker_model": "stenographer/assets/models/wespeaker_en_voxceleb_resnet34_LM_mean.onnx",
         "vad_license": "stenographer/assets/licenses/silero-vad-MIT.txt",
-        "speaker_notice": "stenographer/assets/licenses/wespeaker-resnet34-LM-NOTICE.txt",
+        "diarization_notice": (
+            "stenographer/assets/licenses/nemotron-3-diarization-OpenMDW-1.1-NOTICE.txt"
+        ),
+        "runtime_license": "stenographer/assets/licenses/nemo-speech/LICENSE",
+        "runtime_notices": "stenographer/assets/licenses/nemo-speech/THIRD_PARTY_NOTICES.md",
+        "runtime_sources": "stenographer/assets/nemo_speech/SOURCES.txt",
+        "runtime_x86_64": f"{RUNTIME}/linux-x86_64/libnemo_speech_asr_c.so.1",
+        "runtime_aarch64": f"{RUNTIME}/linux-aarch64/libnemo_speech_asr_c.so.1",
     }
     wheel_names += bundled.values()
     wheel_names += [f"stenographer/assets/sounds/{name}" for name in EXPECTED_PATHS]
@@ -162,8 +170,6 @@ def test_distribution_contract(tmp_path: Path, missing: str | None) -> None:
         sdist_names.pop()
     elif missing == "sound":
         wheel_names.pop()
-    elif missing == "model":
-        wheel_names.remove("stenographer/assets/models/pyannote-segmentation-3-0.onnx")
     elif missing in bundled:
         wheel_names.remove(bundled[missing])
     with zipfile.ZipFile(tmp_path / f"stenographer-{version}-py3-none-any.whl", "w") as archive:

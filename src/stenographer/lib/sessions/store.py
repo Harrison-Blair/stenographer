@@ -25,6 +25,7 @@ from stenographer.lib.sessions.errors import (
 from stenographer.lib.sessions.exporter import export_transcript, render_transcript
 from stenographer.lib.sessions.models import SessionDetail, SessionSummary
 from stenographer.lib.sessions.persistence import (
+    DIARIZE_KEY,
     SPEAKER_PASS_FAILED_KEY,
     atomic_write_private,
     write_private_temporary,
@@ -226,10 +227,12 @@ class SessionStore:
         lines: Iterable[TranscriptLine],
         should_cancel: Callable[[], bool] | None = None,
         speaker_pass_failed: bool = False,
+        diarize: bool | None = None,
     ) -> str:
         """Make a file session folder with a private copy of the source and its transcript.
 
-        An error or a cancel removes the folder that this call made.
+        *diarize* records whether the job separated speakers. An error or a cancel
+        removes the folder that this call made.
         """
         source = Path(source).expanduser()
         rows = tuple(lines)
@@ -276,6 +279,8 @@ class SessionStore:
                 }
                 if speaker_pass_failed:
                     metadata[SPEAKER_PASS_FAILED_KEY] = True
+                if diarize is not None:
+                    metadata[DIARIZE_KEY] = diarize
                 write_session_json(directory, metadata)
         except BaseException:
             shutil.rmtree(directory, ignore_errors=True)

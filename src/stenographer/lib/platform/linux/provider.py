@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.notifier import Notifier
     from stenographer.lib.platform.process_counters import ProcessCounters
     from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
+    from stenographer.lib.platform.speaker_diarizer import SpeakerDiarizer
     from stenographer.lib.platform.system_audio import SystemAudioCapture
     from stenographer.lib.platform.types import ClipboardReader, ClipboardRestorer
 
@@ -166,6 +167,11 @@ class LinuxPlatform(DiagnosticsHostMixin):
         )
 
         return MultiprocessingAsrTransport()
+
+    def speaker_diarizer(self) -> SpeakerDiarizer:
+        from stenographer.lib.platform.linux.nemo_diarizer import NemoSpeakerDiarizer
+
+        return NemoSpeakerDiarizer()
 
     def single_instance_lock(self) -> SingleInstanceLock:
         from stenographer.lib.platform.linux.lock import (

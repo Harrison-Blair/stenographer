@@ -32,11 +32,10 @@ class FakeSession:
     failed_phrase_count = 0
     elapsed_seconds = 12.0
     queue_depth = 0
-    relabel_progress = None
+    labelling_speakers = False
+    speaker_notice = None
     idle_unload_deadline = None
     model_name = "medium.en · int8"
-    relabel_status = ""
-    relabel_error = None
     path = Path("/tmp/session")
 
     def subscribe(self, _callback):

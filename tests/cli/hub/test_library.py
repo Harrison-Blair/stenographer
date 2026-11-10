@@ -48,7 +48,7 @@ class FakeJob:
 
     def __init__(self, job_id: str, path: Path, *, state: str = "running", percent: int = 43):
         self.id = job_id
-        self.options = SimpleNamespace(path=path, diarize=True, speaker_count=None, refine=False)
+        self.options = SimpleNamespace(path=path, diarize=True, refine=False)
         self.state = state
         self.progress = FileJobProgress("transcribe", percent, ())
         self.session_id: str | None = None
@@ -1258,3 +1258,24 @@ async def test_library_poll_draws_only_when_a_job_or_the_busy_mark_changes(tmp_p
         screen.poll_jobs()
         assert draws == [1]
         assert "busy" in str(_button(app, "library-rediarize").label)
+
+
+def test_library_refuses_rediarize_of_a_recording_without_separated_speakers(tmp_path):
+    root = tmp_path / "sessions"
+    writer = SessionWriter.open(tmp_path, REC_LIVE)
+    writer.write_audio("mic", np.full(32_000, 0.2, dtype=np.float32))
+    writer.append_line(TranscriptLine(0.0, 1.2, "", "mic", "you", "You", "delta echo"))
+    writer.close()
+    services = FakeServices(root)
+    app = make_app(tmp_path, services)
+
+    async def exercise():
+        async with app.run_test(size=(150, 45)) as pilot:
+            await _open_library(pilot, app, 1)
+            assert _button(app, "library-rediarize").disabled
+            await pilot.press("d")
+            await pilot.pause()
+            assert "Nothing to re-diarize: mic lines are You." in _notices(app)
+            assert services.actions == []
+
+    asyncio.run(exercise())

@@ -36,6 +36,15 @@ from stenographer.overlay.protocol.backend import Backend
 from stenographer.overlay.protocol.unavailablereason import UnavailableReason
 from tests.cli.support import capabilities
 
+
+@pytest.fixture(autouse=True)
+def _no_speaker_helper(monkeypatch):
+    """The report's speaker check starts the native helper; these tests stub it."""
+    from stenographer.lib.diagnostics import additional_checks
+
+    monkeypatch.setattr(additional_checks, "speaker_reason", lambda: None)
+
+
 # ``render`` interpolates this path, so compare its string representation.
 _CONFIG_PATH = pathlib.Path("/tmp/config.toml")
 

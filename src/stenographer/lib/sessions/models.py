@@ -32,3 +32,5 @@ class SessionDetail:
     activity: dict[str, tuple[float, ...]]
     revision: str
     diarize_mic: bool = False
+    # A file session's speaker option; ``None`` for a session older than the record.
+    diarize: bool | None = None

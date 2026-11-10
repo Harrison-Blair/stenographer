@@ -25,6 +25,8 @@ if [ ! -x .venv/bin/pyinstaller ]; then
 fi
 
 .venv/bin/python scripts/sound_asset_guard.py src/stenographer/assets/sounds
+# The speaker model is pinned by size and sha256 and kept between builds.
+.venv/bin/python -I scripts/fetch_speaker_model.py
 
 if [[ "${VERBOSE}" -eq 1 ]]; then
     .venv/bin/pyinstaller --noconfirm --clean packaging/stenographer.spec

@@ -55,39 +55,44 @@ installer scripts and all required package resources. The Agent rewrite
 prompt's MIT attribution is packaged at
 `stenographer/assets/licenses/asd-ste100-MIT.txt` in wheels and retained under
 `src/` in source distributions. The model attribution files
-(`underdog-bark-3.0-pro-NOTICE.txt`, `silero-vad-MIT.txt`,
-`wespeaker-resnet34-LM-NOTICE.txt`, and `pyannote-segmentation-3.0-MIT.txt`) sit in the
-same folder, as do the Bark Pro converter and its venv lock under
-`stenographer/assets/convert/`. Three models ship with the app and are committed
-to Git in `stenographer/assets/models/`:
+(`underdog-bark-3.0-pro-NOTICE.txt`, `silero-vad-MIT.txt`, and
+`nemotron-3-diarization-OpenMDW-1.1-NOTICE.txt`) and the NeMo-Speech.cpp notices
+(`nemo-speech/`) sit in the same folder, as do the Bark Pro converter and its venv lock under
+`stenographer/assets/convert/`. One model is committed to Git in
+`stenographer/assets/models/`:
 
 | File | Size | SHA-256 |
 | --- | --- | --- |
-| `pyannote-segmentation-3-0.onnx` | about 6 MB | `220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079` |
 | `silero_vad.onnx` | about 0.6 MB | `9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6` |
-| `wespeaker_en_voxceleb_resnet34_LM_mean.onnx` | about 27 MB | `280d78ccc3a8a3ffdf4d9ef867e16faa68d2beb107ad1de7a844285d3522fcd6` |
 
 `silero_vad.onnx` is unchanged from the
 [sherpa-onnx release](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx).
 The ASR model is an explicit download.
 
-### Speaker model
+### Speaker separation runtime
 
-The bundled speaker model is the sherpa-onnx export of WeSpeaker ResNet34-LM
-with mean subtraction added to the start of the ONNX graph: the model expects
-features with their mean over time subtracted, and sherpa-onnx does not do that
-step. `scripts/speaker_model_mean.py` makes the file. It needs the `onnx`
-package (tested with 1.23.2), which is not an app dependency:
+Speaker separation uses NVIDIA Nemotron-3-Diarization, run by the native
+NeMo-Speech.cpp 0.3.0 runtime through its C API in a helper process.
 
-```sh
-python3 -m venv /tmp/onnx-venv && /tmp/onnx-venv/bin/pip install onnx==1.23.2
-curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx
-/tmp/onnx-venv/bin/python -I scripts/speaker_model_mean.py \
-  wespeaker_en_voxceleb_resnet34_LM.onnx wespeaker_en_voxceleb_resnet34_LM_mean.onnx
-```
-
-The script checks the sha256 of the source and prints the sha256 of the output,
-which must match the table above.
+- **Runtime libraries** are committed to Git in
+  `stenographer/assets/nemo_speech/linux-x86_64/` and `linux-aarch64/`: the 12
+  files that the C library loads, from the release's Linux CPU tarballs.
+  `nemo_speech/SOURCES.txt` records the tarball and file SHA-256 values. Every
+  library has RPATH `$ORIGIN`, so each folder loads as a unit. The x86_64 build
+  needs an AVX2 CPU; without one the app records and transcribes with no
+  speaker labels.
+- **The speaker model** (`Nemotron-3-Diarization.q8_0.gguf`, 107,012,128
+  bytes, SHA-256 `08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1`)
+  is larger than GitHub's file limit and is never committed. `scripts/build.sh`
+  and the `native` workflow, which runs PyInstaller directly, run
+  `scripts/fetch_speaker_model.py` before the bundle is built. It downloads
+  the model from the pinned Hugging Face revision into `src/stenographer/assets/models/` (git-ignored).
+  A file with the pinned size and SHA-256 is kept, so a rebuild does not
+  download again; any mismatch fails the build. Run the script by hand to use
+  speaker separation from a source checkout.
+- **The bundle** ships the model and the libraries of the build architecture
+  only, once, under `_internal/stenographer/assets/`. The wheel and source
+  distribution carry the libraries of both architectures but not the model.
 
 ## Releases
 

@@ -32,7 +32,7 @@ same as the key.
 | Key | Action |
 | --- | --- |
 | `?` | Open the help overlay of the current screen; `?` or `escape` closes it. |
-| `q` / `ctrl+c` | Quit. The hub asks first while a recording, a relabel pass, or a file job runs, and while Settings has unsaved changes. |
+| `q` / `ctrl+c` | Quit. The hub asks first while a recording runs or still saves, while a file job runs, and while Settings has unsaved changes. |
 
 While a text input has focus, such as the Library search or a Settings row,
 letters, `?`, and `q` go to the input. The hint row then shows only the keys
@@ -65,8 +65,8 @@ change screens. The hub runs recording start, stop, and save work in the
 background so the interface can remain responsive.
 
 Press `q` or `ctrl+c` to quit. When work is active, the hub asks one question
-that lists each action: stop and save the recording, skip the running relabel,
-and cancel the running file job. Press `y`, `q`, or `ctrl+c` (or click the
+that lists each action: stop and save the recording, finish saving the stopped
+recordings, and cancel the running file job. Press `y`, `q`, or `ctrl+c` (or click the
 confirm button) to run the actions in order and quit; press `n` or `escape` (or
 click the cancel button) to keep working. If a recording cannot save or the
 file job cannot cancel, a notice shows the error and the hub stays open. A
@@ -107,12 +107,12 @@ depend on colour.
 | `up` / `down`, `pageup` / `pagedown`, `home` / `end` | Scroll the transcript. |
 
 Press `enter` (or click `[enter] ■ Stop & save`) to stop and save. The hub
-stays open. The save and the speaker relabel pass run in the background: the
-transcript title shows `relabeling…` and the top line shows
-`relabeling N of M` until the pass ends. While it runs, the saved session is
-busy: `rename busy` shows in the speaker bar, `[r] Rename…` is disabled, and `r` shows the notice
-`session busy`. You can press `space` to record again while the pass runs, and
-several stopped sessions can relabel at the same time. When the pass ends, the
+stays open and the save runs in the background: the transcript title shows
+`saving…` until it ends. The session keeps the speaker labels shown during the
+recording; a stop runs no speaker pass, so it takes seconds. While it saves, the
+saved session is busy: `rename busy` shows in the speaker bar, `[r] Rename…` is
+disabled, and `r` shows the notice `session busy`. You can press `space` to
+record again while it saves. When the save ends, the
 transcript ends with a marker line such as
 `── saved · 31 phrases · mic.flac 88 MB · system.flac 0.2 MB ──` (only the
 audio files that exist). Press `o` to show the session in Library. If the save
@@ -121,10 +121,8 @@ and the REC panel shows `! SAVE FAILED` with that session until the next recordi
 starts; `o` still shows what the session folder holds. If several saves fail, the
 panel lists each error and session, and each press of `o` shows the next session.
 
-If you quit while a relabel pass runs, the quit question lists it. Press `y` to
-skip each pass; the hub waits until each session has saved its files, then
-quits. The saved session keeps the labels that it had during the recording.
-Press `n` to keep the hub open.
+If you quit while a session still saves, the quit question lists it. Press `y`
+to quit after each session has saved; press `n` to keep the hub open.
 
 Each meter shows 18 frequency bands in 8 rows, the band labels
 `100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS, and a
@@ -154,8 +152,9 @@ scroll to the bottom to follow new lines again.
 The speaker bar lists each speaker that has transcript lines, with its talk time.
 The row wraps between speakers when it runs out of room. Each speaker shows as
 text, so it does not depend on colour. The end of the bar shows the count of failed
-phrases when there are any, and `! mic audio not saved` when a source's audio
-cannot be written. `[r] Rename…` sits in the transcript title row. After such a failure the source keeps
+phrases when there are any, `! mic audio not saved` when a source's audio
+cannot be written, and a notice when lines get no speaker label (see
+[Speaker labels](#speaker-labels)). `[r] Rename…` sits in the transcript title row. After such a failure the source keeps
 transcribing, its audio file ends at the failure, and the recording still saves
 its transcript. Press `r` (or click `[r] Rename…`) to open the Rename speaker dialog:
 choose the speaker, type the new name, and press `enter` (or click `[enter] Rename`); `escape` cancels. During a recording, the
@@ -173,8 +172,9 @@ stenographer model download --asr
 
 It needs `python3-venv`, 10 GiB of free disk, and about 10.2 GiB of RAM; see
 [build the speech model](usage.md#build-the-speech-model). Record also uses the
-Silero voice-activity model and the English speaker model, WeSpeaker
-ResNet34-LM. Both ship with the app, so there is nothing else to download.
+Silero voice-activity model and the speaker model, NVIDIA Nemotron-3-Diarization,
+run by NeMo-Speech.cpp. Both ship with the app, so there is nothing else to
+download. Speaker labels need an x86-64 CPU with AVX2 or an ARM64 CPU.
 
 ### Separate the speakers in a room
 
@@ -182,18 +182,14 @@ When several people share one microphone, turn on microphone diarization:
 set `live.diarize_mic` (default `false`) on the Live tab of Settings. A new
 recording then labels microphone speakers `Room 1`, `Room 2`, and so on
 (speaker IDs `room-1`, `room-2`), apart from the system speakers (`Speaker 1`,
-...). Microphone and system voices are never clustered together, so a room
+...). Microphone and system audio are separate speaker streams, so a room
 voice and a system voice never share a label. `r` lists room speakers with the
 system speakers. The setting applies when a recording starts; Record has no
 toggle for it. With the setting off, microphone lines are `You`.
 
 Limits:
 
-- During a recording, labels are per phrase. Voice-activity detection splits
-  phrases at pauses, so a speaker change without a pause stays in one phrase under
-  one label until the recording is saved.
-- Room labels are similarity estimates, like system labels. They can split one
-  person or merge several people.
+- Room labels are estimates. They can split one person or merge several people.
 - System audio that leaks into the microphone can appear as a room speaker. Use
   headphones to avoid this.
 
@@ -212,42 +208,24 @@ processing queue, so a backlog can delay lines. Running `stenographer run` and
 the hub together is supported. Each loads its own copy of the speech model,
 and both can compete for CPU time.
 
-### Relabel rules
+### Speaker labels
 
-During a recording, stenographer regroups speakers every 30 seconds of recording. It runs the batch speaker-label pass over the phrases so far, separately for system phrases and, when microphone diarization is on, microphone phrases. Between passes, each new phrase joins the nearest known speaker, so a new voice can show under another speaker's label until the next pass. Only the first phrase of a source creates a speaker without a pass. A pass can move earlier lines to a different speaker. Known speakers keep their numbers and given names from pass to pass during the recording. The speaker list shows only speakers that have lines.
+A line ends at a pause or where the speaker changes, and has one speaker.
+Nemotron-3-Diarization finds the speaker changes; each line is decoded once.
+A part of a line that decodes to no text joins the part before it (or its only
+neighbour) and is decoded once more, so its speech stays in a line.
+During a recording, a line shows about one second after its last word, when its
+speakers are final. Speakers are numbered from 1 in order of first appearance,
+per source: `Speaker N` for system audio, `Room N` for the microphone with
+`live.diarize_mic` on. Labels are estimates, not identity checks.
 
-When you stop and save a session, stenographer runs a batch speaker-label pass
-on the saved system phrases, and separately on the microphone phrases when
-microphone diarization is on, and stores the revised labels in a new transcript
-revision. This pass also runs when you confirm quit during a recording. Speaker
-labels are similarity estimates, not reliable identity checks. A minor voice gets its own label only if it has at
-least 15 seconds of phrases that are each at least 2 seconds long within a
-30-second window and at least two-thirds of its speech in those sustained
-phrases, or if it has at least 30 seconds of speech or 20% of the top speaker's
-speech time, whichever is less. Otherwise, stenographer merges that voice into the most similar voice. Short or
-sparse phrases can therefore remain under another speaker's label.
-
-The saved speakers come from the saved audio. For each source with lines,
-stenographer runs the bundled pyannote segmentation model on the whole source,
-keeps the pieces of speech of 0.5 seconds or more, and groups the pieces with the
-rules above. A line gets the speaker with the most overlap in seconds. A line with
-no piece stays and gets the closest voice. A source with no saved audio, or one
-where the model finds no speech, groups whole lines. An older recording changes
-only when you press `d` or `t`.
-
-The model runs in a separate process, so the hub stays live and `q` stops the pass
-at once. A long pass uses much memory: on the recordings measured, 82 minutes of
-audio took about 1.7 GB in that process, and 287 minutes took about 7.4 GB. The app
-itself held about 1.1 GB and 1.7 GB for the same recordings with the earlier speaker
-model. If the process dies for any reason, including when the
-system runs out of memory, the pass counts as failed.
-
-When a pass merges speakers, the merged speaker keeps the number of the speaker with the most speech that an earlier pass grouped, and a renamed speaker chooses before an unnamed one. If two renamed speakers merge, only one name can stay on the merged speaker. When the session saves, speakers are numbered from 1 in order of first appearance, with no gaps, so a number can change once at save, for example `Room 3` becomes `Room 2`. Given names stay. If you skip the end pass, or it fails, stenographer saves the speakers and names shown on screen, numbered the same way, and a failure shows the reason on the saved Record screen. If that save fails, the stop shows as a failed save. File jobs and re-diarize number clusters by first appearance and keep each renamed label on one cluster, the one with the most shared speech time. Rename several speakers to the same name
-to merge their displayed labels; this does not change their speaker IDs. The
-speaker model is WeSpeaker ResNet34-LM. Pieces of saved audio group at a
-similarity limit of 0.45; whole lines, and the regroups during a recording, at
-0.40. These limits were tested on six sources of five recordings, so labels are not reliable
-identification.
+Lines get no speaker label (`You` for the microphone, `System` for system audio)
+when the CPU cannot run the speaker model, or the speaker process does not start
+or stops. Settings > Checks shows the reason in the `speaker labels` row. If the
+speaker process falls a minute behind the audio of a source, that source shows
+`! system speakers behind` (or `mic`) in the speaker bar and its new lines get no
+speaker label; when you stop, stenographer labels that source again from its
+saved audio, and the speaker bar's notice is the only sign before then.
 
 ### Saved session files and privacy
 
@@ -283,13 +261,13 @@ entry. The list scrolls to keep the selected row in view. It holds saved recordi
 not finished, newest first. Its columns are `date`, `dur`, `kind` (`rec` or
 `file`), `spk` (speaker count), and `labels`:
 
-- **Recording:** `labels` is `live` for live speaker labels, also after a
-  skipped or failed end pass, `relabeled` when the relabel pass or a re-diarize
-  ran, a revision method such as `rename` or
+- **Recording:** `labels` is `live` for the speaker labels shown during the
+  recording, `relabeled` after a re-diarize or after a stop that labelled a
+  source again from its saved audio, a revision method such as `rename` or
   `re-transcribe`, or `! interrupted` when the recording stopped without a
   clean save.
 - **File session:** `labels` is the name of the source file. If the speaker pass
-  failed at the end of the job, the detail above the transcript shows `live labels`
+  of the job failed or could not run, the detail above the transcript shows `live labels`
   until a later revision, such as a rename or Re-transcribe.
 - **File job:** `dur` shows `queued` or the percent done, and `labels` shows the
   source file name. A failed job shows `× failed`; press `delete` to remove its
@@ -320,8 +298,8 @@ the transcript. Each action is a button that prints its key:
 | `escape` | Clear the search. |
 | `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. On another session, `p` stops the audio that plays and starts that session. A notice shows when the player exits with an error. |
 | `r` | Rename a speaker of the session. Speakers that share a name are one row, and all of them get the new name. |
-| `d` | Re-diarize the session. This also needs the speech model. A file session cannot: use Re-transcribe. |
-| `t` | Re-transcribe the session and group its speakers again, so labels can change. This also needs the speaker model when a source has speaker separation. |
+| `d` | Re-diarize the session. This also needs the speech model. A file session cannot: use Re-transcribe. A recording without separated speakers (no system lines, and mic lines recorded as `You`) cannot either. |
+| `t` | Re-transcribe the session. A source with speaker separation also gets its speakers again, so labels can change. |
 | `x` | Export the transcript. |
 | `delete` | Delete the session after confirmation. On a queued or running job, cancel it after confirmation. |
 | `pageup` / `pagedown`, `home` / `end` | Scroll the transcript. |
@@ -343,15 +321,19 @@ exported file. If export fails, the dialog keeps the folder and format so you ca
 Re-diarization and re-transcription write new transcript revisions and keep
 previous revisions. If an existing `session.json` is unreadable or invalid,
 the revision fails to preserve its metadata. Older sessions without that file
-can still be revised. Re-labeling uses the same speaker similarity limits as the
-Record screen. Re-diarization relabels microphone lines as `Room N` speakers only
-for a session recorded with microphone diarization (`"diarize_mic": true` in its
-`session.json`). For other sessions, including older ones, it relabels system
-lines only and microphone lines stay `You`. `r` can rename room speakers.
+can still be revised. Both use the [speaker label rule](#speaker-labels) on the
+saved audio of each source with speaker separation: a line where the speaker
+changes is cut there and each part is decoded again. Re-diarization labels
+microphone lines as `Room N` speakers only for a session recorded with
+microphone diarization (`"diarize_mic": true` in its `session.json`). For
+other sessions, including older ones, it labels system lines only and
+microphone lines stay `You`. A new speaker keeps the name you gave to most of
+its time. Saved sessions keep their labels until you press `d` or `t`.
 
-A long phrase can hold more than one speaker. On a source with speaker separation, a line where another voice holds a run of at least 1 second is cut, each part is decoded again, and each part gets the speaker of its run. A line has no minimum length. Where two voices overlap, the voice that started last holds the time, and a voice that speaks over a longer one gets its own run before the longer voice continues. If any part decodes to no text, the line stays whole, so no words are lost. A microphone without diarization stays `You`.
-
-This runs at four points: during the relabel pass when a recording stops (`q` skips it with that pass); on Re-diarize, which therefore also needs the speech model; on Re-transcribe, which also needs the speaker model when a source has speaker separation; and at the end of a file job, which keeps a speaker count you set. The count applies to the pieces of speech, so fewer speakers than the number set can have lines. If the pass fails at the end of a file job, the job still saves its lines with the speakers from transcription and marks them `live labels`. If it fails on Re-diarize or Re-transcribe, the Library shows the failure and the previous revision stays. Re-transcribe now groups speakers again, so speaker labels can change; given names carry over. On an imported file it groups automatically and ignores a count set at import, so it can change the speaker count. A file session with one speaker keeps its labels and is not split. If the model finds no speech in a file session and all its phrases are shorter than 1.2 s, Re-transcribe gives it one speaker. Stopping a long recording takes longer: about 4% of its length on an 82-minute recording with much speech, before the parts are decoded.
+Re-diarize fails when speaker labels cannot run on this computer; Re-transcribe
+then keeps the speakers and replaces only the text. A file imported without
+Separate speakers keeps its one speaker. A file imported before this record
+existed counts as separated when it has two speakers or its speaker pass failed.
 
 ### Transcribe a file
 
@@ -362,10 +344,8 @@ dialog. It has a file browser and the job options:
   supported audio files of the current folder, with durations when soundfile can determine them. Hidden folders are listed; search with a leading dot to show hidden audio files. If a folder cannot be read, the browser shows the reason and retains `..` for navigation. Press `up` and `down` (or click a row) to select
   an entry. Press `enter` on a folder to open it. Press `/` to search names in
   the current folder; `escape` clears the search.
-- **Separate speakers** (`s`): identify and label speakers. On by default.
-- **Speaker count** (`c`): `auto` (the default) or a whole number above 0. Any
-  other value shows `× Speaker count must be auto or a whole number above 0`
-  and the dialog stays open.
+- **Separate speakers** (`s`): identify and label speakers; a line also ends
+  where the speaker changes. On by default.
 - **Refine text** (`r`): apply the configured text-refinement service. Off by
   default.
 
@@ -398,8 +378,8 @@ Each job saves its result in the sessions folder, next to your recordings
   transcript revision of that recording. The revision holds the new lines of
   that source and the current lines of the other source, ordered by start
   time. New speakers get IDs such as `mic-file-r3-1` and the labels `Room 1`
-  (mic) or `Speaker 1` (system); without Separate speakers, mic lines are
-  `You`. Earlier renames of the replaced source do not carry over.
+  (mic) or `Speaker 1` (system); when speakers are not separated, mic lines
+  are `You` and system lines `System`. Earlier renames of the replaced source do not carry over.
 - **`source.<ext>` of a file session:** the job saves a new transcript
   revision that replaces all lines.
 
@@ -579,7 +559,6 @@ The Record meters use the saved spectrum floor for each new recording. Returning
 to a saved recording refreshes its transcript; deleting that session clears Record.
 Library shows search progress and read errors, including alongside file jobs.
 Speaker rename waits for the session details to load. File transcription requires
-a valid configuration before the dialog opens; when speaker separation is off,
-the speaker count is disabled and ignored. Switching Settings tabs keeps a valid
+a valid configuration before the dialog opens. Switching Settings tabs keeps a valid
 inline edit and stays on the current tab if the value is invalid. Model status
 refreshes when the dialog opens and before or after a download.

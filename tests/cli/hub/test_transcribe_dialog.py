@@ -10,7 +10,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import soundfile as sf
-from textual.widgets import Input
 
 from stenographer.cli.hub.app import HubApp
 from stenographer.cli.hub.library_screen import LibraryScreen
@@ -27,8 +26,6 @@ from tests.cli.hub.test_library import FakeServices, _library, _rows, _until
 from tests.cli.hub.test_session_jobs import FakePlatform
 from tests.lib.files.test_engine import FakeSegmenter, _file_asr_process
 from tests.lib.transcribe.support import FakeAsrTransport
-
-FAIL = "\N{MULTIPLICATION SIGN}"
 
 
 class RecordingServices(FakeServices):
@@ -91,8 +88,6 @@ def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
                 "[/] search",
                 "Separate speakers",
                 "[s] (●) on",
-                "[c] Speaker count",
-                "auto",
                 "Refine text",
                 "[r] ( ) off",
                 "[esc] Cancel",
@@ -100,6 +95,7 @@ def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
             ):
                 assert label in text, label
             assert "Language" not in text
+            assert "Speaker count" not in text
             rows = _list_rows(app)
             assert rows[0] == "  .."
             assert rows[1] == "▶ meetings/"
@@ -130,7 +126,7 @@ def test_transcribe_dialog_browses_the_home_folder_and_searches(tmp_path):
 
 
 @pytest.mark.parametrize("by", ("key", "click"))
-def test_transcribe_options_and_an_invalid_speaker_count(tmp_path, by):
+def test_transcribe_options_by_key_and_click(tmp_path, by):
     home = _home(tmp_path)
     services = RecordingServices(tmp_path / "sessions")
     app = make_app(tmp_path, services, files_home=home)
@@ -140,35 +136,17 @@ def test_transcribe_options_and_an_invalid_speaker_count(tmp_path, by):
             await _open_dialog(pilot, app)
             await pilot.press("down")
             if by == "key":
-                await pilot.press("r", "c")
+                await pilot.press("r", "s")
             else:
                 await pilot.click("#transcribe-refine")
-                await pilot.click("#transcribe-count-button")
+                await pilot.click("#transcribe-speakers")
             text = _screen_text(app)
-            assert "[s] (●) on" in text and "[r] (●) on" in text
-            count = app.screen.query_one("#transcribe-count", Input)
-            assert app.screen.focused is count
-
-            for bad in ("zero", "0", "-2", "1.5"):
-                count.value = bad
-                await pilot.press("enter")
-                await pilot.pause()
-                assert isinstance(app.screen, TranscribeDialog)
-                assert (
-                    f"{FAIL} Speaker count must be auto or a whole number above 0"
-                    in _screen_text(app)
-                )
-            assert services.jobs == []
-
-            await pilot.click("#transcribe-speakers")
-            assert count.disabled
+            assert "[s] ( ) off" in text and "[r] (●) on" in text
             await pilot.press("enter")
             await _until(pilot, lambda: len(services.jobs) == 1, "no job was queued")
             job = services.jobs[0]
             assert job.options.path == home / "alpha.wav"
-            assert services.submitted_options == [
-                {"diarize": False, "speaker_count": None, "refine": True}
-            ]
+            assert services.submitted_options == [{"diarize": False, "refine": True}]
 
     asyncio.run(exercise())
 
@@ -187,9 +165,7 @@ def test_transcribe_queues_one_job_and_the_library_selects_its_row(tmp_path):
             await _until(pilot, lambda: isinstance(app.screen, LibraryScreen))
             await _until(pilot, lambda: screen.selected_id == "job:file-1", "row not selected")
             assert [job.options.path for job in services.jobs] == [home / "bravo.flac"]
-            assert services.submitted_options == [
-                {"diarize": True, "speaker_count": None, "refine": False}
-            ]
+            assert services.submitted_options == [{"diarize": True, "refine": False}]
             assert len(screen.entries) == 5
             rows = _rows(app)
             assert rows[0].startswith("▶") and "queued" in rows[0] and "bravo.flac" in rows[0]

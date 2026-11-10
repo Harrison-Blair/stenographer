@@ -16,7 +16,7 @@ import soundfile as sf
 
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions.models import SessionDetail, SessionSummary
-from stenographer.lib.sessions.persistence import SPEAKER_PASS_FAILED_KEY
+from stenographer.lib.sessions.persistence import DIARIZE_KEY, SPEAKER_PASS_FAILED_KEY
 
 _SESSION_ID = re.compile(r"(?P<start>\d{8}T\d{6}Z)(?:-\d+)?\Z")
 _REVISION = re.compile(r"transcript\.r(?P<number>[2-9]|[1-9]\d+)\.jsonl\Z")
@@ -339,4 +339,9 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
         activity,
         revision,
         diarize_mic=metadata.get("diarize_mic") is True,
+        diarize=(
+            metadata.get(DIARIZE_KEY)
+            if kind == "file" and isinstance(metadata.get(DIARIZE_KEY), bool)
+            else None
+        ),
     )

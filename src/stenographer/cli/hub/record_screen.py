@@ -315,9 +315,8 @@ class RecordScreen(HubScreen):
     def _draw_transcript(self, state: str, session, lines: tuple, speakers: tuple) -> None:
         count = len(speakers)
         title = f"transcript · {count} {'speaker' if count == 1 else 'speakers'}"
-        relabeling = state == "saved" and self._stopping(session)
-        if relabeling:
-            title += " · relabeling…"
+        if state == "saved" and self._stopping(session):
+            title += " · saving…"
         update_changed(self.query_one("#transcript-title", Static), title)
         view = "▶ mixed  split" if not self.split else "mixed  ▶ split"
         self._set_button(self.query_one("#view-button", HubButton), "v", view, "toggle_view")
@@ -327,8 +326,7 @@ class RecordScreen(HubScreen):
         )
 
         marker = self._marker(session, lines) if state == "saved" else None
-        relabel_error = getattr(session, "relabel_error", None) if state == "saved" else None
-        key = (lines, speakers, self.split, marker, relabel_error)
+        key = (lines, speakers, self.split, marker)
         if key == self._transcript_key:
             return
         self._transcript_key = key
@@ -349,10 +347,6 @@ class RecordScreen(HubScreen):
         rows.extend(self._rows.rows(lines, speaker_ids, layout=layout))
         if marker is not None:
             rows.append(Text(f"── {marker} ──", style="#6ee69a", no_wrap=True))
-        if relabel_error:
-            rows.append(
-                Text(f"Relabeling failed: {relabel_error}. Live labels kept.", style="#ffaf5f")
-            )
         self.query_one("#transcript", TranscriptScroll).update_content(Group(*rows))
 
     def _transcript_data(self, session) -> tuple[tuple, tuple]:
@@ -415,6 +409,9 @@ class RecordScreen(HubScreen):
             items.append(item)
         if not items:
             items.append(Text("no speakers yet", style="#8b93a1"))
+        notice = getattr(session, "speaker_notice", None) if session is not None else None
+        if notice:
+            items.append(Text(f"! {notice}", style="#ffaf5f"))
         failed = getattr(session, "failed_phrase_count", 0) if session is not None else 0
         if failed:
             noun = "phrase" if failed == 1 else "phrases"

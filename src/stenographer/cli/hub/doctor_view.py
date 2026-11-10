@@ -29,6 +29,9 @@ WARNING_DESCRIPTIONS = {
     "deliver: restore_failed": "The clipboard was not restored after a paste.",
     "feedback: cue_failed": "A sound cue did not play.",
     "files: job_failed": "A file job did not finish.",
+    "files: speaker_pass_failed": "A file job got no speaker labels.",
+    "sessions: speakers_failed": "Re-transcribe kept the speakers: speaker labels did not run.",
+    "files: speakers_unavailable": "A file job got no speaker labels.",
     "hotkey: enumerate_failed": "The keyboard devices could not be listed.",
     "hub: doctor_probe_failed": "The checks did not run.",
     "hub: session_job_failed": "A session job did not finish.",
@@ -36,7 +39,10 @@ WARNING_DESCRIPTIONS = {
     "live: model_load_failed": "A live model did not load.",
     "live: audio_save_failed": "Session audio could not be saved.",
     "live: phrase_failed": "One live phrase was not transcribed.",
-    "live: relabel_failed": "The speaker relabel pass did not finish.",
+    "live: speaker_pass_failed": "Speakers were not labelled from the saved audio.",
+    "live: speakers_behind": "Live speaker labels fell behind and stopped.",
+    "live: speakers_failed": "Live speaker labels stopped.",
+    "live: speakers_unavailable": "Speaker labels are not available.",
     "live: source_start_failed": "A live audio source did not start.",
     "live: system_source_failed": "System audio stopped; the mic went on recording.",
     "live: system_source_unavailable": "System audio could not be used for this recording.",
@@ -322,7 +328,9 @@ def build_report(config: Config) -> DoctorReport:
     for check in extra.values():
         add(
             check.check_id,
-            {"python_venv": "python venv"}.get(check.check_id, check.check_id),
+            {"python_venv": "python venv", "speakers": "speaker labels"}.get(
+                check.check_id, check.check_id
+            ),
             "other",
             check.status == "ok",
             check.detail,
