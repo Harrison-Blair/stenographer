@@ -10,6 +10,7 @@ from __future__ import annotations
 import bisect
 import itertools
 import math
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -34,6 +35,10 @@ NO_SPEAKER = {
     "system": ("system", "System"),
     "file": ("speaker-1", "Speaker 1"),
 }
+
+
+# The labels stenographer gives; any other label is a name the user gave.
+_DEFAULT_LABEL = re.compile(r"(?:Speaker|Room) [1-9][0-9]*|You|System")
 
 
 @dataclass(frozen=True)
@@ -163,11 +168,12 @@ def read_saved_audio(path: Path, start: float, end: float) -> np.ndarray:
 
 
 def given_name(line: TranscriptLine) -> str | None:
-    """The name the user gave the speaker of *line*, or ``None`` for a default label."""
-    if (line.speaker_id, line.label) in NO_SPEAKER.values():
-        return None
-    prefix, _, number = line.speaker_id.rpartition("-")
-    return None if line.label == f"{prefix.capitalize()} {number}" else line.label
+    """The name the user gave the speaker of *line*, or ``None`` for a default label.
+
+    Every ID scheme (recordings, file sessions, re-imported sources) gives only these
+    defaults, so the label alone tells a default from a given name.
+    """
+    return None if _DEFAULT_LABEL.fullmatch(line.label) else line.label
 
 
 def shifted_wall(wall: str, seconds: float) -> str:

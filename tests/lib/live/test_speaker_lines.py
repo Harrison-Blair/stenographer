@@ -102,7 +102,14 @@ def test_the_stream_clock_maps_each_run_to_its_session_time():
         ("you", "You", None),
         ("system", "System", None),
         ("speaker-3", "Alex", "Alex"),
-        ("room-2", "Speaker 2", "Speaker 2"),
+        # A re-imported recording source.
+        ("mic-file-r2-2", "Room 2", None),
+        ("system-file-r3-1", "Speaker 1", None),
+        ("mic-file-r2-1", "You", None),
+        ("system-file-r2-1", "System", None),
+        ("mic-file-r2-1", "Dana", "Dana"),
+        # A file session without speaker separation.
+        ("speaker-1", "Speaker 1", None),
     ],
 )
 def test_given_name_tells_a_name_from_a_default_label(speaker_id, label, name):
@@ -198,3 +205,23 @@ def test_relabel_stops_on_a_cancel():
     )
 
     assert result is None
+
+
+def test_relabel_numbers_a_re_imported_source_by_first_appearance():
+    lines = [
+        TranscriptLine(0.0, 4.0, "", "mic", "mic-file-r2-2", "Room 2", "old"),
+        TranscriptLine(4.0, 8.0, "", "mic", "mic-file-r2-1", "Room 1", "old"),
+    ]
+
+    result = relabel_lines(
+        lines,
+        [S(0, 0.0, 4.0), S(1, 4.0, 8.0)],
+        SpeakerNames("mic"),
+        read_audio=lambda start, end: np.zeros(round((end - start) * RATE), np.float32),
+        decode=lambda _samples: "a",
+    )
+
+    assert [(line.speaker_id, line.label) for line in result] == [
+        ("room-1", "Room 1"),
+        ("room-2", "Room 2"),
+    ]
