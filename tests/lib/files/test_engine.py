@@ -179,6 +179,7 @@ def test_file_job_writes_phrase_text_to_a_new_file_session_and_progress_preview(
         assert (session / "source.wav").read_bytes() == source.read_bytes()
         assert json.loads((session / "session.json").read_text(encoding="utf-8")) == {
             "current_revision": "transcript.jsonl",
+            "diarize": False,
             "duration_seconds": 2.0,
             "kind": "file",
             "source_file": "source.wav",

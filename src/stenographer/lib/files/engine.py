@@ -200,6 +200,7 @@ class FilesEngine:
                     lines=lines,
                     should_cancel=lambda: job.cancel_requested,
                     speaker_pass_failed=speaker_pass_failed,
+                    diarize=job.options.diarize,
                 )
             else:
                 session_id, source = target

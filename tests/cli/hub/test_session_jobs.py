@@ -711,3 +711,61 @@ def test_stale_revision_keeps_a_rename_saved_during_the_job(tmp_path, operation)
         ("mic", "you", "You", "second fixture line"),
     ]
     assert not (session / "transcript.r3.jsonl").exists()
+
+
+def _one_speaker_file_session(sessions_root: Path, tmp_path: Path, **options) -> str:
+    source = tmp_path / "Interview.wav"
+    sf.write(source, np.full(48_000, 0.1, dtype=np.float32), 16_000)
+    return SessionStore(sessions_root).create_file_session(
+        source,
+        started_at=datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC),
+        duration_seconds=3.0,
+        lines=[
+            TranscriptLine(0.0, 1.0, "", "file", "speaker-1", "Speaker 1", "alpha"),
+            TranscriptLine(1.5, 2.5, "", "file", "speaker-1", "Speaker 1", "bravo"),
+        ],
+        **options,
+    )
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"diarize": True}, {"speaker_pass_failed": True}],
+    ids=["one-speaker-found", "failed-pass"],
+)
+def test_retranscribe_runs_the_speaker_pass_of_a_file_imported_with_separation(tmp_path, options):
+    sessions_root = tmp_path / "sessions"
+    session_id = _one_speaker_file_session(sessions_root, tmp_path, **options)
+    store = SessionStore(sessions_root)
+    diarizer = FakeDiarizer((SpeakerSegment(0, 0.0, 1.2), SpeakerSegment(1, 1.2, 3.0)))
+    jobs = SessionJobs(
+        store,
+        Config.defaults(),
+        FakePlatform(tmp_path, diarizer),
+        worker_factory=lambda *_args, **_kwargs: FakeWorker(),
+        media_decoder=RecordingDecoder(),
+    )
+
+    jobs.retranscribe(session_id)
+
+    assert len(diarizer.files) == 1
+    assert [line.label for line in store.read(session_id).lines] == ["Speaker 1", "Speaker 2"]
+
+
+def test_retranscribe_keeps_one_speaker_of_a_file_imported_without_separation(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session_id = _one_speaker_file_session(sessions_root, tmp_path, diarize=False)
+    store = SessionStore(sessions_root)
+    diarizer = FakeDiarizer((SpeakerSegment(0, 0.0, 1.2), SpeakerSegment(1, 1.2, 3.0)))
+    jobs = SessionJobs(
+        store,
+        Config.defaults(),
+        FakePlatform(tmp_path, diarizer),
+        worker_factory=lambda *_args, **_kwargs: FakeWorker(),
+        media_decoder=RecordingDecoder(),
+    )
+
+    jobs.retranscribe(session_id)
+
+    assert diarizer.files == []
+    assert [line.label for line in store.read(session_id).lines] == ["Speaker 1", "Speaker 1"]

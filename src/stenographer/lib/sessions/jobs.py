@@ -116,10 +116,17 @@ class SessionJobs:
         """Return the sources with speaker separation that have timed lines.
 
         Mic lines have it only in sessions recorded with mic diarization. A file session
-        keeps no record of the job's speaker option, so one speaker there means no separation.
+        has the job's speaker option; an older one without that record had separation
+        when it has two speakers or its speaker pass failed.
         """
         if detail.summary.kind == "file":
-            if len({line.speaker_id for line in detail.lines}) < 2:
+            separated = detail.diarize
+            if separated is None:
+                separated = (
+                    len({line.speaker_id for line in detail.lines}) >= 2
+                    or detail.summary.speaker_pass_failed
+                )
+            if not separated:
                 return ()
             sources = ("file",)
         else:

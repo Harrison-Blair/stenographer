@@ -329,8 +329,9 @@ microphone lines stay `You`. A new speaker keeps the name you gave to most of
 its time. Saved sessions keep their labels until you press `d` or `t`.
 
 Re-diarize fails when speaker labels cannot run on this computer; Re-transcribe
-then keeps the speakers and replaces only the text. A file session with one
-speaker keeps its labels and is not split.
+then keeps the speakers and replaces only the text. A file imported without
+Separate speakers keeps its one speaker. A file imported before this record
+existed counts as separated when it has two speakers or its speaker pass failed.
 
 ### Transcribe a file
 
