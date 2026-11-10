@@ -175,15 +175,6 @@ def test_rediarize_without_a_change_keeps_all_text(rig, monkeypatch):
     assert [text for _, text in rows(detail)] == ["old text"] * 3
 
 
-def test_an_undiarized_mic_stays_you_and_is_not_split(rig):
-    session = recorded(rig.root, "mic", ("you", "You"))
-
-    rig.jobs.rediarize(session)
-
-    detail = rig.store.read(session)
-    assert rows(detail) == [("you", "old text")] * 3
-
-
 def test_a_diarized_mic_splits_under_room_speakers(rig):
     session = recorded(rig.root, "mic", ("room-1", "Room 1"), diarized=True)
 

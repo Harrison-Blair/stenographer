@@ -882,3 +882,24 @@ def test_a_speaker_helper_process_that_cannot_start_degrades_retranscribe_and_re
     detail = store.read(session.name)
     assert detail.revision == "transcript.r2.jsonl"
     assert [line.text for line in detail.lines] == [f"new phrase {n}" for n in (1, 2, 3, 4)]
+
+
+def test_rediarize_refuses_a_recording_with_no_separated_source(tmp_path):
+    sessions_root = tmp_path / "sessions"
+    writer = SessionWriter.open(tmp_path, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
+    writer.write_audio("mic", np.full(16_000 * 12, 0.1, dtype=np.float32))
+    for start in (2.0, 5.0):
+        writer.append_line(TranscriptLine(start, start + 2.5, "", "mic", "you", "You", "x"))
+    writer.close()
+    session = writer.path
+    store = SessionStore(sessions_root)
+    diarizer = FakeDiarizer(TWO_TURNS)
+
+    with pytest.raises(ValueError, match="Nothing to re-diarize: mic lines are You"):
+        _jobs(tmp_path, store, diarizer).rediarize(session.name)
+
+    assert sorted(path.name for path in session.glob("transcript*")) == [
+        "transcript.jsonl",
+        "transcript.md",
+    ]
+    assert diarizer.files == []

@@ -296,7 +296,7 @@ the transcript. Each action is a button that prints its key:
 | `escape` | Clear the search. |
 | `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. On another session, `p` stops the audio that plays and starts that session. A notice shows when the player exits with an error. |
 | `r` | Rename a speaker of the session. Speakers that share a name are one row, and all of them get the new name. |
-| `d` | Re-diarize the session. This also needs the speech model. A file session cannot: use Re-transcribe. |
+| `d` | Re-diarize the session. This also needs the speech model. A file session cannot: use Re-transcribe. A recording without separated speakers (no system lines, and mic lines recorded as `You`) cannot either. |
 | `t` | Re-transcribe the session. A source with speaker separation also gets its speakers again, so labels can change. |
 | `x` | Export the transcript. |
 | `delete` | Delete the session after confirmation. On a queued or running job, cancel it after confirmation. |

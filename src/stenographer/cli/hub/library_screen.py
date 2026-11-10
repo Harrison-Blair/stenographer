@@ -39,6 +39,7 @@ from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
+from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.sessions.models import SessionSummary
 
 if TYPE_CHECKING:
@@ -425,7 +426,7 @@ class LibraryScreen(HubScreen):
             for button_id in ("library-rename", "library-rediarize", "library-retranscribe"):
                 if busy:
                     labels[button_id] = (f"{labels[button_id][0]} · busy", True)
-            if entry.kind == "file":
+            if entry.kind == "file" or self._rediarize_refusal(entry) is not None:
                 labels["library-rediarize"] = ("Re-diarize", True)
             if entry.job_active:
                 labels["library-delete"] = ("Cancel job… · busy", False)
@@ -800,15 +801,23 @@ class LibraryScreen(HubScreen):
             log_failure(log, logging.ERROR, "hub: session_playback_failed", exc, safe=True)
             self.app.notify(f"Could not play this session: {exc}", severity="error")
 
+    def _rediarize_refusal(self, entry: LibraryEntry) -> str | None:
+        """Why Re-diarize cannot run on *entry*, once its detail is loaded."""
+        if self._detail_id != entry.session_id or self.detail is None:
+            return None
+        return SessionJobs.rediarize_refusal(self.detail)
+
     def action_session_rediarize(self) -> None:
         entry = self._selected_session()
         if entry is None:
             return
-        if entry.kind == "file":
-            self.app.notify(
-                "Re-diarize is not available for a file session: use Re-transcribe.",
-                severity="warning",
-            )
+        refusal = (
+            "Re-diarize is not available for a file session: use Re-transcribe."
+            if entry.kind == "file"
+            else self._rediarize_refusal(entry)
+        )
+        if refusal is not None:
+            self.app.notify(refusal, severity="warning")
             return
         self._start_job("Re-diarize", entry.entry_id, self.app.services.session_jobs.rediarize)
 

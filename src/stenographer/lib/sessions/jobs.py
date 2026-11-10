@@ -58,23 +58,33 @@ class SessionJobs:
     def update_config(self, config: Config) -> None:
         self._config = config
 
+    @classmethod
+    def rediarize_refusal(cls, detail: SessionDetail) -> str | None:
+        """Why Re-diarize cannot run on *detail*, or ``None`` when it can."""
+        if detail.summary.kind == "file":
+            return "Re-diarize is not available for a file session: use Re-transcribe."
+        if cls._separated_sources(detail):
+            return None
+        if any(line.source == "mic" for line in detail.lines):
+            return "Nothing to re-diarize: mic lines are You."
+        return "Nothing to re-diarize: this recording has no timed lines."
+
     def rediarize(self, session_id: str) -> str:
         detail = self._store.read(session_id)
-        if detail.summary.kind == "file":
-            raise ValueError("re-diarize is not available for a file session; use Re-transcribe")
+        refusal = self.rediarize_refusal(detail)
+        if refusal is not None:
+            raise ValueError(refusal)
         sources = self._separated_sources(detail)
-        lines = list(detail.lines)
-        if sources:
-            diarizer = self._open_diarizer(required=True)
-            try:
-                found = self._speaker_segments(session_id, detail, sources, diarizer)
-            finally:
-                diarizer.close()
-            worker = self._make_worker()
-            try:
-                lines = self._relabel_sources(session_id, detail, found, worker)
-            finally:
-                worker.shutdown()
+        diarizer = self._open_diarizer(required=True)
+        try:
+            found = self._speaker_segments(session_id, detail, sources, diarizer)
+        finally:
+            diarizer.close()
+        worker = self._make_worker()
+        try:
+            lines = self._relabel_sources(session_id, detail, found, worker)
+        finally:
+            worker.shutdown()
         return self._store.write_revision(
             session_id, lines, method="diarization", expected_revision=detail.revision
         )
