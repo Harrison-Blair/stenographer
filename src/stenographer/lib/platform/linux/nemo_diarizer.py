@@ -157,7 +157,7 @@ class _Stream:
             self._tail = ()
             self._unanswered.clear()
             self._queued_seconds = 0.0
-        self._owner.release(self._sid)
+        self._owner.forget(self._sid)
 
     def wait_replies(self, should_cancel: Callable[[], bool]) -> bool:
         """Wait until the helper has handled every push; False on a cancel."""
@@ -216,8 +216,11 @@ class NemoSpeakerDiarizer:
         self._ids = itertools.count()
         self._process = None
         self._commands: Connection | None = None
-        # Messages for the helper, in order; the sender thread drains it.
-        self._outbox: collections.deque[tuple] = collections.deque()
+        # Messages for the helper, one queue per stream in order. The sender thread
+        # takes one message from each waiting stream in turn, so a stream that is
+        # behind never delays another. Each queue is bounded by its stream.
+        self._queues: dict[int, collections.deque[tuple]] = {}
+        self._turns: collections.deque[int] = collections.deque()
         self._outbox_ready = threading.Condition()
         self._sending = False
         self._failure: str | None = None
@@ -266,10 +269,16 @@ class NemoSpeakerDiarizer:
     def _send_loop(self, commands: Connection) -> None:
         while True:
             with self._outbox_ready:
-                self._outbox_ready.wait_for(lambda: self._outbox or not self._sending)
+                self._outbox_ready.wait_for(lambda: self._turns or not self._sending)
                 if not self._sending:
                     return
-                message = self._outbox.popleft()
+                sid = self._turns.popleft()
+                waiting = self._queues[sid]
+                message = waiting.popleft()
+                if waiting:
+                    self._turns.append(sid)
+                else:
+                    del self._queues[sid]
             try:
                 commands.send(message)
             except OSError:
@@ -297,27 +306,30 @@ class NemoSpeakerDiarizer:
             stream.fail(reason)
 
     def send(self, message: tuple) -> None:
+        """Queue *message* behind the earlier messages of its stream (``message[1]``)."""
+        sid = message[1]
         with self._outbox_ready:
-            if self._sending:
-                self._outbox.append(message)
-                self._outbox_ready.notify()
+            if not self._sending:
+                return
+            if sid not in self._queues:
+                self._queues[sid] = collections.deque()
+                self._turns.append(sid)
+            self._queues[sid].append(message)
+            self._outbox_ready.notify()
 
     def queued_pushes(self, sid: int) -> int:
-        """Pushes of stream *sid* still waiting in the outbox."""
+        """Pushes of stream *sid* still waiting to go to the helper."""
         with self._outbox_ready:
-            return sum(1 for m in self._outbox if m[0] == "push" and m[1] == sid)
-
-    def release(self, sid: int) -> None:
-        """Drop the queued audio of stream *sid* and close it in the helper."""
-        with self._outbox_ready:
-            self._outbox = collections.deque(
-                m for m in self._outbox if not (m[0] == "push" and m[1] == sid)
-            )
-        self.forget(sid)
+            return sum(1 for m in self._queues.get(sid, ()) if m[0] == "push")
 
     def forget(self, sid: int) -> None:
+        """End stream *sid*: drop everything it still has queued and close it in the
+        helper. A push the helper is handling may finish; its reply is ignored."""
         with self._lock:
             known = self._streams.pop(sid, None) is not None
+        with self._outbox_ready:
+            if self._queues.pop(sid, None) is not None:
+                self._turns.remove(sid)
         if known:
             self.send(("close", sid))
 
@@ -369,7 +381,8 @@ class NemoSpeakerDiarizer:
                 self._failure = "speaker separation was stopped"
         with self._outbox_ready:
             self._sending = False
-            self._outbox.clear()
+            self._queues.clear()
+            self._turns.clear()
             self._outbox_ready.notify_all()
         if process is not None:
             process.kill()
