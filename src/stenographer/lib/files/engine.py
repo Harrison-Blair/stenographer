@@ -21,7 +21,7 @@ from stenographer.lib.files.media import MediaInfo, inspect_media, iter_media_au
 from stenographer.lib.files.models import FileJobOptions
 from stenographer.lib.live.models import vad_model_path
 from stenographer.lib.live.phrase_segmenter import PhraseSegmenter
-from stenographer.lib.live.speaker_lines import SpeakerNames, speaker_pieces
+from stenographer.lib.live.speaker_lines import NO_SPEAKER, SpeakerNames, speaker_pieces
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.sessions.errors import SessionWriteCancelledError, StaleRevisionError
@@ -209,6 +209,7 @@ class FilesEngine:
                     session_id,
                     source,
                     lines,
+                    separated=segments is not None,
                     # A failed pass reads as a recording does after a failed end pass.
                     method="live" if speaker_pass_failed else "file-transcribe",
                 )
@@ -363,9 +364,14 @@ class FilesEngine:
         source: str,
         lines: list[TranscriptLine],
         *,
+        separated: bool,
         method: str,
     ) -> list[TranscriptLine]:
-        """Save new lines of one source as a revision of the session that holds it."""
+        """Save new lines of one source as a revision of the session that holds it.
+
+        *separated* is whether the speaker pass ran and gave segments; without it a
+        recording's lines are ``You`` (mic) or ``System`` (system).
+        """
         detail = self._store.read(session_id)
         revision_name = self._store.next_revision_name(session_id)
         revised = list(lines)
@@ -375,12 +381,8 @@ class FilesEngine:
             speakers: dict[str, int] = {}
             new_lines = []
             for line in lines:
-                index = speakers.setdefault(line.speaker_id, len(speakers) + 1)
-                if not job.options.diarize:
-                    index = 1
-                    label = "You" if source == "mic" else "Speaker 1"
-                else:
-                    label = f"{prefix} {index}"
+                index = speakers.setdefault(line.speaker_id, len(speakers) + 1) if separated else 1
+                label = f"{prefix} {index}" if separated else NO_SPEAKER[source][1]
                 new_lines.append(
                     replace(
                         line,

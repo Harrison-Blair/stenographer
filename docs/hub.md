@@ -376,8 +376,8 @@ Each job saves its result in the sessions folder, next to your recordings
   transcript revision of that recording. The revision holds the new lines of
   that source and the current lines of the other source, ordered by start
   time. New speakers get IDs such as `mic-file-r3-1` and the labels `Room 1`
-  (mic) or `Speaker 1` (system); without Separate speakers, mic lines are
-  `You`. Earlier renames of the replaced source do not carry over.
+  (mic) or `Speaker 1` (system); when speakers are not separated, mic lines
+  are `You` and system lines `System`. Earlier renames of the replaced source do not carry over.
 - **`source.<ext>` of a file session:** the job saves a new transcript
   revision that replaces all lines.
 

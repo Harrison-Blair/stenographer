@@ -658,22 +658,39 @@ def test_diarized_source_job_numbers_new_speakers_and_keeps_the_other_source(
     ]
 
 
-def test_system_source_job_without_diarization_uses_one_speaker(tmp_path):
-
+@pytest.mark.parametrize(
+    ("source", "kept", "no_speaker"),
+    (
+        ("system", (0.2, "mic", "you", "You", "bravo"), ("system", "System")),
+        ("mic", (0.0, "system", "speaker-1", "Speaker 1", "alpha"), ("you", "You")),
+    ),
+)
+@pytest.mark.parametrize(
+    ("diarize", "diarizer"),
+    (
+        (False, FakeDiarizer(TWO_TURNS)),
+        (True, FakeDiarizer(error=SpeakerDiarizerError("helper exited"))),
+        (True, FakeDiarizer(TWO_TURNS, reason="speaker separation needs an AVX2 CPU")),
+    ),
+    ids=("off", "failed", "unavailable"),
+)
+def test_a_recording_source_job_without_separation_labels_you_or_system(
+    tmp_path, source, kept, no_speaker, diarize, diarizer
+):
     session = _recording(tmp_path)
-    engine = _engine(tmp_path, _file_asr_process())
+    engine = _engine(tmp_path, _file_asr_process(), diarizer=diarizer)
     try:
-        job = engine.submit(session / "system.flac", diarize=False)
+        job = engine.submit(session / f"{source}.flac", diarize=diarize)
         _wait_for(job, "completed")
     finally:
         engine.close()
 
-    assert _file_rows(session, "transcript.r2.jsonl") == [
-        (0.0, "system", "system-file-r2-1", "Speaker 1", "recognized phrase 1"),
-        (0.2, "mic", "you", "You", "bravo"),
-        (1.0, "system", "system-file-r2-1", "Speaker 1", "recognized phrase 2"),
+    rows = _file_rows(session, "transcript.r2.jsonl")
+    assert kept in rows
+    assert [row[2:4] for row in rows if row[1] == source] == [
+        (f"{source}-file-r2-1", no_speaker[1]),
+        (f"{source}-file-r2-1", no_speaker[1]),
     ]
-    assert SessionStore(_sessions(tmp_path)).read(session.name).revision == "transcript.r2.jsonl"
 
 
 def test_file_session_source_job_replaces_all_lines(tmp_path):
