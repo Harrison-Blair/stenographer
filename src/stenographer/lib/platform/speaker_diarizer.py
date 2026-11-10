@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
     from pathlib import Path
 
     import numpy as np
@@ -112,13 +112,14 @@ class SpeakerDiarizer(Protocol):
 
     def diarize_file(
         self,
-        source: Path | np.ndarray,
+        source: Path | np.ndarray | Iterable[np.ndarray],
         *,
         progress: Callable[[float], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> tuple[SpeakerSegment, ...] | None:
-        """Segments of a sound file or of mono float32 samples at ``SAMPLE_RATE``,
-        sorted by start. ``None`` on a cancel.
+        """Segments of a sound file, of mono float32 samples at ``SAMPLE_RATE``, or of
+        blocks of such samples, sorted by start. ``None`` on a cancel, which is checked
+        between blocks. *progress* gets no calls for blocks, whose length is unknown.
 
         Raise ``SpeakerDiarizerError`` when the helper fails.
         """

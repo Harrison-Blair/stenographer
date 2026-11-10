@@ -316,15 +316,26 @@ class FilesEngine:
                 log.warning(fmt_event("files", "speakers_unavailable", reason=reason))
                 return None, True
             blocks = iter_media_audio(job.options.path, media, self._decoder)
+            duration = media.duration_seconds or 0.0
+
+            def read_blocks():
+                # The file streams into the pass, so memory stays about one block.
+                read = 0
+                for block in blocks:
+                    if job.cancel_requested:
+                        return
+                    yield block
+                    read += len(block)
+                    if duration > 0:
+                        done = min(1.0, read / SAMPLE_RATE / duration)
+                        job._update("diarize", round(_DIARIZE_SHARE * done), ())
+
             try:
-                samples = np.concatenate(list(blocks))
+                segments = diarizer.diarize_file(
+                    read_blocks(), should_cancel=lambda: job.cancel_requested
+                )
             finally:
                 blocks.close()
-            segments = diarizer.diarize_file(
-                samples,
-                progress=lambda done: job._update("diarize", round(_DIARIZE_SHARE * done), ()),
-                should_cancel=lambda: job.cancel_requested,
-            )
         except Exception as exc:
             if job.cancel_requested:
                 return None, False

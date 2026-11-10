@@ -15,6 +15,7 @@ import pytest
 import soundfile
 
 from stenographer.lib.config.models import Config
+from stenographer.lib.files import engine as engine_module
 from stenographer.lib.files.engine import FilesEngine
 from stenographer.lib.live.phrase_segmenter import Phrase
 from stenographer.lib.live.session_writer import SessionWriter
@@ -39,6 +40,7 @@ class FakeDiarizer:
         self.error = error
         self.reason = reason
         self.on_file = on_file
+        self.on_block = None
         self.files = []
         self.closed = False
 
@@ -46,16 +48,20 @@ class FakeDiarizer:
         return self.reason
 
     def diarize_file(self, source, *, progress=None, should_cancel=None):
-        self.files.append(source)
         if self.on_file is not None:
             self.on_file()
         if self.error is not None:
+            self.files.append(source)
             raise self.error
-        if should_cancel is not None and should_cancel():
-            return None
-        if progress is not None:
-            progress(0.5)
-            progress(1.0)
+        # Blocks are consumed one at a time with a cancel check, as the real pass does.
+        samples = 0
+        for block in source:
+            samples += len(block)
+            if self.on_block is not None:
+                self.on_block()
+            if should_cancel is not None and should_cancel():
+                return None
+        self.files.append(samples)
         return self.segments
 
     def close(self):
@@ -906,7 +912,7 @@ def test_a_file_job_cuts_a_phrase_where_the_speaker_changes_and_decodes_each_par
         assert {line.wall for line in lines} == {""}
         assert percents == sorted(percents)
         # The speaker pass hears the whole file, before any phrase is decoded.
-        assert [samples.size for samples in diarizer.files] == [64 * 16000]
+        assert diarizer.files == [64 * 16000]
         assert diarizer.closed
         assert len(_transcript_rows(_sessions(tmp_path) / job.session_id)) == 4
     finally:
@@ -1092,3 +1098,50 @@ def test_a_file_job_without_diarization_does_not_split(tmp_path):
         assert process.decode_count == 3
     finally:
         engine.close()
+
+
+def test_the_speaker_pass_holds_about_one_block_of_the_file(tmp_path):
+    import tracemalloc
+
+    diarizer = FakeDiarizer(VOICE_TURNS)
+    held = []
+    diarizer.on_file = lambda: held.append(tracemalloc.get_traced_memory()[0])
+    diarizer.on_block = lambda: held.append(tracemalloc.get_traced_memory()[0])
+    tracemalloc.start()
+    try:
+        before = tracemalloc.get_traced_memory()[0]
+        engine, job = _voice_change_job(tmp_path, diarizer=diarizer, diarize=True)
+        try:
+            _wait_for(job, "completed")
+        finally:
+            engine.close()
+    finally:
+        tracemalloc.stop()
+
+    # The 64 s file takes 4 MB as float32 samples; one decoded block takes about 0.3 MB.
+    assert diarizer.files == [64 * 16000]
+    assert max(held) - before < 1_500_000
+
+
+def test_a_cancel_during_the_speaker_pass_stops_decoding_the_file(tmp_path, monkeypatch):
+    real = engine_module.iter_media_audio
+    read = []
+    holder = {}
+
+    def counted(*args, **options):
+        for block in real(*args, **options):
+            read.append(len(block))
+            if len(read) == 2:
+                holder["job"].cancel()
+            yield block
+
+    monkeypatch.setattr(engine_module, "iter_media_audio", counted)
+    process = _file_asr_process()
+    engine, job = _voice_change_job(tmp_path, process, diarize=True)
+    holder["job"] = job
+    try:
+        _wait_for(job, "cancelled")
+    finally:
+        engine.close()
+    assert sum(read) < 64 * 16000
+    assert process.decode_count == 0

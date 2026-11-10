@@ -14,6 +14,7 @@ import contextlib
 import itertools
 import multiprocessing
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -35,9 +36,8 @@ from stenographer.lib.platform.speaker_diarizer import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
     from multiprocessing.connection import Connection
-    from pathlib import Path
 
 # The helper loads only the C library before it reports ready; the model loads
 # on the first stream.
@@ -49,9 +49,23 @@ _POLL_SECONDS = 0.05
 
 
 def file_blocks(
-    source: Path | np.ndarray, block_seconds: float
-) -> Iterator[tuple[np.ndarray, int, float]]:
-    """Yield ``(mono float32 block, rate, share done)`` of a file or of samples."""
+    source: Path | np.ndarray | Iterable[np.ndarray], block_seconds: float
+) -> Iterator[tuple[np.ndarray, int, float | None]]:
+    """Yield ``(mono float32 block, rate, share done)`` of a file, of samples, or of
+    blocks of samples; the share is ``None`` for blocks, whose length is unknown."""
+    if not isinstance(source, (np.ndarray, str, Path)):
+        step = int(block_seconds * SAMPLE_RATE)
+        pending: list[np.ndarray] = []
+        held = 0
+        for block in source:
+            pending.append(np.asarray(block, np.float32))
+            held += len(block)
+            if held >= step:
+                yield np.concatenate(pending), SAMPLE_RATE, None
+                pending, held = [], 0
+        if pending:
+            yield np.concatenate(pending), SAMPLE_RATE, None
+        return
     if isinstance(source, np.ndarray):
         total = max(len(source), 1)
         step = int(block_seconds * SAMPLE_RATE)
@@ -360,7 +374,7 @@ class NemoSpeakerDiarizer:
 
     def diarize_file(
         self,
-        source: Path | np.ndarray,
+        source: Path | np.ndarray | Iterable[np.ndarray],
         *,
         progress: Callable[[float], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
@@ -372,7 +386,7 @@ class NemoSpeakerDiarizer:
                 stream.push(block, rate)
                 if not stream.wait_replies(should_cancel):
                     return None
-                if progress is not None:
+                if progress is not None and done is not None:
                     progress(done)
             segments = stream.finish(timeout=_OPEN_SECONDS)
         finally:

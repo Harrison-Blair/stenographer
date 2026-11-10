@@ -143,3 +143,18 @@ def test_poll_gives_the_finals_tail_and_final_edge_of_one_update() -> None:
 
     assert stream.poll() == LivePoll(final, tail, 1.7)
     assert stream.poll() == LivePoll((), tail, 1.7)
+
+
+def test_file_blocks_of_streamed_samples_are_regrouped_to_whole_blocks() -> None:
+    from stenographer.lib.platform.linux.nemo_diarizer import file_blocks
+
+    chunks = (np.full(10_000, index, np.float32) for index in range(5))
+
+    blocks = list(file_blocks(chunks, 1.0))
+
+    assert [len(block) for block, _rate, _done in blocks] == [20_000, 20_000, 10_000]
+    assert {(rate, done) for _block, rate, done in blocks} == {(SAMPLE_RATE, None)}
+    assert np.array_equal(
+        np.concatenate([block for block, _rate, _done in blocks]),
+        np.repeat(np.arange(5, dtype=np.float32), 10_000),
+    )
