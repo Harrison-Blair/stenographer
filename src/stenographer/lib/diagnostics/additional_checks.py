@@ -7,7 +7,11 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
+import numpy as np
+
 from stenographer.lib.platform import current_platform
+from stenographer.lib.platform.errors import SpeakerDiarizerError
+from stenographer.lib.platform.speaker_diarizer import SAMPLE_RATE
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,24 @@ def python_venv_check(python: str | None = None) -> DiagnosticCheck:
     return DiagnosticCheck("python_venv", "ok", f"`{python} -m venv` works", "")
 
 
+def speaker_reason() -> str | None:
+    """Why speaker labels cannot run here, or ``None``.
+
+    After the host check, this starts the helper and labels one second of silence,
+    so a helper or model that cannot load shows its own reason.
+    """
+    diarizer = current_platform().speaker_diarizer()
+    try:
+        reason = diarizer.unavailable_reason()
+        if reason is None:
+            diarizer.diarize_file(np.zeros(SAMPLE_RATE, np.float32))
+        return reason
+    except SpeakerDiarizerError as exc:
+        return str(exc)
+    finally:
+        diarizer.close()
+
+
 def speaker_check(reason: str | None) -> DiagnosticCheck:
     """Report *reason*, why speaker labels cannot run here, or that they can."""
     if reason is None:
@@ -111,5 +133,5 @@ def collect_additional_checks() -> tuple[DiagnosticCheck, ...]:
         system_capture_check(),
         ffmpeg_check(),
         python_venv_check(),
-        speaker_check(current_platform().speaker_diarizer().unavailable_reason()),
+        speaker_check(speaker_reason()),
     )
