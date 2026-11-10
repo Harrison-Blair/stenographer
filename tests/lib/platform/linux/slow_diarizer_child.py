@@ -43,3 +43,23 @@ def recording_slow_child(commands, results, threads: int) -> None:
 
 def quick_child(commands, results, threads: int) -> None:
     _serve(commands, results, 0.0)
+
+
+def bad_ready_child(commands, results, threads: int) -> None:
+    """Answer the start with a message the parent does not know."""
+    results.send(("hello",))
+    commands.recv()
+
+
+def bad_reply_child(commands, results, threads: int) -> None:
+    """Start, open, then answer a push with a message the parent does not know."""
+    results.send(("ready",))
+    while True:
+        try:
+            message = commands.recv()
+        except EOFError:
+            return
+        if message[0] == "open":
+            results.send(("opened", message[1]))
+        else:
+            results.send(("surprise", message[1]))

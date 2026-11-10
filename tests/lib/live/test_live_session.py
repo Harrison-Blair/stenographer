@@ -985,3 +985,19 @@ def test_audio_pushed_after_a_pause_maps_to_session_time(monkeypatch, tmp_path):
     assert [(line.start, line.label) for line in rig.session.lines] == [(5.0, "Speaker 1")]
     assert rig.session._segments["system"] == [SpeakerSegment(0, 5.0, 6.0)]
     rig.session.stop()
+
+
+def test_a_helper_process_that_cannot_start_keeps_the_recording(monkeypatch, tmp_path):
+    from tests.lib.platform.linux.failing_start import unstartable_diarizer
+
+    diarizer, _context = unstartable_diarizer(monkeypatch)
+    rig = _make_session(monkeypatch, tmp_path, mic=False, diarizer=diarizer)
+    rig.system.emit(1)
+    rig.session._queue.join()
+    rig.system.emit(4)
+    rig.session._queue.join()
+
+    assert "could not start" in rig.session.speaker_issue
+    assert [line.label for line in rig.session.lines] == ["System", "System"]
+    rig.session.stop()
+    diarizer.close()

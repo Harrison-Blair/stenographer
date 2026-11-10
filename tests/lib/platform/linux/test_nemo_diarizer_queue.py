@@ -158,3 +158,50 @@ def test_file_blocks_of_streamed_samples_are_regrouped_to_whole_blocks() -> None
         np.concatenate([block for block, _rate, _done in blocks]),
         np.repeat(np.arange(5, dtype=np.float32), 10_000),
     )
+
+
+def test_a_helper_that_cannot_start_raises_the_speaker_error_and_closes_its_pipes(
+    monkeypatch,
+) -> None:
+    import pytest
+
+    from stenographer.lib.platform.errors import SpeakerDiarizerError
+    from tests.lib.platform.linux.failing_start import unstartable_diarizer
+
+    diarizer, context = unstartable_diarizer(monkeypatch)
+    try:
+        with pytest.raises(SpeakerDiarizerError, match=r"could not start.*Resource temporarily"):
+            diarizer.open_live("mic")
+        with pytest.raises(SpeakerDiarizerError, match="could not start"):
+            diarizer.diarize_file(np.zeros(SAMPLE_RATE, np.float32))
+    finally:
+        diarizer.close()
+    assert context.pipes and all(end.closed for end in context.pipes)
+
+
+def test_an_unexpected_reply_fails_the_streams_instead_of_hanging() -> None:
+    import pytest
+
+    from stenographer.lib.platform.errors import SpeakerDiarizerError
+    from tests.lib.platform.linux.slow_diarizer_child import bad_reply_child
+
+    diarizer = _AvailableDiarizer(child=bad_reply_child)
+    try:
+        with pytest.raises(SpeakerDiarizerError, match="unexpected reply"):
+            diarizer.diarize_file(np.zeros(SAMPLE_RATE, np.float32))
+    finally:
+        diarizer.close()
+
+
+def test_an_unexpected_first_message_fails_the_start() -> None:
+    import pytest
+
+    from stenographer.lib.platform.errors import SpeakerDiarizerError
+    from tests.lib.platform.linux.slow_diarizer_child import bad_ready_child
+
+    diarizer = _AvailableDiarizer(child=bad_ready_child)
+    try:
+        with pytest.raises(SpeakerDiarizerError, match="unexpected reply"):
+            diarizer.open_live("mic")
+    finally:
+        diarizer.close()

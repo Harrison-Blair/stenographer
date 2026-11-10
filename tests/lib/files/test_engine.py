@@ -1162,3 +1162,18 @@ def test_a_cancel_during_the_speaker_pass_stops_decoding_the_file(tmp_path, monk
         engine.close()
     assert sum(read) < 64 * 16000
     assert process.decode_count == 0
+
+
+def test_a_speaker_helper_process_that_cannot_start_saves_one_speaker(monkeypatch, tmp_path):
+    from tests.lib.platform.linux.failing_start import unstartable_diarizer
+
+    diarizer, _context = unstartable_diarizer(monkeypatch)
+    engine, job = _voice_change_job(tmp_path, diarizer=diarizer, diarize=True)
+    try:
+        _wait_for(job, "completed")
+        lines = job.progress.completed_lines
+        assert [(line.speaker_id, line.label) for line in lines] == [("speaker-1", "Speaker 1")] * 3
+    finally:
+        engine.close()
+        diarizer.close()
+    assert _session_json(tmp_path, job.session_id)["speaker_pass_failed"] is True

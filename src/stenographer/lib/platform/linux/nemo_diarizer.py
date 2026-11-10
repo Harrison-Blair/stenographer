@@ -214,6 +214,14 @@ class _Stream:
         self._owner.forget(self._sid)
 
 
+_REPLIES = frozenset({"opened", "pushed", "update", "finished", "failed"})
+
+
+def _kind(message: object) -> object:
+    """The kind of a helper message, or ``None`` when it is not a message."""
+    return message[0] if isinstance(message, tuple) and message else None
+
+
 class NemoSpeakerDiarizer:
     """The ``SpeakerDiarizer`` of Linux. *threads* caps the helper's CPU threads.
 
@@ -255,29 +263,49 @@ class NemoSpeakerDiarizer:
         reason = self.unavailable_reason()
         if reason is not None:
             raise SpeakerDiarizerError(reason)
-        context = multiprocessing.get_context("spawn")
-        commands_read, commands_write = context.Pipe(duplex=False)
-        results_read, results_write = context.Pipe(duplex=False)
-        process = context.Process(
-            target=self._child, args=(commands_read, results_write, self._threads), daemon=True
-        )
-        process.start()
-        # The parent holds no child end, so the death of the child shows end of file.
-        commands_read.close()
-        results_write.close()
+        # The one boundary: every error of starting the helper or of its first answer
+        # becomes a SpeakerDiarizerError, and whatever was made is closed.
+        ends: list[Connection] = []
+        process = None
         try:
+            context = multiprocessing.get_context("spawn")
+            commands_read, commands_write = context.Pipe(duplex=False)
+            ends += (commands_read, commands_write)
+            results_read, results_write = context.Pipe(duplex=False)
+            ends += (results_read, results_write)
+            process = context.Process(
+                target=self._child, args=(commands_read, results_write, self._threads), daemon=True
+            )
+            try:
+                process.start()
+            except OSError as exc:
+                process = None
+                raise SpeakerDiarizerError(f"the speaker helper could not start: {exc}") from exc
+            # The parent holds no child end, so the death of the child shows end of file.
+            commands_read.close()
+            results_write.close()
             if not results_read.poll(_START_SECONDS):
                 raise SpeakerDiarizerError("the speaker helper did not start")
-            message = results_read.recv()
-        except (EOFError, OSError):
-            message = ("failed", None, f"the speaker helper ended (exit code {process.exitcode})")
-        except SpeakerDiarizerError:
-            process.kill()
-            raise
-        if message[0] != "ready":
-            process.kill()
-            process.join()
-            raise SpeakerDiarizerError(message[2])
+            try:
+                message = results_read.recv()
+            except Exception as exc:  # EOF, a dead pipe, or a reply that does not unpickle
+                process.join(1)
+                raise SpeakerDiarizerError(
+                    f"the speaker helper ended (exit code {process.exitcode})"
+                ) from exc
+            if _kind(message) == "failed" and len(message) > 2:
+                raise SpeakerDiarizerError(str(message[2]))
+            if _kind(message) != "ready":
+                raise SpeakerDiarizerError("the speaker helper gave an unexpected reply")
+        except Exception as exc:
+            if process is not None:
+                process.kill()
+                process.join()
+            for end in ends:
+                end.close()
+            if isinstance(exc, SpeakerDiarizerError):
+                raise
+            raise SpeakerDiarizerError(f"the speaker helper could not start: {exc}") from exc
         self._process = process
         self._commands = commands_write
         with self._outbox_ready:
@@ -304,17 +332,30 @@ class NemoSpeakerDiarizer:
                 return  # the reader thread reports the dead helper
 
     def _read_loop(self, results: Connection, process) -> None:
-        while True:
+        reason = None
+        while reason is None:
             try:
                 message = results.recv()
             except (EOFError, OSError):
                 break
+            except Exception:  # a reply that does not unpickle
+                reason = "the speaker helper gave an unexpected reply"
+                break
+            if _kind(message) not in _REPLIES or len(message) < 2:
+                reason = "the speaker helper gave an unexpected reply"
+                break
             with self._lock:
                 stream = self._streams.get(message[1])
             if stream is not None:
-                stream.on_message(message)
+                try:
+                    stream.on_message(message)
+                except Exception:  # a known kind with the wrong shape or order
+                    reason = "the speaker helper gave an unexpected reply"
+        if reason is not None:
+            process.kill()
         process.join()
-        self._fail_all(f"the speaker helper ended (exit code {process.exitcode})")
+        results.close()
+        self._fail_all(reason or f"the speaker helper ended (exit code {process.exitcode})")
 
     def _fail_all(self, reason: str) -> None:
         with self._lock:

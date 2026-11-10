@@ -858,3 +858,27 @@ def test_retranscribe_of_a_separated_file_session_holds_about_one_phrase_of_audi
     # All 480 000 samples take 1.9 MB; one phrase and one chunk take about 28 kB.
     assert len(held) == 160 + 120
     assert max(held) - before < 400_000
+
+
+def test_a_speaker_helper_process_that_cannot_start_degrades_retranscribe_and_rediarize(
+    monkeypatch, tmp_path
+):
+    from tests.lib.platform.linux.failing_start import unstartable_diarizer
+
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=True)
+    store = SessionStore(sessions_root)
+    diarizer, _context = unstartable_diarizer(monkeypatch)
+
+    with pytest.raises(SpeakerDiarizerError, match="could not start"):
+        _jobs(tmp_path, store, diarizer).rediarize(session.name)
+    assert sorted(path.name for path in session.glob("transcript*")) == [
+        "transcript.jsonl",
+        "transcript.md",
+    ]
+
+    _jobs(tmp_path, store, diarizer).retranscribe(session.name)
+
+    detail = store.read(session.name)
+    assert detail.revision == "transcript.r2.jsonl"
+    assert [line.text for line in detail.lines] == [f"new phrase {n}" for n in (1, 2, 3, 4)]

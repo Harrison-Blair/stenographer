@@ -137,3 +137,16 @@ def test_the_speaker_check_starts_the_helper_and_shows_its_failure(
     # Only a host that can run it starts the helper, on one second of silence.
     assert diarizer.files == ([] if diarizer.reason else [16000])
     assert diarizer.closed
+
+
+def test_the_speaker_check_shows_why_the_helper_process_cannot_start(monkeypatch):
+    from tests.lib.platform.linux.failing_start import unstartable_diarizer
+
+    diarizer, _context = unstartable_diarizer(monkeypatch)
+    platform = type("Platform", (), {"speaker_diarizer": lambda _self: diarizer})()
+    monkeypatch.setattr(additional_checks, "current_platform", lambda: platform)
+
+    check = {c.check_id: c for c in additional_checks.collect_additional_checks()}["speakers"]
+
+    assert check.status == "warn"
+    assert "could not start" in check.detail
