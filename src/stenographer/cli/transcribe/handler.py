@@ -67,8 +67,9 @@ def _refine(
 
 @with_config
 def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
-    import soundfile
+    import numpy as np
 
+    from stenographer.lib.files.media import inspect_media, iter_media_audio
     from stenographer.lib.live.models import vad_model_path
     from stenographer.lib.transcribe.dictation_vad import speech_seconds
     from stenographer.lib.transcribe.pipeline import (
@@ -76,7 +77,6 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
         apply_levels,
         apply_recognition,
         apply_speech,
-        downmix,
         log_summary,
         transcript_text,
     )
@@ -85,12 +85,28 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
     if args.raw and args.refine:
         print("stenographer: --raw skips refinement requested by --refine", file=sys.stderr)
 
+    from stenographer.lib.platform import current_platform
+
     path = pathlib.Path(args.file)
+    decoder = current_platform().ffmpeg_decoder()
+    if not path.is_file():
+        print(f"stenographer: cannot read {path}: not a file", file=sys.stderr)
+        return 2
+    info = inspect_media(path, decoder)
+    if info.needs_ffmpeg:
+        print(
+            f"stenographer: cannot read {path}: needs ffmpeg; install it with your system "
+            "package manager",
+            file=sys.stderr,
+        )
+        return 69
     try:
-        samples, sample_rate = soundfile.read(str(path), dtype="float32", always_2d=True)
+        blocks = list(iter_media_audio(path, info, decoder))
     except Exception as exc:
         print(f"stenographer: cannot read {path}: {exc}", file=sys.stderr)
         return 2
+    samples = np.concatenate(blocks) if blocks else np.zeros(0, dtype=np.float32)
+    sample_rate = SAMPLE_RATE
 
     from stenographer.lib.transcribe import bark_download, model
 
@@ -101,23 +117,20 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
         )
         return 78
 
-    from stenographer.lib.audio.resample import _resample_poly
     from stenographer.lib.diagnostics.session import create_session
-    from stenographer.lib.platform import current_platform
     from stenographer.lib.transcribe.pipeline import analytics_metrics
 
     session = create_session(cfg, current_platform())
     record = UtteranceRecord(utt=0, started_at=time.perf_counter(), source="file")
     record.analytics_id = session.start(0, source="file")
     record.input_rate = int(sample_rate)
-    record.channels = int(samples.shape[1])
-    record.in_frames = int(samples.shape[0])
+    record.channels = 1
+    record.in_frames = int(samples.size)
     record.capture_s = record.in_frames / sample_rate
     m = None
     terminal = "error"
     try:
         finalize_started_at = time.perf_counter()
-        samples = _resample_poly(downmix(samples), sample_rate, SAMPLE_RATE)
         record.finalize_ms = (time.perf_counter() - finalize_started_at) * 1000
         record.out_frames = int(samples.size)
         session.checkpoint(record.analytics_id, "secured_capture", analytics_metrics(record))

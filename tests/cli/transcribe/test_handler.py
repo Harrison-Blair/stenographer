@@ -443,3 +443,62 @@ def test_transcribe_refine_sends_the_configured_vocabulary(ollama_wire, monkeypa
     wire = json.dumps(ollama_wire[0]["messages"])
     assert "Kubernetes" in wire
     assert "PipeWire" in wire
+
+
+def _m4a(tmp_path):
+    """Bytes that libsndfile cannot read, named like the format ffmpeg decodes."""
+    path = tmp_path / "clip.m4a"
+    path.write_bytes(b"not a libsndfile format")
+    return path
+
+
+def test_a_file_libsndfile_cannot_read_is_decoded_through_ffmpeg(monkeypatch, tmp_path, capsys):
+    from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
+
+    heard: list[int] = []
+
+    def decode(self, path, *, block_frames=65536):
+        yield np.full(SAMPLE_RATE // 2, 0.1, dtype=np.float32)
+        yield np.full(SAMPLE_RATE // 2, 0.1, dtype=np.float32)
+
+    monkeypatch.setattr(SubprocessFfmpegDecoder, "available", lambda self: True)
+    monkeypatch.setattr(SubprocessFfmpegDecoder, "duration", lambda self, path: 1.0)
+    monkeypatch.setattr(SubprocessFfmpegDecoder, "decode", decode)
+    from stenographer.lib.transcribe import bark_download, model
+
+    class ModelDouble:
+        def __init__(self, cfg):
+            pass
+
+        def transcribe(self, samples):
+            heard.append(samples.size)
+            return TranscriptionResult(text="hello there", duration_seconds=1.0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
+    monkeypatch.setattr(model, "Model", ModelDouble)
+    args = argparse.Namespace(file=str(_m4a(tmp_path)), raw=False, refine=False)
+
+    assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 0
+
+    assert heard == [SAMPLE_RATE]
+    assert capsys.readouterr().out == "Hello there \n"
+
+
+def test_a_file_that_needs_ffmpeg_ends_with_a_clear_message_when_it_is_missing(
+    monkeypatch, tmp_path, capsys
+):
+    from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
+    from stenographer.lib.transcribe import bark_download
+
+    monkeypatch.setattr(SubprocessFfmpegDecoder, "available", lambda self: False)
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
+    path = _m4a(tmp_path)
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
+
+    assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 69
+
+    err = capsys.readouterr().err
+    assert err.startswith(f"stenographer: cannot read {path}: needs ffmpeg")

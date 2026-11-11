@@ -207,7 +207,7 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
 - `stenographer devices` — list audio input devices.
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics; the summary defaults to hotkey dictations (`--source all` includes file transcriptions).
-- `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file; `--raw` skips refinement even when `--refine` is supplied.
+- `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file; `--raw` skips refinement even when `--refine` is supplied. WAV, FLAC, OGG, and MP3 files decode directly; M4A and AAC files need the system `ffmpeg` executable, as in the hub's file import.
 - `stenographer model download [--asr] [--refine]` — fetch selected models explicitly; flags combine.
   The voice-activity and speaker models ship with the app and need no download.
 - `stenographer run` — run the daemon in the foreground.
