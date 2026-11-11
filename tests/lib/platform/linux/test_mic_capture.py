@@ -30,6 +30,12 @@ import time
 from pathlib import Path
 
 Path(os.environ['PW_CAPTURE_ARGS']).write_text(json.dumps(sys.argv[1:]))
+if os.environ.get('PW_TARGET_NOT_FOUND') == '1':
+    # pw-record 1.0.5 on an absent target: a few raw bytes, then exit 1.
+    sys.stdout.buffer.write(bytes(75))
+    sys.stdout.buffer.flush()
+    sys.stderr.write('target not found\\n')
+    raise SystemExit(1)
 encoding = int(os.environ.get('PW_AU_ENCODING', '6'))
 sys.stdout.buffer.write(b'.snd' + struct.pack('>5I', 24, 0xFFFFFFFF, encoding, 16000, 1))
 sys.stdout.buffer.write(struct.pack('>700f', 0.25, -0.5, *([0.0] * 698)))
@@ -88,7 +94,7 @@ def test_the_default_source_has_no_target_and_a_named_one_never_falls_back():
     assert pw_record_command("pw-record", "steno_build_mic")[:4] == [
         "pw-record",
         "-P",
-        "{ node.dont-fallback = true }",
+        "{ node.dont-fallback = true node.dont-reconnect = true }",
         "--target",
     ]
 
@@ -135,6 +141,26 @@ def test_a_child_that_exits_during_capture_is_reported(tmp_path, monkeypatch):
     failures = [i for i in items if isinstance(i, MicCaptureError)]
     assert len(failures) == 1
     assert "exited unexpectedly with status 1" in str(failures[0])
+
+
+def test_an_absent_target_that_writes_a_partial_sample_and_exits_is_a_capture_error(
+    tmp_path, monkeypatch
+):
+    # Raft (PipeWire 1.0.5): an absent named target wrote 75 bytes, then exit 1.
+    _install(tmp_path, monkeypatch)
+    monkeypatch.setenv("PW_TARGET_NOT_FOUND", "1")
+    capture = LinuxMicCapture()
+    items: list[np.ndarray | MicCaptureError] = []
+
+    capture.start("steno_build_absent", items.append)
+    try:
+        capture._thread.join(timeout=5)
+        assert not capture._thread.is_alive()
+        assert capture._process.poll() == 1
+    finally:
+        capture.stop()
+
+    assert [str(item) for item in items] == ["pw-record ended in the middle of a float32 sample"]
 
 
 def test_a_format_error_ends_the_child_before_it_is_reported(tmp_path, monkeypatch):

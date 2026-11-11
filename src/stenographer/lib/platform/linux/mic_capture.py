@@ -73,12 +73,14 @@ class LinuxMicCapture:
 def pw_record_command(executable: str, target: str | None) -> list[str]:
     """The ``pw-record`` command line for *target* (``None``: the default source). PURE.
 
-    A named source that is absent makes ``pw-record`` exit instead of
-    recording the default microphone.
+    A named source that is absent, or that goes away, makes ``pw-record`` exit
+    instead of recording another microphone. WirePlumber 0.5 obeys
+    ``node.dont-fallback``; WirePlumber 0.4 knows only ``node.dont-reconnect``.
     """
     command = [executable]
     if target is not None:
-        command += ["-P", "{ node.dont-fallback = true }", "--target", target]
+        properties = "{ node.dont-fallback = true node.dont-reconnect = true }"
+        command += ["-P", properties, "--target", target]
     return [*command, "--rate", str(RATE), "--channels", "1", "--format", "f32", "-"]
 
 
