@@ -6,6 +6,8 @@ from __future__ import annotations
 import logging
 import time
 
+import pytest
+
 from stenographer.lib.live.source_watch import SILENT_SECONDS, SourceWatch
 from stenographer.lib.platform.errors import MicCaptureError
 from tests.lib.live.test_live_session import FakeClock, _make_session
@@ -115,3 +117,30 @@ def _wait_for(condition) -> None:
     while not condition():
         assert time.monotonic() < deadline
         time.sleep(0.01)
+
+
+@pytest.mark.parametrize("source", ["mic", "system"])
+def test_a_source_that_fails_before_start_returns_is_not_watched(monkeypatch, tmp_path, source):
+    from stenographer.lib.platform.errors import SystemAudioCaptureError
+
+    clock = FakeClock()
+    rig = _make_session(
+        monkeypatch,
+        tmp_path,
+        clock=clock,
+        mic=source == "mic",
+        system=source == "system",
+        start=False,
+    )
+    if source == "mic":
+        rig.recorder.start = lambda target, on_block: on_block(MicCaptureError("pw-record exited"))
+    else:
+        rig.system.start = lambda on_block: on_block(SystemAudioCaptureError("pw-record exited"))
+    try:
+        rig.session.start()
+        assert rig.session.source_states[source] == "off"
+        clock.now = 6.0
+
+        assert rig.session.silent_sources == ()
+    finally:
+        rig.session.stop()

@@ -517,6 +517,9 @@ class LiveSession:
                     self._pushed_seconds[source], self._segment_offsets[source]
                 )
                 self._active[source] = True
+                # Watched before the capture starts: a failure that the reader
+                # reports before start returns takes the source out again.
+                self._watch.started(source, self._monotonic())
             if source == "mic":
                 self._mic_capture.stop()
                 self._mic_capture.start(self._mic_target, self._on_mic_block)
@@ -524,13 +527,15 @@ class LiveSession:
                 self._system_capture.start(self._on_system_block)
             with self._lock:
                 self._source_seen[source] = True
-                self._watch.started(source, self._monotonic())
-            log.info(fmt_event("live", "source_started", source=source))
+                started = self._active[source]
+            if started:
+                log.info(fmt_event("live", "source_started", source=source))
         except Exception as exc:
             with self._lock:
                 self._active[source] = False
                 self._enabled[source] = False
                 self._segmenters[source] = None
+                self._watch.stopped(source)
             log_failure(
                 log, logging.WARNING, "live: source_start_failed", exc, safe=True, source=source
             )
