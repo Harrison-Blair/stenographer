@@ -117,6 +117,8 @@ class LiveSession:
         self._vad_model = vad_model
         self._monotonic = monotonic if monotonic is not None else time.monotonic
         self._watch = SourceWatch()
+        # Sources whose capture failed; cleared when the user starts one again.
+        self._failed: set[str] = set()
         self._watch_stop = threading.Event()
         self._watch_thread: threading.Thread | None = None
         self._queue: Queue[Phrase | object] = Queue()
@@ -528,6 +530,8 @@ class LiveSession:
             with self._lock:
                 self._source_seen[source] = True
                 started = self._active[source]
+                if started:
+                    self._failed.discard(source)
             if started:
                 log.info(fmt_event("live", "source_started", source=source))
         except Exception as exc:
@@ -536,6 +540,7 @@ class LiveSession:
                 self._enabled[source] = False
                 self._segmenters[source] = None
                 self._watch.stopped(source)
+                self._failed.add(source)
             log_failure(
                 log, logging.WARNING, "live: source_start_failed", exc, safe=True, source=source
             )
@@ -599,6 +604,7 @@ class LiveSession:
             self._enabled[source] = False
             self._speech[source] = False
             self._watch.stopped(source)
+            self._failed.add(source)
             segmenter = self._segmenters[source]
             self._segmenters[source] = None
         if segmenter is not None:
@@ -619,6 +625,14 @@ class LiveSession:
                 )
             for source in resumed:
                 log.info(fmt_event("live", "source_resumed", source=source))
+
+    @property
+    def failed_sources(self) -> tuple[str, ...]:
+        """Return the sources whose capture failed in this running session."""
+        with self._lock:
+            if self._stopped:
+                return ()
+            return tuple(source for source in ("mic", "system") if source in self._failed)
 
     @property
     def silent_sources(self) -> tuple[str, ...]:

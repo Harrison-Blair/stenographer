@@ -153,7 +153,8 @@ scroll to the bottom to follow new lines again.
 The speaker bar lists each speaker that has transcript lines, with its talk time.
 The row wraps between speakers when it runs out of room. Each speaker shows as
 text, so it does not depend on colour. The end of the bar shows the count of failed
-phrases when there are any, `! mic no audio` (or `! system no audio`) while a
+phrases when there are any, `! mic stopped` (or `! system stopped`) when the capture of
+a source failed, `! mic no audio` (or `! system no audio`) while a
 running source has delivered no audio for 5 seconds, `! mic audio not saved` when a source's audio
 cannot be written, and a notice when lines get no speaker label (see
 [Speaker labels](#speaker-labels)). `[r] Rename…` sits in the transcript title row. After such a failure the source keeps
@@ -167,8 +168,13 @@ Both sources record through a `pw-record` child process. A source that delivers
 no audio for 5 seconds while it runs shows `! mic no audio` or
 `! system no audio`, and the log gets one `live: source_silent` warning. Nothing
 restarts: the line goes away when audio arrives again. When the capture process
-of a source exits, that source turns off (`live: mic_source_failed` or
-`live: system_source_failed`) and the other source keeps recording.
+of a source exits or cannot start, for example because a named microphone is
+unplugged or absent, that source turns off, Record shows `! mic stopped` or
+`! system stopped`, the log gets `live: mic_source_failed` or
+`live: system_source_failed`, and the other source keeps recording. Nothing
+restarts: the line stays until the recording stops, or until you turn the source
+on again (`m` or `s`) and its capture starts. A source that you turn off shows no
+line.
 
 ### Prepare the models
 
