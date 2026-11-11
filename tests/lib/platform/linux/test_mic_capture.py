@@ -30,7 +30,8 @@ import time
 from pathlib import Path
 
 Path(os.environ['PW_CAPTURE_ARGS']).write_text(json.dumps(sys.argv[1:]))
-sys.stdout.buffer.write(b'.snd' + struct.pack('>5I', 24, 0xFFFFFFFF, 6, 16000, 1))
+encoding = int(os.environ.get('PW_AU_ENCODING', '6'))
+sys.stdout.buffer.write(b'.snd' + struct.pack('>5I', 24, 0xFFFFFFFF, encoding, 16000, 1))
 sys.stdout.buffer.write(struct.pack('>700f', 0.25, -0.5, *([0.0] * 698)))
 sys.stdout.buffer.flush()
 if os.environ.get('PW_EXIT_EARLY') == '1':
@@ -134,6 +135,32 @@ def test_a_child_that_exits_during_capture_is_reported(tmp_path, monkeypatch):
     failures = [i for i in items if isinstance(i, MicCaptureError)]
     assert len(failures) == 1
     assert "exited unexpectedly with status 1" in str(failures[0])
+
+
+def test_a_format_error_ends_the_child_before_it_is_reported(tmp_path, monkeypatch):
+    _install(tmp_path, monkeypatch)
+    monkeypatch.setenv("PW_AU_ENCODING", "3")
+    capture = LinuxMicCapture()
+    reported = []
+    alive_at_report = []
+
+    def receive(item):
+        if isinstance(item, MicCaptureError):
+            alive_at_report.append(capture._process.poll() is None)
+            reported.append(item)
+
+    capture.start("steno_build_mic", receive)
+    try:
+        capture._thread.join(timeout=5)
+        assert not capture._thread.is_alive()
+        assert [str(error) for error in reported] == [
+            "pw-record wrote AU encoding 3 at 16000 Hz with 1 channels"
+        ]
+        # The capture is reported failed, so it no longer records.
+        assert alive_at_report == [False]
+        assert capture._process.poll() is not None
+    finally:
+        capture.stop()
 
 
 def test_start_without_pw_record_raises(tmp_path, monkeypatch):

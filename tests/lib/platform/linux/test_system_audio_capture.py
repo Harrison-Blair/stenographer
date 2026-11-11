@@ -62,7 +62,8 @@ order = '<'
 if os.environ.get('PW_AU') == '1':
     # PipeWire 1.6 writes an AU file to a pipe: a header, then big-endian samples.
     order = '>'
-    sys.stdout.buffer.write(b'.snd' + struct.pack('>5I', 24, 0xFFFFFFFF, 6, 16000, 1))
+    encoding = int(os.environ.get('PW_AU_ENCODING', '6'))
+    sys.stdout.buffer.write(b'.snd' + struct.pack('>5I', 24, 0xFFFFFFFF, encoding, 16000, 1))
 sys.stdout.buffer.write(struct.pack(order + '4f', 9.0, 9.0, 9.0, 9.0))
 sys.stdout.buffer.flush()
 time.sleep(0.3)
@@ -194,6 +195,22 @@ def test_capture_decodes_the_au_stream_of_pipewire_1_6(tmp_path, monkeypatch):
     assert np.array_equal(audio[:4], np.array([0.25, -0.5, 0.75, -1.0], dtype=np.float32))
     assert np.count_nonzero(audio[4:]) == 0
     assert not any(isinstance(block, SystemAudioCaptureError) for block in blocks)
+
+
+def test_start_rejects_an_unsupported_au_stream_and_ends_the_child(tmp_path, monkeypatch):
+    _install_tools(tmp_path, monkeypatch, au=True)
+    monkeypatch.setenv("PW_AU_ENCODING", "3")
+    capture = LinuxSystemAudioCapture()
+    blocks: list[np.ndarray | SystemAudioCaptureError] = []
+
+    with pytest.raises(SystemAudioCaptureError, match="AU encoding 3"):
+        capture.start(blocks.append)
+
+    assert blocks == []
+    assert capture._process is None
+    process_id = int((tmp_path / "pid.txt").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(process_id, 0)
 
 
 def test_early_process_exit_is_reported_to_callback(tmp_path, monkeypatch):

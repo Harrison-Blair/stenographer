@@ -119,7 +119,9 @@ def read_stdout(
 ) -> None:
     """Reader thread: send each block to *on_block*, then an *error_type* if the stream failed.
 
-    A stream that ends while *stopping* is not set is a failure.
+    A stream that ends while *stopping* is not set is a failure. The child has
+    ended before the failure is delivered: a capture reported as failed no
+    longer records.
     """
     assert process.stdout is not None
     read_error: Exception | None = None
@@ -139,6 +141,7 @@ def read_stdout(
         read_error = error_type("could not read pw-record audio")
 
     if read_error is not None:
+        terminate_process(process)
         _deliver(on_block, read_error)
     elif not stopping.is_set():
         status = process.wait()

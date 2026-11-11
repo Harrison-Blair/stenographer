@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 
-from stenographer.lib.platform.errors import SystemAudioCaptureError
+from stenographer.lib.platform.errors import PwRecordFormatError, SystemAudioCaptureError
 from stenographer.lib.platform.linux.pw_record import (
     RATE,
     PwRecordDecoder,
@@ -92,6 +92,8 @@ class LinuxSystemAudioCapture:
                 raise SystemAudioCaptureError(
                     "could not discard audio captured before system link verification"
                 ) from exc
+            except PwRecordFormatError as exc:
+                raise SystemAudioCaptureError(str(exc)) from exc
         except SystemAudioCaptureError:
             terminate_process(process)
             if process.stdout is not None:
