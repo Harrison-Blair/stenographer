@@ -224,3 +224,76 @@ def test_the_stopped_warning_ends_when_the_user_turns_the_source_on_again(monkey
         assert _record_warnings(rig.session) == []
     finally:
         rig.session.stop()
+
+
+@pytest.mark.parametrize("source", ["mic", "system"])
+def test_a_failure_delivered_while_the_user_turns_the_source_off_shows_no_warning(
+    monkeypatch, tmp_path, source
+):
+    # The reader has already seen the child exit; its callback lands during
+    # the stop that the user's toggle runs, before the reader is joined.
+    rig = _make_session(monkeypatch, tmp_path)
+    capture = rig.recorder if source == "mic" else rig.system
+    original_stop = capture.stop
+
+    def stop_with_late_failure(*args, **kwargs):
+        _fail(rig, source)
+        return original_stop(*args, **kwargs)
+
+    capture.stop = stop_with_late_failure
+    try:
+        rig.session.toggle(source)
+
+        assert rig.session.source_states[source] == "off"
+        assert rig.session.failed_sources == ()
+        assert f"! {source} stopped" not in _record_warnings(rig.session)
+    finally:
+        capture.stop = original_stop
+        rig.session.stop()
+
+
+def test_a_start_that_raises_shows_stopped_and_a_failed_retry_shows_it_again(monkeypatch, tmp_path):
+    rig = _make_session(monkeypatch, tmp_path, system=False, start=False)
+    working_start = rig.recorder.start
+
+    def broken_start(target, on_block):
+        raise MicCaptureError("pw-record is not installed")
+
+    rig.recorder.start = broken_start
+    try:
+        rig.session.start()
+        assert rig.session.failed_sources == ("mic",)
+
+        rig.session.toggle("mic")  # on again; the start raises again
+        assert rig.session.source_states["mic"] == "off"
+        assert rig.session.failed_sources == ("mic",)
+
+        rig.recorder.start = working_start
+        rig.session.toggle("mic")  # on again: the capture starts
+        assert rig.session.source_states["mic"] == "on"
+        assert rig.session.failed_sources == ()
+    finally:
+        rig.session.stop()
+
+
+def test_pause_and_resume_keep_a_failure_and_restart_nothing(monkeypatch, tmp_path):
+    rig = _make_session(monkeypatch, tmp_path)
+    try:
+        starts = len(rig.recorder.targets)
+        _fail(rig, "mic")
+        rig.session.pause()
+        assert rig.session.failed_sources == ("mic",)
+        rig.session.resume()
+
+        assert rig.session.failed_sources == ("mic",)
+        assert rig.session.source_states["mic"] == "off"
+        assert len(rig.recorder.targets) == starts
+    finally:
+        rig.session.stop()
+    assert rig.session.failed_sources == ()
+
+    fresh = _make_session(monkeypatch, tmp_path / "next")
+    try:
+        assert fresh.session.failed_sources == ()
+    finally:
+        fresh.session.stop()

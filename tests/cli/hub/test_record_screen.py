@@ -1057,3 +1057,55 @@ async def test_record_bar_shows_why_lines_get_no_speaker_label(tmp_path):
         await pilot.pause()
         assert "! system speakers behind" in _speaker_bar(app)
         created[-1].release.set()
+
+
+@pytest.mark.parametrize(("source", "key"), [("mic", "m"), ("system", "s")])
+async def test_record_drops_the_stopped_warning_of_a_source_the_user_turned_off(
+    tmp_path, monkeypatch, source, key
+):
+    # A failure, then pause, then on and off while paused: the user turned the
+    # source off, so Record shows no stopped warning, also after resume.
+    from stenographer.lib.platform.errors import MicCaptureError, SystemAudioCaptureError
+    from tests.lib.live.test_live_session import _make_session
+
+    rigs = []
+
+    def factory(_config, **options):
+        rigs.append(_make_session(monkeypatch, tmp_path / "live", start=False))
+        return rigs[-1].session
+
+    services = HubServices(
+        Config.defaults(),
+        FakePlatform(tmp_path),
+        session_factory=factory,
+        session_store=SessionStore(tmp_path / "sessions"),
+        device_query=lambda: [],
+    )
+    app = _app(tmp_path, services)
+    warning = f"! {source} stopped"
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.pause()
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording and app.activity_status is None)
+        rig = rigs[0]
+        if source == "mic":
+            rig.recorder.on_block(MicCaptureError("pw-record exited unexpectedly with status 1"))
+        else:
+            rig.system.on_block(
+                SystemAudioCaptureError("pw-record exited unexpectedly with status 1")
+            )
+        await _until(pilot, lambda: warning in _speaker_bar(app), "no stopped warning shown")
+
+        for press in ("space", key, key):
+            await pilot.press(press)
+            await _until(pilot, lambda: app.activity_status is None)
+        assert rig.session.paused
+        assert rig.session.source_states[source] == "off"
+        await pilot.pause(0.2)
+        assert warning not in _speaker_bar(app)
+
+        await pilot.press("space")
+        await _until(pilot, lambda: app.activity_status is None and not rig.session.paused)
+        await pilot.pause(0.2)
+        assert warning not in _speaker_bar(app)
+        rig.session.stop()

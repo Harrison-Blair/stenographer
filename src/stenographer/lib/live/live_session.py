@@ -117,7 +117,8 @@ class LiveSession:
         self._vad_model = vad_model
         self._monotonic = monotonic if monotonic is not None else time.monotonic
         self._watch = SourceWatch()
-        # Sources whose capture failed; cleared when the user starts one again.
+        # Sources that are off because their capture failed while enabled; a
+        # toggle by the user and the session stop clear the mark.
         self._failed: set[str] = set()
         self._watch_stop = threading.Event()
         self._watch_thread: threading.Thread | None = None
@@ -341,13 +342,14 @@ class LiveSession:
         with self._control_lock:
             if self._stopped:
                 return
-            if self._enabled[source]:
-                self._enabled[source] = False
+            with self._lock:
+                enabled = not self._enabled[source]
+                self._enabled[source] = enabled
+                self._failed.discard(source)
+            if not enabled:
                 self._stop_source(source)
-            else:
-                self._enabled[source] = True
-                if not self._paused:
-                    self._start_source(source)
+            elif not self._paused:
+                self._start_source(source)
             log.info(
                 fmt_event("live", "source_toggled", source=source, state=self.source_states[source])
             )
@@ -407,7 +409,9 @@ class LiveSession:
             for source in ("mic", "system"):
                 if self._source_seen[source]:
                     self._pad_source(source, duration)
-            self._stopped = True
+            with self._lock:
+                self._stopped = True
+                self._failed.clear()
             self._finish_streams()
             if self._transcriber is not None:
                 self._queue.put(_STOP)
@@ -530,17 +534,16 @@ class LiveSession:
             with self._lock:
                 self._source_seen[source] = True
                 started = self._active[source]
-                if started:
-                    self._failed.discard(source)
             if started:
                 log.info(fmt_event("live", "source_started", source=source))
         except Exception as exc:
             with self._lock:
+                if self._enabled[source]:
+                    self._failed.add(source)
                 self._active[source] = False
                 self._enabled[source] = False
                 self._segmenters[source] = None
                 self._watch.stopped(source)
-                self._failed.add(source)
             log_failure(
                 log, logging.WARNING, "live: source_start_failed", exc, safe=True, source=source
             )
@@ -600,11 +603,13 @@ class LiveSession:
 
     def _source_failed(self, source: str, error: Exception) -> None:
         with self._lock:
+            # A failure of a source that the user already turned off is dropped.
+            if self._enabled[source]:
+                self._failed.add(source)
             self._active[source] = False
             self._enabled[source] = False
             self._speech[source] = False
             self._watch.stopped(source)
-            self._failed.add(source)
             segmenter = self._segmenters[source]
             self._segmenters[source] = None
         if segmenter is not None:
@@ -628,10 +633,8 @@ class LiveSession:
 
     @property
     def failed_sources(self) -> tuple[str, ...]:
-        """Return the sources whose capture failed in this running session."""
+        """Return the sources that are off because their capture failed."""
         with self._lock:
-            if self._stopped:
-                return ()
             return tuple(source for source in ("mic", "system") if source in self._failed)
 
     @property

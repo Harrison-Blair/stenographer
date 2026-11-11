@@ -172,9 +172,9 @@ of a source exits or cannot start, for example because a named microphone is
 unplugged or absent, that source turns off, Record shows `! mic stopped` or
 `! system stopped`, the log gets `live: mic_source_failed` or
 `live: system_source_failed`, and the other source keeps recording. Nothing
-restarts: the line stays until the recording stops, or until you turn the source
-on again (`m` or `s`) and its capture starts. A source that you turn off shows no
-line.
+restarts. The line shows exactly while the source is off because its capture
+failed and you have not pressed its key (`m` or `s`) since; stopping the
+recording clears it.
 
 ### Prepare the models
 
