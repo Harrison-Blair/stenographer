@@ -654,15 +654,8 @@ class Daemon:
             # the pipeline below publishes HIDDEN or ERROR itself.
             if not self._cancel_pending():
                 self._publish_state(OverlayState.TRANSCRIBING)
-            # The capture ends on the pipeline thread, never on the hotkey thread.
-            thread = threading.Thread(
-                target=self._finish_capture, name="stenographer-pipeline", daemon=True
-            )
-            self._pipeline_thread = thread
-            thread.start()
-
-    def _finish_capture(self) -> None:
-        """Pipeline thread: end the capture, keep its audio up to the stop, then run it."""
+        # The capture ends here, on the release path, so no audio after the
+        # release enters the dictation. A press meanwhile is ignored: busy.
         with self._capture_lock:
             try:
                 samples = self._recorder.stop()
@@ -687,7 +680,14 @@ class Daemon:
                     self._emit_summary(self._take_record("CANCELLED"))
                     return
                 self._cue("record_stop")
-        self._run_pipeline(samples)
+                thread = threading.Thread(
+                    target=self._run_pipeline,
+                    args=(samples,),
+                    name="stenographer-pipeline",
+                    daemon=True,
+                )
+                self._pipeline_thread = thread
+                thread.start()
 
     def _mark_stopped(self) -> None:
         self._recording = False

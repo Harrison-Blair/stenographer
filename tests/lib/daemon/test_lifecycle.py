@@ -1114,7 +1114,10 @@ def test_a_press_and_release_during_a_failed_captures_end_start_nothing(daemon_l
         assert not press.is_alive()
         assert not release.is_alive()
         capture.release.set()
-        _join_pipeline(daemon)
+        deadline = time.monotonic() + 5
+        while daemon._busy:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
         assert daemon._utterance_id == 1
         assert daemon._recording is False
         assert daemon._notifier.errors == ["recording failed; audio was discarded"]
@@ -1207,3 +1210,48 @@ def test_no_capture_child_outlives_cancels_a_failure_and_the_daemon_stop(
 
     assert len(pids) == 6
     assert alive() == []
+
+
+def test_a_release_ends_its_capture_before_it_returns_and_keeps_later_audio_out():
+    # Speech after the release must not enter the dictation, and the
+    # microphone is closed when the release returns.
+    from stenographer.lib.audio.recorder import Recorder
+
+    from .support import _MicCapture
+
+    class RecordingThreadCapture(_MicCapture):
+        def stop(self) -> None:
+            self.stopped_on = threading.current_thread()
+            super().stop()
+
+    capture = RecordingThreadCapture()
+    daemon = _daemon()
+    daemon._recorder = Recorder(capture_factory=lambda: capture, device=None, max_seconds=60)
+    gate = threading.Event()
+    observed: list[np.ndarray] = []
+
+    def held_pipeline(samples: np.ndarray) -> None:
+        gate.wait(5)
+        observed.append(samples.copy())
+
+    daemon._run_pipeline = held_pipeline
+    try:
+        daemon.on_key_down()
+        capture.on_block(np.zeros(512, dtype=np.float32))
+        daemon.on_key_up()
+
+        # Ended on the release path itself, not later on another thread.
+        assert capture.stopped_on is threading.current_thread()
+        assert not capture.running
+        capture.on_block(np.ones(512, dtype=np.float32))
+        daemon.on_key_down()
+        assert daemon._utterance_id == 1  # a press while busy is ignored
+        gate.set()
+        _join_pipeline(daemon)
+    finally:
+        gate.set()
+        daemon.stop()
+
+    assert len(observed) == 1
+    assert observed[0].size == 512
+    assert float(observed[0].sum()) == 0.0
