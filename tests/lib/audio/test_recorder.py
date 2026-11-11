@@ -224,3 +224,56 @@ def test_abandon_returns_at_once_and_the_next_start_gets_its_own_capture():
     made[0].release.set()
     recorder.close()
     assert not made[0].running
+
+
+def test_no_block_of_an_abandoned_take_reaches_the_overlay_after_abandon_returns():
+    # The reader can pass the take's check and be preempted before it calls
+    # the overlay sink; abandon must not return until that delivery is done.
+    import threading
+
+    from stenographer.lib.contracts.overlay_state import OverlayState
+    from stenographer.overlay.supervision.outbound_mailbox import OutboundMailbox
+
+    mailbox = OutboundMailbox()
+    captures: list[FakeCapture] = []
+    entered = threading.Event()
+    resume = threading.Event()
+
+    def factory():
+        captures.append(FakeCapture())
+        return captures[-1]
+
+    def deliver(samples, rate, epoch):
+        if epoch == 1:
+            entered.set()
+            resume.wait(5)
+        mailbox.audio_block(samples, rate, epoch)
+
+    recorder = Recorder(capture_factory=factory, device=None, max_seconds=60, on_block=deliver)
+    try:
+        mailbox.publish(OverlayState.RECORDING)
+        recorder.start()
+        old = threading.Thread(target=lambda: captures[0].emit(*([1.0] * 512)))
+        old.start()
+        assert entered.wait(2)
+        abandoning = threading.Thread(target=recorder.abandon)
+        abandoning.start()
+        abandoning.join(0.3)
+        if abandoning.is_alive():
+            # abandon waits for the delivery in progress: let it finish.
+            resume.set()
+            abandoning.join(2)
+        mailbox.publish(OverlayState.HIDDEN)
+        recorder.start()
+        mailbox.publish(OverlayState.RECORDING)
+        captures[1].emit(*([0.0] * 512))
+        # The old reader resumes as late as possible.
+        resume.set()
+        old.join(2)
+
+        block = mailbox.take_audio_nowait()
+        assert block.stream_epoch == 2
+        assert float(np.sum(block.samples)) == 0.0
+    finally:
+        resume.set()
+        recorder.close()

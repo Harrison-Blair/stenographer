@@ -32,7 +32,9 @@ class _Take:
     """One capture and what its reader thread delivered.
 
     The capture's callback is bound to its take, so a block or a failure from
-    an abandoned capture can never reach a later dictation.
+    an abandoned capture can never reach a later dictation. ``lock`` covers the
+    check and the delivery: once ``close`` returns, nothing of this take reaches
+    the dictation, the overlay, or ``on_failure``.
     """
 
     def __init__(
@@ -49,7 +51,8 @@ class _Take:
         self.max_frames = max_frames
         self.on_block = on_block
         self.on_failure = on_failure
-        self.abandoned = False
+        self.lock = threading.Lock()
+        self.closed = False
         self.blocks: list[np.ndarray] = []
         self.frames = 0
         self.capped = False
@@ -62,8 +65,16 @@ class _Take:
 
     def receive(self, item: np.ndarray | MicCaptureError) -> None:
         """Reader thread: keep a block, or remember why the capture stopped."""
-        if self.abandoned:
-            return
+        with self.lock:
+            if not self.closed:
+                self._receive(item)
+
+    def close(self) -> None:
+        """Deliver nothing more; wait for a delivery that is in progress."""
+        with self.lock:
+            self.closed = True
+
+    def _receive(self, item: np.ndarray | MicCaptureError) -> None:
         if isinstance(item, MicCaptureError):
             self.failure = item
             if self.on_failure is not None:
@@ -175,7 +186,10 @@ class Recorder:
             return np.empty(0, dtype=np.float32)
         finalize_started_at = time.perf_counter()
         try:
-            take.capture.stop()
+            try:
+                take.capture.stop()
+            finally:
+                take.close()
             if take.failure is not None:
                 raise take.failure
         except Exception as exc:
@@ -224,7 +238,7 @@ class Recorder:
         take, self._take = self._take, None
         if take is None:
             return
-        take.abandoned = True
+        take.close()
         self._last_capture = take.stats(time.perf_counter(), self._target)
         take.blocks.clear()
         self._ending = [thread for thread in self._ending if thread.is_alive()]
@@ -248,7 +262,7 @@ class Recorder:
         """
         take, self._take = self._take, None
         if take is not None:
-            take.abandoned = True
+            take.close()
             take.blocks.clear()
             self._end(take.capture)
         ending, self._ending = self._ending, []
