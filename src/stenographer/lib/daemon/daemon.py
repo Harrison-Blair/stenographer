@@ -568,7 +568,10 @@ class Daemon:
             self._max_timer = None
 
     def on_key_down(self, *, profile: RefineProfile = RefineProfile.AGENT) -> None:
-        with self._lock:
+        # A cancel or a stop ends its capture under the capture lock, after it
+        # has cleared the recording state. Wait for it: a press must never meet
+        # a capture that is still ending.
+        with self._capture_lock, self._lock:
             if not can_start(self._recording, self._busy, self._stop_event.is_set()):
                 if self._busy and self._record is not None:
                     self._record.ignored_busy_presses += 1

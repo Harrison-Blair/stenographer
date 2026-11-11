@@ -1036,3 +1036,63 @@ def test_a_capture_that_stops_during_a_dictation_ends_it_with_the_microphone_err
     assert daemon._pipeline_thread is None
     assert "recorder: failed" in daemon_logs.text
     assert "outcome=ERROR" in _summary(daemon_logs)
+
+
+class _SlowStopCapture:
+    """A ``MicCapture`` whose ``stop`` blocks the way ending a real child does."""
+
+    def __init__(self) -> None:
+        from stenographer.lib.platform.errors import MicCaptureError
+
+        self._error = MicCaptureError
+        self.running = False
+        self.stopping = threading.Event()
+        self.release = threading.Event()
+
+    def start(self, target, on_block) -> None:
+        if self.running:
+            raise self._error("microphone capture is already running")
+        self.running = True
+
+    def stop(self) -> None:
+        self.stopping.set()
+        self.release.wait(5)
+        self.running = False
+
+
+@pytest.mark.parametrize("end", ["cancel", "key_up"])
+def test_a_press_while_the_previous_capture_still_ends_waits_and_starts(daemon_logs, end):
+    from stenographer.lib.audio.recorder import Recorder
+
+    capture = _SlowStopCapture()
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    daemon._recorder = Recorder(capture=capture, device=None, max_seconds=60)
+    try:
+        daemon.on_key_down()
+        ending = threading.Thread(target=daemon.on_cancel if end == "cancel" else daemon.on_key_up)
+        ending.start()
+        assert capture.stopping.wait(2)
+
+        press = threading.Thread(target=daemon.on_key_down)
+        press.start()
+        press.join(0.2)
+        capture.release.set()
+        ending.join(5)
+        if end == "key_up":
+            thread = daemon._pipeline_thread
+            assert thread is not None
+            thread.join(10)
+            press.join(5)
+            # A press while the pipeline is busy is ignored, never a failure.
+            daemon.on_key_down()
+        press.join(5)
+
+        assert not press.is_alive()
+        assert daemon._notifier.errors == []
+        assert daemon._recording is True
+        assert capture.running
+    finally:
+        capture.release.set()
+        daemon.stop()
+
+    assert "recorder: failed" not in daemon_logs.text
