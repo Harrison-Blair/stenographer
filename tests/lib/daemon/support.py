@@ -97,14 +97,15 @@ class _Recorder:
         self._samples = samples
         self.last_capture: CaptureStats | None = None
 
-    def start(self) -> None:
+    def start(self, on_failure=None) -> None:
         self.last_capture = None
 
     def stop(self) -> np.ndarray:
         self.last_capture = _CAPTURE
         return self._samples
 
-    def prepare(self) -> None: ...
+    def abandon(self) -> None:
+        self.last_capture = _CAPTURE
 
     def close(self) -> None: ...
 

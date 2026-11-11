@@ -1,15 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Dictation capture: the ``Recorder``.
 
-Each ``start`` starts a platform microphone capture and each ``stop`` ends
-it, so no microphone stays open between dictations. The capture delivers
-16 kHz mono float32 blocks on its reader thread; ``stop`` returns after the
-last block, so the samples and counters it reads are complete."""
+Each ``start`` makes a new platform microphone capture, so each dictation owns
+its own capture child and no microphone stays open between dictations.
+``stop`` ends the capture and returns after its last block, so the audio up to
+the stop is complete. ``abandon`` detaches the capture and ends it on a
+background thread, so the next ``start`` never waits for it; ``close`` ends
+every capture, including the ones that still end in the background."""
 
 from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 import time
 from collections.abc import Callable
 
@@ -25,106 +28,156 @@ from stenographer.lib.platform.mic_capture import MicCapture
 logger = logging.getLogger(__name__)
 
 
-class Recorder:
-    """Captures one dictation as a 1-D float32 array at the ASR rate.
+class _Take:
+    """One capture and what its reader thread delivered.
 
-    *on_block* gets each block for the level meter. *on_failure* is called on
-    the capture's reader thread when the capture stops by itself; the next
-    ``stop`` then raises.
+    The capture's callback is bound to its take, so a block or a failure from
+    an abandoned capture can never reach a later dictation.
+    """
+
+    def __init__(
+        self,
+        capture: MicCapture,
+        *,
+        epoch: int,
+        max_frames: int,
+        on_block: Callable[[np.ndarray, int, int], None] | None,
+        on_failure: Callable[[], None] | None,
+    ) -> None:
+        self.capture = capture
+        self.epoch = epoch
+        self.max_frames = max_frames
+        self.on_block = on_block
+        self.on_failure = on_failure
+        self.abandoned = False
+        self.blocks: list[np.ndarray] = []
+        self.frames = 0
+        self.capped = False
+        self.failure: MicCaptureError | None = None
+        self.started_at = 0.0
+        self.activation_ms = 0.0
+        self.capture_started_at: float | None = None
+        self.first_block_at: float | None = None
+        self.block_count = 0
+
+    def receive(self, item: np.ndarray | MicCaptureError) -> None:
+        """Reader thread: keep a block, or remember why the capture stopped."""
+        if self.abandoned:
+            return
+        if isinstance(item, MicCaptureError):
+            self.failure = item
+            if self.on_failure is not None:
+                with contextlib.suppress(Exception):
+                    self.on_failure()
+            return
+        if self.capped:
+            return
+        if self.first_block_at is None:
+            self.first_block_at = time.perf_counter()
+        self.block_count += 1
+        self.blocks.append(item)
+        if self.on_block is not None:
+            # The optional sink may only replace a latest-only in-memory slot.
+            with contextlib.suppress(Exception):
+                self.on_block(item, SAMPLE_RATE, self.epoch)
+        self.frames += item.shape[0]
+        if self.max_frames and self.frames >= self.max_frames:
+            self.capped = True
+
+    def stats(self, finalize_started_at: float, target: str | None) -> CaptureStats:
+        elapsed = (
+            0.0
+            if self.capture_started_at is None
+            else time.perf_counter() - self.capture_started_at
+        )
+        return CaptureStats(
+            activate_ms=self.activation_ms,
+            capture_seconds=elapsed,
+            input_frames=self.frames,
+            output_frames=self.frames,
+            capped=self.capped,
+            first_callback_at=self.first_block_at,
+            activation_to_callback_ms=(
+                None
+                if self.first_block_at is None
+                else (self.first_block_at - self.started_at) * 1000
+            ),
+            device_name=target,
+            finalize_ms=(time.perf_counter() - finalize_started_at) * 1000,
+            callback_count=self.block_count,
+        )
+
+
+class Recorder:
+    """Captures one dictation at a time as a 1-D float32 array at the ASR rate.
+
+    *capture_factory* makes a new platform capture for each ``start``.
+    *on_block* gets each block for the level meter.
     """
 
     def __init__(
         self,
         *,
-        capture: MicCapture,
+        capture_factory: Callable[[], MicCapture],
         device: str | None,
         max_seconds: int,
         on_block: Callable[[np.ndarray, int, int], None] | None = None,
-        on_failure: Callable[[], None] | None = None,
     ) -> None:
-        self._capture = capture
+        self._capture_factory = capture_factory
         self._target = capture_target(device)
-        self._max_frames = max_seconds * SAMPLE_RATE
         self._max_seconds = max_seconds
         self._on_block = on_block
-        self._on_failure = on_failure
-        self._capturing = False
+        self._take: _Take | None = None
         self._stream_epoch = 0
-        self._blocks: list[np.ndarray] = []
-        self._frames = 0
-        self._capped = False
-        self._failure: MicCaptureError | None = None
-        self._capture_started_at: float | None = None
-        self._activation_started_at = 0.0
-        self._activation_ms = 0.0
-        self._first_block_at: float | None = None
-        self._block_count = 0
+        self._ending: list[threading.Thread] = []
         # One utterance at a time (a daemon invariant), so the last completed
         # capture is unambiguously the one the pipeline thread is about to run.
         self._last_capture: CaptureStats | None = None
 
     @property
     def capturing(self) -> bool:
-        return self._capturing
+        return self._take is not None
 
-    def start(self) -> None:
-        """Start the capture child; raise when it cannot start."""
-        if self._capturing:
+    def start(self, on_failure: Callable[[], None] | None = None) -> None:
+        """Start a new capture child; raise when it cannot start.
+
+        *on_failure* is called on the capture's reader thread when this capture
+        stops by itself; the next ``stop`` then raises.
+        """
+        if self._take is not None:
             raise RuntimeError("recorder is already capturing")
-        # Reset before start: blocks may arrive before capture.start returns.
-        self._discard_samples()
-        self._failure = None
-        self._first_block_at = None
-        self._block_count = 0
         self._last_capture = None
         self._stream_epoch += 1
-        started_at = time.perf_counter()
-        self._activation_started_at = started_at
-        self._capture.start(self._target, self._on_item)
-        self._activation_ms = (time.perf_counter() - started_at) * 1000.0
-        self._capture_started_at = time.perf_counter()
-        self._capturing = True
+        take = _Take(
+            self._capture_factory(),
+            epoch=self._stream_epoch,
+            max_frames=self._max_seconds * SAMPLE_RATE,
+            on_block=self._on_block,
+            on_failure=on_failure,
+        )
+        take.started_at = time.perf_counter()
+        take.capture.start(self._target, take.receive)
+        take.activation_ms = (time.perf_counter() - take.started_at) * 1000.0
+        take.capture_started_at = time.perf_counter()
+        self._take = take
         # DEBUG, not INFO: this runs under the daemon's state lock, and the
         # numbers reach the log through the utterance summary line instead.
-        logger.debug(fmt_event("recorder", "activated", duration_ms=round(self._activation_ms, 1)))
-
-    def _on_item(self, item: np.ndarray | MicCaptureError) -> None:
-        """Reader thread: keep a block, or remember why the capture stopped."""
-        if isinstance(item, MicCaptureError):
-            self._failure = item
-            if self._on_failure is not None:
-                with contextlib.suppress(Exception):
-                    self._on_failure()
-            return
-        if self._capped:
-            return
-        if self._first_block_at is None:
-            self._first_block_at = time.perf_counter()
-        self._block_count += 1
-        self._blocks.append(item)
-        if self._on_block is not None:
-            # The optional sink may only replace a latest-only in-memory slot.
-            with contextlib.suppress(Exception):
-                self._on_block(item, SAMPLE_RATE, self._stream_epoch)
-        self._frames += item.shape[0]
-        if self._max_frames and self._frames >= self._max_frames:
-            self._capped = True
+        logger.debug(fmt_event("recorder", "activated", duration_ms=round(take.activation_ms, 1)))
 
     def stop(self) -> np.ndarray:
-        """End the capture and return its samples.
+        """End the capture and return its samples, up to the stop.
 
         Raise when the capture stopped by itself; its samples are discarded.
         Calling ``stop`` while not capturing is harmless and returns empty.
         """
-        if not self._capturing:
-            self._discard_samples()
+        take, self._take = self._take, None
+        if take is None:
             return np.empty(0, dtype=np.float32)
         finalize_started_at = time.perf_counter()
-        self._capturing = False
         try:
-            self._capture.stop()
-            if self._failure is not None:
-                raise self._failure
+            take.capture.stop()
+            if take.failure is not None:
+                raise take.failure
         except Exception as exc:
             log_failure(
                 logger,
@@ -133,75 +186,81 @@ class Recorder:
                 exc,
                 safe=True,
                 phase="stop",
-                input_frames=self._frames,
-                capped=int(self._capped),
+                input_frames=take.frames,
+                capped=int(take.capped),
             )
-            self._discard_samples()
+            take.blocks.clear()
             raise
-        capture_started_at = self._capture_started_at
-        frames = self._frames
-        capped = self._capped
-        audio = np.concatenate(self._blocks) if self._blocks else np.empty(0, dtype=np.float32)
-        self._discard_samples()
-        elapsed = 0.0 if capture_started_at is None else time.perf_counter() - capture_started_at
-        self._last_capture = CaptureStats(
-            activate_ms=self._activation_ms,
-            capture_seconds=elapsed,
-            input_frames=frames,
-            output_frames=frames,
-            capped=capped,
-            first_callback_at=self._first_block_at,
-            activation_to_callback_ms=(
-                None
-                if self._first_block_at is None
-                else (self._first_block_at - self._activation_started_at) * 1000
-            ),
-            device_name=self._target,
-            finalize_ms=(time.perf_counter() - finalize_started_at) * 1000,
-            callback_count=self._block_count,
-        )
+        audio = np.concatenate(take.blocks) if take.blocks else np.empty(0, dtype=np.float32)
+        take.blocks.clear()
+        stats = take.stats(finalize_started_at, self._target)
+        self._last_capture = stats
         logger.debug(
             fmt_event(
                 "recorder",
                 "captured",
-                duration_seconds=round(elapsed, 3),
-                input_frames=frames,
-                output_frames=frames,
+                duration_seconds=round(stats.capture_seconds, 3),
+                input_frames=stats.input_frames,
+                output_frames=stats.output_frames,
                 rate_hz=SAMPLE_RATE,
                 channels=1,
-                capped=int(capped),
+                capped=int(stats.capped),
             )
         )
-        if capped:
+        if stats.capped:
             logger.warning(
                 "recorder: capture_capped max_seconds=%d frames=%d",
                 self._max_seconds,
-                frames,
+                stats.input_frames,
             )
         return audio
 
-    def close(self) -> None:
-        """End any capture and discard buffered audio. Safe to call repeatedly."""
-        self._capturing = False
+    def abandon(self) -> None:
+        """Discard the capture's audio and end its child on a background thread.
+
+        Returns at once. ``last_capture`` gets the counters up to now. Blocks
+        and a failure that the child still delivers are ignored.
+        """
+        take, self._take = self._take, None
+        if take is None:
+            return
+        take.abandoned = True
+        self._last_capture = take.stats(time.perf_counter(), self._target)
+        take.blocks.clear()
+        self._ending = [thread for thread in self._ending if thread.is_alive()]
+        thread = threading.Thread(
+            target=self._end, args=(take.capture,), name="stenographer-capture-end", daemon=True
+        )
+        self._ending.append(thread)
+        thread.start()
+
+    @staticmethod
+    def _end(capture: MicCapture) -> None:
         try:
-            self._capture.stop()
+            capture.stop()
         except Exception as exc:
             log_failure(logger, logging.WARNING, "recorder: close_failed", exc, safe=True)
-        finally:
-            self._discard_samples()
 
-    def _discard_samples(self) -> None:
-        self._blocks = []
-        self._frames = 0
-        self._capped = False
-        self._capture_started_at = None
+    def close(self) -> None:
+        """End every capture, wait for the ones that end in the background, discard audio.
+
+        Safe to call repeatedly.
+        """
+        take, self._take = self._take, None
+        if take is not None:
+            take.abandoned = True
+            take.blocks.clear()
+            self._end(take.capture)
+        ending, self._ending = self._ending, []
+        for thread in ending:
+            thread.join()
 
     @property
     def last_capture(self) -> CaptureStats | None:
-        """Stats for the most recently completed capture, or ``None``.
+        """Stats for the most recently completed or abandoned capture, or ``None``.
 
-        Read on the hotkey thread in ``Daemon.on_key_up``, immediately after
-        ``stop`` has returned its samples, so the utterance summary can carry
-        the capture's cost without the daemon re-deriving it.
+        Read under the daemon's state lock right after ``stop`` or ``abandon``,
+        so the utterance summary can carry the capture's cost without the
+        daemon re-deriving it.
         """
         return self._last_capture

@@ -128,7 +128,7 @@ def calibrate_spectrum_profile(
         from stenographer.lib.platform import current_platform
 
         recorder = Recorder(
-            capture=current_platform().mic_capture(),
+            capture_factory=current_platform().mic_capture,
             device=device,
             max_seconds=CAPTURE_SECONDS,
         )

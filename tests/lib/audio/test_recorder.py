@@ -49,8 +49,9 @@ class FakeCapture:
 
 
 def _recorder(capture: FakeCapture, **kwargs) -> Recorder:
+    """A recorder whose every start gets *capture*; tests of abandon use a factory."""
     options = {"device": None, "max_seconds": 10, **kwargs}
-    return Recorder(capture=capture, **options)
+    return Recorder(capture_factory=lambda: capture, **options)
 
 
 @pytest.mark.parametrize(
@@ -130,8 +131,8 @@ def test_a_capture_that_cannot_start_raises_and_is_not_capturing():
 def test_a_capture_that_stops_by_itself_calls_on_failure_and_stop_raises(caplog):
     capture = FakeCapture()
     failures = []
-    recorder = _recorder(capture, on_failure=lambda: failures.append(True))
-    recorder.start()
+    recorder = _recorder(capture)
+    recorder.start(on_failure=lambda: failures.append(True))
     capture.emit(0.1)
 
     capture.on_block(MicCaptureError("pw-record exited unexpectedly with status 1"))
@@ -182,3 +183,44 @@ def test_start_while_capturing_is_refused():
 
     with pytest.raises(RuntimeError, match="already capturing"):
         recorder.start()
+
+
+def test_abandon_returns_at_once_and_the_next_start_gets_its_own_capture():
+    import threading
+
+    class SlowStop(FakeCapture):
+        def __init__(self):
+            super().__init__()
+            self.release = threading.Event()
+
+        def stop(self):
+            self.release.wait(5)
+            super().stop()
+
+    made = []
+
+    def factory():
+        made.append(SlowStop())
+        return made[-1]
+
+    failures = []
+    recorder = Recorder(capture_factory=factory, device=None, max_seconds=10)
+    recorder.start(on_failure=lambda: failures.append("old"))
+    made[0].emit(0.5)
+
+    recorder.abandon()
+    assert recorder.last_capture.input_frames == 1
+    recorder.start()
+
+    # The old child still ends; its late blocks and failure reach nobody.
+    made[0].emit(0.9)
+    made[0].on_block(MicCaptureError("pw-record exited unexpectedly with status 1"))
+    made[1].emit(0.25)
+    made[1].release.set()
+    np.testing.assert_array_equal(recorder.stop(), np.asarray([0.25], dtype=np.float32))
+    assert failures == []
+    assert made[0].running
+
+    made[0].release.set()
+    recorder.close()
+    assert not made[0].running

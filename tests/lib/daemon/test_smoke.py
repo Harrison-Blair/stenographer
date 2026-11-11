@@ -85,7 +85,7 @@ _CANARY = "opening words must remain"
 
 
 def _recorder() -> Recorder:
-    return Recorder(capture=current_platform().mic_capture(), device=None, max_seconds=2)
+    return Recorder(capture_factory=current_platform().mic_capture, device=None, max_seconds=2)
 
 
 def test_two_real_capture_cycles_deliver_16_khz_audio():
