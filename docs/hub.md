@@ -363,8 +363,10 @@ use `ffmpeg`. Stenographer does not bundle FFmpeg. Install it with your system
 package manager. The Checks tab reports when `ffmpeg` is missing; a job that
 needs it fails with `× needs ffmpeg` in the Library detail.
 `stenographer transcribe FILE` decodes with the same code. Where `ffmpeg` is missing and the
-file needs it, the command prints `needs ffmpeg` and exits with status 69; an unreadable or
-missing file exits with status 2.
+file needs it, the command prints `needs ffmpeg` and exits with status 69. A file that
+`soundfile` cannot read, such as a damaged WAV file, needs `ffmpeg` too, so without `ffmpeg`
+it also gives `needs ffmpeg` and status 69. A missing file, or a file that `ffmpeg` cannot
+read, exits with status 2.
 
 Each job saves its result in the sessions folder, next to your recordings
 (`$XDG_DATA_HOME/stenographer/sessions/`, or
