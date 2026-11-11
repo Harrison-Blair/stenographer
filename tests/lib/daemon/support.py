@@ -42,7 +42,6 @@ _CAPTURE = CaptureStats(
     capture_seconds=1.0,
     input_frames=_RATE,
     output_frames=_RATE,
-    overflow=False,
     capped=False,
 )
 

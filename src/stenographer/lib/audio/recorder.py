@@ -149,7 +149,6 @@ class Recorder:
             capture_seconds=elapsed,
             input_frames=frames,
             output_frames=frames,
-            overflow=False,
             capped=capped,
             first_callback_at=self._first_block_at,
             activation_to_callback_ms=(
@@ -170,7 +169,6 @@ class Recorder:
                 output_frames=frames,
                 rate_hz=SAMPLE_RATE,
                 channels=1,
-                overflow=0,
                 capped=int(capped),
             )
         )
