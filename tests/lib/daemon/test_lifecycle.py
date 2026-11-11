@@ -1255,3 +1255,34 @@ def test_a_release_ends_its_capture_before_it_returns_and_keeps_later_audio_out(
     assert len(observed) == 1
     assert observed[0].size == 512
     assert float(observed[0].sum()) == 0.0
+
+
+def test_a_capture_that_fails_before_its_start_returns_ends_the_dictation(daemon_logs):
+    # The reader can report an immediate child exit while on_key_down still
+    # holds the state lock; the dictation must still end with the error.
+    from stenographer.lib.audio.recorder import Recorder
+    from stenographer.lib.platform.errors import MicCaptureError
+
+    from .support import _MicCapture
+
+    class FailsAtOnce(_MicCapture):
+        def start(self, target, on_block) -> None:
+            super().start(target, on_block)
+            on_block(MicCaptureError("pw-record exited unexpectedly with status 1"))
+
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    daemon._recorder = Recorder(capture_factory=FailsAtOnce, device=None, max_seconds=60)
+    try:
+        daemon.on_key_down()
+        deadline = time.monotonic() + 5
+        while daemon._recording or daemon._busy:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert daemon._notifier.errors == ["recording failed; audio was discarded"]
+        daemon.on_key_down()
+        assert daemon._recording is True  # the next press starts normally
+    finally:
+        daemon.stop()
+
+    assert daemon._worker.utterances == []
+    assert "recorder: failed phase=stop" in daemon_logs.text
