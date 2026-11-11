@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from stenographer.lib.platform.hotkey_listener import HotkeyListener
     from stenographer.lib.platform.key_injector import KeyInjector
     from stenographer.lib.platform.key_table import KeyTable
+    from stenographer.lib.platform.mic_capture import InputSources, MicCapture
     from stenographer.lib.platform.notifier import Notifier
     from stenographer.lib.platform.process_counters import ProcessCounters
     from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
@@ -142,6 +143,16 @@ class LinuxPlatform(DiagnosticsHostMixin):
 
         player = detect_player()
         return LinuxCuePlayer(player) if player is not None else None
+
+    def mic_capture(self) -> MicCapture:
+        from stenographer.lib.platform.linux.mic_capture import LinuxMicCapture
+
+        return LinuxMicCapture()
+
+    def input_sources(self) -> InputSources:
+        from stenographer.lib.platform.linux.mic_capture import input_sources
+
+        return input_sources()
 
     def system_audio_capture(self) -> SystemAudioCapture:
         from stenographer.lib.platform.linux.system_audio import LinuxSystemAudioCapture

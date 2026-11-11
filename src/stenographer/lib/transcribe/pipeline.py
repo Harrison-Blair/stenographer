@@ -270,9 +270,9 @@ def log_summary(record: UtteranceRecord) -> None:
 def downmix(samples: np.ndarray) -> np.ndarray:
     """Reduce a 2-D capture to mono by keeping channel 0. PURE.
 
-    Channel 0, not the channel mean: that is what the PortAudio callback keeps,
-    and averaging a stereo mic whose second channel is silent or out of phase
-    halves or cancels the speech the VAD then has to find.
+    Channel 0, not the channel mean: averaging a stereo mic whose second
+    channel is silent or out of phase halves or cancels the speech the VAD
+    then has to find.
     """
     if samples.ndim != 2:
         return samples.reshape(-1)

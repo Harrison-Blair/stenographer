@@ -111,7 +111,7 @@ def test_estimator_rejects_nonfinite_samples() -> None:
 
 
 class _FakeRecorder:
-    """A capture source with the four methods the calibration flow drives."""
+    """A capture source with the three methods the calibration flow drives."""
 
     def __init__(
         self,
@@ -125,9 +125,6 @@ class _FakeRecorder:
         self.device = device
         self.max_seconds = max_seconds
         self.calls: list[str] = [] if log is None else log
-
-    def prepare(self) -> None:
-        self.calls.append("prepare")
 
     def start(self) -> None:
         self.calls.append("start")
@@ -178,7 +175,6 @@ def test_calibration_counts_the_room_down_then_measures_it(instant_waits) -> Non
     assert profile == expected
     assert len(profile) == SPECTRUM_BANDS
     assert events == [
-        "prepare",
         "countdown:3",
         "countdown:2",
         "countdown:1",

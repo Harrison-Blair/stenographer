@@ -741,22 +741,17 @@ def test_capture_is_the_default_offer_for_a_brand_new_configuration(key_vocabula
     assert "Binding (capture/keep/type) [capture]: " in console.stdout.getvalue()
 
 
-def test_audio_device_menu_comes_from_the_shared_portaudio_enumeration(monkeypatch):
+def test_audio_device_menu_comes_from_the_shared_source_listing(monkeypatch):
     from stenographer.lib.audio import probe
-    from stenographer.lib.audio.probe import DeviceQuery
+    from stenographer.lib.platform.mic_capture import InputSource, InputSources
 
     monkeypatch.setattr(
         probe,
         "query_devices",
-        lambda: DeviceQuery(
-            devices=(
-                {"name": "HDMI out", "max_input_channels": 0},
-                {"name": "USB mic", "max_input_channels": 1},
-            )
-        ),
+        lambda: InputSources(sources=(InputSource("alsa_input.usb", "USB mic"),)),
     )
 
-    assert setup._audio_devices() == [("1", "1: USB mic")]
+    assert setup._audio_devices() == [("alsa_input.usb", "USB mic")]
 
 
 def test_hotkey_device_menu_comes_from_the_platform_provider(monkeypatch):

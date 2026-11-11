@@ -75,20 +75,22 @@ class FakeWriter:
         self._writer.close()
 
 
-class FakeRecorder:
-    def __init__(self, *, on_block, **kwargs):
-        self.on_block = on_block
-        self.options = kwargs
+class FakeMicCapture:
+    def __init__(self):
+        self.on_block = None
         self.running = False
+        self.targets = []
 
-    def start(self):
+    def start(self, target, on_block):
+        self.targets.append(target)
+        self.on_block = on_block
         self.running = True
 
     def stop(self):
         self.running = False
 
     def emit(self, value):
-        self.on_block(np.asarray([value], dtype=np.float32), 16000, 1)
+        self.on_block(np.asarray([value], dtype=np.float32))
 
 
 class FakeSystemCapture:
@@ -183,6 +185,7 @@ class FakeDiarizer:
 
 class FakePlatform:
     def __init__(self, system_capture, data_path, diarizer, platform_error=None):
+        self.mic = FakeMicCapture()
         self._system_capture = system_capture
         self._data_path = data_path
         self._diarizer = diarizer
@@ -190,6 +193,9 @@ class FakePlatform:
 
     def data_dir(self, _env, _home):
         return self._data_path
+
+    def mic_capture(self):
+        return self.mic
 
     def system_audio_capture(self):
         if self._platform_error is not None:
@@ -306,7 +312,6 @@ def _make_session(
     system_capture = FakeSystemCapture(*availability)
     diarizer = diarizer if diarizer is not None else FakeDiarizer()
     worker_holder = {}
-    recorder_holder = {}
     segmenters = []
 
     class WriterFactory:
@@ -320,11 +325,6 @@ def _make_session(
             super().__init__(cfg, transport=transport)
             worker_holder["worker"] = self
 
-    class RecorderFactory(FakeRecorder):
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            recorder_holder["recorder"] = self
-
     class SegmenterFactory(FakeSegmenter):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -332,7 +332,6 @@ def _make_session(
 
     monkeypatch.setattr(live_session, "SessionWriter", WriterFactory)
     monkeypatch.setattr(live_session, "Worker", WorkerFactory)
-    monkeypatch.setattr(live_session, "Recorder", RecorderFactory)
     monkeypatch.setattr(live_session, "PhraseSegmenter", SegmenterFactory)
     platform = FakePlatform(system_capture, tmp_path, diarizer, platform_error)
     cfg = SimpleNamespace(
@@ -355,7 +354,7 @@ def _make_session(
         writer=writer,
         worker=worker_holder["worker"],
         system=system_capture,
-        recorder=recorder_holder["recorder"],
+        recorder=platform.mic,
         segmenters=segmenters,
         diarizer=diarizer,
     )
@@ -381,8 +380,7 @@ def test_live_session_queues_sources_in_order_filters_d12_and_drains_on_stop(
     assert rig.session.levels_dbfs["mic"] == 0.0
     assert rig.session.source_states["mic"] == "on"
     assert rig.session.model_name == "bark-pro-int8"
-    assert rig.recorder.options["streaming"] is True
-    assert rig.recorder.options["max_seconds"] == 0
+    assert rig.recorder.targets == [None]
     rig.system.emit(2)
     rig.system.emit(3)
     rig.system.emit(4)

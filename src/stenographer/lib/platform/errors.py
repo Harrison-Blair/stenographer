@@ -14,6 +14,14 @@ class SystemAudioCaptureError(RuntimeError):
     """System audio capture could not start or stopped unexpectedly."""
 
 
+class MicCaptureError(RuntimeError):
+    """Microphone capture could not start or stopped unexpectedly."""
+
+
+class PwRecordFormatError(ValueError):
+    """The ``pw-record`` stream is not 16 kHz mono float32."""
+
+
 class SpeakerDiarizerError(RuntimeError):
     """Speaker separation is unavailable, or its helper process failed."""
 

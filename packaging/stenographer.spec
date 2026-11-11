@@ -7,8 +7,7 @@
 # Output: dist/stenographer/stenographer  (onedir bundle)
 #
 # Deliberately NOT bundled — the target system must provide (see docs/building.md):
-#   - libportaudio / pipewire / pulse libs (excluded by hook-sounddevice.py;
-#     found at runtime via rthooks/py_rth_portaudio.py)
+#   - PipeWire with the pw-record and pactl CLIs (microphone and system capture)
 #   - wl-copy, canberra-gtk-play / pw-play / paplay CLIs; /dev/uinput access + `input` group
 # The ASR model is never bundled; `stenographer model download` builds it in the
 # local model directory. The voice models ship in assets/models; the speaker
@@ -72,7 +71,6 @@ a = Analysis(
         *SHERPA_DATAS,
     ],
     hiddenimports=[
-        "sounddevice",
         *NATIVE_IMPORTS,
         *TEXTUAL_IMPORTS,
         *SHERPA_IMPORTS,
@@ -80,11 +78,6 @@ a = Analysis(
         # analysis from entry.py alone would miss most of the package.
         *collect_submodules("stenographer"),
     ],
-    hookspath=[str(PROJECT_ROOT / "packaging")],
-    runtime_hooks=(
-        [str(PROJECT_ROOT / "packaging" / "rthooks" / "py_rth_portaudio.py")]
-        if sys.platform == "linux" else []
-    ),
     excludes=["PySide6", "stenographer_desktop"],
     noarchive=False,
 )

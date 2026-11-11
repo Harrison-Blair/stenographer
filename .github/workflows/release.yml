@@ -98,7 +98,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential libffi-dev libportaudio2 libwayland-dev pkg-config
+            build-essential libffi-dev libwayland-dev pkg-config
       - name: Install development dependencies
         run: |
           python -m venv .venv
@@ -181,7 +181,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential file libffi-dev libportaudio2 libwayland-dev \
+            build-essential file libffi-dev libwayland-dev \
             pkg-config python3-dev
       - name: Install build dependencies
         run: |

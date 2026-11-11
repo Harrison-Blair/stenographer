@@ -280,6 +280,9 @@ journalctl --user -u stenographer.service -f
 Common fixes:
 
 - If the model is missing, run `stenographer model download --asr`.
+- If `doctor` reports the microphone as missing because `pw-record` or `pactl`
+  is not installed, install PipeWire's tools (on Ubuntu: `pipewire-bin` and
+  `pulseaudio-utils`).
 - If the keyboard is unavailable, check read access to `/dev/input/event*` and
   write access to `/dev/uinput`; `doctor` reports the required groups/rules.
 - If delivery fails under Wayland, install `wl-copy` from `wl-clipboard`.
@@ -300,6 +303,21 @@ Start by checking which inputs Stenographer can see:
 ```sh
 stenographer devices
 ```
+
+It lists the PipeWire sources that can record, one per line: the source name,
+then its description; `*` marks the default source. Monitors of outputs are not
+listed. Save a source name as `audio.input_device` (setup, or the Audio tab of
+the hub Settings), or leave it empty to follow the default microphone. The
+values `pipewire`, `default`, and `pulse` also mean the default microphone. A
+number is a device index from an older version: it also means the default
+microphone, and `doctor` warns until you pick the microphone again. A named
+source that is gone makes dictation fail with the microphone error; it never
+records another microphone instead.
+
+Stenographer records through a `pw-record` child process. Dictation starts it
+at the key press and stops it when the dictation ends, so no microphone stays
+open between dictations. If it cannot start, or stops during a dictation, the
+dictation ends with the microphone error.
 
 Select the intended microphone in your audio settings or configuration. Keep a
 headset or close microphone about 10–20 cm from your mouth, point it toward (but

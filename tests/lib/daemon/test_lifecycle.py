@@ -11,7 +11,6 @@ import time
 import numpy as np
 import pytest
 
-from stenographer.lib.audio.recorder import RecorderState
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
@@ -53,8 +52,7 @@ def test_build_wires_collaborators_lazily():
         assert daemon._listener is not None
         assert daemon._deliverer is not None
         assert daemon._worker.process_ids == ()
-        assert daemon._recorder._state is not RecorderState.CAPTURING
-        assert daemon._recorder._state is not RecorderState.PREPARED
+        assert not daemon._recorder.capturing
     finally:
         # stop() before run() must be a safe no-op.
         daemon.stop()
@@ -1004,3 +1002,37 @@ def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire):
     wire = json.dumps(ollama_wire[0]["messages"])
     assert "Kubernetes" in wire
     assert "PipeWire" in wire
+
+
+def test_a_capture_that_stops_during_a_dictation_ends_it_with_the_microphone_error(daemon_logs):
+    from stenographer.lib.audio.recorder import Recorder
+    from stenographer.lib.platform.errors import MicCaptureError
+
+    from .support import _MicCapture
+
+    capture = _MicCapture()
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    daemon._recorder = Recorder(
+        capture=capture, device=None, max_seconds=10, on_failure=daemon._on_capture_failed
+    )
+    try:
+        daemon.on_key_down()
+        assert daemon._recording is True
+        capture.on_block(np.zeros(512, dtype=np.float32))
+
+        capture.on_block(MicCaptureError("pw-record exited unexpectedly with status 1"))
+
+        deadline = time.monotonic() + 2
+        while daemon._recording or daemon._busy:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert not capture.running
+        assert daemon._notifier.errors == ["recording failed; audio was discarded"]
+        # The key release that follows changes nothing.
+        daemon.on_key_up()
+    finally:
+        daemon.stop()
+
+    assert daemon._pipeline_thread is None
+    assert "recorder: failed" in daemon_logs.text
+    assert "outcome=ERROR" in _summary(daemon_logs)

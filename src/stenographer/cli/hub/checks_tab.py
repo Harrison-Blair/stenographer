@@ -49,6 +49,7 @@ log = logging.getLogger(__name__)
 _FIXES = {
     "key_injector_ok": ("run quick setup", "quick_setup"),
     "has_mic": ("choose a microphone", "audio.input_device"),
+    "input_device": ("choose a microphone", "audio.input_device"),
     "hotkey_access_ok": ("set the hotkey", "hotkey.binding"),
     "cue_player": ("choose a sound pack", "feedback.sound_pack"),
     "model_cached": ("download the model", "models"),

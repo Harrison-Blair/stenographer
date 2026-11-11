@@ -58,10 +58,15 @@ from pathlib import Path
 
 Path(os.environ['PW_CAPTURE_ARGS']).write_text(json.dumps(sys.argv[1:]))
 Path(os.environ['PW_CAPTURE_PID']).write_text(str(os.getpid()))
-sys.stdout.buffer.write(struct.pack('<4f', 9.0, 9.0, 9.0, 9.0))
+order = '<'
+if os.environ.get('PW_AU') == '1':
+    # PipeWire 1.6 writes an AU file to a pipe: a header, then big-endian samples.
+    order = '>'
+    sys.stdout.buffer.write(b'.snd' + struct.pack('>5I', 24, 0xFFFFFFFF, 6, 16000, 1))
+sys.stdout.buffer.write(struct.pack(order + '4f', 9.0, 9.0, 9.0, 9.0))
 sys.stdout.buffer.flush()
 time.sleep(0.3)
-sys.stdout.buffer.write(struct.pack('<512f', 0.25, -0.5, 0.75, -1.0, *([0.0] * 508)))
+sys.stdout.buffer.write(struct.pack(order + '512f', 0.25, -0.5, 0.75, -1.0, *([0.0] * 508)))
 sys.stdout.buffer.flush()
 if os.environ.get('PW_EXIT_EARLY') == '1':
     raise SystemExit(17)
@@ -87,6 +92,7 @@ def _install_tools(
     early_exit: bool = False,
     link_output: str | None = None,
     include_link_tool: bool = True,
+    au: bool = False,
 ) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -107,6 +113,10 @@ def _install_tools(
     monkeypatch.setenv("PW_CAPTURE_PID", str(tmp_path / "pid.txt"))
     monkeypatch.setenv("PW_LINK_OUTPUT", str(link_output_path))
     monkeypatch.setenv("PW_LINK_DELAY", "0.15")
+    if au:
+        monkeypatch.setenv("PW_AU", "1")
+    else:
+        monkeypatch.delenv("PW_AU", raising=False)
     if early_exit:
         monkeypatch.setenv("PW_EXIT_EARLY", "1")
     else:
@@ -160,6 +170,30 @@ def test_linux_capture_reads_raw_float_frames_and_stops_process(tmp_path, monkey
     assert all(block.dtype == np.float32 and block.ndim == 1 for block in arrays)
     assert capture._thread is not None and not capture._thread.is_alive()
     assert capture._process is None
+
+
+def test_capture_decodes_the_au_stream_of_pipewire_1_6(tmp_path, monkeypatch):
+    # The header arrives before the link check, whose discard must not lose it.
+    _install_tools(tmp_path, monkeypatch, au=True)
+    capture = LinuxSystemAudioCapture()
+    blocks: list[np.ndarray | SystemAudioCaptureError] = []
+    received = threading.Event()
+
+    def receive(block):
+        blocks.append(block)
+        if isinstance(block, np.ndarray):
+            received.set()
+
+    capture.start(receive)
+    try:
+        assert received.wait(timeout=2)
+    finally:
+        capture.stop()
+
+    audio = np.concatenate([block for block in blocks if isinstance(block, np.ndarray)])
+    assert np.array_equal(audio[:4], np.array([0.25, -0.5, 0.75, -1.0], dtype=np.float32))
+    assert np.count_nonzero(audio[4:]) == 0
+    assert not any(isinstance(block, SystemAudioCaptureError) for block in blocks)
 
 
 def test_early_process_exit_is_reported_to_callback(tmp_path, monkeypatch):

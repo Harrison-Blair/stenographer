@@ -160,6 +160,10 @@ class Daemon:
             if daemon_ref is not None:
                 daemon_ref._on_model_loading_finished()
 
+        def on_capture_failed() -> None:
+            if daemon_ref is not None:
+                daemon_ref._on_capture_failed()
+
         worker = Worker(
             cfg.asr,
             transport=plat.asr_transport(),
@@ -167,9 +171,11 @@ class Daemon:
             on_model_loading_finished=on_model_loading_finished,
         )
         recorder = Recorder(
+            capture=plat.mic_capture(),
             device=cfg.audio.input_device,
             max_seconds=cfg.audio.max_recording_seconds,
             on_block=status.audio_block,
+            on_failure=on_capture_failed,
         )
         daemon = cls(
             cfg=cfg,
@@ -520,6 +526,22 @@ class Daemon:
             )
         self.on_key_up(generation=generation)
 
+    def _on_capture_failed(self) -> None:
+        """Capture reader thread: end the recording now; ``on_key_up`` reports the failure.
+
+        A new thread runs it, because ``on_key_up`` waits for the reader thread.
+        """
+        with self._lock:
+            if not self._recording:
+                return
+            generation = self._utterance_id
+        threading.Thread(
+            target=self.on_key_up,
+            kwargs={"generation": generation},
+            name="stenographer-capture-failed",
+            daemon=True,
+        ).start()
+
     def _arm_max_timer(self, started_at: float) -> None:
         """Arm the cap timer for what is left of this utterance's window.
 
@@ -727,10 +749,6 @@ class Daemon:
                 outcome = record.outcome if record is not None else None
                 self._emit_summary(self._take_record(outcome or outcome_name))
                 self._record_profile = None
-
-    def prepare_recorder(self) -> None:
-        """Open the audio path ahead of the first press."""
-        self._recorder.prepare()
 
     def run(self) -> None:
         """Start the listener and block until stopped."""

@@ -72,7 +72,7 @@
       <h2>How it works</h2>
       <ol class="pipe">
         <li><b>Your hotkeys</b><span>Right Ctrl selects Agent; Right Alt selects General. Both can latch or be held, and Escape cancels without pasting.</span></li>
-        <li><b>Your microphone</b><span>Captured through PortAudio, with a voice detector so an accidental press does not paste noise into your work.</span></li>
+        <li><b>Your microphone</b><span>Captured through PipeWire, with a voice detector so an accidental press does not paste noise into your work.</span></li>
         <li><b>Local transcription</b><span>Underdog Bark 3.0 Pro by Conway Research runs on your CPU through sherpa-onnx. You build the model once on your machine, and only when you ask for it.</span></li>
         <li><b>Formatting</b><span>The pronoun i is capitalized, even when surrounded by punctuation.</span></li>
         <li><b>Hotkeys</b><span>Invalid binding errors identify the affected setting.</span></li>
@@ -104,7 +104,7 @@
       <ol class="steps">
         <li>
           <b>Check your essentials.</b>
-          <p>You need a Wayland session, a systemd user manager, a PortAudio-backed microphone, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. <code>wl-paste</code>, from the same package, lets it restore your previous clipboard item.</p>
+          <p>You need a Wayland session, a systemd user manager, PipeWire with <code>pw-record</code> and <code>pactl</code>, read access to <code>/dev/input/event*</code> (usually by joining the <code>input</code> group), write access to <code>/dev/uinput</code>, and <code>wl-copy</code> from <code>wl-clipboard</code>. <code>wl-paste</code>, from the same package, lets it restore your previous clipboard item.</p>
         </li>
         <li>
           <b>Run the quick install</b> above, or build it yourself using the <a href="https://github.com/Harrison-Blair/stenographer/blob/main/docs/building.md">build guide</a>.
@@ -139,7 +139,7 @@ scripts/install.sh --no-start</code></pre>
             <tr><td><code>stenographer transcribe FILE [--raw] [--refine]</code></td><td>Transcribe one of your audio files; add <code>--raw</code> to skip formatting, or <code>--refine</code> to clean it up. If both are supplied, <code>--raw</code> skips refinement.</td></tr>
             <tr><td><code>stenographer model download</code></td><td>Download models explicitly. Use <code>--asr</code> or <code>--refine</code> to select them; flags can be combined. The voice-activity and speaker models ship with the app.</td></tr>
             <tr><td><code>stenographer doctor</code></td><td>Check what your system needs and print the fixes.</td></tr>
-            <tr><td><code>stenographer devices</code></td><td>List your audio input devices.</td></tr>
+            <tr><td><code>stenographer devices</code></td><td>List your PipeWire microphones: the source name to save and its description.</td></tr>
             <tr><td><code>stenographer setup [--quick | --default]</code></td><td>Configure everything, only the common settings, or write the annotated defaults.</td></tr>
             <tr><td><code>stenographer sounds [PACK]</code></td><td>List, preview, or pick a whole sound pack.</td></tr>
             <tr><td><code>stenographer stats</code></td><td>See hotkey dictation totals, or use <code>--source all</code> to include files; export as JSON or CSV. Collection health covers all runs.</td></tr>

@@ -459,11 +459,11 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
 
 
 def _audio_devices() -> list[tuple[str, str]]:
-    """Return selectable input devices. An unusable PortAudio means no suggestions."""
+    """Return selectable microphones. A failed listing means no suggestions."""
 
     from stenographer.lib.audio.probe import input_device_choices, query_devices
 
-    return input_device_choices(query_devices().devices)
+    return input_device_choices(query_devices())
 
 
 def _hotkey_devices() -> list[tuple[str, str]]:

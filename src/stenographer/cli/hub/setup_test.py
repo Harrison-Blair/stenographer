@@ -27,7 +27,7 @@ def test_step(step_id: str, config: Config, config_dir: pathlib.Path) -> str:
         query = query_devices()
         if query.error is not None:
             return f"{DOCTOR_STATE_GLYPHS['fail']} {query.error}; no audio was captured"
-        devices = input_device_choices(query.devices)
+        devices = input_device_choices(query)
         names = ", ".join(label for _value, label in devices) or "none"
         noun = "device" if len(devices) == 1 else "devices"
         return f"{len(devices)} input {noun}: {names}; no audio was captured"

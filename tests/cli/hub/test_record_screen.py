@@ -946,6 +946,23 @@ async def test_record_bar_reports_a_source_whose_audio_was_not_saved(tmp_path):
         assert "! mic audio not saved" in _speaker_bar(app)
 
 
+async def test_record_bar_warns_while_a_source_delivers_no_audio(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("space")
+        await _until(pilot, lambda: services.recording)
+        created[-1].silent_sources = ("mic",)
+        app.refresh_view()
+        await pilot.pause()
+        assert "! mic no audio" in _speaker_bar(app)
+        created[-1].silent_sources = ()
+        app.refresh_view()
+        await pilot.pause()
+        assert "no audio" not in _speaker_bar(app)
+        created[-1].release.set()
+
+
 def test_record_meters_use_configured_spectrum_floor(tmp_path):
     import asyncio
 

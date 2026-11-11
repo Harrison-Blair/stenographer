@@ -23,13 +23,14 @@ REQUIRED: tuple[str, ...] = (
 class Capabilities(HostProbe):
     has_mic: bool
     model_cached: bool
+    mic_issue: str | None = None
     overlay: OverlayCapability = dataclasses.field(default_factory=OverlayCapability.disabled)
 
 
-def _has_mic() -> bool:
-    from stenographer.lib.audio.probe import has_input_device, query_devices
+def _mic_issue() -> str | None:
+    from stenographer.lib.audio.probe import mic_issue, query_devices
 
-    return has_input_device(query_devices().devices)
+    return mic_issue(query_devices())
 
 
 def probe(cfg) -> Capabilities:
@@ -37,9 +38,11 @@ def probe(cfg) -> Capabilities:
     from stenographer.lib.transcribe import bark_download
 
     host = current_platform().probe_host()
+    issue = _mic_issue()
     return Capabilities(
         **dataclasses.asdict(host),
-        has_mic=_has_mic(),
+        has_mic=issue is None,
+        mic_issue=issue,
         model_cached=bark_download.is_model_cached(),
         overlay=probe_overlay(cfg.feedback.overlay),
     )

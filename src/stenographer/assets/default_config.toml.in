@@ -9,7 +9,7 @@ mode = "hybrid"                # hold = push-to-talk; toggle = press/press; hybr
 hybrid_threshold_seconds = 0.5 # hybrid only: a press held this long stops on release
 
 [stenographer.audio]
-input_device = ""              # PortAudio device name/index; "" = system default
+input_device = ""              # PipeWire source name (stenographer devices); "" = default microphone
 max_recording_seconds = 600
 
 [stenographer.asr]

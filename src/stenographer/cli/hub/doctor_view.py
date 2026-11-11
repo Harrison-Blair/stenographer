@@ -43,6 +43,8 @@ WARNING_DESCRIPTIONS = {
     "live: speakers_behind": "Live speaker labels fell behind and stopped.",
     "live: speakers_failed": "Live speaker labels stopped.",
     "live: speakers_unavailable": "Speaker labels are not available.",
+    "live: mic_source_failed": "The microphone stopped during a recording.",
+    "live: source_silent": "A recording source delivered no audio for 5 seconds.",
     "live: source_start_failed": "A live audio source did not start.",
     "live: system_source_failed": "System audio stopped; the mic went on recording.",
     "live: system_source_unavailable": "System audio could not be used for this recording.",
@@ -270,8 +272,18 @@ def build_report(config: Config) -> DoctorReport:
         "microphone",
         "input",
         caps.has_mic,
-        config.audio.input_device or "default input" if caps.has_mic else "no input device",
+        config.audio.input_device or "default input" if caps.has_mic else caps.mic_issue or "",
         capability_fix("has_mic"),
+    )
+    device_warning = cli_doctor.device_index_warning(config)
+    add(
+        "input_device",
+        "input device",
+        "input",
+        device_warning is None,
+        device_warning or "",
+        "Pick the microphone again in Settings.",
+        failed="warn",
     )
     add(
         "hotkey_access_ok",

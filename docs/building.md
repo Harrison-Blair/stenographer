@@ -248,9 +248,9 @@ the required listening checks.
 
 The target system must provide:
 
-- **libportaudio** (e.g. the `libportaudio2` package) — excluded from the
-  bundle by `packaging/hook-sounddevice.py` so the system audio stack is
-  used; found at runtime via `packaging/rthooks/py_rth_portaudio.py`.
+- **PipeWire with `pw-record` and `pactl`** (Ubuntu: `pipewire-bin` and
+  `pulseaudio-utils`) — the microphone and the system sound are recorded by a
+  `pw-record` child process, and `pactl` lists the microphones.
 - **`wl-copy`** (wl-clipboard) — clipboard delivery with Wayland data control;
   **`xclip`** provides the X11/XWayland fallback.
 - **`canberra-gtk-play`, `pw-play`, or `paplay`** — audio cues, in preference

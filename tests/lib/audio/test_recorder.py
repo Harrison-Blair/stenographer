@@ -1,752 +1,184 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Capture configuration, resampling, and the stream lifecycle.
+"""The dictation ``Recorder`` against a stand-in platform microphone capture.
 
-Constructing a ``Recorder`` is pure. ``prepare``, ``_select_default_device``
-and ``_negotiate`` all take the ``sounddevice`` module as a parameter, and
-``prepare`` remembers it, so preparation, negotiation, the state machine,
-stream recovery, the callback and finalization all run here against a stand-in
-module that opens no device — no PortAudio symbol is patched anywhere. Only the
-real ``import sounddevice`` statement itself (recorder.py:99-101) stays with the
-integration smoke suite, along with everything downstream of a genuine PortAudio
-stream.
+The stand-in implements the ``MicCapture`` contract: it hands blocks or an
+error to the callback the way the reader thread does. No OS call is patched;
+the real ``pw-record`` child is covered by the platform tests.
 """
 
 from __future__ import annotations
 
 import logging
-import math
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from stenographer.lib.audio.recorder import (
-    _ERR_BAD_CHANNELS,
-    _ERR_BAD_SAMPLE_RATE,
-    Recorder,
-    RecorderState,
-)
-from stenographer.lib.audio.resample import _polyphase_filter, _resample_poly
-from stenographer.lib.audio.streaming_resampler import StreamingResampler
+from stenographer.lib.audio.recorder import Recorder
+from stenographer.lib.platform.errors import MicCaptureError
 
 _LOGGER = "stenographer.lib.audio.recorder"
 
-_RATE = 16000
+
+class FakeCapture:
+    def __init__(self, *, start_error: Exception | None = None) -> None:
+        self.start_error = start_error
+        self.on_block = None
+        self.targets: list[str | None] = []
+        self.running = False
+        self.stops = 0
+        # Blocks the reader thread delivers before stop returns.
+        self.pending: list[np.ndarray | MicCaptureError] = []
+
+    def start(self, target, on_block):
+        if self.start_error is not None:
+            raise self.start_error
+        self.targets.append(target)
+        self.on_block = on_block
+        self.running = True
+
+    def stop(self):
+        self.stops += 1
+        if self.running:
+            for item in self.pending:
+                self.on_block(item)
+            self.pending.clear()
+        self.running = False
+
+    def emit(self, *values: float) -> None:
+        self.on_block(np.asarray(values, dtype=np.float32))
+
+
+def _recorder(capture: FakeCapture, **kwargs) -> Recorder:
+    options = {"device": None, "max_seconds": 10, **kwargs}
+    return Recorder(capture=capture, **options)
 
 
 @pytest.mark.parametrize(
-    ("configured", "normalized"),
+    ("device", "target"),
     [
         (None, None),
         ("", None),
-        (0, 0),
-        (7, 7),
-        ("0", 0),
-        ("17", 17),
-        ("0017", 17),
-        ("USB microphone", "USB microphone"),
-        ("-1", "-1"),
-        ("+1", "+1"),
-        (" 1", " 1"),
-        ("1 ", "1 "),
-        ("1.0", "1.0"),
+        ("pipewire", None),
+        ("10", None),
+        ("alsa_input.usb", "alsa_input.usb"),
     ],
 )
-def test_recorder_normalizes_only_exact_nonnegative_decimal_device_strings(configured, normalized):
-    recorder = Recorder(device=configured, max_seconds=2)
-
-    assert recorder._configured_device == normalized
-    assert recorder._selected_device == normalized
-
-
-def test_resample_identity_when_rates_match():
-    data = np.array([0.1, -0.2, 0.3], dtype=np.float32)
-    out = _resample_poly(data, _RATE, _RATE)
-    assert np.array_equal(out, data)
-
-
-def test_resample_empty_stays_empty():
-    out = _resample_poly(np.empty(0, dtype=np.float32), 48000, 16000)
-    assert out.size == 0
-
-
-def test_resample_downsample_length_and_dtype():
-    data = np.zeros(4800, dtype=np.float32)
-    out = _resample_poly(data, 48000, 16000)
-    assert out.dtype == np.float32
-    # 3:1 decimation of 4800 samples lands near 1600 (plus the FIR tail).
-    assert abs(out.size - 1600) <= 40
-
-
-def test_resample_upsample_length():
-    data = np.zeros(800, dtype=np.float32)
-    out = _resample_poly(data, 8000, 16000)
-    assert abs(out.size - 1600) <= 40
-
-
-def test_resample_preserves_dc_level():
-    data = np.full(4800, 0.3, dtype=np.float32)
-    out = _resample_poly(data, 48000, 16000)
-    interior = out[100:-100]
-    assert interior.size > 0
-    assert np.allclose(interior, 0.3, atol=0.02)
-
-
-def _zero_stuffed_reference(data: np.ndarray, rate_in: int, rate_out: int) -> np.ndarray:
-    """The textbook definition: stuff zeros, filter at the high rate, decimate."""
-    gcd = math.gcd(rate_in, rate_out)
-    up, down = rate_out // gcd, rate_in // gcd
-    filt = _polyphase_filter(up, down)
-    stuffed = np.zeros(data.size * up, dtype=np.float64)
-    stuffed[::up] = data
-    return np.convolve(stuffed, filt.astype(np.float64))[filt.size // 2 :: down]
-
-
-@pytest.mark.parametrize("rate", [48000, 44100, 22050, 8000])
-@pytest.mark.parametrize("frames", [1, 7, 500, 3000])
-def test_resample_matches_the_zero_stuffed_definition(rate, frames):
-    data = np.random.default_rng(frames).standard_normal(frames).astype(np.float32)
-
-    out = _resample_poly(data, rate, 16000)
-
-    expected = _zero_stuffed_reference(data, rate, 16000)
-    assert out.size == expected.size
-    assert out == pytest.approx(expected, abs=1e-5)
-
-
-@pytest.mark.parametrize("rate", [48000, 44100, 22050, 8000])
-@pytest.mark.parametrize("block", [1, 37, 512, 20000])
-def test_streaming_resampler_matches_the_definition_for_any_block_size(rate, block):
-    data = np.random.default_rng(block).standard_normal(6000).astype(np.float32)
-    resampler = StreamingResampler(rate, 16000)
-
-    pieces = [resampler.process(data[i : i + block]) for i in range(0, data.size, block)]
-    pieces.append(resampler.flush())
-    out = np.concatenate(pieces)
-
-    gcd = math.gcd(rate, 16000)
-    assert out.size == math.ceil(data.size * (16000 // gcd) / (rate // gcd))
-    assert out.dtype == np.float32
-    assert out == pytest.approx(_zero_stuffed_reference(data, rate, 16000)[: out.size], abs=1e-5)
-
-
-def test_streaming_resampler_emits_only_outputs_with_complete_input():
-    resampler = StreamingResampler(48000, 16000)
-
-    # A 3:1 filter has 61 taps, so output m centres on input 30 + 3m.
-    assert resampler.process(np.ones(30, dtype=np.float32)).size == 0
-    assert resampler.process(np.ones(1, dtype=np.float32)).size == 1
-    assert resampler.process(np.ones(3, dtype=np.float32)).size == 1
-
-
-class FakePortAudioError(Exception):
-    """PortAudio's error type: ``(message, code)`` args the recorder reads."""
-
-
-class FakeStream:
-    """A negotiated input stream that records its lifecycle instead of opening one."""
-
-    def __init__(
-        self, *, samplerate: int, channels: int, callback, start_error: Exception | None = None
-    ) -> None:
-        self.samplerate = samplerate
-        self.channels = channels
-        self.callback = callback
-        self.active = False
-        self.stops = 0
-        self.closes = 0
-        self.start_error = start_error
-        self.stop_error: Exception | None = None
-        self.close_error: Exception | None = None
-
-    def start(self) -> None:
-        if self.start_error is not None:
-            raise self.start_error
-        self.active = True
-
-    def stop(self, ignore_errors: bool = False) -> None:
-        self.stops += 1
-        if self.stop_error is not None:
-            raise self.stop_error
-        self.active = False
-
-    def close(self, ignore_errors: bool = False) -> None:
-        self.closes += 1
-        self.active = False
-        if self.close_error is not None:
-            raise self.close_error
-
-
-class FakeSoundDevice:
-    """The ``sounddevice`` module surface the recorder negotiates against."""
-
-    PortAudioError = FakePortAudioError
-
-    def __init__(
-        self,
-        *,
-        reject=None,
-        default_index: int = 3,
-        name: str = "Fake USB microphone",
-        name_error: Exception | None = None,
-        stream_start_error: Exception | None = None,
-    ) -> None:
-        self._reject = reject if reject is not None else (lambda rate, channels: None)
-        self._stream_start_error = stream_start_error
-        self._default_index = default_index
-        self._name = name
-        self._name_error = name_error
-        self.attempts: list[tuple[int, int, object]] = []
-        self.queries: list[tuple[object, object]] = []
-        self.streams: list[FakeStream] = []
-
-    def query_devices(self, device=None, kind=None):
-        self.queries.append((device, kind))
-        if device is None:
-            return {"index": self._default_index, "name": self._name}
-        if self._name_error is not None:
-            raise self._name_error
-        return {"index": device, "name": self._name}
-
-    def InputStream(self, *, samplerate, channels, dtype, device, callback):  # noqa: N802
-        self.attempts.append((samplerate, channels, device))
-        assert dtype == "float32"
-        code = self._reject(samplerate, channels)
-        if code is not None:
-            raise FakePortAudioError("Invalid device parameters", code)
-        stream = FakeStream(
-            samplerate=samplerate,
-            channels=channels,
-            callback=callback,
-            start_error=self._stream_start_error,
-        )
-        self.streams.append(stream)
-        return stream
-
-
-def _only(rate: int | None = None, channels: int | None = None):
-    """Reject everything but the given rate/channel count, the way a device does."""
-
-    def reject(requested_rate: int, requested_channels: int) -> int | None:
-        if channels is not None and requested_channels != channels:
-            return _ERR_BAD_CHANNELS
-        if rate is not None and requested_rate != rate:
-            return _ERR_BAD_SAMPLE_RATE
-        return None
-
-    return reject
-
-
-def _prepared(sounddevice: FakeSoundDevice, **kwargs) -> Recorder:
-    recorder = Recorder(**{"device": 1, "max_seconds": 5, **kwargs})
-    recorder.prepare(sounddevice)
-    return recorder
-
-
-def _capturing_mono(**kwargs) -> tuple[FakeSoundDevice, Recorder]:
-    """A recorder already capturing from a device that only accepts mono."""
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-    recorder = _prepared(sounddevice, **kwargs)
-    recorder.start()
-    return sounddevice, recorder
-
-
-def _warnings(caplog) -> list[str]:
-    """Only the warnings: DEBUG activity is not part of the reporting contract."""
-    return [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING]
-
-
-def _feed(recorder: Recorder, block: np.ndarray, *, adc: float = 0.0, overflow: bool = False):
-    """Deliver one callback the way PortAudio does: always ``(frames, channels)``."""
-    indata = block.reshape(-1, 1) if block.ndim == 1 else block
-    recorder._on_audio(
-        indata,
-        indata.shape[0],
-        SimpleNamespace(inputBufferAdcTime=adc),
-        SimpleNamespace(input_overflow=overflow),
-    )
-
-
-def test_the_default_input_device_is_resolved_only_when_none_is_configured():
-    sounddevice = FakeSoundDevice(default_index=3)
-    recorder = Recorder(device=None, max_seconds=5)
-
-    recorder._select_default_device(sounddevice)
-
-    assert recorder._selected_device == 3
-    assert sounddevice.queries == [(None, "input")]
-
-
-def test_a_configured_device_is_never_replaced_by_the_host_default():
-    sounddevice = FakeSoundDevice(default_index=3)
-    recorder = Recorder(device=7, max_seconds=5)
-
-    recorder._select_default_device(sounddevice)
-
-    assert recorder._selected_device == 7
-    assert sounddevice.queries == []
-
-
-def test_negotiation_asks_for_the_asr_rate_first_and_retains_a_stopped_stream():
-    sounddevice = FakeSoundDevice()
-
-    recorder = _prepared(sounddevice)
-
-    assert sounddevice.attempts == [(16000, 2, 1)]
-    assert recorder._state is RecorderState.PREPARED
-    assert recorder._state is RecorderState.PREPARED
-    assert recorder._state is not RecorderState.CAPTURING
-    assert recorder._device_rate == 16000
-    assert recorder._channels == 2
-    assert recorder._max_frames == 5 * 16000
-    assert recorder._device_name == "Fake USB microphone"
-    # Prepared means negotiated, not running: no callbacks may arrive yet.
-    assert sounddevice.streams[0].active is False
-
-
-def test_a_rejected_sample_rate_walks_the_fallback_list_and_says_so(caplog):
-    sounddevice = FakeSoundDevice(reject=_only(rate=44100))
-
-    with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        recorder = _prepared(sounddevice)
-
-    assert [rate for rate, _channels, _device in sounddevice.attempts] == [16000, 48000, 44100]
-    assert recorder._device_rate == 44100
-    assert recorder._max_frames == 5 * 44100
-    assert _warnings(caplog) == ["recorder: fallback rate_hz=44100 requested_rate_hz=16000"]
-
-
-def test_a_rejected_channel_count_is_abandoned_without_trying_its_other_rates():
-    sounddevice = FakeSoundDevice(reject=_only(channels=1))
-
-    recorder = _prepared(sounddevice)
-
-    # One attempt at stereo is enough to learn the device is mono.
-    assert sounddevice.attempts == [(16000, 2, 1), (16000, 1, 1)]
-    assert recorder._channels == 1
-    assert recorder._device_rate == 16000
-
-
-def test_an_unrelated_portaudio_error_is_reported_rather_than_retried():
-    sounddevice = FakeSoundDevice(reject=lambda rate, channels: -9996)
-    recorder = Recorder(device=1, max_seconds=5)
-
-    with pytest.raises(FakePortAudioError):
-        recorder.prepare(sounddevice)
-
-    assert len(sounddevice.attempts) == 1
-    assert recorder._state is RecorderState.UNPREPARED
-    assert recorder._stream is None
-
-
-def test_a_device_that_rejects_every_combination_raises_its_own_rejection():
-    sounddevice = FakeSoundDevice(reject=lambda rate, channels: _ERR_BAD_SAMPLE_RATE)
-    recorder = Recorder(device=1, max_seconds=5)
-
-    with pytest.raises(FakePortAudioError) as exc:
-        recorder.prepare(sounddevice)
-
-    assert exc.value.args[1] == _ERR_BAD_SAMPLE_RATE
-    # Five rates for each of the two channel counts, and nothing retained.
-    assert len(sounddevice.attempts) == 10
-    assert recorder._state is RecorderState.UNPREPARED
-    assert recorder._stream is None
-
-
-def test_an_unreadable_device_name_does_not_fail_the_negotiation():
-    sounddevice = FakeSoundDevice(name_error=FakePortAudioError("no such device"))
-
-    recorder = _prepared(sounddevice)
-
-    assert recorder._state is RecorderState.PREPARED
-    assert recorder._device_name is None
-
-
-def test_start_activates_the_retained_stream_and_refuses_a_second_start():
-    sounddevice = FakeSoundDevice()
-    recorder = _prepared(sounddevice)
+def test_start_targets_the_source_the_setting_names(device, target):
+    capture = FakeCapture()
+    recorder = _recorder(capture, device=device)
 
     recorder.start()
 
-    assert sounddevice.streams[0].active is True
-    assert recorder._state is RecorderState.CAPTURING
-    assert recorder._state is RecorderState.CAPTURING
-    assert recorder.last_capture is None
-    with pytest.raises(RuntimeError, match="already capturing"):
-        recorder.start()
-    assert len(sounddevice.attempts) == 1
+    assert capture.targets == [target]
 
 
-def test_a_mono_capture_returns_its_samples_and_the_cost_of_taking_them():
-    sounddevice, recorder = _capturing_mono()
+def test_nothing_captures_before_start_or_after_stop():
+    capture = FakeCapture()
+    recorder = _recorder(capture)
+    assert not capture.running
 
-    _feed(recorder, np.full(800, 0.25, dtype=np.float32), adc=1.0)
-    _feed(recorder, np.full(400, -0.5, dtype=np.float32), adc=1.05)
-    audio = recorder.stop()
+    recorder.start()
+    assert capture.running
+    recorder.stop()
 
-    assert audio.dtype == np.float32
-    assert audio.size == 1200
-    assert audio[0] == pytest.approx(0.25)
-    assert audio[-1] == pytest.approx(-0.5)
+    assert not capture.running
+
+
+def test_stop_returns_every_block_including_those_delivered_while_stopping():
+    capture = FakeCapture()
+    recorder = _recorder(capture)
+    recorder.start()
+    capture.emit(0.1, 0.2)
+    capture.pending.append(np.asarray([0.3], dtype=np.float32))
+
+    samples = recorder.stop()
+
+    np.testing.assert_array_equal(samples, np.asarray([0.1, 0.2, 0.3], dtype=np.float32))
     stats = recorder.last_capture
     assert stats is not None
-    assert stats.input_frames == 1200
-    assert stats.output_frames == 1200
+    assert stats.input_frames == stats.output_frames == 3
     assert stats.input_rate == 16000
-    assert stats.channels == 1
-    assert stats.device_name == "Fake USB microphone"
     assert stats.callback_count == 2
-    assert stats.callback_timing_count == 2
-    assert stats.callback_metadata_dropped == 0
-    assert stats.overflow is False
-    assert stats.capped is False
-    assert stats.recovered is False
     assert stats.first_callback_at is not None
     assert stats.activation_to_callback_ms is not None
-    assert stats.finalize_ms is not None
-    # The stream is stopped and retained for the next press, not closed.
-    assert recorder._state is RecorderState.PREPARED
-    assert sounddevice.streams[0].stops == 1
-    assert sounddevice.streams[0].closes == 0
 
 
-def test_a_stereo_callback_keeps_channel_zero():
-    # The second channel of a stereo microphone is routinely silent or out of
-    # phase; averaging it into the capture is what the VAD then has to find.
-    sounddevice = FakeSoundDevice()
-    recorder = _prepared(sounddevice)
+def test_each_capture_starts_empty_and_gets_a_new_stream_epoch():
+    capture = FakeCapture()
+    seen = []
+    recorder = _recorder(capture, on_block=lambda block, rate, epoch: seen.append((rate, epoch)))
     recorder.start()
-
-    _feed(recorder, np.array([[0.5, -0.5], [0.25, -0.25]], dtype=np.float32))
-    audio = recorder.stop()
-
-    assert audio.tolist() == [0.5, 0.25]
-    assert recorder.last_capture.channels == 2
-
-
-def test_a_capture_at_a_fallback_rate_is_resampled_to_the_asr_rate():
-    sounddevice = FakeSoundDevice(reject=_only(rate=48000, channels=1))
-    recorder = _prepared(sounddevice)
-    recorder.start()
-
-    _feed(recorder, np.full(4800, 0.3, dtype=np.float32))
-    audio = recorder.stop()
-
-    assert abs(audio.size - 1600) <= 40
-    stats = recorder.last_capture
-    assert stats.input_rate == 48000
-    assert stats.input_frames == 4800
-    assert stats.output_frames == audio.size
-
-
-def test_an_input_overflow_is_counted_and_reported(caplog):
-    _, recorder = _capturing_mono()
-
-    _feed(recorder, np.zeros(800, dtype=np.float32))
-    _feed(recorder, np.zeros(800, dtype=np.float32), overflow=True)
-    with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        audio = recorder.stop()
-
-    assert audio.size == 1600
-    assert recorder.last_capture.overflow is True
-    assert recorder.last_capture.overflow_count == 1
-    assert _warnings(caplog) == [
-        "recorder: input_overflow input_frames=1600 output_frames=1600 capped=0"
-    ]
-
-
-def test_the_cap_stops_buffering_without_ending_the_capture(caplog):
-    _, recorder = _capturing_mono(max_seconds=1)
-
-    for _ in range(3):
-        _feed(recorder, np.zeros(10000, dtype=np.float32))
-    with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        audio = recorder.stop()
-
-    # The third callback arrives after the cap and is dropped, not appended.
-    assert audio.size == 20000
-    assert recorder.last_capture.capped is True
-    assert recorder.last_capture.input_frames == 20000
-    assert _warnings(caplog) == ["recorder: capture_capped max_seconds=1 frames=20000"]
-
-
-def test_streaming_keeps_no_blocks_has_no_cap_and_emits_16khz_blocks():
-    received: list[np.ndarray] = []
-    rates: list[int] = []
-
-    def sink(block, rate, epoch):
-        received.append(block.copy())
-        rates.append(rate)
-
-    _, recorder = _capturing_mono(max_seconds=1, streaming=True, on_block=sink)
-
-    for _ in range(3):
-        _feed(recorder, np.full(8000, 0.25, dtype=np.float32))
-    assert recorder._blocks == []
-
-    audio = recorder.stop()
-
-    assert recorder._max_frames == 0
-    assert recorder.last_capture.capped is False
-    assert recorder.last_capture.input_frames == 24000
-    assert audio.size == 0
-    assert sum(block.size for block in received) == 24000
-    assert all(block.dtype == np.float32 for block in received)
-    assert rates == [16000, 16000, 16000]
-
-
-def test_streaming_resamples_continuous_fallback_rate_without_block_drift():
-    received: list[np.ndarray] = []
-
-    def sink(block, rate, epoch):
-        assert rate == 16000
-        received.append(block.copy())
-
-    sounddevice = FakeSoundDevice(reject=_only(rate=48000, channels=1))
-    recorder = _prepared(sounddevice, max_seconds=1, streaming=True, on_block=sink)
-    recorder.start()
-
-    for _ in range(3):
-        _feed(recorder, np.full(16000, 0.25, dtype=np.float32))
+    capture.emit(0.5)
     recorder.stop()
+    recorder.start()
+    capture.emit(0.25)
 
-    assert recorder._blocks == []
-    assert sum(block.size for block in received) == 16000
-    assert recorder.last_capture.output_frames == 16000
-    assert all(block.dtype == np.float32 for block in received)
-    assert np.mean(np.concatenate(received)[100:-100]) == pytest.approx(0.25, abs=0.02)
-
-
-def test_the_optional_block_sink_sees_mono_blocks_and_cannot_break_the_capture():
-    seen: list[tuple[int, int, int]] = []
-
-    def sink(block, rate, epoch):
-        seen.append((block.shape[0], rate, epoch))
-        raise RuntimeError("spectrum consumer failed")
-
-    _, recorder = _capturing_mono(on_block=sink)
-
-    _feed(recorder, np.zeros(800, dtype=np.float32))
-    _feed(recorder, np.zeros(400, dtype=np.float32))
-    audio = recorder.stop()
-
-    assert seen == [(800, 16000, 1), (400, 16000, 1)]
-    assert audio.size == 1200
+    np.testing.assert_array_equal(recorder.stop(), np.asarray([0.25], dtype=np.float32))
+    assert seen == [(16000, 1), (16000, 2)]
 
 
-def test_stopping_a_merely_prepared_recorder_returns_no_audio():
-    sounddevice = FakeSoundDevice()
-    recorder = _prepared(sounddevice)
+def test_a_capture_that_cannot_start_raises_and_is_not_capturing():
+    recorder = _recorder(FakeCapture(start_error=MicCaptureError("pw-record is not installed")))
 
-    audio = recorder.stop()
+    with pytest.raises(MicCaptureError, match="pw-record is not installed"):
+        recorder.start()
 
-    assert audio.size == 0
-    assert audio.dtype == np.float32
-    assert recorder._state is RecorderState.PREPARED
-    assert recorder.last_capture is None
-    assert sounddevice.streams[0].stops == 0
+    assert not recorder.capturing
+    assert recorder.stop().size == 0
 
 
-@pytest.mark.parametrize(
-    ("break_stream", "expected_exception"),
-    [
-        pytest.param(
-            lambda stream: setattr(stream, "active", False),
-            RuntimeError,
-            id="died_during_capture",
-        ),
-        pytest.param(
-            lambda stream: setattr(stream, "stop_error", FakePortAudioError("stream stop failed")),
-            FakePortAudioError,
-            id="stop_raises",
-        ),
-    ],
-)
-def test_a_stream_failure_at_stop_discards_the_whole_capture(
-    caplog, break_stream, expected_exception
-):
-    sounddevice, recorder = _capturing_mono()
-    _feed(recorder, np.full(800, 0.25, dtype=np.float32))
-    break_stream(sounddevice.streams[0])
+def test_a_capture_that_stops_by_itself_calls_on_failure_and_stop_raises(caplog):
+    capture = FakeCapture()
+    failures = []
+    recorder = _recorder(capture, on_failure=lambda: failures.append(True))
+    recorder.start()
+    capture.emit(0.1)
 
-    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(expected_exception):
+    capture.on_block(MicCaptureError("pw-record exited unexpectedly with status 1"))
+
+    assert failures == [True]
+    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(MicCaptureError):
         recorder.stop()
-
-    # An uncertain capture is never half-delivered: the stream is invalidated
-    # and the buffered audio is dropped rather than returned.
-    assert recorder._state is RecorderState.UNPREPARED
+    assert "recorder: capture_failed" in caplog.text
     assert recorder.last_capture is None
-    assert recorder._blocks == []
-    assert sounddevice.streams[0].closes == 1
-    message = _warnings(caplog)[0]
-    assert "recorder: capture_failed" in message
-    assert "phase=stop" in message
-    assert "input_frames=800" in message
+    # The next dictation starts clean.
+    recorder.start()
+    capture.emit(0.2)
+    np.testing.assert_array_equal(recorder.stop(), np.asarray([0.2], dtype=np.float32))
 
 
-def test_close_releases_the_stream_and_lets_the_next_press_reselect_a_default():
-    sounddevice = FakeSoundDevice(default_index=3)
-    recorder = Recorder(device=None, max_seconds=5)
-    recorder._select_default_device(sounddevice)
-    recorder._negotiate(sounddevice)
-
-    recorder.close()
-    recorder.close()
-
-    assert sounddevice.streams[0].closes == 1
-    assert recorder._state is RecorderState.UNPREPARED
-    assert recorder._stream is None
-    # The default may have moved while the daemon was idle.
-    assert recorder._selected_device is None
-
-
-def test_close_keeps_a_configured_device_selected():
-    sounddevice = FakeSoundDevice()
-    recorder = _prepared(sounddevice, device=7)
-
-    recorder.close()
-
-    assert recorder._selected_device == 7
-
-
-def test_a_failing_close_is_reported_and_swallowed(caplog):
-    sounddevice = FakeSoundDevice()
-    recorder = _prepared(sounddevice)
-    sounddevice.streams[0].close_error = FakePortAudioError("device already gone")
+def test_the_sample_cap_keeps_max_seconds_of_audio_and_warns(caplog):
+    capture = FakeCapture()
+    recorder = _recorder(capture, max_seconds=1)
+    recorder.start()
+    block = np.zeros(10_000, dtype=np.float32)
+    capture.on_block(block)
+    capture.on_block(block)
+    capture.on_block(block)
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        recorder.close()
+        samples = recorder.stop()
 
-    assert recorder._state is RecorderState.UNPREPARED
-    message = _warnings(caplog)[0]
-    assert "recorder: close_failed" in message
-    assert "error=FakePortAudioError" in message
-
-
-def test_adc_clock_gaps_are_measured_from_the_callbacks_of_this_activation():
-    _, recorder = _capturing_mono()
-
-    # 800 frames at 16 kHz is 50 ms of audio; the third callback's ADC stamp
-    # jumps a further 200 ms, which is a clock discontinuity, not lost speech.
-    _feed(recorder, np.zeros(800, dtype=np.float32), adc=1.00)
-    _feed(recorder, np.zeros(800, dtype=np.float32), adc=1.05)
-    _feed(recorder, np.zeros(800, dtype=np.float32), adc=1.30)
-    recorder.stop()
-
-    stats = recorder.last_capture
-    assert stats.adc_discontinuities == 1
-    assert stats.max_adc_gap_ms == pytest.approx(200.0, abs=1e-6)
-    assert stats.callback_timing_count == 3
+    assert samples.size == 20_000
+    assert recorder.last_capture.capped is True
+    assert "recorder: capture_capped" in caplog.text
 
 
-def test_a_second_capture_starts_from_a_clean_slate():
-    sounddevice, recorder = _capturing_mono()
-    _feed(recorder, np.full(800, 0.25, dtype=np.float32))
-    first = recorder.stop()
-
+def test_close_stops_a_running_capture_and_is_repeatable():
+    capture = FakeCapture()
+    recorder = _recorder(capture)
     recorder.start()
-    _feed(recorder, np.full(400, 0.5, dtype=np.float32))
-    second = recorder.stop()
 
-    assert first.size == 800
-    assert second.size == 400
-    assert second[0] == pytest.approx(0.5)
-    assert recorder.last_capture.input_frames == 400
-    assert recorder.last_capture.callback_count == 1
-    # The same negotiated stream served both captures.
-    assert len(sounddevice.streams) == 1
-    assert sounddevice.streams[0].stops == 2
-
-
-def test_a_device_whose_name_is_not_text_is_simply_unnamed():
-    sounddevice = FakeSoundDevice(name=None)
-
-    recorder = _prepared(sounddevice)
-
-    assert recorder._state is RecorderState.PREPARED
-    assert recorder._device_name is None
-
-
-def test_a_retained_stream_that_will_not_activate_is_replaced_exactly_once(caplog):
-    sounddevice = FakeSoundDevice()
-    recorder = _prepared(sounddevice)
-    # The device went away while the stream sat retained between utterances.
-    sounddevice.streams[0].start_error = FakePortAudioError("device unavailable")
-
-    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
-        recorder.start()
-
-    assert len(sounddevice.attempts) == 2
-    assert len(sounddevice.streams) == 2
-    assert sounddevice.streams[0].closes == 1
-    assert sounddevice.streams[1].active is True
-    assert recorder._state is RecorderState.CAPTURING
-
-    warnings = _warnings(caplog)
-    assert len(warnings) == 1
-    assert "recorder: activation_failed" in warnings[0]
-    assert "retained=1" in warnings[0]
-    assert 'error=FakePortAudioError detail="device unavailable"' in warnings[0]
-    activations = [
-        record.getMessage()
-        for record in caplog.records
-        if "recorder: activated" in record.getMessage()
-    ]
-    assert len(activations) == 1
-    assert "recovery=renegotiated" in activations[0]
-
-    _feed(recorder, np.full((800, 2), 0.25, dtype=np.float32))
-    audio = recorder.stop()
-
-    # The recovered capture is whole, and says so for the utterance summary.
-    assert audio.size == 800
-    assert recorder.last_capture.recovered is True
-
-
-def test_a_recovery_that_also_fails_to_activate_gives_up(caplog):
-    error = FakePortAudioError("device unavailable")
-    sounddevice = FakeSoundDevice(stream_start_error=error)
-    recorder = _prepared(sounddevice)
-
-    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(FakePortAudioError):
-        recorder.start()
-
-    # Exactly one recovery attempt, and nothing retained afterwards.
-    assert len(sounddevice.attempts) == 2
-    assert len(sounddevice.streams) == 2
-    assert [stream.closes for stream in sounddevice.streams] == [1, 1]
-    assert recorder._state is RecorderState.UNPREPARED
-    assert recorder._stream is None
-    warnings = _warnings(caplog)
-    assert "recorder: activation_failed" in warnings[0]
-    assert "recorder: recovery_failed" in warnings[1]
-    assert "phase=activate" in warnings[1]
-
-
-def test_an_unprepared_recorder_gets_one_attempt_and_no_recovery(caplog):
-    error = FakePortAudioError("device unavailable")
-    sounddevice = FakeSoundDevice(stream_start_error=error)
-    recorder = Recorder(device=1, max_seconds=5)
-    # Prepared once and released, so the module is remembered but nothing is
-    # retained: start() negotiates from scratch and gets no second chance.
-    recorder.prepare(sounddevice)
     recorder.close()
-    sounddevice.attempts.clear()
+    recorder.close()
 
-    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(FakePortAudioError):
+    assert not capture.running
+    assert not recorder.capturing
+
+
+def test_start_while_capturing_is_refused():
+    recorder = _recorder(FakeCapture())
+    recorder.start()
+
+    with pytest.raises(RuntimeError, match="already capturing"):
         recorder.start()
-
-    assert len(sounddevice.attempts) == 1
-    warnings = _warnings(caplog)
-    assert len(warnings) == 1
-    assert "recorder: activation_failed" in warnings[0]
-    assert "retained=0" in warnings[0]
-
-
-def test_preparing_an_already_prepared_recorder_is_a_no_op():
-    sounddevice = FakeSoundDevice()
-    recorder = _prepared(sounddevice)
-
-    recorder.prepare(sounddevice)
-
-    assert len(sounddevice.attempts) == 1
