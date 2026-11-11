@@ -19,8 +19,9 @@ if TYPE_CHECKING:
 
 # Audio pushed into a live stream: mono float32 at this rate.
 SAMPLE_RATE = 16_000
-# CPU threads of one helper, shared by all its streams. Measured: the live preset
-# keeps up with a mic and a system stream at once at RTF 0.40 (about 1.6 cores busy).
+# CPU threads of one helper, shared by all its streams. Measured on an i7-10875H:
+# the live setting keeps up with a mic and a system stream at once at 0.36 s of
+# helper time per second of audio (about 1.5 cores busy) while the recognizer works.
 THREADS = 4
 # A live stream holds at most this much audio that the helper has not handled.
 LIVE_QUEUE_SECONDS = 60.0
