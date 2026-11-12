@@ -25,6 +25,7 @@ from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.speaker_bar import SpeakerBar
 from stenographer.cli.hub.widgets.spectrum_meter import SpectrumMeter
 from stenographer.cli.hub.widgets.status_token import StatusToken
+from stenographer.cli.hub.widgets.tier import tier_for
 from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
 from stenographer.cli.hub.widgets.update_changed import update_changed
 from stenographer.cli.shared.speaker_colors import speaker_color
@@ -165,7 +166,9 @@ class RecordScreen(HubScreen):
         padding: 0;
         border: none;
     }
-    RecordScreen.-narrow #rename-button, RecordScreen.-narrow #transcript-hints { display: none; }
+    RecordScreen.-narrow #rename-button, RecordScreen.-form-line #transcript-hints {
+        display: none;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -301,7 +304,7 @@ class RecordScreen(HubScreen):
         self.query_one("#speaker-bar", SpeakerBar).set_items(
             self._speaker_items(shown, lines, speakers),
             speakers=len(speakers),
-            one_row=self.tier == "narrow",
+            max_rows=self._speaker_rows_allowed(),
         )
         self.query_one("#rename-button", HubButton).disabled = (
             state == "failed" or self._rename_busy(shown)
@@ -556,6 +559,11 @@ class RecordScreen(HubScreen):
         if self._rename_busy(session):
             items.append(Text("rename busy", style="#8b93a1"))
         return tuple(items)
+
+    def _speaker_rows_allowed(self) -> int:
+        """Return the rows of the speaker row: one in a short or narrow terminal, else two."""
+        width, height = self.app.size
+        return 1 if height < 28 or tier_for(width) == "narrow" else 2
 
     def _rename_busy(self, session) -> bool:
         saved = self.record_state() == "saved" and session is not None

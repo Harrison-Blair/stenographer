@@ -201,6 +201,7 @@ class SettingsScreen(HubScreen):
                         tight=True,
                         id=f"tab-{name}",
                     )
+                yield self.checks_tab.summary_row
                 yield Static("", id="settings-tabs-gap")
                 yield HubButton("Undo", key="u", action="undo", tight=True, id="config-undo")
                 yield HubButton(
@@ -249,6 +250,8 @@ class SettingsScreen(HubScreen):
     def _sync_tab_widgets(self) -> None:
         config_tab = self.tab != "checks"
         self.checks_tab.display = not config_tab
+        self.checks_tab.summary_row.display = not config_tab
+        self.query_one("#settings-tabs-gap").display = config_tab
         self.query_one("#config-body").display = config_tab
         for name, _label in TABS:
             self.query_one(f"#tab-{name}", HubButton).set_label(self.tab_label(name))
@@ -299,8 +302,13 @@ class SettingsScreen(HubScreen):
             self.query_one(selector).display = config_tab and not editor.read_only
         count_slot = self.query_one("#config-count", Static)
         count_slot.display = config_tab and not editor.read_only and tier == "wide"
+        # The narrow Checks detail puts [esc] ← Checks in place of the tabs.
+        checks = self.checks_tab
+        back = not config_tab and checks.narrow and checks.detail_open
+        for name, _label in TABS:
+            self.query_one(f"#tab-{name}").display = not back
         if not config_tab:
-            self.checks_tab.refresh_view()
+            checks.refresh_view()
             return
         if editor.shown_keys is None and not editor.read_only:
             editor.show_keys(SETTINGS_KEYS)

@@ -149,10 +149,11 @@ async def test_speaker_bar_sits_above_the_transcript_and_engine_status_stays(tmp
         bar = app.screen.query_one("#speaker-bar", Static)
         assert bar.region.y < app.screen.query_one("#transcript").region.y
         assert bar.region.width == app.screen.query_one("#transcript").region.width
-        items = str(bar.render()).split("   ")
+        speakers, notices = str(bar.render()).split("\n", 1)
+        items = speakers.split("   ")
         assert items[0].startswith("You ")
         assert [item.rsplit(" ", 1)[0].rstrip() for item in items[:2]] == ["You", "Speaker 2"]
-        assert items[-1] == "! 1 phrase failed"
+        assert notices == "! 1 phrase failed", "the notices wrap below the speakers"
         for key in "21":
             await pilot.press(key)
             engine = str(app.screen.query_one("#top-engine", Static).render())

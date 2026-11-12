@@ -66,7 +66,7 @@ tiers by terminal width:
 | --- | --- | --- |
 | Wide | 120 and more | Every value shows. |
 | Medium | 80 to 119 | The Checks list shows the check names only. |
-| Narrow | 60 to 79 | The top line shows only `●` or `Ⅱ` for a recording, no Library count, and the first word of the engine state. The Record speaker row is one line. Checks shows the list alone. |
+| Narrow | 60 to 79 | The top line shows only `●` or `Ⅱ` for a recording, no Library count, and the first word of the engine state. The Record speaker row is one line. Checks shows the list alone and only the counts on the tab line. |
 
 The top of Record depends on the width and the height, so the transcript keeps
 its space in a short terminal:
@@ -186,7 +186,8 @@ of Settings edits the saved device.
 The transcript opens in mixed view, with one time-ordered stream and speaker
 labels. Press `v` (or click `[v] ▶ mixed  split`) to switch to split view,
 where microphone and system lines appear in separate, captioned columns in time
-order. Use `up` and `down` to scroll one line, `pageup` and `pagedown` to scroll
+order. The row of scroll keys under the transcript is hidden in the narrow tier and in the
+level-line form. Use `up` and `down` to scroll one line, `pageup` and `pagedown` to scroll
 one page, and `home` and `end` to move to the top and bottom. The mouse wheel
 also scrolls the transcript. New lines stay in view while the transcript is at
 the bottom. If you scroll up, refreshes do not move the view; press `end` or
@@ -194,9 +195,10 @@ scroll to the bottom to follow new lines again.
 
 The speaker bar lists each speaker that has transcript lines, with its talk time
 (`4:12`; from 100 minutes, `1h40m`).
-The row wraps between speakers when it runs out of room. In the narrow tier the
-speakers stay on one line that ends with `+N` for the speakers that do not fit;
-the notices wrap below it. Each speaker shows as
+The speakers take one line in the narrow tier and in a terminal of fewer than 28
+rows, and at most two lines in other sizes; they wrap between speakers, and the
+last line ends with `+N` for the speakers that do not fit. The notices wrap
+below the speakers. Each speaker shows as
 text, so it does not depend on colour. The end of the bar shows the count of failed
 phrases when there are any, `! mic stopped` (or `! system stopped`) when the capture of
 a source failed, `! mic no audio` (or `! system no audio`) while a
@@ -574,8 +576,7 @@ Each row shows a state glyph, the check name, and a short detail that is cut
 to fit: `✓` pass, `!` warning, `×` failure. In the medium tier the list shows
 the check names only. In the narrow tier the tab shows the list alone: press
 `enter` to show the detail of the selected check and `escape` to return to the
-list. The detail shows the three counts without the time of the last run, and
-the list shows the time only when it fits whole. The detail pane shows the
+list; the detail puts `[esc] ← Checks` in place of the tab names. The detail pane shows the
 selected check with its state word, the result, fix guidance when available,
 `checked HH:MM` and the related path when one applies, and the buttons
 `[f] Fix: …` (for a warning or failure that has a fix), `[t] Test: …` (when
@@ -583,8 +584,11 @@ the area has a test), `[l] Open log`, and `[c] Copy report`. The detail scrolls 
 `[Q] Quick setup…`, `[m] Models…`, and `[D] Defaults…` stay at its bottom. A row of
 buttons that does not fit on one line shows one button on each line.
 
-The first row of the tab shows `N pass · N warn · N fail`, the time of the last
-run, and `[r] Run again` (not in the narrow tier; `r` still runs the checks). The Settings navigation badge shows `NW` for warnings or `NF` for
+Checks has no frame of its own inside the Settings frame. The tab line shows,
+after the tab names, `N pass · N warn · N fail`, the time of the last run, and
+`[r] Run again`. In the medium tier `[r] Run again` shows only when it fits
+whole, and the time shows only when it fits whole; the narrow tier shows the
+counts only (`r` still runs the checks). The Settings navigation badge shows `NW` for warnings or `NF` for
 failures, and the tab label shows `●N` when the last run has warnings or
 failures. New optional checks appear as warnings and do not change the
 existing `stenographer doctor` exit status. The refine service check asks the

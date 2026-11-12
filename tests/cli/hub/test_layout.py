@@ -14,6 +14,7 @@ from textual.app import App
 from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.checks_tab import ChecksTab
+from stenographer.cli.hub.doctor_view import DoctorReport
 from stenographer.cli.hub.engine_status import EngineStatus
 from stenographer.cli.hub.widgets.speaker_bar import SpeakerBar
 from stenographer.cli.hub.widgets.spectrum_meter_model import SpectrumMeterModel
@@ -1100,7 +1101,8 @@ async def test_checks_narrow_summary_is_never_cut(tmp_path):
             return _screen_text(app).splitlines()[row]
 
         listed = summary_row()
-        assert "last run 13:21" in listed and "…" not in listed
+        assert " 6 pass ·  1 warn ·  1 fail" in listed
+        assert "last run" not in listed and "…" not in listed
         await pilot.press("enter")
         await pilot.pause()
         detail = summary_row()
@@ -1170,9 +1172,12 @@ async def test_checks_fit_a_wide_short_terminal(tmp_path, size):
         await pilot.pause()
         selected = app.checks_tab.selected
         assert selected.label == "sounds", "the check with Fix, Test and a path"
-        assert _region_problems(app, app.checks_tab) == []
+        assert _layout_problems(app) == []
         bottom = app.screen.query_one("#checks-dialog-buttons").region
         assert bottom.bottom == app.screen.query_one("#checks-detail").content_region.bottom
+        app.screen.query_one("#checks-detail-scroll").scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert "10:02" in _screen_text(app), "the last warning scrolls into view"
 
 
 @pytest.mark.parametrize("size", [(120, 35), (150, 45)])
@@ -1265,4 +1270,136 @@ async def test_settings_below_floor_shows_the_size_line(tmp_path):
         assert lines == [f"60{TIMES}16 needed · now  59{TIMES}15"]
         await pilot.resize_terminal(80, 24)
         await pilot.pause()
+        assert _layout_problems(app) == []
+
+
+# Review fixes of PR 51, round 3
+
+LONG_NAMES = [
+    TranscriptLine(
+        i * 6.0, i * 6.0 + 5, "", "mic", f"long-{i % 12}", f"{i % 12:02d} " + "x" * 42, TEXT
+    )
+    for i in range(24)
+]
+
+
+@pytest.mark.parametrize("lines", [ROOM_LINES, LONG_NAMES], ids=["rooms", "long-names"])
+@pytest.mark.parametrize(
+    "size", [(150, 16), (120, 16), (120, 24), (120, 28), (100, 20), (80, 16), (80, 20), (60, 16)]
+)
+async def test_record_speaker_row_leaves_the_transcript_six_lines(tmp_path, size, lines):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        session.lines = list(lines)
+        app.refresh_view()
+        await pilot.pause()
+        assert app.screen.query_one("#transcript").region.height >= 6
+        rows = _speaker_bar(app).splitlines()
+        assert len(rows) == (1 if size[1] < 28 or size[0] < 80 else 2)
+        shown = sum(row.count(" 0:") for row in rows)
+        if shown < 12:
+            assert rows[-1].endswith(f"+{12 - shown}"), rows
+        assert _layout_problems(app) == []
+        session.release.set()
+
+
+async def test_record_speaker_row_is_two_lines_at_most_in_a_tall_terminal(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(80, 40)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        session.lines = list(LONG_NAMES)
+        session.failed_phrase_count = 2
+        app.refresh_view()
+        await pilot.pause()
+        rows = _speaker_bar(app).splitlines()
+        assert len(rows) == 3
+        assert rows[1].endswith("+10")
+        assert rows[2] == "! 2 phrases failed"
+        session.release.set()
+
+
+async def test_record_line_form_hides_the_transcript_scroll_hints(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 16)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        assert "PgUp/Dn" not in _screen_text(app)
+        session.release.set()
+
+
+async def test_checks_fit_the_buttons_again_for_each_selected_check(tmp_path):
+    from tests.cli.hub.test_checks_tab import _check
+
+    report = DoctorReport(
+        (
+            _check("key_injector_ok", "input access", "input", "warn", "no access", "Fix."),
+            _check("has_mic", "microphone", "input", "warn", "no microphone", "Fix."),
+            _check("hotkey_access_ok", "hotkey", "input", "fail", "no key", "Fix."),
+        ),
+        (),
+        checked_at=datetime(2026, 10, 27, 13, 21),
+    )
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        fixes = (
+            "[f] Fix: run quick setup",
+            "[f] Fix: choose a microphone",
+            "[f] Fix: set the hotkey",
+        )
+        for index, fix in enumerate(fixes):
+            app.checks_tab._select(index)
+            await pilot.pause()
+            await pilot.pause()
+            assert _layout_problems(app) == [], fix
+            assert fix in _screen_text(app), fix
+
+
+@pytest.mark.parametrize(
+    ("size", "summary"),
+    [
+        ((150, 45), ("6 pass", "last run 13:21", "[r] Run again")),
+        ((100, 30), ("6 pass", "last run 13:21")),
+        ((80, 24), ("6 pass", "last run 13:21")),
+        ((60, 16), ("6 pass", " 1 fail")),
+    ],
+)
+async def test_checks_summary_sits_on_the_tab_line(tmp_path, size, summary):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        tab_row = _screen_text(app).splitlines()[app.screen.query_one("#tab-checks").region.y]
+        for part in summary:
+            assert part in tab_row, tab_row
+        assert "…" not in tab_row
+        assert len(app.screen.query(".-frame-checks")) == 0
+        assert app.checks_tab.styles.border_left[0] in ("", "none")
+        assert _layout_problems(app) == []
+
+
+async def test_checks_narrow_list_shows_eight_rows(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        names = ("input", "engine", "other", *(check.label for check in report.checks))
+        text = _screen_text(app).splitlines()
+        shown = [row for row in text if any(f" {name} " in f" {row} " for name in names)]
+        assert len(shown) >= 8, shown
+        await pilot.press("enter")
+        await pilot.pause()
+        back = app.screen.query_one("#checks-back")
+        assert back.display and back.region.y == app.screen.query_one("#settings-tabs").region.y
         assert _layout_problems(app) == []

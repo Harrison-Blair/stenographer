@@ -15,8 +15,9 @@ _DIM = "#8b93a1"
 class SpeakerBar(Static):
     """Show items on as few rows as fit; a new row starts only between two items.
 
-    With ``one_row``, the first ``speakers`` items share one row that ends with
-    ``+N`` for the speakers that do not fit; the other items wrap below it.
+    With ``max_rows``, the first ``speakers`` items take at most that many rows, and the
+    last of them ends with ``+N`` for the speakers that do not fit; the other items (the
+    notices) wrap below them.
     """
 
     DEFAULT_CSS = """
@@ -29,14 +30,14 @@ class SpeakerBar(Static):
         super().__init__("", markup=False, **kwargs)
         self.items: tuple[Text, ...] = ()
         self.speakers = 0
-        self.one_row = False
+        self.max_rows: int | None = None
 
     def set_items(
-        self, items: tuple[Text, ...], *, speakers: int = 0, one_row: bool = False
+        self, items: tuple[Text, ...], *, speakers: int = 0, max_rows: int | None = None
     ) -> None:
         self.items = items
         self.speakers = speakers
-        self.one_row = one_row
+        self.max_rows = max_rows
         update_changed(self, self.bar_text(self.size.width))
 
     def on_resize(self) -> None:
@@ -44,24 +45,24 @@ class SpeakerBar(Static):
 
     def bar_text(self, width: int) -> Text:
         """Return the items flowed into ``width`` cells; no width yet gives one row."""
-        if not (self.one_row and self.speakers and width):
+        if self.max_rows is None or not (self.speakers and width):
             return self._flow(self.items, width)
         speakers, rest = self.items[: self.speakers], self.items[self.speakers :]
-        text = self._speaker_row(speakers, width)
+        text = self._speaker_rows(speakers, width, self.max_rows)
         if rest:
             text.append("\n")
             text.append_text(self._flow(rest, width))
         return text
 
-    @staticmethod
-    def _speaker_row(speakers: tuple[Text, ...], width: int) -> Text:
-        """Return as many speakers as fit in one row, then ``+N`` for the others."""
+    @classmethod
+    def _speaker_rows(cls, speakers: tuple[Text, ...], width: int, max_rows: int) -> Text:
+        """Return as many speakers as fit in ``max_rows`` rows, then ``+N`` for the others."""
         for shown in range(len(speakers), 0, -1):
             hidden = len(speakers) - shown
-            more = [Text(f"+{hidden}", style=_DIM)] if hidden else []
-            row = Text(_GAP).join([*speakers[:shown], *more])
-            if row.cell_len <= width:
-                return row
+            more = (Text(f"+{hidden}", style=_DIM),) if hidden else ()
+            rows = cls._flow((*speakers[:shown], *more), width)
+            if rows.plain.count("\n") < max_rows:
+                return rows
         return Text(f"+{len(speakers)}", style=_DIM)
 
     @staticmethod

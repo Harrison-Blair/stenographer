@@ -76,6 +76,31 @@ _TESTS = {
 }
 
 
+class ChecksSummaryRow(Horizontal):
+    """The Checks summary on the Settings tab line: back, counts, last run, Run again.
+
+    It sits outside ChecksTab, so its buttons name the tab as their target.
+    """
+
+    def __init__(self, tab: ChecksTab, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.tab = tab
+
+    def compose(self) -> ComposeResult:
+        yield HubButton(
+            "← Checks",
+            key="esc",
+            action="close_detail",
+            tight=True,
+            target=self.tab,
+            id="checks-back",
+        )
+        yield Static("", id="checks-summary", markup=False)
+        yield HubButton(
+            "Run again", key="r", action="run_checks", target=self.tab, id="checks-run-again"
+        )
+
+
 class ChecksTab(Vertical):
     """Run the system checks; fix and test the selected check; open the setup dialogs.
 
@@ -106,20 +131,18 @@ class ChecksTab(Vertical):
     DEFAULT_CSS = """
     ChecksTab {
         height: 1fr;
-        border: round #3a4150;
     }
     ChecksTab:focus {
         background-tint: transparent;
     }
-    ChecksTab #checks-summary-row {
+    #checks-summary-row {
+        width: 1fr;
         height: 1;
-        padding: 0 1;
+        padding-left: 2;
     }
-    ChecksTab #checks-summary { width: 1fr; text-wrap: nowrap; }
-    ChecksTab #checks-back { display: none; }
+    #checks-summary { width: 1fr; text-wrap: nowrap; }
     ChecksTab #checks-body {
         height: 1fr;
-        padding: 1 1 0 1;
     }
     ChecksTab #checks-list-column {
         width: 48;
@@ -164,12 +187,9 @@ class ChecksTab(Vertical):
     }
     Screen.-medium ChecksTab #checks-list-column { width: 24; }
     Screen.-narrow ChecksTab #checks-list-column { width: 1fr; margin-right: 0; }
-    Screen.-narrow ChecksTab #checks-detail, Screen.-narrow ChecksTab #checks-run-again {
-        display: none;
-    }
+    Screen.-narrow ChecksTab #checks-detail { display: none; }
     Screen.-narrow ChecksTab.-detail #checks-detail { display: block; }
     Screen.-narrow ChecksTab.-detail #checks-list-column { display: none; }
-    Screen.-narrow ChecksTab.-detail #checks-back { display: block; }
     """
 
     def __init__(
@@ -197,8 +217,9 @@ class ChecksTab(Vertical):
         self.index = 0
         self._test_statuses: dict[str, str] = {}
         self._view_key = None
-        self._row_forms: dict[str, str] = {}
+        self._row_forms: dict[str, tuple] = {}
         self.detail_open = False
+        self.summary_row = ChecksSummaryRow(self, id="checks-summary-row")
 
     @property
     def test_status(self) -> str:
@@ -206,10 +227,6 @@ class ChecksTab(Vertical):
         return self._test_statuses.get(check.check_id, "") if check else ""
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="checks-summary-row"):
-            yield HubButton("← Checks", key="esc", action="close_detail", id="checks-back")
-            yield Static("", id="checks-summary", markup=False)
-            yield HubButton("Run again", key="r", action="run_checks", id="checks-run-again")
         with Horizontal(id="checks-body"):
             with Vertical(id="checks-list-column"):
                 with Vertical(id="doctor-panel"):
@@ -322,8 +339,7 @@ class ChecksTab(Vertical):
         if not self.is_mounted:
             return
         self.call_after_refresh(self._fit_rows)
-        summary = self.query_one("#checks-summary", Static)
-        width = summary.content_size.width
+        width = self.summary_row.content_size.width
         key = (
             self.report,
             self.index,
@@ -336,11 +352,7 @@ class ChecksTab(Vertical):
         if key == self._view_key:
             return
         self._refresh_checks()
-        # The narrow detail shows the counts only; the list adds the time when it fits whole.
-        text = self.summary_text()
-        if (self.narrow and self.detail_open) or (width and text.cell_len > width):
-            text = self.summary_text(last_run=False)
-        summary.update(text)
+        self._refresh_summary(width)
         check = self.selected
         head = self.query_one("#checks-detail-head", Static)
         body = self.query_one("#checks-detail-body", Static)
@@ -379,6 +391,31 @@ class ChecksTab(Vertical):
         self.query_one("#checks-warnings", Static).update(self._warnings_text())
         self._view_key = key
 
+    def _refresh_summary(self, width: int) -> None:
+        """Fill the tab line: wide shows Run again; medium shows it when it fits whole.
+
+        The counts always show; the last run shows when it fits whole; narrow shows counts.
+        """
+        row = self.summary_row
+        tier = self._tier()
+        back = self.narrow and self.detail_open
+        row.query_one("#checks-back").display = back
+        # In place of the tabs, the back button starts the line.
+        row.styles.padding_left = 0 if back else 2
+        run = row.query_one("#checks-run-again", HubButton)
+        full = self.summary_text()
+        run_width = run.label.cell_length + _PADDED_CELLS
+        if tier == "wide":
+            run.display = True
+        elif tier == "medium":
+            run.display = not width or full.cell_len + run_width <= width
+        else:
+            run.display = False
+        room = width - (run_width if run.display else 0)
+        fits = tier != "narrow" and (not width or full.cell_len <= room)
+        text = full if fits else self.summary_text(last_run=False)
+        row.query_one("#checks-summary", Static).update(text)
+
     def _warnings_text(self) -> Text:
         entries = self.report.warning_entries() if self.report is not None else ()
         unreadable = self.report is not None and UNREADABLE_LOG in self.report.warnings
@@ -402,6 +439,12 @@ class ChecksTab(Vertical):
         return text
 
     def _fit_rows(self) -> None:
+        if self._view_key is not None and self._view_key[-1] != self.summary_row.content_size.width:
+            # The tab line got its width after the last draw; fit the summary to it.
+            self.refresh_view()
+        self._fit_button_rows()
+
+    def _fit_button_rows(self) -> None:
         """Give each button row the widest form that fits its width.
 
         ``padded`` is the usual button row; ``tight`` drops the padding; ``stack`` puts one
@@ -420,9 +463,11 @@ class ChecksTab(Vertical):
                 form = "tight"
             else:
                 form = "stack"
-            if self._row_forms.get(row_id) == form:
+            # A new label or a shown or hidden button needs new widths in the same form.
+            signature = (form, tuple((str(b.label), b.display) for b in buttons))
+            if self._row_forms.get(row_id) == signature:
                 continue
-            self._row_forms[row_id] = form
+            self._row_forms[row_id] = signature
             stack = form == "stack"
             row.styles.layout = "vertical" if stack else "horizontal"
             row.styles.height = "auto" if stack else 1

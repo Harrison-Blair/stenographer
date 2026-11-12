@@ -10,6 +10,7 @@ from textual.widgets import Button as TextualButton
 
 if TYPE_CHECKING:
     from textual.geometry import Size
+    from textual.widget import Widget
 
 
 class HubButton(TextualButton):
@@ -68,10 +69,13 @@ class HubButton(TextualButton):
         action: str | None = None,
         tone: str = "default",
         tight: bool = False,
+        target: Widget | None = None,
         **kwargs,
     ) -> None:
         self.key = key
         self.action_name = action
+        # The widget that runs the action when the button sits outside it.
+        self.target = target
         super().__init__(self.label_text(label, key), **kwargs)
         self.can_focus = False
         self.add_class("-hub", f"-tone-{tone}")
@@ -92,6 +96,10 @@ class HubButton(TextualButton):
         text = label.copy() if isinstance(label, Text) else Text(label)
         return text if key is None else Text(f"[{key}] ").append_text(text)
 
+    def action_nodes(self) -> tuple[Widget, ...]:
+        """Return the target, or else the ancestors, in the order a click looks for the action."""
+        return (self.target,) if self.target is not None else tuple(self.ancestors_with_self)
+
     def set_label(self, label: str | Text) -> None:
         """Change the label and keep the key."""
         self.label = self.label_text(label, self.key)
@@ -102,7 +110,7 @@ class HubButton(TextualButton):
             return
         event.stop()
         name = self.action_name.partition("(")[0]
-        for node in self.ancestors_with_self:
+        for node in self.action_nodes():
             if callable(getattr(node, f"action_{name}", None)):
                 await self.app.run_action(self.action_name, node)
                 return

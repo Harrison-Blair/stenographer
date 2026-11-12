@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Identical helpers shared by hub tests."""
 
-from textual.containers import ScrollableContainer
 from textual.geometry import Region
 from textual.widgets import Button, Static
 
@@ -54,7 +53,8 @@ def _scrolls(node, screen) -> bool:
     """Return whether ``node`` scrolls its children up and down."""
     if node is screen:
         return False
-    return isinstance(node, ScrollableContainer) or node.styles.overflow_y in {"auto", "scroll"}
+    # A ScrollableContainer with overflow-y hidden cannot scroll, so its rows must fit.
+    return node.styles.overflow_y in {"auto", "scroll"}
 
 
 def _layout_problems(app) -> list[str]:
