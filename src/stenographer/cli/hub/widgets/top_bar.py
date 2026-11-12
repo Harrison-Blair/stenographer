@@ -67,6 +67,7 @@ class TopBar(Horizontal):
     }
     TopBar #top-engine {
         width: 1fr;
+        height: 1;
         text-align: right;
         text-wrap: nowrap;
     }

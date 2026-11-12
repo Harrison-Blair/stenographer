@@ -77,6 +77,11 @@ _UNSAVED_SLOT = 20
 _COUNT_SLOT = 10
 
 
+def _tab_gap(tier: str) -> int:
+    """Return the cells after each tab row button."""
+    return 3 if tier == "wide" else 2
+
+
 def _count_text(count: int) -> str:
     return f"{count} change{'' if count == 1 else 's'}"
 
@@ -302,6 +307,7 @@ class SettingsScreen(HubScreen):
             self.query_one(selector).display = config_tab and not editor.read_only
         count_slot = self.query_one("#config-count", Static)
         count_slot.display = config_tab and not editor.read_only and tier == "wide"
+        self._fit_tab_margins(tier)
         # The narrow Checks detail puts [esc] ← Checks in place of the tabs.
         checks = self.checks_tab
         back = not config_tab and checks.narrow and checks.detail_open
@@ -327,15 +333,23 @@ class SettingsScreen(HubScreen):
         update_changed(count_slot, _count_text(count) if count else "")
         update_changed(summary, self._config_summary(editor, tier))
 
+    def _tab_buttons(self) -> list[HubButton]:
+        """Return the buttons of the tab row itself, not those of the Checks summary."""
+        row = self.query_one("#settings-tabs")
+        return [child for child in row.children if isinstance(child, HubButton)]
+
+    def _fit_tab_margins(self, tier: str) -> None:
+        gap = _tab_gap(tier)
+        for button in self._tab_buttons():
+            button.styles.margin = (0, 0 if button.id == "config-save" else gap, 0, 0)
+
     def _fit_tab_row(self, tier: str) -> None:
         """Hide the buttons that have a key, Reset row first, until the tab row fits."""
-        gap = 3 if tier == "wide" else 2
+        gap = _tab_gap(tier)
         row = self.query_one("#settings-tabs")
-        shown = list(row.query(HubButton))
-        for button in shown:
-            button.styles.margin = (0, 0 if button.id == "config-save" else gap, 0, 0)
         for selector in _DROPPABLE_BUTTONS:
             self.query_one(selector).display = True
+        shown = [button for button in self._tab_buttons() if button.display]
         width = row.content_size.width or self.app.size.width
         count = _COUNT_SLOT if self.query_one("#config-count").display else 0
         needed = (

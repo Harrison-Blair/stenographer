@@ -102,9 +102,10 @@ class SpectrumMeter(Widget):
         on = model.state == "on"
         color = _COLORS[model.source]
         full = height >= _FULL_HEIGHT
-        left, right = model.head
+        # The short spectrum leaves [d] device to the status line above it.
+        left, right = model.head_for(device_key=full)
         # The room does not depend on the token shown now, so the device does not come and go.
-        room = width - model.right_width - 1
+        room = width - model.right_width_for(device_key=full) - 1
         if len(left) > room:
             left = model.head_label
         if len(left) > room:
@@ -158,8 +159,8 @@ class SpectrumMeter(Widget):
         offset = event.get_content_offset(self)
         if offset is None or offset.y != 0:
             return
-        left, right = self.model.head
         width = self.content_size.width
+        left, right = self.model.head_for(device_key=self.content_size.height >= _FULL_HEIGHT)
         if right == "[d] device" and offset.x >= width - len(right):
             action = "choose_device"
         elif offset.x < len(left):

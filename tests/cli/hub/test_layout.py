@@ -16,6 +16,7 @@ from textual.widgets import Input, Select, Static
 from stenographer.cli.hub.checks_tab import ChecksTab
 from stenographer.cli.hub.doctor_view import DoctorReport
 from stenographer.cli.hub.engine_status import EngineStatus
+from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.speaker_bar import SpeakerBar
 from stenographer.cli.hub.widgets.spectrum_meter_model import SpectrumMeterModel
 from stenographer.lib.live.session_writer import SessionWriter
@@ -1381,8 +1382,7 @@ async def test_checks_summary_sits_on_the_tab_line(tmp_path, size, summary):
         for part in summary:
             assert part in tab_row, tab_row
         assert "…" not in tab_row
-        assert len(app.screen.query(".-frame-checks")) == 0
-        assert app.checks_tab.styles.border_left[0] in ("", "none")
+        _assert_one_checks_frame(app, divider=size[0] >= 80)
         assert _layout_problems(app) == []
 
 
@@ -1403,3 +1403,165 @@ async def test_checks_narrow_list_shows_eight_rows(tmp_path):
         back = app.screen.query_one("#checks-back")
         assert back.display and back.region.y == app.screen.query_one("#settings-tabs").region.y
         assert _layout_problems(app) == []
+
+
+# Review fixes of PR 51, round 4
+
+
+def _no_border(edge) -> bool:
+    return edge[0] in ("", "none", "hidden")
+
+
+def _assert_one_checks_frame(app, *, divider: bool) -> None:
+    """Checks has no frame of its own; wide and medium have one line before the detail."""
+    tab = app.checks_tab
+    for side in ("top", "right", "bottom", "left"):
+        assert _no_border(getattr(tab.styles, f"border_{side}")), f"ChecksTab {side}"
+    detail = app.screen.query_one("#checks-detail")
+    for side in ("top", "right", "bottom"):
+        assert _no_border(getattr(detail.styles, f"border_{side}")), f"detail {side}"
+    if detail.display:
+        assert _no_border(detail.styles.border_left) is not divider, "detail left"
+
+
+def _tab_line(app) -> str:
+    return _screen_text(app).splitlines()[app.screen.query_one("#settings-tabs").region.y]
+
+
+def _assert_summary_whole(app, label) -> None:
+    line = _tab_line(app)
+    summary = str(app.screen.query_one("#checks-summary").render()).strip()
+    assert summary.startswith(" 6 pass".strip()), (label, summary)
+    assert summary in line, (label, line)
+    if app.screen.query_one("#checks-run-again").display:
+        assert "[r] Run again" in line, (label, line)
+    assert _layout_problems(app) == [], label
+
+
+async def test_checks_summary_stays_whole_after_a_resize(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        for size in ((60, 16), (98, 30), (97, 30), (120, 35)):
+            await pilot.resize_terminal(*size)
+            await pilot.pause()
+            await pilot.pause()
+            _assert_summary_whole(app, size)
+
+
+async def test_checks_summary_stays_whole_at_each_width(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        for width in range(60, 151):
+            await pilot.resize_terminal(width, 35)
+            await pilot.pause()
+            await pilot.pause()
+            _assert_summary_whole(app, width)
+
+
+_ALL_TAB_BUTTONS = ["config-undo", "config-reset", "config-discard", "config-save"]
+
+
+@pytest.mark.parametrize(
+    ("size", "buttons"),
+    [
+        ((150, 45), _ALL_TAB_BUTTONS),
+        ((120, 35), _ALL_TAB_BUTTONS),
+        ((100, 30), _ALL_TAB_BUTTONS),
+        ((80, 24), _ALL_TAB_BUTTONS),
+        ((60, 16), ["config-discard", "config-save"]),
+    ],
+)
+async def test_settings_tab_line_shows_each_button_that_fits(tmp_path, size, buttons):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        row = app.screen.query_one("#settings-tabs")
+        shown = [
+            button.id
+            for button in row.query(HubButton)
+            if button.display and button.region.area and button.id.startswith("config-")
+        ]
+        assert shown == buttons
+        assert _layout_problems(app) == []
+
+
+@pytest.mark.parametrize("size", [(150, 45), (100, 30), (60, 16)])
+async def test_checks_detail_has_no_frame(tmp_path, size):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        if size[0] < 80:
+            await pilot.press("enter")
+            await pilot.pause()
+        _assert_one_checks_frame(app, divider=size[0] >= 80)
+        assert _layout_problems(app) == []
+
+
+async def test_checks_back_button_click_returns_to_the_list(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.checks_tab.detail_open
+        assert await pilot.click("#checks-back")
+        await pilot.pause()
+        assert not app.checks_tab.detail_open
+        assert app.screen.query_one("#checks-list-column").display
+        assert "▶ ! sounds" in _screen_text(app), "the list shows the selected check"
+        assert not app.screen.query_one("#checks-back").display
+
+
+async def test_mic_head_shows_the_device_in_the_short_spectrum_form(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        def head():
+            row = app.screen.query_one("#mic-meter").content_region.y
+            return _screen_text(app).splitlines()[row]
+
+        heads = {"idle": head()}
+        session = await _record_five(pilot, services, created, app)
+        heads["on"] = head()
+        await pilot.press("m")
+        await _until(pilot, lambda: "MIC off" in head())
+        heads["off"] = head()
+        places = {state: line.find("Default input") for state, line in heads.items()}
+        assert -1 not in places.values(), heads
+        assert len(set(places.values())) == 1, heads
+        assert "[d] device" not in heads["idle"]
+        session.release.set()
+
+
+async def test_checks_back_button_starts_the_tab_line(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.press("enter")
+        await pilot.pause()
+        back = app.screen.query_one("#checks-back").region
+        assert back.x == app.screen.query_one("#settings-tabs").content_region.x

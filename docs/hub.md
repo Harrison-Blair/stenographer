@@ -166,7 +166,8 @@ In the full form, each meter shows 18 frequency bands in 8 rows, the band labels
 `100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS (for
 example `-23.4`), and a speech light (`● speech` or `○ quiet`) from the voice
 detector of the source. In the short-spectrum form, the meters sit side by side with
-2 rows of bands and no band labels. In the level-line form, each source is one line:
+2 rows of bands and no band labels; the microphone head leaves `[d] device` to the
+status line, so the device name still shows at 80 columns. In the level-line form, each source is one line:
 `[m] MIC` or `[s] SYS`, a level bar from -60 to 0 dBFS, the level, and the
 speech light.
 While no recording runs, a meter shows a dotted grid and `not recording`.
@@ -584,7 +585,8 @@ the area has a test), `[l] Open log`, and `[c] Copy report`. The detail scrolls 
 `[Q] Quick setup…`, `[m] Models…`, and `[D] Defaults…` stay at its bottom. A row of
 buttons that does not fit on one line shows one button on each line.
 
-Checks has no frame of its own inside the Settings frame. The tab line shows,
+Checks has no frame of its own inside the Settings frame; in the wide and medium
+tiers one vertical line divides the list from the detail. The tab line shows,
 after the tab names, `N pass · N warn · N fail`, the time of the last run, and
 `[r] Run again`. In the medium tier `[r] Run again` shows only when it fits
 whole, and the time shows only when it fits whole; the narrow tier shows the

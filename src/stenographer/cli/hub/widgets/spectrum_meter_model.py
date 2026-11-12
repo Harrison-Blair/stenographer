@@ -27,7 +27,9 @@ _SHORT_NAMES = {"mic": "MIC", "system": "SYS"}
 # The state word of the head (on, off, idle) has a slot, so the device does not move.
 _STATE_SLOT = 4
 # The widest right token of each source: ``● speech``, and ``[d] device`` for the mic.
+# Without the device key (the short spectrum, where the status line has it), ``● speech``.
 _RIGHT_WIDTHS = {"mic": 10, "system": 8}
+_SPEECH_WIDTH = 8
 # The level and peak slots hold ``-99.9`` and ``-inf`` right-aligned.
 _LEVEL_SLOT = 6
 # The level bar of the one-line meter spans this range below 0 dBFS.
@@ -95,6 +97,15 @@ class SpectrumMeterModel:
             self._levels.append((now, level))
             while self._levels and self._levels[0][0] < now - _PEAK_SECONDS:
                 self._levels.popleft()
+
+    def head_for(self, *, device_key: bool = True) -> tuple[str, str]:
+        """Return the left head text and the right token; ``device_key`` allows ``[d] device``."""
+        left, right = self.head
+        return (left, right) if device_key or right != "[d] device" else (left, "")
+
+    def right_width_for(self, *, device_key: bool = True) -> int:
+        """Return the cells the head keeps for its widest right token."""
+        return self.right_width if device_key else _SPEECH_WIDTH
 
     @property
     def head(self) -> tuple[str, str]:

@@ -29,7 +29,6 @@ from stenographer.cli.hub.doctor_view import (
 from stenographer.cli.hub.models_dialog import ModelsDialog
 from stenographer.cli.hub.quick_setup_dialog import QuickSetupDialog
 from stenographer.cli.hub.widgets.button import HubButton
-from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.hub.widgets.tier import tier_for
@@ -87,7 +86,7 @@ class ChecksSummaryRow(Horizontal):
         self.tab = tab
 
     def compose(self) -> ComposeResult:
-        yield HubButton(
+        back = HubButton(
             "← Checks",
             key="esc",
             action="close_detail",
@@ -95,10 +94,20 @@ class ChecksSummaryRow(Horizontal):
             target=self.tab,
             id="checks-back",
         )
-        yield Static("", id="checks-summary", markup=False)
-        yield HubButton(
-            "Run again", key="r", action="run_checks", target=self.tab, id="checks-run-again"
+        run = HubButton(
+            "Run again",
+            key="r",
+            action="run_checks",
+            tight=True,
+            target=self.tab,
+            id="checks-run-again",
         )
+        # Inline: the app rules of HubButton outrank default CSS.
+        back.styles.margin = (0, 1, 0, 0)
+        run.styles.margin = (0, 0, 0, 2)
+        yield back
+        yield Static("", id="checks-summary", markup=False)
+        yield run
 
 
 class ChecksTab(Vertical):
@@ -138,7 +147,6 @@ class ChecksTab(Vertical):
     #checks-summary-row {
         width: 1fr;
         height: 1;
-        padding-left: 2;
     }
     #checks-summary { width: 1fr; text-wrap: nowrap; }
     ChecksTab #checks-body {
@@ -158,6 +166,8 @@ class ChecksTab(Vertical):
     }
     ChecksTab #checks-detail {
         width: 1fr;
+        border-left: solid #3a4150;
+        padding-left: 1;
     }
     ChecksTab #checks-detail-scroll { height: 1fr; }
     ChecksTab #checks-detail-head {
@@ -188,7 +198,11 @@ class ChecksTab(Vertical):
     Screen.-medium ChecksTab #checks-list-column { width: 24; }
     Screen.-narrow ChecksTab #checks-list-column { width: 1fr; margin-right: 0; }
     Screen.-narrow ChecksTab #checks-detail { display: none; }
-    Screen.-narrow ChecksTab.-detail #checks-detail { display: block; }
+    Screen.-narrow ChecksTab.-detail #checks-detail {
+        display: block;
+        border-left: none;
+        padding-left: 0;
+    }
     Screen.-narrow ChecksTab.-detail #checks-list-column { display: none; }
     """
 
@@ -238,7 +252,7 @@ class ChecksTab(Vertical):
                         yield section
                         yield SelectableList(id=f"checks-{group}")
                 yield Static("↑↓ check · t test", id="checks-list-hint")
-            with Frame(id="checks-detail", variant="fill"):
+            with Vertical(id="checks-detail"):
                 with VerticalScroll(id="checks-detail-scroll", can_focus=False):
                     yield Static("", id="checks-detail-head", markup=False)
                     yield Static("", id="checks-detail-body", markup=False)
@@ -399,12 +413,16 @@ class ChecksTab(Vertical):
         row = self.summary_row
         tier = self._tier()
         back = self.narrow and self.detail_open
-        row.query_one("#checks-back").display = back
+        back_button = row.query_one("#checks-back", HubButton)
+        back_button.display = back
         # In place of the tabs, the back button starts the line.
-        row.styles.padding_left = 0 if back else 2
+        row.styles.padding = (0, 0, 0, 0 if back else 2)
         run = row.query_one("#checks-run-again", HubButton)
         full = self.summary_text()
-        run_width = run.label.cell_length + _PADDED_CELLS
+        # Both buttons are tight: the label and the margin are their whole width.
+        run_width = run.label.cell_length + run.styles.margin.left
+        if back:
+            width -= back_button.label.cell_length + back_button.styles.margin.right
         if tier == "wide":
             run.display = True
         elif tier == "medium":
