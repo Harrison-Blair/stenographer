@@ -51,23 +51,34 @@ def _scrolls(node) -> bool:
 
 
 def _layout_problems(app) -> list[str]:
-    """Return each shown widget outside the screen or its parent, and each cut button label."""
+    """Return each shown widget outside the screen or its parent, each overlap of two shown
+    siblings, and each cut button label.
+
+    Inside a scroll container a widget may leave its parent vertically, because the
+    container scrolls; it must still fit horizontally.
+    """
     screen = app.screen
     problems = []
-    for widget in screen.query("*"):
+    shown = [widget for widget in screen.query("*") if widget.display and widget.region.area]
+    for widget in shown:
         region = widget.region
-        if not widget.display or not region.area:
-            continue
-        if any(_scrolls(node) for node in widget.ancestors if node is not screen):
-            continue
         name = widget.id or type(widget).__name__
-        if not screen.region.contains_region(region):
-            problems.append(f"{name} leaves the screen: {region}")
         parent = widget.parent
-        if parent is not screen and not parent.content_region.contains_region(region):
-            problems.append(f"{name} leaves {parent.id}: {region}")
+        if any(_scrolls(node) for node in widget.ancestors if node is not screen):
+            box = parent.content_region
+            if region.x < box.x or region.right > box.right:
+                problems.append(f"{name} leaves {parent.id}: {region}")
+        else:
+            if not screen.region.contains_region(region):
+                problems.append(f"{name} leaves the screen: {region}")
+            if parent is not screen and not parent.content_region.contains_region(region):
+                problems.append(f"{name} leaves {parent.id}: {region}")
         if isinstance(widget, Button) and widget.label.cell_length > widget.content_size.width:
             problems.append(f"{name} cuts its label: {widget.label}")
+    for index, widget in enumerate(shown):
+        for other in shown[index + 1 :]:
+            if other.parent is widget.parent and widget.region.overlaps(other.region):
+                problems.append(f"{widget.id or type(widget).__name__} overlaps {other.id}")
     return problems
 
 
@@ -1013,7 +1024,8 @@ async def test_record_status_line_keeps_the_clock_and_buttons_in_place(tmp_path,
         await pilot.pause()
         clock = app.screen.query_one("#rec-clock-line")
         primary = app.screen.query_one("#rec-primary")
-        idle = (clock.region.x, primary.region.x if size[0] < 80 else None)
+        secondary = app.screen.query_one("#rec-secondary")
+        idle = (clock.region.x, primary.region.x, secondary.region.x)
         session = await _record_with_rooms(pilot, services, created, app)
         await pilot.press("enter")
         await _until(pilot, session.stop_entered.is_set)
@@ -1024,7 +1036,7 @@ async def test_record_status_line_keeps_the_clock_and_buttons_in_place(tmp_path,
         await pilot.pause()
         assert app.record_screen.record_state() == "failed"
         assert "! SAVE FAILED" in _screen_text(app)
-        failed = (clock.region.x, primary.region.x if size[0] < 80 else None)
+        failed = (clock.region.x, primary.region.x, secondary.region.x)
         assert idle == failed
 
 
@@ -1053,3 +1065,126 @@ def test_checks_count_slots_keep_each_word_in_place():
     one, widest = summary(1), summary(99)
     for anchor in ("pass", "warn", "fail", "last run"):
         assert one.index(anchor) == widest.index(anchor), anchor
+
+
+# Review fixes of PR 51
+
+FIVE_SPEAKERS = [
+    TranscriptLine(i * 6.0, i * 6.0 + 5, "", "mic", f"room-{i % 5 + 1}", f"Room {i % 5 + 1}", TEXT)
+    for i in range(20)
+]
+
+
+async def _record_five(pilot, services, created, app):
+    session = await _record_with_rooms(pilot, services, created, app)
+    session.lines = list(FIVE_SPEAKERS)
+    app.refresh_view()
+    await pilot.pause()
+    return session
+
+
+@pytest.mark.parametrize("size", [(150, 16), (120, 16), (120, 24), (80, 16), (80, 20)])
+async def test_record_gives_the_transcript_six_lines_in_a_short_terminal(tmp_path, size):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_five(pilot, services, created, app)
+        assert app.screen.query_one("#transcript").region.height >= 6
+        assert _layout_problems(app) == []
+        session.release.set()
+
+
+@pytest.mark.parametrize("size", [(150, 45), (150, 16), (100, 30), (60, 16)])
+async def test_record_buttons_stay_in_place_when_pause_becomes_resume(tmp_path, size):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_five(pilot, services, created, app)
+
+        def positions():
+            return tuple(
+                app.screen.query_one(selector).region.x
+                for selector in ("#rec-primary", "#rec-secondary")
+            )
+
+        recording = positions()
+        await pilot.press("space")
+        await _until(pilot, lambda: session.paused)
+        app.refresh_view()
+        await pilot.pause()
+        assert "▶ Resume" in _screen_text(app)
+        assert positions() == recording
+        session.release.set()
+
+
+def test_meter_head_keeps_the_device_in_place_when_a_source_turns_on_or_off():
+    model = SpectrumMeterModel("mic", "Default input")
+    places = set()
+    for state in ("on", "off"):
+        model.set_state(state)
+        places.add(model.head[0].index("Default input"))
+    assert len(places) == 1
+
+
+async def test_checks_narrow_summary_is_never_cut(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+
+        def summary_row():
+            row = app.screen.query_one("#checks-summary-row").region.y
+            return _screen_text(app).splitlines()[row]
+
+        listed = summary_row()
+        assert "last run 13:21" in listed and "…" not in listed
+        await pilot.press("enter")
+        await pilot.pause()
+        detail = summary_row()
+        assert "…" not in detail
+        assert "last run" not in detail
+        assert " 6 pass ·  1 warn ·  1 fail" in detail
+
+
+async def test_layout_problems_check_rows_inside_a_scroll_container(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        assert _region_problems(app, app.checks_tab) == []
+        row = app.screen.query_one("#checks-engine")
+        row.styles.offset = (8, 0)
+        await pilot.pause()
+        assert any(p.startswith("checks-engine leaves") for p in _layout_problems(app))
+        row.styles.offset = (0, -2)
+        await pilot.pause()
+        overlaps = [p for p in _layout_problems(app) if " overlaps " in p]
+        assert any("checks-engine" in p for p in overlaps), overlaps
+
+
+async def test_narrow_speaker_row_is_one_line_with_a_count_of_the_rest(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(60, 16)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        rows = _speaker_bar(app).splitlines()
+        assert len(rows) == 1
+        assert rows[0].startswith("Room 1  0:10   Room 2")
+        shown = rows[0].count("Room ")
+        assert rows[0].endswith(f"   +{12 - shown}")
+        session.failed_phrase_count = 2
+        app.refresh_view()
+        await pilot.pause()
+        rows = _speaker_bar(app).splitlines()
+        assert len(rows) == 2
+        assert rows[1] == "! 2 phrases failed"
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        assert len(_speaker_bar(app).splitlines()) > 2, "the medium tier keeps the wrap"
+        session.release.set()

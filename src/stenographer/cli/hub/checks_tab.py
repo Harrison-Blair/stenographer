@@ -111,7 +111,7 @@ class ChecksTab(Vertical):
         height: 1;
         padding: 0 1;
     }
-    ChecksTab #checks-summary { width: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
+    ChecksTab #checks-summary { width: 1fr; text-wrap: nowrap; }
     ChecksTab #checks-back { display: none; }
     ChecksTab #checks-body {
         height: 1fr;
@@ -299,7 +299,8 @@ class ChecksTab(Vertical):
         self.set_class(shown, "-detail")
         self.app.refresh_view()
 
-    def summary_text(self) -> Text:
+    def summary_text(self, *, last_run: bool = True) -> Text:
+        """Return the counts and, unless ``last_run`` is false, the time of the last run."""
         report = self.report
         if report is None:
             return Text("Checking…" if self.checking else "No check run yet.")
@@ -316,17 +317,32 @@ class ChecksTab(Vertical):
             summary.append(
                 f"{count:>{_COUNT_SLOT}} {word}", style=StatusToken.TONES[tone] if count else None
             )
-        summary.append(f" · last run {ran_at}")
+        if last_run:
+            summary.append(f" · last run {ran_at}")
         return summary
 
     def refresh_view(self) -> None:
         if not self.is_mounted:
             return
-        key = (self.report, self.index, self.checking, self.test_status, self._tier())
+        summary = self.query_one("#checks-summary", Static)
+        width = summary.content_size.width
+        key = (
+            self.report,
+            self.index,
+            self.checking,
+            self.test_status,
+            self._tier(),
+            self.detail_open,
+            width,
+        )
         if key == self._view_key:
             return
         self._refresh_checks()
-        self.query_one("#checks-summary", Static).update(self.summary_text())
+        # The narrow detail shows the counts only; the list adds the time when it fits whole.
+        text = self.summary_text()
+        if (self.narrow and self.detail_open) or (width and text.cell_len > width):
+            text = self.summary_text(last_run=False)
+        summary.update(text)
         check = self.selected
         head = self.query_one("#checks-detail-head", Static)
         body = self.query_one("#checks-detail-body", Static)

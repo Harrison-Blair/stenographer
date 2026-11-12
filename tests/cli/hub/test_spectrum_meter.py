@@ -86,9 +86,9 @@ def test_on_state_head_scale_and_level_rows():
     model = _on_model()
     model.feed(_tone(200, 0.1))
 
-    assert model.head == ("[m] MIC on · Default input", "○ quiet")
+    assert model.head == ("[m] MIC on  · Default input", "○ quiet")
     model.speech = True
-    assert model.head == ("[m] MIC on · Default input", "● speech")
+    assert model.head == ("[m] MIC on  · Default input", "● speech")
     assert model.scale == SCALE
     # A 0.1 sine has RMS 0.0707, which is -23.01 dBFS.
     assert model.level_text == " -23.0 dBFS  peak  -23.0"
@@ -182,7 +182,7 @@ def test_widget_draws_blocks_fed_from_another_thread():
             feeder.join()
             await pilot.pause(0.2)
             text = _screen_text(app)
-            assert "[m] MIC on · Default input" in text
+            assert "[m] MIC on  · Default input" in text
             assert "● speech" in text
             assert "█" in text
             assert SCALE in text

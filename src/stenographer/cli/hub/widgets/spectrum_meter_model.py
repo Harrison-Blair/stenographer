@@ -24,6 +24,9 @@ _RATE = 16000
 _PEAK_SECONDS = 3.0
 _KEYS = {"mic": "m", "system": "s"}
 _SHORT_NAMES = {"mic": "MIC", "system": "SYS"}
+# The state word of the head has a slot for on and off, so the device does not move when a
+# source turns on or off. A slot for idle would push the system device out of the full meter.
+_STATE_SLOT = 3
 # The level and peak slots hold ``-99.9`` and ``-inf`` right-aligned.
 _LEVEL_SLOT = 6
 # The level bar of the one-line meter spans this range below 0 dBFS.
@@ -95,7 +98,8 @@ class SpectrumMeterModel:
     @property
     def head(self) -> tuple[str, str]:
         """Return the left head text and the right token."""
-        left = f"{self.head_label} · {self.device}"
+        prefix = f"[{_KEYS[self.source]}] {self.source.upper()}"
+        left = f"{prefix} {self._state:<{_STATE_SLOT}} · {self.device}"
         if self._state == "on":
             right = "● speech" if self.speech else "○ quiet"
         elif self._state == "idle" and self.source == "mic":

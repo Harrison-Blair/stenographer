@@ -65,8 +65,17 @@ tiers by terminal width:
 | Tier | Columns | Changes |
 | --- | --- | --- |
 | Wide | 120 and more | Every value shows. |
-| Medium | 80 to 119 | Record shows its REC panel as one status line and short spectra. The Checks list shows the check names only. |
-| Narrow | 60 to 79 | Record shows one level line per source. The top line shows only `●` or `Ⅱ` for a recording, no Library count, and the first word of the engine state. Checks shows the list alone. |
+| Medium | 80 to 119 | The Checks list shows the check names only. |
+| Narrow | 60 to 79 | The top line shows only `●` or `Ⅱ` for a recording, no Library count, and the first word of the engine state. The Record speaker row is one line. Checks shows the list alone. |
+
+The top of Record depends on the width and the height, so the transcript keeps
+its space in a short terminal:
+
+| Form | Size | Top of Record |
+| --- | --- | --- |
+| Full | 120 columns and 28 rows or more | REC panel and full spectra |
+| Short spectrum | 80 columns and 20 rows or more, when the full form does not apply | one status line and two short spectra |
+| Level line | every other size from 60×16 | one status line and one level line per source |
 
 The top line is one line at every size. When it is too narrow, the model name
 drops first, then `ram`, then `cpu`; the navigation and the engine state stay.
@@ -106,12 +115,13 @@ editor does not know about.
 
 Record has a REC panel, a MIC meter, and a SYSTEM meter at the top. Below them,
 a speaker bar sits above the full-width transcript. The transcript gets the
-space first. In the medium and narrow tiers, the REC panel is one status line:
-the state, the clock, one note (the microphone, `started HH:MM`, `saved HH:MM`,
-or the error, in the medium tier only), and two buttons. The session ID shows
-only in the wide tier, and the narrow tier uses short button labels such as
-`[enter] ■ Stop`. There, `[d] change device…` is the second button while no
-recording runs. Capture is local: Record never sends audio or
+space first. In the short-spectrum and level-line forms, the REC panel is one
+status line: the state, the clock, one note (the microphone, `started HH:MM`,
+`saved HH:MM`, or the error; not in the narrow tier), and two buttons. Each
+button keeps the width of its widest label, so a label change moves nothing.
+The session ID shows only in the full form, and the narrow tier uses short
+button labels such as `[enter] ■ Stop` and `[space] ● Record`. In the status
+line, `[d] device…` is the second button while no recording runs. Capture is local: Record never sends audio or
 transcript text over the network. Each state shows a glyph and a word, so it does not
 depend on colour.
 
@@ -152,11 +162,11 @@ panel lists each error and session, and each press of `o` shows the next session
 If you quit while a session still saves, the quit question lists it. Press `y`
 to quit after each session has saved; press `n` to keep the hub open.
 
-In the wide tier, each meter shows 18 frequency bands in 8 rows, the band labels
+In the full form, each meter shows 18 frequency bands in 8 rows, the band labels
 `100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS (for
 example `-23.4`), and a speech light (`● speech` or `○ quiet`) from the voice
-detector of the source. In the medium tier, the meters sit side by side with
-2 rows of bands and no band labels. In the narrow tier, each source is one line:
+detector of the source. In the short-spectrum form, the meters sit side by side with
+2 rows of bands and no band labels. In the level-line form, each source is one line:
 `[m] MIC` or `[s] SYS`, a level bar from -60 to 0 dBFS, the level, and the
 speech light.
 While no recording runs, a meter shows a dotted grid and `not recording`.
@@ -184,7 +194,9 @@ scroll to the bottom to follow new lines again.
 
 The speaker bar lists each speaker that has transcript lines, with its talk time
 (`4:12`; from 100 minutes, `1h40m`).
-The row wraps between speakers when it runs out of room. Each speaker shows as
+The row wraps between speakers when it runs out of room. In the narrow tier the
+speakers stay on one line that ends with `+N` for the speakers that do not fit;
+the notices wrap below it. Each speaker shows as
 text, so it does not depend on colour. The end of the bar shows the count of failed
 phrases when there are any, `! mic stopped` (or `! system stopped`) when the capture of
 a source failed, `! mic no audio` (or `! system no audio`) while a
@@ -560,7 +572,8 @@ Each row shows a state glyph, the check name, and a short detail that is cut
 to fit: `✓` pass, `!` warning, `×` failure. In the medium tier the list shows
 the check names only. In the narrow tier the tab shows the list alone: press
 `enter` to show the detail of the selected check and `escape` to return to the
-list. The detail pane shows the
+list. The detail shows the three counts without the time of the last run, and
+the list shows the time only when it fits whole. The detail pane shows the
 selected check with its state word, the result, fix guidance when available,
 `checked HH:MM` and the related path when one applies, and the buttons
 `[f] Fix: …` (for a warning or failure that has a fix), `[t] Test: …` (when

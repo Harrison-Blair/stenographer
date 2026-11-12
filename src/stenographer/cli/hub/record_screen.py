@@ -51,6 +51,8 @@ _STATE_TOKENS = {
 }
 _RECORD_HINTS = (("m", "mic"), ("s", "system"), ("v", "view"))
 _CLOCK_COLORS = {"record": "#ff875f", "saved": "#6ee69a"}
+# Status-line button widths (primary, secondary) for the widest label; narrow labels are short.
+_LINE_BUTTONS = {False: (22, 16), True: (16, 16)}
 # The speaker count and each talk time have a fixed slot, so nothing beside them moves.
 _SPEAKER_COUNT_SLOT = 3
 _TALK_TIME_SLOT = 5
@@ -109,12 +111,12 @@ class RecordScreen(HubScreen):
     RecordScreen #transcript { height: 1fr; }
     RecordScreen #transcript-hints { height: 1; }
 
-    /* Medium and narrow: the REC panel is one status line above the meters. */
-    RecordScreen.-medium #record-top, RecordScreen.-narrow #record-top {
+    /* Short and line forms: the REC panel is one status line above the meters. */
+    RecordScreen.-form-short #record-top, RecordScreen.-form-line #record-top {
         layout: vertical;
         height: auto;
     }
-    RecordScreen.-medium #rec-panel, RecordScreen.-narrow #rec-panel {
+    RecordScreen.-form-short #rec-panel, RecordScreen.-form-line #rec-panel {
         layout: horizontal;
         width: 1fr;
         min-width: 0;
@@ -123,36 +125,41 @@ class RecordScreen(HubScreen):
         padding: 0;
         border: none;
     }
-    RecordScreen.-medium #rec-state, RecordScreen.-narrow #rec-state { width: 14; }
-    RecordScreen.-medium #rec-clock, RecordScreen.-narrow #rec-clock { display: none; }
-    RecordScreen.-medium #rec-clock-line { display: block; width: 10; }
-    RecordScreen.-narrow #rec-clock-line { display: block; width: 9; }
-    RecordScreen.-medium #rec-info {
+    RecordScreen.-form-short #rec-state, RecordScreen.-form-line #rec-state { width: 14; }
+    RecordScreen.-form-short #rec-clock, RecordScreen.-form-line #rec-clock { display: none; }
+    RecordScreen.-form-short #rec-clock-line, RecordScreen.-form-line #rec-clock-line {
+        display: block;
+        width: 10;
+    }
+    RecordScreen.-narrow #rec-clock-line { width: 9; }
+    RecordScreen.-form-short #rec-info, RecordScreen.-form-line #rec-info {
         width: 1fr;
         height: 1;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
     RecordScreen.-narrow #rec-info { display: none; }
-    RecordScreen.-medium #device-button, RecordScreen.-narrow #device-button { display: none; }
+    RecordScreen.-form-short #device-button, RecordScreen.-form-line #device-button {
+        display: none;
+    }
 
-    /* Medium: two short spectra side by side. */
-    RecordScreen.-medium #meters { width: 1fr; height: 6; }
-    RecordScreen.-medium #mic-column, RecordScreen.-medium #system-column {
+    /* Short form: two short spectra side by side. */
+    RecordScreen.-form-short #meters { width: 1fr; height: 6; }
+    RecordScreen.-form-short #mic-column, RecordScreen.-form-short #system-column {
         width: 1fr;
         height: 6;
     }
-    RecordScreen.-medium #mic-column { margin-right: 0; }
-    RecordScreen.-medium #meters SpectrumMeter { width: 1fr; height: 6; }
+    RecordScreen.-form-short #mic-column { margin-right: 0; }
+    RecordScreen.-form-short #meters SpectrumMeter { width: 1fr; height: 6; }
 
-    /* Narrow: one level line per source. */
-    RecordScreen.-narrow #meters { layout: vertical; width: 1fr; height: 2; }
-    RecordScreen.-narrow #mic-column, RecordScreen.-narrow #system-column {
+    /* Line form: one level line per source. */
+    RecordScreen.-form-line #meters { layout: vertical; width: 1fr; height: 2; }
+    RecordScreen.-form-line #mic-column, RecordScreen.-form-line #system-column {
         width: 1fr;
         height: 1;
         margin: 0;
     }
-    RecordScreen.-narrow #meters SpectrumMeter {
+    RecordScreen.-form-line #meters SpectrumMeter {
         width: 1fr;
         height: 1;
         padding: 0;
@@ -219,10 +226,19 @@ class RecordScreen(HubScreen):
                 yield TranscriptScroll(id="transcript", can_focus=False)
                 yield KeyHints(footer=False, id="transcript-hints")
 
-    def on_mount(self) -> None:
-        # Inline: the app rules of HubButton outrank the default CSS of this screen.
-        for button in self.query("#rec-panel HubButton"):
-            button.styles.margin = (0, 0, 0, 2)
+    @property
+    def form(self) -> str:
+        """Return ``full``, ``short`` or ``line``: the top of Record by width and height."""
+        width, height = self.app.size
+        if width >= 120 and height >= 28:
+            return "full"
+        return "short" if width >= 80 and height >= 20 else "line"
+
+    def apply_size(self) -> None:
+        super().apply_size()
+        form = self.form
+        for name in ("full", "short", "line"):
+            self.set_class(name == form, f"-form-{name}")
 
     # State
 
@@ -283,7 +299,9 @@ class RecordScreen(HubScreen):
         self._draw_meters(live)
         self._draw_transcript(state, shown, lines, speakers)
         self.query_one("#speaker-bar", SpeakerBar).set_items(
-            self._speaker_items(shown, lines, speakers)
+            self._speaker_items(shown, lines, speakers),
+            speakers=len(speakers),
+            one_row=self.tier == "narrow",
         )
         self.query_one("#rename-button", HubButton).disabled = (
             state == "failed" or self._rename_busy(shown)
@@ -327,42 +345,61 @@ class RecordScreen(HubScreen):
             self.query_one("#rec-clock-line", Static),
             Text(Clock.format(seconds), style=f"bold {_CLOCK_COLORS[tone]}"),
         )
-        update_changed(self.query_one("#rec-info", Static), self._rec_info(state, session, tier))
+        info = self._rec_info(state, session, self.form != "full")
+        update_changed(self.query_one("#rec-info", Static), info)
 
         primary = self.query_one("#rec-primary", HubButton)
         secondary = self.query_one("#rec-secondary", HubButton)
+        full = self.form == "full"
+        narrow = tier == "narrow"
         if state in {"recording", "paused"}:
-            stop = "■ Stop" if tier == "narrow" else "■ Stop & save"
-            self._set_button(primary, "enter", stop, "stop")
+            self._set_button(primary, "enter", "■ Stop" if narrow else "■ Stop & save", "stop")
             resume = state == "paused"
             self._set_button(
                 secondary, "space", "▶ Resume" if resume else "Ⅱ Pause", "record_toggle"
             )
         elif state in {"saved", "failed"}:
-            self._set_button(primary, "space", "● Record again", "record_toggle")
-            label = "Open in Library" if tier == "wide" else "Open"
+            again = "● Record" if narrow else "● Record again"
+            self._set_button(primary, "space", again, "record_toggle")
+            label = "Open in Library" if full else "Open"
             self._set_button(secondary, "o", label, "open_library")
         else:
             self._set_button(primary, "space", "● Record", "record_toggle")
-            if tier != "wide":
-                label = "device…" if tier == "narrow" else "change device…"
-                self._set_button(secondary, "d", label, "choose_device")
-        secondary.display = state != "idle" or tier != "wide"
+            if not full:
+                self._set_button(secondary, "d", "device…", "choose_device")
+        secondary.display = state != "idle" or not full
         self.query_one("#device-button").visible = state in {"idle", "saved", "failed"}
+        self._size_buttons(primary, secondary, None if full else _LINE_BUTTONS[narrow])
 
-    def _rec_info(self, state: str, session, tier: str) -> str:
+    @staticmethod
+    def _size_buttons(primary: HubButton, secondary: HubButton, widths) -> None:
+        """Give each status-line button the width of its widest label; the panel uses auto.
+
+        Inline styles: the app rules of HubButton outrank the default CSS of this screen.
+        """
+        if widths is None:
+            sizes, margins = ("auto", "auto"), ((0, 0, 0, 2), (0, 0, 0, 2))
+        else:
+            sizes, margins = widths, ((0, 0, 0, 1), (0, 0, 0, 2))
+        for button, size, margin in zip((primary, secondary), sizes, margins, strict=True):
+            if str(button.styles.width) != str(size):
+                button.styles.width = size
+                button.styles.margin = margin
+                button.styles.content_align_horizontal = "left"
+
+    def _rec_info(self, state: str, session, compact: bool) -> str:
         """Return the info rows of the REC panel, or the one note of the status line."""
         if state == "idle":
             return f"mic · {self.mic_device()}"
         if state == "saved":
             session_id = session.path.name
             saved_at = self._saved_at.get(session_id)
-            if tier != "wide":
+            if compact:
                 return f"saved {saved_at:%H:%M}" if saved_at else ""
             return f"saved {saved_at:%H:%M}\n{session_id}" if saved_at else session_id
         if state == "failed":
             failures = tuple(reversed(self._failed_stops()))
-            if tier != "wide":
+            if compact:
                 return str(failures[0][1]).splitlines()[0] if failures else ""
             return "\n".join(f"{error}\n{failed.path.name}" for failed, error in failures)
         started = session_started_at(session.path.name) if session is not None else None
