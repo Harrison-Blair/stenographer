@@ -14,6 +14,7 @@ from textual.app import App
 from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.checks_tab import ChecksTab
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
 from stenographer.cli.hub.doctor_view import DoctorReport
 from stenographer.cli.hub.engine_status import EngineStatus
 from stenographer.cli.hub.widgets.button import HubButton
@@ -1428,44 +1429,104 @@ def _tab_line(app) -> str:
     return _screen_text(app).splitlines()[app.screen.query_one("#settings-tabs").region.y]
 
 
-def _assert_summary_whole(app, label) -> None:
+def _setup_report() -> DoctorReport:
+    """A computer before setup: 5 pass, 5 warn, 5 fail, so the tab badge is ``●10``."""
+    from tests.cli.hub.test_checks_tab import _check
+
+    groups = ("input", "engine", "other")
+    checks = [
+        _check(f"{status}_{index}", f"{status} {index}", groups[index % 3], status, "detail")
+        for status in ("ok", "warn", "fail")
+        for index in range(5)
+    ]
+    return DoctorReport(tuple(checks), (), checked_at=datetime(2026, 10, 27, 13, 21))
+
+
+# The summary of each report and the first medium width that shows [r] Run again. On the
+# tab line (width - 6: the screen gutter, the frame and its padding on each side) sit
+# "  Settings" (10) and "▶ Checks ●N" (9 + the badge) with 2 cells after each, 2 cells
+# before the summary, the summary with the last run (44), and Run again (13) with its
+# 2-cell margin.
+_SUMMARIES = {
+    "board": (_board_report, " 6 pass ·  1 warn ·  1 fail", 6 + 12 + 11 + 2 + 2 + 44 + 15),
+    "setup": (_setup_report, " 5 pass ·  5 warn ·  5 fail", 6 + 12 + 12 + 2 + 2 + 44 + 15),
+}
+
+
+def _assert_summary_whole(app, label, counts, run_from) -> None:
     line = _tab_line(app)
-    summary = str(app.screen.query_one("#checks-summary").render()).strip()
-    assert summary.startswith(" 6 pass".strip()), (label, summary)
-    assert summary in line, (label, line)
-    if app.screen.query_one("#checks-run-again").display:
-        assert "[r] Run again" in line, (label, line)
+    width = app.size.width
+    tier = "wide" if width >= 120 else "medium" if width >= 80 else "narrow"
+    narrow_detail = tier == "narrow" and app.checks_tab.detail_open
+    expected = counts if tier == "narrow" else counts + " · last run 13:21"
+    assert expected in line, (label, line)
+    if tier == "narrow" or narrow_detail:
+        assert "last run" not in line, (label, line)
+    shows_run = tier == "wide" or (tier == "medium" and width >= run_from)
+    assert ("[r] Run again" in line) is shows_run, (label, line)
     assert _layout_problems(app) == [], label
 
 
-async def test_checks_summary_stays_whole_after_a_resize(tmp_path):
+async def _open_checks(pilot, app) -> None:
+    await pilot.press("3", "left")
+    await _until(pilot, lambda: app.checks_tab.report is not None)
+    await pilot.pause()
+
+
+@pytest.mark.parametrize("name", list(_SUMMARIES))
+async def test_checks_summary_stays_whole_after_a_resize(tmp_path, name):
+    make_report, counts, run_from = _SUMMARIES[name]
     services, _created = _services(tmp_path)
-    report = _board_report()
+    report = make_report()
     app = _app(tmp_path, services, doctor_probe=lambda _config: report)
     async with app.run_test(size=(120, 35)) as pilot:
-        await pilot.press("3", "left")
-        await _until(pilot, lambda: app.checks_tab.report is not None)
-        await pilot.pause()
-        for size in ((60, 16), (98, 30), (97, 30), (120, 35)):
+        await _open_checks(pilot, app)
+        for size in ((60, 16), (98, 30), (97, 30), (91, 30), (90, 30), (89, 30), (120, 35)):
             await pilot.resize_terminal(*size)
             await pilot.pause()
             await pilot.pause()
-            _assert_summary_whole(app, size)
+            _assert_summary_whole(app, size, counts, run_from)
+        await pilot.resize_terminal(60, 16)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        _assert_summary_whole(app, "detail", counts, run_from)
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        _assert_summary_whole(app, "back", counts, run_from)
 
 
-async def test_checks_summary_stays_whole_at_each_width(tmp_path):
+@pytest.mark.parametrize("name", list(_SUMMARIES))
+async def test_checks_summary_stays_whole_at_each_width(tmp_path, name):
+    make_report, counts, run_from = _SUMMARIES[name]
     services, _created = _services(tmp_path)
-    report = _board_report()
+    report = make_report()
     app = _app(tmp_path, services, doctor_probe=lambda _config: report)
     async with app.run_test(size=(120, 35)) as pilot:
-        await pilot.press("3", "left")
-        await _until(pilot, lambda: app.checks_tab.report is not None)
-        await pilot.pause()
+        await _open_checks(pilot, app)
         for width in range(60, 151):
             await pilot.resize_terminal(width, 35)
             await pilot.pause()
             await pilot.pause()
-            _assert_summary_whole(app, width)
+            _assert_summary_whole(app, width, counts, run_from)
+
+
+@pytest.mark.parametrize("count", [0, 1, 9, 10, 15])
+async def test_checks_counts_stay_whole_at_60_columns_with_each_badge(tmp_path, count):
+    from tests.cli.hub.test_checks_tab import _check
+
+    checks = [_check(f"warn_{i}", f"warn {i}", "input", "warn", "detail") for i in range(count)]
+    checks.append(_check("ok_0", "ok 0", "engine"))
+    report = DoctorReport(tuple(checks), (), checked_at=datetime(2026, 10, 27, 13, 21))
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await _open_checks(pilot, app)
+        line = _tab_line(app)
+        assert f" 1 pass · {count:>2} warn ·  0 fail" in line, line
+        assert (f"●{count}" in line) is bool(count), line
+        assert _layout_problems(app) == []
 
 
 _ALL_TAB_BUTTONS = ["config-undo", "config-reset", "config-discard", "config-save"]
@@ -1565,3 +1626,40 @@ async def test_checks_back_button_starts_the_tab_line(tmp_path):
         await pilot.pause()
         back = app.screen.query_one("#checks-back").region
         assert back.x == app.screen.query_one("#settings-tabs").content_region.x
+
+
+async def _click_mic_head_end(pilot, app) -> None:
+    """Click the last cell of the mic head, where ``[d] device`` sits in the full form."""
+    meter = app.screen.query_one("#mic-meter")
+    content = meter.content_region
+    offset = (content.right - 1 - meter.region.x, content.y - meter.region.y)
+    assert await pilot.click("#mic-meter", offset=offset)
+    await pilot.pause()
+    await pilot.pause()
+
+
+async def test_mic_head_end_click_opens_no_device_dialog_in_the_short_spectrum(tmp_path):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        assert (
+            "[d] device"
+            not in _screen_text(app).splitlines()[
+                app.screen.query_one("#mic-meter").content_region.y
+            ]
+        )
+        await _click_mic_head_end(pilot, app)
+        assert not isinstance(app.screen, ChoiceDialog)
+
+
+async def test_mic_head_device_click_opens_the_device_dialog_in_the_full_form(tmp_path):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.pause()
+        content = app.screen.query_one("#mic-meter").content_region
+        head = _screen_text(app).splitlines()[content.y][content.x : content.right]
+        assert head.endswith("[d] device"), head
+        await _click_mic_head_end(pilot, app)
+        await _until(pilot, lambda: isinstance(app.screen, ChoiceDialog))

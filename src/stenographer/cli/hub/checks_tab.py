@@ -61,6 +61,8 @@ _FIXES = {
 # The button rows of the detail, and the cells a button adds to its label in each row form.
 _BUTTON_ROWS = ("#checks-detail-buttons", "#checks-report-buttons", "#checks-dialog-buttons")
 _PADDED_CELLS = 5
+# The cells between the tab names and the Checks summary.
+_SUMMARY_GAP = 2
 _TIGHT_GAP = 2
 # Each count of the summary has a slot of this width.
 _COUNT_SLOT = 2
@@ -353,7 +355,7 @@ class ChecksTab(Vertical):
         if not self.is_mounted:
             return
         self.call_after_refresh(self._fit_rows)
-        width = self.summary_row.content_size.width
+        width = self.summary_row.outer_size.width
         key = (
             self.report,
             self.index,
@@ -409,20 +411,23 @@ class ChecksTab(Vertical):
         """Fill the tab line: wide shows Run again; medium shows it when it fits whole.
 
         The counts always show; the last run shows when it fits whole; narrow shows counts.
+        ``width`` is the whole width of the summary row, its gap included.
         """
         row = self.summary_row
         tier = self._tier()
         back = self.narrow and self.detail_open
         back_button = row.query_one("#checks-back", HubButton)
         back_button.display = back
-        # In place of the tabs, the back button starts the line.
-        row.styles.padding = (0, 0, 0, 0 if back else 2)
         run = row.query_one("#checks-run-again", HubButton)
         full = self.summary_text()
         # Both buttons are tight: the label and the margin are their whole width.
         run_width = run.label.cell_length + run.styles.margin.left
+        # In place of the tabs, the back button starts the line; else a gap of 2 follows them.
+        gap = 0 if back else _SUMMARY_GAP
         if back:
             width -= back_button.label.cell_length + back_button.styles.margin.right
+        free = width
+        width -= gap
         if tier == "wide":
             run.display = True
         elif tier == "medium":
@@ -432,6 +437,11 @@ class ChecksTab(Vertical):
         room = width - (run_width if run.display else 0)
         fits = tier != "narrow" and (not width or full.cell_len <= room)
         text = full if fits else self.summary_text(last_run=False)
+        if free and not back:
+            # A wide badge such as ●15 takes cells: the gap gives them up before the counts do.
+            used = text.cell_len + (run_width if run.display else 0)
+            gap = max(1, min(_SUMMARY_GAP, free - used))
+        row.styles.padding = (0, 0, 0, gap)
         row.query_one("#checks-summary", Static).update(text)
 
     def _warnings_text(self) -> Text:
@@ -457,7 +467,7 @@ class ChecksTab(Vertical):
         return text
 
     def _fit_rows(self) -> None:
-        if self._view_key is not None and self._view_key[-1] != self.summary_row.content_size.width:
+        if self._view_key is not None and self._view_key[-1] != self.summary_row.outer_size.width:
             # The tab line got its width after the last draw; fit the summary to it.
             self.refresh_view()
         self._fit_button_rows()
