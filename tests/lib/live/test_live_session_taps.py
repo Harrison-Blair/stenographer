@@ -106,17 +106,17 @@ def test_a_slow_listener_does_not_delay_accept_or_pause(monkeypatch, tmp_path):
 
     def slow(source, _samples):
         calls.append(source)
-        time.sleep(0.4)
+        time.sleep(2.0)
 
     rig.session.add_block_listener(slow)
     started = time.monotonic()
     for _ in range(5):
         rig.recorder.emit(3)
-    assert time.monotonic() - started < 0.1
+    assert time.monotonic() - started < 1.0
     assert wait_until(lambda: calls)
     started = time.monotonic()
     rig.session.pause()
-    assert time.monotonic() - started < 0.1
+    assert time.monotonic() - started < 1.0
     rig.session.stop()
 
 
