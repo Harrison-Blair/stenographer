@@ -1117,15 +1117,6 @@ async def test_record_buttons_stay_in_place_when_pause_becomes_resume(tmp_path, 
         session.release.set()
 
 
-def test_meter_head_keeps_the_device_in_place_when_a_source_turns_on_or_off():
-    model = SpectrumMeterModel("mic", "Default input")
-    places = set()
-    for state in ("on", "off"):
-        model.set_state(state)
-        places.add(model.head[0].index("Default input"))
-    assert len(places) == 1
-
-
 async def test_checks_narrow_summary_is_never_cut(tmp_path):
     services, _created = _services(tmp_path)
     report = _board_report()
@@ -1187,4 +1178,77 @@ async def test_narrow_speaker_row_is_one_line_with_a_count_of_the_rest(tmp_path)
         await pilot.resize_terminal(100, 30)
         await pilot.pause()
         assert len(_speaker_bar(app).splitlines()) > 2, "the medium tier keeps the wrap"
+        session.release.set()
+
+
+# Review fixes of PR 51, round 2
+
+WARNINGS = (
+    "13:12:04 WARN live: source_silent",
+    "11:48:30 ERROR live: system_source_failed",
+    "10:02:11 WARN live: source_silent",
+)
+
+
+@pytest.mark.parametrize("size", [(150, 16), (120, 16), (120, 24)])
+async def test_checks_fit_a_wide_short_terminal(tmp_path, size):
+    services, _created = _services(tmp_path)
+    report = _board_report(WARNINGS)
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        selected = app.checks_tab.selected
+        assert selected.label == "sounds", "the check with Fix, Test and a path"
+        assert _region_problems(app, app.checks_tab) == []
+        bottom = app.screen.query_one("#checks-dialog-buttons").region
+        assert bottom.bottom == app.screen.query_one("#checks-detail").content_region.bottom
+
+
+@pytest.mark.parametrize("size", [(120, 35), (150, 45)])
+async def test_checks_wide_keeps_the_dialog_buttons_at_the_bottom_of_the_detail(tmp_path, size):
+    services, _created = _services(tmp_path)
+    report = _board_report(WARNINGS)
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        detail = app.screen.query_one("#checks-detail").content_region
+        row = app.screen.query_one("#checks-dialog-buttons").region
+        assert row.bottom == detail.bottom
+        assert "[Q] Quick setup…" in _screen_text(app).splitlines()[row.y]
+        assert _region_problems(app, app.checks_tab) == []
+
+
+def test_meter_head_keeps_the_device_in_place_for_each_state():
+    for source, device in (("mic", "Default input"), ("system", "default output")):
+        model = SpectrumMeterModel(source, device)
+        places = set()
+        for state in ("on", "off", "idle"):
+            model.set_state(state)
+            places.add(model.head[0].index(device))
+        assert len(places) == 1, source
+
+
+@pytest.mark.parametrize("size", [(120, 35), (100, 30)])
+async def test_system_head_does_not_change_with_speech(tmp_path, size):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_five(pilot, services, created, app)
+
+        def head():
+            row = app.screen.query_one("#system-meter").content_region.y
+            return _screen_text(app).splitlines()[row]
+
+        quiet = head()
+        assert "default output" in quiet
+        session.speech_detected["system"] = True
+        app.refresh_view()
+        await pilot.pause()
+        speech = head()
+        assert "● speech" in speech
+        assert speech.index("default output") == quiet.index("default output")
         session.release.set()

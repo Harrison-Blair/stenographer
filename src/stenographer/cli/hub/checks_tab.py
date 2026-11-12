@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from rich.text import Text
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Static
 
@@ -132,6 +132,7 @@ class ChecksTab(Vertical):
     ChecksTab #checks-detail {
         width: 1fr;
     }
+    ChecksTab #checks-detail-scroll { height: 1fr; }
     ChecksTab #checks-detail-head {
         text-style: bold;
     }
@@ -153,8 +154,7 @@ class ChecksTab(Vertical):
         text-style: bold;
     }
     ChecksTab #checks-warnings {
-        height: 1fr;
-        overflow-y: auto;
+        height: auto;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
@@ -166,17 +166,9 @@ class ChecksTab(Vertical):
     Screen.-narrow ChecksTab.-detail #checks-detail { display: block; }
     Screen.-narrow ChecksTab.-detail #checks-list-column { display: none; }
     Screen.-narrow ChecksTab.-detail #checks-back { display: block; }
-    Screen.-medium ChecksTab #checks-detail, Screen.-narrow ChecksTab #checks-detail {
-        overflow-y: auto;
-    }
     Screen.-medium ChecksTab #checks-detail-buttons,
-    Screen.-narrow ChecksTab #checks-detail-buttons,
-    Screen.-medium ChecksTab #checks-dialog-buttons,
-    Screen.-narrow ChecksTab #checks-dialog-buttons {
+    Screen.-narrow ChecksTab #checks-detail-buttons {
         layout: vertical;
-        height: auto;
-    }
-    Screen.-medium ChecksTab #checks-warnings, Screen.-narrow ChecksTab #checks-warnings {
         height: auto;
     }
     """
@@ -230,18 +222,23 @@ class ChecksTab(Vertical):
                         yield SelectableList(id=f"checks-{group}")
                 yield Static("↑↓ check · t test", id="checks-list-hint")
             with Frame(id="checks-detail", variant="fill"):
-                yield Static("", id="checks-detail-head", markup=False)
-                yield Static("", id="checks-detail-body", markup=False)
-                yield Static("", id="checks-detail-path", markup=False)
-                with Horizontal(id="checks-detail-buttons"):
-                    yield HubButton("Fix", key="f", action="fix", id="checks-fix", tone="primary")
-                    yield HubButton("Test", key="t", action="test", id="checks-test")
-                with Horizontal(id="checks-report-buttons"):
-                    yield HubButton("Open log", key="l", action="open_log", id="checks-log")
-                    yield HubButton("Copy report", key="c", action="copy_report", id="checks-copy")
-                yield Static("", id="checks-test-status", markup=False)
-                yield Static("recent warnings", id="checks-warnings-title", markup=False)
-                yield Static("", id="checks-warnings", markup=False)
+                with VerticalScroll(id="checks-detail-scroll", can_focus=False):
+                    yield Static("", id="checks-detail-head", markup=False)
+                    yield Static("", id="checks-detail-body", markup=False)
+                    yield Static("", id="checks-detail-path", markup=False)
+                    with Horizontal(id="checks-detail-buttons"):
+                        yield HubButton(
+                            "Fix", key="f", action="fix", id="checks-fix", tone="primary"
+                        )
+                        yield HubButton("Test", key="t", action="test", id="checks-test")
+                    with Horizontal(id="checks-report-buttons"):
+                        yield HubButton("Open log", key="l", action="open_log", id="checks-log")
+                        yield HubButton(
+                            "Copy report", key="c", action="copy_report", id="checks-copy"
+                        )
+                    yield Static("", id="checks-test-status", markup=False)
+                    yield Static("recent warnings", id="checks-warnings-title", markup=False)
+                    yield Static("", id="checks-warnings", markup=False)
                 with Horizontal(id="checks-dialog-buttons"):
                     yield HubButton(
                         "Quick setup…", key="Q", action="quick_setup", id="checks-quick"
@@ -338,6 +335,7 @@ class ChecksTab(Vertical):
         if key == self._view_key:
             return
         self._refresh_checks()
+        self._fit_dialog_buttons()
         # The narrow detail shows the counts only; the list adds the time when it fits whole.
         text = self.summary_text()
         if (self.narrow and self.detail_open) or (width and text.cell_len > width):
@@ -402,6 +400,16 @@ class ChecksTab(Vertical):
                 text.append("\n")
             text.append(UNREADABLE_LOG, style=StatusToken.TONES["dim"])
         return text
+
+    def _fit_dialog_buttons(self) -> None:
+        """Keep Quick setup, Models and Defaults on one row: below the wide tier they lose
+        their padding. Inline: the app rules of HubButton outrank this default CSS."""
+        compact = self._tier() != "wide"
+        for button in self.query("#checks-dialog-buttons HubButton").results(HubButton):
+            button.styles.padding = 0 if compact else None
+            button.styles.line_pad = 0 if compact else None
+            button.styles.width = button.label.cell_length if compact else None
+            button.styles.margin = (0, 2, 0, 0) if compact else None
 
     def _tier(self) -> str:
         return tier_for(self.app.size.width)

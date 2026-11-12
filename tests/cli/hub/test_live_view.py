@@ -400,5 +400,5 @@ async def test_system_source_state_and_device_fit_on_one_line(tmp_path):
         await pilot.pause()
         system_lines = [row for row in _screen_text(app).splitlines() if "[s] SYSTEM" in row]
         assert len(system_lines) == 1
-        assert "on  · default output" in system_lines[0]
+        assert "on   default output" in system_lines[0]
         assert "○ quiet" in system_lines[0]

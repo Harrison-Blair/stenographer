@@ -103,7 +103,8 @@ class SpectrumMeter(Widget):
         color = _COLORS[model.source]
         full = height >= _FULL_HEIGHT
         left, right = model.head
-        room = width - len(right) - (1 if right else 0)
+        # The room does not depend on the token shown now, so the device does not come and go.
+        room = width - model.right_width - 1
         if len(left) > room:
             left = model.head_label
         if len(left) > room:
